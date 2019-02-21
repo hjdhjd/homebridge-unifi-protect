@@ -1,0 +1,25 @@
+{
+  "name": "homebridge-camera-unifi",
+  "version": "0.1.0",
+  "description": "Unifi Protect plugin for homebridge: https://github.com/nfarina/homebridge",
+  "license": "ISC",
+  "keywords": [
+    "homebridge-plugin"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/ptescher/homebridge-camera-unifi.git"
+  },
+  "bugs": {
+    "url": "http://github.com/ptescher/homebridge-camera-unifi/issues"
+  },
+  "engines": {
+    "node": ">=5.0.0",
+    "homebridge": ">=0.4.5"
+  },
+  "dependencies": {
+    "homebridge-camera-ffmpeg": "^0.1.11",
+    "request": "^2.88.0",
+    "request-promise": "^4.2.4"
+  }
+}
