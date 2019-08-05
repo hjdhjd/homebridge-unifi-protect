@@ -8,7 +8,7 @@ module.exports = function(homebridge) {
   hap = homebridge.hap;
   UUIDGen = homebridge.hap.uuid;
 
-  homebridge.registerPlatform("homebridge-unifi-protect2", "Camera-UniFi", unifiPlatform, true);
+  homebridge.registerPlatform("homebridge-unifi-protect2", "Camera-UniFi-Protect", unifiPlatform, true);
 }
 
 function unifiPlatform(log, config, api) {
@@ -36,6 +36,24 @@ unifiPlatform.prototype.didFinishLaunching = function() {
   var self = this;
   var videoProcessor = self.config.videoProcessor || 'ffmpeg';
   var videoConfig = self.config.videoConfig;
+
+  // Set some sane defaults...
+
+  // Tell ffmpeg that this is an RTSP over HTTP stream.
+  videoConfig.sourcePrefix = self.config.videoConfig.sourcePrefix || '-re -rtsp_transport http';
+
+  // Magic incantation to stream effectively to iOS at the best quality possible.
+  videoConfig.additionalCommandline = self.config.videoConfig.additionalCommandline || '-preset slow -profile:v high -level 4.2 -x264-params intra-refresh=1:bframes=0';
+
+  // Map audio and video to deal with UniFi quirks.
+  videoConfig.mapaudio = self.config.videoConfig.mapaudio || '0:0';
+  videoConfig.mapvideo = self.config.videoConfig.mapvideo || '0:1';
+
+  // Set a reasonable max FPS value. If your Protect setup is slower, this won't matter.
+  videoConfig.maxFPS = self.config.videoConfig.maxFPS || 20;
+
+  // Set a reasonable stream maximum.
+  videoConfig.maxStreams = self.config.videoConfig.maxStreams || 4;
 
   if (self.config.controllers) {
     var controllers = self.config.controllers;
@@ -103,7 +121,7 @@ unifiPlatform.prototype.didFinishLaunching = function() {
 
     Promise.all(promises).then(controllerAccessories => {
       controllerAccessories.forEach(accessories => {
-        self.api.publishCameraAccessories("Camera-UniFi", accessories);
+        self.api.publishCameraAccessories("Camera-UniFi-Protect", accessories);
       });
     });
   }
