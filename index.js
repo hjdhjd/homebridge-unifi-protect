@@ -77,7 +77,7 @@ unifiPlatform.prototype.didFinishLaunching = function() {
               videoConfig: {
                 source: videoConfig.sourcePrefix + " -i rtsp://" + bootstrap.nvr.host + ':' + bootstrap.nvr.ports.rtsp + '/' + channel.rtspAlias,
                 stillImageSource: '-i https://' + bootstrap.nvr.host + ':' + bootstrap.nvr.ports.https + '/api/cameras/' + camera.id + '/snapshot?accessKey=' + accessKey,
-                additionalCommandLine: videoConfig.additionalCommandLine,
+                additionalCommandline: videoConfig.additionalCommandline,
                 mapvideo: videoConfig.mapvideo,
                 mapaudio: videoConfig.mapaudio,
                 maxStreams: videoConfig.maxStreams,

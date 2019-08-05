@@ -30,7 +30,7 @@ any other capabilities that make sense to this plugin to enable HomeKit users to
       }],
       "videoConfig": {
         "sourcePrefix": "-rtsp_transport http -re",
-        "additionalCommandLine": "",
+        "additionalCommandline": "",
         "mapaudio": "",
         "mapvideo": "",
         "maxStreams": 2,
