@@ -8,7 +8,7 @@ module.exports = function(homebridge) {
   hap = homebridge.hap;
   UUIDGen = homebridge.hap.uuid;
 
-  homebridge.registerPlatform("homebridge-camera-unifi", "Camera-unifi", unifiPlatform, true);
+  homebridge.registerPlatform("homebridge-unifi-protect2", "Camera-UniFi", unifiPlatform, true);
 }
 
 function unifiPlatform(log, config, api) {
@@ -44,7 +44,8 @@ unifiPlatform.prototype.didFinishLaunching = function() {
         controllerConfig.url + 'api/auth',
         {
           json: { username: controllerConfig.username, password: controllerConfig.password },
-          resolveWithFullResponse: true
+          resolveWithFullResponse: true,
+          rejectUnauthorized: false
         }
       ).then(response => {
         var accessToken = response.headers.authorization;
@@ -53,7 +54,8 @@ unifiPlatform.prototype.didFinishLaunching = function() {
           {
             headers: { 
               Authorization: 'Bearer ' + accessToken
-            }
+            },
+            rejectUnauthorized: false
           }
         ).then(response => {  
           let bootstrap = JSON.parse(response);
@@ -75,6 +77,9 @@ unifiPlatform.prototype.didFinishLaunching = function() {
               videoConfig: {
                 source: videoConfig.sourcePrefix + " -i rtsp://" + bootstrap.nvr.host + ':' + bootstrap.nvr.ports.rtsp + '/' + channel.rtspAlias,
                 stillImageSource: '-i https://' + bootstrap.nvr.host + ':' + bootstrap.nvr.ports.https + '/api/cameras/' + camera.id + '/snapshot?accessKey=' + accessKey,
+                additionalCommandLine: videoConfig.additionalCommandLine,
+                mapvideo: videoConfig.mapvideo,
+                mapaudio: videoConfig.mapaudio,
                 maxStreams: videoConfig.maxStreams,
                 maxWidth: videoConfig.maxWidth,
                 maxHeight: videoConfig.maxHeight,
@@ -98,7 +103,7 @@ unifiPlatform.prototype.didFinishLaunching = function() {
 
     Promise.all(promises).then(controllerAccessories => {
       controllerAccessories.forEach(accessories => {
-        self.api.publishCameraAccessories("Camera-unifi", accessories);
+        self.api.publishCameraAccessories("Camera-UniFi", accessories);
       });
     });
   }
