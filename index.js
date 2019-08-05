@@ -40,20 +40,59 @@ unifiPlatform.prototype.didFinishLaunching = function() {
   // Set some sane defaults...
 
   // Tell ffmpeg that this is an RTSP over HTTP stream.
-  videoConfig.sourcePrefix = self.config.videoConfig.sourcePrefix || '-re -rtsp_transport http';
+  var sourcePrefix = '-re -rtsp_transport http';
 
   // Magic incantation to stream effectively to iOS at the best quality possible.
-  videoConfig.additionalCommandline = self.config.videoConfig.additionalCommandline || '-preset slow -profile:v high -level 4.2 -x264-params intra-refresh=1:bframes=0';
+  var additionalCommandline = '-preset slow -profile:v high -level 4.2 -x264-params intra-refresh=1:bframes=0';
 
   // Map audio and video to deal with UniFi quirks.
-  videoConfig.mapaudio = self.config.videoConfig.mapaudio || '0:0';
-  videoConfig.mapvideo = self.config.videoConfig.mapvideo || '0:1';
+  var mapaudio = '0:0';
+  var mapvideo = '0:1';
 
   // Set a reasonable max FPS value. If your Protect setup is slower, this won't matter.
-  videoConfig.maxFPS = self.config.videoConfig.maxFPS || 20;
+  var maxFPS = 20;
 
   // Set a reasonable stream maximum.
-  videoConfig.maxStreams = self.config.videoConfig.maxStreams || 4;
+  var maxStreams = 4;
+
+  // Default to 1080p
+  var maxWidth = 1920;
+  var maxHeight = 1080;
+
+  if(videoConfig) {
+    if(videoConfig.sourcePrefix) {
+      sourcePrefix = videoConfig.sourcePrefix;
+    }
+
+    if(videoConfig.additionalCommandline) {
+      additionalCommandline = videoConfig.additionalCommandline;
+    }
+
+    if(videoConfig.mapaudio) {
+      mapaudio = videoConfig.mapaudio;
+    }
+
+    if(videoConfig.mapvideo) {
+      mapvideo = videoConfig.mapvideo;
+    }
+
+    if(videoConfig.maxFPS) {
+      maxFPS = videoConfig.maxFPS;
+    }
+
+    if(videoConfig.maxStreams) {
+      maxStreams = videoConfig.maxStreams;
+    }
+
+    if(videoConfig.maxWidth) {
+      maxWidth = videoConfig.maxWidth;
+    }
+
+    if(videoConfig.maxHeight) {
+      maxHeight = videoConfig.maxHeight;
+    }
+
+  }
 
   if (self.config.controllers) {
     var controllers = self.config.controllers;
@@ -93,15 +132,15 @@ unifiPlatform.prototype.didFinishLaunching = function() {
             var cameraConfig = {
               name: cameraName,
               videoConfig: {
-                source: videoConfig.sourcePrefix + " -i rtsp://" + bootstrap.nvr.host + ':' + bootstrap.nvr.ports.rtsp + '/' + channel.rtspAlias,
+                source: sourcePrefix + " -i rtsp://" + bootstrap.nvr.host + ':' + bootstrap.nvr.ports.rtsp + '/' + channel.rtspAlias,
                 stillImageSource: '-i https://' + bootstrap.nvr.host + ':' + bootstrap.nvr.ports.https + '/api/cameras/' + camera.id + '/snapshot?accessKey=' + accessKey,
-                additionalCommandline: videoConfig.additionalCommandline,
-                mapvideo: videoConfig.mapvideo,
-                mapaudio: videoConfig.mapaudio,
-                maxStreams: videoConfig.maxStreams,
-                maxWidth: videoConfig.maxWidth,
-                maxHeight: videoConfig.maxHeight,
-                maxFPS: videoConfig.maxFPS
+                additionalCommandline: additionalCommandline,
+                mapvideo: mapvideo,
+                mapaudio: mapaudio,
+                maxStreams: maxStreams,
+                maxWidth: maxWidth,
+                maxHeight: maxHeight,
+                maxFPS: maxFPS
               }
             }
     

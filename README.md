@@ -100,7 +100,7 @@ This step is not required. For those that prefer to tailor the defaults to their
 | mapaudio               | Mapping of audio channels for ffmpeg.                   | "0:0"                                                                                 | No       |
 | mapvideo               | Mapping of video channels for ffmpeg.                   | "0:1"                                                                                 | No       |
 | maxStreams             | Maximum number of streams allowed for a camera.         | 4                                                                                     | No       |
-| maxWidth               | Maximum width of a video stream allowed.                |                                                                                       | No       |
-| maxHeight              | Maximum height of a video stream allowed.               |                                                                                       | No       |
+| maxWidth               | Maximum width of a video stream allowed.                | 1920                                                                                  | No       |
+| maxHeight              | Maximum height of a video stream allowed.               | 1080                                                                                  | No       |
 | maxFPS                 | Maximum framerate for a video stream.                   | 20                                                                                    | No       |
 
