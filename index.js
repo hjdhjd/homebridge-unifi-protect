@@ -118,6 +118,8 @@ unifiPlatform.prototype.didFinishLaunching = function() {
           let bootstrap = JSON.parse(response);
           var accessKey = bootstrap.accessKey;
 
+          self.log(JSON.stringify(response, null, 4));
+
           return bootstrap.cameras.map(camera => {  
             var cameraName = camera.name;
   
@@ -146,6 +148,12 @@ unifiPlatform.prototype.didFinishLaunching = function() {
     
             var uuid = UUIDGen.generate(cameraName);
             var cameraAccessory = new Accessory(cameraName, uuid, hap.Accessory.Categories.CAMERA);
+
+            cameraAccessory.getService(hap.Service.AccessoryInformation)
+              .setCharacteristic(hap.Characteristic.Manufacturer, 'Ubiquiti Networks')
+              .setCharacteristic(hap.Characteristic.Model, camera.type)
+              .setCharacteristic(hap.Characteristic.FirmwareRevision, camera.firmwareVersion)
+              .setCharacteristic(hap.Characteristic.SerialNumber, camera.id);
   
             var cameraSource = new FFMPEG(hap, cameraConfig, self.log, videoProcessor);
             cameraAccessory.configureCameraSource(cameraSource);
