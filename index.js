@@ -153,7 +153,7 @@ unifiPlatform.prototype.didFinishLaunching = function() {
               .setCharacteristic(hap.Characteristic.Manufacturer, 'Ubiquiti Networks')
               .setCharacteristic(hap.Characteristic.Model, camera.type)
               .setCharacteristic(hap.Characteristic.FirmwareRevision, camera.firmwareVersion)
-              .setCharacteristic(hap.Characteristic.SerialNumber, camera.id);
+              .setCharacteristic(hap.Characteristic.SerialNumber, camera.mac);
   
             var cameraSource = new FFMPEG(hap, cameraConfig, self.log, videoProcessor);
             cameraAccessory.configureCameraSource(cameraSource);
