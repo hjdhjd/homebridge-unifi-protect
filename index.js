@@ -118,7 +118,7 @@ unifiPlatform.prototype.didFinishLaunching = function() {
           let bootstrap = JSON.parse(response);
           var accessKey = bootstrap.accessKey;
 
-          self.log(JSON.stringify(response, null, 4));
+          // self.log(JSON.stringify(response, null, 4));
 
           return bootstrap.cameras.map(camera => {  
             var cameraName = camera.name;
