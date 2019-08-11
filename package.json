@@ -12,7 +12,6 @@
     "unifi protect",
     "unifi camera"
   ],
-  ],
   "repository": {
     "type": "git",
     "url": "git://github.com/hjdhjd/homebridge-unifi-protect2.git"
