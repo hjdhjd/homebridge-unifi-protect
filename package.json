@@ -1,10 +1,17 @@
 {
   "name": "homebridge-unifi-protect2",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Unifi Protect platform plugin for homebridge: https://github.com/nfarina/homebridge",
   "license": "ISC",
   "keywords": [
-    "homebridge-plugin"
+    "homebridge",
+    "homebridge-plugin",
+    "homebridge-unifi-protect",
+    "unifi",
+    "unifi ffmpeg",
+    "unifi protect",
+    "unifi camera"
+  ],
   ],
   "repository": {
     "type": "git",
