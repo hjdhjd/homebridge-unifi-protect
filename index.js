@@ -118,7 +118,7 @@ unifiPlatform.prototype.didFinishLaunching = function() {
           let bootstrap = JSON.parse(response);
           var accessKey = bootstrap.accessKey;
 
-          // self.log(JSON.stringify(response, null, 4));
+          // self.log(response);
 
           return bootstrap.cameras.map(camera => {  
             var cameraName = camera.name;
@@ -131,11 +131,17 @@ unifiPlatform.prototype.didFinishLaunching = function() {
               throw new Error("No RTSP channel found");
             }
   
+           //     Other possibilities for dealing with image snapshoots...the first relies on anonymous snapshots being enabled. The second is a slightly
+           //     fancier way of using ffmpeg to get a high-quality image snapshot. In practice, the default setting of the ffmpeg plugin works great in
+           //     my testing.
+           //
+           //       stillImageSource: '-i https://' + camera.host + '/snap.jpeg',
+           //       stillImageSource: sourcePrefix + ' -i rtsp://' + bootstrap.nvr.host + ':' + bootstrap.nvr.ports.rtsp + '/' + channel.rtspAlias + ' -q:v 0',
+
             var cameraConfig = {
               name: cameraName,
               videoConfig: {
-                source: sourcePrefix + " -i rtsp://" + bootstrap.nvr.host + ':' + bootstrap.nvr.ports.rtsp + '/' + channel.rtspAlias,
-                stillImageSource: '-i https://' + bootstrap.nvr.host + ':' + bootstrap.nvr.ports.https + '/api/cameras/' + camera.id + '/snapshot?accessKey=' + accessKey,
+                source: sourcePrefix + ' -i rtsp://' + bootstrap.nvr.host + ':' + bootstrap.nvr.ports.rtsp + '/' + channel.rtspAlias,
                 additionalCommandline: additionalCommandline,
                 mapvideo: mapvideo,
                 mapaudio: mapaudio,
@@ -152,15 +158,16 @@ unifiPlatform.prototype.didFinishLaunching = function() {
             cameraAccessory.getService(hap.Service.AccessoryInformation)
               .setCharacteristic(hap.Characteristic.Manufacturer, 'Ubiquiti Networks')
               .setCharacteristic(hap.Characteristic.Model, camera.type)
+              .setCharacteristic(hap.Characteristic.HardwareRevision, camera.hardwareRevision)
               .setCharacteristic(hap.Characteristic.FirmwareRevision, camera.firmwareVersion)
               .setCharacteristic(hap.Characteristic.SerialNumber, camera.mac);
   
             var cameraSource = new FFMPEG(hap, cameraConfig, self.log, videoProcessor);
             cameraAccessory.configureCameraSource(cameraSource);
-  
+
             return cameraAccessory;
-          });
-        });
+           });
+         });
       }).then(result => {
         return result;
       });
