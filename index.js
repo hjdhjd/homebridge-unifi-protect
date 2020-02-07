@@ -1,7 +1,7 @@
 var Accessory, hap, UUIDGen;
 
 var FFMPEG = require('homebridge-camera-ffmpeg/ffmpeg.js').FFMPEG;
-var requestPromise = require('request-promise');
+var requestPromise = require('request-promise').defaults({jar: true});
 
 module.exports = function(homebridge) {
   Accessory = homebridge.platformAccessory;
@@ -26,6 +26,28 @@ function unifiPlatform(log, config, api) {
 
     self.api.on('didFinishLaunching', self.didFinishLaunching.bind(this));
   }
+}
+
+function getUnifiAuthConfig(controllerConfig) {
+  return requestPromise.get(controllerConfig.url, {
+    rejectUnauthorized: false,
+    resolveWithFullResponse: true
+  }).then(response => {
+    if (response.headers['x-csrf-token']) {
+      return {
+        authURL: controllerConfig.url + '/api/auth/login',
+        bootstrapURL: controllerConfig.url + '/proxy/protect/api/bootstrap',
+        isUnifiOS: true,
+        csrfToken: response.headers['x-csrf-token']
+      }
+    } else {
+      return {
+        authURL: controllerConfig.url + '/api/auth',
+        bootstrapURL: controllerConfig.url + '/api/bootstrap',
+        isUnifiOS: false
+      }
+    }
+  });
 }
 
 unifiPlatform.prototype.configureAccessory = function(accessory) {
@@ -97,80 +119,95 @@ unifiPlatform.prototype.didFinishLaunching = function() {
   if (self.config.controllers) {
     var controllers = self.config.controllers;
     var promises = controllers.map(controllerConfig => {
-      return requestPromise.post(
-        controllerConfig.url + 'api/auth',
-        {
-          json: { username: controllerConfig.username, password: controllerConfig.password },
+      return getUnifiAuthConfig(controllerConfig).then(unifiAuthConfig => {
+        var options = {
+          json: {
+            username: controllerConfig.username,
+            password: controllerConfig.password
+          },
           resolveWithFullResponse: true,
           rejectUnauthorized: false
         }
-      ).then(response => {
-        var accessToken = response.headers.authorization;
-        return requestPromise.get(
-          controllerConfig.url + 'api/bootstrap',
-          {
-            headers: { 
-              Authorization: 'Bearer ' + accessToken
-            },
-            rejectUnauthorized: false
+        if(unifiAuthConfig.isUnifiOS){
+          options.headers = {
+            'X-CSRF-Token': unifiAuthConfig.csrfToken,
           }
-        ).then(response => {  
-          let bootstrap = JSON.parse(response);
-          var accessKey = bootstrap.accessKey;
+        }
+        return requestPromise.post(
+          unifiAuthConfig.authURL, options)
+          .then(response => {
+            var options = {
+              headers: {},
+              rejectUnauthorized: false,
+              resolveWithFullResponse: true
+          };
+          if(unifiAuthConfig.isUnifiOS){
+            options.headers['X-CSRF-Token'] = unifiAuthConfig.csrfToken;
+          } else {
+            options.headers['Authorization'] = 'Bearer ' + response.headers.authorization;
+          }
+            return requestPromise.get(
+                unifiAuthConfig.bootstrapURL, options
+            ).then(response => {
+              let bootstrap = JSON.parse(response.body);
+              var accessKey = bootstrap.accessKey;
 
-          // self.log(response);
+              // self.log(response);
 
-          return bootstrap.cameras.map(camera => {  
-            var cameraName = camera.name;
-  
-            var channel = camera.channels.find(channel => {
-              return channel.isRtspEnabled == true;
+              return bootstrap.cameras.map(camera => {
+                var cameraName = camera.name;
+
+                var channel = camera.channels.find(channel => {
+                  return channel.isRtspEnabled == true;
+                });
+
+                if (!channel) {
+                  throw new Error("No RTSP channel found");
+                }
+
+                //     Other possibilities for dealing with image snapshoots...the first relies on anonymous snapshots being enabled. The second is a slightly
+                //     fancier way of using ffmpeg to get a high-quality image snapshot. In practice, the default setting of the ffmpeg plugin works great in
+                //     my testing.
+                //
+                //       stillImageSource: '-i https://' + camera.host + '/snap.jpeg',
+                //       stillImageSource: sourcePrefix + ' -i rtsp://' + bootstrap.nvr.host + ':' + bootstrap.nvr.ports.rtsp + '/' + channel.rtspAlias + ' -q:v 0',
+
+                var cameraConfig = {
+                  name: cameraName,
+                  videoConfig: {
+                    source: sourcePrefix + ' -i rtsp://' + bootstrap.nvr.host + ':' + bootstrap.nvr.ports.rtsp + '/' + channel.rtspAlias,
+                    additionalCommandline: additionalCommandline,
+                    mapvideo: mapvideo,
+                    mapaudio: mapaudio,
+                    maxStreams: maxStreams,
+                    maxWidth: maxWidth,
+                    maxHeight: maxHeight,
+                    maxFPS: maxFPS
+                  }
+                }
+
+                var uuid = UUIDGen.generate(cameraName);
+                var cameraAccessory = new Accessory(cameraName, uuid, hap.Accessory.Categories.CAMERA);
+
+                cameraAccessory.getService(hap.Service.AccessoryInformation)
+                  .setCharacteristic(hap.Characteristic.Manufacturer, 'Ubiquiti Networks')
+                  .setCharacteristic(hap.Characteristic.Model, camera.type)
+                  .setCharacteristic(hap.Characteristic.HardwareRevision, camera.hardwareRevision)
+                  .setCharacteristic(hap.Characteristic.FirmwareRevision, camera.firmwareVersion)
+                  .setCharacteristic(hap.Characteristic.SerialNumber, camera.mac);
+
+                var cameraSource = new FFMPEG(hap, cameraConfig, self.log, videoProcessor);
+                cameraAccessory.configureCameraSource(cameraSource);
+
+                return cameraAccessory;
+              });
+            }).catch(e => {
+              console.error(e);
             });
-  
-            if (!channel) {
-              throw new Error("No RTSP channel found");
-            }
-  
-           //     Other possibilities for dealing with image snapshoots...the first relies on anonymous snapshots being enabled. The second is a slightly
-           //     fancier way of using ffmpeg to get a high-quality image snapshot. In practice, the default setting of the ffmpeg plugin works great in
-           //     my testing.
-           //
-           //       stillImageSource: '-i https://' + camera.host + '/snap.jpeg',
-           //       stillImageSource: sourcePrefix + ' -i rtsp://' + bootstrap.nvr.host + ':' + bootstrap.nvr.ports.rtsp + '/' + channel.rtspAlias + ' -q:v 0',
-
-            var cameraConfig = {
-              name: cameraName,
-              videoConfig: {
-                source: sourcePrefix + ' -i rtsp://' + bootstrap.nvr.host + ':' + bootstrap.nvr.ports.rtsp + '/' + channel.rtspAlias,
-                additionalCommandline: additionalCommandline,
-                mapvideo: mapvideo,
-                mapaudio: mapaudio,
-                maxStreams: maxStreams,
-                maxWidth: maxWidth,
-                maxHeight: maxHeight,
-                maxFPS: maxFPS
-              }
-            }
-    
-            var uuid = UUIDGen.generate(cameraName);
-            var cameraAccessory = new Accessory(cameraName, uuid, hap.Accessory.Categories.CAMERA);
-
-            cameraAccessory.getService(hap.Service.AccessoryInformation)
-              .setCharacteristic(hap.Characteristic.Manufacturer, 'Ubiquiti Networks')
-              .setCharacteristic(hap.Characteristic.Model, camera.type)
-              .setCharacteristic(hap.Characteristic.HardwareRevision, camera.hardwareRevision)
-              .setCharacteristic(hap.Characteristic.FirmwareRevision, camera.firmwareVersion)
-              .setCharacteristic(hap.Characteristic.SerialNumber, camera.mac);
-  
-            var cameraSource = new FFMPEG(hap, cameraConfig, self.log, videoProcessor);
-            cameraAccessory.configureCameraSource(cameraSource);
-
-            return cameraAccessory;
-           });
-         });
-      }).then(result => {
-        return result;
-      });
+          }).then(result => {
+            return result;
+          })
+        });
     });
 
     Promise.all(promises).then(controllerAccessories => {
