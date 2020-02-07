@@ -38,6 +38,8 @@ camera accessories.
 # Configuration
 Add the platform in `config.json` in your home directory inside `.homebridge`.
 
+If you're using a CloudKey Gen2+, you can use the following config (note the port 7443).
+
 ```js
 "platforms": [
   {
@@ -49,6 +51,25 @@ Add the platform in `config.json` in your home directory inside `.homebridge`.
         "url": "https://my-cloud-key:7443/",
         "username": "some-homebridge-user (or create a new one just for homebridge)",
         "password": "some-password"
+      }
+    ]
+  }
+]
+```
+
+If you're using a UniFi Dream Machine Pro, drop the port and use your regular Ubiquiti Account credentials. This does not support 2FA currently.
+
+```js
+"platforms": [
+  {
+    "platform": "Camera-UniFi-Protect",
+    "name": "UniFi Protect",
+
+    "controllers": [
+      {
+        "url": "https://my-udm-pro/",
+        "username": "your-ubiquiti-account",
+        "password": "your-ubiquiti-password"
       }
     ]
   }
