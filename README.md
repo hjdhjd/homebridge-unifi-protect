@@ -48,7 +48,7 @@ If you're using a CloudKey Gen2+, you can use the following config (note the por
 
     "controllers": [
       {
-        "url": "https://my-cloud-key:7443/",
+        "url": "https://my-cloud-key:7443",
         "username": "some-homebridge-user (or create a new one just for homebridge)",
         "password": "some-password"
       }
@@ -67,7 +67,7 @@ If you're using a UniFi Dream Machine Pro, drop the port and use your regular Ub
 
     "controllers": [
       {
-        "url": "https://my-udm-pro/",
+        "url": "https://my-udm-pro",
         "username": "your-ubiquiti-account",
         "password": "your-ubiquiti-password"
       }
