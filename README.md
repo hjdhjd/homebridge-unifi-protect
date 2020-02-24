@@ -20,9 +20,6 @@ Install homebridge:
 ```sh
 sudo npm install -g homebridge
 ```
-Install homebridge-camera-ffmpeg:
-```sh
-sudo npm install -g homebridge-camera-ffmpeg
 ```
 Install homebridge-ufp:
 ```sh
