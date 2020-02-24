@@ -8,7 +8,7 @@ module.exports = function(homebridge) {
   hap = homebridge.hap;
   UUIDGen = homebridge.hap.uuid;
 
-  homebridge.registerPlatform("homebridge-unifi-protect2", "Camera-UniFi-Protect", unifiPlatform, true);
+  homebridge.registerPlatform("homebridge-ufp", "Camera-UniFi-Protect", unifiPlatform, true);
 }
 
 function unifiPlatform(log, config, api) {
@@ -150,9 +150,6 @@ unifiPlatform.prototype.didFinishLaunching = function() {
                 unifiAuthConfig.bootstrapURL, options
             ).then(response => {
               let bootstrap = JSON.parse(response.body);
-              var accessKey = bootstrap.accessKey;
-
-              // self.log(response);
 
               return bootstrap.cameras.map(camera => {
                 var cameraName = camera.name;
@@ -190,7 +187,7 @@ unifiPlatform.prototype.didFinishLaunching = function() {
                 var cameraAccessory = new Accessory(cameraName, uuid, hap.Accessory.Categories.CAMERA);
 
                 cameraAccessory.getService(hap.Service.AccessoryInformation)
-                  .setCharacteristic(hap.Characteristic.Manufacturer, 'Ubiquiti Networks')
+                  .setCharacteristic(hap.Characteristic.Manufacturer, 'Ubiquiti Inc.')
                   .setCharacteristic(hap.Characteristic.Model, camera.type)
                   .setCharacteristic(hap.Characteristic.HardwareRevision, camera.hardwareRevision)
                   .setCharacteristic(hap.Characteristic.FirmwareRevision, camera.firmwareVersion)

@@ -1,6 +1,6 @@
 {
-  "name": "homebridge-unifi-protect2",
-  "version": "1.0.4",
+  "name": "homebridge-ufp",
+  "version": "1.1.0",
   "description": "Unifi Protect platform plugin for homebridge: https://github.com/nfarina/homebridge",
   "license": "ISC",
   "keywords": [
@@ -14,10 +14,10 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git://github.com/hjdhjd/homebridge-unifi-protect2.git"
+    "url": "git://github.com/jonbloom/homebridge-ufp"
   },
   "bugs": {
-    "url": "http://github.com/hjdhjd/homebridge-unifi-protect2/issues"
+    "url": "http://github.com/jonbloom/homebridge-ufp/issues"
   },
   "engines": {
     "node": ">=5.0.0",

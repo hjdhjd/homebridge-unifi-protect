@@ -1,4 +1,4 @@
-# homebridge-unifi-protect2
+# homebridge-ufp
 
 Unifi Protect plarform plugin for [Homebridge](https://github.com/nfarina/homebridge)
 
@@ -24,9 +24,9 @@ Install homebridge-camera-ffmpeg:
 ```sh
 sudo npm install -g homebridge-camera-ffmpeg
 ```
-Install homebridge-unifi-protect2:
+Install homebridge-ufp:
 ```sh
-sudo npm install -g homebridge-unifi-protect2
+sudo npm install -g homebridge-ufp
 ```
 
 You will need a working ffmpeg installation for this plugin to work. Configuring ffmpeg is beyond the scope of this manual. Please refer to the
@@ -38,7 +38,7 @@ camera accessories.
 # Configuration
 Add the platform in `config.json` in your home directory inside `.homebridge`.
 
-If you're using a CloudKey Gen2+, you can use the following config (note the port 7443).
+If you're using a UniFi Protect device that is not running UniFi OS (UDM-Pro < 1.6, UniFi NVR-4 < 1.3.0, or CloudKey Gen2+), you can use the following config (note the port 7443).
 
 ```js
 "platforms": [
@@ -48,7 +48,7 @@ If you're using a CloudKey Gen2+, you can use the following config (note the por
 
     "controllers": [
       {
-        "url": "https://my-cloud-key:7443",
+        "url": "https://my-ufp-device:7443",
         "username": "some-homebridge-user (or create a new one just for homebridge)",
         "password": "some-password"
       }
@@ -57,7 +57,7 @@ If you're using a CloudKey Gen2+, you can use the following config (note the por
 ]
 ```
 
-If you're using a UniFi Dream Machine Pro, drop the port and use your regular Ubiquiti Account credentials. This does not support 2FA currently.
+If you're using a device running UniFi OS (UDM-Pro ≥ 1.6.0, UniFi NVR-4 ≥ 1.3.0), drop the port and use your regular Ubiquiti Account credentials. This does not currently support 2FA. You may also be able to create a read-only account, but this has not been tested.
 
 ```js
 "platforms": [
@@ -67,7 +67,7 @@ If you're using a UniFi Dream Machine Pro, drop the port and use your regular Ub
 
     "controllers": [
       {
-        "url": "https://my-udm-pro",
+        "url": "https://my-ufp-device",
         "username": "your-ubiquiti-account",
         "password": "your-ubiquiti-password"
       }
@@ -88,7 +88,7 @@ This step is not required. For those that prefer to tailor the defaults to their
 
     "controllers": [
       {
-        "url": "https://my-cloud-key:7443/",
+        "url": "https://my-ufp-device",
         "username": "some-homebridge-user (or create a new one just for homebridge)",
         "password": "some-password"
       }
@@ -113,7 +113,7 @@ This step is not required. For those that prefer to tailor the defaults to their
 | platform               | Must always be `Camera-UniFi-Protect`.                  |                                                                                       | Yes      |
 | name                   | For logging purposes.                                   |                                                                                       | No       |
 | videoProcessor         | Specify path of ffmpeg or avconv                        | "ffmpeg"                                                                              | No       |
-| url                    | URL for UniFi CloudKey G2+                              |                                                                                       | Yes      |
+| url                    | URL for your UniFi Protect NVR                          |                                                                                       | Yes      |
 | username               | Your UniFi Protect username                             |                                                                                       | Yes      |
 | password               | Your UniFi Protect password                             |                                                                                       | Yes      |
 | sourcePrefix           | Prefix to apply to ffmpeg source command.               | "-re -rtsp_transport http"                                                            | No       |
@@ -124,4 +124,3 @@ This step is not required. For those that prefer to tailor the defaults to their
 | maxWidth               | Maximum width of a video stream allowed.                | 1920                                                                                  | No       |
 | maxHeight              | Maximum height of a video stream allowed.               | 1080                                                                                  | No       |
 | maxFPS                 | Maximum framerate for a video stream.                   | 20                                                                                    | No       |
-
