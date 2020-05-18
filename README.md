@@ -71,7 +71,7 @@ Add the platform in `config.json` in your home directory inside `.homebridge`.
     "controllers": [
       {
         "url": "https://my-cloud-key:7443/",
-        "username": "some-homebridge-user (or create a new one just for homebridge)",
+        "username": "some-unifi-protect-user (or create a new one just for homebridge)",
         "password": "some-password"
       }
     ]
