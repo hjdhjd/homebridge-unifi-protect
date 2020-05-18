@@ -46,11 +46,11 @@ excellent documentation for [camera-ffmpeg](https://github.com/KhaosT/homebridge
 
 ## Adding your cameras using the Home app
 
-###TL;DR
+### TL;DR
 Adding cameras requires the same steps outlined in homebridge-camera-ffmpeg. Install the accessories and use the Homebridge setup code for the
 camera accessories.
 
-###Longer version
+### Longer version
 After restarting Homebridge, each camera you defined will need to be manually paired in the Home app, to do this:
 
 1. Open the Home <img src="https://user-images.githubusercontent.com/3979615/78010622-4ea1d380-738e-11ea-8a17-e6a465eeec35.png" height="16.42px"> app on your device.
