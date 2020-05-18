@@ -1,6 +1,6 @@
 {
   "name": "homebridge-unifi-protect2",
-  "version": "1.2.0",
+  "version": "1.2.2",
   "description": "UniFi Protect platform plugin for homebridge: https://github.com/nfarina/homebridge",
   "license": "ISC",
   "keywords": [

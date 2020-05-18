@@ -220,7 +220,7 @@ unifiPlatform.prototype.didFinishLaunching = function() {
 
     Promise.all(promises).then(controllerAccessories => {
       controllerAccessories.forEach(accessories => {
-        self.api.publishCameraAccessories("Camera-UniFi-Protect", accessories);
+        self.api.publishCameraAccessories("homebridge-unifi-protect2", accessories);
       });
     });
   }

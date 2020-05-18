@@ -2,7 +2,8 @@
 
 Unifi Protect plarform plugin for [Homebridge](https://github.com/nfarina/homebridge)
 
-This plugin is intended to automatically configure all the cameras you have setup in UniFi Protect to make them available via HomeKit. It requires the
+This plugin is intended to automatically configure all the cameras you have setup in UniFi Protect to make them available via HomeKit. It supports
+UniFi CloudKey Gen2+ and UniFi Dream Machine Pro and should support any device that can run UniFi Protect. It requires the
 [camera-ffmpeg](https://github.com/KhaosT/homebridge-camera-ffmpeg) plugin in order to provide that functionality.
 
 This package is based on the excellent work of [homebridge-camera-unifi](https://github.com/ptescher/homebridge-camera-unifi).
@@ -23,17 +24,17 @@ monitoring the logs in reealtime on Protect and trying to parse what it's tellin
 motion detection on Protect right now (circa early-mid 2020) makes this a moving target. TL;DR: it's on the radar, but I'm waiting until there are better options to
 implementing this in a reasonable way.
 
-## Installation
+# Installation
 If you are new to Homebridge, please first read the Homebridge [documentation](https://www.npmjs.com/package/homebridge).
 If you are running on a Raspberry, you will find a tutorial in the [homebridge-punt Wiki](https://github.com/cflurin/homebridge-punt/wiki/Running-Homebridge-on-a-Raspberry-Pi).
 
 Install homebridge:
 ```sh
-sudo npm install -g homebridge
+sudo npm install -g --unsafe-perm homebridge
 ```
 Install homebridge-camera-ffmpeg:
 ```sh
-sudo npm install -g homebridge-camera-ffmpeg
+sudo npm install -g --unsafe-perm homebridge-camera-ffmpeg
 ```
 Install homebridge-unifi-protect2:
 ```sh
@@ -43,8 +44,20 @@ sudo npm install -g homebridge-unifi-protect2
 You will need a working ffmpeg installation for this plugin to work. Configuring ffmpeg is beyond the scope of this manual. Please refer to the
 excellent documentation for [camera-ffmpeg](https://github.com/KhaosT/homebridge-camera-ffmpeg).
 
-Finally, adding cameras requires the same steps outlined in camera-ffmpeg. Install the accessories and use the Homebridge setup code for the
+## Adding your cameras using the Home app
+
+###TL;DR
+Adding cameras requires the same steps outlined in homebridge-camera-ffmpeg. Install the accessories and use the Homebridge setup code for the
 camera accessories.
+
+###Longer version
+After restarting Homebridge, each camera you defined will need to be manually paired in the Home app, to do this:
+
+1. Open the Home <img src="https://user-images.githubusercontent.com/3979615/78010622-4ea1d380-738e-11ea-8a17-e6a465eeec35.png" height="16.42px"> app on your device.
+2. Tap the Home tab, then tap <img src="https://user-images.githubusercontent.com/3979615/78010869-9aed1380-738e-11ea-9644-9f46b3633026.png" height="16.42px">.
+3. Tap *Add Accessory*, and select *I Don't Have a Code or Cannot Scan*.
+4. Select the Camera you want to pair.
+5. Enter the Homebridge PIN, this can be found under the QR code in Homebridge UI or your Homebridge logs, alternatively you can select *Use Camera* and scan the QR code again.
 
 # Configuration
 Add the platform in `config.json` in your home directory inside `.homebridge`.
