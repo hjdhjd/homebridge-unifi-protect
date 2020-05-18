@@ -12,6 +12,17 @@ This package is based on the excellent work of [homebridge-camera-unifi](https:/
 This plugin aims to be a one-stop-shop for UniFi Protect to HomeKit connectivity. Over time, it is my hope to add motion sensors and
 any other capabilities that make sense to this plugin to enable HomeKit users to easily connect the UniFi Protect and HomeKit worlds.
 
+# What's new?
+
+* UniFi Dream Machine Pro (UniFiOS support)
+
+# What's not in this plugin right now
+
+* Support for motion detection and motion events. I would love to add this functionality but most of the approaches to implementing this right now involve hacks like
+monitoring the logs in reealtime on Protect and trying to parse what it's telling us on the motion front. Additionally, with the developmeent and evolution of
+motion detection on Protect right now (circa early-mid 2020) makes this a moving target. TL;DR: it's on the radar, but I'm waiting until there are better options to
+implementing this in a reasonable way.
+
 ## Installation
 If you are new to Homebridge, please first read the Homebridge [documentation](https://www.npmjs.com/package/homebridge).
 If you are running on a Raspberry, you will find a tutorial in the [homebridge-punt Wiki](https://github.com/cflurin/homebridge-punt/wiki/Running-Homebridge-on-a-Raspberry-Pi).
