@@ -123,9 +123,17 @@
 		}
 	},
 	"layout" : [
+                {
+			"type": "flex",
+			"flex-flow": "row wrap",
+			"items": [
+				"name",
+				"videoProcessor"
+			]
+		},
 		{
 			"key": "controllers",
-			"title": "UniFi Protect Controller",
+			"name": "UniFi Protect",
 			"type": "array",
 			"orderable": false,
 			"buttonText": "Add UniFi Protect Controller",
