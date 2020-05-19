@@ -1,6 +1,6 @@
 {
   "name": "homebridge-unifi-protect2",
-  "version": "1.2.10",
+  "version": "1.2.11",
   "description": "UniFi Protect platform plugin for Homebridge for UniFi CloudKey G2+ and UnifiOS (UDM Pro, etc.)",
   "displayName": "Homebridge UniFi Protect",
   "license": "ISC",
