@@ -29,14 +29,13 @@ function unifiPlatform(log, config, api) {
 }
 
 function getUnifiAuthConfig(controllerConfig) {
-
   // Cleanup some common URL issues - eliminate multiple slashes and trailing slashes.
-  //
   controllerConfig.url = 'https://' + controllerConfig.url
-                                                      .replace(/^https\:\/\//, '') // Remove the leading "http://" for now.
+                                                      .replace(/^https\:\/\//, '') // Remove the leading "https://" for now.
                                                       .replace(/\/+/g, '/') // Replace consecutive slashes with a single slash.
                                                       .replace(/\/+$/, ''); // Remove trailing slashes.
 
+  // Check to see if we're running on a CloudKey equivalent or a UnifiOS device.
   return requestPromise.get(controllerConfig.url, {
     rejectUnauthorized: false,
     resolveWithFullResponse: true

@@ -1,10 +1,10 @@
 # homebridge-unifi-protect2
 
-Unifi Protect plarform plugin for [Homebridge](https://github.com/nfarina/homebridge)
+Unifi Protect plarform plugin for [Homebridge](https://homebridge.io)
 
 This plugin is intended to automatically configure all the cameras you have setup in UniFi Protect to make them available via HomeKit. It supports
 UniFi CloudKey Gen2+ and UniFi Dream Machine Pro and should support any device that can run UniFi Protect. It requires the
-[camera-ffmpeg](https://github.com/KhaosT/homebridge-camera-ffmpeg) plugin in order to provide that functionality.
+[homebridge-camera-ffmpeg](https://github.com/KhaosT/homebridge-camera-ffmpeg) plugin in order to provide that functionality.
 
 This package is based on the excellent work of [homebridge-camera-unifi](https://github.com/ptescher/homebridge-camera-unifi).
 
@@ -26,7 +26,6 @@ implementing this in a reasonable way.
 
 # Installation
 If you are new to Homebridge, please first read the Homebridge [documentation](https://www.npmjs.com/package/homebridge).
-If you are running on a Raspberry, you will find a tutorial in the [homebridge-punt Wiki](https://github.com/cflurin/homebridge-punt/wiki/Running-Homebridge-on-a-Raspberry-Pi).
 
 Install homebridge:
 ```sh
@@ -41,8 +40,8 @@ Install homebridge-unifi-protect2:
 sudo npm install -g homebridge-unifi-protect2
 ```
 
-You will need a working ffmpeg installation for this plugin to work. Configuring ffmpeg is beyond the scope of this manual. Please refer to the
-excellent documentation for [camera-ffmpeg](https://github.com/KhaosT/homebridge-camera-ffmpeg).
+You will need a working **ffmpeg** installation for this plugin to work. Configuring ffmpeg is beyond the scope of this manual. Please refer to the
+excellent documentation for [homebridge-camera-ffmpeg](https://github.com/KhaosT/homebridge-camera-ffmpeg).
 
 ## Adding your cameras using the Home app
 
@@ -70,7 +69,7 @@ Add the platform in `config.json` in your home directory inside `.homebridge`.
 
     "controllers": [
       {
-        "url": "https://my-cloud-key:7443/",
+        "url": "https://my-cloud-key:7443",
         "username": "some-unifi-protect-user (or create a new one just for homebridge)",
         "password": "some-password"
       }
@@ -91,7 +90,7 @@ This step is not required. For those that prefer to tailor the defaults to their
 
     "controllers": [
       {
-        "url": "https://my-cloud-key:7443/",
+        "url": "https://my-cloud-key:7443",
         "username": "some-homebridge-user (or create a new one just for homebridge)",
         "password": "some-password"
       }
