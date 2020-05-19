@@ -28,12 +28,16 @@ function unifiPlatform(log, config, api) {
   }
 }
 
-function getUnifiAuthConfig(controllerConfig) {
+function getUnifiAuthConfig(controllerConfig, log, debugProtect) {
   // Cleanup some common URL issues - eliminate multiple slashes and trailing slashes.
   controllerConfig.url = 'https://' + controllerConfig.url
                                                       .replace(/^https\:\/\//, '') // Remove the leading "https://" for now.
                                                       .replace(/\/+/g, '/') // Replace consecutive slashes with a single slash.
                                                       .replace(/\/+$/, ''); // Remove trailing slashes.
+
+  if(debugProtect) {
+    log("Configuration URL: " + controllerConfig.url);
+  }
 
   // Check to see if we're running on a CloudKey equivalent or a UnifiOS device.
   return requestPromise.get(controllerConfig.url, {
@@ -41,6 +45,9 @@ function getUnifiAuthConfig(controllerConfig) {
     resolveWithFullResponse: true
   }).then(response => {
     if (response.headers['x-csrf-token']) {
+      if(debugProtect) {
+        log("UniFi Protect endpoint type identified: UnifiOS.");
+      }
       return {
         authURL: controllerConfig.url + '/api/auth/login',
         bootstrapURL: controllerConfig.url + '/proxy/protect/api/bootstrap',
@@ -48,21 +55,28 @@ function getUnifiAuthConfig(controllerConfig) {
         csrfToken: response.headers['x-csrf-token']
       }
     } else {
+      if(debugProtect) {
+        log("UniFi Protect endpoint type identified: CloudKey Gen2+ or similar.");
+      }
+
       return {
         authURL: controllerConfig.url + '/api/auth',
         bootstrapURL: controllerConfig.url + '/api/bootstrap',
         isUnifiOS: false
       }
     }
+  }).catch(e => {
+  	log.error("Error detecting endpoint type: " + e)
   });
 }
 
 unifiPlatform.prototype.configureAccessory = function(accessory) {
-  // Won't be invoked
+  // Shouldn't be invoked.
 }
 
 unifiPlatform.prototype.didFinishLaunching = function() {
   var self = this;
+  var debugProtect = self.config.debugProtect === true;
   var videoProcessor = self.config.videoProcessor || 'ffmpeg';
   var videoConfig = self.config.videoConfig;
 
@@ -127,7 +141,7 @@ unifiPlatform.prototype.didFinishLaunching = function() {
     var controllers = self.config.controllers;
 
     var promises = controllers.map(controllerConfig => {
-      return getUnifiAuthConfig(controllerConfig).then(unifiAuthConfig => {
+      return getUnifiAuthConfig(controllerConfig, self.log, debugProtect).then(unifiAuthConfig => {
         var options = {
           json: {
             username: controllerConfig.username,
@@ -136,11 +150,13 @@ unifiPlatform.prototype.didFinishLaunching = function() {
           resolveWithFullResponse: true,
           rejectUnauthorized: false
         }
-        if(unifiAuthConfig.isUnifiOS){
+
+        if(unifiAuthConfig.isUnifiOS) {
           options.headers = {
             'X-CSRF-Token': unifiAuthConfig.csrfToken,
           }
         }
+
         return requestPromise.post(
           unifiAuthConfig.authURL, options)
           .then(response => {
@@ -148,73 +164,80 @@ unifiPlatform.prototype.didFinishLaunching = function() {
               headers: {},
               rejectUnauthorized: false,
               resolveWithFullResponse: true
-          };
+            };
+
           if(unifiAuthConfig.isUnifiOS){
             options.headers['X-CSRF-Token'] = unifiAuthConfig.csrfToken;
           } else {
             options.headers['Authorization'] = 'Bearer ' + response.headers.authorization;
           }
-            return requestPromise.get(
-                unifiAuthConfig.bootstrapURL, options
-            ).then(response => {
-              let bootstrap = JSON.parse(response.body);
 
-              // self.log(response.body);
+		  return requestPromise.get(
+			  unifiAuthConfig.bootstrapURL, options
+		  ).then(response => {
+			let bootstrap = JSON.parse(response.body);
 
-              return bootstrap.cameras.map(camera => {
-                var cameraName = camera.name;
+			// Debug logging if enabled.
+			if(debugProtect) {
+			  self.log(response.body);
+			}
 
-                var channel = camera.channels.find(channel => {
-                  return channel.isRtspEnabled == true;
-                });
+			return bootstrap.cameras.map(camera => {
+			  var cameraName = camera.name;
 
-                if (!channel) {
-                  throw new Error("No RTSP channel found");
-                }
+			  var channel = camera.channels.find(channel => {
+				return channel.isRtspEnabled == true;
+			  });
 
-                //     Other possibilities for dealing with image snapshoots...the first relies on anonymous snapshots being enabled. The second is a slightly
-                //     fancier way of using ffmpeg to get a high-quality image snapshot. In practice, the default setting of the ffmpeg plugin works great in
-                //     my testing.
-                //
-                //       stillImageSource: '-i https://' + camera.host + '/snap.jpeg',
-                //       stillImageSource: sourcePrefix + ' -i rtsp://' + bootstrap.nvr.host + ':' + bootstrap.nvr.ports.rtsp + '/' + channel.rtspAlias + ' -q:v 0',
+			  if (!channel) {
+				throw new Error("No cameras with enabled RTSP channels found. Only cameras with RTSP streams enabled can be used with this plugin. Please enable RTSP on at least one camera in UniFi Protect.");
+			  }
 
-                var cameraConfig = {
-                  name: cameraName,
-                  videoConfig: {
-                    source: sourcePrefix + ' -i rtsp://' + bootstrap.nvr.host + ':' + bootstrap.nvr.ports.rtsp + '/' + channel.rtspAlias,
-                    additionalCommandline: additionalCommandline,
-                    mapvideo: mapvideo,
-                    mapaudio: mapaudio,
-                    maxStreams: maxStreams,
-                    maxWidth: maxWidth,
-                    maxHeight: maxHeight,
-                    maxFPS: maxFPS
-                  }
-                }
+			  // Other possibilities for dealing with image snapshots...the first relies on anonymous snapshots being enabled. The second is a slightly
+			  // fancier way of using ffmpeg to get a high-quality image snapshot. In practice, the default setting of the ffmpeg plugin works great in
+			  // my testing.
+			  //
+			  // stillImageSource: '-i https://' + camera.host + '/snap.jpeg',
+			  // stillImageSource: sourcePrefix + ' -i rtsp://' + bootstrap.nvr.host + ':' + bootstrap.nvr.ports.rtsp + '/' + channel.rtspAlias + ' -q:v 0',
 
-                var uuid = UUIDGen.generate(cameraName);
-                var cameraAccessory = new Accessory(cameraName, uuid, hap.Accessory.Categories.CAMERA);
+			  var cameraConfig = {
+				name: cameraName,
+				videoConfig: {
+				  source: sourcePrefix + ' -i rtsp://' + bootstrap.nvr.host + ':' + bootstrap.nvr.ports.rtsp + '/' + channel.rtspAlias,
+				  additionalCommandline: additionalCommandline,
+				  mapvideo: mapvideo,
+				  mapaudio: mapaudio,
+				  maxStreams: maxStreams,
+				  maxWidth: maxWidth,
+				  maxHeight: maxHeight,
+				  maxFPS: maxFPS
+				}
+			  }
 
-                cameraAccessory.getService(hap.Service.AccessoryInformation)
-                  .setCharacteristic(hap.Characteristic.Manufacturer, 'Ubiquiti Networks')
-                  .setCharacteristic(hap.Characteristic.Model, camera.type)
-                  .setCharacteristic(hap.Characteristic.HardwareRevision, camera.hardwareRevision)
-                  .setCharacteristic(hap.Characteristic.FirmwareRevision, camera.firmwareVersion)
-                  .setCharacteristic(hap.Characteristic.SerialNumber, camera.mac);
+			  var uuid = UUIDGen.generate(cameraName);
+			  var cameraAccessory = new Accessory(cameraName, uuid, hap.Accessory.Categories.CAMERA);
 
-                var cameraSource = new FFMPEG(hap, cameraConfig, self.log, videoProcessor);
-                cameraAccessory.configureCameraSource(cameraSource);
+			  cameraAccessory.getService(hap.Service.AccessoryInformation)
+				.setCharacteristic(hap.Characteristic.Manufacturer, 'Ubiquiti Networks')
+				.setCharacteristic(hap.Characteristic.Model, camera.type)
+				.setCharacteristic(hap.Characteristic.HardwareRevision, camera.hardwareRevision)
+				.setCharacteristic(hap.Characteristic.FirmwareRevision, camera.firmwareVersion)
+				.setCharacteristic(hap.Characteristic.SerialNumber, camera.mac);
 
-                return cameraAccessory;
-              });
-            }).catch(e => {
-              self.log.error(e);
-            });
-          }).then(result => {
-            return result;
-          })
-        });
+			  var cameraSource = new FFMPEG(hap, cameraConfig, self.log, videoProcessor);
+			  cameraAccessory.configureCameraSource(cameraSource);
+
+			  return cameraAccessory;
+			});
+		  }).catch(e => {
+			self.log.error("Unable to bootstrap cameras from UniFi Protect controller: " + e);
+		  });
+		}).then(result => {
+		  return result;
+		}).catch(e => {
+		  self.log.error("Error connecting to UniFi Protect controller - verify the URL setting you configured: " + e);
+		})
+      });
     });
 
     Promise.all(promises).then(controllerAccessories => {

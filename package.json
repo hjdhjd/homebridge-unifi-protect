@@ -1,7 +1,7 @@
 {
   "name": "homebridge-unifi-protect2",
-  "version": "1.2.11",
-  "description": "UniFi Protect platform plugin for Homebridge for UniFi CloudKey G2+ and UnifiOS (UDM Pro, etc.)",
+  "version": "1.2.14",
+  "description": "UniFi Protect platform plugin for Homebridge for UniFi CloudKey G2+ and UnifiOS (UDM Pro, UniFi NVR, and others)",
   "displayName": "Homebridge UniFi Protect",
   "license": "ISC",
   "keywords": [
@@ -16,7 +16,10 @@
     "unifios",
     "udm",
     "udm pro",
-    "unifi dream machine pro"
+    "udm-pro",
+    "unifi dream machine pro",
+    "unifi nvr",
+    "unifi-nvr"
   ],
   "repository": {
     "type": "git",

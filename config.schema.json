@@ -11,7 +11,6 @@
                                 "type": "string",
 				"title": "Platform Name",
                                 "required": false,
-                                "placeholder": "UniFi Protect",
                                 "default": "UniFi Protect",
 				"description": "Name you want to assign to the UniFi Protect platform plugin."
                         },
@@ -19,9 +18,15 @@
                                 "type": "string",
 				"title": "Video Processor",
                                 "required": false,
-                                "placeholder": "/usr/local/bin/ffmpeg",
-                                "default": "/usr/local/bin/ffmpeg",
+                                "default": "ffmpeg",
 				"description": "Location of ffmpeg or your preferred video processor."
+                        },
+			"debugProtect": {
+                                "type": "boolean",
+				"title": "Debug Logging",
+                                "required": false,
+                                "default": false,
+				"description": "Enable additional debug logging for this plugin."
                         },
  			"controllers": {
 				"type": "array",
@@ -38,21 +43,21 @@
 							"required": true,
 							"format": "uri",
 							"placeholder": "https://my-cloud-key:7443",
-							"description": "CloudKey Gen2+ or UniFi Dream Machine Pro URL."
+							"description": "For CloudKey Gen2+ include the port in the URL: <code>https://my-cloud-key:7443</code>.<BR>For UnifiOS devices (UDM-Pro, UniFi NVR), exclude the port: <code>https://my-udm-pro</code>."
 						},
 						"username": {
 							"type": "string",
 							"title": "Username",
 							"required": true,
 							"placeholder": "some-unifi-protect-user",
-							"description": "UniFi Protect Username."
+							"description": "UniFi Protect username.<BR>For UnifiOS devices (UDM-Pro, UniFi NVR) you can use your Ubiquiti account credentials.<BR>2FA accounts are not supported at this time.<BR><B>Creating a homebridge-specific local user is strongly encouraged for security and sanity.</B>"
 						},
 						"password": {
 							"type": "string",
 							"title": "Password",
 							"required": true,
 							"placeholder": "unifi-protect-password",
-							"description": "UniFi Protect Password."
+							"description": "UniFi Protect password.<BR>For UnifiOS devices (UDM-Pro, UniFi NVR) you can use your Ubiquiti account credentials.<BR>2FA accounts are not supported at this time.<BR><B>Creating a homebridge-specific local user is strongly encouraged for security and sanity.</B>"
 						}
 					}
 				}
@@ -144,9 +149,9 @@
 			]
 		},
 		{
-			"key": "videoConfig",
+			"key": "advancedConfig",
 			"type": "section",
-			"title": "Advanced Video Settings",
+			"title": "Advanced Settings (Optional)",
 			"expandable": true,
 			"expanded": false,
 			"items": [
@@ -157,7 +162,8 @@
 				"videoConfig.maxStreams",
 				"videoConfig.maxWidth",
 				"videoConfig.maxHeight",
-				"videoConfig.maxFPS"
+				"videoConfig.maxFPS",
+				"debugProtect"
 			]
 		}
 	]

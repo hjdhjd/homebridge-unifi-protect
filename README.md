@@ -61,6 +61,10 @@ After restarting Homebridge, each camera you defined will need to be manually pa
 # Configuration
 Add the platform in `config.json` in your home directory inside `.homebridge`.
 
+For UniFi CloudKey Gen2+ devices, you need to specify the port in the URL to access Protect.
+
+Sample configuration block for UCK Gen2+ devices:
+
 ```js
 "platforms": [
   {
@@ -78,6 +82,28 @@ Add the platform in `config.json` in your home directory inside `.homebridge`.
 ]
 ```
 
+For UnifiOS devices like UDM-Pro, UniFi NVR, do not specify the port. You can use your Ubiquiti account credentials, though
+2FA is not currently supported. **I strongly recommend creating a local user just for Homebridge instead of using this option.**
+
+Here's a sample configuration block for UnifiOS devices:
+
+```js
+"platforms": [
+  {
+    "platform": "Camera-UniFi-Protect",
+    "name": "UniFi Protect",
+
+    "controllers": [
+      {
+        "url": "https://my-udm-pro",
+        "username": "some-unifi-protect-user (or create a new one just for homebridge)",
+        "password": "some-password"
+      }
+    ]
+  }
+]
+```
+
 ### Advanced Configuration (Optional)
 This step is not required. For those that prefer to tailor the defaults to their liking, here are the supported parameters.
 
@@ -87,6 +113,7 @@ This step is not required. For those that prefer to tailor the defaults to their
     "platform": "Camera-UniFi-Protect",
     "name": "UniFi Protect",
     "videoProcessor" : "/usr/local/bin/ffmpeg",
+    "debug" : no,
 
     "controllers": [
       {
@@ -114,10 +141,11 @@ This step is not required. For those that prefer to tailor the defaults to their
 |------------------------|---------------------------------------------------------|---------------------------------------------------------------------------------------|----------|
 | platform               | Must always be `Camera-UniFi-Protect`.                  |                                                                                       | Yes      |
 | name                   | For logging purposes.                                   |                                                                                       | No       |
-| videoProcessor         | Specify path of ffmpeg or avconv                        | "ffmpeg"                                                                              | No       |
+| videoProcessor         | Specify path of ffmpeg or avconv.                       | "ffmpeg"                                                                              | No       |
+| debug                  | Enable additional debug logging.                        | no                                                                                    | No       |
 | url                    | URL for UniFi CloudKey G2+                              |                                                                                       | Yes      |
-| username               | Your UniFi Protect username                             |                                                                                       | Yes      |
-| password               | Your UniFi Protect password                             |                                                                                       | Yes      |
+| username               | Your UniFi Protect username.                            |                                                                                       | Yes      |
+| password               | Your UniFi Protect password.                            |                                                                                       | Yes      |
 | sourcePrefix           | Prefix to apply to ffmpeg source command.               | "-re -rtsp_transport http"                                                            | No       |
 | additionalCommandline  | Additional parameters to pass ffmpeg to render video.   | "-preset slow -profile:v high -level 4.2 -x264-params intra-refresh=1:bframes=0"      | No       |
 | mapaudio               | Mapping of audio channels for ffmpeg.                   | "0:0"                                                                                 | No       |
