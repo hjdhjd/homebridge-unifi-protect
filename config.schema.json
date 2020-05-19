@@ -1,7 +1,7 @@
 {
 	"pluginAlias": "Camera-UniFi-Protect",
 	"pluginType": "platform",
-	"headerDisplay": "UniFi Protect platform plugin for Homebridge for UniFi CloudKey G2+ and UniFiOS (UDM Pro, etc.)",
+	"headerDisplay": "The UniFi Protect platform plugin for Homebridge exposes all of your UniFi Protect cameras to HomeKit as separate accessories. Each camera needs to be manually paired.\n\n1. Open the Home <img src='https://user-images.githubusercontent.com/3979615/78010622-4ea1d380-738e-11ea-8a17-e6a465eeec35.png' height='16.42px'> app on your device.\n2. Tap the Home tab, then tap <img src='https://user-images.githubusercontent.com/3979615/78010869-9aed1380-738e-11ea-9644-9f46b3633026.png' height='16.42px'>.\n3. Tap *Add Accessory*, and select *I Don't Have a Code or Cannot Scan*.\n4. Enter the Homebridge PIN, this can be found under the QR code in Homebridge UI or your Homebridge logs, alternatively you can select *Use Camera* and scan the QR code again.\n\nFor help and examples of common configurations please read the [Homebridge FFmpeg Plugin wiki](https://github.com/KhaosT/homebridge-camera-ffmpeg/wiki).",
 	"footerDisplay": "The **ffmpeg** binary must be installed on your system for this plugin to work.<BR>For additional help please see the [developer page](https://github.com/hjdhjd/homebridge-unifi-protect2).",
 	"singular": true,
 	"schema": {
