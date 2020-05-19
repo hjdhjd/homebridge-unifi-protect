@@ -1,0 +1,154 @@
+{
+	"pluginAlias": "Camera-UniFi-Protect",
+	"pluginType": "platform",
+	"headerDisplay": "UniFi Protect platform plugin for Homebridge for UniFi CloudKey G2+ and UniFiOS (UDM Pro, etc.)",
+	"footerDisplay": "The **ffmpeg** binary must be installed on your system for this plugin to work.<BR>For additional help please see the [developer page](https://github.com/hjdhjd/homebridge-unifi-protect2).",
+	"singular": true,
+	"schema": {
+		"type": "object",
+		"properties": {
+			"name": {
+                                "type": "string",
+				"title": "Platform Name",
+                                "required": false,
+                                "placeholder": "e.g. UniFi Protect",
+				"description": "Name you want to assign to the UniFi Protect platform plugin."
+                        },
+			"videoProcessor": {
+                                "type": "string",
+				"title": "Video Processor",
+                                "required": false,
+                                "placeholder": "e.g. /usr/local/bin/ffmpeg",
+				"description": "Location of ffmpeg or your preferred video processor."
+                        },
+ 			"controllers": {
+				"type": "array",
+				"title": "Controllers",
+				"description": "UniFi Protect controllers in your environment.",
+				"items" : {
+					"type" : "object",
+					"title" : "UniFi Protect Controller",
+					"description" : "Provide the details of your UniFi Protect controller.",
+					"properties": {
+						"url": {
+							"type": "string",
+							"title": "URL",
+							"required": true,
+							"format": "uri",
+							"placeholder": "e.g. https://my-cloud-key:7443",
+							"description": "CloudKey Gen2+ or UniFi Dream Machine Pro URL."
+						},
+						"username": {
+							"type": "string",
+							"title": "Username",
+							"required": true,
+							"placeholder": "e.g. some-unifi-protect-user",
+							"description": "UniFi Protect Username."
+						},
+						"password": {
+							"type": "string",
+							"title": "Password",
+							"required": true,
+							"placeholder": "e.g. unifi-protect-password",
+							"description": "UniFi Protect Password."
+						}
+					}
+				}
+			},
+			"videoConfig": {
+				"type": "object",
+				"title": "Video Configuration",
+				"description": "Configure optional video parameters.",
+				"properties" : {
+					"sourcePrefix": {
+						"type": "string",
+						"title": "Source Prefix",
+						"required": false,
+						"default": "-re -rtsp_transport http",
+						"description": "Prefix to apply to the ffmpeg source command."
+					},
+					"additionalCommandline": {
+						"type": "string",
+						"title": "Additional Rendering Command Line Parameters",
+						"required": false,
+						"default": "-preset slow -profile:v high -level 4.2 -x264-params intra-refresh=1:bframes=0",
+						"description": "Additional parameters to pass to ffmpeg (or other videeo renderer)."
+					},
+					"mapaudio": {
+						"type": "string",
+						"title": "Audio Channel Mapping",
+						"required": false,
+						"default": "0:0",
+						"description": "The mapping of audio channels in the RTSP stream from UniFi Protect to ffmpeg."
+					},
+					"mapvideo": {
+						"type": "string",
+						"title": "Video Channel Mapping",
+						"required": false,
+						"default": "0:1",
+						"description": "The mapping of video channels in the RTSP stream from UniFi Protect to ffmpeg."
+					},
+					"maxStreams": {
+						"type": "integer",
+						"title": "Maximum Number of Streams",
+						"required": false,
+						"default": 4,
+						"description": "The maximum number of simultaneous streams permitted for a camera."
+					},
+					"maxWidth": {
+						"type": "integer",
+						"title": "Maximum Image Width",
+						"required": false,
+						"default": 1920,
+						"description": "The maximum image width reported to HomeKit."
+					},
+					"maxHeight": {
+						"type": "integer",
+						"title": "Maximum Image Height",
+						"required": false,
+						"default": 1080,
+						"description": "The maximum image height reported to HomeKit."
+					},
+					"maxFPS": {
+						"type": "integer",
+						"title": "Maximum Framerate",
+						"required": false,
+						"default": 20,
+						"description": "The maximum video framerate reported to HomeKit."
+					}
+				}
+			}
+		}
+	},
+	"layout" : [
+		{
+			"key": "controllers",
+			"title": "UniFi Protect Controller",
+			"type": "array",
+			"orderable": false,
+			"buttonText": "Add UniFi Protect Controller",
+			"items": [
+				"controllers[].url",
+				"controllers[].username",
+				"controllers[].password"
+			]
+		},
+		{
+			"key": "videoConfig",
+			"type": "section",
+			"title": "Advanced Video Settings",
+			"expandable": true,
+			"expanded": false,
+			"items": [
+				"videoConfig.sourcePrefix",
+				"videoConfig.additionalCommandline",
+				"videoConfig.mapaudio",
+				"videoConfig.mapvideo",
+				"videoConfig.maxStreams",
+				"videoConfig.maxWidth",
+				"videoConfig.maxHeight",
+				"videoConfig.maxFPS"
+			]
+		}
+	]
+}
