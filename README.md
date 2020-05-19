@@ -15,13 +15,13 @@ any other capabilities that make sense to this plugin to enable HomeKit users to
 
 # What's new?
 
-* UniFi Dream Machine Pro (UniFiOS support)
+* UniFi Dream Machine Pro (UnifiOS support)
 
 # What's not in this plugin right now
 
 * Support for motion detection and motion events. I would love to add this functionality but most of the approaches to implementing this right now involve hacks like
-monitoring the logs in reealtime on Protect and trying to parse what it's telling us on the motion front. Additionally, with the developmeent and evolution of
-motion detection on Protect right now (circa early-mid 2020) makes this a moving target. TL;DR: it's on the radar, but I'm waiting until there are better options to
+monitoring the logs in realtime on Protect and trying to parse what it's telling us on the motion front. Additionally, the active development and evolution of
+motion detection on Protect right now (circa mid 2020) makes this a moving target. TL;DR: it's on the radar, but I'm waiting until there are better options to
 implementing this in a reasonable way.
 
 # Installation
