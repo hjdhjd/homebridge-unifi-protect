@@ -11,14 +11,16 @@
                                 "type": "string",
 				"title": "Platform Name",
                                 "required": false,
-                                "placeholder": "e.g. UniFi Protect",
+                                "placeholder": "UniFi Protect",
+                                "default": "UniFi Protect",
 				"description": "Name you want to assign to the UniFi Protect platform plugin."
                         },
 			"videoProcessor": {
                                 "type": "string",
 				"title": "Video Processor",
                                 "required": false,
-                                "placeholder": "e.g. /usr/local/bin/ffmpeg",
+                                "placeholder": "/usr/local/bin/ffmpeg",
+                                "default": "/usr/local/bin/ffmpeg",
 				"description": "Location of ffmpeg or your preferred video processor."
                         },
  			"controllers": {
@@ -35,21 +37,21 @@
 							"title": "URL",
 							"required": true,
 							"format": "uri",
-							"placeholder": "e.g. https://my-cloud-key:7443",
+							"placeholder": "https://my-cloud-key:7443",
 							"description": "CloudKey Gen2+ or UniFi Dream Machine Pro URL."
 						},
 						"username": {
 							"type": "string",
 							"title": "Username",
 							"required": true,
-							"placeholder": "e.g. some-unifi-protect-user",
+							"placeholder": "some-unifi-protect-user",
 							"description": "UniFi Protect Username."
 						},
 						"password": {
 							"type": "string",
 							"title": "Password",
 							"required": true,
-							"placeholder": "e.g. unifi-protect-password",
+							"placeholder": "unifi-protect-password",
 							"description": "UniFi Protect Password."
 						}
 					}
