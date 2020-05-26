@@ -262,6 +262,8 @@ unifiPlatform.prototype.didFinishLaunching = function() {
       controllerAccessories.forEach(accessories => {
         self.api.publishCameraAccessories("homebridge-unifi-protect2", accessories);
       });
+    }).catch(e => {
+      self.log.error("Unable to register cameras with HomeKit: " + e);
     });
   }
 }
