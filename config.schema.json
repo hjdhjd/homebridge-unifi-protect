@@ -136,7 +136,7 @@
 						"title": "Enable Audio",
 						"required": false,
 						"default": false,
-						"description": "Enable audio as well as video support. Warning: this requires fdk-aac which is not typically included by default in most installations of ffmpeg."
+						"description": "Enable audio as well as video support. Warning: this requires ffmpeg to be compiled with fdk-aac which is not typically included by default in most installations of ffmpeg."
 					}
 				}
 			}
