@@ -40,15 +40,14 @@ implementing this in a reasonable way.
 # Installation
 If you are new to Homebridge, please first read the Homebridge [documentation](https://www.npmjs.com/package/homebridge).
 
-Install homebridge:
+Install homebridge if you haven't already done so:
+
 ```sh
 sudo npm install -g --unsafe-perm homebridge
 ```
-Install homebridge-camera-ffmpeg:
-```sh
-sudo npm install -g --unsafe-perm homebridge-camera-ffmpeg
-```
+
 Install homebridge-unifi-protect2:
+
 ```sh
 sudo npm install -g homebridge-unifi-protect2
 ```
