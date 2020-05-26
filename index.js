@@ -94,13 +94,20 @@ unifiPlatform.prototype.didFinishLaunching = function() {
 
   // Set a reasonable max FPS value. If your Protect setup is slower, this won't matter.
   var maxFPS = 20;
+  
+  // Set a reasonable packet size. This must be increments of 188.
+  var packetSize = 564;
 
   // Set a reasonable stream maximum.
   var maxStreams = 4;
 
-  // Default to 1080p
+  // Default to 1080p.
   var maxWidth = 1920;
   var maxHeight = 1080;
+  
+  // Default to no audio. Most default ffmpeg installations do not include support for
+  // fdk-aac, which is a prerequisite to enabling this.
+  var audio = false;
 
   if(videoConfig) {
     if(videoConfig.sourcePrefix) {
@@ -133,6 +140,14 @@ unifiPlatform.prototype.didFinishLaunching = function() {
 
     if(videoConfig.maxHeight) {
       maxHeight = videoConfig.maxHeight;
+    }
+
+    if(videoConfig.packetSize) {
+      maxHeight = videoConfig.packetSize;
+    }
+
+    if(videoConfig.audio) {
+      audio = videoConfig.audio === true;
     }
 
   }
@@ -210,7 +225,10 @@ unifiPlatform.prototype.didFinishLaunching = function() {
 				  maxStreams: maxStreams,
 				  maxWidth: maxWidth,
 				  maxHeight: maxHeight,
-				  maxFPS: maxFPS
+				  maxFPS: maxFPS,
+				  packetSize: packetSize,
+				  audio: audio,
+				  debug: debugProtect
 				}
 			  }
 

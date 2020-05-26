@@ -15,7 +15,20 @@ any other capabilities that make sense to this plugin to enable HomeKit users to
 
 # What's new?
 
-* UniFi Dream Machine Pro (UnifiOS support)
+* UniFi Dream Machine Pro and UniFi NVR support (UnifiOS support).
+* Audio support (listen-only - no microphone support).
+
+# Audio support notes
+
+Audio on cameras is tricky in the HomeKit world to begin with, and when you throw in some of the specifics of how UniFi Protect works, it gets
+even more interesting. Some things to keep in mind if you want to use audio with UniFi Protect:
+
+* This plugin supports audio coming from UniFi cameras. It does **not** support sending audio through the microphone.
+* You will need to enable the `audio` configuration option and you may need to adjust the `packetSize` option if you're getting choppy audio
+  or video as a result.
+* **Audio support will not work unless you have a version of ffmpeg that supports fdk-aac.** Unfortunately, most default installations of ffmpeg are
+  not compiled with support for fdk-aac. You'll need to compile or acquire a version of ffmpeg that does. Doing so is beyond the scope of this
+  plugin. There are plenty of guides to this - Google is your friend.  
 
 # What's not in this plugin right now
 
@@ -131,7 +144,9 @@ This step is not required. For those that prefer to tailor the defaults to their
         "maxStreams": 4,
         "maxWidth": 1920,
         "maxHeight": 1080,
-        "maxFPS": 20
+        "maxFPS": 20,
+        "packetSize" : 376,
+        "audio": no
     } 
   }
 ]
@@ -154,4 +169,6 @@ This step is not required. For those that prefer to tailor the defaults to their
 | maxWidth               | Maximum width of a video stream allowed.                | 1920                                                                                  | No       |
 | maxHeight              | Maximum height of a video stream allowed.               | 1080                                                                                  | No       |
 | maxFPS                 | Maximum framerate for a video stream.                   | 20                                                                                    | No       |
+| packetSize             | Packet size for the camera stream in multiples of 188.  | 564                                                                                    | No       |
+| audio                  | Enable audio support for UniFi Protect.                 | no                                                                                    | No       |
 
