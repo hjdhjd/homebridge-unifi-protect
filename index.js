@@ -82,8 +82,8 @@ unifiPlatform.prototype.didFinishLaunching = function() {
 
   // Set some sane defaults...
 
-  // Tell ffmpeg that this is an RTSP over HTTP stream.
-  var sourcePrefix = '-re -rtsp_transport http';
+  // Tell ffmpeg that this is an RTSP over a TCP stream.
+  var sourcePrefix = '-re -rtsp_transport tcp';
 
   // Magic incantation to stream effectively to iOS at the best quality possible.
   var additionalCommandline = '-preset slow -profile:v high -level 4.2 -x264-params intra-refresh=1:bframes=0';

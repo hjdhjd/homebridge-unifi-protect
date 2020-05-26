@@ -71,7 +71,7 @@
 						"type": "string",
 						"title": "Source Prefix",
 						"required": false,
-						"default": "-re -rtsp_transport http",
+						"default": "-re -rtsp_transport tcp",
 						"description": "Prefix to apply to the ffmpeg source command."
 					},
 					"additionalCommandline": {

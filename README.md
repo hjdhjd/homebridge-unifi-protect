@@ -137,7 +137,7 @@ This step is not required. For those that prefer to tailor the defaults to their
     ],
 
     "videoConfig": {
-        "sourcePrefix": "-re -rtsp_transport http",
+        "sourcePrefix": "-re -rtsp_transport tcp",
         "additionalCommandline": "-preset slow -profile:v high -level 4.2 -x264-params intra-refresh=1:bframes=0",
         "mapaudio": "0:0",
         "mapvideo": "0:1",
@@ -161,7 +161,7 @@ This step is not required. For those that prefer to tailor the defaults to their
 | url                    | URL for UniFi CloudKey G2+                              |                                                                                       | Yes      |
 | username               | Your UniFi Protect username.                            |                                                                                       | Yes      |
 | password               | Your UniFi Protect password.                            |                                                                                       | Yes      |
-| sourcePrefix           | Prefix to apply to ffmpeg source command.               | "-re -rtsp_transport http"                                                            | No       |
+| sourcePrefix           | Prefix to apply to ffmpeg source command.               | "-re -rtsp_transport tcp"                                                            | No       |
 | additionalCommandline  | Additional parameters to pass ffmpeg to render video.   | "-preset slow -profile:v high -level 4.2 -x264-params intra-refresh=1:bframes=0"      | No       |
 | mapaudio               | Mapping of audio channels for ffmpeg.                   | "0:0"                                                                                 | No       |
 | mapvideo               | Mapping of video channels for ffmpeg.                   | "0:1"                                                                                 | No       |
