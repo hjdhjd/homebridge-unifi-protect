@@ -1,6 +1,6 @@
 var Accessory, hap, UUIDGen;
 
-var FFMPEG = require('homebridge-camera-ffmpeg/ffmpeg.js').FFMPEG;
+var FFMPEG = require('./ffmpeg').FFMPEG;
 var requestPromise = require('request-promise').defaults({jar: true});
 
 module.exports = function(homebridge) {
