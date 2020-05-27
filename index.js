@@ -77,7 +77,7 @@ unifiPlatform.prototype.configureAccessory = function(accessory) {
 unifiPlatform.prototype.didFinishLaunching = function() {
   var self = this;
   var debugProtect = self.config.debugProtect === true;
-  var videoProcessor = self.config.videoProcessor || 'ffmpeg';
+  var videoProcessor = self.config.videoProcessor;
   var videoConfig = self.config.videoConfig;
 
   // Set some sane defaults...
