@@ -48,7 +48,7 @@ Audio on cameras is tricky in the HomeKit world to begin with, and when you thro
 
 * **Audio support will not work unless you have a version of ffmpeg that supports fdk-aac.** Unfortunately, most default installations of ffmpeg are not compiled with support for fdk-aac. You'll need to compile or acquire a version of ffmpeg that does. Doing so is beyond the scope of this plugin. There are plenty of guides to this - Google is your friend. This plugin uses [ffmpeg-for-homebridge](https://www.npmjs.com/package/ffmpeg-for-homebridge) which easies pain somewhat by providing prebuilt static binaries of ffmpeg for certain platforms, and save you the trouble of having to compile a version of ffmpeg yourself.
 
-## Using another Video Processor
+## Using another video processor
 
 `videoProcessor` is the video processor used to stream video. By default, this is ffmpeg, but can be your own custom version of ffmpeg or other video processor that accepts and understands ffmpeg command line arguments.
 
