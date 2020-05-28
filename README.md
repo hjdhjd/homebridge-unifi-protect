@@ -72,8 +72,6 @@ Audio on cameras is tricky in the HomeKit world to begin with, and when you thro
 }
 ```
 
-## Home / HomeKit Configuration
-
 ## Adding your cameras using the Home app
 
 After restarting Homebridge, each UniFi camera will need to be manually paired in the Home app.
@@ -86,7 +84,7 @@ To do this:
 4. Select the Camera you want to pair.
 5. Enter the Homebridge PIN, this can be found under the QR code in Homebridge UI or your Homebridge logs, alternatively you can select *Use Camera* and scan the QR code again.
 
-## Plugin Configuration
+## Plugin configuration
 Add the platform in `config.json` in your home directory inside `.homebridge`.
 
 For UniFi CloudKey Gen2+ devices, you need to specify the port in the URL to access Protect.
