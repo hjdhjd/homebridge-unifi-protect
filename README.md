@@ -130,7 +130,7 @@ Here's a sample configuration block for UnifiOS devices:
 ]
 ```
 
-### Advanced Configuration (Optional)
+### Advanced configuration (optional)
 This step is not required. For those that prefer to tailor the defaults to their liking, here are the supported parameters.
 
 ```
