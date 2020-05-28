@@ -33,7 +33,8 @@
     "homebridge": ">=0.4.5"
   },
   "dependencies": {
-    "homebridge-camera-ffmpeg": "^0.1.11",
+    "ffmpeg-for-homebridge": "0.0.5",
+    "ip": "^1.1.5",
     "request": "^2.88.0",
     "request-promise": "^4.2.4"
   }
