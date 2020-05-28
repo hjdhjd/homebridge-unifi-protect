@@ -1,41 +1,24 @@
-# homebridge-unifi-protect2
+# Homebridge UniFi Protect2
 
 Unifi Protect plarform plugin for [Homebridge](https://homebridge.io)
 
-This plugin is intended to automatically configure all the cameras you have setup in UniFi Protect to make them available via HomeKit. It supports
-UniFi CloudKey Gen2+ and UniFi Dream Machine Pro and should support any device that can run UniFi Protect. It requires the
-[homebridge-camera-ffmpeg](https://github.com/KhaosT/homebridge-camera-ffmpeg) plugin in order to provide that functionality.
+This plugin is intended to automatically configure all the cameras you have setup in UniFi Protect to make them available via HomeKit. It supports UniFi CloudKey Gen2+ and UniFi Dream Machine Pro and should support any device that can run UniFi Protect.
 
-This package is based on the excellent work of [homebridge-camera-unifi](https://github.com/ptescher/homebridge-camera-unifi).
+This package is based on the excellent work of [homebridge-camera-ffmpeg](https://github.com/KhaosT/homebridge-camera-ffmpeg) and [homebridge-camera-unifi](https://github.com/ptescher/homebridge-camera-unifi).
 
-# Why use this homebridge plugin?
+## Why use this homebridge plugin?
 
 This plugin aims to be a one-stop-shop for UniFi Protect to HomeKit connectivity. Over time, it is my hope to add motion sensors and
 any other capabilities that make sense to this plugin to enable HomeKit users to easily connect the UniFi Protect and HomeKit worlds.
 
-# What's new?
+## What's not in this plugin right now
+
+Support for motion detection and motion events. I would love to add this functionality but most of the approaches to implementing this right now involve hacks like monitoring the logs in realtime on Protect and trying to parse what it's telling us on the motion front. Additionally, the active development and evolution of motion detection on Protect right now (circa mid 2020) makes this a moving target. TL;DR: it's on the radar, but I'm waiting until there are better options to implementing this in a reasonable way.
+
+## What's new?
 
 * UniFi Dream Machine Pro and UniFi NVR support (UnifiOS support).
 * Audio support (listen-only - no microphone support).
-
-# Audio support notes
-
-Audio on cameras is tricky in the HomeKit world to begin with, and when you throw in some of the specifics of how UniFi Protect works, it gets
-even more interesting. Some things to keep in mind if you want to use audio with UniFi Protect:
-
-* This plugin supports audio coming from UniFi cameras. It does **not** support sending audio through the microphone.
-* You will need to enable the `audio` configuration option and you may need to adjust the `packetSize` option if you're getting choppy audio
-  or video as a result.
-* **Audio support will not work unless you have a version of ffmpeg that supports fdk-aac.** Unfortunately, most default installations of ffmpeg are
-  not compiled with support for fdk-aac. You'll need to compile or acquire a version of ffmpeg that does. Doing so is beyond the scope of this
-  plugin. There are plenty of guides to this - Google is your friend.  
-
-# What's not in this plugin right now
-
-* Support for motion detection and motion events. I would love to add this functionality but most of the approaches to implementing this right now involve hacks like
-monitoring the logs in realtime on Protect and trying to parse what it's telling us on the motion front. Additionally, the active development and evolution of
-motion detection on Protect right now (circa mid 2020) makes this a moving target. TL;DR: it's on the radar, but I'm waiting until there are better options to
-implementing this in a reasonable way.
 
 # Installation
 If you are new to Homebridge, please first read the Homebridge [documentation](https://www.npmjs.com/package/homebridge).
@@ -49,20 +32,53 @@ sudo npm install -g --unsafe-perm homebridge
 Install homebridge-unifi-protect2:
 
 ```sh
-sudo npm install -g homebridge-unifi-protect2
+sudo npm install -g --unsafe-perm homebridge-unifi-protect2
 ```
 
 You will need a working **ffmpeg** installation for this plugin to work. Configuring ffmpeg is beyond the scope of this manual. Please refer to the
 excellent documentation for [homebridge-camera-ffmpeg](https://github.com/KhaosT/homebridge-camera-ffmpeg).
 
+## Audio support notes
+
+Audio on cameras is tricky in the HomeKit world to begin with, and when you throw in some of the specifics of how UniFi Protect works, it gets even more interesting. Some things to keep in mind if you want to use audio with UniFi Protect:
+
+* This plugin supports audio coming from UniFi cameras. It does **not** support two-way audio.
+
+* You will need to enable the `audio` configuration option and you may need to adjust the `packetSize` option if you're getting choppy audio or video as a result.
+
+* **Audio support will not work unless you have a version of ffmpeg that supports fdk-aac.** Unfortunately, most default installations of ffmpeg are not compiled with support for fdk-aac. You'll need to compile or acquire a version of ffmpeg that does. Doing so is beyond the scope of this plugin. There are plenty of guides to this - Google is your friend. This plugin uses [ffmpeg-for-homebridge](https://www.npmjs.com/package/ffmpeg-for-homebridge) which easies pain somewhat by providing prebuilt static binaries of ffmpeg for certain platforms, and save you the trouble of having to compile a version of ffmpeg yourself.
+
+## Using another Video Processor
+
+`videoProcessor` is the video processor used to stream video. By default, this is ffmpeg, but can be your own custom version of ffmpeg or other video processor that accepts and understands ffmpeg command line arguments.
+
+```
+{
+  "platform": "Camera-UniFi-Protect",
+  "videoProcessor": "ffmpeg",
+  "controllers": [
+    ...
+  ]
+}
+```
+
+```
+{
+  "platform": "Camera-UniFi-Protect",
+  "videoProcessor": "/my/own/compiled/ffmpeg",
+  "controllers": [
+    ...
+  ]
+}
+```
+
+## Home / HomeKit Configuration
+
 ## Adding your cameras using the Home app
 
-### TL;DR
-Adding cameras requires the same steps outlined in homebridge-camera-ffmpeg. Install the accessories and use the Homebridge setup code for the
-camera accessories.
+After restarting Homebridge, each UniFi camera will need to be manually paired in the Home app.
 
-### Longer version
-After restarting Homebridge, each camera you defined will need to be manually paired in the Home app, to do this:
+To do this:
 
 1. Open the Home <img src="https://user-images.githubusercontent.com/3979615/78010622-4ea1d380-738e-11ea-8a17-e6a465eeec35.png" height="16.42px"> app on your device.
 2. Tap the Home tab, then tap <img src="https://user-images.githubusercontent.com/3979615/78010869-9aed1380-738e-11ea-9644-9f46b3633026.png" height="16.42px">.
@@ -70,7 +86,7 @@ After restarting Homebridge, each camera you defined will need to be manually pa
 4. Select the Camera you want to pair.
 5. Enter the Homebridge PIN, this can be found under the QR code in Homebridge UI or your Homebridge logs, alternatively you can select *Use Camera* and scan the QR code again.
 
-# Configuration
+## Plugin Configuration
 Add the platform in `config.json` in your home directory inside `.homebridge`.
 
 For UniFi CloudKey Gen2+ devices, you need to specify the port in the URL to access Protect.
