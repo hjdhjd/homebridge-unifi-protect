@@ -158,7 +158,7 @@ This step is not required. For those that prefer to tailor the defaults to their
         "maxWidth": 1920,
         "maxHeight": 1080,
         "maxFPS": 20,
-        "packetSize" : 564,
+        "packetSize" : 376,
         "audio": no
     } 
   }
@@ -182,6 +182,6 @@ This step is not required. For those that prefer to tailor the defaults to their
 | maxWidth               | Maximum width of a video stream allowed.                | 1920                                                                                  | No       |
 | maxHeight              | Maximum height of a video stream allowed.               | 1080                                                                                  | No       |
 | maxFPS                 | Maximum framerate for a video stream.                   | 20                                                                                    | No       |
-| packetSize             | Packet size for the camera stream in multiples of 188.  | 564                                                                                   | No       |
+| packetSize             | Packet size for the camera stream in multiples of 188.  | 376                                                                                   | No       |
 | audio                  | Enable audio support for UniFi Protect.                 | no                                                                                    | No       |
 

@@ -96,7 +96,7 @@ unifiPlatform.prototype.didFinishLaunching = function() {
   var maxFPS = 20;
   
   // Set a reasonable packet size. This must be increments of 188.
-  var packetSize = 564;
+  var packetSize = 376;
 
   // Set a reasonable stream maximum.
   var maxStreams = 4;
@@ -143,7 +143,7 @@ unifiPlatform.prototype.didFinishLaunching = function() {
     }
 
     if(videoConfig.packetSize) {
-      maxHeight = videoConfig.packetSize;
+      packetSize = videoConfig.packetSize;
     }
 
     if(videoConfig.audio) {
