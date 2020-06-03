@@ -1,3 +1,16 @@
+<span align="center">
+
+<a href="https://github.com/homebridge/verified/blob/master/verified-plugins.json"><img alt="homebridge-verified" src="https://github.com/homebridge/branding/blob/master/logos/homebridge-color-round.svg?sanitize=true" width="140px"></a>
+
+# Homebridge UniFi Protect
+
+<a href="https://www.npmjs.com/package/homebridge-unifi-protect2"><img title="npm version" src="https://badgen.net/npm/v/homebridge-unifi-protect2" ></a>
+<a href="https://www.npmjs.com/package/homebridge-unifi-protect2"><img title="npm downloads" src="https://badgen.net/npm/dt/homebridge-unifi-protect2" ></a>
+
+<p>UniFi Protect plugin for <a href="https://homebridge.io">Homebridge</a>.</p>
+
+</span>
+
 # Homebridge UniFi Protect2
 
 Unifi Protect plarform plugin for [Homebridge](https://homebridge.io)
