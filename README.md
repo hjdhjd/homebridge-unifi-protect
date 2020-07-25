@@ -1,28 +1,21 @@
-<span align="center">
+<SPAN ALIGN="CENTER">
 
-<a href="https://github.com/homebridge/verified/blob/master/verified-plugins.json"><img alt="homebridge-verified" src="https://github.com/homebridge/branding/blob/master/logos/homebridge-color-round.svg?sanitize=true" width="140px"></a>
+[![homebridge-unifi-protect2: Native HomeKit support for UniFi Protect](https://raw.githubusercontent.com/hjdhjd/homebridge-unifi-protect2/master/homebridge-protect.svg)](https://github.com/hjdhjd/homebridge-unifi-protect2)
 
-# Homebridge UniFi Protect
+# Homebridge UniFi Protect<SUP STYLE="font-size: smaller; color:#5EB5E6;">2</SUP>
 
-<a href="https://www.npmjs.com/package/homebridge-unifi-protect2"><img title="npm version" src="https://badgen.net/npm/v/homebridge-unifi-protect2" ></a>
-<a href="https://www.npmjs.com/package/homebridge-unifi-protect2"><img title="npm downloads" src="https://badgen.net/npm/dt/homebridge-unifi-protect2" ></a>
+[![Downloads](https://badgen.net/npm/dt/homebridge-unifi-protect2)](https://www.npmjs.com/package/homebridge-unifi-protect2)
+[![Version](https://badgen.net/npm/v/homebridge-unifi-protect2)](https://www.npmjs.com/package/homebridge-unifi-protect2)
+[![verified-by-homebridge](https://badgen.net/badge/homebridge/verified/purple)](https://github.com/homebridge/homebridge/wiki/Verified-Plugins)
 
-<p>UniFi Protect plugin for <a href="https://homebridge.io">Homebridge</a>.</p>
+## HomeKit support the UniFi Protect ecosystem using [Homebridge](https://homebridge.io).
+</SPAN>
 
-</span>
+`homebridge-unifi-protect2` is a [Homebridge](https://homebridge.io) plugin that provides HomeKit support to the [UniFi Protect](https://unifi-network.ui.com/video-security) device ecosystem. [UniFi Protect](https://unifi-network.ui.com/video-security) is [Ubiquiti's](https://www.ui.com) next-generation video security platform, with a rich camera, doorbell, and NVR set of options for you to choose from, as well as an app which you can use to view, configure and manage your video camera and doorbells.
 
-# Homebridge UniFi Protect2
+This plugin attempts to bridge a gap in the UniFi Protect ecosystem by providing native HomeKit support on par with what you would expect from a first-party of native HomeKit solution. Our north star is to create a plugin that *just works* with minimal required configuration by you, the end user, to get up and running. The goal is to provide as close to a streamlined experience as you would expect from a first-party or native HomeKit solution. For the adventurous, there will be more granular options available to enable you to further tailor your experience.
 
-Unifi Protect plarform plugin for [Homebridge](https://homebridge.io)
-
-This plugin is intended to automatically configure all the cameras you have setup in UniFi Protect to make them available via HomeKit. It supports UniFi CloudKey Gen2+ and UniFi Dream Machine Pro and should support any device that can run UniFi Protect.
-
-This package is based on the excellent work of [homebridge-camera-ffmpeg](https://github.com/KhaosT/homebridge-camera-ffmpeg) and [homebridge-camera-unifi](https://github.com/ptescher/homebridge-camera-unifi).
-
-## Why use this homebridge plugin?
-
-This plugin aims to be a one-stop-shop for UniFi Protect to HomeKit connectivity. Over time, it is my hope to add motion sensors and
-any other capabilities that make sense to this plugin to enable HomeKit users to easily connect the UniFi Protect and HomeKit worlds.
+What does *just works* mean in practice? It means that this plugin will discover all your supported UniFi Protect devices and make them available in HomeKit. It supports all known UniFi Protect NVR configurations (UniFi CloudKey Gen2+, UniFi Dream Machine Pro, and UniFi Protect NVR).
 
 ## What's not in this plugin right now
 
@@ -173,7 +166,7 @@ This step is not required. For those that prefer to tailor the defaults to their
         "maxFPS": 20,
         "packetSize" : 376,
         "audio": no
-    } 
+    }
   }
 ]
 ```
