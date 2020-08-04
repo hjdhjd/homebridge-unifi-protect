@@ -33,7 +33,12 @@ import { ProtectCamera } from "./protect-camera";
 import { FfmpegProcess } from "./protect-ffmpeg";
 import { ProtectPlatform } from "./protect-platform";
 import { ProtectOptions } from "./protect-types";
+
+// Bring in a precompiled ffmpeg binary that meets our requirements, if available.
 const pathToFfmpeg = require("ffmpeg-for-homebridge"); // eslint-disable-line @typescript-eslint/no-var-requires
+
+// Increase the listener limits to support Protect installations with more than 10 cameras. 100 seems like a reasonable default.
+require("events").EventEmitter.defaultMaxListeners = 100; // eslint-disable-line @typescript-eslint/no-var-requires
 
 type SessionInfo = {
   address: string; // Address of the HAP controller.
