@@ -1,0 +1,45 @@
+{
+    "parser": "@typescript-eslint/parser",
+    "extends": [
+        "eslint:recommended",
+        "plugin:@typescript-eslint/eslint-recommended",
+        "plugin:@typescript-eslint/recommended"
+    ],
+    "parserOptions": {
+        "ecmaVersion": 2018,
+        "sourceType": "module"
+    },
+    "ignorePatterns": ["dist"],
+    "rules": {
+        "quotes": ["warn", "double", {"avoidEscape": true}],
+        "indent": [
+            "warn",
+            2,
+            {
+                "SwitchCase": 1
+            }
+        ],
+        "linebreak-style": ["warn", "unix"],
+        "semi": ["warn", "always"],
+        "comma-dangle": ["error"],
+        "dot-notation": "warn",
+        "eqeqeq": "warn",
+        "curly": ["warn", "all"],
+        "brace-style": ["warn"],
+        "prefer-arrow-callback": ["warn"],
+        "max-len": ["warn", 170],
+        "no-console": ["warn"],
+        "lines-between-class-members": [
+            "warn",
+            "always",
+            {
+                "exceptAfterSingleLine": true
+            }
+        ],
+        "@typescript-eslint/explicit-function-return-type": "off",
+        "@typescript-eslint/no-non-null-assertion": "off",
+        "@typescript-eslint/explicit-module-boundary-types": "off",
+        "@typescript-eslint/no-explicit-any": "off",
+        "@typescript-eslint/no-this-alias": "off"
+    }
+}
