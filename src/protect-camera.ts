@@ -13,10 +13,7 @@ import { ProtectAccessory } from "./protect-accessory";
 import { ProtectApi } from "./protect-api";
 import { ProtectNvr } from "./protect-nvr";
 import { ProtectStreamingDelegate } from "./protect-stream";
-import {
-  ProtectCameraConfig,
-  ProtectNvrBootstrap
-} from "./protect-types";
+import { ProtectCameraConfig, ProtectNvrBootstrap } from "./protect-types";
 
 export class ProtectCamera extends ProtectAccessory {
   cameraUrl = "";
@@ -136,7 +133,7 @@ export class ProtectCamera extends ProtectAccessory {
       this.log("%s %s: Disabling motion sensor switch.",
         this.nvr.nvrApi.getNvrName(), this.nvr.nvrApi.getDeviceName(accessory.context.camera));
       // If we disable the switch, make sure we fully reset it's state.
-      accessory.context.detectMotion = true;
+      delete accessory.context.detectMotion;
       return false;
     }
 
