@@ -1,187 +1,162 @@
 {
-	"pluginAlias": "Camera-UniFi-Protect",
-	"pluginType": "platform",
-	"headerDisplay": "The UniFi Protect platform plugin for Homebridge exposes all of your UniFi Protect cameras to HomeKit as separate accessories. Each camera needs to be manually paired.\n\n1. Open the Home <img src='https://user-images.githubusercontent.com/3979615/78010622-4ea1d380-738e-11ea-8a17-e6a465eeec35.png' height='16.42px'> app on your device.\n2. Tap the Home tab, then tap <img src='https://user-images.githubusercontent.com/3979615/78010869-9aed1380-738e-11ea-9644-9f46b3633026.png' height='16.42px'>.\n3. Tap *Add Accessory*, and select *I Don't Have a Code or Cannot Scan*.\n4. Enter the Homebridge PIN, this can be found under the QR code in Homebridge UI or your Homebridge logs, alternatively you can select *Use Camera* and scan the QR code again.\n\nFor help and examples of common configurations please read the [Homebridge FFmpeg Plugin wiki](https://github.com/KhaosT/homebridge-camera-ffmpeg/wiki).",
-	"footerDisplay": "The **ffmpeg** binary must be installed on your system for this plugin to work.<BR>For additional help please see the [developer page](https://github.com/hjdhjd/homebridge-unifi-protect2).",
-	"singular": true,
-	"schema": {
-		"type": "object",
-		"properties": {
-			"name": {
-                                "type": "string",
-				"title": "Platform Name",
-                                "required": false,
-                                "default": "UniFi Protect",
-				"description": "Name you want to assign to the UniFi Protect platform plugin."
-                        },
-			"videoProcessor": {
-                                "type": "string",
-				"title": "Video Processor",
-                                "required": false,
-                                "default": "ffmpeg",
-				"description": "Location of ffmpeg or your preferred video processor."
-                        },
-			"debugProtect": {
-                                "type": "boolean",
-				"title": "Debug Logging",
-                                "required": false,
-                                "default": false,
-				"description": "Enable additional debug logging for this plugin."
-                        },
- 			"controllers": {
-				"type": "array",
-				"title": "Controllers",
-				"description": "UniFi Protect controllers in your environment.",
-				"items" : {
-					"type" : "object",
-					"title" : "UniFi Protect Controller",
-					"description" : "Provide the details of your UniFi Protect controller.",
-					"properties": {
-						"url": {
-							"type": "string",
-							"title": "URL",
-							"required": true,
-							"format": "uri",
-							"placeholder": "https://my-cloud-key:7443",
-							"description": "For CloudKey Gen2+ include the port in the URL: <code>https://my-cloud-key:7443</code>.<BR>For UnifiOS devices (UDM-Pro, UniFi NVR), exclude the port: <code>https://my-udm-pro</code>."
-						},
-						"username": {
-							"type": "string",
-							"title": "Username",
-							"required": true,
-							"placeholder": "some-unifi-protect-user",
-							"description": "UniFi Protect username.<BR>For UnifiOS devices (UDM-Pro, UniFi NVR) you can use your Ubiquiti account credentials.<BR>2FA accounts are not supported at this time.<BR><B>Creating a homebridge-specific local user is strongly encouraged for security and sanity.</B>"
-						},
-						"password": {
-							"type": "string",
-							"title": "Password",
-							"required": true,
-							"placeholder": "unifi-protect-password",
-							"description": "UniFi Protect password.<BR>For UnifiOS devices (UDM-Pro, UniFi NVR) you can use your Ubiquiti account credentials.<BR>2FA accounts are not supported at this time.<BR><B>Creating a homebridge-specific local user is strongly encouraged for security and sanity.</B>"
-						}
-					}
-				}
-			},
-			"videoConfig": {
-				"type": "object",
-				"title": "Video Configuration",
-				"description": "Configure optional video parameters.",
-				"properties" : {
-					"sourcePrefix": {
-						"type": "string",
-						"title": "Source Prefix",
-						"required": false,
-						"default": "-re -rtsp_transport tcp",
-						"description": "Prefix to apply to the ffmpeg source command."
-					},
-					"additionalCommandline": {
-						"type": "string",
-						"title": "Additional Rendering Command Line Parameters",
-						"required": false,
-						"default": "-preset slow -profile:v high -level 4.2 -x264-params intra-refresh=1:bframes=0",
-						"description": "Additional parameters to pass to ffmpeg (or other videeo renderer)."
-					},
-					"mapaudio": {
-						"type": "string",
-						"title": "Audio Channel Mapping",
-						"required": false,
-						"default": "0:0",
-						"description": "The mapping of audio channels in the RTSP stream from UniFi Protect to ffmpeg."
-					},
-					"mapvideo": {
-						"type": "string",
-						"title": "Video Channel Mapping",
-						"required": false,
-						"default": "0:1",
-						"description": "The mapping of video channels in the RTSP stream from UniFi Protect to ffmpeg."
-					},
-					"maxStreams": {
-						"type": "integer",
-						"title": "Maximum Number of Streams",
-						"required": false,
-						"default": 4,
-						"description": "The maximum number of simultaneous streams permitted for a camera."
-					},
-					"maxWidth": {
-						"type": "integer",
-						"title": "Maximum Image Width",
-						"required": false,
-						"default": 1920,
-						"description": "The maximum image width reported to HomeKit."
-					},
-					"maxHeight": {
-						"type": "integer",
-						"title": "Maximum Image Height",
-						"required": false,
-						"default": 1080,
-						"description": "The maximum image height reported to HomeKit."
-					},
-					"maxFPS": {
-						"type": "integer",
-						"title": "Maximum Framerate",
-						"required": false,
-						"default": 20,
-						"description": "The maximum video framerate reported to HomeKit."
-					},
-					"packetSize": {
-						"type": "integer",
-						"title": "Packet Size",
-						"required": false,
-						"default": 564,
-						"multipleOf": 188,
-						"description": "The packet size to be used. If video or audio is choppy, try different values. This must be in increments of 188."
-					},
-					"audio": {
-						"type": "boolean",
-						"title": "Enable Audio",
-						"required": false,
-						"default": false,
-						"description": "Enable audio as well as video support. Warning: this requires ffmpeg to be compiled with fdk-aac which is not typically included by default in most installations of ffmpeg."
-					}
-				}
-			}
-		}
-	},
-	"layout" : [
-                {
-			"type": "flex",
-			"flex-flow": "row wrap",
-			"items": [
-				"name",
-				"videoProcessor"
-			]
-		},
-		{
-			"key": "controllers",
-			"name": "UniFi Protect",
-			"type": "array",
-			"orderable": false,
-			"buttonText": "Add UniFi Protect Controller",
-			"items": [
-				"controllers[].url",
-				"controllers[].username",
-				"controllers[].password"
-			]
-		},
-		{
-			"key": "advancedConfig",
-			"type": "section",
-			"title": "Advanced Settings (Optional)",
-			"expandable": true,
-			"expanded": false,
-			"items": [
-				"videoConfig.sourcePrefix",
-				"videoConfig.additionalCommandline",
-				"videoConfig.mapaudio",
-				"videoConfig.mapvideo",
-				"videoConfig.maxStreams",
-				"videoConfig.maxWidth",
-				"videoConfig.maxHeight",
-				"videoConfig.maxFPS",
-				"videoConfig.packetSize",
-				"videoConfig.audio",
-				"debugProtect"
-			]
-		}
-	]
+  "pluginAlias": "UniFi Protect",
+  "pluginType": "platform",
+  "headerDisplay": "Full HomeKit support UniFi Protect devices. See the [homebridge-unifi-protect2](https://github.com/hjdhjd/homebridge-unifi-protect2) developer page for detailed documentation.",
+  "footerDisplay": "The **ffmpeg** binary must be installed on your system for this plugin to work. For audio support, make sure your version of ffmpeg is compiled with support for **fdk-aac**.",
+  "singular": true,
+
+  "schema": {
+    "type": "object",
+    "properties": {
+      "debug": {
+        "type": "boolean",
+        "title": "Debug Logging",
+        "required": false,
+        "default": false,
+        "description": "Enable additional debug logging for this plugin. Default: false."
+      },
+      "ffmpegOptions": {
+        "type": "string",
+        "title": "Custom FFmpeg command line options.",
+        "required": false,
+        "placeholder": "e.g. -probesize 32 -analyzeduration 0 -fflags nobuffer -refs 1 -x264-params intra-refresh=1:bframes=0",
+        "description": "Command line options to use for FFmpeg. Default: -probesize 32 -analyzeduration 0 -fflags nobuffer -refs 1 -x264-params intra-refresh=1:bframes=0"
+      },
+      "motionDuration": {
+        "type": "string",
+        "title": "Motion Event Duration (seconds)",
+        "required": false,
+        "minimum": 5,
+        "maximum": 20,
+        "placeholder": "e.g. 10",
+        "description": "Duration of a single motion event. Setting this too low will potentially cause a lot of notification spam. Default: 10."
+      },
+      "options": {
+        "title": "Feature Options",
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "videoProcessor": {
+        "type": "string",
+        "title": "Video Processor",
+        "required": false,
+        "placeholder": "e.g. ffmpeg",
+        "description": "Location of ffmpeg or your preferred video processor. Default: builtin or in your local path."
+      },
+
+      "controllers": {
+        "type": "array",
+        "title": "UniFi Protect Controllers",
+        "items": {
+          "type": "object",
+          "title": "UniFi Protect Controller",
+          "description": "Provide the details of your UniFi Protect controller.",
+          "properties": {
+            "address": {
+              "type": "string",
+              "title": "Controller Address",
+              "required": true,
+              "format": "hostname",
+              "placeholder": "e.g. 1.2.3.4",
+              "description": "Hostname or IP address of your UniFi Protect controller."
+            },
+            "name": {
+              "type": "string",
+              "title": "Controller Name",
+              "required": false,
+              "placeholder": "e.g. UNVR",
+              "description": "Name for this UniFi Protect controller to be used for logging purposes. password. Default: Defined by the controller."
+            },
+            "password": {
+              "type": "string",
+              "title": "Controller Password",
+              "required": true,
+              "placeholder": "e.g. unifi-protect-password",
+              "description": "UniFi Protect password for this controller. Creating a homebridge-specific local user is strongly encouraged for security and sanity."
+            },
+            "refreshInterval": {
+              "type": "integer",
+              "title": "Controller Refresh Interval (seconds)",
+              "required": false,
+              "minimum": 2,
+              "maximum": 30,
+              "placeholder": "10",
+              "description": "Refresh interval to check for cameras that have been added or removed to a controller. For UCK Gen2+ devices only, this is also the interval used to check for motion events. Default: 5 seconds for UCK Gen2+, 10 seconds for UniFI OS."
+            },
+            "username": {
+              "type": "string",
+              "title": "Controller Username",
+              "required": true,
+              "placeholder": "e.g. some-unifi-protect-user",
+              "description": "UniFi Protect username for this controller. Creating a homebridge-specific local user is strongly encouraged for security and sanity."
+            }
+          }
+        }
+      }
+    }
+  },
+
+  "layout": [
+    {
+      "key": "controllers",
+      "title": "UniFi Protect Controllers",
+      "type": "fieldset",
+      "orderable": false,
+      "expandable": true,
+      "expanded": false,
+      "buttonText": "Add UniFi Protect Controller",
+      "items": [
+        "controllers[].address",
+        "controllers[].username",
+        "controllers[].password",
+        "controllers[].refreshInterval",
+        "controllers[].name"
+      ]
+    },
+
+    {
+      "key": "general",
+      "title": "General Options (Optional)",
+      "type": "fieldset",
+      "orderable": false,
+      "expandable": true,
+      "expanded": false,
+      "items": [
+        {
+          "items": [
+            "motionDuration",
+            "ffmpegOptions",
+            "videoProcessor",
+            "debug"
+          ]
+        }
+      ]
+    },
+
+    {
+      "key": "options",
+      "title": "Plugin Feature Options (Optional)",
+      "buttonText": "Add Feature Option",
+      "type": "fieldset",
+      "orderable": false,
+      "expandable": true,
+      "expanded": false,
+      "items": [
+        {
+          "type": "string",
+          "description": "Enter only one option per entry. See developer page for the complete list of available options. ",
+          "placeholder": "e.g. Disable.Stream.High",
+          "displayFlex": true,
+          "flex-direction": "row",
+          "items": [
+            {
+              "key": "options[]"
+            }
+          ]
+        }
+      ]
+    }
+  ]
 }
