@@ -1,10 +1,10 @@
 {
   "name": "homebridge-unifi-protect2",
-  "version": "3.0.1",
+  "version": "3.0.2",
   "displayName": "Homebridge UniFi Protect",
   "description": "Complete HomeKit integration for UniFi Protect with full support for most features including autoconfiguration, motion detection, and multiple controllers.",
   "author": "HJD https://github.com/hjdhjd",
-  "homepage": "https://github.com/hjdhjd/homebridge-myq2#readme",
+  "homepage": "https://github.com/hjdhjd/homebridge-unifi-protect2#readme",
   "license": "ISC",
   "repository": {
     "type": "git",

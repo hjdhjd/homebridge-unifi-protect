@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 3.0.2 (2020-08-04)
+  * Fix: URL typo in package.
+
 ## 3.0.1 (2020-08-04)
   * Fix: ensure ffmpeg sessions are properly shutdown when inactive.
   * Fix: eliminate a warning that might occur in installations with more than 10 Protect cameras related to event listeners.
