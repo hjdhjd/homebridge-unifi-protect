@@ -273,8 +273,6 @@ export class ProtectNvr {
     const camera = accessory.context.camera;
     const hap = this.hap;
 
-    // CHECK REFRESHINTERVAL
-
     if(!accessory || !camera) {
       return;
     }
