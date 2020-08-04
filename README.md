@@ -46,7 +46,7 @@ If you have installed the [Homebridge Config UI](https://github.com/oznu/homebri
 If you prefer to install `homebridge-unifi-protect2` from the command line, you can do so by executing:
 
 ```sh
-sudo npm install -g homebridge-unifi-protect2
+sudo npm install --unsafe-perm -g homebridge-unifi-protect2
 ```
 
 You will need a working **ffmpeg** installation for this plugin to work. Configuring ffmpeg is beyond the scope of this manual. Please refer to the
