@@ -1,12 +1,9 @@
 {
   "compilerOptions": {
-    "target": "ES2018",
+    "target": "ES2019",
     "module": "commonjs",
     "lib": [
-      "ES2015",
-      "ES2016",
-      "ES2017",
-      "ES2018",
+      "ES2019",
       "dom"
     ],
     "sourceMap": true,
