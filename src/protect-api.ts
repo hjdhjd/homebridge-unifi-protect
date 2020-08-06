@@ -14,6 +14,7 @@ import {
   ProtectNvrBootstrap,
   ProtectNvrUserConfig
 } from "./protect-types";
+import { PROTECT_API_ERROR_LIMIT, PROTECT_API_RETRY_TIME } from "./settings";
 import util from "util";
 
 /*
@@ -34,6 +35,8 @@ import util from "util";
  */
 
 export class ProtectApi {
+  private apiErrorCount = 0;
+  private apiLastSuccess = 0;
   bootstrap!: ProtectNvrBootstrap;
   Cameras!: Array<ProtectCameraConfig>;
   private debug: (message: string, ...parameters: any[]) => void;
@@ -200,6 +203,7 @@ export class ProtectApi {
     return this.isUnifiOs ? this.launchEventListener() : true;
   }
 
+  // Connect to the UniFi OS realtime events API.
   private async launchEventListener(): Promise<boolean> {
     // Log us in if needed.
     if(!(await this.loginProtect())) {
@@ -246,7 +250,7 @@ export class ProtectApi {
 
       this.log("%s: Connected to the realtime system events API.", this.getNvrName());
     } catch(error) {
-      this.log("LISTENER ERROR: " + error);
+      this.log("%s: Error connecting to the system events API: %s", this.getNvrName(), error);
     }
 
     return true;
@@ -399,12 +403,14 @@ export class ProtectApi {
     });
 
     // Update Protect with the new configuration.
-    const response = await this.fetch(this.cameraUpdateUrl() + "/" + device.id, {
+    const response = await this.fetch(this.camerasUrl() + "/" + device.id, {
       body: JSON.stringify({ channels: device.channels }),
       method: "PATCH"
     }, true, false);
 
     if(!response || !response.ok) {
+      this.apiErrorCount++;
+
       if(response.status === 403) {
         this.log("%s %s: Insufficient privileges to enable RTSP on all channels. Please ensure this username has the Administrator role assigned in UniFi Protect.",
           this.getNvrName(), this.getDeviceName(device));
@@ -416,15 +422,24 @@ export class ProtectApi {
       return device;
     }
 
+    // Since we have taken responsibility for decoding response types, we need to reset our API backoff count.
+    this.apiErrorCount = 0;
+    this.apiLastSuccess = Date.now();
+
     // Everything worked, save the new channel array.
     return await response.json();
   }
 
   // Utility to generate a nicely formatted NVR string.
   getNvrName(): string {
-    // Our NVR string appears as:
+    // Our NVR string, if it exists, appears as:
     // NVR [NVR Type].
-    return this.bootstrap.nvr.name + " [" + this.bootstrap.nvr.type + "]";
+    // Otherwise, we appear as NVRaddress.
+    if(this.bootstrap && this.bootstrap.nvr) {
+      return this.bootstrap.nvr.name + " [" + this.bootstrap.nvr.type + "]";
+    } else {
+      return this.nvrAddress;
+    }
   }
 
   // Utility to generate a nicely formatted device string.
@@ -433,6 +448,13 @@ export class ProtectApi {
     // DeviceName [Device Type] (address: IP address, mac: MAC address).
     return name + " [" + device.type + "]" +
       (deviceInfo ? " (address: " + device.host + " mac: " + device.mac + ")" : "");
+  }
+
+  // Return the URL to directly access cameras, adjusting for Protect NVR variants.
+  camerasUrl(): string {
+    // Updating the channels on a UCK Gen2+ device is done through: https://protect-nvr-ip:7443/api/cameras/CAMERAID.
+    // Boostrapping a UniFi OS device is fone through: https://protect-nvr-ip/proxy/protect/api/cameras/CAMERAID.
+    return "https://" + this.nvrAddress + (this.isUnifiOs ? "/proxy/protect/api/cameras" : ":7443/api/cameras");
   }
 
   // Return the right authentication URL, depending on which Protect NVR platform we are using.
@@ -447,13 +469,6 @@ export class ProtectApi {
     // Boostrapping a UCK Gen2+ device is done through: https://protect-nvr-ip:7443/api/bootstrap.
     // Boostrapping a UniFi OS device is fone through: https://protect-nvr-ip/proxy/protect/api/bootstrap.
     return "https://" + this.nvrAddress + (this.isUnifiOs ? "/proxy/protect/api/bootstrap" : ":7443/api/bootstrap");
-  }
-
-  // Return the right bootstrap URL, depending on which Protect NVR platform we are using.
-  private cameraUpdateUrl(): string {
-    // Updating the channels on a UCK Gen2+ device is done through: https://protect-nvr-ip:7443/api/cameras/CAMERAID.
-    // Boostrapping a UniFi OS device is fone through: https://protect-nvr-ip/proxy/protect/api/cameras/CAMERAID.
-    return "https://" + this.nvrAddress + (this.isUnifiOs ? "/proxy/protect/api/cameras" : ":7443/api/cameras");
   }
 
   // Return the system events API URL, if it's supported by this UniFi Protect device type.
@@ -503,7 +518,7 @@ export class ProtectApi {
   }
 
   // Utility to let us streamline error handling and return checking from the Protect API.
-  private async fetch(url: RequestInfo, options: RequestInit, logErrors = true, decodeResponse = true): Promise<Response> {
+  async fetch(url: RequestInfo, options: RequestInit = { method: "GET"}, logErrors = true, decodeResponse = true): Promise<Response> {
     let response: Response;
 
     // Since Protect often uses self-signed certificates, we need to disable TLS validation.
@@ -513,6 +528,30 @@ export class ProtectApi {
     options.headers = this.headers;
 
     try {
+      const now = Date.now();
+
+      // Throttle this after ten attempts.
+      if(this.apiErrorCount >= PROTECT_API_ERROR_LIMIT) {
+        // Let the user know we've got an API problem.
+        if(this.apiErrorCount === PROTECT_API_ERROR_LIMIT) {
+          this.log("%s: Throttling API calls due to errors with the %s previous attempts. I'll retry again in %s minutes.",
+            this.getNvrName(), this.apiErrorCount, PROTECT_API_RETRY_TIME / 60);
+          this.apiErrorCount++;
+          this.apiLastSuccess = now;
+          return null as any;
+        }
+
+        // Throttle our API calls.
+        if((this.apiLastSuccess + (PROTECT_API_RETRY_TIME * 1000)) > now) {
+          return null as any;
+        }
+
+        // Inform the user that we're out of the penalty box and try again.
+        this.log("%s: Resuming connectivity to the UniFi Protect API after throttling for %s minutes.",
+          this.getNvrName(), PROTECT_API_RETRY_TIME / 60);
+        this.apiErrorCount = 0;
+      }
+
       response = await fetch(url, options);
 
       // The caller will sort through responses instead of us.
@@ -523,22 +562,30 @@ export class ProtectApi {
       // Bad username and password.
       if(response.status === 401) {
         this.log("Invalid login credentials given. Please check your login and password.");
+        this.apiErrorCount++;
         return null as any;
       }
 
       // Insufficient privileges.
       if(response.status === 403) {
+        this.apiErrorCount++;
         this.log("Insufficient privileges for this user. Please check the roles assigned to this user and ensure it has sufficient privileges.");
+        return null as any;
       }
 
       // Some other unknown error occurred.
       if(!response.ok) {
+        this.apiErrorCount++;
         this.log("Error: %s - %s", response.status, response.statusText);
         return null as any;
       }
 
+      this.apiLastSuccess = Date.now();
+      this.apiErrorCount = 0;
       return response;
     } catch(error) {
+      this.apiErrorCount++;
+
       switch(error.code) {
         case "ECONNREFUSED":
           this.log("%s: Connection refused.", this.nvrAddress);
@@ -546,6 +593,11 @@ export class ProtectApi {
 
         case "ECONNRESET":
           this.log("%s: Connection reset.", this.nvrAddress);
+          break;
+
+        case "ENOTFOUND":
+          this.log("%s: Hostname or IP address not found. Please ensure the address you configured for this UniFi Protect controller is correct.",
+            this.nvrAddress);
           break;
 
         default:
