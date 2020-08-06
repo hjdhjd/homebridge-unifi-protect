@@ -21,3 +21,9 @@ export const PROTECT_NVR_UNIFIOS_REFRESH_INTERVAL = 10;
 // How often should we check UniFi Cloud Key Gen2+ Protect NVRs for motion, other events, or new or removed devices.
 // This WILL impact motion and event detection resolution on UCK Gen2+ NVRs.
 export const PROTECT_NVR_UCK_REFRESH_INTERVAL = 5;
+
+// Number of API errors to accept before we implement backoff so we don't slam a Protect controller.
+export const PROTECT_API_ERROR_LIMIT = 10;
+
+// Amount, in seconds, to wait before trying to access the API again once we've hit the PROTECT_API_ERROR_LIMIT threshold.
+export const PROTECT_API_RETRY_TIME = 300;
