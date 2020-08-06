@@ -5,7 +5,6 @@
  * This module is heavily inspired by the homebridge and homebridge-camera-ffmpeg source code and
  * borrows heavily from both. Thank you for your contributions to the HomeKit world.
  */
-import { spawn } from "child_process";
 import getPort from "get-port";
 import {
   API,
@@ -132,31 +131,24 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   }
 
   // HomeKit image snapshot request handler.
-  handleSnapshotRequest(request: SnapshotRequest, callback: SnapshotRequestCallback): void {
-    const fcmd = "-re -rtsp_transport tcp -i " + this.camera.cameraUrl + " -frames:v 1 -f image2 -";
+  async handleSnapshotRequest(request: SnapshotRequest, callback: SnapshotRequestCallback): Promise<void> {
+    const params = new URLSearchParams({ force: "true", width: request.width as any, height: request.height as any });
+
+    this.debug("%s: Requesting image: %sx%s from: %s?%s", this.name, request.width, request.height, this.camera.snapshotUrl, params);
+
+    const response = await this.camera.nvr.nvrApi.fetch(this.camera.snapshotUrl + "?" + params);
+
+    if(!response || !response.ok) {
+      this.log("%s: Unable to retrieve snapshot.", this.name);
+      callback(new Error(this.name + ": Unable to retrieve snapshot."));
+      return;
+    }
 
     try {
-      // Launch FFmpeg to grab this snapshot.
-      const ffmpeg = spawn(this.videoProcessor, fcmd.split(/\s+/), { env: process.env });
-
-      // Grab the image.
-      let imageBuffer = Buffer.alloc(0);
-      this.debug("%s: Image snapshot: %sx%s.", this.name, request.width, request.height);
-
-      ffmpeg.stdout.on("data", (data: Uint8Array) => {
-        imageBuffer = Buffer.concat([imageBuffer, data]);
-      });
-
-      ffmpeg.on("error", (error: string) => {
-        this.log.error("%s: An error occurred while making a snapshot request: %s.", this.name, error);
-      });
-
-      ffmpeg.on("close", () => {
-        callback(undefined, imageBuffer);
-      });
-
+      const buffer = await response.buffer();
+      callback(undefined, buffer);
     } catch(error) {
-      this.log.error(error, this.name);
+      this.log.error("%s: An error occurred while making a snapshot request: %s.", this.name, error);
       callback(error);
     }
   }

@@ -18,6 +18,7 @@ import { ProtectCameraConfig, ProtectNvrBootstrap } from "./protect-types";
 export class ProtectCamera extends ProtectAccessory {
   cameraUrl = "";
   isVideoConfigured = false;
+  snapshotUrl = "";
 
   // Configure a camera accessory for HomeKit.
   protected async configureDevice(): Promise<boolean> {
@@ -47,12 +48,8 @@ export class ProtectCamera extends ProtectAccessory {
     await this.configureMotionSensor();
     await this.configureMotionSwitch();
 
-    // Configure our video stream.
-    if(!(await this.configureVideoStream())) {
-      return false;
-    }
-
-    return true;
+    // Configure our video stream and we're done.
+    return await this.configureVideoStream();
   }
 
   // Configure camera device information for HomeKit.
@@ -265,8 +262,9 @@ export class ProtectCamera extends ProtectAccessory {
       }
     }
 
-    // Set the camera URL.
+    // Set the video stream and shapshot URLs.
     this.cameraUrl = newCameraUrl;
+    this.snapshotUrl = nvrApi.camerasUrl() + "/" + camera.id + "/snapshot";
 
     // Configure the video stream and inform HomeKit about it, if it's our first time.
     if(!this.isVideoConfigured) {
