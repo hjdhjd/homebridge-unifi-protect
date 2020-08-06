@@ -1,6 +1,6 @@
 {
   "name": "homebridge-unifi-protect2",
-  "version": "3.0.2",
+  "version": "3.1.0",
   "displayName": "Homebridge UniFi Protect",
   "description": "Complete HomeKit integration for UniFi Protect with full support for most features including autoconfiguration, motion detection, and multiple controllers.",
   "author": "HJD https://github.com/hjdhjd",
@@ -36,7 +36,10 @@
     "udm-pro",
     "unifi dream machine pro",
     "unifi nvr",
-    "unifi-nvr"
+    "unifi-nvr",
+    "uvc g3 flex",
+    "uvc g4 doorbell",
+    "uvc g4 pro"
   ],
   "engines": {
     "homebridge": ">=1.0.0"
@@ -51,7 +54,11 @@
     "watch": "npm run build && npm link && nodemon"
   },
   "files": [
-    "CHANGELOG.md",
+    "docs/AdvancedOptions.md",
+    "docs/Liveviews.md",
+    "docs/Changelog.md",
+    "docs/FeatureOptions.md",
+    "docs/Autoconfiguration.md",
     "LICENSE.md",
     "README.md",
     "config.schema.json",
