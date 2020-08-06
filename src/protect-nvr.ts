@@ -8,12 +8,13 @@ import {
   Logging,
   PlatformAccessory
 } from "homebridge";
-import { ProtectAccessory } from "./protect-accessory";
 import { ProtectApi } from "./protect-api";
 import { ProtectCamera } from "./protect-camera";
 import { ProtectPlatform } from "./protect-platform";
+import { ProtectSecuritySystem } from "./protect-securitysystem";
 import {
   ProtectCameraConfig,
+  ProtectNvrLiveviewConfig,
   ProtectNvrOptions,
   ProtectNvrSystemEvent,
   ProtectNvrSystemEventController
@@ -28,9 +29,8 @@ import {
 let Accessory: typeof PlatformAccessory;
 
 export class ProtectNvr {
-  private readonly accessories: PlatformAccessory[] = [];
   private api: API;
-  private readonly configuredAccessories: { [index: string]: ProtectAccessory } = {};
+  private readonly configuredCameras: { [index: string]: ProtectCamera } = {};
   private debug: (message: string, ...parameters: any[]) => void;
   private hap: HAP;
   private lastMotion: { [index: string]: number } = {};
@@ -44,6 +44,8 @@ export class ProtectNvr {
   platform: ProtectPlatform;
   private pollingTimer!: NodeJS.Timeout;
   private refreshInterval: number;
+  private securityAccessory!: PlatformAccessory;
+  private securitySystem!: ProtectSecuritySystem;
   private unsupportedDevices: { [index: string]: boolean } = {};
 
   constructor(platform: ProtectPlatform, nvrOptions: ProtectNvrOptions) {
@@ -118,7 +120,6 @@ export class ProtectNvr {
 
         // Register this accessory with homebridge and add it to the accessory array so we can track it.
         this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
-        this.accessories.push(accessory);
         this.platform.accessories.push(accessory);
       }
 
@@ -127,9 +128,9 @@ export class ProtectNvr {
       accessory.context.nvr = this.nvrApi.bootstrap.nvr.mac;
 
       // Setup the Protect camera if it hasn't been configured yet.
-      if(!this.configuredAccessories[accessory.UUID]) {
+      if(!this.configuredCameras[accessory.UUID]) {
         // Eventually switch on multiple types of UniFi Protect cameras. For now, it's cameras only...
-        this.configuredAccessories[accessory.UUID] = new ProtectCamera(this, accessory);
+        this.configuredCameras[accessory.UUID] = new ProtectCamera(this, accessory);
 
         // Refresh the accessory cache with these values.
         this.api.updatePlatformAccessories([accessory]);
@@ -141,6 +142,10 @@ export class ProtectNvr {
 
     // Remove Protect cameras that are no longer found on this Protect NVR, but we still have in HomeKit.
     await this.cleanupDevices();
+
+    // Configure our security system accessory.
+    await this.configureSecuritySystem();
+
     return true;
   }
 
@@ -150,6 +155,11 @@ export class ProtectNvr {
     // Refresh the full device list from the Protect API.
     if(!(await this.nvrApi.refreshDevices())) {
       return false;
+    }
+
+    // Set a name for this NVR, if we haven't configured one for ourselves.
+    if(!this.name && this.nvrApi && this.nvrApi.bootstrap && this.nvrApi.bootstrap.nvr) {
+      this.name = this.nvrApi.bootstrap.nvr.name;
     }
 
     // If not already configured by the user, set the refresh interval here depending on whether we
@@ -181,9 +191,8 @@ export class ProtectNvr {
     return true;
   }
 
-  // Check for motion on Protect cameras.
+  // Check for motion events on Protect cameras for non-UniFi OS controllers.
   private async checkCameraMotion(): Promise<boolean> {
-
     // Only operate on non-UniFi OS devices. For UniFi OS, we have the realtime events API.
     if(this.nvrApi.isUnifiOs) {
       return false;
@@ -248,11 +257,11 @@ export class ProtectNvr {
       }
 
       // Find the camera in our list of accessories so we can fire off the motion event.
-      const foundCamera = Object.keys(this.configuredAccessories).find((x: string) =>
-        this.configuredAccessories[x].accessory.context.camera.host === controller.info.lastMotionCameraAddress);
+      const foundCamera = Object.keys(this.configuredCameras).find((x: string) =>
+        this.configuredCameras[x].accessory.context.camera.host === controller.info.lastMotionCameraAddress);
 
       // Now grab the accessory associated with the Protect device.
-      const accessory = this.configuredAccessories[foundCamera!].accessory;
+      const accessory = this.configuredCameras[foundCamera!].accessory;
 
       // If we don't have an accessory, it's probably because we've chosen to hide it. In that case,
       // just ignore and move on. Alternatively, it could be a new camera that we just don't know about yet,
@@ -269,6 +278,7 @@ export class ProtectNvr {
     return true;
   }
 
+  // Motion event processing from UniFi Protect and delivered to HomeKit.
   private async motionEventHandler(accessory: PlatformAccessory, lastMotion: number): Promise<void> {
     const camera = accessory.context.camera;
     const hap = this.hap;
@@ -346,6 +356,84 @@ export class ProtectNvr {
     }, refresh * 1000);
   }
 
+  // Update security system accessory.
+  private async configureSecuritySystem(): Promise<boolean> {
+    // Have we disabled the security system accessory?
+    // Check it here.
+    if(!this.nvrApi || !this.nvrApi.bootstrap || !this.nvrApi.bootstrap.nvr) {
+      return false;
+    }
+
+    const nvr = this.nvrApi.bootstrap.nvr;
+    const uuid = this.hap.uuid.generate(nvr.mac + ".Security");
+
+    // If the user has created plugin-specific liveviews, we make a security system accessory available to allow for some
+    // convenient actions like enabling and disabling motion detection on a set of cameras at once. Otherwise, don't make
+    // this available.
+    const liveviews = this.nvrApi.bootstrap.liveviews;
+
+    if(liveviews) {
+      const reLiveviewScene = /^Protect-(Away|Home|Night|Off)$/gi;
+
+      // If we have a security system accessory already configured, we delete it now. The user likely removed the last
+      // liveview that we look for.
+      if(!liveviews.some((x: ProtectNvrLiveviewConfig) => x.name.search(reLiveviewScene) !== -1 ? true : false)) {
+        const oldAccessory = this.platform.accessories.find((x: PlatformAccessory) => x.UUID === uuid);
+
+        if(oldAccessory) {
+          this.log("%s: No plugin-specific liveviews found. Disabling the security system accessory associated with this UniFi Protect controller. ",
+            this.nvrApi.getNvrName());
+
+          // Unregister the accessory and delete it's remnants from HomeKit and the plugin.
+          this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [oldAccessory]);
+          this.platform.accessories.splice(this.platform.accessories.indexOf(oldAccessory), 1);
+        }
+
+        if(this.securitySystem) {
+          delete this.securitySystem;
+        }
+
+        this.securityAccessory = null as any;
+        this.securitySystem = null as any;
+        return false;
+      }
+    }
+
+    // Create the security system accessory if it doesn't already exist.
+    if(!this.securityAccessory) {
+      // See if we already have this accessory defined.
+      if((this.securityAccessory = this.platform.accessories.find((x: PlatformAccessory) => x.UUID === uuid)!) === undefined) {
+        // We will use the NVR MAC address + ".Security" to create our UUID. That should provide guaranteed uniqueness we need.
+        this.securityAccessory = new Accessory(nvr.name, uuid);
+
+        // Register this accessory with homebridge and add it to the platform accessory array so we can track it.
+        this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [this.securityAccessory]);
+        this.platform.accessories.push(this.securityAccessory);
+      }
+
+      if(!this.securityAccessory) {
+        this.log("%s: Umable to create the security system accessory.");
+        return false;
+      }
+
+      this.log("%s: Plugin-specific liveviews have been detected. Enabling the security system accessory.", this.nvrApi.getNvrName());
+    }
+
+    // We have the security system accessory, now let's configure it.
+    if(!this.securitySystem) {
+      this.securitySystem = new ProtectSecuritySystem(this, this.securityAccessory);
+
+      if(!this.securitySystem) {
+        this.log("%s: Unable to configure the security system accessory", this.nvrApi.getNvrName());
+        return false;
+      }
+    }
+
+    // Update our NVR reference.
+    this.securityAccessory.context.nvr = nvr.mac;
+    return true;
+  }
+
   // Cleanup removed Protect devices from HomeKit.
   private async cleanupDevices(): Promise<void> {
     for(const oldAccessory of this.platform.accessories) {
@@ -356,6 +444,11 @@ export class ProtectNvr {
       // Since we're accessing the shared accessories list for the entire platform, we need to ensure we
       // are only touching our cameras and not another NVR's.
       if(oldNvr !== nvr.mac) {
+        continue;
+      }
+
+      // Security system accessories are handled elsewhere.
+      if(oldAccessory.getService(this.hap.Service.SecuritySystem)) {
         continue;
       }
 
@@ -375,8 +468,7 @@ export class ProtectNvr {
       // Unregister the accessory and delete it's remnants from HomeKit and the plugin.
       this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [oldAccessory]);
 
-      delete this.configuredAccessories[oldAccessory.UUID];
-      this.accessories.splice(this.accessories.indexOf(oldAccessory), 1);
+      delete this.configuredCameras[oldAccessory.UUID];
       this.platform.accessories.splice(this.platform.accessories.indexOf(oldAccessory), 1);
     }
   }
@@ -384,7 +476,7 @@ export class ProtectNvr {
   // Check devices for any updates to the configured RTSP streams.
   private async updateDeviceStreams(accessory: PlatformAccessory): Promise<void> {
     // Find our camera object and reconfigure our RTSP stream, if we can.
-    const camera = this.configuredAccessories[accessory.UUID] as ProtectCamera;
+    const camera = this.configuredCameras[accessory.UUID] as ProtectCamera;
 
     if(!camera) {
       return;

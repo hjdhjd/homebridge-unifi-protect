@@ -13,7 +13,7 @@ export interface ProtectNvrBootstrapInterface {
   groups: any[],
   lastUpdateId: string,
   lights: any[],
-  liveviews: any[],
+  liveviews: ProtectNvrLiveviewConfig[],
   nvr: ProtectNvrConfig,
   sensors: any[],
   users: ProtectNvrUserConfig[],
@@ -234,6 +234,18 @@ export interface ProtectCameraChannelConfigInterface {
   width: number
 }
 
+// A semi-complete description of the UniFi Protect NVR liveview JSON.
+export interface ProtectNvrLiveviewConfigInterface {
+  id: string,
+  isDefault: boolean,
+  isGlobal: boolean,
+  layout: number,
+  modelKey: string,
+  name: string,
+  owner: string,
+  slots: { cameras: string[], cycleInterval: number, cycleMode: string } []
+}
+
 // A semi-complete description of the UniFi Protect NVR user JSON.
 export interface ProtectNvrUserConfigInterface {
   alertRules: any[],
@@ -353,6 +365,7 @@ export type ProtectNvrBootstrap = Readonly<ProtectNvrBootstrapInterface>;
 export type ProtectNvrConfig = Readonly<ProtectNvrConfigInterface>;
 export type ProtectCameraConfig = Readonly<ProtectCameraConfigInterface>;
 export type ProtectCameraChannelConfig = Readonly<ProtectCameraChannelConfigInterface>;
+export type ProtectNvrLiveviewConfig = Readonly<ProtectNvrLiveviewConfigInterface>;
 export type ProtectNvrSystemEvent = Readonly<ProtectNvrSystemEventInterface>;
 export type ProtectNvrSystemEventController = Readonly<ProtectNvrSystemEventControllerInterface>;
 export type ProtectNvrUserConfig = Readonly<ProtectNvrUserConfigInterface>;
