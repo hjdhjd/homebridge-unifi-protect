@@ -9,7 +9,7 @@ export const PLUGIN_NAME = "homebridge-unifi-protect2";
 export const PLATFORM_NAME = "UniFi Protect";
 
 // Magic incantantion to further streamline ffmpeg for Protect.
-export const PROTECT_FFMPEG_OPTIONS = "-probesize 32 -analyzeduration 0 -fflags nobuffer -refs 1 -x264-params intra-refresh=1:bframes=0";
+export const PROTECT_FFMPEG_OPTIONS = "-probesize 32 -analyzeduration 0 -fflags nobuffer";
 
 // Default duration of motion events. Setting this too low will potentially cause a lot of notification spam.
 export const PROTECT_MOTION_DURATION = 10;

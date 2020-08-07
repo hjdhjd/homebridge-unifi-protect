@@ -134,7 +134,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   async handleSnapshotRequest(request: SnapshotRequest, callback: SnapshotRequestCallback): Promise<void> {
     const params = new URLSearchParams({ force: "true", width: request.width as any, height: request.height as any });
 
-    this.debug("%s: Requesting image: %sx%s from: %s?%s", this.name, request.width, request.height, this.camera.snapshotUrl, params);
+    this.debug("%s: HomeKit snapshot request: %sx%s. Retrieving image from Protect: %s?%s", this.name, request.width, request.height, this.camera.snapshotUrl, params);
 
     const response = await this.camera.nvr.nvrApi.fetch(this.camera.snapshotUrl + "?" + params);
 
@@ -208,14 +208,15 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     const sessionInfo = this.pendingSessions[request.sessionID];
 
     // We're going to be encoding an H.264 stream.
-    const vcodec = "libx264";
+    const vcodec = "copy";
 
     // Accept whatever frame rate is requested of us.
     const fps = request.video.fps;
 
-    // Set our packet size to be 188 - it's the smallest possible size we can use (must be a multiple of 188).
-    // We do this primarily for speed and interactivity at the expense of some minor additional overhead.
-    const mtu = 188;
+    // Set our packet size to be 658 - half the size of a UDP packet (1316 bytes).
+    // We do this primarily for speed and interactivity at the expense of some minor additional overhead. In
+    // testing, this produces the best combination of instantaneous response with the right level of quality.
+    const mtu = 658;
 
     // Protect unfortunately has the video and audio streams backwards from what FFmpeg expects, so we map the
     // audio and video channels to the right streams.
@@ -228,14 +229,14 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
     let fcmd = "-re -rtsp_transport tcp -i " + this.camera.cameraUrl;
 
-    this.log("%s: Starting video stream: %sx%s, %s fps, %s kbps.",
+    this.log("%s: HomeKit video stream request: %sx%s, %s fps, %s kbps.",
       this.name, request.video.width, request.video.height, request.video.fps, request.video.max_bit_rate);
 
     // Configure our video parameters.
     const ffmpegVideoArgs =
       " -map " + mapvideo +
       " -vcodec " + vcodec +
-      " -pix_fmt yuvj420p" +
+      " -pix_fmt yuvj422p" +
       " -r " + fps +
       " -f rawvideo" +
       " " + this.platform.config.ffmpegOptions +
@@ -303,6 +304,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
   // Process incoming stream requests.
   handleStreamRequest(request: StreamingRequest, callback: StreamRequestCallback): void {
+
     switch(request.type) {
       case StreamRequestTypes.START:
         this.startStream(request, callback);
