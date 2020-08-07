@@ -2,7 +2,10 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
-## 3.1.0
+## 3.1.1 (2020-08-07)
+  * Fix: improve streaming startup latency and performance.
+
+## 3.1.0 (2020-08-06)
   * New feature: enable or disable motion detection across multiple cameras simultaneously using the liveview feature in the UniFi Protect controller webUI. This will activate a new HomeKit security system accessory for this plugin and give you the ability to really tailor when alerts get generated, and for which cameras. [Read more about it here](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/Liveviews.md).
   * Enhancement: snapshots are now pulled directly from the Protect controller. This should substantially improve both the speed of snapshot generation and the image quality which were previously generated from a video frame.
   * Enhancement: improved error detection and notification when you configure a bad hostname or IP address.
