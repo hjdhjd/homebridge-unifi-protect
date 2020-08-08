@@ -40,7 +40,7 @@ The `options` setting is an array of strings used to customize feature options. 
 * <CODE>Enable.MotionSwitch</CODE> - add a switch accessory to activate or deactivate motion detection in HomeKit.
 * <CODE>Disable.MotionSwitch</CODE> - remove the switch accessory used to enable or disable motion detection. Note: this will not disable motion detection, just remove the ability to selectively activate and deactivate it in HomeKit.
 
-Before using these features, you should understand how feature options propogate to controllers and the devices attached to them. If you choose to disable a controller from being available to HomeKit, you will also disable all the cameras attached to that controller. If you've disabled a controller, and all it's devices with it, you can selectively enable a single device associated with that controller by explicitly setting an `Enable.` feature option. This provides you a lot of richness in how you enable or disable devices for HomeKit use.
+Before using these features, you should understand how feature options propagate to controllers and the devices attached to them. If you choose to disable a controller from being available to HomeKit, you will also disable all the cameras attached to that controller. If you've disabled a controller, and all it's devices with it, you can selectively enable a single device associated with that controller by explicitly setting an `Enable.` feature option. This provides you a lot of richness in how you enable or disable devices for HomeKit use.
 
 ### Example
 An example `options` setting might look like this:
