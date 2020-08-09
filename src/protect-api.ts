@@ -242,7 +242,11 @@ export class ProtectApi {
       });
 
       this.eventListener.on("error", (error) => {
-        this.log("%s: %s", this.getNvrName(), error);
+        // If we're closing before fully established it's because we're shutting down the API - ignore it.
+        if(error.message !== "WebSocket was closed before the connection was established") {
+          this.log("%s: %s", this.getNvrName(), error);
+        }
+
         this.eventListener.terminate();
         this.eventListener = null as any;
         this.eventListenerConfigured = false;
@@ -501,7 +505,7 @@ export class ProtectApi {
   }
 
   // Utility to clear out old login credentials or attempts.
-  private clearLoginCredentials() {
+  clearLoginCredentials(): void {
     this.isAdminUser = false;
     this.isUnifiOs = false;
     this.loggedIn = false;

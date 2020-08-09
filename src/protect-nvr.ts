@@ -165,7 +165,7 @@ export class ProtectNvr {
     // Only run this check once, since we don't need to repeat it again.
     if(!this.isEnabled && (this.platform.configOptions.indexOf("DISABLE." + this.nvrApi.bootstrap.nvr.mac.toUpperCase()) !== -1)) {
       this.log("%s: Disabling this Protect controller.", this.nvrApi.getNvrName());
-      clearTimeout(this.pollingTimer);
+      this.nvrApi.clearLoginCredentials();
       return false;
     }
 
@@ -369,6 +369,11 @@ export class ProtectNvr {
     this.pollingTimer = setTimeout(async () => {
       // Refresh our Protect device information and gracefully handle Protect errors.
       await self.updateAccessories();
+
+      // Our Protect NVR is disabled. We're done.
+      if(!this.isEnabled) {
+        return;
+      }
 
       // Fire off the next polling interval.
       self.poll(self.refreshInterval);
