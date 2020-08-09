@@ -16,12 +16,14 @@ import { ProtectStreamingDelegate } from "./protect-stream";
 import { ProtectCameraConfig, ProtectNvrBootstrap } from "./protect-types";
 
 export class ProtectCamera extends ProtectAccessory {
-  cameraUrl = "";
-  isVideoConfigured = false;
-  snapshotUrl = "";
+  cameraUrl!: string
+  isVideoConfigured!: boolean;
+  snapshotUrl!: string;
 
   // Configure a camera accessory for HomeKit.
   protected async configureDevice(): Promise<boolean> {
+    this.isVideoConfigured = false;
+
     const accessory = this.accessory;
     let detectMotion = true;
 
@@ -52,7 +54,7 @@ export class ProtectCamera extends ProtectAccessory {
     return await this.configureVideoStream();
   }
 
-  // Configure camera device information for HomeKit.
+  // Configure the camera device information for HomeKit.
   private async configureInfo(): Promise<boolean> {
     const accessory = this.accessory;
     const camera: ProtectCameraConfig = accessory.context.camera;
@@ -86,7 +88,7 @@ export class ProtectCamera extends ProtectAccessory {
     return true;
   }
 
-  // Configure camera motion sensors for HomeKit.
+  // Configure the camera motion sensor for HomeKit.
   private async configureMotionSensor(): Promise<boolean> {
     const accessory = this.accessory;
     const hap = this.hap;
@@ -117,7 +119,7 @@ export class ProtectCamera extends ProtectAccessory {
     const accessory = this.accessory;
     const hap = this.hap;
 
-    // Clear out any previous motion sensor service.
+    // Clear out any previous switch service.
     let switchService = accessory.getService(hap.Service.Switch);
 
     if(switchService) {

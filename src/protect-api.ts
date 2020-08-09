@@ -143,7 +143,7 @@ export class ProtectApi {
     }
 
     // Clear out our login credentials and reset for another try.
-    await this.clearLoginCredentials();
+    this.clearLoginCredentials();
 
     return false;
   }
@@ -162,7 +162,7 @@ export class ProtectApi {
         this.nvrAddress);
 
       // Clear out our login credentials and reset for another try.
-      await this.clearLoginCredentials();
+      this.clearLoginCredentials();
       return false;
     }
 
@@ -181,7 +181,7 @@ export class ProtectApi {
       this.log("%s: Unable to retrieve camera information from UniFi Protect. Will retry again later.", this.nvrAddress);
 
       // Clear out our login credentials and reset for another try.
-      await this.clearLoginCredentials();
+      this.clearLoginCredentials();
       return false;
     }
 
@@ -190,7 +190,7 @@ export class ProtectApi {
     this.bootstrap = data;
 
     if(firstRun) {
-      this.log("%s: Connected to the NVR API(address: %s mac: %s).", this.getNvrName(), data.nvr.host, data.nvr.mac);
+      this.log("%s: Connected to the Protect controller API (address: %s mac: %s).", this.getNvrName(), data.nvr.host, data.nvr.mac);
     }
 
     // Capture the bootstrap if we're debugging.
@@ -248,7 +248,7 @@ export class ProtectApi {
         this.eventListenerConfigured = false;
       });
 
-      this.log("%s: Connected to the realtime system events API.", this.getNvrName());
+      this.log("%s: Connected to the UniFi realtime system events API.", this.getNvrName());
     } catch(error) {
       this.log("%s: Error connecting to the system events API: %s", this.getNvrName(), error);
     }
@@ -453,21 +453,21 @@ export class ProtectApi {
   // Return the URL to directly access cameras, adjusting for Protect NVR variants.
   camerasUrl(): string {
     // Updating the channels on a UCK Gen2+ device is done through: https://protect-nvr-ip:7443/api/cameras/CAMERAID.
-    // Boostrapping a UniFi OS device is fone through: https://protect-nvr-ip/proxy/protect/api/cameras/CAMERAID.
+    // Boostrapping a UniFi OS device is done through: https://protect-nvr-ip/proxy/protect/api/cameras/CAMERAID.
     return "https://" + this.nvrAddress + (this.isUnifiOs ? "/proxy/protect/api/cameras" : ":7443/api/cameras");
   }
 
   // Return the right authentication URL, depending on which Protect NVR platform we are using.
   private authUrl(): string {
     // Authenticating a UCK Gen2+ device is done through: https://protect-nvr-ip:7443/api/auth.
-    // Authenticating a UniFi OS device is fone through: https://protect-nvr-ip/api/auth/login.
+    // Authenticating a UniFi OS device is done through: https://protect-nvr-ip/api/auth/login.
     return "https://" + this.nvrAddress + (this.isUnifiOs ? "/api/auth/login" : ":7443/api/auth");
   }
 
   // Return the right bootstrap URL, depending on which Protect NVR platform we are using.
   private bootstrapUrl(): string {
     // Boostrapping a UCK Gen2+ device is done through: https://protect-nvr-ip:7443/api/bootstrap.
-    // Boostrapping a UniFi OS device is fone through: https://protect-nvr-ip/proxy/protect/api/bootstrap.
+    // Boostrapping a UniFi OS device is done through: https://protect-nvr-ip/proxy/protect/api/bootstrap.
     return "https://" + this.nvrAddress + (this.isUnifiOs ? "/proxy/protect/api/bootstrap" : ":7443/api/bootstrap");
   }
 
@@ -501,7 +501,7 @@ export class ProtectApi {
   }
 
   // Utility to clear out old login credentials or attempts.
-  private async clearLoginCredentials() {
+  private clearLoginCredentials() {
     this.isAdminUser = false;
     this.isUnifiOs = false;
     this.loggedIn = false;
@@ -530,7 +530,7 @@ export class ProtectApi {
     try {
       const now = Date.now();
 
-      // Throttle this after ten attempts.
+      // Throttle this after PROTECT_API_ERROR_LIMIT attempts.
       if(this.apiErrorCount >= PROTECT_API_ERROR_LIMIT) {
         // Let the user know we've got an API problem.
         if(this.apiErrorCount === PROTECT_API_ERROR_LIMIT) {

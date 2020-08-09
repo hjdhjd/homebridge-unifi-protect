@@ -48,14 +48,14 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
       this.debug("Debug logging on. Expect a lot of data.");
     }
 
-    // If we have feature options, put them into their own array, upper-cased for future use.
+    // If we have feature options, put them into their own array, upper-cased for future reference.
     if(config.options) {
       config.options.forEach((featureOption: string) => {
         this.configOptions.push(featureOption.toUpperCase());
       });
     }
 
-    // Motion detection duration. Make sure it's never less than 2 seconds so we can actually alert the user.
+    // Additional ffmpeg options, in case the user wants to override the defaults. This option may be removed in a future release.
     if(!config.ffmpegOptions) {
       config.ffmpegOptions = PROTECT_FFMPEG_OPTIONS;
     }
@@ -69,18 +69,18 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
       config.motionDuration = PROTECT_MOTION_DURATION;
     }
 
-    // Loop through each configured NVR and instantiate them.
+    // Loop through each configured NVR and instantiate it.
     config.controllers.forEach((nvrOptions: ProtectNvrOptions) => {
 
       // We need an address, or there's nothing to do.
       if(!nvrOptions.address) {
-        this.log("No host or IP address has been configured. Unable to start.");
+        this.log("No host or IP address has been configured.");
         return;
       }
 
       // We need login credentials or we're skipping this one.
       if(!nvrOptions.username || !nvrOptions.password) {
-        this.log("No UniFi Protect login credentials have been configured. Unable to start");
+        this.log("No UniFi Protect login credentials have been configured.");
         return;
       }
 
