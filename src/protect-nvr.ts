@@ -30,14 +30,14 @@ let Accessory: typeof PlatformAccessory;
 
 export class ProtectNvr {
   private api: API;
-  private readonly configuredCameras: { [index: string]: ProtectCamera } = {};
+  private readonly configuredCameras: { [index: string]: ProtectCamera };
   private debug: (message: string, ...parameters: any[]) => void;
+  private isEnabled: boolean;
   private hap: HAP;
   private lastMotion: { [index: string]: number } = {};
   private log: Logging;
   private motionDuration: number;
-  private readonly motionEventTimers: { [index: string]: NodeJS.Timeout } = {};
-  private realLastMotion: { [index: string]: number } = {};
+  private readonly motionEventTimers: { [index: string]: NodeJS.Timeout };
   private name: string;
   private nvrAddress: string;
   nvrApi!: ProtectApi;
@@ -46,18 +46,22 @@ export class ProtectNvr {
   private refreshInterval: number;
   private securityAccessory!: PlatformAccessory;
   private securitySystem!: ProtectSecuritySystem;
-  private unsupportedDevices: { [index: string]: boolean } = {};
+  private unsupportedDevices: { [index: string]: boolean };
 
   constructor(platform: ProtectPlatform, nvrOptions: ProtectNvrOptions) {
     this.api = platform.api;
+    this.configuredCameras = {};
     this.debug = platform.debug.bind(platform);
+    this.isEnabled = false;
     this.hap = this.api.hap;
     this.log = platform.log;
     this.name = nvrOptions.name;
     this.motionDuration = platform.config.motionDuration;
+    this.motionEventTimers = {};
     this.nvrAddress = nvrOptions.address;
     this.platform = platform;
     this.refreshInterval = nvrOptions.refreshInterval;
+    this.unsupportedDevices = {};
 
     Accessory = this.api.platformAccessory;
 
@@ -156,6 +160,16 @@ export class ProtectNvr {
     if(!(await this.nvrApi.refreshDevices())) {
       return false;
     }
+
+    // This NVR has been disabled. Stop polling for updates and let the user know that we're done here.
+    // Only run this check once, since we don't need to repeat it again.
+    if(!this.isEnabled && (this.platform.configOptions.indexOf("DISABLE." + this.nvrApi.bootstrap.nvr.mac.toUpperCase()) !== -1)) {
+      this.log("%s: Disabling this Protect controller.", this.nvrApi.getNvrName());
+      clearTimeout(this.pollingTimer);
+      return false;
+    }
+
+    this.isEnabled = true;
 
     // Set a name for this NVR, if we haven't configured one for ourselves.
     if(!this.name && this.nvrApi && this.nvrApi.bootstrap && this.nvrApi.bootstrap.nvr) {
@@ -260,8 +274,13 @@ export class ProtectNvr {
       const foundCamera = Object.keys(this.configuredCameras).find((x: string) =>
         this.configuredCameras[x].accessory.context.camera.host === controller.info.lastMotionCameraAddress);
 
+      // Nothing here - we may have disabled this camera or it's associated NVR.
+      if(!foundCamera) {
+        return;
+      }
+
       // Now grab the accessory associated with the Protect device.
-      const accessory = this.configuredCameras[foundCamera!].accessory;
+      const accessory = this.configuredCameras[foundCamera].accessory;
 
       // If we don't have an accessory, it's probably because we've chosen to hide it. In that case,
       // just ignore and move on. Alternatively, it could be a new camera that we just don't know about yet,
