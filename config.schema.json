@@ -146,7 +146,7 @@
       "items": [
         {
           "type": "string",
-          "description": "Enter only one option per entry. See developer page for the complete list of available options. ",
+          "description": "Enter only one option per entry. See project page for the complete list of available options.",
           "placeholder": "e.g. Disable.Stream.High",
           "displayFlex": true,
           "flex-direction": "row",
