@@ -207,83 +207,123 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   private async startStream(request: StartStreamRequest, callback: StreamRequestCallback): Promise<void> {
     const sessionInfo = this.pendingSessions[request.sessionID];
 
-    // We're going to be encoding an H.264 stream.
-    const vcodec = "copy";
+    // Set our packet size to be 564. Why? MPEG transport stream (TS) packets are 188 bytes in size each.
+    // These packets transmit the video data that you ultimately see on your screen and are transmitted using
+    // UDP. Each UDP packet is 1316 bytes in size, before being encapsulated in IP. We want to get as many
+    // TS packets as we can, within reason, in those UDP packets. This translates to 1316 / 188 = 7 TS packets
+    // as a limit of what can be pushed through over a network connection. Here's the problem...you need to have
+    // enough data to fill that pipe, all the time. Network latency, ffmpeg overhead, and the speed / quality of
+    // the original camera stream all play a role here, and as you can imagine, there's a nearly endless set of
+    // combinations to deciding how to fill that pipe. Set it too low, and you're incurring extra overhead in
+    // pushing less data to clients, though you're increasing interactivity by getting whatever data you have to
+    // the end user. Set it too high, and startup latency becomes unacceptable when you're trying to stream.
+    //
+    // For audio, you have a latency problem and a packet size that's too big will force the audio to sound choppy
+    // - so we opt to increase responsiveness at the risk of more overhead. This gives the end user a much better
+    // audio experience, at a very marginal cost in bandwidth overhead.
+    //
+    // Through experimentation, I've found a sweet spot of 188 * 3 = 564 for video on Protect cameras. This works
+    // very well for G3-series cameras, and pretty well for G4-series cameras. The G4s tend to push a lot more data
+    // which drives the latency higher when you're first starting up a stream. In my testing, adjusting the packet
+    // size beyond 564 did not have a material impact in improving the startup time of a G4 camera, but did have
+    // a negative impact on G3 cameras.
+    const videomtu = 188 * 3;
+    const audiomtu = 188 * 1;
 
-    // Accept whatever frame rate is requested of us.
-    const fps = request.video.fps;
-
-    // Set our packet size to be 658 - half the size of a UDP packet (1316 bytes).
-    // We do this primarily for speed and interactivity at the expense of some minor additional overhead. In
-    // testing, this produces the best combination of instantaneous response with the right level of quality.
-    const mtu = 658;
-
-    // Protect unfortunately has the video and audio streams backwards from what FFmpeg expects, so we map the
-    // audio and video channels to the right streams.
-    const mapaudio = "0:0";
-    const mapvideo = "0:1";
-
-    // Accept whatever bitrates are requested of us.
-    const videoBitrate = request.video.max_bit_rate;
-    const audioBitrate = request.audio.max_bit_rate;
-
+    // -re: tell ffmpeg to read information as fast as it's being sent.
+    // -rtsp_transport tcp: tell the RTSP stream handler that we're looking for a TCP connection.
     let fcmd = "-re -rtsp_transport tcp -i " + this.camera.cameraUrl;
 
     this.log("%s: HomeKit video stream request: %sx%s, %s fps, %s kbps.",
       this.name, request.video.width, request.video.height, request.video.fps, request.video.max_bit_rate);
 
-    // Configure our video parameters.
+    // Configure our video parameters:
+    // -map 0:v           selects the first available video track from the stream. Protect actually maps audio
+    //                    and video tracks in opposite locations from where ffmpeg typically expects them. This
+    //                    setting is a more general solution than naming the track locations directly in case
+    //                    Protect changes this in n the future.
+    // -vcodec copy       copy the stream withour reencoding it.
+    // -f rawvideo        specify that we're using raw video.
+    // -pix_fmt yuvj422p  use the yuvj422p pixel format rather than yuvj420p, which is now deprecated in ffmpeg.
+    // -r fps             frame rate to use for this stream. This is specified by HomeKit.
+    // -b:v bitrate       the average bitrate to use for this stream. This is specified by HomeKit.
+    // -bufsize size      this is the decoder buffer size, which drives the variability / quality of the output bitrate.
+    // -maxrate bitrate   the maximum bitrate tolerance, used with -bufsize. We set this to max_bit_rate to effectively
+    //                    create a constant bitrate.
+    // -payload_type num  payload type for the RTP stream. This is negotiated by HomeKit and is usually 99 for H.264 video.
     const ffmpegVideoArgs =
-      " -map " + mapvideo +
-      " -vcodec " + vcodec +
-      " -pix_fmt yuvj422p" +
-      " -r " + fps +
+      " -map 0:v" +
+      " -vcodec copy" +
       " -f rawvideo" +
+      " -pix_fmt yuvj422p" +
+      " -r " + request.video.fps +
       " " + this.platform.config.ffmpegOptions +
-      " -b:v " + videoBitrate + "k" +
-      " -bufsize " + 2 * videoBitrate + "k" +
-      " -maxrate " + videoBitrate + "k" +
+      " -b:v " + request.video.max_bit_rate + "k" +
+      " -bufsize " + (2 * request.video.max_bit_rate) + "k" +
+      " -maxrate " + request.video.max_bit_rate + "k" +
       " -payload_type " + request.video.pt;
 
-    // Add the required RTP settings and encryption for the stream.
+    // Add the required RTP settings and encryption for the stream:
+    // -ssrc                   synchronization source stream identifier. Random number negotiated by HomeKit to identify this stream.
+    // -f rtp                  specify that we're using the RTP protocol.
+    // -srtp_out_suite enc     specify the output encryption encoding suites.
+    // -srtp_out_params params specify the output encoding parameters. This is negotiated by HomeKit.
     const ffmpegVideoStream =
       " -ssrc " + sessionInfo.videoSSRC +
       " -f rtp" +
       " -srtp_out_suite AES_CM_128_HMAC_SHA1_80" +
       " -srtp_out_params " + sessionInfo.videoSRTP.toString("base64") +
       " srtp://" + sessionInfo.address + ":" + sessionInfo.videoPort +
-      "?rtcpport=" + sessionInfo.videoPort +"&localrtcpport=" + sessionInfo.videoPort + "&pkt_size=" + mtu;
+      "?rtcpport=" + sessionInfo.videoPort +"&localrtcpport=" + sessionInfo.videoPort + "&pkt_size=" + videomtu;
 
     // Assemble the final video command line.
     fcmd += ffmpegVideoArgs;
     fcmd += ffmpegVideoStream;
 
     // Configure the audio portion of the command line, but only if we have audio supported enabled (on by
-    // default), and our version of FFmpeg supports libfdk_aac.
+    // default), and our version of FFmpeg supports libfdk_aac. Options we use are:
+    //
+    // -map 0:a              selects the first available audio track from the stream. Protect actually maps audio
+    //                       and video tracks in opposite locations from where ffmpeg typically expects them. This
+    //                       setting is a more general solution than naming the track locations directly in case
+    //                       Protect changes this in the future.
+    // -acodec libfdk_aac    encode to AAC.
+    // -profile:a aac_eld    specify enhanced, low-delay AAC for HomeKit.
+    // -flags +global_header sets the global header in the bitstream.
+    // -f null               null filter to pass the audio unchanged without running through a muxing operation.
+    // -ar samplerate        sample rate to use for this audio. This is specified by HomeKit.
+    // -b:a bitrate          bitrate to use for this audio. This is specified by HomeKit.
+    // -bufsize size         this is the decoder buffer size, which drives the variability / quality of the output bitrate.
+    // -ac 1                 set the number of audio channels to 1.
+    // -payload_type num     payload type for the RTP stream. This is negotiated by HomeKit and is usually 110 for AAC-ELD audio.
     if(this.camera && this.camera.accessory && this.camera.nvr &&
       this.camera.nvr.optionEnabled(this.camera.accessory.context.camera, "Audio") &&
       (await FfmpegProcess.codecEnabled(this.videoProcessor, "libfdk_aac"))) {
       // Configure our video parameters.
       const ffmpegAudioArgs =
-        " -map " + mapaudio +
+        " -map 0:a" +
         " -acodec libfdk_aac" +
         " -profile:a aac_eld" +
         " -flags +global_header" +
         " -f null" +
         " -ar " + request.audio.sample_rate + "k" +
-        " -b:a " + audioBitrate + "k" +
-        " -bufsize " + audioBitrate + "k" +
+        " -b:a " + request.audio.max_bit_rate + "k" +
+        " -bufsize " + (2 * request.audio.max_bit_rate) + "k" +
         " -ac 1" +
         " -payload_type " + request.audio.pt;
 
-      // Add the required RTP settings and encryption for the stream.
+      // Add the required RTP settings and encryption for the stream:
+      // -ssrc                   synchronization source stream identifier. Random number negotiated by HomeKit to identify this stream.
+      // -f rtp                  specify that we're using the RTP protocol.
+      // -srtp_out_suite enc     specify the output encryption encoding suites.
+      // -srtp_out_params params specify the output encoding parameters. This is negotiated by HomeKit.
       const ffmpegAudioStream =
         " -ssrc " + sessionInfo.audioSSRC +
         " -f rtp" +
         " -srtp_out_suite AES_CM_128_HMAC_SHA1_80" +
         " -srtp_out_params " + sessionInfo.audioSRTP.toString("base64") +
         " srtp://" + sessionInfo.address + ":" + sessionInfo.audioPort +
-        "?rtcpport=" + sessionInfo.audioPort + "&localrtcpport=" + sessionInfo.audioPort + "&pkt_size=188";
+        "?rtcpport=" + sessionInfo.audioPort + "&localrtcpport=" + sessionInfo.audioPort + "&pkt_size=" + audiomtu;
 
       fcmd += ffmpegAudioArgs;
       fcmd += ffmpegAudioStream;
