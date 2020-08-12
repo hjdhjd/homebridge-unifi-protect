@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 3.1.3 (2020-08-12)
+  * Minor updates to support libraries and some housekeeping.
+
 ## 3.1.2 (2020-08-09)
   * Fix: correctly disable a Protect controller when configured to do so in options.
 
