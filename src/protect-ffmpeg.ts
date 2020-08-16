@@ -55,34 +55,30 @@ export class FfmpegProcess {
     // Execute the command line.
     this.process = spawn(delegate.videoProcessor, command.split(/\s+/), { env: process.env });
 
-    if(this.process.stdin) {
-      this.process.stdin.on("error", (error: Error) => {
-        if(!error.message.includes("EPIPE")) {
-          this.log.error("%s: FFmpeg error: %s", delegate.name, error.message);
-        }
-      });
-    }
+    this.process.stdin?.on("error", (error: Error) => {
+      if(!error.message.includes("EPIPE")) {
+        this.log.error("%s: FFmpeg error: %s", delegate.name, error.message);
+      }
+    });
 
-    if(this.process.stderr) {
-      this.process.stderr.on("data", (data) => {
-        if(!started) {
-          started = true;
-          this.debug("%s: Received the first frame.", delegate.name);
+    this.process.stderr?.on("data", (data) => {
+      if(!started) {
+        started = true;
+        this.debug("%s: Received the first frame.", delegate.name);
 
-          // Always remember to execute the callback once we're setup.
-          if(callback) {
-            callback();
-          }
+        // Always remember to execute the callback once we're setup.
+        if(callback) {
+          callback();
         }
+      }
 
-        // Debugging and additional logging, if requested.
-        if(delegate.platform.debugMode) {
-          data.toString().split(/\n/).forEach((line: string) => {
-            this.log(line);
-          });
-        }
-      });
-    }
+      // Debugging and additional logging, if requested.
+      if(delegate.platform.debugMode) {
+        data.toString().split(/\n/).forEach((line: string) => {
+          this.log(line);
+        });
+      }
+    });
 
     // Error handling.
     this.process.on("error", (error: Error) => {
