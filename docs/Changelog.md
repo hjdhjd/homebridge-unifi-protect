@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 3.2.0 (2020-08-16)
+  * New feature: initial support for UniFi Protect G4 Doorbell. We support doorbell rings, video, and receiving audio in this release.
+  * Enhancement: enable connection reuse (aka keepalives) on UniFi OS platforms.
+  * Fix: correct a race condition that can occur when adding new cameras in realtime.
+  * Fix: refresh Protect controller security credentials on a regular basis.
+
 ## 3.1.3 (2020-08-12)
   * Minor updates to support libraries and some housekeeping.
 

@@ -24,6 +24,8 @@ What does *just works* mean in practice? It means that this plugin will discover
 
 - **Support for multiple controllers.** This plugin can support multiple UniFi Protect controllers. If you have more than one controller, it's easy to add them to this plugin, and integrate them seamlessly into HomeKit.
 
+- **Doorbell ring support** This plugin provides support for [UniFi Protect G4 Doorbell](https://store.ui.com/collections/unifi-protect/products/uvc-g4-doorbell). We currently support doorbell rings, motion detection, video, and receiving audio. *Using the microphone to send audio is not currently supported*.
+
 - **Automatic *continuous* detection and configuration of all UniFi Protect devices.** By default - all of your supported UniFi Protect devices are made available in HomeKit without needing any further configuration on your part. Additionally, if you add or remove cameras or other devices to your UniFi Protect controller, this plugin will autodetect those configuration changes and add or remove those devices in HomeKit, seamlessly, *in realtime*.
 
 - **The ability to [selectively hide and show](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/FeatureOptions.md) specific Protect devices.** For those who only want to show particular devices in HomeKit, or particular controllers, a flexible and intuitive way to configure device availability at a granular level is available.
@@ -38,8 +40,11 @@ What does *just works* mean in practice? It means that this plugin will discover
 
 ### What's not in this plugin right now
 
-Full support for UniFi Protect doorbells such as the [UniFi Protect G4 Doorbell](https://store.ui.com/collections/unifi-protect/products/uvc-g4-doorbell). I would love to add more complete support for the doorbell, but until I can get my hands on one, the best I can do at the moment is provide support for the camera itself, but not the full doorbell functionality. I hope to resolve this in the near future.
+Microphone support / two-way audio for UniFi Protect doorbell devices such as the [G4 Doorbell](https://store.ui.com/collections/unifi-protect/products/uvc-g4-doorbell). I'd love to get there with two-way audio, but we need further reverse engineering of the Protect API to do it, or an official API from Ubiquiti (this is unlikely to happen, so reverse engineering it is).
 
+Currently, we support doorbell ring events, motion sensor, and incoming video.
+
+I hope to continue to work on this one to get two-way audio working. The game plan right now is to figure out how Protect is currently transmitting audio back to the doorbell and see how we can emulate it.
 
 ## Documentation
 * Getting going
