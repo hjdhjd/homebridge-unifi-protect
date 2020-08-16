@@ -172,7 +172,7 @@ export class ProtectSecuritySystem extends ProtectAccessory {
 
       case SecuritySystemTargetState.DISARM:
         newState = SecuritySystemCurrentState.DISARMED;
-        viewScene = "Protect-Disarmed";
+        viewScene = "Protect-Off";
         break;
 
       default:
@@ -230,7 +230,7 @@ export class ProtectSecuritySystem extends ProtectAccessory {
           motionSwitch.getCharacteristic(hap.Characteristic.On)!.updateValue(targetAccessory.context.detectMotion);
         }
 
-        this.log("%s: Motion detection %s.", targetAccessory.displayName,
+        this.log("%s -> %s: Motion detection %s.", viewScene, targetAccessory.displayName,
           targetAccessory.context.detectMotion === true ? "enabled" : "disabled");
       }
     }
