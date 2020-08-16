@@ -50,6 +50,12 @@ export class ProtectCamera extends ProtectAccessory {
     await this.configureMotionSensor();
     await this.configureMotionSwitch();
 
+    // If we have a doorbell, configure it as one.
+    if(camera.type === "UVC G4 Doorbell") {
+      await this.configureVideoDoorbell();
+      this.nvr.doorbellCount++;
+    }
+
     // Configure our video stream and we're done.
     return await this.configureVideoStream();
   }
@@ -166,7 +172,7 @@ export class ProtectCamera extends ProtectAccessory {
     const nvrApi: ProtectApi = this.nvr.nvrApi;
 
     // No channels exist on this camera.
-    if(!accessory.context.camera || !accessory.context.camera.channels) {
+    if(!accessory.context.camera?.channels) {
       return false;
     }
 
@@ -275,6 +281,33 @@ export class ProtectCamera extends ProtectAccessory {
       accessory.configureController(streamingDelegate.controller);
     }
 
+    return true;
+  }
+
+  // Configure a doorbell accessory for HomeKit.
+  private async configureVideoDoorbell(): Promise<boolean> {
+
+    // Clear out any previous doorbell service.
+    let doorbellService = this.accessory.getService(this.hap.Service.Doorbell);
+
+    if(doorbellService) {
+      this.accessory.removeService(doorbellService);
+    }
+
+    // Add the doorbell service to this Protect doorbell. HomeKit requires the doorbell service to be
+    // the primary service on the accessory.
+    doorbellService = new this.hap.Service.Doorbell(this.accessory.displayName);
+
+    this.accessory.addService(doorbellService)
+      .getCharacteristic(this.hap.Characteristic.ProgrammableSwitchEvent)
+      .on(CharacteristicEventTypes.GET, (callback: CharacteristicGetCallback) => {
+
+        // Provide the status of this doorbell. This must always return null, per the HomeKit spec.
+        // callback(null, this.ringState);
+        callback(null, null);
+      });
+
+    doorbellService.setPrimaryService(true);
     return true;
   }
 }
