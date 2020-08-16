@@ -11,7 +11,7 @@ import {
   PlatformConfig
 } from "homebridge";
 import { ProtectNvr } from "./protect-nvr";
-import { ProtectNvrOptions, ProtectOptions } from "./protect-types";
+import { ProtectOptions } from "./protect-types";
 import { PROTECT_FFMPEG_OPTIONS, PROTECT_MOTION_DURATION } from "./settings";
 import util from "util";
 
@@ -50,9 +50,9 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
 
     // If we have feature options, put them into their own array, upper-cased for future reference.
     if(config.options) {
-      config.options.forEach((featureOption: string) => {
+      for(const featureOption of config.options) {
         this.configOptions.push(featureOption.toUpperCase());
-      });
+      }
     }
 
     // Additional ffmpeg options, in case the user wants to override the defaults. This option may be removed in a future release.
@@ -60,39 +60,37 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
       config.ffmpegOptions = PROTECT_FFMPEG_OPTIONS;
     }
 
-    // Motion detection duration. Make sure it's never less than 2 seconds so we can actually alert the user.
-    if(config.motionDuration) {
-      if(config.motionDuration < 2 ) {
-        config.motionDuration = 2;
-      }
-    } else {
+    if(!config.motionDuration) {
       config.motionDuration = PROTECT_MOTION_DURATION;
     }
 
+    // Motion detection duration. Make sure it's never less than 2 seconds so we can actually alert the user.
+    if(config.motionDuration < 2 ) {
+      config.motionDuration = 2;
+    }
+
     // Loop through each configured NVR and instantiate it.
-    config.controllers.forEach((nvrOptions: ProtectNvrOptions) => {
+    for(const controllerConfig of config.controllers) {
 
       // We need an address, or there's nothing to do.
-      if(!nvrOptions.address) {
+      if(!controllerConfig.address) {
         this.log("No host or IP address has been configured.");
-        return;
+        continue;
       }
 
       // We need login credentials or we're skipping this one.
-      if(!nvrOptions.username || !nvrOptions.password) {
+      if(!controllerConfig.username || !controllerConfig.password) {
         this.log("No UniFi Protect login credentials have been configured.");
-        return;
+        continue;
       }
 
       // NVR device list refresh interval. Make sure it's never less than 2 seconds so we don't overwhelm the Protect NVR.
-      if(nvrOptions.refreshInterval) {
-        if(nvrOptions.refreshInterval < 2 ) {
-          nvrOptions.refreshInterval = 2;
-        }
+      if(controllerConfig?.refreshInterval < 2) {
+        controllerConfig.refreshInterval = 2;
       }
 
-      this.controllers.push(new ProtectNvr(this, nvrOptions));
-    });
+      this.controllers.push(new ProtectNvr(this, controllerConfig));
+    }
 
     // This event gets fired after homebridge has restored all cached accessories and called their respective
     // `configureAccessory` function.
@@ -117,9 +115,9 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
   // Launch our configured controllers. Once we do, they can sustain themselves.
   private pollControllers() {
 
-    this.controllers.forEach((nvr: ProtectNvr) => {
-      nvr.poll(0);
-    });
+    for(const controller of this.controllers) {
+      controller.poll(0);
+    }
   }
 
   // Utility for debug logging.
