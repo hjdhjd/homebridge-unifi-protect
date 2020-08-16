@@ -15,6 +15,7 @@
         "default": false,
         "description": "Enable additional debug logging for this plugin. Default: false."
       },
+
       "ffmpegOptions": {
         "type": "string",
         "title": "Custom FFmpeg command line options.",
@@ -22,6 +23,7 @@
         "placeholder": "e.g. -probesize 32 -analyzeduration 0 -fflags nobuffer -refs 1 -x264-params intra-refresh=1:bframes=0",
         "description": "Command line options to use for FFmpeg. Default: -probesize 32 -analyzeduration 0 -fflags nobuffer -refs 1 -x264-params intra-refresh=1:bframes=0"
       },
+
       "motionDuration": {
         "type": "string",
         "title": "Motion Event Duration (seconds)",
@@ -31,6 +33,7 @@
         "placeholder": "e.g. 10",
         "description": "Duration of a single motion event. Setting this too low will potentially cause a lot of notification spam. Default: 10."
       },
+
       "options": {
         "title": "Feature Options",
         "type": "array",
@@ -38,6 +41,7 @@
           "type": "string"
         }
       },
+
       "videoProcessor": {
         "type": "string",
         "title": "Video Processor",
@@ -62,6 +66,7 @@
               "placeholder": "e.g. 1.2.3.4",
               "description": "Hostname or IP address of your UniFi Protect controller."
             },
+
             "name": {
               "type": "string",
               "title": "Controller Name",
@@ -69,6 +74,7 @@
               "placeholder": "e.g. UNVR",
               "description": "Name for this UniFi Protect controller to be used for logging purposes. password. Default: Defined by the controller."
             },
+
             "password": {
               "type": "string",
               "title": "Controller Password",
@@ -76,6 +82,7 @@
               "placeholder": "e.g. unifi-protect-password",
               "description": "UniFi Protect password for this controller. Creating a homebridge-specific local user is strongly encouraged for security and sanity."
             },
+
             "refreshInterval": {
               "type": "integer",
               "title": "Controller Refresh Interval (seconds)",
@@ -85,6 +92,7 @@
               "placeholder": "10",
               "description": "Refresh interval to check for cameras that have been added or removed to a controller. For UCK Gen2+ devices only, this is also the interval used to check for motion events. Default: 5 seconds for UCK Gen2+, 10 seconds for UniFI OS."
             },
+
             "username": {
               "type": "string",
               "title": "Controller Username",
