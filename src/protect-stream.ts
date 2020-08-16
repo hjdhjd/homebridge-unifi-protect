@@ -138,7 +138,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
     const response = await this.camera.nvr.nvrApi.fetch(this.camera.snapshotUrl + "?" + params);
 
-    if(!response || !response.ok) {
+    if(!response?.ok) {
       this.log("%s: Unable to retrieve snapshot.", this.name);
       callback(new Error(this.name + ": Unable to retrieve snapshot."));
       return;
@@ -234,7 +234,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     // -rtsp_transport tcp: tell the RTSP stream handler that we're looking for a TCP connection.
     let fcmd = "-re -rtsp_transport tcp -i " + this.camera.cameraUrl;
 
-    this.log("%s: HomeKit video stream request: %sx%s, %s fps, %s kbps.",
+    this.log("%s: HomeKit video stream request received: %sx%s, %s fps, %s kbps.",
       this.name, request.video.width, request.video.height, request.video.fps, request.video.max_bit_rate);
 
     // Configure our video parameters:
@@ -296,9 +296,8 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     // -bufsize size         this is the decoder buffer size, which drives the variability / quality of the output bitrate.
     // -ac 1                 set the number of audio channels to 1.
     // -payload_type num     payload type for the RTP stream. This is negotiated by HomeKit and is usually 110 for AAC-ELD audio.
-    if(this.camera && this.camera.accessory && this.camera.nvr &&
-      this.camera.nvr.optionEnabled(this.camera.accessory.context.camera, "Audio") &&
-      (await FfmpegProcess.codecEnabled(this.videoProcessor, "libfdk_aac"))) {
+    if(await FfmpegProcess.codecEnabled(this.videoProcessor, "libfdk_aac")) {
+
       // Configure our video parameters.
       const ffmpegAudioArgs =
         " -map 0:a" +
