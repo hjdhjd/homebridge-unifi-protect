@@ -10,6 +10,7 @@ import {
 } from "homebridge";
 import { ProtectApi } from "./protect-api";
 import { ProtectCamera } from "./protect-camera";
+import { ProtectMqtt } from "./protect-mqtt";
 import { ProtectPlatform } from "./protect-platform";
 import { ProtectSecuritySystem } from "./protect-securitysystem";
 import {
@@ -29,7 +30,7 @@ import {
 
 export class ProtectNvr {
   private api: API;
-  private config: ProtectNvrOptions;
+  config: ProtectNvrOptions;
   private readonly configuredCameras: { [index: string]: ProtectCamera };
   private debug: (message: string, ...parameters: any[]) => void;
   doorbellCount: number;
@@ -39,6 +40,7 @@ export class ProtectNvr {
   private lastRing: { [index: string]: number };
   private log: Logging;
   private motionDuration: number;
+  private mqtt: ProtectMqtt;
   private readonly motionEventTimers: { [index: string]: NodeJS.Timeout };
   private name: string;
   private nvrAddress: string;
@@ -61,6 +63,7 @@ export class ProtectNvr {
     this.lastMotion = {};
     this.lastRing = {};
     this.log = platform.log;
+    this.mqtt = null as any;
     this.name = nvrOptions.name;
     this.motionDuration = platform.config.motionDuration;
     this.motionEventTimers = {};
@@ -211,7 +214,12 @@ export class ProtectNvr {
 
     this.isEnabled = true;
 
-    // Check for events on non-UniFi OS devices since they lack the realtime event listener API.
+    // Create an MQTT connection, if needed.
+    if(!this.mqtt && this.config.mqttUrl) {
+      this.mqtt = new ProtectMqtt(this);
+    }
+
+    // Check for doorbell events (all OSs) and motion events for non-UniFi OS controllers.
     await this.checkProtectEvents();
 
     // Configure our event listener, if needed.
@@ -223,7 +231,7 @@ export class ProtectNvr {
     return true;
   }
 
-  // Check for events on Protect cameras for non-UniFi OS controllers.
+  // Check for doorbell events (all OSs) and motion events for non-UniFi OS controllers.
   private async checkProtectEvents(): Promise<boolean> {
     // Ensure we're up and running.
     if(!this.nvrApi?.Cameras) {
@@ -373,8 +381,12 @@ export class ProtectNvr {
       return;
     }
 
-    // Trigger the motion event.
+    // Trigger the motion event in HomeKit.
     motionService.getCharacteristic(hap.Characteristic.MotionDetected).updateValue(true);
+
+    // Publish to MQTT, if the user has configured it.
+    this.mqtt?.publish(accessory, "motion", "true");
+
     this.log("%s %s: Motion detected.", this.nvrApi.getNvrName(), accessory.displayName);
 
     // Reset our motion event after motionDuration.
@@ -428,6 +440,9 @@ export class ProtectNvr {
     doorbellService
       .getCharacteristic(this.hap.Characteristic.ProgrammableSwitchEvent)
       .setValue(this.hap.Characteristic.ProgrammableSwitchEvent.SINGLE_PRESS);
+
+    // Publish to MQTT, if the user has configured it.
+    this.mqtt?.publish(accessory, "doorbell", "true");
 
     this.log("%s %s: Doorbell ring detected.", this.nvrApi.getNvrName(), accessory.displayName);
   }

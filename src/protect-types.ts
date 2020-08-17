@@ -352,6 +352,8 @@ export interface ProtectOptions {
 // NVR configuration options.
 export interface ProtectNvrOptions {
   address: string,
+  mqttTopic: string,
+  mqttUrl: string,
   name: string,
   refreshInterval: number,
   username: string,

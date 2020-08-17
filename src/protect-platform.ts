@@ -12,7 +12,7 @@ import {
 } from "homebridge";
 import { ProtectNvr } from "./protect-nvr";
 import { ProtectOptions } from "./protect-types";
-import { PROTECT_FFMPEG_OPTIONS, PROTECT_MOTION_DURATION } from "./settings";
+import { PROTECT_FFMPEG_OPTIONS, PROTECT_MOTION_DURATION, PROTECT_MQTT_TOPIC } from "./settings";
 import util from "util";
 
 export class ProtectPlatform implements DynamicPlatformPlugin {
@@ -84,9 +84,14 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
         continue;
       }
 
-      // NVR device list refresh interval. Make sure it's never less than 2 seconds so we don't overwhelm the Protect NVR.
-      if(controllerConfig?.refreshInterval < 2) {
+      // Controller device list refresh interval. Make sure it's never less than 2 seconds so we don't overwhelm the Protect controller.
+      if(controllerConfig.refreshInterval < 2) {
         controllerConfig.refreshInterval = 2;
+      }
+
+      // MQTT topic to use.
+      if(!controllerConfig.mqttTopic) {
+        controllerConfig.mqttTopic = PROTECT_MQTT_TOPIC;
       }
 
       this.controllers.push(new ProtectNvr(this, controllerConfig));

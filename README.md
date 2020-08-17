@@ -38,6 +38,8 @@ What does *just works* mean in practice? It means that this plugin will discover
 
 - **Create scenes or presets for groups of cameras.** If you choose to [create specific liveviews](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/Liveviews.md), a security system accessory will appear in HomeKit, enabling you to have motion-detection scenes or presets a tap away.
 
+- **MQTT support** MQTT support is available for those that want to make UniFi Protect accessible via MQTT. Currently, there's support for publishing events based on doorbell rings and motion sensor activity.
+
 ### What's not in this plugin right now
 
 Microphone support / two-way audio for UniFi Protect doorbell devices such as the [G4 Doorbell](https://store.ui.com/collections/unifi-protect/products/uvc-g4-doorbell). I'd love to get there with two-way audio, but we need further reverse engineering of the Protect API to do it, or an official API from Ubiquiti (this is unlikely to happen, so reverse engineering it is).
@@ -54,6 +56,7 @@ I hope to continue to work on this one to get two-way audio working. The game pl
   * [Autoconfiguration](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/Autoconfiguration.md): what it is, design choices that I've made, and why.
   * [Feature Options](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/FeatureOptions.md): granular options to allow you to set the camera quality individually, show or hide specific cameras, controllers, and more.
   * [Liveview Scenes](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/Liveviews.md): use the UniFi Protect liveviews feature (available in the UniFi Protect controller webUI) to create motion-detection scenes.
+  * [MQTT](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/MQTT.md): how to configure MQTT support.
   * [Advanced Configuration](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/AdvancedOptions.md): complete list of configuration options available in this plugin.
   * [Changelog](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/Changelog.md): changes and release history of this plugin, starting with v3.0.
 

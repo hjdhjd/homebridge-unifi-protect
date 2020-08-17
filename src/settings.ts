@@ -27,6 +27,12 @@ export const PROTECT_LOGIN_REFRESH_INTERVAL = 1800;
 // Default duration, in seconds, of motion events. Setting this too low will potentially cause a lot of notification spam.
 export const PROTECT_MOTION_DURATION = 10;
 
+// How often, in seconds, should we try to reconnect with an MQTT broker, if we have one configured.
+export const PROTECT_MQTT_RECONNECT_INTERVAL = 60;
+
+// Default MQTT topic to use when publishing events. This is in the form of: unifi/protect/camera/event
+export const PROTECT_MQTT_TOPIC = "unifi/protect";
+
 // How often, in seconds, should we check Protect controllers for doorbell events. This setting is only used when a doorbell has been
 // detected and will override the default refresh intervals configured by the user.
 export const PROTECT_NVR_DOORBELL_REFRESH_INTERVAL = 2;

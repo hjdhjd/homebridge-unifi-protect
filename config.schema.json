@@ -67,6 +67,23 @@
               "description": "Hostname or IP address of your UniFi Protect controller."
             },
 
+            "mqttTopic": {
+              "type": "string",
+              "title": "MQTT: Base Topic",
+              "required": false,
+              "placeholder": "e.g. unifi/protect",
+              "description": "The base MQTT topic to publish to. Default: unifi/protect."
+            },
+
+            "mqttUrl": {
+              "type": "string",
+              "title": "MQTT: Broker URL",
+              "required": false,
+              "format": "uri",
+              "placeholder": "e.g. mqtt://1.2.3.4",
+              "description": "URL for the MQTT broker you'd like to publish event messages to. Default: None."
+            },
+
             "name": {
               "type": "string",
               "title": "Controller Name",
@@ -89,7 +106,7 @@
               "required": false,
               "minimum": 2,
               "maximum": 30,
-              "placeholder": "10",
+              "placeholder": "e.g. 10",
               "description": "Refresh interval to check for cameras that have been added or removed to a controller. For UCK Gen2+ devices only, this is also the interval used to check for motion events. Default: 5 seconds for UCK Gen2+, 10 seconds for UniFI OS."
             },
 
@@ -120,7 +137,9 @@
         "controllers[].username",
         "controllers[].password",
         "controllers[].refreshInterval",
-        "controllers[].name"
+        "controllers[].name",
+        "controllers[].mqttUrl",
+        "controllers[].mqttTopic"
       ]
     },
 
