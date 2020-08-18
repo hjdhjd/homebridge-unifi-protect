@@ -48,8 +48,8 @@ The topics and messages that are published are:
 
 | Topic                 | Message Published
 |-----------------------|----------------------------------
-| **doorbell**          | `true` when motion is detected. `false` when the motion event is reset.
-| **motion**            | `true` when the doorbell is rung. Each press of the doorbell will trigger a new event.
+| **doorbell**          | `true` when the doorbell is rung. Each press of the doorbell will trigger a new event.
+| **motion**            | `true` when motion is detected. `false` when the motion event is reset.
 
 ### Some fun facts
   * MQTT support is disabled by default. It's enabled when an MQTT broker is specified in the configuration.
