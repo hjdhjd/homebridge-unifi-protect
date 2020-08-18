@@ -1,6 +1,6 @@
 /* Copyright(C) 2017-2020, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * protect-nvr.ts: NVR device class for UniFi Protect.
+ * protect-liveviews.ts: Liveviews class for UniFi Protect.
  */
 import {
   API,
@@ -80,7 +80,7 @@ export class ProtectLiveviews {
       const oldAccessory = this.platform.accessories.find((x: PlatformAccessory) => x.UUID === uuid);
 
       if(oldAccessory) {
-        this.log("%s: No plugin-specific liveviews found. Disabling the security system accessory associated with this UniFi Protect controller. ",
+        this.log("%s: No plugin-specific liveviews found. Disabling the security system accessory associated with this UniFi Protect controller.",
           this.nvrApi.getNvrName());
 
         // Unregister the accessory and delete it's remnants from HomeKit and the plugin.
@@ -110,7 +110,7 @@ export class ProtectLiveviews {
       }
 
       if(!this.securityAccessory) {
-        this.log("%s: Unable to create the security system accessory.");
+        this.log("%s: Unable to create the security system accessory.", this.nvrApi.getNvrName());
         return;
       }
 
@@ -122,7 +122,7 @@ export class ProtectLiveviews {
       this.securitySystem = new ProtectSecuritySystem(this.nvr, this.securityAccessory);
 
       if(!this.securitySystem) {
-        this.log("%s: Unable to configure the security system accessory", this.nvrApi.getNvrName());
+        this.log("%s: Unable to configure the security system accessory.", this.nvrApi.getNvrName());
         return;
       }
     }
@@ -232,8 +232,6 @@ export class ProtectLiveviews {
       return;
     }
 
-    this.log("%s: Activating %s liveview scene", this.nvrApi.getNvrName(), liveviewSwitch.context.liveview);
-
     // Get the complete list of cameras in the liveview we're interested in.
     // This cryptic line grabs the list of liveviews that have the name we're interested in
     // (turns out, you can define multiple liveviews in Protect with the same name...who knew!),
@@ -267,7 +265,7 @@ export class ProtectLiveviews {
           motionSwitch.getCharacteristic(this.hap.Characteristic.On)!.updateValue(targetAccessory.context.detectMotion);
         }
 
-        this.log("%s -> %s: Motion detection %s.", liveviewSwitch.context.liveview, targetAccessory.displayName,
+        this.log("%s: %s -> %s: Motion detection %s.", this.nvrApi.getNvrName(), liveviewSwitch.context.liveview, targetAccessory.displayName,
           targetAccessory.context.detectMotion === true ? "enabled" : "disabled");
       }
     }
