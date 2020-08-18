@@ -19,7 +19,7 @@ export const PROTECT_API_RETRY_INTERVAL = 300;
 export const PROTECT_EVENTS_HEARTBEAT_INTERVAL = 5;
 
 // Magic incantantion to further streamline ffmpeg for Protect.
-export const PROTECT_FFMPEG_OPTIONS = "-probesize 32 -analyzeduration 0 -fflags nobuffer";
+export const PROTECT_FFMPEG_OPTIONS = "-probesize 32 -analyzeduration 0 -fflags nobuffer -strict experimental";
 
 // How often, in seconds, should we refresh our Protect login credentials.
 export const PROTECT_LOGIN_REFRESH_INTERVAL = 1800;
