@@ -51,7 +51,7 @@ This step is not required. The defaults should work well for almost everyone, bu
 | username               | Your UniFi Protect username.                            |                                                                                       | Yes      |
 | password               | Your UniFi Protect password.                            |                                                                                       | Yes      |
 | videoProcessor         | Specify path of ffmpeg or avconv.                       | "ffmpeg"                                                                              | No       |
-| ffmpegOptions          | Additional parameters to pass ffmpeg to render video.   | "-probesize 32 -analyzeduration 0 -fflags nobuffer"                                   | No       |
+| ffmpegOptions          | Additional parameters to pass ffmpeg to render video.   | "-probesize 32 -analyzeduration 0 -fflags nobuffer -strict experimental"              | No       |
 | motionDuration         | Duration of motion events. Setting this too low will potentially cause a lot of notification spam. | 10                                         | No       |
 | refreshInterval        | Interval to check UniFi Protect for new or removed devices. On UCKGen2+ controllers **only**, also sets the polling interval for motion events. | 10 seconds for UniFi OS, 5 seconds for UCK Gen2+ | No       |
 | options                | Configure plugin [feature options](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/FeatureOptions.md).   | []      | No       |
