@@ -23,7 +23,9 @@ Ultimately, as I was playing more with the second option, I decided that configu
 
 Well, the Protect webUI already has a nice feature called liveviews that allows you to create an aggregated view of cameras. It's straightforward to use and intuitive. Why not use that as a starting point to specify which cameras you want to group together? Then, what was the best way to give users options in how to do so...well, [HomeKit](https://www.apple.com/ios/home/) has a *security system accessory* that allows for setting multiple security states, and will notify the user when switching to any of those states. Seems very well-suited to the task, and that brings us to how all this works.
 
-### How to configure and use this feature
+Finally, you might want to create a way to toggle multiple cameras at once in the form of a switch, either in addition to, or instead of, a security system accessory...so we support that too.
+
+### <A NAME="security-system"></A>How to configure and use the liveview security system feature
 
 First, we need to understand the security system accessory in [HomeKit](https://www.apple.com/ios/home/). This accessory is best described as a switch with multiple settings. You can set a security system accessory to the following states using the Home app:
 
@@ -53,7 +55,15 @@ Creating plugin-specific liveviews are as simple as ensuring they are named:
 
 Once configured, you can set the security system state in the Home app. When you select a setting - *Away* for example - it will lookup all the cameras associated with that liveview and activate motion detection for those cameras, **and it will disable motion detection on all other cameras**. Put another way - when using this feature, and you enable a specific security system state, only those cameras will have motion detection active. All other cameras will have motion detection set to off.
 
-Some fun facts:
+### <A NAME="switch"></A>How to configure and use the liveview switch feature
+
+In addition to the above, `homebridge-unifi-protect2` can create switches based on arbitrary liveviews that you create. To use this feature, you create a liveview and choose a name for it beginning with `Protect-` followed by whatever you want to call this switch. The only reserved names are the ones above for the security system feature.
+
+For example, if you configure a liveview named `Protect-Outside`, you'll see a switch created in the Home app called *UDM-Pro Outside*, assuming your controller is a UDM-Pro. Toggling the switch on and off will turn on and off motion detection in the cameras configured in the liveview.
+
+There's a crucial difference between liveview switches and the liveview security system accessory: ***liveview switches only impact the cameras you've configured in that liveview***. The security system accessory will disable motion detection on all cameras not explicitly configured in a given liveview scene (with the exception of the *Off* scene, which is special - [see above](#security-ssytem)).
+
+### Some fun facts
   * You don't need to configure all the liveviews. If you have at least one, the security system accessory will appear. For security system states with no corresponding liveviews, nothing will happen.
   * UniFi Protect will allow you to have multiple liveviews with the same name. In this case, `homebridge-unifi-protect2` will pull all the cameras in all the liveviews with the same name and control them together.
   * There is a setting when editing liveviews called `Share view with others`. This makes a given liveview available to all users, instead of just the user you're currently logged in with. Why does this matter? If you use a different username and password for `homebridge-unifi-protect2` than the one you use to login, you'll want to ensure that any views you create are shared with all users so they can be used with other usernames. Alternatively, login to the Protect webUI with the same username you configured `homebridge-unifi-protect2` to configure liveviews for that user.
