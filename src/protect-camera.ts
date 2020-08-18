@@ -142,7 +142,7 @@ export class ProtectCamera extends ProtectAccessory {
       return false;
     }
 
-    // Add the motion sensor to the camera.
+    // Add the switch to the camera.
     switchService = new hap.Service.Switch(accessory.displayName);
 
     // Activate or deactivate motion detection.
