@@ -230,9 +230,8 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     const videomtu = 188 * 3;
     const audiomtu = 188 * 1;
 
-    // -re: tell ffmpeg to read information as fast as it's being sent.
     // -rtsp_transport tcp: tell the RTSP stream handler that we're looking for a TCP connection.
-    let fcmd = "-re -rtsp_transport tcp -i " + this.camera.cameraUrl;
+    let fcmd = "-rtsp_transport tcp -i " + this.camera.cameraUrl;
 
     this.log("%s: HomeKit video stream request received: %sx%s, %s fps, %s kbps.",
       this.name, request.video.width, request.video.height, request.video.fps, request.video.max_bit_rate);
