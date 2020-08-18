@@ -42,9 +42,14 @@ unifi/protect/ABCDEF123456/doorbell
 
 In the above examples, `1234567890AB` and `ABCDEF123456` are the MAC addresses of your cameras or doorbells. We use MAC addresses as an easy way to guarantee unique identifiers that won't change. `homebridge-unifi-protect2` provides you information about your cameras and their respective MAC addresses in the homebridge log on startup. Additionally, you can use the UniFi Protect app or webUI to lookup what the MAC addresses are of your cameras, should you need to do so.
 
-The message that is published to these topics is always `true`, indicating the motion sensor has been triggered or the doorbell has been rung.
+The topics and messages that are published are:
 
-Some fun facts:
+| Topic                 | Message Published
+|-----------------------|----------------------------------
+| **doorbell**          | `true` when motion is detected. `false` when the motion event is reset.
+| **motion**            | `true` when the doorbell is rung. Each press of the doorbell will trigger a new event.
+
+### Some fun facts
   * MQTT support is disabled by default. It's enabled when an MQTT broker is specified in the configuration.
   * MQTT is configured per-controller. This allows you to have different MQTT brokers for different Protect controllers, if needed.
   * We only *publish* MQTT events, we do not subscribe to them. This means that `homebridge-unifi-protect2` can provide data to MQTT, but not act on anything published to perform an action itself.

@@ -398,6 +398,10 @@ export class ProtectNvr {
 
       if(motionService) {
         motionService.getCharacteristic(hap.Characteristic.MotionDetected).updateValue(false);
+
+        // Publish to MQTT, if the user has configured it.
+        self.mqtt?.publish(accessory, "motion", "false");
+
         self.debug("%s %s: Resetting motion event.", this.nvrApi.getNvrName(), accessory.displayName);
       }
 
