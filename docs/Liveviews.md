@@ -61,7 +61,7 @@ In addition to the above, `homebridge-unifi-protect2` can create switches based 
 
 For example, if you configure a liveview named `Protect-Outside`, you'll see a switch created in the Home app called *UDM-Pro Outside*, assuming your controller is a UDM-Pro. Toggling the switch on and off will turn on and off motion detection in the cameras configured in the liveview.
 
-There's a crucial difference between liveview switches and the liveview security system accessory: ***liveview switches only impact the cameras you've configured in that liveview***. The security system accessory will disable motion detection on all cameras not explicitly configured in a given liveview scene (with the exception of the *Off* scene, which is special - [see above](#security-ssytem)).
+There's a crucial difference between liveview switches and the liveview security system accessory: ***liveview switches only impact the cameras you've configured in that liveview***. The security system accessory will disable motion detection on all cameras not explicitly configured in a given liveview scene (with the exception of the *Off* scene, which is special - [see above](#security-system)).
 
 ### Some fun facts
   * You don't need to configure all the liveviews. If you have at least one, the security system accessory will appear. For security system states with no corresponding liveviews, nothing will happen.
