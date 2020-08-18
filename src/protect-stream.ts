@@ -136,7 +136,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
     this.debug("%s: HomeKit snapshot request: %sx%s. Retrieving image from Protect: %s?%s", this.name, request.width, request.height, this.camera.snapshotUrl, params);
 
-    const response = await this.camera.nvr.nvrApi.fetch(this.camera.snapshotUrl + "?" + params);
+    const response = await this.camera.nvr.nvrApi.fetch(this.camera.snapshotUrl + "?" + params, { method: "GET" }, true, false);
 
     if(!response?.ok) {
       this.log("%s: Unable to retrieve snapshot.", this.name);
