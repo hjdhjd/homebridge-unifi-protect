@@ -535,7 +535,7 @@ export class ProtectApi {
   }
 
   // Utility to let us streamline error handling and return checking from the Protect API.
-  async fetch(url: RequestInfo, options: RequestInit = { method: "GET"}, logErrors = true, decodeResponse = true): Promise<Response> {
+  async fetch(url: RequestInfo, options: RequestInit = { method: "GET" }, logErrors = true, decodeResponse = true): Promise<Response> {
     let response: Response;
 
     options.agent = this.httpsAgent;
