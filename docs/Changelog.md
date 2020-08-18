@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 3.3.1 (2020-08-18)
+  * Enhancement: publish motion sensor reset events to MQTT.
+
 ## 3.3.0 (2020-08-17)
   * New feature: MQTT support, for those that have asked for it. Read more [here](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/MQTT.md).
   * Enhancement: Liveviews can now be used to create switches to control groups of motion sensors Read more [here](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/Liveviews.md).
