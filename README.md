@@ -20,7 +20,7 @@ This plugin attempts to bridge a gap in the UniFi Protect ecosystem by providing
 What does *just works* mean in practice? It means that this plugin will discover all your supported UniFi Protect devices and make them available in HomeKit. It supports all known UniFi Protect controller configurations (UniFi CloudKey Gen2+, UniFi Dream Machine Pro, and UniFi Protect NVR).
 
 ### Features
-- ***Easy* configuration - all you need is your UniFi Protect username and password to get started.** The defaults work for the vast majority of users. When you want more, there are [advanced options](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/AdvancedOptions.md) you can play with, if you choose.
+- ***Easy* configuration - all you need is your UniFi Protect controller IP address, username, and password to get started.** The defaults work for the vast majority of users. When you want more, there are [advanced options](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/AdvancedOptions.md) you can play with, if you choose.
 
 - **Support for multiple controllers.** This plugin can support multiple UniFi Protect controllers. If you have more than one controller, it's easy to add them to this plugin, and integrate them seamlessly into HomeKit.
 

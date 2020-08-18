@@ -35,7 +35,9 @@ This step is not required. The defaults should work well for almost everyone, bu
         "address": "1.2.3.4",
         "username": "some-homebridge-user (or create a new one just for homebridge)",
         "password": "some-password",
-        "refreshInterval": 5
+        "refreshInterval": 5,
+        "mqttUrl": "mqtt://test.mosquitto.org",
+        "mqttTopic": "unifi/protect"
       }
     ],
   }
@@ -54,5 +56,6 @@ This step is not required. The defaults should work well for almost everyone, bu
 | refreshInterval        | Interval to check UniFi Protect for new or removed devices. On UCKGen2+ controllers **only**, also sets the polling interval for motion events. | 10 seconds for UniFi OS, 5 seconds for UCK Gen2+ | No       |
 | options                | Configure plugin [feature options](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/FeatureOptions.md).   | []      | No       |
 | name                   | Controller name to use for homebridge logging purposes. | UniFi Protect controller name                                                         | No       |
+| mqttUrl                | The URL of your MQTT broker. **This must be in URL form**, e.g.: `mqtt://user@password:1.2.3.4`. |                                              | No       |
+| mqttTopic              | The base topic to use when publishing MQTT messages.    | "unifi/protect"                                                                       | No       |
 | debug                  | Enable additional debug logging.                        | no                                                                                    | No       |
-
