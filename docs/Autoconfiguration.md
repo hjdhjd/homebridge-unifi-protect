@@ -1,14 +1,16 @@
-<SPAN ALIGN="CENTER">
+<SPAN ALIGN="CENTER" STYLE="text-align:center">
+<DIV ALIGN="CENTER" STYLE="text-align:center">
 
 [![homebridge-unifi-protect2: Native HomeKit support for UniFi Protect](https://raw.githubusercontent.com/hjdhjd/homebridge-unifi-protect2/master/homebridge-protect.svg)](https://github.com/hjdhjd/homebridge-unifi-protect2)
 
-# Homebridge UniFi Protect<SUP STYLE="font-size: smaller; color:#5EB5E6;">2</SUP>
+# Homebridge UniFi Protect<SUP STYLE="font-size: smaller; color:#0559C9;">2</SUP>
 
-[![Downloads](https://img.shields.io/npm/dt/homebridge-unifi-protect2?color=%235EB5E6&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect2)
-[![Version](https://img.shields.io/npm/v/homebridge-unifi-protect2?color=%235EB5E6&label=UniFi%20Protect%202&logo=apple&logoColor=%235EB5E6&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect2)
-[![verified-by-homebridge](https://img.shields.io/badge/homebridge-verified-blueviolet?style=for-the-badge)](https://github.com/homebridge/homebridge/wiki/Verified-Plugins)
+[![Downloads](https://img.shields.io/npm/dt/homebridge-unifi-protect2?color=%230559C9&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect2)
+[![Version](https://img.shields.io/npm/v/homebridge-unifi-protect2?color=%230559C9&label=UniFi%20Protect%202&logo=ubiquiti&logoColor=%230559C9&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect2)
+[![verified-by-homebridge](https://img.shields.io/badge/homebridge-verified-blueviolet?color=%2357277C&style=for-the-badge)](https://github.com/homebridge/homebridge/wiki/Verified-Plugins)
 
-## HomeKit support the UniFi Protect ecosystem using [Homebridge](https://homebridge.io).
+## HomeKit support for the UniFi Protect ecosystem using [Homebridge](https://homebridge.io).
+</DIV>
 </SPAN>
 
 `homebridge-unifi-protect2` is a [Homebridge](https://homebridge.io) plugin that provides HomeKit support to the [UniFi Protect](https://unifi-network.ui.com/video-security) device ecosystem. [UniFi Protect](https://unifi-network.ui.com/video-security) is [Ubiquiti's](https://www.ui.com) next-generation video security platform, with rich camera, doorbell, and NVR controller hardware options for you to choose from, as well as an app which you can use to view, configure and manage your video camera and doorbells.
