@@ -10,12 +10,11 @@ import {
 } from "homebridge";
 import { ProtectApi } from "./protect-api";
 import { ProtectCamera } from "./protect-camera";
+import { ProtectLiveviews } from "./protect-liveviews";
 import { ProtectMqtt } from "./protect-mqtt";
 import { ProtectPlatform } from "./protect-platform";
-import { ProtectSecuritySystem } from "./protect-securitysystem";
 import {
   ProtectCameraConfig,
-  ProtectNvrLiveviewConfig,
   ProtectNvrOptions,
   ProtectNvrSystemEvent,
   ProtectNvrSystemEventController
@@ -38,6 +37,7 @@ export class ProtectNvr {
   private hap: HAP;
   private lastMotion: { [index: string]: number };
   private lastRing: { [index: string]: number };
+  private liveviews: ProtectLiveviews;
   private log: Logging;
   private motionDuration: number;
   private mqtt: ProtectMqtt;
@@ -48,8 +48,6 @@ export class ProtectNvr {
   platform: ProtectPlatform;
   private pollingTimer!: NodeJS.Timeout;
   private refreshInterval: number;
-  private securityAccessory!: PlatformAccessory;
-  private securitySystem!: ProtectSecuritySystem;
   private unsupportedDevices: { [index: string]: boolean };
 
   constructor(platform: ProtectPlatform, nvrOptions: ProtectNvrOptions) {
@@ -62,6 +60,7 @@ export class ProtectNvr {
     this.hap = this.api.hap;
     this.lastMotion = {};
     this.lastRing = {};
+    this.liveviews = null as any;
     this.log = platform.log;
     this.mqtt = null as any;
     this.name = nvrOptions.name;
@@ -84,6 +83,9 @@ export class ProtectNvr {
 
     // Initialize our connection to the UniFi Protect API.
     this.nvrApi = new ProtectApi(platform, nvrOptions.address, nvrOptions.username, nvrOptions.password);
+
+    // Initialize our liveviews.
+    this.liveviews = new ProtectLiveviews(this);
   }
 
   // Discover new UniFi Protect devices.
@@ -154,8 +156,8 @@ export class ProtectNvr {
     // Remove Protect cameras that are no longer found on this Protect NVR, but we still have in HomeKit.
     await this.cleanupDevices();
 
-    // Configure our security system accessory.
-    await this.configureSecuritySystem();
+    // Configure our liveview-based accessories.
+    await this.liveviews.configureLiveviews();
 
     return true;
   }
@@ -469,89 +471,6 @@ export class ProtectNvr {
     }, refresh * 1000);
   }
 
-  // Update security system accessory.
-  private async configureSecuritySystem(): Promise<boolean> {
-
-    // Do we have controller access?
-    if(!this.nvrApi?.bootstrap?.nvr) {
-      return false;
-    }
-
-    const nvr = this.nvrApi.bootstrap.nvr;
-
-    if(!nvr.mac) {
-      return false;
-    }
-
-    const uuid = this.hap.uuid.generate(nvr.mac + ".Security");
-
-    // If the user has created plugin-specific liveviews, we make a security system accessory available to allow for some
-    // convenient actions like enabling and disabling motion detection on a set of cameras at once. Otherwise, don't make
-    // this available.
-    const liveviews = this.nvrApi.bootstrap.liveviews;
-
-    if(liveviews) {
-      const reLiveviewScene = /^Protect-(Away|Home|Night|Off)$/gi;
-
-      // If we have a security system accessory already configured, we delete it now. The user likely removed the last
-      // liveview that we look for.
-      if(!liveviews.some((x: ProtectNvrLiveviewConfig) => x.name.search(reLiveviewScene) !== -1 ? true : false)) {
-        const oldAccessory = this.platform.accessories.find((x: PlatformAccessory) => x.UUID === uuid);
-
-        if(oldAccessory) {
-          this.log("%s: No plugin-specific liveviews found. Disabling the security system accessory associated with this UniFi Protect controller. ",
-            this.nvrApi.getNvrName());
-
-          // Unregister the accessory and delete it's remnants from HomeKit and the plugin.
-          this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [oldAccessory]);
-          this.platform.accessories.splice(this.platform.accessories.indexOf(oldAccessory), 1);
-        }
-
-        if(this.securitySystem) {
-          delete this.securitySystem;
-        }
-
-        this.securityAccessory = null as any;
-        this.securitySystem = null as any;
-        return false;
-      }
-    }
-
-    // Create the security system accessory if it doesn't already exist.
-    if(!this.securityAccessory) {
-      // See if we already have this accessory defined.
-      if((this.securityAccessory = this.platform.accessories.find((x: PlatformAccessory) => x.UUID === uuid)!) === undefined) {
-        // We will use the NVR MAC address + ".Security" to create our UUID. That should provide guaranteed uniqueness we need.
-        this.securityAccessory = new this.api.platformAccessory(nvr.name, uuid);
-
-        // Register this accessory with homebridge and add it to the platform accessory array so we can track it.
-        this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [this.securityAccessory]);
-        this.platform.accessories.push(this.securityAccessory);
-      }
-
-      if(!this.securityAccessory) {
-        this.log("%s: Umable to create the security system accessory.");
-        return false;
-      }
-
-      this.log("%s: Plugin-specific liveviews have been detected. Enabling the security system accessory.", this.nvrApi.getNvrName());
-    }
-
-    // We have the security system accessory, now let's configure it.
-    if(!this.securitySystem) {
-      this.securitySystem = new ProtectSecuritySystem(this, this.securityAccessory);
-
-      if(!this.securitySystem) {
-        this.log("%s: Unable to configure the security system accessory", this.nvrApi.getNvrName());
-        return false;
-      }
-    }
-
-    // Update our NVR reference.
-    this.securityAccessory.context.nvr = nvr.mac;
-    return true;
-  }
-
   // Cleanup removed Protect devices from HomeKit.
   private async cleanupDevices(): Promise<void> {
     for(const oldAccessory of this.platform.accessories) {
@@ -565,8 +484,8 @@ export class ProtectNvr {
         continue;
       }
 
-      // Security system accessories are handled elsewhere.
-      if(oldAccessory.getService(this.hap.Service.SecuritySystem)) {
+      // Liveview-centric accessories are handled elsewhere.
+      if(("liveview" in oldAccessory.context) || oldAccessory.getService(this.hap.Service.SecuritySystem)) {
         continue;
       }
 
