@@ -4,9 +4,9 @@
 
 # Homebridge UniFi Protect<SUP STYLE="font-size: smaller; color:#5EB5E6;">2</SUP>
 
-[![Downloads](https://img.shields.io/npm/dt/homebridge-unifi-protect2?color=%235EB5E6&logo=apple&logoColor=%235EB5E6&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect2)
+[![Downloads](https://img.shields.io/npm/dt/homebridge-unifi-protect2?color=%235EB5E6&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect2)
 [![Version](https://img.shields.io/npm/v/homebridge-unifi-protect2?color=%235EB5E6&label=UniFi%20Protect%202&logo=apple&logoColor=%235EB5E6&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect2)
-[![verified-by-homebridge](https://img.shields.io/badge/homebridge-verified-blueviolet?logo=apple&logoColor=%235EB5E6&style=for-the-badge)](https://github.com/homebridge/homebridge/wiki/Verified-Plugins)
+[![verified-by-homebridge](https://img.shields.io/badge/homebridge-verified-blueviolet?style=for-the-badge)](https://github.com/homebridge/homebridge/wiki/Verified-Plugins)
 
 ## HomeKit support for the UniFi Protect ecosystem using [Homebridge](https://homebridge.io).
 </SPAN>
