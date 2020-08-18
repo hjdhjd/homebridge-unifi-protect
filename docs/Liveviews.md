@@ -21,9 +21,9 @@ Plugin-specific liveview scenes are really a way to further tailor how you activ
 
 Ultimately, as I was playing more with the second option, I decided that configuring this through `config.json` or the Homebridge webUI was going to be cumbersome and a less than optimal user experience. What to do?
 
-Well, the Protect webUI already has a nice feature called liveviews that allows you to create an aggregated view of cameras. It's straightforward to use and intuitive. Why not use that as a starting point to specify which cameras you want to group together? Then, what was the best way to give users options in how to do so...well, [HomeKit](https://www.apple.com/ios/home/) has a *security system accessory* that allows for setting multiple security states, and will notify the user when switching to any of those states. Seems very well-suited to the task, and that brings us to how all this works.
+Well, the Protect webUI already has a nice feature called liveviews that allows you to create an aggregated view of cameras. It's straightforward to use and intuitive. Why not use that as a starting point to specify which cameras you want to group together? Then, what was the best way to give users options in how to do so - well, [HomeKit](https://www.apple.com/ios/home/) has a *security system accessory* that allows for setting multiple security states, and will notify the user when switching to any of those states. Seems very well-suited to the task, and that brings us to how all this works.
 
-Finally, you might want to create a way to toggle multiple cameras at once in the form of a switch, either in addition to, or instead of, a security system accessory...so we support that too.
+Finally, you might want to create a way to toggle multiple cameras at once in the form of a switch, either in addition to, or instead of, a security system accessory, so we support that too to give you as much flexibility as you'd like in tailoring your experience.
 
 ### <A NAME="security-system"></A>How to configure and use the liveview security system feature
 
