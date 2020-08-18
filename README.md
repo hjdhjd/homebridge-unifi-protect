@@ -24,7 +24,7 @@ What does *just works* mean in practice? It means that this plugin will discover
 
 - **Support for multiple controllers.** This plugin can support multiple UniFi Protect controllers. If you have more than one controller, it's easy to add them to this plugin, and integrate them seamlessly into HomeKit.
 
-- **Doorbell ring support** This plugin provides support for [UniFi Protect G4 Doorbell](https://store.ui.com/collections/unifi-protect/products/uvc-g4-doorbell). We currently support doorbell rings, motion detection, video, and receiving audio. *Using the microphone to send audio is not currently supported*.
+- **Doorbell ring support.** This plugin provides support for [UniFi Protect G4 Doorbell](https://store.ui.com/collections/unifi-protect/products/uvc-g4-doorbell). We currently support doorbell rings, motion detection, video, and receiving audio. *Using the microphone to send audio is not currently supported*.
 
 - **Automatic *continuous* detection and configuration of all UniFi Protect devices.** By default - all of your supported UniFi Protect devices are made available in HomeKit without needing any further configuration on your part. Additionally, if you add or remove cameras or other devices to your UniFi Protect controller, this plugin will autodetect those configuration changes and add or remove those devices in HomeKit, seamlessly, *in realtime*.
 
@@ -79,7 +79,7 @@ Audio on cameras is tricky in the HomeKit world to begin with, and when you thro
 
 * This plugin supports audio coming from UniFi cameras. It does **not** support two-way audio at this time.
 
-* **Audio support will not work unless you have a version of ffmpeg that supports fdk-aac.** Unfortunately, most default installations of ffmpeg are not compiled with support for fdk-aac. You'll need to compile or acquire a version of ffmpeg that does. Doing so is beyond the scope of this plugin. There are plenty of guides to this - Google is your friend. This plugin uses [ffmpeg-for-homebridge](https://www.npmjs.com/package/ffmpeg-for-homebridge) which easies pain somewhat by providing prebuilt static binaries of ffmpeg for certain platforms, and save you the trouble of having to compile a version of ffmpeg yourself.
+* **Audio support will not work unless you have a version of ffmpeg that supports fdk-aac.** Unfortunately, most default installations of ffmpeg are not compiled with support for fdk-aac. You'll need to compile or acquire a version of ffmpeg that does. Doing so is beyond the scope of this documentation. There are plenty of guides to this - Google is your friend. This plugin uses [ffmpeg-for-homebridge](https://www.npmjs.com/package/ffmpeg-for-homebridge) which eases the pain somewhat by providing prebuilt static binaries of ffmpeg for certain platforms, and save you the trouble of having to compile a version of ffmpeg yourself.
 
 ### Using another video processor
 `videoProcessor` is the video processor used to stream video. By default, this is [ffmpeg](https://ffmpeg.org), but can be your own custom version of ffmpeg or other video processor that accepts and understands ffmpeg command line arguments.
