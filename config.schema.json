@@ -148,8 +148,13 @@
               "expandable": true,
               "expanded": false,
               "items": [
-                "controllers[].name",
-                "controllers[].refreshInterval"
+                {
+                  "description": "These settings are optional. The defaults work well for almost everyone.",
+                  "items": [
+                    "controllers[].name",
+                    "controllers[].refreshInterval"
+                  ]
+                }
               ]
             },
             {
@@ -159,8 +164,13 @@
               "expandable": true,
               "expanded": false,
               "items": [
-                "controllers[].mqttUrl",
-                "controllers[].mqttTopic"
+                {
+                  "description": "MQTT support will only be enabled if an MQTT broker URL is specified below.",
+                  "items": [
+                    "controllers[].mqttUrl",
+                    "controllers[].mqttTopic"
+                  ]
+                }
               ]
             }
           ]
