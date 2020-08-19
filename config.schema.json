@@ -132,6 +132,8 @@
       "items": [
         {
           "key": "controllers",
+          "name": " ",
+          "description": "Provide the IP address and login details of your UniFi Protect controllers.",
           "type": "array",
           "orderable": false,
           "buttonText": "Add UniFi Protect Controller",
@@ -174,6 +176,8 @@
       "items": [
         {
           "key": "options",
+          "name": " ",
+          "description": "Feature options allow you to further customize the behavior of this plugin such as the ability to show or hide cameras or specify stream quality.",
           "type": "array",
           "orderable": false,
           "buttonText": "Add Feature Option",
@@ -190,10 +194,15 @@
       "expandable": true,
       "expanded": false,
       "items": [
-        "videoProcessor",
-        "ffmpegOptions",
-        "motionDuration",
-        "debug"
+        {
+          "description": "These settings should be rarely used or needed by most people. Use these with caution.",
+          "items": [
+            "videoProcessor",
+            "ffmpegOptions",
+            "motionDuration",
+            "debug"
+          ]
+        }
       ]
     }
   ]
