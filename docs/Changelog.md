@@ -3,7 +3,7 @@
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
 ## 3.3.2 (2020-08-18)
-  * Houskeeping updates to the plugin configuration webUI.
+  * Houskeeping updates to the plugin configuration webUI and streaming.
 
 ## 3.3.1 (2020-08-18)
   * Enhancement: publish motion sensor reset events to MQTT.
