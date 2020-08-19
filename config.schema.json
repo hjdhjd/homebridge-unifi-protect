@@ -2,61 +2,18 @@
   "pluginAlias": "UniFi Protect",
   "pluginType": "platform",
   "headerDisplay": "Full HomeKit support UniFi Protect devices. See the [homebridge-unifi-protect2](https://github.com/hjdhjd/homebridge-unifi-protect2) developer page for detailed documentation.",
-  "footerDisplay": "A working **ffmpeg** must be installed on your system for this plugin to work. For audio support, make sure your version of ffmpeg is compiled with support for **fdk-aac**.",
+  "footerDisplay": "A working **ffmpeg** installation is required for this plugin to work. For audio support, make sure your version of ffmpeg is compiled with support for **fdk-aac**.",
   "singular": true,
 
   "schema": {
     "type": "object",
     "properties": {
-      "debug": {
-        "type": "boolean",
-        "title": "Debug Logging",
-        "required": false,
-        "default": false,
-        "description": "Enable additional debug logging for this plugin. Default: false."
-      },
-
-      "ffmpegOptions": {
-        "type": "string",
-        "title": "Custom FFmpeg command line options.",
-        "required": false,
-        "placeholder": "e.g. -probesize 32 -analyzeduration 0 -fflags nobuffer -refs 1 -x264-params intra-refresh=1:bframes=0",
-        "description": "Command line options to use for FFmpeg. Default: -probesize 32 -analyzeduration 0 -fflags nobuffer -refs 1 -x264-params intra-refresh=1:bframes=0"
-      },
-
-      "motionDuration": {
-        "type": "string",
-        "title": "Motion Event Duration (seconds)",
-        "required": false,
-        "minimum": 5,
-        "maximum": 20,
-        "placeholder": "e.g. 10",
-        "description": "Duration of a single motion event. Setting this too low will potentially cause a lot of notification spam. Default: 10."
-      },
-
-      "options": {
-        "title": "Feature Options",
-        "type": "array",
-        "items": {
-          "type": "string"
-        }
-      },
-
-      "videoProcessor": {
-        "type": "string",
-        "title": "Video Processor",
-        "required": false,
-        "placeholder": "e.g. ffmpeg",
-        "description": "Location of ffmpeg or your preferred video processor. Default: builtin or in your local path."
-      },
-
       "controllers": {
         "type": "array",
         "title": "UniFi Protect Controllers",
         "items": {
           "type": "object",
           "title": "UniFi Protect Controller",
-          "description": "Provide the details of your UniFi Protect controller.",
           "properties": {
             "address": {
               "type": "string",
@@ -69,7 +26,7 @@
 
             "mqttTopic": {
               "type": "string",
-              "title": "MQTT: Base Topic",
+              "title": "MQTT Base Topic",
               "required": false,
               "placeholder": "e.g. unifi/protect",
               "description": "The base MQTT topic to publish to. Default: unifi/protect."
@@ -77,7 +34,7 @@
 
             "mqttUrl": {
               "type": "string",
-              "title": "MQTT: Broker URL",
+              "title": "MQTT Broker URL",
               "required": false,
               "format": "uri",
               "placeholder": "e.g. mqtt://1.2.3.4",
@@ -119,70 +76,124 @@
             }
           }
         }
+      },
+
+      "options": {
+        "title": "Feature Options",
+        "type": "array",
+        "items": {
+          "type": "string",
+          "description": "Enter only one option per entry. See project page for the complete list of available options.",
+          "placeholder": "e.g. Disable.Stream.High"
+        }
+      },
+
+      "videoProcessor": {
+        "type": "string",
+        "title": "Video Processor",
+        "required": false,
+        "placeholder": "e.g. ffmpeg",
+        "description": "Location of ffmpeg or your preferred video processor. Default: builtin or in your local path."
+      },
+
+      "ffmpegOptions": {
+        "type": "string",
+        "title": "Custom ffmpeg command line options.",
+        "required": false,
+        "placeholder": "e.g. -probesize 32 -analyzeduration 0 -fflags nobuffer -strict experimental",
+        "description": "Command line options to use for ffmpeg. Use with care. Default: see project page."
+      },
+
+      "motionDuration": {
+        "type": "integer",
+        "title": "Motion Event Duration (seconds)",
+        "required": false,
+        "minimum": 5,
+        "maximum": 20,
+        "placeholder": "e.g. 10",
+        "description": "Duration of a single motion event. Setting this too low will potentially cause a lot of excess notifications. Default: 10."
+      },
+
+      "debug": {
+        "type": "boolean",
+        "title": "Debug Logging",
+        "required": false,
+        "description": "Enable additional debug logging for this plugin. This will create a lot of logging. Default: false."
       }
     }
   },
 
   "layout": [
     {
-      "key": "controllers",
+      "type": "section",
       "title": "UniFi Protect Controllers",
-      "type": "fieldset",
-      "orderable": false,
-      "expandable": true,
-      "expanded": false,
-      "buttonText": "Add UniFi Protect Controller",
-      "items": [
-        "controllers[].address",
-        "controllers[].username",
-        "controllers[].password",
-        "controllers[].refreshInterval",
-        "controllers[].name",
-        "controllers[].mqttUrl",
-        "controllers[].mqttTopic"
-      ]
-    },
-
-    {
-      "key": "general",
-      "title": "General Options (Optional)",
-      "type": "fieldset",
-      "orderable": false,
       "expandable": true,
       "expanded": false,
       "items": [
         {
+          "key": "controllers",
+          "type": "array",
+          "orderable": false,
+          "buttonText": "Add UniFi Protect Controller",
           "items": [
-            "motionDuration",
-            "ffmpegOptions",
-            "videoProcessor",
-            "debug"
-          ]
-        }
-      ]
-    },
-
-    {
-      "key": "options",
-      "title": "Plugin Feature Options (Optional)",
-      "buttonText": "Add Feature Option",
-      "type": "fieldset",
-      "orderable": false,
-      "expandable": true,
-      "expanded": false,
-      "items": [
-        {
-          "type": "string",
-          "description": "Enter only one option per entry. See project page for the complete list of available options.",
-          "placeholder": "e.g. Disable.Stream.High",
-          "displayFlex": true,
-          "flex-direction": "row",
-          "items": [
+            "controllers[].address",
+            "controllers[].username",
+            "controllers[].password",
             {
-              "key": "options[]"
+              "key": "controllers[]",
+              "type": "section",
+              "title": "Optional Settings",
+              "expandable": true,
+              "expanded": false,
+              "items": [
+                "controllers[].name",
+                "controllers[].refreshInterval"
+              ]
+            },
+            {
+              "key": "controllers[]",
+              "type": "section",
+              "title": "MQTT Settings",
+              "expandable": true,
+              "expanded": false,
+              "items": [
+                "controllers[].mqttUrl",
+                "controllers[].mqttTopic"
+              ]
             }
           ]
         }
+      ]
+    },
+
+    {
+      "type": "section",
+      "title": "Plugin Feature Options (Optional)",
+      "expandable": true,
+      "expanded": false,
+      "items": [
+        {
+          "key": "options",
+          "type": "array",
+          "orderable": false,
+          "buttonText": "Add Feature Option",
+          "items": [
+            "options[]"
+          ]
+        }
+      ]
+    },
+
+    {
+      "type": "section",
+      "title": "Additional Settings (Optional)",
+      "expandable": true,
+      "expanded": false,
+      "items": [
+        "videoProcessor",
+        "ffmpegOptions",
+        "motionDuration",
+        "debug"
       ]
     }
   ]
