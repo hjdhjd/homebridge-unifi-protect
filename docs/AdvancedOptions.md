@@ -16,6 +16,7 @@
 `homebridge-unifi-protect2` is a [Homebridge](https://homebridge.io) plugin that provides HomeKit support to the [UniFi Protect](https://unifi-network.ui.com/video-security) device ecosystem. [UniFi Protect](https://unifi-network.ui.com/video-security) is [Ubiquiti's](https://www.ui.com) next-generation video security platform, with rich camera, doorbell, and NVR controller hardware options for you to choose from, as well as an app which you can use to view, configure and manage your video camera and doorbells.
 
 ### Advanced Configuration (Optional)
+
 This step is not required. The defaults should work well for almost everyone, but for those that prefer to tweak additional settings, this is the complete list of settings available.
 
 ```js
@@ -37,11 +38,17 @@ This step is not required. The defaults should work well for almost everyone, bu
         "address": "1.2.3.4",
         "username": "some-homebridge-user (or create a new one just for homebridge)",
         "password": "some-password",
+        "doorbellMessages": [
+          {
+             "message": "Be right there.",
+             "duration": 90
+          }
+        ],
         "refreshInterval": 5,
         "mqttUrl": "mqtt://test.mosquitto.org",
         "mqttTopic": "unifi/protect"
       }
-    ],
+    ]
   }
 ]
 ```
@@ -49,9 +56,10 @@ This step is not required. The defaults should work well for almost everyone, bu
 | Fields                 | Description                                             | Default                                                                               | Required |
 |------------------------|---------------------------------------------------------|---------------------------------------------------------------------------------------|----------|
 | platform               | Must always be `UniFi Protect`.                         | UniFi Protect                                                                         | Yes      |
-| address                | Host or IP address of your UniFi Protect controller     |                                                                                       | Yes      |
+| address                | Host or IP address of your UniFi Protect controller.    |                                                                                       | Yes      |
 | username               | Your UniFi Protect username.                            |                                                                                       | Yes      |
 | password               | Your UniFi Protect password.                            |                                                                                       | Yes      |
+| doorbellMessages       | Configure [doorbell messages](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/Doorbell.md) for your UniFi Protect controller. | [] | No |
 | videoProcessor         | Specify path of ffmpeg or avconv.                       | "ffmpeg"                                                                              | No       |
 | ffmpegOptions          | Additional parameters to pass ffmpeg to render video.   | "-probesize 32 -analyzeduration 0 -fflags nobuffer -strict experimental"              | No       |
 | motionDuration         | Duration of motion events. Setting this too low will potentially cause a lot of notification spam. | 10                                         | No       |
