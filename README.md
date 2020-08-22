@@ -59,7 +59,7 @@ I hope to continue to work on this one to get two-way audio working. The game pl
 * Advanced Topics
   * [Autoconfiguration](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/Autoconfiguration.md): what it is, design choices that I've made, and why.
   * [Feature Options](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/FeatureOptions.md): granular options to allow you to set the camera quality individually, show or hide specific cameras, controllers, and more.
-  * [Doorbells](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/doorbell.md): how UniFi Protect doorbell support works in this plugin, and how to use all the available features including doorbell messages.
+  * [Doorbells](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/Doorbell.md): how UniFi Protect doorbell support works in this plugin, and how to use all the available features including doorbell messages.
   * [Liveview Scenes](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/Liveviews.md): use the UniFi Protect liveviews feature (available in the UniFi Protect controller webUI) to create motion-detection scenes.
   * [MQTT](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/MQTT.md): how to configure MQTT support.
   * [Advanced Configuration](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/AdvancedOptions.md): complete list of configuration options available in this plugin.
