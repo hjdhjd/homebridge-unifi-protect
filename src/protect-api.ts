@@ -11,6 +11,7 @@ import {
   ProtectCameraChannelConfigInterface,
   ProtectCameraConfig,
   ProtectCameraConfigInterface,
+  ProtectCameraConfigPayload,
   ProtectNvrBootstrap,
   ProtectNvrUserConfig
 } from "./protect-types";
@@ -442,6 +443,40 @@ export class ProtectApi {
     this.apiLastSuccess = Date.now();
 
     // Everything worked, save the new channel array.
+    return await response.json();
+  }
+
+  // Update a camera object.
+  async updateCamera(device: ProtectCameraConfig, payload: ProtectCameraConfigPayload): Promise<ProtectCameraConfig> {
+    // No device object, we're done.
+    if(!device) {
+      return null as any;
+    }
+
+    // Log us in if needed.
+    if(!(await this.loginProtect())) {
+      return null as any;
+    }
+
+    // Only admin users can show messages on doorbells.
+    if(!this.isAdminUser) {
+      return null as any;
+    }
+
+    this.debug("%s %s: %s", this.getNvrName(), this.getDeviceName(device), util.inspect(payload, { colors: true, sorted: true, depth: 10 }));
+
+    // Update Protect with the new configuration.
+    const response = await this.fetch(this.camerasUrl() + "/" + device.id, {
+      body: JSON.stringify(payload),
+      method: "PATCH"
+    });
+
+    if(!response?.ok) {
+      this.log("%s %s: Unable to configure the camera: %s.", this.getNvrName(), this.getDeviceName(device), response.status);
+      return null as any;
+    }
+
+    // We successfully set the message, return the updated device object.
     return await response.json();
   }
 
