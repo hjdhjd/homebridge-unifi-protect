@@ -2,7 +2,6 @@
  *
  * protect-securitysystem.ts: Security system accessory for UniFi Protect.
  */
-
 import {
   CharacteristicEventTypes,
   CharacteristicGetCallback,
