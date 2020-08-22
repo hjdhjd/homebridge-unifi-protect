@@ -11,6 +11,11 @@ import {
 import { ProtectNvr } from "./protect-nvr";
 import { ProtectPlatform } from "./protect-platform";
 
+// List our optional methods in our subclasses.
+export interface ProtectAccessory {
+  configureDoorbellLcdSwitch?(): Promise<boolean>;
+}
+
 export abstract class ProtectAccessory {
   readonly accessory: PlatformAccessory;
   readonly api: API;
