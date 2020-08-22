@@ -107,9 +107,23 @@ export class ProtectMqtt {
       return;
     }
 
-    this.debug("MQTT publish: " + this.config.mqttTopic + "/" + accessory.context.camera.mac + "/" + topic + " Message: " + message);
+    this.debug("%s: MQTT publish: %s Message: %s.", this.nvrApi.getNvrName(), this.config.mqttTopic + "/" + accessory.context.camera.mac + "/" + topic, message);
 
-    // By default, we publish as: unifi/protect/name|mac/event/name
+    // By default, we publish as: unifi/protect/mac/event/name
     this.mqtt.publish(this.config.mqttTopic + "/" + accessory.context.camera.mac + "/" + topic, message);
+  }
+
+  // Subscribe to an MQTT topic.
+  subscribe(accessory: PlatformAccessory, topic: string, callback: (cbBuffer: Buffer) => void): void {
+
+    // By default, we subscribe as: unifi/protect/mac/event/name.
+    this.mqtt.on("connect", () => {
+      this.mqtt.subscribe(this.config.mqttTopic + "/" + accessory.context.camera.mac + "/" + topic);
+      this.debug("%s: MQTT subscribe: %s.", this.nvrApi.getNvrName(), this.config.mqttTopic + "/" + accessory.context.camera.mac + "/" + topic);
+    });
+
+    this.mqtt.on("message", (topic: string, message: Buffer) => {
+      callback(message);
+    });
   }
 }
