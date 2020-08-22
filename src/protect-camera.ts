@@ -2,7 +2,6 @@
  *
  * protect-camera.ts: Camera device class for UniFi Protect.
  */
-
 import {
   CharacteristicEventTypes,
   CharacteristicGetCallback,
@@ -22,24 +21,31 @@ export class ProtectCamera extends ProtectAccessory {
 
   // Configure a camera accessory for HomeKit.
   protected async configureDevice(): Promise<boolean> {
-    this.isVideoConfigured = false;
 
-    const accessory = this.accessory;
     let detectMotion = true;
 
+    this.isVideoConfigured = false;
+
     // Save the camera object before we wipeout the context.
-    const camera = accessory.context.camera;
+    const camera = this.accessory.context.camera;
 
     // Save the motion sensor switch state before we wipeout the context.
-    if(accessory.context.detectMotion !== undefined) {
-      detectMotion = accessory.context.detectMotion;
+    if(this.accessory.context.detectMotion !== undefined) {
+      detectMotion = this.accessory.context.detectMotion;
     }
 
     // Clean out the context object in case it's been polluted somehow.
-    accessory.context = {};
-    accessory.context.camera = camera;
-    accessory.context.nvr = this.nvr.nvrApi.bootstrap.nvr.mac;
-    accessory.context.detectMotion = detectMotion;
+    this.accessory.context = {};
+    this.accessory.context.camera = camera;
+    this.accessory.context.nvr = this.nvr.nvrApi.bootstrap.nvr.mac;
+    this.accessory.context.detectMotion = detectMotion;
+
+    // Clear out any switches on this camera so we can start fresh.
+    let switchService;
+
+    while((switchService = this.accessory.getService(this.hap.Service.Switch))) {
+      this.accessory.removeService(switchService);
+    }
 
     // Configure accessory information.
     if(!(await this.configureInfo())) {
@@ -49,12 +55,6 @@ export class ProtectCamera extends ProtectAccessory {
     // Configure the motion sensor.
     await this.configureMotionSensor();
     await this.configureMotionSwitch();
-
-    // If we have a doorbell, configure it as one.
-    if(camera.type === "UVC G4 Doorbell") {
-      await this.configureVideoDoorbell();
-      this.nvr.doorbellCount++;
-    }
 
     // Configure our video stream and we're done.
     return await this.configureVideoStream();
@@ -122,61 +122,58 @@ export class ProtectCamera extends ProtectAccessory {
 
   // Configure a switch to easily activate or deactivate motion sensor detection for HomeKit.
   private async configureMotionSwitch(): Promise<boolean> {
-    const accessory = this.accessory;
-    const hap = this.hap;
 
     // Clear out any previous switch service.
-    let switchService = accessory.getService(hap.Service.Switch);
+    let switchService = this.accessory.getService(this.hap.Service.Switch);
 
     if(switchService) {
-      accessory.removeService(switchService);
+      this.accessory.removeService(switchService);
     }
 
     // Have we disabled motion sensors or the motion switch?
-    if(!this.nvr || !this.nvr.optionEnabled(accessory.context.camera, "MotionSensor") ||
-      !this.nvr.optionEnabled(accessory.context.camera, "MotionSwitch")) {
+    if(!this.nvr || !this.nvr.optionEnabled(this.accessory.context.camera, "MotionSensor") ||
+      !this.nvr.optionEnabled(this.accessory.context.camera, "MotionSwitch")) {
       this.log("%s %s: Disabling motion sensor switch.",
-        this.nvr.nvrApi.getNvrName(), this.nvr.nvrApi.getDeviceName(accessory.context.camera));
+        this.nvr.nvrApi.getNvrName(), this.nvr.nvrApi.getDeviceName(this.accessory.context.camera));
       // If we disable the switch, make sure we fully reset it's state.
-      delete accessory.context.detectMotion;
+      delete this.accessory.context.detectMotion;
       return false;
     }
 
     // Add the switch to the camera.
-    switchService = new hap.Service.Switch(accessory.displayName);
+    switchService = new this.hap.Service.Switch(this.accessory.displayName, "MotionSensorSwitch");
 
     // Activate or deactivate motion detection.
-    accessory.addService(switchService)
+    this.accessory.addService(switchService)
       .getCharacteristic(this.hap.Characteristic.On)!
       .on(CharacteristicEventTypes.GET, (callback: CharacteristicGetCallback) => {
-        callback(null, accessory.context.detectMotion);
+        callback(null, this.accessory.context.detectMotion);
       })
       .on(CharacteristicEventTypes.SET, (value: CharacteristicValue, callback: CharacteristicSetCallback) => {
-        if(accessory.context.detectMotion !== value) {
-          this.log("%s: Motion detection %s.", accessory.displayName, value === true ? "enabled" : "disabled");
+        if(this.accessory.context.detectMotion !== value) {
+          this.log("%s: Motion detection %s.", this.accessory.displayName, value === true ? "enabled" : "disabled");
         }
 
-        accessory.context.detectMotion = value === true;
+        this.accessory.context.detectMotion = value === true;
         callback(null);
       })
-      .updateValue(accessory.context.detectMotion);
+      .updateValue(this.accessory.context.detectMotion);
 
     return true;
   }
 
   // Configure a camera accessory for HomeKit.
   async configureVideoStream(): Promise<boolean> {
-    const accessory = this.accessory;
     const bootstrap: ProtectNvrBootstrap = this.nvr.nvrApi.bootstrap;
     const nvr: ProtectNvr = this.nvr;
     const nvrApi: ProtectApi = this.nvr.nvrApi;
 
     // No channels exist on this camera.
-    if(!accessory.context.camera?.channels) {
+    if(!this.accessory.context.camera?.channels) {
       return false;
     }
 
-    const camera: ProtectCameraConfig = await nvrApi.enableRtsp(accessory.context.camera) || accessory.context.camera;
+    const camera: ProtectCameraConfig = await nvrApi.enableRtsp(this.accessory.context.camera) ?? this.accessory.context.camera;
     let forceQuality = "";
     let newCameraQuality = "";
     let newCameraUrl = "";
@@ -255,7 +252,7 @@ export class ProtectCamera extends ProtectAccessory {
       // Notify only if this is a new change.
       if(!this.isVideoConfigured || this.cameraUrl) {
         this.log("%s %s: No RTSP stream has been configured for this camera. %s",
-          nvrApi.getNvrName(), nvrApi.getDeviceName(camera, accessory.displayName),
+          nvrApi.getNvrName(), nvrApi.getDeviceName(camera, this.accessory.displayName),
           "Enable an RTSP stream in the UniFi Protect webUI to resolve this issue or " +
           "assign the Administrator role to the user configured for this plugin to allow it to automatically configure itself."
         );
@@ -266,7 +263,7 @@ export class ProtectCamera extends ProtectAccessory {
 
       if(this.cameraUrl !== newCameraUrl) {
         this.log("%s %s: Stream quality configured: %s.", nvrApi.getNvrName(),
-          nvrApi.getDeviceName(camera, accessory.displayName), newCameraQuality);
+          nvrApi.getDeviceName(camera, this.accessory.displayName), newCameraQuality);
       }
     }
 
@@ -278,36 +275,9 @@ export class ProtectCamera extends ProtectAccessory {
     if(!this.isVideoConfigured) {
       this.isVideoConfigured = true;
       const streamingDelegate = new ProtectStreamingDelegate(this);
-      accessory.configureController(streamingDelegate.controller);
+      this.accessory.configureController(streamingDelegate.controller);
     }
 
-    return true;
-  }
-
-  // Configure a doorbell accessory for HomeKit.
-  private async configureVideoDoorbell(): Promise<boolean> {
-
-    // Clear out any previous doorbell service.
-    let doorbellService = this.accessory.getService(this.hap.Service.Doorbell);
-
-    if(doorbellService) {
-      this.accessory.removeService(doorbellService);
-    }
-
-    // Add the doorbell service to this Protect doorbell. HomeKit requires the doorbell service to be
-    // the primary service on the accessory.
-    doorbellService = new this.hap.Service.Doorbell(this.accessory.displayName);
-
-    this.accessory.addService(doorbellService)
-      .getCharacteristic(this.hap.Characteristic.ProgrammableSwitchEvent)
-      .on(CharacteristicEventTypes.GET, (callback: CharacteristicGetCallback) => {
-
-        // Provide the status of this doorbell. This must always return null, per the HomeKit spec.
-        // callback(null, this.ringState);
-        callback(null, null);
-      });
-
-    doorbellService.setPrimaryService(true);
     return true;
   }
 }
