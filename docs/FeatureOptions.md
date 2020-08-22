@@ -17,7 +17,7 @@
 
 ### Feature Options
 
-Feature options allow you to enable or disable certain features in this plugin. These feature options provide unique flexibility by also allowing you to set a scope for each option that allows you more granular control in how this plugin makes features and capabilities available in HomeKit.
+Feature Options allow you to enable or disable certain features in this plugin. These Feature Options provide unique flexibility by also allowing you to set a scope for each option that allows you more granular control in how this plugin makes features and capabilities available in HomeKit.
 
 The priority given to these options works in the following order, from highest to lowest priority where settings that are higher in priority can override lower ones:
 
@@ -27,7 +27,9 @@ The priority given to these options works in the following order, from highest t
 
 To specify the scope of an option, you append the option with `.MAC`, where `MAC` is the MAC address of either a UniFi Protect controller or a camera. If you don't append a MAC address to an option, it will be applied globally, unless a more specifically scoped option is specified elsewhere. The plugin will log all devices it encounters and knows about, including MAC addresses. You can use that to guide what features you would like to enable ot disable.
 
-The `options` setting is an array of strings used to customize feature options. The available feature options are:
+The `options` setting is an array of strings used to customize Feature Options in your `config.json`. I would encourage most users, however, to use the [Homebridge webUI](https://github.com/oznu/homebridge-config-ui-x), to configure Feature Options as well as other options in this plugin. It contains additional validation checking of parameters to ensure the configuration is always valid.
+
+These Feature Options are available on ***all*** UniFi Protect devices available through this plugin:
 
 | Option                                        | Description
 |-----------------------------------------------|----------------------------------
@@ -43,14 +45,20 @@ The `options` setting is an array of strings used to customize feature options. 
 |                                               |
 | `Enable.MotionSwitch`                         | Add a switch accessory to activate or deactivate motion detection in HomeKit. *(Default)*
 | `Disable.MotionSwitch`                        | Remove the switch accessory used to enable or disable motion detection. *Note: this will not disable motion detection, just remove the ability to selectively activate and deactivate it in HomeKit.*
-|                                               |
+
+In addition to the Feature Options available to all UniFi Protect devices, these are available for UniFi Protect doorbell devices:
+
+| Option                                        | Description
+|-----------------------------------------------|----------------------------------
+| `Enable.ContactSensor`                        | Add a contact sensor accessory that is triggered when the doorbell rings. This is useful when trying to create HomeKit automations for doorbell ring events.
+| `Disable.ContactSensor`                       | Remove the contact sensor accessory.  *(Default)*
 | `Enable.Messages`                             | Enable the doorbell messages feature on UniFi Protect doorbells. *(Default)*
 | `Disable.Messages`                            | Disable the doorbell messages feature on UniFi Protect doorbells.
 | `Enable.Messages.FromDoorbell`                | Allow messages saved on the UniFi Protect doorbell to appear as switches in HomeKit. *(Default)*
 | `Disable.Messages.FromDoorbell`               | Prevent messages saved on the UniFi Protect doorbell from appearing as switches in HomeKit.
 
 
-Before using these features, you should understand how feature options propagate to controllers and the devices attached to them. If you choose to disable a controller from being available to HomeKit, you will also disable all the cameras attached to that controller. If you've disabled a controller, and all it's devices with it, you can selectively enable a single device associated with that controller by explicitly setting an `Enable.` feature option. This provides you a lot of richness in how you enable or disable devices for HomeKit use.
+Before using these features, you should understand how Feature Options propagate to controllers and the devices attached to them. If you choose to disable a controller from being available to HomeKit, you will also disable all the cameras attached to that controller. If you've disabled a controller, and all it's devices with it, you can selectively enable a single device associated with that controller by explicitly setting an `Enable.` Feature Option. This provides you a lot of richness in how you enable or disable devices for HomeKit use.
 
 ### Example
 

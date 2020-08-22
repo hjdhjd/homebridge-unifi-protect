@@ -31,6 +31,22 @@ If you're reading this, chances are you own, or would like to own, a UniFi Prote
   * Two-way Audio Support
     * ***This plugin does not currently support two-way audio. I'd love to do so, and as the API and HomeKit technical challenges are solved, I hope to do so in the future.***
 
+### <A NAME="doorbell-ring"></A>Doorbell Rings
+
+[HomeKit](https://www.apple.com/ios/home/) is a great home automation platform in many ways. Where there are gaps in HomeKit support, plugins like this one help to fill it by providing HomeKit support for devices without native HomeKit support. Every so often, however, you run into something that really is a limitation of the HomeKit platform that you need to work around. Doorbell ring automation is one of those things.
+
+This plugin supports HomeKit's native video doorbell and doorbell ring functionality. What HomeKit lacks though is a way to trigger an automation when a ring occurs. There's currently no way to say something like *when the doorbell rings, and it's nighttime, turn on the front porch lights*. It's impossible to tell if this is an oversight or intentional on Apple's part. Until Apple chooses to provide that capability, what can we do?
+
+Enter automation support for doorbell ring events in this plugin. If you choose to enable support for doorbell ring automation, you can create HomeKit automations based on doorbell ring events. Here's how it works:
+
+  * Enable the `Doorbell.ContactSensor` Feature Option in the plugin configuration. See the [Feature Options](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/FeatureOptions.md) documentation for more information on Feature Options.
+
+  * This will create a contact sensor service on the doorbell. Whenever the doorbell rings, the contact sensor will be triggered and set to the *open* state for two seconds, before resetting to the *closed* state again.
+
+  * You can create automations in HomeKit based on this by using the contact sensor as a proxy for the doorbell ring.
+
+  * ***This feature is disabled by default***. At it's core this feature is a workaround for a limitation in HomeKit for a narrow, but very real, use case. I've chosen to err on the side of keeping things as clean as possible when it comes to exposing services within the plugin, while providing more sophisticated functionality like this feature to those who want it.
+
 ### <A NAME="doorbell-messages"></A>Doorbell Messages
 
 Before we get to configuring this feature in HomeKit, let's discuss what this feature is and what design decisions I've chosen to make in implementing this feature for HomeKit.
@@ -109,7 +125,7 @@ For those of the command-line persuasion, you can see what an example `config.js
 | `message`           | The message text to display on the doorbell.
 | `duration`          | The duration, in seconds, that you want to display the message for on the doorbell. If not specified, it defaults to the UniFi Protect default, 60 seconds. If set to 0, the message will display indefinitely.
 
-There are also two feature options that you can use to either disable the messages feature entirely, or, to tell `homebridge-unifi-protect2` to only display the messages you've configured within Homebridge in HomeKit:
+There are also two Fature Options that you can use to either disable the messages feature entirely, or, to tell `homebridge-unifi-protect2` to only display the messages you've configured within Homebridge in HomeKit:
 
 | Feature Options        | Description
 |-----------------------|----------------------------------
