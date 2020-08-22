@@ -26,7 +26,15 @@ export interface ProtectNvrConfigInterface {
   canAutoUpdate: boolean,
   cloudConnectionError: string,
   disableAudio: boolean,
-  doorbellSettings: any,
+  doorbellSettings: {
+    defaultMessageText: string,
+    defaultMessageResetTimeoutMs: number,
+    customMessages: string[],
+    allMessages: {
+      type: string,
+      text: string
+    }[]
+  },
   enableAutomaticBackups: boolean,
   enableCrashReporting: boolean,
   enableStatsReporting: boolean,
@@ -103,7 +111,7 @@ export interface ProtectCameraConfigInterface {
   apRssi: string,
   audioBitrate: number,
   canManage: boolean,
-  channels: ProtectCameraChannelConfig[],
+  channels: ProtectCameraChannelConfigInterface[],
   connectionHost: string,
   featureFlags: {
     canAdjustIrLedLevel: boolean,
@@ -188,6 +196,11 @@ export interface ProtectCameraConfigInterface {
   lastMotion: number,
   lastRing: number,
   lastSeen: number,
+  lcdMessage: {
+    resetAt: number | null,
+    text: string,
+    type: string
+  },
   ledSettings: {
     blinkRate: number,
     isEnabled: boolean
@@ -212,6 +225,13 @@ export interface ProtectCameraConfigInterface {
   platform: string,
   state: string,
   type: string,
+  wifiConnectionState: {
+    channel: number,
+    frequency: number,
+    phyRate: number,
+    signalQuality: number,
+    signalStrength: number
+  }
 }
 
 // A semi-complete description of the UniFi Protect camera channel JSON.
@@ -352,6 +372,10 @@ export interface ProtectOptions {
 // NVR configuration options.
 export interface ProtectNvrOptions {
   address: string,
+  doorbellMessages: {
+    duration: number,
+    message: string
+  }[],
   mqttTopic: string,
   mqttUrl: string,
   name: string,
@@ -366,6 +390,7 @@ export interface ProtectNvrOptions {
 export type ProtectNvrBootstrap = Readonly<ProtectNvrBootstrapInterface>;
 export type ProtectNvrConfig = Readonly<ProtectNvrConfigInterface>;
 export type ProtectCameraConfig = Readonly<ProtectCameraConfigInterface>;
+export type ProtectCameraConfigPayload = Partial<ProtectCameraConfigInterface>;
 export type ProtectCameraChannelConfig = Readonly<ProtectCameraChannelConfigInterface>;
 export type ProtectNvrLiveviewConfig = Readonly<ProtectNvrLiveviewConfigInterface>;
 export type ProtectNvrSystemEvent = Readonly<ProtectNvrSystemEventInterface>;
