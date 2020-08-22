@@ -33,6 +33,8 @@ import { FfmpegProcess } from "./protect-ffmpeg";
 import { ProtectPlatform } from "./protect-platform";
 import { ProtectOptions } from "./protect-types";
 
+const beVerbose = false;
+
 // Bring in a precompiled ffmpeg binary that meets our requirements, if available.
 const pathToFfmpeg = require("ffmpeg-for-homebridge"); // eslint-disable-line @typescript-eslint/no-var-requires
 
@@ -78,7 +80,6 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     this.camera = camera;
     this.config = camera.platform.config;
     this.debug = camera.debug.bind(camera.platform);
-    // this.debug = camera.platform.log;
     this.hap = camera.api.hap;
     this.log = camera.platform.log;
     this.name = camera.accessory.displayName;
@@ -243,7 +244,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     //                    Protect changes this in n the future.
     // -vcodec copy       copy the stream withour reencoding it.
     // -f rawvideo        specify that we're using raw video.
-    // -pix_fmt yuvj422p  use the yuvj422p pixel format rather than yuvj420p, which is now deprecated in ffmpeg.
+    // -pix_fmt yuvj420p  use the yuvj420p pixel format, which is what Protect uses.
     // -r fps             frame rate to use for this stream. This is specified by HomeKit.
     // -b:v bitrate       the average bitrate to use for this stream. This is specified by HomeKit.
     // -bufsize size      this is the decoder buffer size, which drives the variability / quality of the output bitrate.
@@ -254,7 +255,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       " -map 0:v" +
       " -vcodec copy" +
       " -f rawvideo" +
-      " -pix_fmt yuvj422p" +
+      " -pix_fmt yuvj420p" +
       " -r " + request.video.fps +
       " " + this.platform.config.ffmpegOptions +
       " -b:v " + request.video.max_bit_rate + "k" +
@@ -328,7 +329,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     }
 
     // Additional logging, but only if we're debugging.
-    if(this.platform.debugMode) {
+    if(beVerbose || this.platform.debugMode) {
       fcmd += " -loglevel level+verbose";
     }
 

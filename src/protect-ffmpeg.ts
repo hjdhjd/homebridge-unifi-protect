@@ -11,6 +11,8 @@ import execa from "execa";
 import { Logging, StreamRequestCallback } from "homebridge";
 import { ProtectStreamingDelegate } from "./protect-stream";
 
+const beVerbose = false;
+
 export class FfmpegProcess {
   private readonly debug: (message: string, ...parameters: any[]) => void;
   private readonly log: Logging;
@@ -21,13 +23,16 @@ export class FfmpegProcess {
 
   constructor(delegate: ProtectStreamingDelegate, sessionId: string, command: string, returnPort: number, callback: StreamRequestCallback) {
     this.debug = delegate.platform.debug.bind(this);
-    // this.debug = delegate.platform.log;
     this.delegate = delegate;
     this.log = delegate.platform.log;
 
     let started = false;
 
-    this.debug("%s: ffmpeg command: %s %s", delegate.name, delegate.videoProcessor, command);
+    if(beVerbose) {
+      this.log("%s: ffmpeg command: %s %s", delegate.name, delegate.videoProcessor, command);
+    } else {
+      this.debug("%s: ffmpeg command: %s %s", delegate.name, delegate.videoProcessor, command);
+    }
 
     const socket = createSocket("udp4");
 
@@ -73,7 +78,7 @@ export class FfmpegProcess {
       }
 
       // Debugging and additional logging, if requested.
-      if(delegate.platform.debugMode) {
+      if(beVerbose || delegate.platform.debugMode) {
         data.toString().split(/\n/).forEach((line: string) => {
           this.log(line);
         });
