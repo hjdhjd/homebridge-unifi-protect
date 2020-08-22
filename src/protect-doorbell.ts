@@ -36,8 +36,8 @@ interface protectMessageInterface {
 
 export class ProtectDoorbell extends ProtectCamera {
   private defaultDuration!: number;
-  private isMessagesEnabled: boolean;
-  private isMessagesFromControllerEnabled: boolean;
+  private isMessagesEnabled!: boolean;
+  private isMessagesFromControllerEnabled!: boolean;
   private messageSwitches!: messageSwitchInterface[];
 
   // Configure the doorbell for HomeKit.
@@ -68,6 +68,72 @@ export class ProtectDoorbell extends ProtectCamera {
     // Let's setup the doorbell-specific attributes.
     await this.configureVideoDoorbell();
     this.nvr.doorbellCount++;
+
+    // Configure the contact sensor, if we have one.
+    await this.configureContactSensor();
+
+    // Configure MQTT.
+    await this.configureMqtt();
+
+    // Now, make the doorbell LCD message functionality available.
+    return await this.configureDoorbellLcdSwitch();
+  }
+
+  // Configure the doorbell service for HomeKit.
+  private async configureVideoDoorbell(): Promise<boolean> {
+
+    // Clear out any previous doorbell service.
+    let doorbellService = this.accessory.getService(this.hap.Service.Doorbell);
+
+    if(doorbellService) {
+      this.accessory.removeService(doorbellService);
+    }
+
+    // Add the doorbell service to this Protect doorbell. HomeKit requires the doorbell service to be
+    // marked as the primary service on the accessory.
+    doorbellService = new this.hap.Service.Doorbell(this.accessory.displayName);
+
+    this.accessory.addService(doorbellService)
+      .getCharacteristic(this.hap.Characteristic.ProgrammableSwitchEvent)
+      .on(CharacteristicEventTypes.GET, (callback: CharacteristicGetCallback) => {
+
+        // Provide the status of this doorbell. This must always return null, per the HomeKit spec.
+        callback(null, null);
+      });
+
+    doorbellService.setPrimaryService(true);
+    return true;
+  }
+
+  // Configure a contact sensor for HomeKit to be used for automation purposes.
+  private async configureContactSensor(): Promise<boolean> {
+    const accessory = this.accessory;
+    const hap = this.hap;
+
+    // Clear out any previous contact sensor service.
+    let contactService = accessory.getService(hap.Service.ContactSensor);
+
+    if(contactService) {
+      accessory.removeService(contactService);
+    }
+
+    // If we haven't asked for a contact sensor, we're done here.
+    if(!this.nvr.optionEnabled(this.accessory.context.camera, "ContactSensor", false)) {
+      return false;
+    }
+
+    this.log("%s %s: Enabling doorbell contact sensor. This sensor can be used for the automation of doorbell ring events in HomeKit.",
+      this.nvr.nvrApi.getNvrName(), this.nvr.nvrApi.getDeviceName(accessory.context.camera));
+
+    // Add the contact sensor to the doorbell.
+    contactService = new hap.Service.ContactSensor(accessory.displayName + " Doorbell");
+    accessory.addService(contactService);
+
+    return true;
+  }
+
+  // Configure MQTT capabilities for the doorbell.
+  private async configureMqtt(): Promise<boolean> {
 
     // We support the ability to set the doorbell message like so:
     //
@@ -121,33 +187,6 @@ export class ProtectDoorbell extends ProtectCamera {
       this.setMessage(outboundPayload);
     });
 
-    // Now, make the doorbell LCD message functionality available.
-    return await this.configureDoorbellLcdSwitch();
-  }
-
-  // Configure the doorbell service for HomeKit.
-  private async configureVideoDoorbell(): Promise<boolean> {
-
-    // Clear out any previous doorbell service.
-    let doorbellService = this.accessory.getService(this.hap.Service.Doorbell);
-
-    if(doorbellService) {
-      this.accessory.removeService(doorbellService);
-    }
-
-    // Add the doorbell service to this Protect doorbell. HomeKit requires the doorbell service to be
-    // marked as the primary service on the accessory.
-    doorbellService = new this.hap.Service.Doorbell(this.accessory.displayName);
-
-    this.accessory.addService(doorbellService)
-      .getCharacteristic(this.hap.Characteristic.ProgrammableSwitchEvent)
-      .on(CharacteristicEventTypes.GET, (callback: CharacteristicGetCallback) => {
-
-        // Provide the status of this doorbell. This must always return null, per the HomeKit spec.
-        callback(null, null);
-      });
-
-    doorbellService.setPrimaryService(true);
     return true;
   }
 
