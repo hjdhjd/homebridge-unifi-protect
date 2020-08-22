@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 3.4.0 (2020-08-22)
+  * New feature: Complete doorbell message support. For those who have G4 Doorbells, you now have the ability to set the message on the doorbell from within HomeKit. TL;DR - a switch will appear on your doorbell for each message that's configured. [Full details here] (https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/Doorbell.md). Oh...and you can use MQTT to set arbitrary doorbell message too. :smile:
+  * New feature: You can now create HomeKit automations based on doorbell ring events. This feature really should exist in HomeKit, but unfortunately Apple doesn't allow you to create automations for doorbell ring events. [Full details here] (https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/Doorbell.md).
+  * Minor housekeeping throughout the plugin.
+
 ## 3.3.2 (2020-08-18)
   * Houskeeping updates to the plugin configuration webUI and streaming.
 
