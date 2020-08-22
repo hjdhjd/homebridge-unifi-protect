@@ -57,11 +57,7 @@
     "watch": "npm run build && npm link && nodemon"
   },
   "files": [
-    "docs/AdvancedOptions.md",
-    "docs/Liveviews.md",
-    "docs/Changelog.md",
-    "docs/FeatureOptions.md",
-    "docs/Autoconfiguration.md",
+    "docs/**.md",
     "LICENSE.md",
     "README.md",
     "config.schema.json",
