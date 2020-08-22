@@ -16,6 +16,7 @@
 `homebridge-unifi-protect2` is a [Homebridge](https://homebridge.io) plugin that provides HomeKit support to the [UniFi Protect](https://unifi-network.ui.com/video-security) device ecosystem. [UniFi Protect](https://unifi-network.ui.com/video-security) is [Ubiquiti's](https://www.ui.com) next-generation video security platform, with rich camera, doorbell, and NVR controller hardware options for you to choose from, as well as an app which you can use to view, configure and manage your video camera and doorbells.
 
 ### Liveview Scenes
+
 Plugin-specific liveview scenes are really a way to further tailor how you activate or deactivate motion detection across multiple cameras in a single click. I wanted to provide a way for users to be able to create groups of cameras that can have motion detection toggled at a time and I experimented with a couple of ways to do it:
 
   * Use [HomeKit](https://www.apple.com/ios/home/) automation events to create scenes that activate or deactivate groups of cameras. While this works, it has scaling challenges with larger numbers of cameras and the [HomeKit](https://www.apple.com/ios/home/) UI. This also won't inform the user when those scenes are set, merely activate or deactivate those scenes.
@@ -27,7 +28,7 @@ Well, the Protect webUI already has a nice feature called liveviews that allows 
 
 Finally, you might want to create a way to toggle multiple cameras at once in the form of a switch, either in addition to, or instead of, a security system accessory, so we support that too to give you as much flexibility as you'd like in tailoring your experience.
 
-### <A NAME="security-system"></A>How to configure and use the liveview security system feature
+### <A NAME="security-system"></A>Configuring the Liveview Security System Feature
 
 First, we need to understand the security system accessory in [HomeKit](https://www.apple.com/ios/home/). This accessory is best described as a switch with multiple settings. You can set a security system accessory to the following states using the Home app:
 
@@ -57,7 +58,7 @@ Creating plugin-specific liveviews are as simple as ensuring they are named:
 
 Once configured, you can set the security system state in the Home app. When you select a setting - *Away* for example - it will lookup all the cameras associated with that liveview and activate motion detection for those cameras, **and it will disable motion detection on all other cameras**. Put another way - when using this feature, and you enable a specific security system state, only those cameras will have motion detection active. All other cameras will have motion detection set to off.
 
-### <A NAME="switch"></A>How to configure and use the liveview switch feature
+### <A NAME="switch"></A>Configuring the Liveview Switch Feature
 
 In addition to the above, `homebridge-unifi-protect2` can create switches based on arbitrary liveviews that you create. To use this feature, you create a liveview and choose a name for it beginning with `Protect-` followed by whatever you want to call this switch. The only reserved names are the ones above for the security system feature.
 
@@ -65,7 +66,8 @@ For example, if you configure a liveview named `Protect-Outside`, you'll see a s
 
 There's a crucial difference between liveview switches and the liveview security system accessory: ***liveview switches only impact the cameras you've configured in that liveview***. The security system accessory will disable motion detection on all cameras not explicitly configured in a given liveview scene (with the exception of the *Off* scene, which is special - [see above](#security-system)).
 
-### Some fun facts
+### Some Fun Facts
+
   * You don't need to configure all the liveviews. If you have at least one, the security system accessory will appear. For security system states with no corresponding liveviews, nothing will happen.
   * UniFi Protect will allow you to have multiple liveviews with the same name. In this case, `homebridge-unifi-protect2` will pull all the cameras in all the liveviews with the same name and control them together.
   * There is a setting when editing liveviews called `Share view with others`. This makes a given liveview available to all users, instead of just the user you're currently logged in with. Why does this matter? If you use a different username and password for `homebridge-unifi-protect2` than the one you use to login, you'll want to ensure that any views you create are shared with all users so they can be used with other usernames. Alternatively, login to the Protect webUI with the same username you configured `homebridge-unifi-protect2` to configure liveviews for that user.
