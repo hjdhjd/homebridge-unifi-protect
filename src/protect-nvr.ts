@@ -10,6 +10,7 @@ import {
 } from "homebridge";
 import { ProtectApi } from "./protect-api";
 import { ProtectCamera } from "./protect-camera";
+import { ProtectDoorbell } from "./protect-doorbell";
 import { ProtectLiveviews } from "./protect-liveviews";
 import { ProtectMqtt } from "./protect-mqtt";
 import { ProtectPlatform } from "./protect-platform";
@@ -30,7 +31,7 @@ import {
 export class ProtectNvr {
   private api: API;
   config: ProtectNvrOptions;
-  private readonly configuredCameras: { [index: string]: ProtectCamera };
+  private readonly configuredCameras: { [index: string]: ProtectCamera | ProtectDoorbell };
   private debug: (message: string, ...parameters: any[]) => void;
   doorbellCount: number;
   private isEnabled: boolean;
@@ -40,7 +41,7 @@ export class ProtectNvr {
   private liveviews: ProtectLiveviews;
   private log: Logging;
   private motionDuration: number;
-  private mqtt: ProtectMqtt;
+  mqtt: ProtectMqtt;
   private readonly motionEventTimers: { [index: string]: NodeJS.Timeout };
   private name: string;
   private nvrAddress: string;
@@ -143,13 +144,22 @@ export class ProtectNvr {
       // Setup the Protect camera if it hasn't been configured yet.
       if(!this.configuredCameras[accessory.UUID]) {
         // Eventually switch on multiple types of UniFi Protect cameras. For now, it's cameras only...
-        this.configuredCameras[accessory.UUID] = new ProtectCamera(this, accessory);
+        if(camera.type === "UVC G4 Doorbell") {
+          this.configuredCameras[accessory.UUID] = new ProtectDoorbell(this, accessory);
+        } else {
+          this.configuredCameras[accessory.UUID] = new ProtectCamera(this, accessory);
+        }
 
         // Refresh the accessory cache with these values.
         this.api.updatePlatformAccessories([accessory]);
       } else {
         // Finally, check if we have changes to the exposed RTSP streams on our cameras.
-        await this.configuredCameras[accessory.UUID]?.configureVideoStream();
+        await this.configuredCameras[accessory.UUID].configureVideoStream();
+
+        // Check for changes to the doorbell LCD as well.
+        if(camera.type === "UVC G4 Doorbell") {
+          await (this.configuredCameras[accessory.UUID] as ProtectDoorbell).configureDoorbellLcdSwitch();
+        }
       }
     }
 
