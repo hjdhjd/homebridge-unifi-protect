@@ -88,10 +88,6 @@ export class ProtectLiveviews {
         this.platform.accessories.splice(this.platform.accessories.indexOf(oldAccessory), 1);
       }
 
-      if(this.securitySystem) {
-        delete this.securitySystem;
-      }
-
       this.securityAccessory = null as any;
       this.securitySystem = null as any;
       return;
