@@ -42,7 +42,7 @@ export class ProtectNvr {
   private log: Logging;
   private motionDuration: number;
   mqtt: ProtectMqtt;
-  private readonly motionEventTimers: { [index: string]: NodeJS.Timeout };
+  private readonly eventTimers: { [index: string]: NodeJS.Timeout };
   private name: string;
   private nvrAddress: string;
   nvrApi!: ProtectApi;
@@ -66,7 +66,7 @@ export class ProtectNvr {
     this.mqtt = null as any;
     this.name = nvrOptions.name;
     this.motionDuration = platform.config.motionDuration;
-    this.motionEventTimers = {};
+    this.eventTimers = {};
     this.nvrAddress = nvrOptions.address;
     this.platform = platform;
     this.refreshInterval = nvrOptions.refreshInterval;
@@ -376,7 +376,7 @@ export class ProtectNvr {
     this.lastMotion[camera.mac] = lastMotion;
 
     // If we already have a motion event inflight, allow it to complete so we don't spam users.
-    if(this.motionEventTimers[camera.mac]) {
+    if(this.eventTimers[camera.mac]) {
       return;
     }
 
@@ -403,11 +403,11 @@ export class ProtectNvr {
 
     // Reset our motion event after motionDuration.
     const self = this;
-    this.motionEventTimers[camera.mac] = setTimeout(() => {
-      const motionService = accessory.getService(hap.Service.MotionSensor);
+    this.eventTimers[camera.mac] = setTimeout(() => {
+      const thisMotionService = accessory.getService(hap.Service.MotionSensor);
 
-      if(motionService) {
-        motionService.getCharacteristic(hap.Characteristic.MotionDetected).updateValue(false);
+      if(thisMotionService) {
+        thisMotionService.getCharacteristic(hap.Characteristic.MotionDetected).updateValue(false);
 
         // Publish to MQTT, if the user has configured it.
         self.mqtt?.publish(accessory, "motion", "false");
@@ -416,7 +416,7 @@ export class ProtectNvr {
       }
 
       // Delete the timer from our motion event tracker.
-      delete self.motionEventTimers[camera.mac];
+      delete self.eventTimers[camera.mac];
     }, this.motionDuration * 1000);
   }
 
@@ -456,6 +456,35 @@ export class ProtectNvr {
     doorbellService
       .getCharacteristic(this.hap.Characteristic.ProgrammableSwitchEvent)
       .setValue(this.hap.Characteristic.ProgrammableSwitchEvent.SINGLE_PRESS);
+
+    // Trigger the doorbell ring contact sensor, if one is configured.
+    const contactService = accessory.getService(hap.Service.ContactSensor);
+
+    if(contactService) {
+
+      // Kill any inflight contact reset.
+      if(this.eventTimers[camera.mac + ".DoorbellRing"]) {
+        clearTimeout(this.eventTimers[camera.mac + ".DoorbellRing"]);
+        delete this.eventTimers[camera.mac + ".DoorbellRing"];
+      }
+
+      // Trigger the contact event in HomeKit.
+      contactService.getCharacteristic(hap.Characteristic.ContactSensorState).updateValue(hap.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED);
+
+      // Reset our contact event after two seconds.
+      const self = this;
+      this.eventTimers[camera.mac + ".DoorbellRing"] = setTimeout(() => {
+        const thisContactService = accessory.getService(hap.Service.ContactSensor);
+
+        if(thisContactService) {
+          contactService.getCharacteristic(hap.Characteristic.ContactSensorState).updateValue(hap.Characteristic.ContactSensorState.CONTACT_DETECTED);
+          self.debug("%s %s: Resetting contact sensor event.", this.nvrApi.getNvrName(), accessory.displayName);
+        }
+
+        // Delete the timer from our motion event tracker.
+        delete self.eventTimers[camera.mac + ".DoorbellRing"];
+      }, 2 * 1000);
+    }
 
     // Publish to MQTT, if the user has configured it.
     this.mqtt?.publish(accessory, "doorbell", "true");
@@ -543,14 +572,14 @@ export class ProtectNvr {
     //    camera that it's managing.
     const configOptions = this.platform?.configOptions;
 
-    // Nothing configured - we show all Protect devices to HomeKit.
+    // Nothing configured - we assume the default return value.
     if(!configOptions) {
-      return true;
+      return defaultReturnValue;
     }
 
-    // No valid device passed to us, assume the option is enabled.
+    // No valid device passed to us - assume the default return value.
     if(!device?.mac) {
-      return true;
+      return defaultReturnValue;
     }
 
     let optionSetting;
