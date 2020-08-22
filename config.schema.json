@@ -8,13 +8,16 @@
   "schema": {
     "type": "object",
     "properties": {
+
       "controllers": {
         "type": "array",
         "title": "UniFi Protect Controllers",
+
         "items": {
           "type": "object",
           "title": "UniFi Protect Controller",
           "properties": {
+
             "address": {
               "type": "string",
               "title": "Controller Address",
@@ -22,6 +25,37 @@
               "format": "hostname",
               "placeholder": "e.g. 1.2.3.4",
               "description": "Hostname or IP address of your UniFi Protect controller."
+            },
+
+            "doorbellMessages": {
+              "type": "array",
+              "title": "Doorbell Messages",
+
+              "items": {
+                "type": "object",
+                "title": "Message Entry Object",
+
+                "properties": {
+
+                  "duration": {
+                    "type": "integer",
+                    "title": "Message Duration (seconds)",
+                    "required": false,
+                    "minimum": 0,
+                    "placeholder": "e.g. 60",
+                    "description": "Length of time to display the message on your doorbell. Use 0 to display the message indefinitely. Default: 60."
+                  },
+
+                  "message": {
+                    "type": "string",
+                    "title": "Message Name",
+                    "required": false,
+                    "maxLength": 30,
+                    "placeholder": "e.g. I'll be there soon.",
+                    "description": "Message to display on your doorbell. Default: None."
+                  }
+                }
+              }
             },
 
             "mqttTopic": {
@@ -79,10 +113,12 @@
       },
 
       "options": {
-        "title": "Feature Options",
         "type": "array",
+        "title": "Feature Options",
+
         "items": {
           "type": "string",
+          "required": false,
           "description": "Enter only one option per entry. See project page for the complete list of available options.",
           "placeholder": "e.g. Disable.Stream.High"
         }
@@ -132,15 +168,38 @@
       "items": [
         {
           "key": "controllers",
+          "type": "array",
           "name": " ",
           "description": "Provide the IP address and login details of your UniFi Protect controllers.",
-          "type": "array",
           "orderable": false,
           "buttonText": "Add UniFi Protect Controller",
           "items": [
             "controllers[].address",
             "controllers[].username",
             "controllers[].password",
+
+            {
+              "key": "controllers[]",
+              "type": "section",
+              "title": "Doorbell Message Presets",
+              "expandable": true,
+              "expanded": false,
+              "items": [
+                {
+                  "key": "controllers[].doorbellMessages",
+                  "type": "array",
+                  "name": " ",
+                  "description": "Create additional message presets to display on your UniFi Protect Doorbell.",
+                  "orderable": false,
+                  "buttonText": "Add Doorbell Message",
+                  "items": [
+                    "controllers[].doorbellMessages[].message",
+                    "controllers[].doorbellMessages[].duration"
+                  ]
+                }
+              ]
+            },
+
             {
               "key": "controllers[]",
               "type": "section",
@@ -186,9 +245,9 @@
       "items": [
         {
           "key": "options",
+          "type": "array",
           "name": " ",
           "description": "Feature options allow you to further customize the behavior of this plugin such as the ability to show or hide cameras or specify stream quality.",
-          "type": "array",
           "orderable": false,
           "buttonText": "Add Feature Option",
           "items": [
