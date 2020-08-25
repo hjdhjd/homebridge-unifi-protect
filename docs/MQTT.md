@@ -31,7 +31,7 @@ You configure MQTT settings within a `controller` configuration block. The setti
 
 | Configuration Setting | Description
 |-----------------------|----------------------------------
-| **mqttUrl**           | The URL of your MQTT broker. **This must be in URL form**, e.g.: `mqtt://user@password:1.2.3.4`.
+| **mqttUrl**           | The URL of your MQTT broker. **This must be in URL form**, e.g.: `mqtt://user:password@1.2.3.4`.
 | **mqttTopic**         | The base topic to publish to. The default is: `unifi/protect`.
 
 To reemphasize the above: **mqttUrl** must be a valid URL. Just entering a hostname will result in an error. The URL can use any of these protocols: `mqtt`, `mqtts`, `tcp`, `tls`, `ws`, `wss`.
