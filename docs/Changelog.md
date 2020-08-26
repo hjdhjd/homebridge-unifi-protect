@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 3.5.0 (2020-08-26)
+  * New feature: Two-way audio support for doorbells and cameras that support it. For those who have G4 Doorbells, you now have the ability to use two-way audio...with a catch. Automatic echo cancellation (AEC) is unavailable which means you'll hear your own voice. [Read more here](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/Doorbell.md#doorbell-twoway). Note: this support is untested on the UniFi Protect G3 Mini, but I expect it should work given the consistency in Ubiquiti's implementation. Enjoy. :smile:
+  * Enhancement: Improved default network interface detection.
+
 ## 3.4.0 (2020-08-22)
   * New feature: Complete doorbell message support. For those who have G4 Doorbells, you now have the ability to set the message on the doorbell from within HomeKit. TL;DR - a switch will appear on your doorbell for each message that's configured. [Full details here] (https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/Doorbell.md). Oh...and you can use MQTT to set arbitrary doorbell message too. :smile:
   * New feature: You can now create HomeKit automations based on doorbell ring events. This feature really should exist in HomeKit, but unfortunately Apple doesn't allow you to create automations for doorbell ring events. [Full details here] (https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/Doorbell.md).
