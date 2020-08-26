@@ -19,6 +19,9 @@
 
 If you're reading this, chances are you own, or would like to own, a UniFi Protect doorbell. Currently, Ubiquiti sells one doorbell - the [UniFi Protect G4 Doorbell](https://store.ui.com/collections/unifi-protect-cameras/products/uvc-g4-doorbell), and it's quite a nice device. You can read all about the features and specs elsewhere, but for our purposes, I'm going to focus on talking about the handful of features that are most relevant for [HomeKit](https://www.apple.com/ios/home/) users in particular:
 
+  * Two-way Audio Support
+    * `homebridge-unifi-protect2` supports two-way audio, and it works well with one notable caveat: a lack of acoustic echo cancelation, or AEC.
+
   * Doorbell Ring Support
     * `homebridge-unifi-protect2` fully supports doorbell ring notifications. When you ring the doorbell, you'll get a notification on your iOS/macOS devices, including a snapshot of whose at the door. These snapshots tied to notifications are often called *rich notifications*.
 
@@ -28,8 +31,14 @@ If you're reading this, chances are you own, or would like to own, a UniFi Prote
   * Doorbell Messages
     * An interesting and novel feature of the G4 Doorbell is that it has it's own LCD screen. You can choose to set a message on this screen for people to see. Messages can be set indefinitely, selected from a preexisting list after the doorbell is rung, or you can type in a message in realtime at any point. `homebridge-unifi-protect2` has full support for setting messages on your doorbell.
 
-  * Two-way Audio Support
-    * ***This plugin does not currently support two-way audio. I'd love to do so, and as the API and HomeKit technical challenges are solved, I hope to do so in the future.***
+### <A NAME="doorbell-twoway"></A>Two-way Audio
+  * Protect cameras and doorbells that support two-way audio are *full-duplex*, meaning they transmit and receive audio simultaneously. This creates a problem - without using some method to eliminate your own voice from what gets picked up by the speaker, ***you will inevitably hear your own voice back whenever you use the microphone in the Home app***, however the person standing in front of the doorbell will hear things normally.
+
+  * Unfortunately, AEC is not a solved problem in the open source community quite yet, though there are great commercial options. There are a couple of glimmers of hope: Protect cameras appear to actually support AEC, though there doesn't appear to be a straightforward way to access this capability at the moment. The second is that, things *do* work quite well, aside from the unfortunate challenge around AEC for the person using the Home app.
+
+  * Two-way audio is enabled by default. You can disable it, through the [Feature Option](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/FeatureOptions.md), `TwoWayAudio`.
+
+  * Finally, since someone will inevitably ask: Ring and Nest-Cam (terrific plugins by terrific developers) - don't have this problem because Ring and Nest send all audio back to Ring and Nest's servers where audio is processed and dealt with, including AEC.
 
 ### <A NAME="doorbell-ring"></A>Doorbell Rings
 

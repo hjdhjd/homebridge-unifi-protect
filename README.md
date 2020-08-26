@@ -26,7 +26,9 @@ What does *just works* mean in practice? It means that this plugin will discover
 
 - **Blazing fast video streaming.** Video streaming from HomeKit will start within in 1-2 seconds for G3-series cameras and 3-4 seconds for G4-series cameras, in most cases. I've spent the time to optimize the video streaming experience to ensure it feels very responsive, and *just works*.
 
-- **[Doorbell ring and messages support.](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/Doorbell.md).** This plugin provides support for [UniFi Protect G4 Doorbells](https://store.ui.com/collections/unifi-protect/products/uvc-g4-doorbell). We currently support doorbell rings, motion detection, video, and receiving audio. In addition, we also support the use of the doorbell LCD screen to show messages. *Using the microphone to send audio is not currently supported*.
+- **[Full UniFi Protect G4 Doorbell support.](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/Doorbell.md).** This plugin provides complete support for [UniFi Protect G4 Doorbells](https://store.ui.com/collections/unifi-protect/products/uvc-g4-doorbell). We support all the features of the doorbell including - doorbell rings, two-way audio, and the use of the onboard LCD screen for messages. Two-way audio has caveats you should be aware of.
+
+- **[Two-way audio support](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/Doorbell.md#doorbell-twoway) for all UniFi Protect cameras that support it**. In addition to [UniFi Protect G4 Doorbells](https://store.ui.com/collections/unifi-protect/products/uvc-g4-doorbell), the [UniFi Protect G3 Micro](https://store.ui.com/collections/unifi-protect/products/unifi-video-g3-micro) provides two-way audio capabilities, and that functionality is available to you in HomeKit.
 
 - **Support for multiple controllers.** This plugin can support multiple UniFi Protect controllers. If you have more than one controller, it's easy to add them to this plugin, and integrate them seamlessly into HomeKit.
 
@@ -46,11 +48,11 @@ What does *just works* mean in practice? It means that this plugin will discover
 
 ### What's not in this plugin right now
 
-Microphone support / two-way audio for UniFi Protect doorbell devices such as the [G4 Doorbell](https://store.ui.com/collections/unifi-protect/products/uvc-g4-doorbell). I'd love to get there with two-way audio, but we need further reverse engineering of the Protect API to do it, or an official API from Ubiquiti (this is unlikely to happen, so reverse engineering it is).
+Acoustic Echo Cancellation (AEC) support for two-way audio in UniFi Protect. We're most of the way there with two-way audio support, and hopefully AEC support can be reverse-engineered in the future.
 
-Currently, we support doorbell ring events, motion sensor, and incoming video.
+Currently, we support doorbell ring events, motion sensor, incoming video, and two-way audio.
 
-I hope to continue to work on this one to get two-way audio working. The game plan right now is to figure out how Protect is currently transmitting audio back to the doorbell and see how we can emulate it.
+I hope to continue to work on this one to get AEC working for two-way audio. [You can also read more on about two-way audio support here](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/Doorbell.md#doorbell-twoway).
 
 ## Documentation
 * Getting going
@@ -82,7 +84,9 @@ excellent documentation for [homebridge-camera-ffmpeg](https://github.com/Sunoo/
 ### Audio
 Audio on cameras is tricky in the HomeKit world to begin with, and when you throw in some of the specifics of how UniFi Protect works, it gets even more interesting. Some things to keep in mind if you want to use audio with UniFi Protect:
 
-* This plugin supports audio coming from UniFi cameras. It does **not** support two-way audio at this time.
+* This plugin provides audio on UniFi cameras and doorbells. This includes two-way audio on the [G4 Doorbell](https://store.ui.com/collections/unifi-protect/products/uvc-g4-doorbell) and [G3 Micro](https://store.ui.com/collections/unifi-protect/products/unifi-video-g3-micro).
+
+* There is one notable caveat, currently, with two-way audio: the lack of acoustic echo cancellation, or AEC. [Read more on about two-way audio here](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/Doorbell.md#doorbell-twoway).
 
 * **Audio support will not work unless you have a version of ffmpeg that supports fdk-aac.** Unfortunately, most default installations of ffmpeg are not compiled with support for fdk-aac. You'll need to compile or acquire a version of ffmpeg that does. Doing so is beyond the scope of this documentation. There are plenty of guides to this - Google is your friend. This plugin uses [ffmpeg-for-homebridge](https://www.npmjs.com/package/ffmpeg-for-homebridge) which eases the pain somewhat by providing prebuilt static binaries of ffmpeg for certain platforms, and save you the trouble of having to compile a version of ffmpeg yourself.
 
