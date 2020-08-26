@@ -71,7 +71,7 @@ type SessionInfo = {
 // Camera streaming delegate implementation for Protect.
 export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   private readonly api: API;
-  private readonly camera: ProtectCamera;
+  readonly camera: ProtectCamera;
   private readonly config: ProtectOptions;
   debug: (message: string, ...parameters: any[]) => void;
   private readonly hap: HAP;

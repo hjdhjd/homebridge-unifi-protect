@@ -9,17 +9,6 @@ import { createSocket } from "dgram";
 import { Logging } from "homebridge";
 import { ProtectStreamingDelegate } from "./protect-stream";
 
-// Retrieve the payload information from a packet to discern what the packet payload is.
-function getPayloadType(message: Buffer): number {
-  return message.readUInt8(1) & 0x7f;
-}
-
-// Return whether or not a packet is RTP (or not).
-function isRtpMessage(message: Buffer): boolean {
-  const payloadType = getPayloadType(message);
-  return payloadType > 90 || payloadType === 0;
-}
-
 // What this function does is create two socket pipes to split traffic coming in from serverPort and
 // pipe it out two audioRTCPPort and returnAudioPort.
 //
@@ -66,7 +55,7 @@ export class RtpSplitter {
       this.socket.send(msg, returnAudioPort, "127.0.0.1");
 
       // RTCP control packets should go to the RTCP port.
-      if(!isRtpMessage(msg)) {
+      if(!this.isRtpMessage(msg)) {
 
         // Save this RTCP message for heartbeat purposes.
         this.heartbeatMsg = Buffer.from(msg);
@@ -110,5 +99,17 @@ export class RtpSplitter {
 
     clearTimeout(this.heartbeatTimer);
     this.socket.close();
+  }
+
+  // Retrieve the payload information from a packet to discern what the packet payload is.
+  private getPayloadType(message: Buffer): number {
+    return message.readUInt8(1) & 0x7f;
+  }
+
+  // Return whether or not a packet is RTP (or not).
+  private isRtpMessage(message: Buffer): boolean {
+    const payloadType = this.getPayloadType(message);
+
+    return (payloadType > 90) || (payloadType === 0);
   }
 }
