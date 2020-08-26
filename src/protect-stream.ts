@@ -31,7 +31,7 @@ import os from "os";
 import { ProtectCamera } from "./protect-camera";
 import { FfmpegProcess } from "./protect-ffmpeg";
 import { ProtectPlatform } from "./protect-platform";
-import { RtpSplitter } from "./protect-rtpsplitter";
+import { RtpSplitter } from "./protect-rtp";
 import { ProtectOptions } from "./protect-types";
 import { networkInterfaceDefault } from "systeminformation";
 
