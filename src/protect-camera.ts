@@ -169,6 +169,7 @@ export class ProtectCamera extends ProtectAccessory {
 
     // Identify twoway-capable devices.
     switch(this.accessory.context.camera?.type) {
+      case "UVC G3 Micro":
       case "UVC G4 Doorbell":
         // Enabled by default unless disabled by the user.
         this.twoWayAudio = this.nvr?.optionEnabled(this.accessory.context.camera, "TwoWayAudio");
