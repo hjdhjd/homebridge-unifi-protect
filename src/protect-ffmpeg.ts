@@ -10,6 +10,7 @@ import { createSocket } from "dgram";
 import execa from "execa";
 import { Logging, StreamRequestCallback } from "homebridge";
 import { ProtectStreamingDelegate } from "./protect-stream";
+import { Readable, Writable } from "stream";
 
 const beVerbose = false;
 
@@ -21,7 +22,8 @@ export class FfmpegProcess {
   private timeout?: NodeJS.Timeout;
   private delegate: ProtectStreamingDelegate;
 
-  constructor(delegate: ProtectStreamingDelegate, sessionId: string, command: string, returnPort: number, callback: StreamRequestCallback) {
+  constructor(delegate: ProtectStreamingDelegate, sessionId: string, command: string,
+    returnPort?: { addressVersion: string, port: number }, callback?: StreamRequestCallback) {
     this.debug = delegate.platform.debug.bind(this);
     this.delegate = delegate;
     this.log = delegate.platform.log;
@@ -34,28 +36,32 @@ export class FfmpegProcess {
       this.debug("%s: ffmpeg command: %s %s", delegate.name, delegate.videoProcessor, command);
     }
 
-    const socket = createSocket("udp4");
+    // Create the return port for FFmpeg, if requested to do so. The only time we don't do this is when we're standing up
+    // a two-way audio stream - in that case, the audio work is done through RtpSplitter and not here.
+    if(returnPort !== undefined) {
+      const socket = createSocket(returnPort.addressVersion === "ipv6" ? "udp6" : "udp4");
 
-    // Handle network errors.
-    socket.on("error", (error: Error) => {
-      this.log.error("%s: Socket error: ", delegate.name, error.name);
-      delegate.stopStream(sessionId);
-    });
-
-    // Kill zombie video streams.
-    socket.on("message", () => {
-      if(this.timeout) {
-        clearTimeout(this.timeout);
-      }
-
-      this.timeout = setTimeout(() => {
-        delegate.platform.log.info("%s: Device appears to be inactive for over 5 seconds. Stopping stream.", delegate.name);
-        delegate.controller.forceStopStreamingSession(sessionId);
+      // Handle network errors.
+      socket.on("error", (error: Error) => {
+        this.log.error("%s: Socket error: ", delegate.name, error.name);
         delegate.stopStream(sessionId);
-      }, 5000);
-    });
+      });
 
-    socket.bind(returnPort);
+      // Kill zombie video streams.
+      socket.on("message", () => {
+        if(this.timeout) {
+          clearTimeout(this.timeout);
+        }
+
+        this.timeout = setTimeout(() => {
+          delegate.platform.log.info("%s: Device appears to be inactive for over 5 seconds. Stopping stream.", delegate.name);
+          delegate.controller.forceStopStreamingSession(sessionId);
+          delegate.stopStream(sessionId);
+        }, 5000);
+      });
+
+      socket.bind(returnPort.port);
+    }
 
     // Execute the command line.
     this.process = spawn(delegate.videoProcessor, command.split(/\s+/), { env: process.env });
@@ -118,13 +124,23 @@ export class FfmpegProcess {
     });
   }
 
-  // Cleanup.
-  public stop(): void {
+  // Cleanup after we're done.
+  stop(): void {
     this.killing = true;
     if(this.timeout) {
       clearTimeout(this.timeout);
     }
     this.process.kill("SIGKILL");
+  }
+
+  // Grab the standard input.
+  getStdin(): Writable | null {
+    return this.process.stdin;
+  }
+
+  // Grab the standard output.
+  getStdout(): Readable | null {
+    return this.process.stdout;
   }
 
   // Validate whether or not we have a specific codec available to us in FFmpeg.
