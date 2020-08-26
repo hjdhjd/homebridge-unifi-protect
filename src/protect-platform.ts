@@ -97,10 +97,8 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
       this.controllers.push(new ProtectNvr(this, controllerConfig));
     }
 
-    // This event gets fired after homebridge has restored all cached accessories and called their respective
-    // `configureAccessory` function.
-    //
-    // Fire off our polling, and let's get the party started.
+    // Avoid a prospective race condition by waiting to configure our controllers until Homebridge is done
+    // loading all the cached accessories it knows about, and calling configureAccessory() on each.
     api.on(APIEvent.DID_FINISH_LAUNCHING, this.pollControllers.bind(this));
   }
 
