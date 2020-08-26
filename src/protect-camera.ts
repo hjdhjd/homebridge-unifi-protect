@@ -15,19 +15,21 @@ import { ProtectStreamingDelegate } from "./protect-stream";
 import { ProtectCameraConfig, ProtectNvrBootstrap } from "./protect-types";
 
 export class ProtectCamera extends ProtectAccessory {
-  cameraUrl!: string
+  cameraUrl!: string;
   isVideoConfigured!: boolean;
   snapshotUrl!: string;
+  twoWayAudio!: boolean;
 
   // Configure a camera accessory for HomeKit.
   protected async configureDevice(): Promise<boolean> {
-
-    let detectMotion = true;
 
     this.isVideoConfigured = false;
 
     // Save the camera object before we wipeout the context.
     const camera = this.accessory.context.camera;
+
+    // Default motion detection support to on.
+    let detectMotion = true;
 
     // Save the motion sensor switch state before we wipeout the context.
     if(this.accessory.context.detectMotion !== undefined) {
@@ -48,15 +50,15 @@ export class ProtectCamera extends ProtectAccessory {
     }
 
     // Configure accessory information.
-    if(!(await this.configureInfo())) {
-      return false;
-    }
+    await this.configureInfo();
 
     // Configure the motion sensor.
     await this.configureMotionSensor();
     await this.configureMotionSwitch();
 
-    // Configure our video stream and we're done.
+    // Configure two-way audio support and our video stream...and we're done.
+    await this.configureTwoWayAudio();
+
     return await this.configureVideoStream();
   }
 
@@ -107,7 +109,7 @@ export class ProtectCamera extends ProtectAccessory {
     }
 
     // Have we disabled motion sensors?
-    if(!this.nvr || !this.nvr.optionEnabled(accessory.context.camera, "MotionSensor")) {
+    if(!this.nvr?.optionEnabled(accessory.context.camera, "MotionSensor")) {
       this.log("%s %s: Disabling motion sensor.",
         this.nvr.nvrApi.getNvrName(), this.nvr.nvrApi.getDeviceName(accessory.context.camera));
       return false;
@@ -131,8 +133,8 @@ export class ProtectCamera extends ProtectAccessory {
     }
 
     // Have we disabled motion sensors or the motion switch?
-    if(!this.nvr || !this.nvr.optionEnabled(this.accessory.context.camera, "MotionSensor") ||
-      !this.nvr.optionEnabled(this.accessory.context.camera, "MotionSwitch")) {
+    if(!this.nvr?.optionEnabled(this.accessory.context.camera, "MotionSensor") ||
+      !this.nvr?.optionEnabled(this.accessory.context.camera, "MotionSwitch")) {
       this.log("%s %s: Disabling motion sensor switch.",
         this.nvr.nvrApi.getNvrName(), this.nvr.nvrApi.getDeviceName(this.accessory.context.camera));
       // If we disable the switch, make sure we fully reset it's state.
@@ -158,6 +160,24 @@ export class ProtectCamera extends ProtectAccessory {
         callback(null);
       })
       .updateValue(this.accessory.context.detectMotion);
+
+    return true;
+  }
+
+  // Configure two-way audio support for HomeKit.
+  private async configureTwoWayAudio(): Promise<boolean> {
+
+    // Identify twoway-capable devices.
+    switch(this.accessory.context.camera?.type) {
+      case "UVC G4 Doorbell":
+        // Enabled by default unless disabled by the user.
+        this.twoWayAudio = this.nvr?.optionEnabled(this.accessory.context.camera, "TwoWayAudio");
+        break;
+
+      default:
+        this.twoWayAudio = false;
+        break;
+    }
 
     return true;
   }
