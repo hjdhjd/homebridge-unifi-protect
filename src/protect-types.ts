@@ -2,7 +2,6 @@
  *
  * protect-types.ts: Type definitions for UniFi Protect.
  */
-
 // An semi-complete description of the UniFi Protect NVR bootstrap JSON.
 export interface ProtectNvrBootstrapInterface {
   accessKey: string,
