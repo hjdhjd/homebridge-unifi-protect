@@ -45,6 +45,9 @@ These Feature Options are available on ***all*** UniFi Protect devices available
 |                                               |
 | `Enable.MotionSwitch`                         | Add a switch accessory to activate or deactivate motion detection in HomeKit. *(Default)*
 | `Disable.MotionSwitch`                        | Remove the switch accessory used to enable or disable motion detection. *Note: this will not disable motion detection, just remove the ability to selectively activate and deactivate it in HomeKit.*
+|                                               |
+| `Enable.TwoWayAudio`                          | Enable two-way audio support using the Home app for supported cameras and doorbells (G3 Micro and G4 Doorbell, currently). *(Default)*<BR>**Note that acoustic echo cancellation (AEC) is not currently available and you *will* hear an echo when using the Home app, however those standing at the doorbell (or camera) will hear things correctly.**</BR>
+| `Disable.TwoWayAudio`                         | Disable two-way audio support.
 
 In addition to the Feature Options available to all UniFi Protect devices, these are available for UniFi Protect doorbell devices:
 
@@ -56,7 +59,6 @@ In addition to the Feature Options available to all UniFi Protect devices, these
 | `Disable.Messages`                            | Disable the doorbell messages feature on UniFi Protect doorbells.
 | `Enable.Messages.FromDoorbell`                | Allow messages saved on the UniFi Protect doorbell to appear as switches in HomeKit. *(Default)*
 | `Disable.Messages.FromDoorbell`               | Prevent messages saved on the UniFi Protect doorbell from appearing as switches in HomeKit.
-
 
 Before using these features, you should understand how Feature Options propagate to controllers and the devices attached to them. If you choose to disable a controller from being available to HomeKit, you will also disable all the cameras attached to that controller. If you've disabled a controller, and all it's devices with it, you can selectively enable a single device associated with that controller by explicitly setting an `Enable.` Feature Option. This provides you a lot of richness in how you enable or disable devices for HomeKit use.
 
