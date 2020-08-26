@@ -118,6 +118,7 @@
 
         "items": {
           "type": "string",
+          "title": "Feature Option",
           "required": false,
           "description": "Enter only one option per entry. See project page for the complete list of available options.",
           "placeholder": "e.g. Disable.Stream.High"
