@@ -5,7 +5,6 @@
  * This module is heavily inspired by the homebridge and homebridge-camera-ffmpeg source code and
  * borrows heavily from both. Thank you for your contributions to the HomeKit world.
  */
-import getPort from "get-port";
 import {
   API,
   APIEvent,
@@ -31,7 +30,7 @@ import os from "os";
 import { ProtectCamera } from "./protect-camera";
 import { FfmpegProcess } from "./protect-ffmpeg";
 import { ProtectPlatform } from "./protect-platform";
-import { RtpSplitter } from "./protect-rtp";
+import { RtpSplitter, RtpUtils } from "./protect-rtp";
 import { ProtectOptions } from "./protect-types";
 import { networkInterfaceDefault } from "systeminformation";
 
@@ -180,9 +179,9 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     const hasLibFdk = await FfmpegProcess.codecEnabled(this.videoProcessor, "libfdk_aac");
 
     // Setup our audio plumbing.
-    const audioReturnPort = await getPort();
-    const audioServerPort = (hasLibFdk && this.camera.twoWayAudio) ? await getPort() : -1;
-    const audioTwoWayPort = (hasLibFdk && this.camera.twoWayAudio) ? await getPort() : -1;
+    const audioReturnPort = (await RtpUtils.reservePorts())[0];
+    const audioServerPort = (hasLibFdk && this.camera.twoWayAudio) ? (await RtpUtils.reservePorts())[0] : -1;
+    const audioTwoWayPort = (hasLibFdk && this.camera.twoWayAudio) ? (await RtpUtils.reservePorts(2))[0] : -1;
     const audioSSRC = this.hap.CameraController.generateSynchronisationSource();
 
     if(!hasLibFdk) {
@@ -195,7 +194,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       new RtpSplitter(this, request.addressVersion, audioServerPort, audioReturnPort, audioTwoWayPort) : null;
 
     // Setup our video plumbing.
-    const videoReturnPort = await getPort();
+    const videoReturnPort = (await RtpUtils.reservePorts())[0];
     const videoSSRC = this.hap.CameraController.generateSynchronisationSource();
 
     const sessionInfo: SessionInfo = {
