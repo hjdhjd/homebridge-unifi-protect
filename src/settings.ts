@@ -44,3 +44,7 @@ export const PROTECT_NVR_UCK_REFRESH_INTERVAL = 10;
 // How often, in seconds, should we check Protect controllers for new or removed devices.
 // This will NOT impact motion detection on UniFi OS devices, but will impact doorbell event detection.
 export const PROTECT_NVR_UNIFIOS_REFRESH_INTERVAL = 5;
+
+// How often, in seconds, should we heartbeat FFmpeg in two-way audio sessions. This should be less than 5 seconds, which is
+// FFmpeg's input timeout interval.
+export const PROTECT_TWOWAY_HEARTBEAT_INTERVAL = 3.5;
