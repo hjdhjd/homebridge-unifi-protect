@@ -263,7 +263,7 @@ export class ProtectDoorbell extends ProtectCamera {
       }
 
       // We don't want to touch motion sensor switches here.
-      if(switchService.subtype === "MotionSensorSwitch") {
+      if(this.isReservedName(switchService.subtype)) {
         continue;
       }
 
@@ -329,7 +329,7 @@ export class ProtectDoorbell extends ProtectCamera {
       }
 
       // In the unlikely event someone tries to use words we have reserved for our own use.
-      if(entry.text === "MotionSensorSwitch") {
+      if(this.isReservedName(entry.text)) {
         continue;
       }
 

@@ -9,7 +9,7 @@ import {
   PlatformAccessory
 } from "homebridge";
 import { ProtectApi } from "./protect-api";
-import { ProtectCamera } from "./protect-camera";
+import { ProtectCamera, PROTECT_SWITCH_TRIGGER } from "./protect-camera";
 import { ProtectDoorbell } from "./protect-doorbell";
 import { ProtectLiveviews } from "./protect-liveviews";
 import { ProtectMqtt } from "./protect-mqtt";
@@ -143,6 +143,7 @@ export class ProtectNvr {
 
       // Setup the Protect camera if it hasn't been configured yet.
       if(!this.configuredCameras[accessory.UUID]) {
+
         // Eventually switch on multiple types of UniFi Protect cameras. For now, it's cameras only...
         if(camera.type === "UVC G4 Doorbell") {
           this.configuredCameras[accessory.UUID] = new ProtectDoorbell(this, accessory);
@@ -150,9 +151,8 @@ export class ProtectNvr {
           this.configuredCameras[accessory.UUID] = new ProtectCamera(this, accessory);
         }
 
-        // Refresh the accessory cache with these values.
-        this.api.updatePlatformAccessories([accessory]);
       } else {
+
         // Finally, check if we have changes to the exposed RTSP streams on our cameras.
         await this.configuredCameras[accessory.UUID].configureVideoStream();
 
@@ -160,6 +160,7 @@ export class ProtectNvr {
         if(camera.type === "UVC G4 Doorbell") {
           await (this.configuredCameras[accessory.UUID] as ProtectDoorbell).configureDoorbellLcdSwitch();
         }
+
       }
     }
 
@@ -239,6 +240,9 @@ export class ProtectNvr {
 
     // Sync status and check for any new or removed accessories.
     await this.discoverAndSyncAccessories();
+
+    // Refresh the accessory cache.
+    this.api.updatePlatformAccessories(this.platform.accessories);
 
     return true;
   }
@@ -351,7 +355,7 @@ export class ProtectNvr {
   }
 
   // Motion event processing from UniFi Protect and delivered to HomeKit.
-  private async motionEventHandler(accessory: PlatformAccessory, lastMotion: number): Promise<void> {
+  async motionEventHandler(accessory: PlatformAccessory, lastMotion: number): Promise<void> {
     const camera = accessory.context.camera;
     const hap = this.hap;
 
@@ -387,14 +391,20 @@ export class ProtectNvr {
       return;
     }
 
-    // If we have a motion switch, and it's set to off, we're done here.
-    if(accessory.getService(hap.Service.Switch) &&
-      (accessory.context.detectMotion !== undefined) && !accessory.context.detectMotion) {
+    // If we have disabled motion events, we're done here.
+    if(("detectMotion" in accessory.context) && !accessory.context.detectMotion) {
       return;
     }
 
     // Trigger the motion event in HomeKit.
     motionService.getCharacteristic(hap.Characteristic.MotionDetected).updateValue(true);
+
+    // Check to see if we have a motion trigger switch configured. If we do, update it.
+    const triggerService = accessory.getServiceById(hap.Service.Switch, PROTECT_SWITCH_TRIGGER);
+
+    if(triggerService) {
+      triggerService.getCharacteristic(hap.Characteristic.On).updateValue(true);
+    }
 
     // Publish to MQTT, if the user has configured it.
     this.mqtt?.publish(accessory, "motion", "true");
@@ -408,6 +418,13 @@ export class ProtectNvr {
 
       if(thisMotionService) {
         thisMotionService.getCharacteristic(hap.Characteristic.MotionDetected).updateValue(false);
+
+        // Check to see if we have a motion trigger switch configured. If we do, update it.
+        const triggerService = accessory.getServiceById(hap.Service.Switch, PROTECT_SWITCH_TRIGGER);
+
+        if(triggerService) {
+          triggerService.getCharacteristic(hap.Characteristic.On).updateValue(false);
+        }
 
         // Publish to MQTT, if the user has configured it.
         self.mqtt?.publish(accessory, "motion", "false");
