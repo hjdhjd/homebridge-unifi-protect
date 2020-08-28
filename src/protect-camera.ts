@@ -22,6 +22,7 @@ export class ProtectCamera extends ProtectAccessory {
   cameraUrl!: string;
   isVideoConfigured!: boolean;
   snapshotUrl!: string;
+  public stream!: ProtectStreamingDelegate;
   twoWayAudio!: boolean;
 
   // Configure a camera accessory for HomeKit.
@@ -366,8 +367,8 @@ export class ProtectCamera extends ProtectAccessory {
     // Configure the video stream and inform HomeKit about it, if it's our first time.
     if(!this.isVideoConfigured) {
       this.isVideoConfigured = true;
-      const streamingDelegate = new ProtectStreamingDelegate(this);
-      this.accessory.configureController(streamingDelegate.controller);
+      this.stream = new ProtectStreamingDelegate(this);
+      this.accessory.configureController(this.stream.controller);
     }
 
     return true;

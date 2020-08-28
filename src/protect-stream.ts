@@ -7,7 +7,6 @@
  */
 import {
   API,
-  APIEvent,
   AudioStreamingCodecType,
   AudioStreamingSamplerate,
   CameraController,
@@ -98,12 +97,6 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     this.platform = camera.platform;
     this.videoProcessor = this.config.videoProcessor || pathToFfmpeg || "ffmpeg";
 
-    this.api.on(APIEvent.SHUTDOWN, () => {
-      for(const session of Object.keys(this.ongoingSessions)) {
-        this.stopStream(session);
-      }
-    });
-
     // Setup for our camera controller.
     const options: CameraControllerOptions = {
       cameraStreamCount: 2, // HomeKit requires at least 2 streams, and HomeKit Secure Video requires 1.
@@ -150,7 +143,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   }
 
   // HomeKit image snapshot request handler.
-  async handleSnapshotRequest(request: SnapshotRequest, callback: SnapshotRequestCallback): Promise<void> {
+  public async handleSnapshotRequest(request: SnapshotRequest, callback: SnapshotRequestCallback): Promise<void> {
     const params = new URLSearchParams({ force: "true", width: request.width as any, height: request.height as any });
 
     this.debug("%s: HomeKit snapshot request: %sx%s. Retrieving image from Protect: %s?%s", this.name, request.width, request.height, this.camera.snapshotUrl, params);
@@ -173,7 +166,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   }
 
   // Prepare to launch the video stream.
-  async prepareStream(request: PrepareStreamRequest, callback: PrepareStreamCallback): Promise<void> {
+  public async prepareStream(request: PrepareStreamRequest, callback: PrepareStreamCallback): Promise<void> {
 
     // We need to check for AAC support because it's going to inform our audio support.
     const hasLibFdk = await FfmpegProcess.codecEnabled(this.videoProcessor, "libfdk_aac");
@@ -481,7 +474,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   }
 
   // Process incoming stream requests.
-  handleStreamRequest(request: StreamingRequest, callback: StreamRequestCallback): void {
+  public handleStreamRequest(request: StreamingRequest, callback: StreamRequestCallback): void {
 
     switch(request.type) {
       case StreamRequestTypes.START:
@@ -504,7 +497,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   }
 
   // Close a video stream.
-  stopStream(sessionId: string): void {
+  public stopStream(sessionId: string): void {
     try {
 
       // Stop any FFmpeg instances we have running.
@@ -527,6 +520,13 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     } catch(error) {
 
       this.log.error("%s: Error occurred terminating video process: %s", this.name, error);
+    }
+  }
+
+  // Shutdown all our video streams.
+  public shutdown(): void {
+    for(const session of Object.keys(this.ongoingSessions)) {
+      this.stopStream(session);
     }
   }
 

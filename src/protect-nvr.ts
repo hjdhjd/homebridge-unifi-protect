@@ -4,6 +4,7 @@
  */
 import {
   API,
+  APIEvent,
   HAP,
   Logging,
   PlatformAccessory
@@ -87,6 +88,14 @@ export class ProtectNvr {
 
     // Initialize our liveviews.
     this.liveviews = new ProtectLiveviews(this);
+
+    // Cleanup any stray ffmpeg sessions on shutdown.
+    this.api.on(APIEvent.SHUTDOWN, () => {
+      for(const protectCamera of Object.values(this.configuredCameras)) {
+        this.debug("%s %s: Shutting down all video stream processes.", this.nvrApi.getNvrName(), this.nvrApi.getDeviceName(protectCamera.accessory.context.camera));
+        protectCamera.stream?.shutdown();
+      }
+    });
   }
 
   // Discover new UniFi Protect devices.
