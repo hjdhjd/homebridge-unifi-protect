@@ -106,6 +106,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
   // intentionally avoid doing anything significant here, and save all that logic
   // for device discovery.
   configureAccessory(accessory: PlatformAccessory): void {
+
     // Delete the UniFi Protect camera pointer on startup. This will be set by device discovery.
     // Notably, we do NOT clear out the NVR pointer, because we need to maintain the mapping between
     // camera and NVR.
