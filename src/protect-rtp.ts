@@ -131,6 +131,9 @@ export class RtpUtils {
     // If we're requesting additional consecutive ports, keep searching until they're found.
     for(let i = 1; i < count; i++) {
       const targetConsecutivePort = port + i;
+
+      // We need to await here in order to determine whether we need to keep going.
+      // eslint-disable-next-line no-await-in-loop
       const openPort = await getPort({ port: targetConsecutivePort });
 
       // Unable to reserve the next consecutive port. Roll the dice again and hope for the best.
