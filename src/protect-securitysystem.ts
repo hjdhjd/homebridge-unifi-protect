@@ -13,8 +13,6 @@ import { PROTECT_SWITCH_MOTION } from "./protect-camera";
 import { ProtectNvrConfig } from "./protect-types";
 
 export class ProtectSecuritySystem extends ProtectAccessory {
-  cameraUrl = "";
-  isVideoConfigured = false;
 
   // Configure a security system accessory for HomeKit.
   protected async configureDevice(): Promise<boolean> {
@@ -52,25 +50,25 @@ export class ProtectSecuritySystem extends ProtectAccessory {
 
     // Update the manufacturer information for this security system.
     accessory
-      .getService(hap.Service.AccessoryInformation)!
-      .getCharacteristic(hap.Characteristic.Manufacturer).updateValue("github.com/hjdhjd");
+      .getService(hap.Service.AccessoryInformation)
+      ?.getCharacteristic(hap.Characteristic.Manufacturer).updateValue("github.com/hjdhjd");
 
     // Update the model information for this security system.
     accessory
-      .getService(hap.Service.AccessoryInformation)!
-      .getCharacteristic(hap.Characteristic.Model).updateValue("UniFi Protect Liveview Security System");
+      .getService(hap.Service.AccessoryInformation)
+      ?.getCharacteristic(hap.Characteristic.Model).updateValue("UniFi Protect Liveview Security System");
 
 
     if(nvrInfo) {
       // Update the serial number for this security system - we base this off of the NVR.
       accessory
-        .getService(hap.Service.AccessoryInformation)!
-        .getCharacteristic(hap.Characteristic.SerialNumber).updateValue(nvrInfo.mac + ".Security");
+        .getService(hap.Service.AccessoryInformation)
+        ?.getCharacteristic(hap.Characteristic.SerialNumber).updateValue(nvrInfo.mac + ".Security");
 
       // Update the hardware revision for this security system - we base this off of the NVR.
       accessory
-        .getService(hap.Service.AccessoryInformation)!
-        .getCharacteristic(hap.Characteristic.HardwareRevision).updateValue(nvrInfo.hardwareRevision);
+        .getService(hap.Service.AccessoryInformation)
+        ?.getCharacteristic(hap.Characteristic.HardwareRevision).updateValue(nvrInfo.hardwareRevision);
     }
 
     return true;
@@ -119,18 +117,18 @@ export class ProtectSecuritySystem extends ProtectAccessory {
     // Handlers to get our current state, and initialize on startup.
     accessory.addService(securityService)
       .setCharacteristic(SecuritySystemCurrentState, accessory.context.securityState)
-      .getCharacteristic(SecuritySystemCurrentState)!
-      .on(CharacteristicEventTypes.GET, this.getSecurityState.bind(this));
+      .getCharacteristic(SecuritySystemCurrentState)
+      ?.on(CharacteristicEventTypes.GET, this.getSecurityState.bind(this));
 
     // Handlers for triggering a change in the security system state.
-    accessory.getService(hap.Service.SecuritySystem)!
-      .getCharacteristic(SecuritySystemTargetState)!
+    accessory.getService(hap.Service.SecuritySystem)
+      ?.getCharacteristic(SecuritySystemTargetState)
       .on(CharacteristicEventTypes.SET, this.setSecurityState.bind(this));
 
     // Set the initial state after we have setup our handlers above. This way, when we startup, we
     // automatically restore the scene we've been set to, if any.
-    accessory.getService(hap.Service.SecuritySystem)!
-      .setCharacteristic(SecuritySystemTargetState, targetSecurityState);
+    accessory.getService(hap.Service.SecuritySystem)
+      ?.setCharacteristic(SecuritySystemTargetState, targetSecurityState);
 
     return true;
   }
@@ -194,7 +192,7 @@ export class ProtectSecuritySystem extends ProtectAccessory {
         nvrApi.getNvrName(), viewScene);
 
       accessory.context.securityState = newState;
-      accessory.getService(hap.Service.SecuritySystem)!.getCharacteristic(SecuritySystemCurrentState).updateValue(newState);
+      accessory.getService(hap.Service.SecuritySystem)?.getCharacteristic(SecuritySystemCurrentState).updateValue(newState);
       callback(null);
       return;
     }
@@ -226,7 +224,7 @@ export class ProtectSecuritySystem extends ProtectAccessory {
         const motionSwitch = targetAccessory.getServiceById(hap.Service.Switch, PROTECT_SWITCH_MOTION);
 
         if(motionSwitch) {
-          motionSwitch.getCharacteristic(hap.Characteristic.On)!.updateValue(targetAccessory.context.detectMotion);
+          motionSwitch.getCharacteristic(hap.Characteristic.On)?.updateValue(targetAccessory.context.detectMotion);
         }
 
         this.log("%s -> %s: Motion detection %s.", viewScene, targetAccessory.displayName,
@@ -236,7 +234,7 @@ export class ProtectSecuritySystem extends ProtectAccessory {
 
     // Inform the user of our new state, and return.
     accessory.context.securityState = newState;
-    accessory.getService(hap.Service.SecuritySystem)!.getCharacteristic(SecuritySystemCurrentState).updateValue(newState);
+    accessory.getService(hap.Service.SecuritySystem)?.getCharacteristic(SecuritySystemCurrentState).updateValue(newState);
     callback(null);
   }
 }
