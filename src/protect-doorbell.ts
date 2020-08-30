@@ -204,7 +204,7 @@ export class ProtectDoorbell extends ProtectCamera {
 
     // Something's not right with the configuration...we're done.
     if(!doorbellSettings) {
-      return null as any;
+      return [];
     }
 
     let doorbellMessages: messageInterface[] = [];
@@ -217,10 +217,6 @@ export class ProtectDoorbell extends ProtectCamera {
         // If we've set a duration, let's honor it. If it's less than zero, use the default duration.
         if(("duration" in configEntry) && !isNaN(configEntry.duration) && (configEntry.duration >= 0)) {
           duration = configEntry.duration * 1000;
-
-          if(!duration) {
-            duration = null as any;
-          }
         }
 
         // Add it to our list.
@@ -404,7 +400,7 @@ export class ProtectDoorbell extends ProtectCamera {
     // We take the duration and save it for MQTT and then translate the payload into what Protect is expecting from us.
     if("duration" in payload.lcdMessage) {
       duration = payload.lcdMessage.duration ?? 0;
-      payload.lcdMessage.resetAt = (payload.lcdMessage.duration ? Date.now() + payload.lcdMessage.duration : null as any);
+      payload.lcdMessage.resetAt = (payload.lcdMessage.duration ? Date.now() + payload.lcdMessage.duration : null);
       delete payload.lcdMessage.duration;
     }
 
