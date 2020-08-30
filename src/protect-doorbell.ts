@@ -72,9 +72,6 @@ export class ProtectDoorbell extends ProtectCamera {
     // Configure the contact sensor, if we have one.
     await this.configureContactSensor();
 
-    // Configure MQTT.
-    await this.configureMqtt();
-
     // Now, make the doorbell LCD message functionality available.
     return await this.configureDoorbellLcdSwitch();
   }
@@ -133,7 +130,10 @@ export class ProtectDoorbell extends ProtectCamera {
   }
 
   // Configure MQTT capabilities for the doorbell.
-  private async configureMqtt(): Promise<boolean> {
+  protected async configureMqtt(): Promise<boolean> {
+
+    // Call our parent to setup the general camera MQTT capabilities.
+    await super.configureMqtt();
 
     // We support the ability to set the doorbell message like so:
     //
@@ -149,6 +149,12 @@ export class ProtectDoorbell extends ProtectCamera {
       // Catch any errors in parsing what we get over MQTT.
       try {
         incomingPayload = JSON.parse(message.toString());
+
+        // Sanity check what comes in from MQTT to make sure it's what we want.
+        if(!(incomingPayload instanceof Object)) {
+          throw new Error("The JSON object is not in the expected format");
+        }
+
       } catch(error) {
         this.log("%s %s: Unable to process MQTT message: \"%s\". Error: %s.",
           this.nvr.nvrApi.getNvrName(), this.nvr.nvrApi.getDeviceName(this.accessory.context.camera),
