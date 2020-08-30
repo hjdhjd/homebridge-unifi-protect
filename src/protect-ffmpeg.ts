@@ -23,6 +23,7 @@ export class FfmpegProcess {
 
   constructor(delegate: ProtectStreamingDelegate, sessionId: string, command: string,
     returnPort?: { addressVersion: string, port: number }, callback?: StreamRequestCallback) {
+
     this.debug = delegate.platform.debug.bind(this);
     this.delegate = delegate;
     this.log = delegate.platform.log;
@@ -129,7 +130,7 @@ export class FfmpegProcess {
   }
 
   // Cleanup after we're done.
-  stop(): void {
+  public stop(): void {
     this.killing = true;
     if(this.timeout) {
       clearTimeout(this.timeout);
@@ -138,17 +139,17 @@ export class FfmpegProcess {
   }
 
   // Grab the standard input.
-  getStdin(): Writable | null {
+  public getStdin(): Writable | null {
     return this.process.stdin;
   }
 
   // Grab the standard output.
-  getStdout(): Readable | null {
+  public getStdout(): Readable | null {
     return this.process.stdout;
   }
 
   // Validate whether or not we have a specific codec available to us in FFmpeg.
-  static async codecEnabled(videoProcessor: string, codec: string): Promise<boolean> {
+  public static async codecEnabled(videoProcessor: string, codec: string): Promise<boolean> {
     const output = await execa(videoProcessor, ["-codecs"]);
     return output.stdout.includes(codec);
   }
