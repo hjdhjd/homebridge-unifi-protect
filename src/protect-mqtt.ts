@@ -17,6 +17,7 @@ export class ProtectMqtt {
   private mqtt: MqttClient;
   private nvr: ProtectNvr;
   private nvrApi: ProtectApi;
+  private subscriptions: { [index: string]: (cbBuffer: Buffer) => void };
 
   constructor(nvr: ProtectNvr) {
     this.config = nvr.config;
@@ -26,6 +27,7 @@ export class ProtectMqtt {
     this.mqtt = null as any;
     this.nvr = nvr;
     this.nvrApi = nvr.nvrApi;
+    this.subscriptions = {};
 
     if(!this.config.mqttUrl) {
       return;
@@ -70,6 +72,14 @@ export class ProtectMqtt {
       }
     });
 
+    // Process inbound messages and pass it to the right message handler.
+    this.mqtt.on("message", (topic: string, message: Buffer) => {
+
+      if(this.subscriptions[topic]) {
+        this.subscriptions[topic](message);
+      }
+    });
+
     // Notify the user when there's a connectivity error.
     this.mqtt.on("error", (error: NodeJS.ErrnoException) => {
       switch(error.code) {
@@ -102,28 +112,22 @@ export class ProtectMqtt {
   // Publish an MQTT event to a broker.
   publish(accessory: PlatformAccessory, topic: string, message: string): void {
 
-    // MQTT isn't configured, we're done.
-    if(!this.isConnected) {
-      return;
-    }
-
     this.debug("%s: MQTT publish: %s Message: %s.", this.nvrApi.getNvrName(), this.config.mqttTopic + "/" + accessory.context.camera.mac + "/" + topic, message);
 
     // By default, we publish as: unifi/protect/mac/event/name
-    this.mqtt.publish(this.config.mqttTopic + "/" + accessory.context.camera.mac + "/" + topic, message);
+    this.mqtt?.publish(this.config.mqttTopic + "/" + accessory.context.camera.mac + "/" + topic, message);
   }
 
   // Subscribe to an MQTT topic.
   subscribe(accessory: PlatformAccessory, topic: string, callback: (cbBuffer: Buffer) => void): void {
 
-    // By default, we subscribe as: unifi/protect/mac/event/name.
-    this.mqtt.on("connect", () => {
-      this.mqtt.subscribe(this.config.mqttTopic + "/" + accessory.context.camera.mac + "/" + topic);
-      this.debug("%s: MQTT subscribe: %s.", this.nvrApi.getNvrName(), this.config.mqttTopic + "/" + accessory.context.camera.mac + "/" + topic);
-    });
+    const expandedTopic = this.config.mqttTopic + "/" + accessory.context.camera.mac + "/" + topic;
 
-    this.mqtt.on("message", (topic: string, message: Buffer) => {
-      callback(message);
-    });
+    // Add to our callback list.
+    this.subscriptions[expandedTopic] = callback;
+
+    // Tell MQTT we're subscribing to this event.
+    // By default, we subscribe as: unifi/protect/mac/event/name.
+    this.mqtt.subscribe(expandedTopic);
   }
 }
