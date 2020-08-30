@@ -16,20 +16,26 @@ import { PROTECT_FFMPEG_OPTIONS, PROTECT_MOTION_DURATION, PROTECT_MQTT_TOPIC } f
 import util from "util";
 
 export class ProtectPlatform implements DynamicPlatformPlugin {
-  accessories: PlatformAccessory[] = [];
-  debugMode = false;
-  readonly log: Logging;
-  readonly api: API;
-  readonly config: ProtectOptions;
-  readonly configOptions: string[] = [];
-  private readonly controllers: ProtectNvr[] = [];
+  public accessories: PlatformAccessory[];
+  public readonly api: API;
+  public readonly config: ProtectOptions;
+  public readonly configOptions: string[];
+  private readonly controllers: ProtectNvr[];
+  public debugMode: boolean;
+  public readonly log: Logging;
+  public verboseFfmpeg: boolean;
 
   constructor(log: Logging, config: PlatformConfig, api: API) {
+    this.accessories = [];
     this.api = api;
+    this.configOptions = [];
+    this.controllers = [];
+    this.debugMode = false;
+    this.verboseFfmpeg = false;
+    this.log = log;
 
     // Force this to ProtectOptions.
     this.config = config as any;
-    this.log = log;
 
     // We can't start without being configured.
     if(!config) {
@@ -42,10 +48,15 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
       return;
     }
 
-    // Capture configuration parameters.
-    if(config.debug) {
+    // Debugging - most people shouldn't enable this.
+    if(config.debugAll) {
       this.debugMode = config.debug === true;
       this.debug("Debug logging on. Expect a lot of data.");
+    }
+
+    // Debug FFmpeg.
+    if(config.verboseFfmpeg) {
+      this.verboseFfmpeg = config.verboseFfmpeg === true;
     }
 
     // If we have feature options, put them into their own array, upper-cased for future reference.
@@ -105,7 +116,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
   // This gets called when homebridge restores cached accessories at startup. We
   // intentionally avoid doing anything significant here, and save all that logic
   // for device discovery.
-  configureAccessory(accessory: PlatformAccessory): void {
+  public configureAccessory(accessory: PlatformAccessory): void {
 
     // Delete the UniFi Protect camera pointer on startup. This will be set by device discovery.
     // Notably, we do NOT clear out the NVR pointer, because we need to maintain the mapping between
@@ -125,7 +136,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
   }
 
   // Utility for debug logging.
-  debug(message: string, ...parameters: any[]) {
+  public debug(message: string, ...parameters: any[]) {
     if(this.debugMode) {
       this.log(util.format(message, ...parameters));
     }

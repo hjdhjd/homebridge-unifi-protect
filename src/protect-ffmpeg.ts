@@ -12,10 +12,9 @@ import { Logging, StreamRequestCallback } from "homebridge";
 import { ProtectStreamingDelegate } from "./protect-stream";
 import { Readable, Writable } from "stream";
 
-const beVerbose = false;
-
 export class FfmpegProcess {
   private readonly debug: (message: string, ...parameters: any[]) => void;
+  private isVerbose: boolean;
   private readonly log: Logging;
   private readonly process: ChildProcess;
   private killing = false;
@@ -28,9 +27,10 @@ export class FfmpegProcess {
     this.delegate = delegate;
     this.log = delegate.platform.log;
 
-    let started = false;
+    // Toggle FFmpeg logging, if configured.
+    this.isVerbose = this.delegate.platform.verboseFfmpeg;
 
-    if(beVerbose) {
+    if(this.isVerbose) {
       this.log("%s: ffmpeg command: %s %s", delegate.name, delegate.videoProcessor, command);
     } else {
       this.debug("%s: ffmpeg command: %s %s", delegate.name, delegate.videoProcessor, command);
@@ -63,6 +63,9 @@ export class FfmpegProcess {
       socket.bind(returnPort.port);
     }
 
+    // Track if we've started receiving data.
+    let started = false;
+
     // Execute the command line.
     this.process = spawn(delegate.videoProcessor, command.split(/\s+/), { env: process.env });
 
@@ -84,7 +87,7 @@ export class FfmpegProcess {
       }
 
       // Debugging and additional logging, if requested.
-      if(beVerbose || delegate.platform.debugMode) {
+      if(this.isVerbose || delegate.platform.debugMode) {
         data.toString().split(/\n/).forEach((line: string) => {
           this.log(line);
         });
@@ -112,6 +115,7 @@ export class FfmpegProcess {
         }
       } else {
         this.log.error(message + " (Error)", delegate.name);
+        this.delegate.setVerboseFfmpeg();
 
         delegate.stopStream(sessionId);
 

@@ -31,9 +31,8 @@ import { FfmpegProcess } from "./protect-ffmpeg";
 import { ProtectPlatform } from "./protect-platform";
 import { RtpSplitter, RtpUtils } from "./protect-rtp";
 import { ProtectOptions } from "./protect-types";
+import { PROTECT_FFMPEG_VERBOSE_DURATION } from "./settings";
 import { networkInterfaceDefault } from "systeminformation";
-
-const beVerbose = false;
 
 // Bring in a precompiled ffmpeg binary that meets our requirements, if available.
 const pathToFfmpeg = require("ffmpeg-for-homebridge"); // eslint-disable-line @typescript-eslint/no-var-requires
@@ -69,20 +68,21 @@ type SessionInfo = {
 // Camera streaming delegate implementation for Protect.
 export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   private readonly api: API;
-  readonly protectCamera: ProtectCamera;
   private readonly config: ProtectOptions;
-  debug: (message: string, ...parameters: any[]) => void;
+  public controller: CameraController;
+  public debug: (message: string, ...parameters: any[]) => void;
   private readonly hap: HAP;
-  readonly log: Logging;
-  readonly name: string;
-  readonly platform: ProtectPlatform;
-  readonly videoProcessor: string;
   private readonly interfaceName = "public";
-  controller: CameraController;
+  public readonly log: Logging;
+  public readonly name: string;
+  public readonly platform: ProtectPlatform;
+  public readonly protectCamera: ProtectCamera;
+  private verboseFfmpegTimer!: NodeJS.Timeout | null;
+  public readonly videoProcessor: string;
 
   // Keep track of streaming sessions.
-  ongoingSessions: { [index: string]: { ffmpeg: FfmpegProcess[], rtpSplitter: RtpSplitter | null } };
-  pendingSessions: { [index: string]: SessionInfo };
+  private ongoingSessions: { [index: string]: { ffmpeg: FfmpegProcess[], rtpSplitter: RtpSplitter | null } };
+  private pendingSessions: { [index: string]: SessionInfo };
 
   constructor(camera: ProtectCamera) {
     this.api = camera.api;
@@ -392,7 +392,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     }
 
     // Additional logging, but only if we're debugging.
-    if(beVerbose) {
+    if(this.platform.verboseFfmpeg) {
       fcmd += " -loglevel level+verbose";
     } else if(this.platform.debugMode) {
       fcmd += " -loglevel level+debug";
@@ -473,7 +473,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     ].join(" ");
 
     // Additional logging, but only if we're debugging.
-    if(beVerbose) {
+    if(this.platform.verboseFfmpeg) {
       ffmpegReturnAudioCmd += " -loglevel level+verbose";
     } else if(this.platform.debugMode) {
       ffmpegReturnAudioCmd += " -loglevel level+debug";
@@ -544,6 +544,27 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     for(const session of Object.keys(this.ongoingSessions)) {
       this.stopStream(session);
     }
+  }
+
+  // Temporarily increase the verbosity of FFmpeg output for end users.
+  public setVerboseFfmpeg() {
+
+    // If we're already increased our logging, we're done.
+    if(this.platform.verboseFfmpeg || this.verboseFfmpegTimer) {
+      return;
+    }
+
+    // Set a timer to revert back to normal behavior.
+    this.verboseFfmpegTimer = setTimeout(() => {
+      this.platform.verboseFfmpeg = false;
+      this.log("Returning FFmpeg logging output to normal levels.")
+
+      // Clear out the old timer.
+      this.verboseFfmpegTimer = null;
+    }, PROTECT_FFMPEG_VERBOSE_DURATION * 60 * 1000);
+
+    this.log("FFmpeg exited unexpectedly. Increasing logging output of FFmpeg for the next %s minutes to provide additional visibility.", PROTECT_FFMPEG_VERBOSE_DURATION);
+    this.platform.verboseFfmpeg = true;
   }
 
   // Utility function to grab the default external IP address.
