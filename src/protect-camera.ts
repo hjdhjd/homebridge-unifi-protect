@@ -57,6 +57,9 @@ export class ProtectCamera extends ProtectAccessory {
     // Configure accessory information.
     await this.configureInfo();
 
+    // Configure MQTT services.
+    await this.configureMqtt();
+
     // Configure the motion sensor.
     await this.configureMotionSensor();
     await this.configureMotionSwitch();
@@ -155,7 +158,7 @@ export class ProtectCamera extends ProtectAccessory {
     this.accessory.addService(switchService)
       .getCharacteristic(this.hap.Characteristic.On)!
       .on(CharacteristicEventTypes.GET, (callback: CharacteristicGetCallback) => {
-        callback(null, this.accessory.context.detectMotion);
+        callback(null, this.accessory.context.detectMotion === true);
       })
       .on(CharacteristicEventTypes.SET, (value: CharacteristicValue, callback: CharacteristicSetCallback) => {
         if(this.accessory.context.detectMotion !== value) {
@@ -283,6 +286,7 @@ export class ProtectCamera extends ProtectAccessory {
     // user requests, we fail.
     if(forceQuality) {
       const foundChannel = camera.channels.find(channel => {
+
         // No RTSP channel here.
         if(!channel.isRtspEnabled) {
           return false;
@@ -316,9 +320,10 @@ export class ProtectCamera extends ProtectAccessory {
           break;
       }
 
-      // Iterate
+      // Iterate.
       for(const quality of channelPriority) {
         const foundChannel = camera.channels.find(channel => {
+
           // No RTSP channel here.
           if(!channel.isRtspEnabled) {
             return false;
@@ -370,6 +375,66 @@ export class ProtectCamera extends ProtectAccessory {
       this.stream = new ProtectStreamingDelegate(this);
       this.accessory.configureController(this.stream.controller);
     }
+
+    return true;
+  }
+
+  // Configure MQTT capabilities of this camera.
+  protected async configureMqtt(): Promise<boolean> {
+    const bootstrap: ProtectNvrBootstrap = this.nvr.nvrApi.bootstrap;
+    const camera = this.accessory.context.camera;
+
+    // Trigger a motion event in MQTT, if requested to do so.
+    this.nvr.mqtt?.subscribe(this.accessory, "motion/trigger", (message: Buffer) => {
+      const value = message.toString();
+
+      // When we get the right message, we trigger the motion event.
+      if(value?.toUpperCase() === "true".toUpperCase()) {
+
+        // Trigger the motion event.
+        this.nvr.motionEventHandler(this.accessory, Date.now());
+        this.log("%s %s: Motion event triggered via MQTT.", this.nvr.nvrApi.getNvrName(), this.nvr.nvrApi.getDeviceName(this.accessory.context.camera));
+      }
+    });
+
+    // Return the RTSP URLs when requested.
+    this.nvr.mqtt?.subscribe(this.accessory, "rtsp/get", (message: Buffer) => {
+      const value = message.toString();
+
+      // When we get the right message, we trigger the snapshot request.
+      if(value?.toUpperCase() === "true".toUpperCase()) {
+        const urlInfo: { [index: string]: string } = {};
+
+        // Include the default URL we're using for the camera.
+        if(this.cameraUrl) {
+          urlInfo.Default = this.cameraUrl;
+        }
+
+        // Grab all the available RTSP channels.
+        for(const channel of camera.channels) {
+          if(!channel.isRtspEnabled) {
+            continue;
+          }
+
+          urlInfo[channel.name] = "rtsp://" + bootstrap.nvr.host + ":" + bootstrap.nvr.ports.rtsp + "/" + channel.rtspAlias;
+        }
+
+        this.nvr.mqtt?.publish(this.accessory, "rtsp", JSON.stringify(urlInfo));
+        this.log("%s %s: RTSP information published via MQTT.", this.nvr.nvrApi.getNvrName(), this.nvr.nvrApi.getDeviceName(this.accessory.context.camera));
+      }
+    });
+
+    // Trigger snapshots when requested.
+    this.nvr.mqtt?.subscribe(this.accessory, "snapshot/trigger", (message: Buffer) => {
+      const value = message.toString();
+
+      // When we get the right message, we trigger the snapshot request.
+      if(value?.toUpperCase() === "true".toUpperCase()) {
+
+        this.stream?.handleSnapshotRequest({ width: 0, height: 0 }, null as any);
+        this.log("%s %s: Snapshot triggered via MQTT.", this.nvr.nvrApi.getNvrName(), this.nvr.nvrApi.getDeviceName(this.accessory.context.camera));
+      }
+    });
 
     return true;
   }
