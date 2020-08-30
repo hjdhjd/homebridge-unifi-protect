@@ -95,7 +95,7 @@ export class RtpSplitter {
   }
 
   // Close the socket and cleanup.
-  close(): void {
+  public close(): void {
     this.debug("%s: Closing the RtpSplitter instance on port %s.", this.name, this.serverPort);
 
     clearTimeout(this.heartbeatTimer);
