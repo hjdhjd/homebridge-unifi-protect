@@ -69,7 +69,7 @@ type SessionInfo = {
 // Camera streaming delegate implementation for Protect.
 export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   private readonly api: API;
-  readonly camera: ProtectCamera;
+  readonly protectCamera: ProtectCamera;
   private readonly config: ProtectOptions;
   debug: (message: string, ...parameters: any[]) => void;
   private readonly hap: HAP;
@@ -86,7 +86,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
   constructor(camera: ProtectCamera) {
     this.api = camera.api;
-    this.camera = camera;
+    this.protectCamera = camera;
     this.config = camera.platform.config;
     this.debug = camera.debug.bind(camera.platform);
     this.hap = camera.api.hap;
@@ -134,7 +134,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
             }
           ],
 
-          twoWayAudio: this.camera.twoWayAudio
+          twoWayAudio: this.protectCamera.twoWayAudio
         }
       }
     };
@@ -146,22 +146,38 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   public async handleSnapshotRequest(request: SnapshotRequest, callback: SnapshotRequestCallback): Promise<void> {
     const params = new URLSearchParams({ force: "true", width: request.width as any, height: request.height as any });
 
-    this.debug("%s: HomeKit snapshot request: %sx%s. Retrieving image from Protect: %s?%s", this.name, request.width, request.height, this.camera.snapshotUrl, params);
+    this.debug("%s: HomeKit snapshot request: %sx%s. Retrieving image from Protect: %s?%s",
+      this.name, request.width, request.height, this.protectCamera.snapshotUrl, params);
 
-    const response = await this.camera.nvr.nvrApi.fetch(this.camera.snapshotUrl + "?" + params, { method: "GET" }, true, false);
+    const response = await this.protectCamera.nvr.nvrApi.fetch(this.protectCamera.snapshotUrl + "?" + params, { method: "GET" }, true, false);
 
     if(!response?.ok) {
       this.log("%s: Unable to retrieve snapshot.", this.name);
-      callback(new Error(this.name + ": Unable to retrieve snapshot."));
+      if(callback) {
+        callback(new Error(this.name + ": Unable to retrieve snapshot."));
+      }
       return;
     }
 
     try {
+
+      // Process the image and send it to HomeKit.
       const buffer = await response.buffer();
-      callback(undefined, buffer);
+
+      if(callback) {
+        callback(undefined, buffer);
+      }
+
+      // Publish the snapshot as a data URL to MQTT, if configured.
+      this.protectCamera.nvr.mqtt?.publish(this.protectCamera.accessory, "snapshot", "data:image/jpeg;base64," + buffer.toString("base64"));
+
     } catch(error) {
+
       this.log.error("%s: An error occurred while making a snapshot request: %s.", this.name, error);
-      callback(error);
+
+      if(callback) {
+        callback(error);
+      }
     }
   }
 
@@ -173,8 +189,8 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
     // Setup our audio plumbing.
     const audioReturnPort = (await RtpUtils.reservePorts())[0];
-    const audioServerPort = (hasLibFdk && this.camera.twoWayAudio) ? (await RtpUtils.reservePorts())[0] : -1;
-    const audioTwoWayPort = (hasLibFdk && this.camera.twoWayAudio) ? (await RtpUtils.reservePorts(2))[0] : -1;
+    const audioServerPort = (hasLibFdk && this.protectCamera.twoWayAudio) ? (await RtpUtils.reservePorts())[0] : -1;
+    const audioTwoWayPort = (hasLibFdk && this.protectCamera.twoWayAudio) ? (await RtpUtils.reservePorts(2))[0] : -1;
     const audioSSRC = this.hap.CameraController.generateSynchronisationSource();
 
     if(!hasLibFdk) {
@@ -183,7 +199,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     }
 
     // Setup the RTP splitter for two-way audio scenarios.
-    const rtpSplitter = (hasLibFdk && this.camera.twoWayAudio) ?
+    const rtpSplitter = (hasLibFdk && this.protectCamera.twoWayAudio) ?
       new RtpSplitter(this, request.addressVersion, audioServerPort, audioReturnPort, audioTwoWayPort) : null;
 
     // Setup our video plumbing.
@@ -226,7 +242,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       },
 
       audio: {
-        port: (hasLibFdk && this.camera.twoWayAudio) ? audioServerPort : audioReturnPort,
+        port: (hasLibFdk && this.protectCamera.twoWayAudio) ? audioServerPort : audioReturnPort,
         ssrc: audioSSRC,
         srtp_key: request.audio.srtp_key,
         srtp_salt: request.audio.srtp_salt
@@ -272,7 +288,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     const audiomtu = 188 * 1;
 
     // -rtsp_transport tcp: tell the RTSP stream handler that we're looking for a TCP connection.
-    let fcmd = "-hide_banner -rtsp_transport tcp -i " + this.camera.cameraUrl;
+    let fcmd = "-hide_banner -rtsp_transport tcp -i " + this.protectCamera.cameraUrl;
 
     this.log("%s: HomeKit video stream request received: %sx%s, %s fps, %s kbps.",
       this.name, request.video.width, request.video.height, request.video.fps, request.video.max_bit_rate);
@@ -384,7 +400,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
     // Combine everything and start an instance of FFmpeg.
     const ffmpeg = new FfmpegProcess(this, request.sessionID, fcmd,
-      (sessionInfo.hasLibFdk && this.camera.twoWayAudio) ? undefined : { addressVersion: sessionInfo.addressVersion, port: sessionInfo.videoReturnPort },
+      (sessionInfo.hasLibFdk && this.protectCamera.twoWayAudio) ? undefined : { addressVersion: sessionInfo.addressVersion, port: sessionInfo.videoReturnPort },
       callback);
 
     // Some housekeeping for our FFmpeg and splitter sessions.
@@ -392,11 +408,11 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     delete this.pendingSessions[request.sessionID];
 
     // If we aren't doing two-way audio, we're done here. For two-way audio...we have some more plumbing to do.
-    if(!sessionInfo.hasLibFdk || !this.camera.twoWayAudio) {
+    if(!sessionInfo.hasLibFdk || !this.protectCamera.twoWayAudio) {
       return;
     }
 
-    const camera = this.camera.accessory.context.camera;
+    const camera = this.protectCamera.accessory.context.camera;
     const sdpIpVersion = sessionInfo.addressVersion === "ipv6" ? "IP6 ": "IP4";
 
     // Session description protocol message that FFmpeg will share with HomeKit.
