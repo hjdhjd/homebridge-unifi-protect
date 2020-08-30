@@ -361,10 +361,12 @@ export interface ProtectNvrSystemEventControllerInterface {
 
 // Plugin configuration options.
 export interface ProtectOptions {
+  debugAll: boolean,
   ffmpegOptions: string,
   motionDuration: number,
   controllers: ProtectNvrOptions[],
   options: string[],
+  verboseFfmpeg: boolean,
   videoProcessor: string
 }
 
