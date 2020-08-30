@@ -19,11 +19,11 @@ export const PROTECT_SWITCH_MOTION = "MotionSensorSwitch";
 export const PROTECT_SWITCH_TRIGGER = "MotionSensorTrigger";
 
 export class ProtectCamera extends ProtectAccessory {
-  cameraUrl!: string;
-  isVideoConfigured!: boolean;
-  snapshotUrl!: string;
+  public cameraUrl!: string;
+  private isVideoConfigured!: boolean;
+  public snapshotUrl!: string;
   public stream!: ProtectStreamingDelegate;
-  twoWayAudio!: boolean;
+  public twoWayAudio!: boolean;
 
   // Configure a camera accessory for HomeKit.
   protected async configureDevice(): Promise<boolean> {
@@ -79,28 +79,28 @@ export class ProtectCamera extends ProtectAccessory {
 
     // Update the manufacturer information for this camera.
     accessory
-      .getService(hap.Service.AccessoryInformation)!
-      .getCharacteristic(hap.Characteristic.Manufacturer).updateValue("Ubiquiti Networks");
+      .getService(hap.Service.AccessoryInformation)
+      ?.getCharacteristic(hap.Characteristic.Manufacturer).updateValue("Ubiquiti Networks");
 
     // Update the model information for this camera.
     accessory
-      .getService(hap.Service.AccessoryInformation)!
-      .getCharacteristic(hap.Characteristic.Model).updateValue(camera.type);
+      .getService(hap.Service.AccessoryInformation)
+      ?.getCharacteristic(hap.Characteristic.Model).updateValue(camera.type);
 
     // Update the serial number for this camera.
     accessory
-      .getService(hap.Service.AccessoryInformation)!
-      .getCharacteristic(hap.Characteristic.SerialNumber).updateValue(camera.mac);
+      .getService(hap.Service.AccessoryInformation)
+      ?.getCharacteristic(hap.Characteristic.SerialNumber).updateValue(camera.mac);
 
     // Update the hardware revision for this camera.
     accessory
-      .getService(hap.Service.AccessoryInformation)!
-      .getCharacteristic(hap.Characteristic.HardwareRevision).updateValue(camera.hardwareRevision);
+      .getService(hap.Service.AccessoryInformation)
+      ?.getCharacteristic(hap.Characteristic.HardwareRevision).updateValue(camera.hardwareRevision);
 
     // Update the firmware revision for this camera.
     accessory
-      .getService(hap.Service.AccessoryInformation)!
-      .getCharacteristic(hap.Characteristic.FirmwareRevision).updateValue(camera.firmwareVersion);
+      .getService(hap.Service.AccessoryInformation)
+      ?.getCharacteristic(hap.Characteristic.FirmwareRevision).updateValue(camera.firmwareVersion);
 
     return true;
   }
@@ -156,8 +156,8 @@ export class ProtectCamera extends ProtectAccessory {
 
     // Activate or deactivate motion detection.
     this.accessory.addService(switchService)
-      .getCharacteristic(this.hap.Characteristic.On)!
-      .on(CharacteristicEventTypes.GET, (callback: CharacteristicGetCallback) => {
+      .getCharacteristic(this.hap.Characteristic.On)
+      ?.on(CharacteristicEventTypes.GET, (callback: CharacteristicGetCallback) => {
         callback(null, this.accessory.context.detectMotion === true);
       })
       .on(CharacteristicEventTypes.SET, (value: CharacteristicValue, callback: CharacteristicSetCallback) => {
@@ -198,8 +198,8 @@ export class ProtectCamera extends ProtectAccessory {
 
     // Activate or deactivate motion detection.
     this.accessory.addService(triggerService)
-      .getCharacteristic(this.hap.Characteristic.On)!
-      .on(CharacteristicEventTypes.GET, (callback: CharacteristicGetCallback) => {
+      .getCharacteristic(this.hap.Characteristic.On)
+      ?.on(CharacteristicEventTypes.GET, (callback: CharacteristicGetCallback) => {
         callback(null, motionService?.getCharacteristic(this.hap.Characteristic.MotionDetected).value);
       })
       .on(CharacteristicEventTypes.SET, (value: CharacteristicValue, callback: CharacteristicSetCallback) => {
@@ -259,7 +259,7 @@ export class ProtectCamera extends ProtectAccessory {
   }
 
   // Configure a camera accessory for HomeKit.
-  async configureVideoStream(): Promise<boolean> {
+  public async configureVideoStream(): Promise<boolean> {
     const bootstrap: ProtectNvrBootstrap = this.nvr.nvrApi.bootstrap;
     const nvr: ProtectNvr = this.nvr;
     const nvrApi: ProtectApi = this.nvr.nvrApi;
