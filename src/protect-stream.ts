@@ -143,7 +143,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   }
 
   // HomeKit image snapshot request handler.
-  public async handleSnapshotRequest(request: SnapshotRequest, callback: SnapshotRequestCallback): Promise<void> {
+  public async handleSnapshotRequest(request: SnapshotRequest, callback: SnapshotRequestCallback | null): Promise<void> {
     const params = new URLSearchParams({ force: "true", width: request.width as any, height: request.height as any });
 
     this.debug("%s: HomeKit snapshot request: %sx%s. Retrieving image from Protect: %s?%s",

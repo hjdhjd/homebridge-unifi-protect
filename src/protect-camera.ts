@@ -431,7 +431,7 @@ export class ProtectCamera extends ProtectAccessory {
       // When we get the right message, we trigger the snapshot request.
       if(value?.toUpperCase() === "true".toUpperCase()) {
 
-        this.stream?.handleSnapshotRequest({ width: 0, height: 0 }, null as any);
+        this.stream?.handleSnapshotRequest({ width: 0, height: 0 }, null);
         this.log("%s %s: Snapshot triggered via MQTT.", this.nvr.nvrApi.getNvrName(), this.nvr.nvrApi.getDeviceName(this.accessory.context.camera));
       }
     });
