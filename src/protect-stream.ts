@@ -229,6 +229,11 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     // Grab our IP address.
     const currentAddress = await this.getDefaultIpAddress(request.addressVersion);
 
+    if(!currentAddress) {
+      callback(new Error("Unable to determine the right IP address to use. This is likely due to running homebridge in an environment with multiple NICs."));
+      return;
+    }
+
     // Prepare the response stream.
     const response: PrepareStreamResponse = {
       address: currentAddress,
@@ -570,7 +575,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   }
 
   // Utility function to grab the default external IP address.
-  private async getDefaultIpAddress(addressVersion: ("ipv6" | "ipv4")): Promise<string> {
+  private async getDefaultIpAddress(addressVersion: ("ipv6" | "ipv4")): Promise<string | null> {
 
     const interfaceName = await networkInterfaceDefault();
     const interfaces = os.networkInterfaces();
@@ -589,7 +594,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     }) || externalInfo?.[0];
 
     if(!addressInfo) {
-      return null as any;
+      return null;
     }
 
     return addressInfo.address;
