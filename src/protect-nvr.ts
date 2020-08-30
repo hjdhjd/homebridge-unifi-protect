@@ -31,10 +31,10 @@ import {
 
 export class ProtectNvr {
   private api: API;
-  config: ProtectNvrOptions;
+  public config: ProtectNvrOptions;
   private readonly configuredCameras: { [index: string]: ProtectCamera | ProtectDoorbell };
   private debug: (message: string, ...parameters: any[]) => void;
-  doorbellCount: number;
+  public doorbellCount: number;
   private isEnabled: boolean;
   private hap: HAP;
   private lastMotion: { [index: string]: number };
@@ -42,12 +42,12 @@ export class ProtectNvr {
   private liveviews: ProtectLiveviews;
   private log: Logging;
   private motionDuration: number;
-  mqtt: ProtectMqtt;
+  public mqtt: ProtectMqtt;
   private readonly eventTimers: { [index: string]: NodeJS.Timeout };
   private name: string;
   private nvrAddress: string;
-  nvrApi!: ProtectApi;
-  platform: ProtectPlatform;
+  public nvrApi!: ProtectApi;
+  public platform: ProtectPlatform;
   private pollingTimer!: NodeJS.Timeout;
   private refreshInterval: number;
   private unsupportedDevices: { [index: string]: boolean };
@@ -132,10 +132,10 @@ export class ProtectNvr {
       // Generate this camera's unique identifier.
       const uuid = this.hap.uuid.generate(camera.mac);
 
-      let accessory: PlatformAccessory;
+      let accessory: PlatformAccessory | undefined;
 
       // See if we already know about this accessory or if it's truly new. If it is new, add it to HomeKit.
-      if((accessory = this.platform.accessories.find((x: PlatformAccessory) => x.UUID === uuid)!) === undefined) {
+      if((accessory = this.platform.accessories.find((x: PlatformAccessory) => x.UUID === uuid)) === undefined) {
         accessory = new this.api.platformAccessory(camera.name, uuid);
 
         this.log("%s %s: Adding %s to HomeKit.",
@@ -163,11 +163,11 @@ export class ProtectNvr {
       } else {
 
         // Finally, check if we have changes to the exposed RTSP streams on our cameras.
-        await this.configuredCameras[accessory.UUID].configureVideoStream();
+        this.configuredCameras[accessory.UUID].configureVideoStream();
 
         // Check for changes to the doorbell LCD as well.
         if(camera.type === "UVC G4 Doorbell") {
-          await (this.configuredCameras[accessory.UUID] as ProtectDoorbell).configureDoorbellLcdSwitch();
+          (this.configuredCameras[accessory.UUID] as ProtectDoorbell).configureDoorbellLcdSwitch();
         }
 
       }
@@ -296,11 +296,11 @@ export class ProtectNvr {
 
       // We process UniFi OS motion events elsewhere through the realtime API. UCK, we process here.
       if(!this.nvrApi.isUnifiOs) {
-        await this.motionEventHandler(accessory, camera.lastMotion);
+        this.motionEventHandler(accessory, camera.lastMotion);
       }
 
       // No realtime API yet for doorbells, so we resort to polling.
-      await this.doorbellEventHandler(accessory, camera.lastRing);
+      this.doorbellEventHandler(accessory, camera.lastRing);
     }
 
     return true;
@@ -364,7 +364,7 @@ export class ProtectNvr {
   }
 
   // Motion event processing from UniFi Protect and delivered to HomeKit.
-  async motionEventHandler(accessory: PlatformAccessory, lastMotion: number): Promise<void> {
+  public async motionEventHandler(accessory: PlatformAccessory, lastMotion: number): Promise<void> {
     const camera = accessory.context.camera;
     const hap = this.hap;
 
@@ -519,7 +519,7 @@ export class ProtectNvr {
   }
 
   // Periodically poll the Protect API for status.
-  poll(refresh: number): void {
+  public poll(refresh: number): void {
     // Clear the last polling interval out.
     clearTimeout(this.pollingTimer);
 
@@ -585,7 +585,7 @@ export class ProtectNvr {
   }
 
   // Utility function to let us know if a Protect device or feature should be enabled in HomeKit or not.
-  optionEnabled(device: ProtectCameraConfig, option = "", defaultReturnValue = true): boolean {
+  public optionEnabled(device: ProtectCameraConfig, option = "", defaultReturnValue = true): boolean {
 
     // There are a couple of ways to enable and disable options. The rules of the road are:
     //
