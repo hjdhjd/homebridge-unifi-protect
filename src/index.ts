@@ -8,6 +8,6 @@ import { PLUGIN_NAME, PLATFORM_NAME } from "./settings";
 import { ProtectPlatform } from "./protect-platform";
 
 // Register our platform with homebridge.
-export = (api: API) => {
+export = (api: API): void => {
   api.registerPlatform(PLUGIN_NAME, PLATFORM_NAME, ProtectPlatform);
 }
