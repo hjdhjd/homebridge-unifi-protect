@@ -39,10 +39,10 @@ export class ProtectNvr {
   private hap: HAP;
   private lastMotion: { [index: string]: number };
   private lastRing: { [index: string]: number };
-  private liveviews: ProtectLiveviews;
+  private liveviews: ProtectLiveviews | null;
   private log: Logging;
   private motionDuration: number;
-  public mqtt: ProtectMqtt;
+  public mqtt: ProtectMqtt | null;
   private readonly eventTimers: { [index: string]: NodeJS.Timeout };
   private name: string;
   private nvrAddress: string;
@@ -62,9 +62,9 @@ export class ProtectNvr {
     this.hap = this.api.hap;
     this.lastMotion = {};
     this.lastRing = {};
-    this.liveviews = null as any;
+    this.liveviews = null;
     this.log = platform.log;
-    this.mqtt = null as any;
+    this.mqtt = null;
     this.name = nvrOptions.name;
     this.motionDuration = platform.config.motionDuration;
     this.eventTimers = {};
@@ -177,7 +177,7 @@ export class ProtectNvr {
     await this.cleanupDevices();
 
     // Configure our liveview-based accessories.
-    await this.liveviews.configureLiveviews();
+    await this.liveviews?.configureLiveviews();
 
     return true;
   }
