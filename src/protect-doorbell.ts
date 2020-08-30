@@ -308,7 +308,7 @@ export class ProtectDoorbell extends ProtectCamera {
   }
 
   // Configure our access to the Doorbell LCD screen.
-  async configureDoorbellLcdSwitch(): Promise<boolean> {
+  public async configureDoorbellLcdSwitch(): Promise<boolean> {
 
     // If the user has disabled the doorbell message functionality - we're done.
     if(!this.isMessagesEnabled) {
@@ -365,8 +365,8 @@ export class ProtectDoorbell extends ProtectCamera {
 
       // Configure the message switch.
       this.accessory.addService(switchService)
-        .getCharacteristic(this.hap.Characteristic.On)!
-        .on(CharacteristicEventTypes.GET, this.getSwitchState.bind(this, this.messageSwitches[this.messageSwitches.length - 1]))
+        .getCharacteristic(this.hap.Characteristic.On)
+        ?.on(CharacteristicEventTypes.GET, this.getSwitchState.bind(this, this.messageSwitches[this.messageSwitches.length - 1]))
         .on(CharacteristicEventTypes.SET, this.setSwitchState.bind(this, this.messageSwitches[this.messageSwitches.length - 1]));
     }
 
