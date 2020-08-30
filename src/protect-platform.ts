@@ -128,7 +128,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
   }
 
   // Launch our configured controllers. Once we do, they can sustain themselves.
-  private pollControllers() {
+  private pollControllers(): void {
 
     for(const controller of this.controllers) {
       controller.poll(0);
@@ -136,7 +136,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
   }
 
   // Utility for debug logging.
-  public debug(message: string, ...parameters: any[]) {
+  public debug(message: string, ...parameters: any[]): void {
     if(this.debugMode) {
       this.log(util.format(message, ...parameters));
     }
