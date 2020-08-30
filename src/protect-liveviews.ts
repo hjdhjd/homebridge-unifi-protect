@@ -27,16 +27,16 @@ import {
 
 export class ProtectLiveviews {
   private api: API;
-  config: ProtectNvrOptions;
+  private config: ProtectNvrOptions;
   private debug: (message: string, ...parameters: any[]) => void;
   private hap: HAP;
   private liveviews: ProtectNvrLiveviewConfig[];
   private liveviewSwitches: PlatformAccessory[];
   private log: Logging;
-  nvr: ProtectNvr;
-  nvrApi: ProtectApi;
-  platform: ProtectPlatform;
-  private securityAccessory: PlatformAccessory;
+  private nvr: ProtectNvr;
+  private nvrApi: ProtectApi;
+  private platform: ProtectPlatform;
+  private securityAccessory: PlatformAccessory | undefined;
   private securitySystem: ProtectSecuritySystem;
 
   // Create an instance of our liveviews capability.
@@ -56,7 +56,7 @@ export class ProtectLiveviews {
   }
 
   // Update security system accessory.
-  async configureLiveviews(): Promise<void> {
+  public async configureLiveviews(): Promise<void> {
 
     // Do we have controller access?
     if(!this.nvrApi?.bootstrap?.nvr) {
@@ -96,7 +96,7 @@ export class ProtectLiveviews {
     // Create the security system accessory if it doesn't already exist.
     if(!this.securityAccessory) {
       // See if we already have this accessory defined.
-      if((this.securityAccessory = this.platform.accessories.find((x: PlatformAccessory) => x.UUID === uuid)!) === undefined) {
+      if((this.securityAccessory = this.platform.accessories.find((x: PlatformAccessory) => x.UUID === uuid)) === undefined) {
         // We will use the NVR MAC address + ".Security" to create our UUID. That should provide guaranteed uniqueness we need.
         this.securityAccessory = new this.api.platformAccessory(this.nvrApi.bootstrap.nvr.name, uuid);
 
@@ -173,7 +173,7 @@ export class ProtectLiveviews {
       // Check to see if the accessory already exists before we create it.
       let newAccessory;
 
-      if((newAccessory = this.platform.accessories.find((x: PlatformAccessory) => x.UUID === uuid)!) === undefined) {
+      if((newAccessory = this.platform.accessories.find((x: PlatformAccessory) => x.UUID === uuid)) === undefined) {
 
         newAccessory = new this.api.platformAccessory(this.nvrApi.bootstrap.nvr.name + " " + viewName, uuid);
 
@@ -205,8 +205,8 @@ export class ProtectLiveviews {
 
       // Activate or deactivate motion detection.
       newAccessory.addService(switchService)
-        .getCharacteristic(this.hap.Characteristic.On)!
-        .on(CharacteristicEventTypes.GET, this.getSwitchState.bind(this, newAccessory))
+        .getCharacteristic(this.hap.Characteristic.On)
+        ?.on(CharacteristicEventTypes.GET, this.getSwitchState.bind(this, newAccessory))
         .on(CharacteristicEventTypes.SET, this.setSwitchState.bind(this, newAccessory))
         .updateValue(newAccessory.context.switchState);
 
@@ -215,12 +215,12 @@ export class ProtectLiveviews {
   }
 
   // Get the current liveview switch state.
-  private async getSwitchState(accessory: PlatformAccessory, callback: CharacteristicGetCallback) {
+  private async getSwitchState(accessory: PlatformAccessory, callback: CharacteristicGetCallback): Promise<void> {
     callback(null, accessory.context.switchState);
   }
 
   // Toggle the liveview switch state.
-  private async setSwitchState(liveviewSwitch: PlatformAccessory, value: CharacteristicValue, callback: CharacteristicSetCallback) {
+  private async setSwitchState(liveviewSwitch: PlatformAccessory, value: CharacteristicValue, callback: CharacteristicSetCallback): Promise<void> {
 
     // We're already at this state - we're done.
     if(liveviewSwitch.context.switchState === value) {
@@ -258,7 +258,7 @@ export class ProtectLiveviews {
         const motionSwitch = targetAccessory.getService(this.hap.Service.Switch);
 
         if(motionSwitch) {
-          motionSwitch.getCharacteristic(this.hap.Characteristic.On)!.updateValue(targetAccessory.context.detectMotion);
+          motionSwitch.getCharacteristic(this.hap.Characteristic.On)?.updateValue(targetAccessory.context.detectMotion);
         }
 
         this.log("%s: %s -> %s: Motion detection %s.", this.nvrApi.getNvrName(), liveviewSwitch.context.liveview, targetAccessory.displayName,
