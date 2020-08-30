@@ -17,14 +17,14 @@ export interface ProtectAccessory {
 }
 
 export abstract class ProtectAccessory {
-  readonly accessory: PlatformAccessory;
-  readonly api: API;
-  debug: (message: string, ...parameters: any[]) => void;
+  public readonly accessory: PlatformAccessory;
+  public readonly api: API;
+  public debug: (message: string, ...parameters: any[]) => void;
   protected readonly debugMode: boolean;
   protected readonly hap: HAP;
   protected readonly log: Logging;
-  readonly nvr: ProtectNvr;
-  readonly platform: ProtectPlatform;
+  public readonly nvr: ProtectNvr;
+  public readonly platform: ProtectPlatform;
 
   // The constructor initializes key variables and calls configureDevice().
   constructor(nvr: ProtectNvr, accessory: PlatformAccessory) {
