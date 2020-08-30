@@ -547,7 +547,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   }
 
   // Temporarily increase the verbosity of FFmpeg output for end users.
-  public setVerboseFfmpeg() {
+  public setVerboseFfmpeg(): void {
 
     // If we're already increased our logging, we're done.
     if(this.platform.verboseFfmpeg || this.verboseFfmpegTimer) {
@@ -557,13 +557,15 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     // Set a timer to revert back to normal behavior.
     this.verboseFfmpegTimer = setTimeout(() => {
       this.platform.verboseFfmpeg = false;
-      this.log("Returning FFmpeg logging output to normal levels.")
+      this.log("Returning FFmpeg logging output to normal levels.");
 
       // Clear out the old timer.
       this.verboseFfmpegTimer = null;
     }, PROTECT_FFMPEG_VERBOSE_DURATION * 60 * 1000);
 
-    this.log("FFmpeg exited unexpectedly. Increasing logging output of FFmpeg for the next %s minutes to provide additional visibility.", PROTECT_FFMPEG_VERBOSE_DURATION);
+    this.log("FFmpeg exited unexpectedly. Increasing logging output of FFmpeg for the next %s minutes to provide additional visibility.",
+      PROTECT_FFMPEG_VERBOSE_DURATION);
+
     this.platform.verboseFfmpeg = true;
   }
 
