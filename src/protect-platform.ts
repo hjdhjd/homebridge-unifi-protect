@@ -18,7 +18,7 @@ import util from "util";
 export class ProtectPlatform implements DynamicPlatformPlugin {
   public accessories: PlatformAccessory[];
   public readonly api: API;
-  public readonly config: ProtectOptions;
+  public readonly config!: ProtectOptions;
   public readonly configOptions: string[];
   private readonly controllers: ProtectNvr[];
   public debugMode: boolean;
@@ -34,54 +34,53 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
     this.verboseFfmpeg = false;
     this.log = log;
 
-    // Force this to ProtectOptions.
-    this.config = config as any;
-
     // We can't start without being configured.
     if(!config) {
       return;
     }
 
+    // Plugin options into our config variables.
+    this.config = {
+      controllers: config.controllers,
+      debugAll: config.debug === true,
+      ffmpegOptions: config.ffmpegOptions ?? PROTECT_FFMPEG_OPTIONS,
+      motionDuration: config.motionDuration ?? PROTECT_MOTION_DURATION,
+      options: config.options,
+      verboseFfmpeg: config.verboseFfmpeg === true,
+      videoProcessor: config.videoProcessor
+    };
+
     // We need a UniFi Protect controller configured to do anything.
-    if(!config.controllers) {
+    if(!this.config.controllers) {
       this.log("No UniFi Protect controllers have been configured.");
       return;
     }
 
     // Debugging - most people shouldn't enable this.
-    if(config.debugAll) {
-      this.debugMode = config.debug === true;
+    if(this.config.debugAll) {
+      this.debugMode = true;
       this.debug("Debug logging on. Expect a lot of data.");
     }
 
     // Debug FFmpeg.
-    if(config.verboseFfmpeg) {
-      this.verboseFfmpeg = config.verboseFfmpeg === true;
+    if(this.config.verboseFfmpeg) {
+      this.verboseFfmpeg = true;
     }
 
     // If we have feature options, put them into their own array, upper-cased for future reference.
-    if(config.options) {
-      for(const featureOption of config.options) {
+    if(this.config.options) {
+      for(const featureOption of this.config.options) {
         this.configOptions.push(featureOption.toUpperCase());
       }
     }
 
-    // Additional ffmpeg options, in case the user wants to override the defaults. This option may be removed in a future release.
-    if(!config.ffmpegOptions) {
-      config.ffmpegOptions = PROTECT_FFMPEG_OPTIONS;
-    }
-
-    if(!config.motionDuration) {
-      config.motionDuration = PROTECT_MOTION_DURATION;
-    }
-
     // Motion detection duration. Make sure it's never less than 2 seconds so we can actually alert the user.
-    if(config.motionDuration < 2 ) {
-      config.motionDuration = 2;
+    if(this.config.motionDuration < 2 ) {
+      this.config.motionDuration = 2;
     }
 
     // Loop through each configured NVR and instantiate it.
-    for(const controllerConfig of config.controllers) {
+    for(const controllerConfig of this.config.controllers) {
 
       // We need an address, or there's nothing to do.
       if(!controllerConfig.address) {
@@ -136,7 +135,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
   }
 
   // Utility for debug logging.
-  public debug(message: string, ...parameters: any[]): void {
+  public debug(message: string, ...parameters: unknown[]): void {
     if(this.debugMode) {
       this.log(util.format(message, ...parameters));
     }

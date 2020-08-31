@@ -24,7 +24,7 @@ import { PROTECT_TWOWAY_HEARTBEAT_INTERVAL } from "./settings";
 // in answering the questions needed to bring all this together. A special thank you to @Sunoo for the many hours of
 // discussion and brainstorming on this and other topics.
 export class RtpSplitter {
-  private debug: (message: string, ...parameters: any[]) => void;
+  private debug: (message: string, ...parameters: unknown[]) => void;
   private delegate: ProtectStreamingDelegate;
   private heartbeatTimer!: NodeJS.Timeout;
   private heartbeatMsg!: Buffer;

@@ -6,17 +6,17 @@
 export interface ProtectNvrBootstrapInterface {
   accessKey: string,
   authUserId: string,
-  bridges: any[],
+  bridges: unknown[],
   cameras: ProtectCameraConfig[],
   cloudPortalUrl: string,
-  groups: any[],
+  groups: unknown[],
   lastUpdateId: string,
-  lights: any[],
+  lights: unknown[],
   liveviews: ProtectNvrLiveviewConfig[],
   nvr: ProtectNvrConfig,
-  sensors: any[],
+  sensors: unknown[],
   users: ProtectNvrUserConfig[],
-  viewers: any[]
+  viewers: unknown[]
 }
 
 // A semi-complete description of the UniFi Protect NVR configuration JSON.
@@ -93,7 +93,7 @@ export interface ProtectNvrConfigInterface {
   recordingRetentionDurationMs: string,
   releaseChannel: string,
   setupCode: string,
-  storageInfo: any,
+  storageInfo: unknown,
   timeFormat: string,
   timezone: string,
   type: string,
@@ -101,7 +101,7 @@ export interface ProtectNvrConfigInterface {
   upSince: number,
   uptime: number,
   version: string,
-  wifiSettings: any
+  wifiSettings: unknown
 }
 
 // A semi-complete description of the UniFi Protect camera JSON.
@@ -267,7 +267,7 @@ export interface ProtectNvrLiveviewConfigInterface {
 
 // A semi-complete description of the UniFi Protect NVR user JSON.
 export interface ProtectNvrUserConfigInterface {
-  alertRules: any[],
+  alertRules: unknown[],
   allPermissions: string[],
   cloudAccount: string,
   email: string,
@@ -298,10 +298,10 @@ export interface ProtectNvrUserConfigInterface {
 // A semi-complete description of the UniFi Protect system events JSON.
 export interface ProtectNvrSystemEventInterface {
   apps: {
-    apps: any[],
+    apps: unknown[],
     controllers: ProtectNvrSystemEventController[]
   },
-  system: any,
+  system: unknown,
   type: string
 }
 
@@ -354,17 +354,17 @@ export interface ProtectNvrSystemEventControllerInterface {
   },
   uiNpmPackageName: string,
   uiVersion: string,
-  unadoptedDevices: any[],
+  unadoptedDevices: unknown[],
   updateAvailable: string,
   version: string
 }
 
 // Plugin configuration options.
 export interface ProtectOptions {
+  controllers: ProtectNvrOptions[],
   debugAll: boolean,
   ffmpegOptions: string,
   motionDuration: number,
-  controllers: ProtectNvrOptions[],
   options: string[],
   verboseFfmpeg: boolean,
   videoProcessor: string

@@ -12,8 +12,14 @@ import { Logging, StreamRequestCallback } from "homebridge";
 import { ProtectStreamingDelegate } from "./protect-stream";
 import { Readable, Writable } from "stream";
 
+// Port and IP version information.
+interface PortInterface {
+  addressVersion: string,
+  port: number
+}
+
 export class FfmpegProcess {
-  private readonly debug: (message: string, ...parameters: any[]) => void;
+  private readonly debug: (message: string, ...parameters: unknown[]) => void;
   private isVerbose: boolean;
   private readonly log: Logging;
   private readonly process: ChildProcess;
@@ -21,8 +27,7 @@ export class FfmpegProcess {
   private timeout?: NodeJS.Timeout;
   private delegate: ProtectStreamingDelegate;
 
-  constructor(delegate: ProtectStreamingDelegate, sessionId: string, command: string,
-    returnPort?: { addressVersion: string, port: number }, callback?: StreamRequestCallback) {
+  constructor(delegate: ProtectStreamingDelegate, sessionId: string, command: string, returnPort?: PortInterface, callback?: StreamRequestCallback) {
 
     this.debug = delegate.platform.debug.bind(this);
     this.delegate = delegate;

@@ -11,7 +11,7 @@ import { PROTECT_MQTT_RECONNECT_INTERVAL } from "./settings";
 
 export class ProtectMqtt {
   private config: ProtectNvrOptions;
-  private debug: (message: string, ...parameters: any[]) => void;
+  private debug: (message: string, ...parameters: unknown[]) => void;
   private isConnected: boolean;
   private log: Logging;
   private mqtt: MqttClient | null;

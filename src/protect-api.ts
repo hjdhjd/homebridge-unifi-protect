@@ -40,7 +40,7 @@ export class ProtectApi {
   private apiLastSuccess: number;
   bootstrap!: ProtectNvrBootstrap | null;
   Cameras!: ProtectCameraConfig[] | undefined;
-  private debug: (message: string, ...parameters: any[]) => void;
+  private debug: (message: string, ...parameters: unknown[]) => void;
   private eventHeartbeatTimer!: NodeJS.Timeout;
   eventListener!: WebSocket | null;
   eventListenerConfigured!: boolean;

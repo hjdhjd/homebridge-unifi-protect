@@ -19,7 +19,7 @@ export interface ProtectAccessory {
 export abstract class ProtectAccessory {
   public readonly accessory: PlatformAccessory;
   public readonly api: API;
-  public debug: (message: string, ...parameters: any[]) => void;
+  public debug: (message: string, ...parameters: unknown[]) => void;
   protected readonly debugMode: boolean;
   protected readonly hap: HAP;
   protected readonly log: Logging;

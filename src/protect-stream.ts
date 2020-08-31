@@ -70,7 +70,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   private readonly api: API;
   private readonly config: ProtectOptions;
   public controller: CameraController;
-  public debug: (message: string, ...parameters: any[]) => void;
+  public debug: (message: string, ...parameters: unknown[]) => void;
   private readonly hap: HAP;
   private readonly interfaceName = "public";
   public readonly log: Logging;
@@ -144,7 +144,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
   // HomeKit image snapshot request handler.
   public async handleSnapshotRequest(request: SnapshotRequest, callback: SnapshotRequestCallback | null): Promise<void> {
-    const params = new URLSearchParams({ force: "true", width: request.width as any, height: request.height as any });
+    const params = new URLSearchParams({ force: "true", width: request.width.toString(), height: request.height.toString() });
 
     this.debug("%s: HomeKit snapshot request: %sx%s. Retrieving image from Protect: %s?%s",
       this.name, request.width, request.height, this.protectCamera.snapshotUrl, params);

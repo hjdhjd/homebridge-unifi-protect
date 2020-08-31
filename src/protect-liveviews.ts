@@ -28,7 +28,7 @@ import {
 export class ProtectLiveviews {
   private api: API;
   private config: ProtectNvrOptions;
-  private debug: (message: string, ...parameters: any[]) => void;
+  private debug: (message: string, ...parameters: unknown[]) => void;
   private hap: HAP;
   private liveviews: ProtectNvrLiveviewConfig[] | undefined;
   private liveviewSwitches: PlatformAccessory[];

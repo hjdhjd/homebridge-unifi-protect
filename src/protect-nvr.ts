@@ -33,7 +33,7 @@ export class ProtectNvr {
   private api: API;
   public config: ProtectNvrOptions;
   private readonly configuredCameras: { [index: string]: ProtectCamera | ProtectDoorbell };
-  private debug: (message: string, ...parameters: any[]) => void;
+  private debug: (message: string, ...parameters: unknown[]) => void;
   public doorbellCount: number;
   private isEnabled: boolean;
   private hap: HAP;
