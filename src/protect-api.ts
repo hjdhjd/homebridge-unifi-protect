@@ -38,11 +38,11 @@ import util from "util";
 export class ProtectApi {
   private apiErrorCount: number;
   private apiLastSuccess: number;
-  bootstrap!: ProtectNvrBootstrap;
-  Cameras!: ProtectCameraConfig[];
+  bootstrap!: ProtectNvrBootstrap | null;
+  Cameras!: ProtectCameraConfig[] | undefined;
   private debug: (message: string, ...parameters: any[]) => void;
   private eventHeartbeatTimer!: NodeJS.Timeout;
-  eventListener!: WebSocket;
+  eventListener!: WebSocket | null;
   eventListenerConfigured!: boolean;
   private headers!: Headers;
   private httpsAgent!: Agent;
@@ -245,7 +245,7 @@ export class ProtectApi {
 
       if(!ws) {
         this.log("Unable to connect to system events API. Will retry again later.");
-        this.eventListener = null as any;
+        this.eventListener = null;
         this.eventListenerConfigured = false;
         return false;
       }
@@ -266,7 +266,7 @@ export class ProtectApi {
         }
 
         this.eventListener?.terminate();
-        this.eventListener = null as any;
+        this.eventListener = null;
         this.eventListenerConfigured = false;
       });
 
@@ -287,7 +287,7 @@ export class ProtectApi {
 
     this.debug(util.inspect(this.bootstrap, { colors: true, sorted: true, depth: 10 }));
 
-    const newDeviceList: ProtectCameraConfig[] = this.bootstrap.cameras;
+    const newDeviceList: ProtectCameraConfig[] | undefined = this.bootstrap?.cameras;
 
     // Notify the user about any new devices that we've discovered.
     if(newDeviceList) {
@@ -335,7 +335,7 @@ export class ProtectApi {
   public async isAllRtspConfigured(): Promise<boolean> {
 
     // Look for any cameras with any non-RTSP enabled channels.
-    return this.bootstrap?.cameras?.some(camera => camera.channels?.some(channel => !channel.isRtspEnabled));
+    return this.bootstrap?.cameras?.some(camera => camera.channels?.some(channel => !channel.isRtspEnabled)) ? true : false;
   }
 
   // Check admin privileges.
@@ -348,7 +348,7 @@ export class ProtectApi {
     const oldAdminStatus = this.isAdminUser;
 
     // Find this user.
-    const user = this.bootstrap.users.find((x: ProtectNvrUserConfig) => x.id === this.bootstrap.authUserId);
+    const user = this.bootstrap?.users.find((x: ProtectNvrUserConfig) => x.id === this.bootstrap?.authUserId);
 
     if(!user?.allPermissions) {
       return false;
@@ -550,7 +550,7 @@ export class ProtectApi {
     // We use terminate() to immediately destroy the connection, instead of close(), which waits for the close timer.
     this.eventHeartbeatTimer = setTimeout(() => {
       self.eventListener?.terminate();
-      self.eventListener = null as any;
+      self.eventListener = null;
       self.eventListenerConfigured = false;
     }, PROTECT_EVENTS_HEARTBEAT_INTERVAL * 1000);
   }
@@ -561,11 +561,11 @@ export class ProtectApi {
     this.isUnifiOs = false;
     this.loggedIn = false;
     this.loginAge = 0;
-    this.bootstrap = null as any;
+    this.bootstrap = null;
 
     // Shutdown any event listeners, if we have them.
     this.eventListener?.terminate();
-    this.eventListener = null as any;
+    this.eventListener = null;
     this.eventListenerConfigured = false;
 
     // Initialize the headers we need.

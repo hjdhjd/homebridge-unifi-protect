@@ -100,8 +100,10 @@ export class ProtectNvr {
 
   // Discover new UniFi Protect devices.
   private async discoverAndSyncAccessories(): Promise<boolean> {
+
     // Iterate through the list of cameras that Protect has returned and sync them with what we show HomeKit.
-    for(const camera of this.nvrApi.Cameras) {
+    for(const camera of this.nvrApi.Cameras ?? []) {
+
       // If we have no MAC address, name, or this camera isn't being managed by Protect, we skip.
       if(!camera.mac || !camera.name || !camera.isManaged) {
         continue;
@@ -148,7 +150,7 @@ export class ProtectNvr {
 
       // Link the accessory to it's camera object and it's hosting NVR.
       accessory.context.camera = camera;
-      accessory.context.nvr = this.nvrApi.bootstrap.nvr.mac;
+      accessory.context.nvr = this.nvrApi.bootstrap?.nvr.mac;
 
       // Setup the Protect camera if it hasn't been configured yet.
       if(!this.configuredCameras[accessory.UUID]) {
@@ -192,7 +194,7 @@ export class ProtectNvr {
 
     // This NVR has been disabled. Stop polling for updates and let the user know that we're done here.
     // Only run this check once, since we don't need to repeat it again.
-    if(!this.isEnabled && (this.platform.configOptions.indexOf("DISABLE." + this.nvrApi.bootstrap.nvr.mac.toUpperCase()) !== -1)) {
+    if(!this.isEnabled && (this.platform.configOptions.indexOf("DISABLE." + this.nvrApi.bootstrap?.nvr.mac.toUpperCase()) !== -1)) {
       this.log("%s: Disabling this Protect controller.", this.nvrApi.getNvrName());
       this.nvrApi.clearLoginCredentials();
       return false;
@@ -542,10 +544,16 @@ export class ProtectNvr {
 
   // Cleanup removed Protect devices from HomeKit.
   private async cleanupDevices(): Promise<void> {
+    const nvr = this.nvrApi.bootstrap?.nvr;
+
+    // If we don't have a valid bootstrap configuration, we're done here.
+    if(!nvr) {
+      return;
+    }
+
     for(const oldAccessory of this.platform.accessories) {
       const oldCamera = oldAccessory.context.camera;
       const oldNvr = oldAccessory.context.nvr;
-      const nvr = this.nvrApi.bootstrap.nvr;
 
       // Since we're accessing the shared accessories list for the entire platform, we need to ensure we
       // are only touching our cameras and not another NVR's.

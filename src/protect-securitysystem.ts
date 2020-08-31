@@ -26,7 +26,7 @@ export class ProtectSecuritySystem extends ProtectAccessory {
 
     // Clean out the context object in case it's been polluted somehow.
     accessory.context = {};
-    accessory.context.nvr = this.nvr.nvrApi.bootstrap.nvr.mac;
+    accessory.context.nvr = this.nvr.nvrApi.bootstrap?.nvr.mac;
     accessory.context.securityState = securityState;
 
     // Configure accessory information.
@@ -142,12 +142,18 @@ export class ProtectSecuritySystem extends ProtectAccessory {
   private setSecurityState(value: CharacteristicValue, callback: CharacteristicSetCallback): void {
     const accessory = this.accessory;
     const hap = this.hap;
-    const liveviews = this.nvr.nvrApi.bootstrap.liveviews;
+    const liveviews = this.nvr.nvrApi.bootstrap?.liveviews;
     let newState: CharacteristicValue;
     const nvrApi = this.nvr.nvrApi;
     const SecuritySystemCurrentState = hap.Characteristic.SecuritySystemCurrentState;
     const SecuritySystemTargetState = hap.Characteristic.SecuritySystemTargetState;
     let viewScene = "";
+
+    // If we don't have any liveviews or the bootstrap configuration, there's nothing for us to do.
+    if(!liveviews || !nvrApi.bootstrap) {
+      callback(null);
+      return;
+    }
 
     // We have three different states which can be triggered (aside from disarming).
     // Those states are home, away, and night. We use this as a convenient way to easily enable or disable motion detection

@@ -30,14 +30,14 @@ export class ProtectLiveviews {
   private config: ProtectNvrOptions;
   private debug: (message: string, ...parameters: any[]) => void;
   private hap: HAP;
-  private liveviews: ProtectNvrLiveviewConfig[];
+  private liveviews: ProtectNvrLiveviewConfig[] | undefined;
   private liveviewSwitches: PlatformAccessory[];
   private log: Logging;
   private nvr: ProtectNvr;
   private nvrApi: ProtectApi;
   private platform: ProtectPlatform;
-  private securityAccessory: PlatformAccessory | undefined;
-  private securitySystem: ProtectSecuritySystem;
+  private securityAccessory: PlatformAccessory | null | undefined;
+  private securitySystem: ProtectSecuritySystem | null;
 
   // Create an instance of our liveviews capability.
   constructor(protectNvr: ProtectNvr) {
@@ -51,8 +51,8 @@ export class ProtectLiveviews {
     this.nvr = protectNvr;
     this.nvrApi = protectNvr.nvrApi;
     this.platform = protectNvr.platform;
-    this.securityAccessory = null as any;
-    this.securitySystem = null as any;
+    this.securityAccessory = null;
+    this.securitySystem = null;
   }
 
   // Update security system accessory.
@@ -72,6 +72,11 @@ export class ProtectLiveviews {
   // Configure the security system accessory.
   private async configureSecuritySystem(): Promise<void> {
 
+    // If we don't have the bootstrap configuration, we're done here.
+    if(!this.nvrApi.bootstrap) {
+      return;
+    }
+
     const reLiveviewScene = /^Protect-(Away|Home|Night|Off)$/i;
     const uuid = this.hap.uuid.generate(this.nvrApi.bootstrap.nvr.mac + ".Security");
 
@@ -88,8 +93,8 @@ export class ProtectLiveviews {
         this.platform.accessories.splice(this.platform.accessories.indexOf(oldAccessory), 1);
       }
 
-      this.securityAccessory = null as any;
-      this.securitySystem = null as any;
+      this.securityAccessory = null;
+      this.securitySystem = null;
       return;
     }
 
@@ -129,6 +134,11 @@ export class ProtectLiveviews {
 
   // Configure any liveview-associated switches.
   private async configureSwitches(): Promise<void> {
+
+    // If we don't have any liveviews or the bootstrap configuration, there's nothing to configure.
+    if(!this.liveviews || !this.nvrApi.bootstrap) {
+      return;
+    }
 
     // Iterate through the list of switches and see if we still have matching liveviews.
     for(const liveviewSwitch of this.liveviewSwitches) {
@@ -222,8 +232,8 @@ export class ProtectLiveviews {
   // Toggle the liveview switch state.
   private async setSwitchState(liveviewSwitch: PlatformAccessory, value: CharacteristicValue, callback: CharacteristicSetCallback): Promise<void> {
 
-    // We're already at this state - we're done.
-    if(liveviewSwitch.context.switchState === value) {
+    // We don't have any liveviews or we're already at this state - we're done.
+    if(!this.nvrApi.bootstrap || !this.liveviews || (liveviewSwitch.context.switchState === value)) {
       callback(null);
       return;
     }

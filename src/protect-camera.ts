@@ -44,7 +44,7 @@ export class ProtectCamera extends ProtectAccessory {
     // Clean out the context object in case it's been polluted somehow.
     this.accessory.context = {};
     this.accessory.context.camera = camera;
-    this.accessory.context.nvr = this.nvr.nvrApi.bootstrap.nvr.mac;
+    this.accessory.context.nvr = this.nvr.nvrApi.bootstrap?.nvr.mac;
     this.accessory.context.detectMotion = detectMotion;
 
     // Clear out any switches on this camera so we can start fresh.
@@ -260,12 +260,12 @@ export class ProtectCamera extends ProtectAccessory {
 
   // Configure a camera accessory for HomeKit.
   public async configureVideoStream(): Promise<boolean> {
-    const bootstrap: ProtectNvrBootstrap = this.nvr.nvrApi.bootstrap;
+    const bootstrap: ProtectNvrBootstrap | null = this.nvr.nvrApi.bootstrap;
     const nvr: ProtectNvr = this.nvr;
     const nvrApi: ProtectApi = this.nvr.nvrApi;
 
-    // No channels exist on this camera.
-    if(!this.accessory.context.camera?.channels) {
+    // No channels exist on this camera or we don't have access to the bootstrap configuration.
+    if(!this.accessory.context.camera?.channels || !bootstrap) {
       return false;
     }
 
@@ -381,7 +381,7 @@ export class ProtectCamera extends ProtectAccessory {
 
   // Configure MQTT capabilities of this camera.
   protected async configureMqtt(): Promise<boolean> {
-    const bootstrap: ProtectNvrBootstrap = this.nvr.nvrApi.bootstrap;
+    const bootstrap: ProtectNvrBootstrap | null = this.nvr.nvrApi.bootstrap;
     const camera = this.accessory.context.camera;
 
     // Trigger a motion event in MQTT, if requested to do so.
@@ -412,7 +412,7 @@ export class ProtectCamera extends ProtectAccessory {
 
         // Grab all the available RTSP channels.
         for(const channel of camera.channels) {
-          if(!channel.isRtspEnabled) {
+          if(!bootstrap || !channel.isRtspEnabled) {
             continue;
           }
 

@@ -42,7 +42,8 @@ export class ProtectDoorbell extends ProtectCamera {
 
   // Configure the doorbell for HomeKit.
   protected async configureDevice(): Promise<boolean> {
-    this.defaultDuration = this.nvr?.nvrApi?.bootstrap?.nvr?.doorbellSettings.defaultMessageResetTimeoutMs;
+    this.defaultDuration = this.nvr?.nvrApi?.bootstrap?.nvr?.doorbellSettings?.defaultMessageResetTimeoutMs === undefined ? 60000 :
+      this.nvr.nvrApi.bootstrap.nvr.doorbellSettings.defaultMessageResetTimeoutMs;
     this.isMessagesEnabled = true;
     this.isMessagesFromControllerEnabled = true;
     this.messageSwitches = [];

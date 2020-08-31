@@ -14,7 +14,7 @@ export class ProtectMqtt {
   private debug: (message: string, ...parameters: any[]) => void;
   private isConnected: boolean;
   private log: Logging;
-  private mqtt: MqttClient;
+  private mqtt: MqttClient | null;
   private nvr: ProtectNvr;
   private nvrApi: ProtectApi;
   private subscriptions: { [index: string]: (cbBuffer: Buffer) => void };
@@ -24,7 +24,7 @@ export class ProtectMqtt {
     this.debug = nvr.platform.debug.bind(nvr.platform);
     this.isConnected = false;
     this.log = nvr.platform.log;
-    this.mqtt = null as any;
+    this.mqtt = null;
     this.nvr = nvr;
     this.nvrApi = nvr.nvrApi;
     this.subscriptions = {};
@@ -96,7 +96,7 @@ export class ProtectMqtt {
           break;
 
         case "ENOTFOUND":
-          this.mqtt.end(true);
+          this.mqtt?.end(true);
           this.log("%s MQTT Broker: Hostname or IP address not found. (url: %s).", this.nvrApi.getNvrName(), this.config.mqttUrl);
           break;
 
@@ -128,6 +128,6 @@ export class ProtectMqtt {
 
     // Tell MQTT we're subscribing to this event.
     // By default, we subscribe as: unifi/protect/mac/event/name.
-    this.mqtt.subscribe(expandedTopic);
+    this.mqtt?.subscribe(expandedTopic);
   }
 }
