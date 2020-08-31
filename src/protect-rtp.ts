@@ -85,12 +85,11 @@ export class RtpSplitter {
     // Send a heartbeat to FFmpeg every 3.5 seconds to keep things open. FFmpeg has a five-second timeout
     // in reading input, and we want to be comfortably within the margin for error to ensure the process
     // continues to run.
-    const self = this;
     this.heartbeatTimer = setTimeout(() => {
       this.debug("Sending ffmpeg a heartbeat.");
 
-      self.socket.send(self.heartbeatMsg, port, "127.0.0.1");
-      self.heartbeat(port);
+      this.socket.send(this.heartbeatMsg, port, "127.0.0.1");
+      this.heartbeat(port);
     }, PROTECT_TWOWAY_HEARTBEAT_INTERVAL * 1000);
   }
 

@@ -543,15 +543,14 @@ export class ProtectApi {
 
   // Utility to check the heartbeat of our listener.
   private heartbeatEventListener(): void {
-    const self = this;
 
     clearTimeout(this.eventHeartbeatTimer);
 
     // We use terminate() to immediately destroy the connection, instead of close(), which waits for the close timer.
     this.eventHeartbeatTimer = setTimeout(() => {
-      self.eventListener?.terminate();
-      self.eventListener = null;
-      self.eventListenerConfigured = false;
+      this.eventListener?.terminate();
+      this.eventListener = null;
+      this.eventListenerConfigured = false;
     }, PROTECT_EVENTS_HEARTBEAT_INTERVAL * 1000);
   }
 

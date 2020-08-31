@@ -423,7 +423,6 @@ export class ProtectNvr {
     this.log("%s %s: Motion detected.", this.nvrApi.getNvrName(), accessory.displayName);
 
     // Reset our motion event after motionDuration.
-    const self = this;
     this.eventTimers[camera.mac] = setTimeout(() => {
       const thisMotionService = accessory.getService(hap.Service.MotionSensor);
 
@@ -438,13 +437,13 @@ export class ProtectNvr {
         }
 
         // Publish to MQTT, if the user has configured it.
-        self.mqtt?.publish(accessory, "motion", "false");
+        this.mqtt?.publish(accessory, "motion", "false");
 
-        self.debug("%s %s: Resetting motion event.", this.nvrApi.getNvrName(), accessory.displayName);
+        this.debug("%s %s: Resetting motion event.", this.nvrApi.getNvrName(), accessory.displayName);
       }
 
       // Delete the timer from our motion event tracker.
-      delete self.eventTimers[camera.mac];
+      delete this.eventTimers[camera.mac];
     }, this.motionDuration * 1000);
   }
 
@@ -500,17 +499,16 @@ export class ProtectNvr {
       contactService.getCharacteristic(hap.Characteristic.ContactSensorState).updateValue(hap.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED);
 
       // Reset our contact event after two seconds.
-      const self = this;
       this.eventTimers[camera.mac + ".DoorbellRing"] = setTimeout(() => {
         const thisContactService = accessory.getService(hap.Service.ContactSensor);
 
         if(thisContactService) {
           contactService.getCharacteristic(hap.Characteristic.ContactSensorState).updateValue(hap.Characteristic.ContactSensorState.CONTACT_DETECTED);
-          self.debug("%s %s: Resetting contact sensor event.", this.nvrApi.getNvrName(), accessory.displayName);
+          this.debug("%s %s: Resetting contact sensor event.", this.nvrApi.getNvrName(), accessory.displayName);
         }
 
         // Delete the timer from our motion event tracker.
-        delete self.eventTimers[camera.mac + ".DoorbellRing"];
+        delete this.eventTimers[camera.mac + ".DoorbellRing"];
       }, 2 * 1000);
     }
 
@@ -526,11 +524,9 @@ export class ProtectNvr {
     clearTimeout(this.pollingTimer);
 
     // Setup periodic update with our polling interval.
-    const self = this;
-
     this.pollingTimer = setTimeout(async () => {
       // Refresh our Protect device information and gracefully handle Protect errors.
-      await self.updateAccessories();
+      await this.updateAccessories();
 
       // Our Protect NVR is disabled. We're done.
       if(!this.isEnabled) {
@@ -538,7 +534,7 @@ export class ProtectNvr {
       }
 
       // Fire off the next polling interval.
-      self.poll(self.refreshInterval);
+      this.poll(this.refreshInterval);
     }, refresh * 1000);
   }
 
