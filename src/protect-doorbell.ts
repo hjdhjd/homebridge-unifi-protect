@@ -120,8 +120,7 @@ export class ProtectDoorbell extends ProtectCamera {
       return false;
     }
 
-    this.log("%s %s: Enabling doorbell contact sensor. This sensor can be used for the automation of doorbell ring events in HomeKit.",
-      this.nvr.nvrApi.getNvrName(), this.nvr.nvrApi.getDeviceName(accessory.context.camera));
+    this.log("%s: Enabling doorbell contact sensor. This sensor can be used for the automation of doorbell ring events in HomeKit.", this.name());
 
     // Add the contact sensor to the doorbell.
     contactService = new hap.Service.ContactSensor(accessory.displayName + " Doorbell");
@@ -157,17 +156,13 @@ export class ProtectDoorbell extends ProtectCamera {
         }
 
       } catch(error) {
-        this.log("%s %s: Unable to process MQTT message: \"%s\". Error: %s.",
-          this.nvr.nvrApi.getNvrName(), this.nvr.nvrApi.getDeviceName(this.accessory.context.camera),
-          message.toString(), error.message);
+        this.log("%s: Unable to process MQTT message: \"%s\". Error: %s.", this.name(), message.toString(), error.message);
         return;
       }
 
       // At a minimum, make sure a message was specified.
       if(!("message" in incomingPayload) || (("duration" in incomingPayload) && isNaN(incomingPayload.duration))) {
-        this.log("%s %s: Unable to process MQTT message: \"%s\".",
-          this.nvr.nvrApi.getNvrName(), this.nvr.nvrApi.getDeviceName(this.accessory.context.camera),
-          incomingPayload);
+        this.log("%s: Unable to process MQTT message: \"%s\".", this.name(), incomingPayload);
         return;
       }
 
@@ -181,11 +176,11 @@ export class ProtectDoorbell extends ProtectCamera {
       // No message defined...we assume we're resetting the message.
       if(!incomingPayload.message.length) {
         outboundPayload = { lcdMessage: {} };
-        this.log("%s %s: Received MQTT doorbell message reset.", this.nvr.nvrApi.getNvrName(), this.nvr.nvrApi.getDeviceName(this.accessory.context.camera));
+        this.log("%s: Received MQTT doorbell message reset.", this.name());
       } else {
         outboundPayload = { lcdMessage: { duration: incomingPayload.duration, text: incomingPayload.message, type: "CUSTOM_MESSAGE" } };
-        this.log("%s %s: Received MQTT doorbell message%s: %s.",
-          this.nvr.nvrApi.getNvrName(), this.nvr.nvrApi.getDeviceName(this.accessory.context.camera),
+        this.log("%s: Received MQTT doorbell message%s: %s.",
+          this.name(),
           outboundPayload.lcdMessage.duration ? " (" + (outboundPayload.lcdMessage.duration / 1000) + " seconds)" : "",
           outboundPayload.lcdMessage.text);
       }
@@ -245,8 +240,7 @@ export class ProtectDoorbell extends ProtectCamera {
         continue;
       }
 
-      this.log("%s %s: Removing saved doorbell message: %s.",
-        this.nvr.nvrApi.getNvrName(), this.nvr.nvrApi.getDeviceName(this.accessory.context.camera), entry.text);
+      this.log("%s: Removing saved doorbell message: %s.", this.name(), entry.text);
 
       // This entry is now stale, delete it.
       this.accessory.removeService(entry.service);
@@ -275,10 +269,7 @@ export class ProtectDoorbell extends ProtectCamera {
 
       // We've no longer got this message - remove it and inform the user about it.
       if(!lcdEntry) {
-        this.log("%s %s: Removing saved doorbell message: %s.",
-          this.nvr.nvrApi.getNvrName(), this.nvr.nvrApi.getDeviceName(this.accessory.context.camera),
-          switchService.subtype?.slice(switchService.subtype.indexOf(".") + 1));
-
+        this.log("%s: Removing saved doorbell message: %s.", this.name(), switchService.subtype?.slice(switchService.subtype.indexOf(".") + 1));
         this.accessory.removeService(switchService);
         continue;
       }
@@ -293,8 +284,7 @@ export class ProtectDoorbell extends ProtectCamera {
 
         // Inform the user that the message has been set.
         if(switchState) {
-          this.log("%s %s: Doorbell message set%s: %s.", this.nvr.nvrApi.getNvrName(), this.nvr.nvrApi.getDeviceName(this.accessory.context.camera),
-            lcdEntry.duration ? " (" + (lcdEntry.duration / 1000) + " seconds)" : "", lcdEntry.text);
+          this.log("%s: Doorbell message set%s: %s.", this.name(), lcdEntry.duration ? " (" + (lcdEntry.duration / 1000) + " seconds)" : "", lcdEntry.text);
 
           // Publish to MQTT, if the user has configured it.
           this.nvr.mqtt?.publish(this.accessory, "message", JSON.stringify({ message: lcdEntry.text,
@@ -341,8 +331,7 @@ export class ProtectDoorbell extends ProtectCamera {
         continue;
       }
 
-      this.log("%s %s: Discovered doorbell message switch%s: %s.", this.nvr.nvrApi.getNvrName(), this.nvr.nvrApi.getDeviceName(this.accessory.context.camera),
-        entry.duration ? " (" + (entry.duration / 1000) + " seconds)" : "", entry.text);
+      this.log("%s: Discovered doorbell message switch%s: %s.", this.name(), entry.duration ? " (" + (entry.duration / 1000) + " seconds)" : "", entry.text);
 
       // Clear out any previous instance of this service.
       let switchService = this.accessory.getServiceById(this.hap.Service.Switch, entry.text);
@@ -409,8 +398,7 @@ export class ProtectDoorbell extends ProtectCamera {
     const newCamera = await this.nvr.nvrApi.updateCamera(this.accessory.context.camera, payload);
 
     if(!newCamera) {
-      this.log("%s %s: Unable to set doorbell message. Please ensure this username has the Administrator role in UniFi Protect.",
-        this.nvr.nvrApi.getNvrName(), this.nvr.nvrApi.getDeviceName(this.accessory.context.camera));
+      this.log("%s: Unable to set doorbell message. Please ensure this username has the Administrator role in UniFi Protect.", this.name());
       return;
     }
 
@@ -419,8 +407,7 @@ export class ProtectDoorbell extends ProtectCamera {
 
     // Notify the user when we set the message on the doorbell, but not when we clear it.
     if(payload.lcdMessage && Object.keys(payload.lcdMessage).length) {
-      this.log("%s %s: Doorbell message set%s: %s.", this.nvr.nvrApi.getNvrName(), this.nvr.nvrApi.getDeviceName(this.accessory.context.camera),
-        duration ? " (" + (duration / 1000) + " seconds)" : "", payload.lcdMessage?.text);
+      this.log("%s: Doorbell message set%s: %s.", this.name(), duration ? " (" + (duration / 1000) + " seconds)" : "", payload.lcdMessage?.text);
 
       // Publish to MQTT, if the user has configured it.
       this.nvr.mqtt?.publish(this.accessory, "message", JSON.stringify({ message: payload.lcdMessage?.text, duration: duration / 1000 }));

@@ -72,17 +72,14 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   public controller: CameraController;
   public debug: (message: string, ...parameters: unknown[]) => void;
   private readonly hap: HAP;
-  private readonly interfaceName = "public";
   public readonly log: Logging;
   public readonly name: string;
+  private ongoingSessions: { [index: string]: { ffmpeg: FfmpegProcess[], rtpSplitter: RtpSplitter | null } };
+  private pendingSessions: { [index: string]: SessionInfo };
   public readonly platform: ProtectPlatform;
   public readonly protectCamera: ProtectCamera;
   private verboseFfmpegTimer!: NodeJS.Timeout | null;
   public readonly videoProcessor: string;
-
-  // Keep track of streaming sessions.
-  private ongoingSessions: { [index: string]: { ffmpeg: FfmpegProcess[], rtpSplitter: RtpSplitter | null } };
-  private pendingSessions: { [index: string]: SessionInfo };
 
   constructor(camera: ProtectCamera) {
     this.api = camera.api;
@@ -147,12 +144,12 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     const params = new URLSearchParams({ force: "true", width: request.width.toString(), height: request.height.toString() });
 
     this.debug("%s: HomeKit snapshot request: %sx%s. Retrieving image from Protect: %s?%s",
-      this.name, request.width, request.height, this.protectCamera.snapshotUrl, params);
+      this.protectCamera.name(), request.width, request.height, this.protectCamera.snapshotUrl, params);
 
     const response = await this.protectCamera.nvr.nvrApi.fetch(this.protectCamera.snapshotUrl + "?" + params, { method: "GET" }, true, false);
 
     if(!response?.ok) {
-      this.log("%s: Unable to retrieve snapshot.", this.name);
+      this.log("%s: Unable to retrieve snapshot.", this.protectCamera.name());
       if(callback) {
         callback(new Error(this.name + ": Unable to retrieve snapshot."));
       }
@@ -173,7 +170,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
     } catch(error) {
 
-      this.log.error("%s: An error occurred while making a snapshot request: %s.", this.name, error);
+      this.log.error("%s: An error occurred while making a snapshot request: %s.", this.protectCamera.name(), error);
 
       if(callback) {
         callback(error);
@@ -195,7 +192,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
     if(!hasLibFdk) {
       this.log("%s: Audio support disabled. A version of FFmpeg that is compiled with fdk_aac support is required to support audio.",
-        this.name);
+        this.protectCamera.name());
     }
 
     // Setup the RTP splitter for two-way audio scenarios.
@@ -296,7 +293,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     let fcmd = "-hide_banner -rtsp_transport tcp -i " + this.protectCamera.cameraUrl;
 
     this.log("%s: HomeKit video stream request received: %sx%s, %s fps, %s kbps.",
-      this.name, request.video.width, request.video.height, request.video.fps, request.video.max_bit_rate);
+      this.protectCamera.name(), request.video.width, request.video.height, request.video.fps, request.video.max_bit_rate);
 
     // Configure our video parameters:
     // -map 0:v           selects the first available video track from the stream. Protect actually maps audio
@@ -505,7 +502,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       case StreamRequestTypes.RECONFIGURE:
         // Once ffmpeg is updated to support this, we'll enable this one.
         this.log("%s: Ignoring request to reconfigure: %sx%s, %s fps, %s kbps.",
-          this.name, request.video.width, request.video.height, request.video.fps, request.video.max_bit_rate);
+          this.protectCamera.name(), request.video.width, request.video.height, request.video.fps, request.video.max_bit_rate);
         callback();
         break;
 
@@ -536,11 +533,11 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       delete this.ongoingSessions[sessionId];
 
       // Inform the user.
-      this.log.info("%s: Stopped video stream.", this.name);
+      this.log.info("%s: Stopped video stream.", this.protectCamera.name());
 
     } catch(error) {
 
-      this.log.error("%s: Error occurred terminating video process: %s", this.name, error);
+      this.log.error("%s: Error occurred terminating video process: %s", this.protectCamera.name(), error);
     }
   }
 
@@ -568,7 +565,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       this.verboseFfmpegTimer = null;
     }, PROTECT_FFMPEG_VERBOSE_DURATION * 60 * 1000);
 
-    this.log("FFmpeg exited unexpectedly. Increasing logging output of FFmpeg for the next %s minutes to provide additional visibility.",
+    this.log("FFmpeg exited unexpectedly. Increasing logging output of FFmpeg for the next %s minutes to provide additional detail for future attempts to stream video.",
       PROTECT_FFMPEG_VERBOSE_DURATION);
 
     this.platform.verboseFfmpeg = true;

@@ -92,7 +92,7 @@ export class ProtectNvr {
     // Cleanup any stray ffmpeg sessions on shutdown.
     this.api.on(APIEvent.SHUTDOWN, () => {
       for(const protectCamera of Object.values(this.configuredCameras)) {
-        this.debug("%s %s: Shutting down all video stream processes.", this.nvrApi.getNvrName(), this.nvrApi.getDeviceName(protectCamera.accessory.context.camera));
+        this.debug("%s: Shutting down all video stream processes.", protectCamera.name());
         protectCamera.stream?.shutdown();
       }
     });
@@ -120,8 +120,8 @@ export class ProtectNvr {
         // Notify the user we see this camera, but we aren't adding it to HomeKit.
         this.unsupportedDevices[camera.mac] = true;
 
-        this.log("UniFi Protect camera type '%s' is not currently supported, ignoring: %s.",
-          camera.modelKey, this.nvrApi.getDeviceName(camera));
+        this.log("%s: UniFi Protect camera type '%s' is not currently supported, ignoring: %s.",
+          this.nvrApi.getNvrName(), camera.modelKey, this.nvrApi.getDeviceName(camera));
 
         continue;
       }
@@ -140,8 +140,7 @@ export class ProtectNvr {
       if((accessory = this.platform.accessories.find((x: PlatformAccessory) => x.UUID === uuid)) === undefined) {
         accessory = new this.api.platformAccessory(camera.name, uuid);
 
-        this.log("%s %s: Adding %s to HomeKit.",
-          this.nvrApi.getNvrName(), this.nvrApi.getDeviceName(camera), camera.modelKey);
+        this.log("%s: Adding %s to HomeKit.", this.nvrApi.getFullName(camera), camera.modelKey);
 
         // Register this accessory with homebridge and add it to the accessory array so we can track it.
         this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
@@ -376,14 +375,14 @@ export class ProtectNvr {
 
     // Have we seen this event before? If so...move along.
     if(this.lastMotion[camera.mac] >= lastMotion) {
-      this.debug("%s %s: Skipping duplicate motion event.", this.nvrApi.getNvrName(), accessory.displayName);
+      this.debug("%s: Skipping duplicate motion event.", this.nvrApi.getFullName(camera));
       return;
     }
 
     // We only consider events that have happened within the last two refresh intervals. Otherwise, we assume
     // it's stale data and don't inform the user.
     if((Date.now() - lastMotion) > (this.refreshInterval * 2 * 1000)) {
-      this.debug("%s %s: Skipping motion event due to stale data.", this.nvrApi.getNvrName(), accessory.displayName);
+      this.debug("%s: Skipping motion event due to stale data.", this.nvrApi.getFullName(camera));
       return;
     }
 
@@ -420,7 +419,7 @@ export class ProtectNvr {
     // Publish to MQTT, if the user has configured it.
     this.mqtt?.publish(accessory, "motion", "true");
 
-    this.log("%s %s: Motion detected.", this.nvrApi.getNvrName(), accessory.displayName);
+    this.log("%s: Motion detected.", this.nvrApi.getFullName(camera));
 
     // Reset our motion event after motionDuration.
     this.eventTimers[camera.mac] = setTimeout(() => {
@@ -439,7 +438,7 @@ export class ProtectNvr {
         // Publish to MQTT, if the user has configured it.
         this.mqtt?.publish(accessory, "motion", "false");
 
-        this.debug("%s %s: Resetting motion event.", this.nvrApi.getNvrName(), accessory.displayName);
+        this.debug("%s: Resetting motion event.", this.nvrApi.getFullName(camera));
       }
 
       // Delete the timer from our motion event tracker.
@@ -458,14 +457,14 @@ export class ProtectNvr {
 
     // Have we seen this event before? If so...move along. It's unlikely we hit this in a doorbell scenario, but just in case.
     if(this.lastRing[camera.mac] >= lastRing) {
-      this.debug("%s %s: Skipping duplicate doorbell ring.", this.nvrApi.getNvrName(), accessory.displayName);
+      this.debug("%s: Skipping duplicate doorbell ring.", this.nvrApi.getFullName(camera));
       return;
     }
 
     // We only consider events that have happened within the last two refresh intervals. Otherwise,
     // we assume it's stale data and don't inform the user.
     if((Date.now() - lastRing) > (this.refreshInterval * 2 * 1000)) {
-      this.debug("%s %s: Skipping doorbell ring due to stale data.", this.nvrApi.getNvrName(), accessory.displayName);
+      this.debug("%s: Skipping doorbell ring due to stale data.", this.nvrApi.getFullName(camera));
       return;
     }
 
@@ -504,7 +503,7 @@ export class ProtectNvr {
 
         if(thisContactService) {
           contactService.getCharacteristic(hap.Characteristic.ContactSensorState).updateValue(hap.Characteristic.ContactSensorState.CONTACT_DETECTED);
-          this.debug("%s %s: Resetting contact sensor event.", this.nvrApi.getNvrName(), accessory.displayName);
+          this.debug("%s: Resetting contact sensor event.", this.nvrApi.getFullName(camera));
         }
 
         // Delete the timer from our motion event tracker.
@@ -515,7 +514,7 @@ export class ProtectNvr {
     // Publish to MQTT, if the user has configured it.
     this.mqtt?.publish(accessory, "doorbell", "true");
 
-    this.log("%s %s: Doorbell ring detected.", this.nvrApi.getNvrName(), accessory.displayName);
+    this.log("%s: Doorbell ring detected.", this.nvrApi.getFullName(camera));
   }
 
   // Periodically poll the Protect API for status.

@@ -43,4 +43,9 @@ export abstract class ProtectAccessory {
   // All accessories require a configureDevice function. This is where all the
   // accessory-specific configuration and setup happens.
   protected abstract async configureDevice(): Promise<boolean>;
+
+  // Utility function to return the fully enumerated name of this camera.
+  public name(): string {
+    return this.nvr.nvrApi.getFullName(this.accessory.context.camera);
+  }
 }

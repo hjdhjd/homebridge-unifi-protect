@@ -119,8 +119,7 @@ export class ProtectCamera extends ProtectAccessory {
 
     // Have we disabled motion sensors?
     if(!this.nvr?.optionEnabled(accessory.context.camera, "MotionSensor")) {
-      this.log("%s %s: Disabling motion sensor.",
-        this.nvr.nvrApi.getNvrName(), this.nvr.nvrApi.getDeviceName(accessory.context.camera));
+      this.log("%s: Disabling motion sensor.", this.name());
       return false;
     }
 
@@ -144,8 +143,8 @@ export class ProtectCamera extends ProtectAccessory {
     // Have we disabled motion sensors or the motion switch?
     if(!this.nvr?.optionEnabled(this.accessory.context.camera, "MotionSensor") ||
       !this.nvr?.optionEnabled(this.accessory.context.camera, "MotionSwitch")) {
-      this.log("%s %s: Disabling motion sensor switch.",
-        this.nvr.nvrApi.getNvrName(), this.nvr.nvrApi.getDeviceName(this.accessory.context.camera));
+      this.log("%s: Disabling motion sensor switch.", this.name());
+
       // If we disable the switch, make sure we fully reset it's state.
       this.accessory.context.detectMotion = true;
       return false;
@@ -162,9 +161,7 @@ export class ProtectCamera extends ProtectAccessory {
       })
       .on(CharacteristicEventTypes.SET, (value: CharacteristicValue, callback: CharacteristicSetCallback) => {
         if(this.accessory.context.detectMotion !== value) {
-          this.log("%s %s: Motion detection %s.",
-            this.nvr.nvrApi.getNvrName(), this.nvr.nvrApi.getDeviceName(this.accessory.context.camera),
-            this.accessory.displayName, value === true ? "enabled" : "disabled");
+          this.log("%s: Motion detection %s.", this.name(), (value === true) ? "enabled" : "disabled");
         }
 
         this.accessory.context.detectMotion = value === true;
@@ -216,7 +213,7 @@ export class ProtectCamera extends ProtectAccessory {
 
             // Trigger the motion event.
             this.nvr.motionEventHandler(this.accessory, Date.now());
-            this.log("%s %s: Motion event triggered.", this.nvr.nvrApi.getNvrName(), this.nvr.nvrApi.getDeviceName(this.accessory.context.camera));
+            this.log("%s: Motion event triggered.", this.name());
           }
 
         } else {
@@ -233,8 +230,7 @@ export class ProtectCamera extends ProtectAccessory {
       })
       .updateValue(false);
 
-    this.log("%s %s: Enabling motion sensor automation trigger.",
-      this.nvr.nvrApi.getNvrName(), this.nvr.nvrApi.getDeviceName(this.accessory.context.camera));
+    this.log("%s: Enabling motion sensor automation trigger.", this.name());
 
     return true;
   }
@@ -349,8 +345,8 @@ export class ProtectCamera extends ProtectAccessory {
     if(!newCameraUrl) {
       // Notify only if this is a new change.
       if(!this.isVideoConfigured || this.cameraUrl) {
-        this.log("%s %s: No RTSP stream has been configured for this camera. %s",
-          nvrApi.getNvrName(), nvrApi.getDeviceName(camera, this.accessory.displayName),
+        this.log("%s: No RTSP stream has been configured for this camera. %s",
+          this.name(),
           "Enable an RTSP stream in the UniFi Protect webUI to resolve this issue or " +
           "assign the Administrator role to the user configured for this plugin to allow it to automatically configure itself."
         );
@@ -360,8 +356,7 @@ export class ProtectCamera extends ProtectAccessory {
       newCameraUrl = "rtsp://" + bootstrap.nvr.host + ":" + bootstrap.nvr.ports.rtsp + "/" + newCameraUrl;
 
       if(this.cameraUrl !== newCameraUrl) {
-        this.log("%s %s: Stream quality configured: %s.", nvrApi.getNvrName(),
-          nvrApi.getDeviceName(camera, this.accessory.displayName), newCameraQuality);
+        this.log("%s: Stream quality configured: %s.", this.name(), newCameraQuality);
       }
     }
 
@@ -393,7 +388,7 @@ export class ProtectCamera extends ProtectAccessory {
 
         // Trigger the motion event.
         this.nvr.motionEventHandler(this.accessory, Date.now());
-        this.log("%s %s: Motion event triggered via MQTT.", this.nvr.nvrApi.getNvrName(), this.nvr.nvrApi.getDeviceName(this.accessory.context.camera));
+        this.log("%s: Motion event triggered via MQTT.", this.name());
       }
     });
 
@@ -420,7 +415,7 @@ export class ProtectCamera extends ProtectAccessory {
         }
 
         this.nvr.mqtt?.publish(this.accessory, "rtsp", JSON.stringify(urlInfo));
-        this.log("%s %s: RTSP information published via MQTT.", this.nvr.nvrApi.getNvrName(), this.nvr.nvrApi.getDeviceName(this.accessory.context.camera));
+        this.log("%s: RTSP information published via MQTT.", this.name());
       }
     });
 
@@ -432,7 +427,7 @@ export class ProtectCamera extends ProtectAccessory {
       if(value?.toUpperCase() === "true".toUpperCase()) {
 
         this.stream?.handleSnapshotRequest({ width: 0, height: 0 }, null);
-        this.log("%s %s: Snapshot triggered via MQTT.", this.nvr.nvrApi.getNvrName(), this.nvr.nvrApi.getDeviceName(this.accessory.context.camera));
+        this.log("%s: Snapshot triggered via MQTT.", this.name());
       }
     });
 

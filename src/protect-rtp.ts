@@ -29,7 +29,6 @@ export class RtpSplitter {
   private heartbeatTimer!: NodeJS.Timeout;
   private heartbeatMsg!: Buffer;
   private log: Logging;
-  private name: string;
   private serverPort: number;
   public readonly socket;
 
@@ -39,13 +38,12 @@ export class RtpSplitter {
     this.debug = streamingDelegate.debug;
     this.delegate = streamingDelegate;
     this.log = streamingDelegate.log;
-    this.name = streamingDelegate.name;
     this.serverPort = serverPort;
     this.socket = createSocket(ipFamily === "ipv6" ? "udp6" : "udp4" );
 
     // Catch errors when they happen on our splitter.
     this.socket.on("error", (error)  => {
-      this.log("%s: RTPSplitter Error: %s", this.name, error);
+      this.log("%s: RTPSplitter Error: %s", this.delegate.protectCamera.name(), error);
       this.socket.close();
     });
 
@@ -70,7 +68,7 @@ export class RtpSplitter {
     });
 
     this.debug("%s: Creating an RtpSplitter instance - inbound port: %s, twoway audio port: %s, return audio port: %s.",
-      this.name, this.serverPort, twowayAudioPort, returnAudioPort);
+      this.delegate.protectCamera.name(), this.serverPort, twowayAudioPort, returnAudioPort);
 
     // Take the socket live.
     this.socket.bind(this.serverPort);
@@ -95,7 +93,7 @@ export class RtpSplitter {
 
   // Close the socket and cleanup.
   public close(): void {
-    this.debug("%s: Closing the RtpSplitter instance on port %s.", this.name, this.serverPort);
+    this.debug("%s: Closing the RtpSplitter instance on port %s.", this.delegate.protectCamera.name(), this.serverPort);
 
     clearTimeout(this.heartbeatTimer);
     this.socket.close();

@@ -233,7 +233,7 @@ export class ProtectSecuritySystem extends ProtectAccessory {
           motionSwitch.getCharacteristic(hap.Characteristic.On)?.updateValue(targetAccessory.context.detectMotion);
         }
 
-        this.log("%s -> %s: Motion detection %s.", viewScene, targetAccessory.displayName,
+        this.log("%s: %s -> %s: Motion detection %s.", nvrApi.getNvrName(), viewScene, targetAccessory.displayName,
           targetAccessory.context.detectMotion === true ? "enabled" : "disabled");
       }
     }
