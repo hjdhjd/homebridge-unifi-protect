@@ -16,7 +16,7 @@ export const PROTECT_API_RETRY_INTERVAL = 300;
 
 // Heartbeat interval, in seconds, for the realtime Protect API on UniFI OS devices.
 // UniFi OS expects to hear from us every 15 seconds.
-export const PROTECT_EVENTS_HEARTBEAT_INTERVAL = 5;
+export const PROTECT_EVENTS_HEARTBEAT_INTERVAL = 10;
 
 // Magic incantantion to further streamline ffmpeg for Protect.
 export const PROTECT_FFMPEG_OPTIONS = "-probesize 32 -analyzeduration 0 -fflags nobuffer";
