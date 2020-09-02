@@ -17,6 +17,7 @@ import { ProtectMqtt } from "./protect-mqtt";
 import { ProtectPlatform } from "./protect-platform";
 import {
   ProtectCameraConfig,
+  ProtectNvrBootstrap,
   ProtectNvrOptions,
   ProtectNvrSystemEvent,
   ProtectNvrSystemEventController
@@ -99,7 +100,7 @@ export class ProtectNvr {
   }
 
   // Discover new UniFi Protect devices.
-  private async discoverAndSyncAccessories(): Promise<boolean> {
+  private discoverAndSyncAccessories(): boolean {
 
     // Iterate through the list of cameras that Protect has returned and sync them with what we show HomeKit.
     for(const camera of this.nvrApi.Cameras ?? []) {
@@ -164,21 +165,21 @@ export class ProtectNvr {
       } else {
 
         // Finally, check if we have changes to the exposed RTSP streams on our cameras.
-        this.configuredCameras[accessory.UUID].configureVideoStream();
+        void this.configuredCameras[accessory.UUID].configureVideoStream();
 
         // Check for changes to the doorbell LCD as well.
         if(camera.type === "UVC G4 Doorbell") {
-          (this.configuredCameras[accessory.UUID] as ProtectDoorbell).configureDoorbellLcdSwitch();
+          void (this.configuredCameras[accessory.UUID] as ProtectDoorbell).configureDoorbellLcdSwitch();
         }
 
       }
     }
 
     // Remove Protect cameras that are no longer found on this Protect NVR, but we still have in HomeKit.
-    await this.cleanupDevices();
+    this.cleanupDevices();
 
     // Configure our liveview-based accessories.
-    await this.liveviews?.configureLiveviews();
+    this.liveviews?.configureLiveviews();
 
     return true;
   }
@@ -193,7 +194,7 @@ export class ProtectNvr {
 
     // This NVR has been disabled. Stop polling for updates and let the user know that we're done here.
     // Only run this check once, since we don't need to repeat it again.
-    if(!this.isEnabled && (this.platform.configOptions.indexOf("DISABLE." + this.nvrApi.bootstrap?.nvr.mac.toUpperCase()) !== -1)) {
+    if(!this.isEnabled && (this.platform.configOptions.indexOf("DISABLE." + (this.nvrApi.bootstrap as ProtectNvrBootstrap)?.nvr.mac.toUpperCase()) !== -1)) {
       this.log("%s: Disabling this Protect controller.", this.nvrApi.getNvrName());
       this.nvrApi.clearLoginCredentials();
       return false;
@@ -243,13 +244,13 @@ export class ProtectNvr {
     }
 
     // Check for doorbell events (all OSs) and motion events for non-UniFi OS controllers.
-    await this.checkProtectEvents();
+    this.checkProtectEvents();
 
     // Configure our event listener, if needed.
-    await this.configureEventListener();
+    this.configureEventListener();
 
     // Sync status and check for any new or removed accessories.
-    await this.discoverAndSyncAccessories();
+    this.discoverAndSyncAccessories();
 
     // Refresh the accessory cache.
     this.api.updatePlatformAccessories(this.platform.accessories);
@@ -258,7 +259,7 @@ export class ProtectNvr {
   }
 
   // Check for doorbell events (all OSs) and motion events for non-UniFi OS controllers.
-  private async checkProtectEvents(): Promise<boolean> {
+  private checkProtectEvents(): boolean {
     // Ensure we're up and running.
     if(!this.nvrApi?.Cameras) {
       return false;
@@ -297,18 +298,18 @@ export class ProtectNvr {
 
       // We process UniFi OS motion events elsewhere through the realtime API. UCK, we process here.
       if(!this.nvrApi.isUnifiOs) {
-        this.motionEventHandler(accessory, camera.lastMotion);
+        void this.motionEventHandler(accessory, camera.lastMotion);
       }
 
       // No realtime API yet for doorbells, so we resort to polling.
-      this.doorbellEventHandler(accessory, camera.lastRing);
+      void this.doorbellEventHandler(accessory, camera.lastRing);
     }
 
     return true;
   }
 
   // Configure the realtime API event listener to trigger events on accessories, like motion.
-  private async configureEventListener(): Promise<boolean> {
+  private configureEventListener(): boolean {
 
     // The event listener API only works on UniFi OS devices.
     if(!this.nvrApi.isUnifiOs) {
@@ -321,8 +322,9 @@ export class ProtectNvr {
     }
 
     // Listen for any messages coming in from our listener.
-    this.nvrApi.eventListener.on("message", async (event) => {
-      const nvrEvent: ProtectNvrSystemEvent = JSON.parse(event as string);
+    this.nvrApi.eventListener.on("message", (event) => {
+
+      const nvrEvent = JSON.parse(event as string) as ProtectNvrSystemEvent;
 
       // We're interested in device state change events.
       if(nvrEvent?.type !== "DEVICE_STATE_CHANGED") {
@@ -338,7 +340,7 @@ export class ProtectNvr {
 
       // Find the camera in our list of accessories so we can fire off the motion event.
       const foundCamera = Object.keys(this.configuredCameras).find((x: string) =>
-        this.configuredCameras[x].accessory.context.camera.host === controller.info.lastMotionCameraAddress);
+        (this.configuredCameras[x].accessory.context.camera as ProtectCameraConfig).host === controller.info.lastMotionCameraAddress);
 
       // Nothing here - we may have disabled this camera or it's associated NVR.
       if(!foundCamera) {
@@ -356,7 +358,7 @@ export class ProtectNvr {
       }
 
       // The UniFi OS realtime API returns lastMotion in seconds rather than milliseconds.
-      await this.motionEventHandler(accessory, controller.info.lastMotion * 1000);
+      this.motionEventHandler(accessory, controller.info.lastMotion * 1000);
     });
 
     // Mark the listener as configured.
@@ -365,8 +367,8 @@ export class ProtectNvr {
   }
 
   // Motion event processing from UniFi Protect and delivered to HomeKit.
-  public async motionEventHandler(accessory: PlatformAccessory, lastMotion: number): Promise<void> {
-    const camera = accessory.context.camera;
+  public motionEventHandler(accessory: PlatformAccessory, lastMotion: number): void {
+    const camera = accessory.context.camera as ProtectCameraConfig;
     const hap = this.hap;
 
     if(!accessory || !camera || !lastMotion) {
@@ -447,8 +449,8 @@ export class ProtectNvr {
   }
 
   // Doorbell event processing from UniFi Protect and delivered to HomeKit.
-  private async doorbellEventHandler(accessory: PlatformAccessory, lastRing: number): Promise<void> {
-    const camera = accessory.context.camera;
+  private doorbellEventHandler(accessory: PlatformAccessory, lastRing: number): void {
+    const camera = accessory.context.camera as ProtectCameraConfig;
     const hap = this.hap;
 
     if(!accessory || !camera || !lastRing) {
@@ -517,28 +519,34 @@ export class ProtectNvr {
     this.log("%s: Doorbell ring detected.", this.nvrApi.getFullName(camera));
   }
 
-  // Periodically poll the Protect API for status.
-  public poll(refresh: number): void {
-    // Clear the last polling interval out.
-    clearTimeout(this.pollingTimer);
+  // Emulate a sleep function.
+  private sleep(ms: number): Promise<NodeJS.Timeout> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
 
-    // Setup periodic update with our polling interval.
-    this.pollingTimer = setTimeout(async () => {
+  // Periodically poll the Protect API for status.
+  public async poll(refresh: number): Promise<void> {
+
+    // Loop forever.
+    for(;;) {
+
+      // Sleep until our next update.
+      // eslint-disable-next-line no-await-in-loop
+      await this.sleep(refresh * 1000);
+
       // Refresh our Protect device information and gracefully handle Protect errors.
+      // eslint-disable-next-line no-await-in-loop
       await this.updateAccessories();
 
       // Our Protect NVR is disabled. We're done.
       if(!this.isEnabled) {
         return;
       }
-
-      // Fire off the next polling interval.
-      this.poll(this.refreshInterval);
-    }, refresh * 1000);
+    }
   }
 
   // Cleanup removed Protect devices from HomeKit.
-  private async cleanupDevices(): Promise<void> {
+  private cleanupDevices(): void {
     const nvr = this.nvrApi.bootstrap?.nvr;
 
     // If we don't have a valid bootstrap configuration, we're done here.
@@ -547,8 +555,8 @@ export class ProtectNvr {
     }
 
     for(const oldAccessory of this.platform.accessories) {
-      const oldCamera = oldAccessory.context.camera;
-      const oldNvr = oldAccessory.context.nvr;
+      const oldCamera = oldAccessory.context.camera as ProtectCameraConfig;
+      const oldNvr = oldAccessory.context.nvr as string;
 
       // Since we're accessing the shared accessories list for the entire platform, we need to ensure we
       // are only touching our cameras and not another NVR's.
