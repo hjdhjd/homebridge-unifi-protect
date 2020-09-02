@@ -223,6 +223,18 @@ export interface ProtectCameraConfigInterface {
   },
   platform: string,
   state: string,
+  talkbackSettings: {
+    bindAddr: string,
+    bindPort: number,
+    bitsPerSample: number,
+    channels: number,
+    filterAddr: string,
+    filterPort: number,
+    typeFmt: string,
+    typeIn: string,
+    quality: number,
+    samplingRate: number
+  },
   type: string,
   wifiConnectionState: {
     channel: number,
