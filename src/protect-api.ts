@@ -496,7 +496,12 @@ export class ProtectApi {
   }
 
   // Utility to generate a nicely formatted device string.
-  public getDeviceName(camera: ProtectCameraConfig, name: string = camera.name, cameraInfo = false): string {
+  public getDeviceName(camera: ProtectCameraConfig, name = camera?.name, cameraInfo = false): string {
+
+    // Validate our inputs.
+    if(!camera) {
+      return "";
+    }
 
     // A completely enumerated device will appear as:
     // Camera [Camera Type] (address: IP address, mac: MAC address).
@@ -506,9 +511,10 @@ export class ProtectApi {
 
   // Utility to generate a nicely formatted NVR and device string.
   public getFullName(camera: ProtectCameraConfig): string {
+    const cameraName = this.getDeviceName(camera);
 
     // Returns: NVR [NVR Type] Camera [Camera Type]
-    return this.getNvrName() + " " + this.getDeviceName(camera);
+    return this.getNvrName() + (cameraName.length > 0 ? " " + cameraName : "");
   }
 
   // Return the URL to directly access cameras, adjusting for Protect NVR variants.

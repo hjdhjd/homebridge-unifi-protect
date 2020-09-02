@@ -46,6 +46,6 @@ export abstract class ProtectAccessory {
 
   // Utility function to return the fully enumerated name of this camera.
   public name(): string {
-    return this.nvr.nvrApi.getFullName(this.accessory.context.camera);
+    return this.nvr.nvrApi.getFullName(this.accessory.context.camera ?? null);
   }
 }
