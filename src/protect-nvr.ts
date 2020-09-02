@@ -194,7 +194,7 @@ export class ProtectNvr {
 
     // This NVR has been disabled. Stop polling for updates and let the user know that we're done here.
     // Only run this check once, since we don't need to repeat it again.
-    if(!this.isEnabled && (this.platform.configOptions.indexOf("DISABLE." + (this.nvrApi.bootstrap as ProtectNvrBootstrap)?.nvr.mac.toUpperCase()) !== -1)) {
+    if(!this.isEnabled && !this.optionEnabled(null)) {
       this.log("%s: Disabling this Protect controller.", this.nvrApi.getNvrName());
       this.nvrApi.clearLoginCredentials();
       return false;
