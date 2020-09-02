@@ -11,9 +11,9 @@ import {
 import { ProtectNvr } from "./protect-nvr";
 import { ProtectPlatform } from "./protect-platform";
 
-// List our optional methods in our subclasses.
+// List the optional methods of our subclasses that we want to expose commonly.
 export interface ProtectAccessory {
-  configureDoorbellLcdSwitch?(): Promise<boolean>;
+  configureDoorbellLcdSwitch?(): boolean;
 }
 
 export abstract class ProtectAccessory {
@@ -37,7 +37,7 @@ export abstract class ProtectAccessory {
     this.nvr = nvr;
     this.platform = nvr.platform;
 
-    this.configureDevice();
+    void this.configureDevice();
   }
 
   // All accessories require a configureDevice function. This is where all the

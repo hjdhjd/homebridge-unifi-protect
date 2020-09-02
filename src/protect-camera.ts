@@ -31,14 +31,14 @@ export class ProtectCamera extends ProtectAccessory {
     this.isVideoConfigured = false;
 
     // Save the camera object before we wipeout the context.
-    const camera = this.accessory.context.camera;
+    const camera = this.accessory.context.camera as ProtectCameraConfig;
 
     // Default motion detection support to on.
     let detectMotion = true;
 
     // Save the motion sensor switch state before we wipeout the context.
     if(this.accessory.context.detectMotion !== undefined) {
-      detectMotion = this.accessory.context.detectMotion;
+      detectMotion = this.accessory.context.detectMotion as boolean;
     }
 
     // Clean out the context object in case it's been polluted somehow.
@@ -55,26 +55,26 @@ export class ProtectCamera extends ProtectAccessory {
     }
 
     // Configure accessory information.
-    await this.configureInfo();
+    this.configureInfo();
 
     // Configure MQTT services.
-    await this.configureMqtt();
+    this.configureMqtt();
 
     // Configure the motion sensor.
-    await this.configureMotionSensor();
-    await this.configureMotionSwitch();
-    await this.configureMotionTrigger();
+    this.configureMotionSensor();
+    this.configureMotionSwitch();
+    this.configureMotionTrigger();
 
     // Configure two-way audio support and our video stream...and we're done.
-    await this.configureTwoWayAudio();
+    this.configureTwoWayAudio();
 
     return await this.configureVideoStream();
   }
 
   // Configure the camera device information for HomeKit.
-  private async configureInfo(): Promise<boolean> {
+  private configureInfo(): boolean {
     const accessory = this.accessory;
-    const camera: ProtectCameraConfig = accessory.context.camera;
+    const camera = accessory.context.camera as ProtectCameraConfig;
     const hap = this.hap;
 
     // Update the manufacturer information for this camera.
@@ -106,7 +106,7 @@ export class ProtectCamera extends ProtectAccessory {
   }
 
   // Configure the camera motion sensor for HomeKit.
-  private async configureMotionSensor(): Promise<boolean> {
+  private configureMotionSensor(): boolean {
     const accessory = this.accessory;
     const hap = this.hap;
 
@@ -131,7 +131,7 @@ export class ProtectCamera extends ProtectAccessory {
   }
 
   // Configure a switch to easily activate or deactivate motion sensor detection for HomeKit.
-  private async configureMotionSwitch(): Promise<boolean> {
+  private configureMotionSwitch(): boolean {
 
     // Clear out any previous switch service.
     let switchService = this.accessory.getServiceById(this.hap.Service.Switch, PROTECT_SWITCH_MOTION);
@@ -173,7 +173,7 @@ export class ProtectCamera extends ProtectAccessory {
   }
 
   // Configure a switch to manually trigger a motion sensor event for HomeKit.
-  private async configureMotionTrigger(): Promise<boolean> {
+  private configureMotionTrigger(): boolean {
 
     // Clear out any previous switch service.
     let triggerService = this.accessory.getServiceById(this.hap.Service.Switch, PROTECT_SWITCH_TRIGGER);
@@ -236,10 +236,10 @@ export class ProtectCamera extends ProtectAccessory {
   }
 
   // Configure two-way audio support for HomeKit.
-  private async configureTwoWayAudio(): Promise<boolean> {
+  private configureTwoWayAudio(): boolean {
 
     // Identify twoway-capable devices.
-    switch(this.accessory.context.camera?.type) {
+    switch((this.accessory.context.camera as ProtectCameraConfig)?.type) {
       case "UVC G3 Micro":
       case "UVC G4 Doorbell":
         // Enabled by default unless disabled by the user.
@@ -261,11 +261,11 @@ export class ProtectCamera extends ProtectAccessory {
     const nvrApi: ProtectApi = this.nvr.nvrApi;
 
     // No channels exist on this camera or we don't have access to the bootstrap configuration.
-    if(!this.accessory.context.camera?.channels || !bootstrap) {
+    if(!(this.accessory.context.camera as ProtectCameraConfig)?.channels || !bootstrap) {
       return false;
     }
 
-    const camera: ProtectCameraConfig = await nvrApi.enableRtsp(this.accessory.context.camera) ?? this.accessory.context.camera;
+    const camera = await nvrApi.enableRtsp(this.accessory.context.camera) ?? (this.accessory.context.camera as ProtectCameraConfig);
     let forceQuality = "";
     let newCameraQuality = "";
     let newCameraUrl = "";
@@ -353,7 +353,7 @@ export class ProtectCamera extends ProtectAccessory {
       }
     } else {
       // Set the selected quality.
-      newCameraUrl = "rtsp://" + bootstrap.nvr.host + ":" + bootstrap.nvr.ports.rtsp + "/" + newCameraUrl;
+      newCameraUrl = "rtsp://" + bootstrap.nvr.host + ":" + bootstrap.nvr.ports.rtsp.toString() + "/" + newCameraUrl;
 
       if(this.cameraUrl !== newCameraUrl) {
         this.log("%s: Stream quality configured: %s.", this.name(), newCameraQuality);
@@ -375,21 +375,22 @@ export class ProtectCamera extends ProtectAccessory {
   }
 
   // Configure MQTT capabilities of this camera.
-  protected async configureMqtt(): Promise<boolean> {
+  protected configureMqtt(): boolean {
     const bootstrap: ProtectNvrBootstrap | null = this.nvr.nvrApi.bootstrap;
-    const camera = this.accessory.context.camera;
+    const camera = (this.accessory.context.camera as ProtectCameraConfig);
 
     // Trigger a motion event in MQTT, if requested to do so.
     this.nvr.mqtt?.subscribe(this.accessory, "motion/trigger", (message: Buffer) => {
       const value = message.toString();
 
       // When we get the right message, we trigger the motion event.
-      if(value?.toUpperCase() === "true".toUpperCase()) {
-
-        // Trigger the motion event.
-        this.nvr.motionEventHandler(this.accessory, Date.now());
-        this.log("%s: Motion event triggered via MQTT.", this.name());
+      if(value?.toUpperCase() !== "true".toUpperCase()) {
+        return;
       }
+
+      // Trigger the motion event.
+      this.nvr.motionEventHandler(this.accessory, Date.now());
+      this.log("%s: Motion event triggered via MQTT.", this.name());
     });
 
     // Return the RTSP URLs when requested.
@@ -397,26 +398,28 @@ export class ProtectCamera extends ProtectAccessory {
       const value = message.toString();
 
       // When we get the right message, we trigger the snapshot request.
-      if(value?.toUpperCase() === "true".toUpperCase()) {
-        const urlInfo: { [index: string]: string } = {};
-
-        // Include the default URL we're using for the camera.
-        if(this.cameraUrl) {
-          urlInfo.Default = this.cameraUrl;
-        }
-
-        // Grab all the available RTSP channels.
-        for(const channel of camera.channels) {
-          if(!bootstrap || !channel.isRtspEnabled) {
-            continue;
-          }
-
-          urlInfo[channel.name] = "rtsp://" + bootstrap.nvr.host + ":" + bootstrap.nvr.ports.rtsp + "/" + channel.rtspAlias;
-        }
-
-        this.nvr.mqtt?.publish(this.accessory, "rtsp", JSON.stringify(urlInfo));
-        this.log("%s: RTSP information published via MQTT.", this.name());
+      if(value?.toUpperCase() !== "true".toUpperCase()) {
+        return;
       }
+
+      const urlInfo: { [index: string]: string } = {};
+
+      // Include the default URL we're using for the camera.
+      if(this.cameraUrl) {
+        urlInfo.Default = this.cameraUrl;
+      }
+
+      // Grab all the available RTSP channels.
+      for(const channel of camera.channels) {
+        if(!bootstrap || !channel.isRtspEnabled) {
+          continue;
+        }
+
+        urlInfo[channel.name] = "rtsp://" + bootstrap.nvr.host + ":" + bootstrap.nvr.ports.rtsp.toString() + "/" + channel.rtspAlias;
+      }
+
+      this.nvr.mqtt?.publish(this.accessory, "rtsp", JSON.stringify(urlInfo));
+      this.log("%s: RTSP information published via MQTT.", this.name());
     });
 
     // Trigger snapshots when requested.
@@ -424,11 +427,12 @@ export class ProtectCamera extends ProtectAccessory {
       const value = message.toString();
 
       // When we get the right message, we trigger the snapshot request.
-      if(value?.toUpperCase() === "true".toUpperCase()) {
-
-        this.stream?.handleSnapshotRequest({ width: 0, height: 0 }, null);
-        this.log("%s: Snapshot triggered via MQTT.", this.name());
+      if(value?.toUpperCase() !== "true".toUpperCase()) {
+        return;
       }
+
+      void this.stream?.handleSnapshotRequest({ width: 0, height: 0 }, null);
+      this.log("%s: Snapshot triggered via MQTT.", this.name());
     });
 
     return true;

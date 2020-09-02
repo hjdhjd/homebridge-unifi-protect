@@ -10,18 +10,18 @@ import {
 } from "homebridge";
 import { ProtectAccessory } from "./protect-accessory";
 import { PROTECT_SWITCH_MOTION } from "./protect-camera";
-import { ProtectNvrConfig } from "./protect-types";
+import { ProtectCameraConfig, ProtectNvrConfig } from "./protect-types";
 
 export class ProtectSecuritySystem extends ProtectAccessory {
 
   // Configure a security system accessory for HomeKit.
-  protected async configureDevice(): Promise<boolean> {
+  protected configureDevice(): Promise<boolean> {
     const accessory = this.accessory;
-    let securityState = this.hap.Characteristic.SecuritySystemCurrentState.STAY_ARM;
+    let securityState: CharacteristicValue = this.hap.Characteristic.SecuritySystemCurrentState.STAY_ARM;
 
     // Save the motion sensor switch state before we wipeout the context.
     if(accessory.context.securityState !== undefined) {
-      securityState = accessory.context.securityState;
+      securityState = accessory.context.securityState as CharacteristicValue;
     }
 
     // Clean out the context object in case it's been polluted somehow.
@@ -30,16 +30,16 @@ export class ProtectSecuritySystem extends ProtectAccessory {
     accessory.context.securityState = securityState;
 
     // Configure accessory information.
-    if(!(await this.configureInfo())) {
-      return false;
+    if(!this.configureInfo()) {
+      return Promise.resolve(false);
     }
 
     // Configure the security system service and we're done.
-    return await this.configureSecuritySystem();
+    return Promise.resolve(this.configureSecuritySystem());
   }
 
   // Configure the security system device information for HomeKit.
-  private async configureInfo(): Promise<boolean> {
+  private configureInfo(): boolean {
     const accessory = this.accessory;
     const hap = this.hap;
     let nvrInfo!: ProtectNvrConfig;
@@ -75,7 +75,7 @@ export class ProtectSecuritySystem extends ProtectAccessory {
   }
 
   // Configure the security system for HomeKit.
-  private async configureSecuritySystem(): Promise<boolean> {
+  private configureSecuritySystem(): boolean {
     const accessory = this.accessory;
     const hap = this.hap;
 
@@ -218,7 +218,7 @@ export class ProtectSecuritySystem extends ProtectAccessory {
       // check to see if this is one of the cameras we want to turn on motion detection for.
       if(((newState !== SecuritySystemCurrentState.DISARMED) ||
         ((newState === SecuritySystemCurrentState.DISARMED) && targetCameraIds.length)) &&
-        targetCameraIds.some(thisCameraId => thisCameraId === targetAccessory.context.camera.id)) {
+        targetCameraIds.some(thisCameraId => thisCameraId === (targetAccessory.context.camera as ProtectCameraConfig).id)) {
         targetState = true;
       }
 

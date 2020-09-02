@@ -4,7 +4,7 @@
  */
 import { Logging } from "homebridge";
 import https, { Agent } from "https";
-import fetch, { Headers, Response, RequestInfo, RequestInit } from "node-fetch";
+import fetch, { FetchError, Headers, Response, RequestInfo, RequestInit } from "node-fetch";
 import WebSocket from "ws";
 import { ProtectPlatform } from "./protect-platform";
 import {
@@ -185,10 +185,10 @@ export class ProtectApi {
     }
 
     // Now let's get our NVR configuration information.
-    let data = null;
+    let data: ProtectNvrBootstrap | null = null;
 
     try {
-      data = await response.json();
+      data = await response.json() as ProtectNvrBootstrap;
     } catch(error) {
       data = null;
       this.log("%s: Unable to parse response from UniFi Protect. Will retry again later.", this.getNvrName());
@@ -215,7 +215,7 @@ export class ProtectApi {
     this.debug(util.inspect(this.bootstrap, { colors: true, sorted: true, depth: 10 }));
 
     // Check for admin user privileges or role changes.
-    await this.checkAdminUserStatus(firstRun);
+    this.checkAdminUserStatus(firstRun);
 
     // We're good. Now connect to the event listener API if we're a UniFi OS device, otherwise, we're done.
     return this.isUnifiOs ? this.launchEventListener() : true;
@@ -253,8 +253,9 @@ export class ProtectApi {
       this.eventListener = ws;
 
       // Setup our heartbeat to ensure we can revive our connection if needed.
-      this.eventListener.on("open", this.heartbeatEventListener);
-      this.eventListener.on("ping", this.heartbeatEventListener);
+      this.eventListener.on("message", this.heartbeatEventListener.bind(this));
+      this.eventListener.on("open", this.heartbeatEventListener.bind(this));
+      this.eventListener.on("ping", this.heartbeatEventListener.bind(this));
       this.eventListener.on("close", () => {
         clearTimeout(this.eventHeartbeatTimer);
       });
@@ -332,14 +333,14 @@ export class ProtectApi {
   }
 
   // Validate if all RTSP channels enabled on all cameras.
-  public async isAllRtspConfigured(): Promise<boolean> {
+  public isAllRtspConfigured(): boolean {
 
     // Look for any cameras with any non-RTSP enabled channels.
     return this.bootstrap?.cameras?.some(camera => camera.channels?.some(channel => !channel.isRtspEnabled)) ? true : false;
   }
 
   // Check admin privileges.
-  private async checkAdminUserStatus(firstRun = false): Promise<boolean> {
+  private checkAdminUserStatus(firstRun = false): boolean {
     if(!this.bootstrap?.users) {
       return false;
     }
@@ -444,7 +445,7 @@ export class ProtectApi {
     this.apiLastSuccess = Date.now();
 
     // Everything worked, save the new channel array.
-    return await response.json();
+    return await response.json() as ProtectCameraConfig;
   }
 
   // Update a camera object.
@@ -478,7 +479,7 @@ export class ProtectApi {
     }
 
     // We successfully set the message, return the updated device object.
-    return await response.json();
+    return await response.json() as ProtectCameraConfig;
   }
 
   // Utility to generate a nicely formatted NVR string.
@@ -544,6 +545,7 @@ export class ProtectApi {
   // Utility to check the heartbeat of our listener.
   private heartbeatEventListener(): void {
 
+    // Clear out our last timer and set a new one.
     clearTimeout(this.eventHeartbeatTimer);
 
     // We use terminate() to immediately destroy the connection, instead of close(), which waits for the close timer.
@@ -644,24 +646,26 @@ export class ProtectApi {
     } catch(error) {
       this.apiErrorCount++;
 
-      switch(error.code) {
-        case "ECONNREFUSED":
-          this.log("%s: Connection refused.", this.getNvrName());
-          break;
+      if(error instanceof FetchError) {
+        switch(error.code) {
+          case "ECONNREFUSED":
+            this.log("%s: Connection refused.", this.getNvrName());
+            break;
 
-        case "ECONNRESET":
-          this.log("%s: Connection reset.", this.getNvrName());
-          break;
+          case "ECONNRESET":
+            this.log("%s: Connection reset.", this.getNvrName());
+            break;
 
-        case "ENOTFOUND":
-          this.log("%s: Hostname or IP address not found. Please ensure the address you configured for this UniFi Protect controller is correct.",
-            this.getNvrName());
-          break;
+          case "ENOTFOUND":
+            this.log("%s: Hostname or IP address not found. Please ensure the address you configured for this UniFi Protect controller is correct.",
+              this.getNvrName());
+            break;
 
-        default:
-          if(logErrors) {
-            this.log(error);
-          }
+          default:
+            if(logErrors) {
+              this.log(error.message);
+            }
+        }
       }
 
       return null;

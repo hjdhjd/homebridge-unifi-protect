@@ -6,7 +6,7 @@ import { Logging, PlatformAccessory } from "homebridge";
 import mqtt, { MqttClient } from "mqtt";
 import { ProtectApi } from "./protect-api";
 import { ProtectNvr } from "./protect-nvr";
-import { ProtectNvrOptions } from "./protect-types";
+import { ProtectCameraConfig, ProtectNvrOptions } from "./protect-types";
 import { PROTECT_MQTT_RECONNECT_INTERVAL } from "./settings";
 
 export class ProtectMqtt {
@@ -42,14 +42,16 @@ export class ProtectMqtt {
     try {
       this.mqtt = mqtt.connect(this.config.mqttUrl, { reconnectPeriod: PROTECT_MQTT_RECONNECT_INTERVAL * 1000});
     } catch(error) {
-      switch(error.message) {
-        case "Missing protocol":
-          this.log("%s MQTT Broker: Invalid URL provided: %s.", this.nvrApi.getNvrName(), this.config.mqttUrl);
-          break;
+      if(error instanceof Error) {
+        switch(error.message) {
+          case "Missing protocol":
+            this.log("%s MQTT Broker: Invalid URL provided: %s.", this.nvrApi.getNvrName(), this.config.mqttUrl);
+            break;
 
-        default:
-          this.log("%s MQTT Broker: Error: %s.", this.nvrApi.getNvrName(), error.message);
-          break;
+          default:
+            this.log("%s MQTT Broker: Error: %s.", this.nvrApi.getNvrName(), error.message);
+            break;
+        }
       }
     }
 
@@ -112,16 +114,20 @@ export class ProtectMqtt {
   // Publish an MQTT event to a broker.
   publish(accessory: PlatformAccessory, topic: string, message: string): void {
 
-    this.debug("%s: MQTT publish: %s Message: %s.", this.nvrApi.getNvrName(), this.config.mqttTopic + "/" + accessory.context.camera.mac + "/" + topic, message);
+    const camera = accessory.context.camera as ProtectCameraConfig;
+
+    this.debug("%s: MQTT publish: %s Message: %s.", this.nvrApi.getNvrName(), this.config.mqttTopic + "/" + camera.mac + "/" + topic, message);
 
     // By default, we publish as: unifi/protect/mac/event/name
-    this.mqtt?.publish(this.config.mqttTopic + "/" + accessory.context.camera.mac + "/" + topic, message);
+    this.mqtt?.publish(this.config.mqttTopic + "/" + camera.mac + "/" + topic, message);
   }
 
   // Subscribe to an MQTT topic.
   subscribe(accessory: PlatformAccessory, topic: string, callback: (cbBuffer: Buffer) => void): void {
 
-    const expandedTopic = this.config.mqttTopic + "/" + accessory.context.camera.mac + "/" + topic;
+    const camera = accessory.context.camera as ProtectCameraConfig;
+
+    const expandedTopic = this.config.mqttTopic + "/" + camera.mac + "/" + topic;
 
     // Add to our callback list.
     this.subscriptions[expandedTopic] = callback;

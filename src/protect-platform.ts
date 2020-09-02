@@ -11,7 +11,7 @@ import {
   PlatformConfig
 } from "homebridge";
 import { ProtectNvr } from "./protect-nvr";
-import { ProtectOptions } from "./protect-types";
+import { ProtectNvrOptions, ProtectOptions } from "./protect-types";
 import { PROTECT_FFMPEG_OPTIONS, PROTECT_MOTION_DURATION, PROTECT_MQTT_TOPIC } from "./settings";
 import util from "util";
 
@@ -41,13 +41,13 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
 
     // Plugin options into our config variables.
     this.config = {
-      controllers: config.controllers,
+      controllers: config.controllers as ProtectNvrOptions[],
       debugAll: config.debug === true,
-      ffmpegOptions: config.ffmpegOptions ?? PROTECT_FFMPEG_OPTIONS,
-      motionDuration: config.motionDuration ?? PROTECT_MOTION_DURATION,
-      options: config.options,
+      ffmpegOptions: config.ffmpegOptions as string ?? PROTECT_FFMPEG_OPTIONS,
+      motionDuration: config.motionDuration as number ?? PROTECT_MOTION_DURATION,
+      options: config.options as string[],
       verboseFfmpeg: config.verboseFfmpeg === true,
-      videoProcessor: config.videoProcessor
+      videoProcessor: config.videoProcessor as string
     };
 
     // We need a UniFi Protect controller configured to do anything.
@@ -126,11 +126,11 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
     this.accessories.push(accessory);
   }
 
-  // Launch our configured controllers. Once we do, they can sustain themselves.
+  // Launch our configured controllers. Once we do, they will sustain themselves.
   private pollControllers(): void {
 
     for(const controller of this.controllers) {
-      controller.poll(0);
+      void controller.poll(0);
     }
   }
 

@@ -17,6 +17,7 @@ import { ProtectNvr } from "./protect-nvr";
 import { ProtectPlatform } from "./protect-platform";
 import { ProtectSecuritySystem } from "./protect-securitysystem";
 import {
+  ProtectCameraConfig,
   ProtectNvrLiveviewConfig,
   ProtectNvrOptions
 } from "./protect-types";
@@ -56,7 +57,7 @@ export class ProtectLiveviews {
   }
 
   // Update security system accessory.
-  public async configureLiveviews(): Promise<void> {
+  public configureLiveviews(): void {
 
     // Do we have controller access?
     if(!this.nvrApi?.bootstrap?.nvr) {
@@ -70,7 +71,7 @@ export class ProtectLiveviews {
   }
 
   // Configure the security system accessory.
-  private async configureSecuritySystem(): Promise<void> {
+  private configureSecuritySystem(): void {
 
     // If we don't have the bootstrap configuration, we're done here.
     if(!this.nvrApi.bootstrap) {
@@ -133,7 +134,7 @@ export class ProtectLiveviews {
   }
 
   // Configure any liveview-associated switches.
-  private async configureSwitches(): Promise<void> {
+  private configureSwitches(): void {
 
     // If we don't have any liveviews or the bootstrap configuration, there's nothing to configure.
     if(!this.liveviews || !this.nvrApi.bootstrap) {
@@ -143,7 +144,7 @@ export class ProtectLiveviews {
     // Iterate through the list of switches and see if we still have matching liveviews.
     for(const liveviewSwitch of this.liveviewSwitches) {
       // We found a switch matching this liveview. Move along...
-      if(this.liveviews.some((x: ProtectNvrLiveviewConfig) => x.name.toUpperCase() === ("Protect-" + liveviewSwitch.context?.liveview).toUpperCase())) {
+      if(this.liveviews.some((x: ProtectNvrLiveviewConfig) => x.name.toUpperCase() === ("Protect-" + (liveviewSwitch.context?.liveview as string)).toUpperCase())) {
         continue;
       }
 
@@ -173,7 +174,7 @@ export class ProtectLiveviews {
       const viewName = viewMatch[1];
 
       // See if we already have this accessory defined.
-      if(this.liveviewSwitches.some((x: PlatformAccessory) => x.context?.liveview.toUpperCase() === viewName.toUpperCase())) {
+      if(this.liveviewSwitches.some((x: PlatformAccessory) => (x.context?.liveview as string).toUpperCase() === viewName.toUpperCase())) {
         continue;
       }
 
@@ -225,12 +226,12 @@ export class ProtectLiveviews {
   }
 
   // Get the current liveview switch state.
-  private async getSwitchState(accessory: PlatformAccessory, callback: CharacteristicGetCallback): Promise<void> {
+  private getSwitchState(accessory: PlatformAccessory, callback: CharacteristicGetCallback): void {
     callback(null, accessory.context.switchState);
   }
 
   // Toggle the liveview switch state.
-  private async setSwitchState(liveviewSwitch: PlatformAccessory, value: CharacteristicValue, callback: CharacteristicSetCallback): Promise<void> {
+  private setSwitchState(liveviewSwitch: PlatformAccessory, value: CharacteristicValue, callback: CharacteristicSetCallback): void {
 
     // We don't have any liveviews or we're already at this state - we're done.
     if(!this.nvrApi.bootstrap || !this.liveviews || (liveviewSwitch.context.switchState === value)) {
@@ -242,7 +243,7 @@ export class ProtectLiveviews {
     // This cryptic line grabs the list of liveviews that have the name we're interested in
     // (turns out, you can define multiple liveviews in Protect with the same name...who knew!),
     // and then create a single list containing all of the cameras found.
-    const targetCameraIds = this.liveviews.filter(view => view.name.toUpperCase() === ("Protect-" + liveviewSwitch.context.liveview).toUpperCase())
+    const targetCameraIds = this.liveviews.filter(view => view.name.toUpperCase() === ("Protect-" + (liveviewSwitch.context.liveview as string)).toUpperCase())
       .map(view => view.slots.map(slots => slots.cameras))
       .flat(2);
 
@@ -260,7 +261,8 @@ export class ProtectLiveviews {
       }
 
       // Check to see if this is one of the cameras we want to toggle motion detection for and the state is changing.
-      if(targetCameraIds.some(thisCameraId => thisCameraId === targetAccessory.context.camera.id) && (targetAccessory.context.detectMotion !== value)) {
+      if(targetCameraIds.some(thisCameraId =>
+        thisCameraId === (targetAccessory.context.camera as ProtectCameraConfig).id) && (targetAccessory.context.detectMotion !== value)) {
 
         targetAccessory.context.detectMotion = value;
 

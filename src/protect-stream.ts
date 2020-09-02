@@ -30,15 +30,17 @@ import { ProtectCamera } from "./protect-camera";
 import { FfmpegProcess } from "./protect-ffmpeg";
 import { ProtectPlatform } from "./protect-platform";
 import { RtpSplitter, RtpUtils } from "./protect-rtp";
-import { ProtectOptions } from "./protect-types";
+import { ProtectCameraConfig, ProtectOptions } from "./protect-types";
 import { PROTECT_FFMPEG_VERBOSE_DURATION } from "./settings";
 import { networkInterfaceDefault } from "systeminformation";
 
 // Bring in a precompiled ffmpeg binary that meets our requirements, if available.
-const pathToFfmpeg = require("ffmpeg-for-homebridge"); // eslint-disable-line @typescript-eslint/no-var-requires
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const pathToFfmpeg = require("ffmpeg-for-homebridge") as string;
 
 // Increase the listener limits to support Protect installations with more than 10 cameras. 100 seems like a reasonable default.
-require("events").EventEmitter.defaultMaxListeners = 100; // eslint-disable-line @typescript-eslint/no-var-requires
+// eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-unsafe-member-access
+require("events").EventEmitter.defaultMaxListeners = 100;
 
 type FfmpegSessions = {
   outbound: FfmpegProcess,
@@ -146,7 +148,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     this.debug("%s: HomeKit snapshot request: %sx%s. Retrieving image from Protect: %s?%s",
       this.protectCamera.name(), request.width, request.height, this.protectCamera.snapshotUrl, params);
 
-    const response = await this.protectCamera.nvr.nvrApi.fetch(this.protectCamera.snapshotUrl + "?" + params, { method: "GET" }, true, false);
+    const response = await this.protectCamera.nvr.nvrApi.fetch(this.protectCamera.snapshotUrl + "?" + params.toString(), { method: "GET" }, true, false);
 
     if(!response?.ok) {
       this.log("%s: Unable to retrieve snapshot.", this.protectCamera.name());
@@ -262,7 +264,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   }
 
   // Launch the Protect video (and audio) stream.
-  private async startStream(request: StartStreamRequest, callback: StreamRequestCallback): Promise<void> {
+  private startStream(request: StartStreamRequest, callback: StreamRequestCallback): void {
 
     const sessionInfo = this.pendingSessions[request.sessionID];
 
@@ -315,12 +317,12 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       "-vcodec copy",
       "-f rawvideo",
       "-pix_fmt yuvj420p",
-      "-r " + request.video.fps,
+      "-r " + request.video.fps.toString(),
       this.platform.config.ffmpegOptions,
-      "-b:v " + request.video.max_bit_rate + "k",
-      "-bufsize " + (2 * request.video.max_bit_rate) + "k",
-      "-maxrate " + request.video.max_bit_rate + "k",
-      "-payload_type " + request.video.pt
+      "-b:v " + request.video.max_bit_rate.toString() + "k",
+      "-bufsize " + (2 * request.video.max_bit_rate).toString() + "k",
+      "-maxrate " + request.video.max_bit_rate.toString() + "k",
+      "-payload_type " + request.video.pt.toString()
     ].join(" ");
 
     // Add the required RTP settings and encryption for the stream:
@@ -330,12 +332,12 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     // -srtp_out_params params specify the output encoding parameters. This is negotiated by HomeKit.
     const ffmpegVideoStream = [
       "",
-      "-ssrc " + sessionInfo.videoSSRC,
+      "-ssrc " + sessionInfo.videoSSRC.toString(),
       "-f rtp",
       "-srtp_out_suite AES_CM_128_HMAC_SHA1_80",
       "-srtp_out_params " + sessionInfo.videoSRTP.toString("base64"),
-      "srtp://" + sessionInfo.address + ":" + sessionInfo.videoPort + "?rtcpport=" + sessionInfo.videoPort +
-      "&localrtcpport=" + sessionInfo.videoPort + "&pkt_size=" + videomtu
+      "srtp://" + sessionInfo.address.toString() + ":" + sessionInfo.videoPort.toString() + "?rtcpport=" + sessionInfo.videoPort.toString() +
+      "&localrtcpport=" + sessionInfo.videoPort.toString() + "&pkt_size=" + videomtu.toString()
     ].join(" ");
 
     // Assemble the final video command line.
@@ -367,11 +369,11 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
         "-profile:a aac_eld",
         "-flags +global_header",
         "-f null",
-        "-ar " + request.audio.sample_rate + "k",
-        "-b:a " + request.audio.max_bit_rate + "k",
-        "-bufsize " + (2 * request.audio.max_bit_rate) + "k",
+        "-ar " + request.audio.sample_rate.toString() + "k",
+        "-b:a " + request.audio.max_bit_rate.toString() + "k",
+        "-bufsize " + (2 * request.audio.max_bit_rate).toString() + "k",
         "-ac 1",
-        "-payload_type " + request.audio.pt
+        "-payload_type " + request.audio.pt.toString()
       ].join(" ");
 
       // Add the required RTP settings and encryption for the stream:
@@ -381,12 +383,12 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       // -srtp_out_params params specify the output encoding parameters. This is negotiated by HomeKit.
       const ffmpegAudioStream = [
         "",
-        "-ssrc " + sessionInfo.audioSSRC,
+        "-ssrc " + sessionInfo.audioSSRC.toString(),
         "-f rtp",
         "-srtp_out_suite AES_CM_128_HMAC_SHA1_80",
         "-srtp_out_params " + sessionInfo.audioSRTP.toString("base64"),
-        "srtp://" + sessionInfo.address + ":" + sessionInfo.audioPort + "?rtcpport=" + sessionInfo.audioPort +
-        "&localrtcpport=" + sessionInfo.audioPort + "&pkt_size=" + audiomtu
+        "srtp://" + sessionInfo.address.toString() + ":" + sessionInfo.audioPort.toString() + "?rtcpport=" + sessionInfo.audioPort.toString() +
+        "&localrtcpport=" + sessionInfo.audioPort.toString() + "&pkt_size=" + audiomtu.toString()
       ].join(" ");
 
       fcmd += ffmpegAudioArgs;
@@ -414,7 +416,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       return;
     }
 
-    const camera = this.protectCamera.accessory.context.camera;
+    const camera = this.protectCamera.accessory.context.camera as ProtectCameraConfig;
     const sdpIpVersion = sessionInfo.addressVersion === "ipv6" ? "IP6 ": "IP4";
 
     // Session description protocol message that FFmpeg will share with HomeKit.
@@ -437,7 +439,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       "s=" + this.name + " Audio Talkback",
       "c=IN " + sdpIpVersion + " " + sessionInfo.address,
       "t=0 0",
-      "m=audio " + sessionInfo.audioTwoWayPort + " RTP/AVP 110",
+      "m=audio " + sessionInfo.audioTwoWayPort.toString() + " RTP/AVP 110",
       "b=AS:24",
       "a=rtpmap:110 MPEG4-GENERIC/16000/1",
       "a=fmtp:110 profile-level-id=1;mode=AAC-hbr;sizelength=13;indexlength=3;indexdeltalength=3; config=F8F0212C00BC00",
@@ -467,11 +469,11 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       "-map 0:a",
       "-acodec " + camera.talkbackSettings.typeFmt,
       "-flags +global_header",
-      "-ar " + camera.talkbackSettings.samplingRate,
+      "-ar " + camera.talkbackSettings.samplingRate.toString(),
       "-b:a 64k",
-      "-ac " + camera.talkbackSettings.channels,
+      "-ac " + camera.talkbackSettings.channels.toString(),
       "-f adts",
-      "udp://" + camera.host + ":" + camera.talkbackSettings.bindPort
+      "udp://" + camera.host + ":" + camera.talkbackSettings.bindPort.toString()
     ].join(" ");
 
     // Additional logging, but only if we're debugging.
