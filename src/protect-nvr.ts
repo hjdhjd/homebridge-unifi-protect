@@ -596,7 +596,7 @@ export class ProtectNvr {
   }
 
   // Utility function to let us know if a Protect device or feature should be enabled in HomeKit or not.
-  public optionEnabled(device: ProtectCameraConfig, option = "", defaultReturnValue = true): boolean {
+  public optionEnabled(device: ProtectCameraConfig | null, option = "", defaultReturnValue = true): boolean {
 
     // There are a couple of ways to enable and disable options. The rules of the road are:
     //
@@ -614,29 +614,28 @@ export class ProtectNvr {
       return defaultReturnValue;
     }
 
-    // No valid device passed to us - assume the default return value.
-    if(!device?.mac) {
-      return defaultReturnValue;
-    }
-
     let optionSetting;
 
-    // First we test for camera-level option settings.
-    // No option specified means we're testing to see if this device should be shown in HomeKit.
-    if(!option) {
-      optionSetting = device.mac.toUpperCase();
-    } else {
-      optionSetting = (option + "." + device.mac).toUpperCase();
-    }
+    // If we've specified a device, check for device-specific options first. Otherwise, we're dealing
+    // with an NVR-specific or global option.
+    if(device?.mac) {
+      // First we test for camera-level option settings.
+      // No option specified means we're testing to see if this device should be shown in HomeKit.
+      if(!option) {
+        optionSetting = device.mac.toUpperCase();
+      } else {
+        optionSetting = (option + "." + device.mac).toUpperCase();
+      }
 
-    // We've explicitly enabled this option for this device.
-    if(configOptions.indexOf("ENABLE." + optionSetting) !== -1) {
-      return true;
-    }
+      // We've explicitly enabled this option for this device.
+      if(configOptions.indexOf("ENABLE." + optionSetting) !== -1) {
+        return true;
+      }
 
-    // We've explicitly disabled this option for this device.
-    if(configOptions.indexOf("DISABLE." + optionSetting) !== -1) {
-      return false;
+      // We've explicitly disabled this option for this device.
+      if(configOptions.indexOf("DISABLE." + optionSetting) !== -1) {
+        return false;
+      }
     }
 
     // If we don't have a managing device attached, we're done here.
