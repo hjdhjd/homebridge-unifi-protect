@@ -13,6 +13,7 @@ import { PROTECT_SWITCH_MOTION } from "./protect-camera";
 import { ProtectCameraConfig, ProtectNvrConfig } from "./protect-types";
 
 export class ProtectSecuritySystem extends ProtectAccessory {
+  private isAlarmTriggered!: boolean;
 
   // Configure a security system accessory for HomeKit.
   protected configureDevice(): Promise<boolean> {
@@ -30,12 +31,15 @@ export class ProtectSecuritySystem extends ProtectAccessory {
     accessory.context.securityState = securityState;
 
     // Configure accessory information.
-    if(!this.configureInfo()) {
-      return Promise.resolve(false);
-    }
+    this.configureInfo();
 
-    // Configure the security system service and we're done.
-    return Promise.resolve(this.configureSecuritySystem());
+    // Configure the security system service.
+    this.configureSecuritySystem();
+
+    // Configure the security alarm.
+    this.configureSecurityAlarm();
+
+    return Promise.resolve(true);
   }
 
   // Configure the security system device information for HomeKit.
@@ -93,7 +97,6 @@ export class ProtectSecuritySystem extends ProtectAccessory {
 
     switch(accessory.context.securityState) {
       case SecuritySystemCurrentState.STAY_ARM:
-      case SecuritySystemCurrentState.ALARM_TRIGGERED:
         targetSecurityState = SecuritySystemTargetState.STAY_ARM;
         break;
 
@@ -133,9 +136,56 @@ export class ProtectSecuritySystem extends ProtectAccessory {
     return true;
   }
 
+  // Configure the security alarm for HomeKit.
+  private configureSecurityAlarm(): boolean {
+
+    this.isAlarmTriggered = false;
+
+    // Clear out any previous switch service.
+    let switchService = this.accessory.getService(this.hap.Service.Switch);
+
+    if(switchService) {
+      this.accessory.removeService(switchService);
+    }
+
+    // Have we enabled the security system alarm?
+    if(!this.nvr?.optionEnabled(null, "SecurityAlarm", false)) {
+      return false;
+    }
+
+    // Notify the user that we're enabled.
+    this.log("%s: Enabling the security alarm switch on the security system accessory.", this.name());
+
+    // Add the switch to the security system.
+    switchService = new this.hap.Service.Switch(this.accessory.displayName + " Alarm");
+
+    // Activate or deactivate the security alarm.
+    this.accessory.addService(switchService)
+      .getCharacteristic(this.hap.Characteristic.On)
+      ?.on(CharacteristicEventTypes.GET, (callback: CharacteristicGetCallback) => {
+        callback(null, this.isAlarmTriggered === true);
+      })
+      .on(CharacteristicEventTypes.SET, (value: CharacteristicValue, callback: CharacteristicSetCallback) => {
+        if(this.isAlarmTriggered !== value) {
+
+          this.accessory.getService(this.hap.Service.SecuritySystem)
+          ?.getCharacteristic(this.hap.Characteristic.SecuritySystemCurrentState)
+          .updateValue(value === true ? this.hap.Characteristic.SecuritySystemCurrentState.ALARM_TRIGGERED : this.accessory.context.securityState);
+
+          this.log("%s: Security system alarm %s.", this.name(), (value === true) ? "triggered" : "reset");
+        }
+
+        this.isAlarmTriggered = value === true;
+        callback(null);
+      })
+      .updateValue(this.isAlarmTriggered);
+
+    return true;
+  }
+
   // Get the current security system state.
   private getSecurityState(callback: CharacteristicGetCallback): void {
-    callback(null, this.accessory.context.securityState);
+    callback(null, this.isAlarmTriggered ? this.hap.Characteristic.SecuritySystemCurrentState.ALARM_TRIGGERED : this.accessory.context.securityState);
   }
 
   // Change the security system state, and enable or disable motion detection accordingly.
@@ -238,9 +288,17 @@ export class ProtectSecuritySystem extends ProtectAccessory {
       }
     }
 
-    // Inform the user of our new state, and return.
+    // Inform the user of our new state.
     accessory.context.securityState = newState;
     accessory.getService(hap.Service.SecuritySystem)?.getCharacteristic(SecuritySystemCurrentState).updateValue(newState);
+
+    // Reset our alarm state and update our alarm switch.
+    this.isAlarmTriggered = false;
+
+    if(accessory.getService(hap.Service.Switch)?.getCharacteristic(hap.Characteristic.On).value !== this.isAlarmTriggered) {
+      accessory.getService(hap.Service.Switch)?.getCharacteristic(hap.Characteristic.On).updateValue(this.isAlarmTriggered);
+    }
+
     callback(null);
   }
 }
