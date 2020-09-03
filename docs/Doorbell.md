@@ -157,5 +157,7 @@ To learn more about the MQTT support provided by this plugin, see the [MQTT](htt
 ### Some Fun Facts
   * There is a 30 character limit to what can be displayed on the LCD.
   * No, you can't use emojis. Would've been nice, right?
+  * No, you can't have newlines / carriage returns either. These are limitations in what the doorbell displays, not ones imposed by `homebridge-unifi-protect2`. In my testing, it supports basic formatting and regular text, and that's it.
+  * No, you can't display cool icons like the builtin *do not disturb* and *leave package at door* settings do. Would be nice, but these just aren't accessible. Would be an awesome feature to have though, if Ubiquiti chooses to make it customizable in the future.
   * You get more flexibility in formatting when using the plugin-centric configuration option rather than configuring messages in Protect directly. Protect will always uppercase any message you enter. `homebridge-unifi-protect2` will honor whatever case and formatting you enter.
   * There's no practical limit to the number of messages you can configure.
