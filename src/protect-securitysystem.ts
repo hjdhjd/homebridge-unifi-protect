@@ -168,9 +168,10 @@ export class ProtectSecuritySystem extends ProtectAccessory {
       .on(CharacteristicEventTypes.SET, (value: CharacteristicValue, callback: CharacteristicSetCallback) => {
         if(this.isAlarmTriggered !== value) {
 
-          this.accessory.getService(this.hap.Service.SecuritySystem)
-          ?.getCharacteristic(this.hap.Characteristic.SecuritySystemCurrentState)
-          .updateValue(value === true ? this.hap.Characteristic.SecuritySystemCurrentState.ALARM_TRIGGERED : this.accessory.context.securityState);
+          this.accessory
+            .getService(this.hap.Service.SecuritySystem)
+            ?.getCharacteristic(this.hap.Characteristic.SecuritySystemCurrentState)
+            .updateValue(value === true ? this.hap.Characteristic.SecuritySystemCurrentState.ALARM_TRIGGERED : this.accessory.context.securityState);
 
           this.log("%s: Security system alarm %s.", this.name(), (value === true) ? "triggered" : "reset");
         }
