@@ -17,7 +17,6 @@ import { ProtectMqtt } from "./protect-mqtt";
 import { ProtectPlatform } from "./protect-platform";
 import {
   ProtectCameraConfig,
-  ProtectNvrBootstrap,
   ProtectNvrOptions,
   ProtectNvrSystemEvent,
   ProtectNvrSystemEventController
@@ -322,9 +321,26 @@ export class ProtectNvr {
     }
 
     // Listen for any messages coming in from our listener.
-    this.nvrApi.eventListener.on("message", (event) => {
+    this.nvrApi.eventListener.on("message", (event: string) => {
 
-      const nvrEvent = JSON.parse(event as string) as ProtectNvrSystemEvent;
+      let nvrEvent;
+
+      try {
+
+        nvrEvent = JSON.parse(event) as ProtectNvrSystemEvent;
+
+      } catch(error) {
+
+        if(error instanceof SyntaxError) {
+          this.log("%s: Unable to process message from the realtime events API: \"%s\". Error: %s.", this.nvrApi.getNvrName(), event, error.message);
+        } else {
+          this.log("%s: Unknown error has occurred: %s.", this.nvrApi.getNvrName(), error);
+        }
+
+        // Errors mean that we're done now.
+        return;
+
+      }
 
       // We're interested in device state change events.
       if(nvrEvent?.type !== "DEVICE_STATE_CHANGED") {
