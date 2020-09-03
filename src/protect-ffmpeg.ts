@@ -84,8 +84,7 @@ export class FfmpegProcess {
     // Track if we've started receiving data.
     let started = false;
 
-    // Execute the command line.
-    // this.process = spawn(delegate.videoProcessor, command.split(/\s+/), { env: process.env });
+    // Prepare the command line we want to execute.
     this.process = execa.command(this.delegate.videoProcessor + " " + ffmpegCommandLine);
 
     // Handle errors on stdin.
@@ -117,6 +116,7 @@ export class FfmpegProcess {
 
     try {
 
+      // Execute the command line.
       await this.process;
 
     } catch(error) {
