@@ -5,6 +5,7 @@
  * This module is heavily inspired by the homebridge and homebridge-camera-ffmpeg source code and
  * borrows heavily from both. Thank you for your contributions to the HomeKit world.
  */
+import ffmpegPath from "ffmpeg-for-homebridge";
 import {
   API,
   AudioStreamingCodecType,
@@ -34,18 +35,9 @@ import { ProtectCameraConfig, ProtectOptions } from "./protect-types";
 import { PROTECT_FFMPEG_VERBOSE_DURATION } from "./settings";
 import { networkInterfaceDefault } from "systeminformation";
 
-// Bring in a precompiled ffmpeg binary that meets our requirements, if available.
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const pathToFfmpeg = require("ffmpeg-for-homebridge") as string;
-
 // Increase the listener limits to support Protect installations with more than 10 cameras. 100 seems like a reasonable default.
 // eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-unsafe-member-access
 require("events").EventEmitter.defaultMaxListeners = 100;
-
-type FfmpegSessions = {
-  outbound: FfmpegProcess,
-  twoway: FfmpegProcess
-};
 
 type SessionInfo = {
   address: string; // Address of the HAP controller.
@@ -94,7 +86,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     this.ongoingSessions = {};
     this.pendingSessions = {};
     this.platform = camera.platform;
-    this.videoProcessor = this.config.videoProcessor || pathToFfmpeg || "ffmpeg";
+    this.videoProcessor = this.config.videoProcessor || ffmpegPath || "ffmpeg";
 
     // Setup for our camera controller.
     const options: CameraControllerOptions = {
@@ -225,7 +217,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       audioSSRC: audioSSRC
     };
 
-    // Grab our IP address.
+    // Grab our IP address. This is no longer needed in homebridge 1.1.3 and beyond - it handles this for us.
     const currentAddress = await this.getDefaultIpAddress(request.addressVersion);
 
     if(!currentAddress) {
@@ -336,7 +328,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       "-f rtp",
       "-srtp_out_suite AES_CM_128_HMAC_SHA1_80",
       "-srtp_out_params " + sessionInfo.videoSRTP.toString("base64"),
-      "srtp://" + sessionInfo.address.toString() + ":" + sessionInfo.videoPort.toString() + "?rtcpport=" + sessionInfo.videoPort.toString() +
+      "srtp://" + sessionInfo.address + ":" + sessionInfo.videoPort.toString() + "?rtcpport=" + sessionInfo.videoPort.toString() +
       "&localrtcpport=" + sessionInfo.videoPort.toString() + "&pkt_size=" + videomtu.toString()
     ].join(" ");
 
@@ -387,7 +379,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
         "-f rtp",
         "-srtp_out_suite AES_CM_128_HMAC_SHA1_80",
         "-srtp_out_params " + sessionInfo.audioSRTP.toString("base64"),
-        "srtp://" + sessionInfo.address.toString() + ":" + sessionInfo.audioPort.toString() + "?rtcpport=" + sessionInfo.audioPort.toString() +
+        "srtp://" + sessionInfo.address + ":" + sessionInfo.audioPort.toString() + "?rtcpport=" + sessionInfo.audioPort.toString() +
         "&localrtcpport=" + sessionInfo.audioPort.toString() + "&pkt_size=" + audiomtu.toString()
       ].join(" ");
 
@@ -518,12 +510,13 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
   // Close a video stream.
   public stopStream(sessionId: string): void {
+
     try {
 
       // Stop any FFmpeg instances we have running.
       if(this.ongoingSessions[sessionId]) {
         for(const ffmpegProcess of this.ongoingSessions[sessionId].ffmpeg) {
-          ffmpegProcess?.stop();
+          ffmpegProcess.stop();
         }
       }
 
