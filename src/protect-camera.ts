@@ -206,7 +206,7 @@ export class ProtectCamera extends ProtectAccessory {
           // Check to see if motion events are disabled.
           if(switchService && !switchService.getCharacteristic(this.hap.Characteristic.On).value) {
             setTimeout(() => {
-            triggerService?.getCharacteristic(this.hap.Characteristic.On).updateValue(false);
+              triggerService?.getCharacteristic(this.hap.Characteristic.On).updateValue(false);
             }, 50);
 
           } else {
