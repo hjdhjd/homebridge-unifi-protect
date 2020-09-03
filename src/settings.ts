@@ -22,7 +22,7 @@ export const PROTECT_EVENTS_HEARTBEAT_INTERVAL = 10;
 export const PROTECT_FFMPEG_OPTIONS = "-probesize 32 -analyzeduration 0 -fflags nobuffer";
 
 // Duration, in minutes, to increase the level of logging for FFmpeg when we encounter errors.
-export const PROTECT_FFMPEG_VERBOSE_DURATION = 30;
+export const PROTECT_FFMPEG_VERBOSE_DURATION = 5;
 
 // How often, in seconds, should we refresh our Protect login credentials.
 export const PROTECT_LOGIN_REFRESH_INTERVAL = 1800;
