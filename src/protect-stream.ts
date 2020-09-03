@@ -528,11 +528,11 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       delete this.ongoingSessions[sessionId];
 
       // Inform the user.
-      this.log.info("%s: Stopped video stream.", this.protectCamera.name());
+      this.log.info("%s: Stopped video streaming session.", this.protectCamera.name());
 
     } catch(error) {
 
-      this.log.error("%s: Error occurred terminating video process: %s", this.protectCamera.name(), error);
+      this.log.error("%s: Error occurred while ending the FFmpeg video processes: %s.", this.protectCamera.name(), error);
     }
   }
 
