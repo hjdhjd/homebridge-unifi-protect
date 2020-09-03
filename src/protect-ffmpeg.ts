@@ -5,9 +5,8 @@
  * This module is heavily inspired by the homebridge and homebridge-camera-ffmpeg source code and
  * borrows heavily from both. Thank you for your contributions to the HomeKit world.
  */
-import { ChildProcess, spawn } from "child_process";
 import { createSocket } from "dgram";
-import execa from "execa";
+import execa, { ExecaChildProcess, ExecaError } from "execa";
 import { Logging, StreamRequestCallback } from "homebridge";
 import { ProtectStreamingDelegate } from "./protect-stream";
 import { Readable, Writable } from "stream";
@@ -20,18 +19,19 @@ interface PortInterface {
 
 export class FfmpegProcess {
   private readonly debug: (message: string, ...parameters: unknown[]) => void;
+  private delegate: ProtectStreamingDelegate;
   private isVerbose: boolean;
   private readonly log: Logging;
-  private readonly process: ChildProcess;
-  private killing = false;
+  private process!: ExecaChildProcess;
+  private sessionId: string;
   private timeout?: NodeJS.Timeout;
-  private delegate: ProtectStreamingDelegate;
 
   constructor(delegate: ProtectStreamingDelegate, sessionId: string, command: string, returnPort?: PortInterface, callback?: StreamRequestCallback) {
 
     this.debug = delegate.platform.debug.bind(this);
     this.delegate = delegate;
     this.log = delegate.platform.log;
+    this.sessionId = sessionId;
 
     // Toggle FFmpeg logging, if configured.
     this.isVerbose = this.delegate.platform.verboseFfmpeg;
@@ -44,103 +44,133 @@ export class FfmpegProcess {
 
     // Create the return port for FFmpeg, if requested to do so. The only time we don't do this is when we're standing up
     // a two-way audio stream - in that case, the audio work is done through RtpSplitter and not here.
-    if(returnPort !== undefined) {
-      const socket = createSocket(returnPort.addressVersion === "ipv6" ? "udp6" : "udp4");
-
-      // Handle network errors.
-      socket.on("error", (error: Error) => {
-        this.log.error("%s: Socket error: ", delegate.name, error.name);
-        delegate.stopStream(sessionId);
-      });
-
-      // Kill zombie video streams.
-      socket.on("message", () => {
-        if(this.timeout) {
-          clearTimeout(this.timeout);
-        }
-
-        this.timeout = setTimeout(() => {
-          delegate.platform.log.info("%s: Device appears to be inactive for over 5 seconds. Stopping stream.", delegate.name);
-          delegate.controller.forceStopStreamingSession(sessionId);
-          delegate.stopStream(sessionId);
-        }, 5000);
-      });
-
-      socket.bind(returnPort.port);
+    if(returnPort) {
+      this.createSocket(returnPort);
     }
+
+    void this.startFfmpeg(command, callback);
+  }
+
+  // Create the port for FFmpeg to send data through.
+  private createSocket(portInfo: PortInterface): void {
+
+    const socket = createSocket(portInfo.addressVersion === "ipv6" ? "udp6" : "udp4");
+
+    // Handle potential network errors.
+    socket.on("error", (error: Error) => {
+      this.log.error("%s: Socket error: ", this.delegate.protectCamera.name(), error.name);
+      this.delegate.stopStream(this.sessionId);
+    });
+
+    // Kill zombie video streams.
+    socket.on("message", () => {
+      if(this.timeout) {
+        clearTimeout(this.timeout);
+      }
+
+      this.timeout = setTimeout(() => {
+        this.log("%s: Device appears to be inactive for over 5 seconds. Stopping stream.", this.delegate.protectCamera.name());
+        this.delegate.controller.forceStopStreamingSession(this.sessionId);
+        this.delegate.stopStream(this.sessionId);
+      }, 5000);
+    });
+
+    socket.bind(portInfo.port);
+  }
+
+  // Start our FFmpeg process.
+  private async startFfmpeg(ffmpegCommandLine: string, callback?: StreamRequestCallback): Promise<void> {
 
     // Track if we've started receiving data.
     let started = false;
 
     // Execute the command line.
-    this.process = spawn(delegate.videoProcessor, command.split(/\s+/), { env: process.env });
+    // this.process = spawn(delegate.videoProcessor, command.split(/\s+/), { env: process.env });
+    this.process = execa.command(this.delegate.videoProcessor + " " + ffmpegCommandLine);
 
+    // Handle errors on stdin.
     this.process.stdin?.on("error", (error: Error) => {
       if(!error.message.includes("EPIPE")) {
-        this.log.error("%s: FFmpeg error: %s", delegate.name, error.message);
+        this.log.error("%s: FFmpeg error: %s", this.delegate.protectCamera.name(), error.message);
       }
     });
 
-    this.process.stderr?.on("data", (data) => {
+    // Handle logging output that gets sent to stderr.
+    this.process.stderr?.on("data", (data: Buffer) => {
       if(!started) {
         started = true;
-        this.debug("%s: Received the first frame.", delegate.name);
+        this.debug("%s: Received the first frame.", this.delegate.protectCamera.name());
 
-        // Always remember to execute the callback once we're setup.
+        // Always remember to execute the callback once we're setup to let homebridge know we're streaming.
         if(callback) {
           callback();
         }
       }
 
       // Debugging and additional logging, if requested.
-      if(this.isVerbose || delegate.platform.debugMode) {
+      if(this.isVerbose || this.delegate.platform.debugMode) {
         data.toString().split(/\n/).forEach((line: string) => {
           this.log(line);
         });
       }
     });
 
-    // Error handling.
-    this.process.on("error", (error: Error) => {
-      this.log.error("%s: Unable to start stream: %s.", delegate.name, error.message);
-      if(callback) {
-        callback(new Error("ffmpeg process creation failed!"));
-        delegate.stopStream(sessionId);
+    try {
+
+      await this.process;
+
+    } catch(error) {
+
+      // You might think this should be ExecaError, but ExecaError is a type, not a class, and instanceof
+      // only operates on classes.
+      if(!(error instanceof Error)) {
+        this.log("Unknown error received while attempting to start FFmpeg: %s.", error);
+        return;
       }
-    });
 
-    // Handle the end of our process - graceful and otherwise.
-    this.process.on("exit", (code: number, signal: NodeJS.Signals) => {
-      const message = "%s: ffmpeg exited with code: " + code + " and signal: " + signal;
+      // Recast our error object as an ExecaError.
+      const execError = error as ExecaError;
 
-      if(code === null || code === 255) {
-        if(this.killing) {
-          this.debug(message + " (Expected)", delegate.name);
-        } else {
-          this.log.error(message + " (Unexpected)", delegate.name);
-        }
+      // Some utilities to streamline things.
+      const logPrefix = this.delegate.protectCamera.name() + ": FFmpeg process ended ";
+      const code = execError.exitCode ?? null;
+      const signal = execError.signal ?? null;
+
+      // We asked FFmpeg to stop.
+      if(execError.isCanceled) {
+        this.debug(logPrefix + "(Expected).");
+        return;
+      }
+
+      // FFmpeg ended for another reason.
+      const errorMessage = logPrefix + "(Error)." + (code === null ? "" : " Exit code: " + code.toString() + ".") + (signal === null ? "" : " Signal: " + signal + ".");
+      this.log.error("%s: %s", this.delegate.protectCamera.name(), execError.message);
+
+      // Stop the stream.
+      this.delegate.stopStream(this.sessionId);
+
+      // Temporarily increase logging verbosity.
+      this.delegate.setVerboseFfmpeg();
+
+      // Let homebridge know what happened and stop the stream if we've already started.
+      if(!started && callback) {
+        callback(new Error(errorMessage));
       } else {
-        this.log.error(message + " (Error)", delegate.name);
-        this.delegate.setVerboseFfmpeg();
-
-        delegate.stopStream(sessionId);
-
-        if(!started && callback) {
-          callback(new Error(message));
-        } else {
-          delegate.controller.forceStopStreamingSession(sessionId);
-        }
+        this.delegate.controller.forceStopStreamingSession(this.sessionId);
       }
-    });
+    }
   }
 
   // Cleanup after we're done.
   public stop(): void {
-    this.killing = true;
+
+    // Cancel our process.
+    this.process.cancel();
+
+    // Kill our heartbeat monitoring.
     if(this.timeout) {
       clearTimeout(this.timeout);
     }
-    this.process.kill("SIGKILL");
   }
 
   // Grab the standard input.
