@@ -65,6 +65,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
     // Debug FFmpeg.
     if(this.config.verboseFfmpeg) {
       this.verboseFfmpeg = true;
+      this.log("Verbose logging of video streaming sessions enabled. Expect a lot of data.");
     }
 
     // If we have feature options, put them into their own array, upper-cased for future reference.
