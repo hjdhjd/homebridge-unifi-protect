@@ -141,7 +141,7 @@ export class ProtectDoorbell extends ProtectCamera {
       const value = message.toString();
 
       // When we get the right message, we return the current message set on the doorbell.
-      if(value?.toUpperCase() !== "true".toUpperCase()) {
+      if(value?.toLowerCase() !== "true") {
         return;
       }
 
@@ -186,7 +186,7 @@ export class ProtectDoorbell extends ProtectCamera {
         if(error instanceof SyntaxError) {
           this.log("%s: Unable to process MQTT message: \"%s\". Error: %s.", this.name(), message.toString(), error.message);
         } else {
-          this.log("%s: Unknown error has occurred: %s", this.name(), error);
+          this.log("%s: Unknown error has occurred: %s.", this.name(), error);
         }
 
         // Errors mean that we're done now.
