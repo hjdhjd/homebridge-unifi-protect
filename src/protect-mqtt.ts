@@ -112,18 +112,18 @@ export class ProtectMqtt {
   }
 
   // Publish an MQTT event to a broker.
-  public publish(accessory: PlatformAccessory, topic: string, message: string): void {
+  public publish(accessory: PlatformAccessory | string, topic: string, message: string): void {
 
     // No accessory, we're done.
     if(!accessory) {
       return;
     }
 
-    // Assume it's the controller's MAC initially.
-    let mac = accessory.context.nvr as string;
+    // Check if we were passed the MAC as an input. Otherwise, assume it's the controller's MAC initially.
+    let mac = typeof accessory === "string" ? accessory : (accessory.context.nvr as string);
 
     // Check to see if it's really a camera...if it is, use it's MAC address.
-    if("camera" in accessory.context) {
+    if((typeof accessory !== "string") && ("camera" in accessory.context)) {
       mac = (accessory.context.camera as ProtectCameraConfig).mac;
     }
 
@@ -134,24 +134,24 @@ export class ProtectMqtt {
   }
 
   // Subscribe to an MQTT topic.
-  public subscribe(accessory: PlatformAccessory, topic: string, callback: (cbBuffer: Buffer) => void): void {
+  public subscribe(accessory: PlatformAccessory | string, topic: string, callback: (cbBuffer: Buffer) => void): void {
 
     // No accessory, we're done.
     if(!accessory) {
       return;
     }
 
-    // Assume it's the controller's MAC initially.
-    let mac = accessory.context.nvr as string;
+    // Check if we were passed the MAC as an input. Otherwise, assume it's the controller's MAC initially.
+    let mac = typeof accessory === "string" ? accessory : (accessory.context.nvr as string);
 
     // Check to see if it's really a camera...if it is, use it's MAC address.
-    if("camera" in accessory.context) {
+    if((typeof accessory !== "string") && ("camera" in accessory.context)) {
       mac = (accessory.context.camera as ProtectCameraConfig).mac;
     }
 
     const expandedTopic = this.config.mqttTopic + "/" + mac + "/" + topic;
 
-    this.debug("%s: MQTT subscribe: %s.", this.nvrApi.getNvrName(), expandedTopic);
+    this.log("%s: MQTT subscribe: %s.", this.nvrApi.getNvrName(), expandedTopic);
 
     // Add to our callback list.
     this.subscriptions[expandedTopic] = callback;
