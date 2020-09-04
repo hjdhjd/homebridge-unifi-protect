@@ -68,8 +68,18 @@ For example, if you configure a liveview named `Protect-Outside`, you'll see a s
 
 There's a crucial difference between liveview switches and the liveview security system accessory: ***liveview switches only impact the cameras you've configured in that liveview***. The security system accessory will disable motion detection on all cameras not explicitly configured in a given liveview scene (with the exception of the *Off* scene, which is special - [see above](#security-system)).
 
-### Some Fun Facts
+### MQTT Support
+[MQTT support](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/MQTT.md) is available for liveviews. You can set liveviews, as well as security system states, using MQTT. The following MQTT actions are supported:
 
+  * When the security system state is changed, a message will be published to MQTT.
+  * You can set the security system state using MQTT.
+  * When a liveview scene state changes, a message will be published to MQTT.
+  * You can get the state of all liveview scenes using MQTT.
+  * You can set a liveview scene using MQTT.
+
+To learn more about the MQTT support provided by this plugin, see the [MQTT](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/MQTT.md) page.
+
+### Some Fun Facts
   * You don't need to configure all the liveviews. If you have at least one, the security system accessory will appear. For security system states with no corresponding liveviews, nothing will happen.
   * UniFi Protect will allow you to have multiple liveviews with the same name. In this case, `homebridge-unifi-protect2` will pull all the cameras in all the liveviews with the same name and control them together.
   * There is a setting when editing liveviews called `Share view with others`. This makes a given liveview available to all users, instead of just the user you're currently logged in with. Why does this matter? If you use a different username and password for `homebridge-unifi-protect2` than the one you use to login, you'll want to ensure that any views you create are shared with all users so they can be used with other usernames. Alternatively, login to the Protect webUI with the same username you configured `homebridge-unifi-protect2` to configure liveviews for that user.
