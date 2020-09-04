@@ -26,7 +26,7 @@ This step is not required. The defaults should work well for almost everyone, bu
     "videoProcessor": "/usr/local/bin/ffmpeg",
     "ffmpegOptions": "-preset ultrafast -tune zerolatency",
     "motionDuration": 10,
-    "debug": false,
+    "verboseFfmpeg": false,
 
     "options": [
       "Disable.Stream.High"
@@ -68,4 +68,4 @@ This step is not required. The defaults should work well for almost everyone, bu
 | name                   | Controller name to use for homebridge logging purposes. | UniFi Protect controller name                                                         | No       |
 | mqttUrl                | The URL of your MQTT broker. **This must be in URL form**, e.g.: `mqtt://user@password:1.2.3.4`. |                                              | No       |
 | mqttTopic              | The base topic to use when publishing MQTT messages.    | "unifi/protect"                                                                       | No       |
-| debug                  | Enable additional debug logging.                        | no                                                                                    | No       |
+| verboseFfmpeg          | Enable additional logging for video streaming.          | false                                                                                 | No       |
