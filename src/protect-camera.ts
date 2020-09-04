@@ -384,7 +384,7 @@ export class ProtectCamera extends ProtectAccessory {
       const value = message.toString();
 
       // When we get the right message, we trigger the motion event.
-      if(value?.toUpperCase() !== "true".toUpperCase()) {
+      if(value?.toLowerCase() !== "true") {
         return;
       }
 
@@ -398,7 +398,7 @@ export class ProtectCamera extends ProtectAccessory {
       const value = message.toString();
 
       // When we get the right message, we trigger the snapshot request.
-      if(value?.toUpperCase() !== "true".toUpperCase()) {
+      if(value?.toLowerCase() !== "true") {
         return;
       }
 
@@ -427,7 +427,7 @@ export class ProtectCamera extends ProtectAccessory {
       const value = message.toString();
 
       // When we get the right message, we trigger the snapshot request.
-      if(value?.toUpperCase() !== "true".toUpperCase()) {
+      if(value?.toLowerCase() !== "true") {
         return;
       }
 
