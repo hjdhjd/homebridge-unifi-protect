@@ -45,19 +45,47 @@ unifi/protect/ABCDEF123456/doorbell
 
 In the above examples, `1234567890AB` and `ABCDEF123456` are the MAC addresses of your cameras or doorbells. We use MAC addresses as an easy way to guarantee unique identifiers that won't change. `homebridge-unifi-protect2` provides you information about your cameras and their respective MAC addresses in the homebridge log on startup. Additionally, you can use the UniFi Protect app or webUI to lookup what the MAC addresses are of your cameras, should you need to do so.
 
-The topics and messages that are published are:
+The topics and messages that `homebridge-unifi-protect2` publishes are:
 
 | Topic                 | Message Published
 |-----------------------|----------------------------------
 | **doorbell**          | `true` when the doorbell is rung. Each press of the doorbell will trigger a new event.
 | **message**           | `{"message":"Some Message","duration":60}`. See [Doorbell Messages](#doorbell-messages) for additional documentation.
+|                       |
+| **liveviews**         | `[{"name": "LiveviewName", "state": true},{"name": "AnotherLiveview", "state": false}]`. `state` can be `true` or `false`, indicating whether a liveview scene is active.
 | **motion**            | `true` when motion is detected. `false` when the motion event is reset.
+|                       |
+| **motion**            | `true` when motion is detected. `false` when the motion event is reset.
+|                       |
+| **rtsp**              | `{"Name": "URL"}`. Represents a JSON containing all the valid RTSP URLs that can be used to stream from this camera. `Name` is the name assigned by UniFi Protect to the RTSP URL. `URL` represents the URL that can be used for streaming. The name `Default` represents the URL that `homebridge-unifi-protect2` is using to stream video.
+|                       |
+| **securitysystem**    | One of `Alarm`, `Away`, `Home`, `Night`, `Off`. This message is published every time the security state is set.
+|                       |
+| **snapshot**          | A [data URL](https://developer.mozilla.org/en-US/docs/Web/HTTP/Basics_of_HTTP/Data_URIs) containing a base64-encoded JPEG of the snapshot that was requested (either by HomeKit or MQTT).
 
+The topics that `homebridge-unifi-protect2` subscribes to are:
+
+| Topic                   | Message Expected
+|-------------------------|----------------------------------
+| **liveviews/get**       | `true` will request that the plugin publish the current state of all liveviews to the `liveviews` topic.
+| **liveviews/set**       | An array in the format `[{"name": "view1", "state": true }, ...]` This will activate or deactivate one of more liveviews, depending on the respective state.
+|                         |
+| **message/get**         | `true` will request that the plugin publish a message to the `message` topic containing the current message JSON for the doorbell. See [Doorbell Messages](#doorbell-messages) for additional documentation.
+| **message/set**         | `{"message":"Some Message","duration":60}`. See [Doorbell Messages](#doorbell-messages) for additional documentation.
+|                         |
+| **motion/trigger**      | `true` will trigger a motion event on the camera or doorbell.
+|                         |
+| **rtsp/get**            | `true` will request that the plugin publish a message to the `rtsp` topic containing a JSON of RTSP URLs for the camera or doorbell.
+|                         |
+| **securitysystem/get**  | `true` will request that the plugin publish the current state of the security system to the `securitysystem` topic.
+| **securitysystem/set**  | One of `AlarmOff`, `AlarmOn`, `Away`, `Home`, `Night`, `Off`. This will set the respective state on the security system accessory.
+|                         |
+| **snapshot/trigger**    | `true` will trigger the camera or doorbell to generate a snapshot.
 
 #### <A NAME="doorbell-messages"></A>Doorbell Messages
 Doorbell messages are a fun feature available in UniFi Protect doorbells. You can read the [doorbell documentation](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/Doorbell.md) for more information about what the feature is and how it works.
 
-Doorbell messages are published to MQTT using the topic `message`. `homebridge-unifi-protect2` will publish the following JSON every time it sets a message to the `message` topic:
+Doorbell messages are published to MQTT using the topic `message`. `homebridge-unifi-protect2` will publish the following JSON every time the plugin sets a message to the `message` topic:
 
 ```js
 { "message": "Some Message", "duration": 60}
@@ -65,7 +93,7 @@ Doorbell messages are published to MQTT using the topic `message`. `homebridge-u
 
 | Property          | Description
 |-------------------|----------------------------------
-| `message`         | This contains the message that's set on the doorbell.
+| `message`         | This contains the message that's set on the doorbell. An empty message, `""`, will reset the message display on the doorbell.
 | `duration`        | This contains the duration that the message is set for, in seconds.
 
 The accepted values for `duration` are:
@@ -76,7 +104,9 @@ The accepted values for `duration` are:
 | `number`          | This specifies that the message will be on the doorbell screen for `number` seconds, greater than 0.
 | none              | A missing duration property will use the UniFi Protect default value of 60 seconds.
 
-`homebridge-unifi-protect2` subscribes to messages on `message/set`. If you publish an MQTT message to `message/set` containing a JSON using the above format, you can set the message on the doorbell LCD. This should provide the ability to arbitrarily set any message on the doorbell, programmatically.
+`homebridge-unifi-protect2` subscribes to messages sent to the topic `message/set`. If you publish an MQTT message to the `message/set` topic containing a JSON using the above format, you can set the message on the doorbell LCD. This should provide the ability to arbitrarily set any message on the doorbell, programmatically.
+
+`homebridge-unifi-protect2` subscribes to messages sent to the topic `message/get`. If you publish an MQTT message containing `true` to the `message/get` topic, a message will be published to the `message` topic containing the current doorbell message and remaining duration in the JSON message format above.
 
 ### Some Fun Facts
 
