@@ -3,55 +3,42 @@
  * protect-liveviews.ts: Liveviews class for UniFi Protect.
  */
 import {
-  API,
   CharacteristicEventTypes,
   CharacteristicGetCallback,
   CharacteristicSetCallback,
   CharacteristicValue,
-  HAP,
-  Logging,
   PlatformAccessory
 } from "homebridge";
-import { ProtectApi } from "./protect-api";
+import { ProtectBase } from "./protect-accessory";
 import { ProtectNvr } from "./protect-nvr";
-import { ProtectPlatform } from "./protect-platform";
 import { ProtectSecuritySystem } from "./protect-securitysystem";
 import {
   ProtectCameraConfig,
-  ProtectNvrLiveviewConfig,
-  ProtectNvrOptions
+  ProtectNvrLiveviewConfig
 } from "./protect-types";
 import {
   PLATFORM_NAME,
   PLUGIN_NAME
 } from "./settings";
 
-export class ProtectLiveviews {
-  private api: API;
-  private config: ProtectNvrOptions;
-  private debug: (message: string, ...parameters: unknown[]) => void;
-  private hap: HAP;
+export class ProtectLiveviews extends ProtectBase {
+  private isMqttConfigured: boolean;
   private liveviews: ProtectNvrLiveviewConfig[] | undefined;
   private liveviewSwitches: PlatformAccessory[];
-  private log: Logging;
-  private nvr: ProtectNvr;
-  private nvrApi: ProtectApi;
-  private platform: ProtectPlatform;
+
   private securityAccessory: PlatformAccessory | null | undefined;
   private securitySystem: ProtectSecuritySystem | null;
 
-  // Create an instance of our liveviews capability.
-  constructor(protectNvr: ProtectNvr) {
-    this.api = protectNvr.platform.api;
-    this.config = protectNvr.config;
-    this.debug = protectNvr.platform.debug.bind(protectNvr.platform);
-    this.hap = protectNvr.platform.api.hap;
-    this.liveviews = protectNvr.nvrApi?.bootstrap?.liveviews;
+  // Configure our liveviews capability.
+  constructor(nvr: ProtectNvr) {
+
+    // Let the base class get us set up.
+    super(nvr);
+
+    // Initialize the class.
+    this.isMqttConfigured = false;
+    this.liveviews = this.nvrApi?.bootstrap?.liveviews;
     this.liveviewSwitches = [];
-    this.log = protectNvr.platform.log;
-    this.nvr = protectNvr;
-    this.nvrApi = protectNvr.nvrApi;
-    this.platform = protectNvr.platform;
     this.securityAccessory = null;
     this.securitySystem = null;
   }
@@ -60,7 +47,7 @@ export class ProtectLiveviews {
   public configureLiveviews(): void {
 
     // Do we have controller access?
-    if(!this.nvrApi?.bootstrap?.nvr) {
+    if(!this.nvrApi.bootstrap?.nvr) {
       return;
     }
 
@@ -68,6 +55,7 @@ export class ProtectLiveviews {
 
     this.configureSecuritySystem();
     this.configureSwitches();
+    this.configureMqtt();
   }
 
   // Configure the security system accessory.
@@ -225,17 +213,98 @@ export class ProtectLiveviews {
     }
   }
 
+  // Configure MQTT capabilities for the security system.
+  private configureMqtt(): void {
+
+    if(this.isMqttConfigured || !this.nvrApi.bootstrap?.nvr.mac) {
+      return;
+    }
+
+    this.isMqttConfigured = true;
+
+    // Return the current status of all the liveviews.
+    this.nvr.mqtt?.subscribe(this.nvrApi.bootstrap?.nvr.mac, "liveviews/get", (message: Buffer) => {
+
+      const value = message.toString().toLowerCase();
+
+      // When we get the right message, we return the list of liveviews.
+      if(value !== "true") {
+        return;
+      }
+
+      // Get the list of liveviews.
+      const liveviews = this.liveviewSwitches.map(x =>
+        ({ name: x.context.liveview as string, state: x.getService(this.hap.Service.Switch)?.getCharacteristic(this.hap.Characteristic.On).value }));
+
+      this.nvr.mqtt?.publish(this.nvrApi.bootstrap?.nvr.mac ?? "", "liveviews", JSON.stringify(liveviews));
+      this.log("%s: Liveview scenes list published via MQTT.", this.name());
+    });
+
+    // Set the status of one or more liveviews.
+    this.nvr.mqtt?.subscribe(this.nvrApi.bootstrap?.nvr.mac, "liveviews/set", (message: Buffer) => {
+
+      interface mqttLiveviewJSON {
+        name: string,
+        state: boolean
+      }
+
+      let incomingPayload;
+
+      // Catch any errors in parsing what we get over MQTT.
+      try {
+        incomingPayload = JSON.parse(message.toString()) as mqttLiveviewJSON[];
+
+        // Sanity check what comes in from MQTT to make sure it's what we want.
+        if(!(incomingPayload instanceof Array)) {
+          throw new Error("The JSON object is not in the expected format");
+        }
+
+      } catch(error) {
+
+        if(error instanceof SyntaxError) {
+          this.log("%s: Unable to process MQTT liveview setting: \"%s\". Error: %s.", this.name(), message.toString(), error.message);
+        } else {
+          this.log("%s: Unknown error has occurred: %s.", this.name(), error);
+        }
+
+        // Errors mean that we're done now.
+        return;
+      }
+
+      // Update state on the liveviews.
+      for(const entry of incomingPayload) {
+
+        // Lookup this liveview.
+        const accessory = this.liveviewSwitches.find((x: PlatformAccessory) => ((x.context?.liveview as string) ?? "").toUpperCase() === entry.name?.toUpperCase());
+
+        // If we can't find it, move on.
+        if(!accessory) {
+          continue;
+        }
+
+        // Set the switch state and update the switch in HomeKit.
+        this.setSwitchState(accessory, entry.state);
+        accessory.getService(this.hap.Service.Switch)?.getCharacteristic(this.hap.Characteristic.On).updateValue(accessory.context.switchState);
+        this.log("%s: Liveview scene updated via MQTT: %s.", this.name(), accessory.context.liveview);
+      }
+    });
+  }
+
   // Get the current liveview switch state.
   private getSwitchState(accessory: PlatformAccessory, callback: CharacteristicGetCallback): void {
     callback(null, accessory.context.switchState);
   }
 
   // Toggle the liveview switch state.
-  private setSwitchState(liveviewSwitch: PlatformAccessory, value: CharacteristicValue, callback: CharacteristicSetCallback): void {
+  private setSwitchState(liveviewSwitch: PlatformAccessory, value: CharacteristicValue, callback?: CharacteristicSetCallback): void {
 
     // We don't have any liveviews or we're already at this state - we're done.
     if(!this.nvrApi.bootstrap || !this.liveviews || (liveviewSwitch.context.switchState === value)) {
-      callback(null);
+
+      if(callback) {
+        callback(null);
+      }
+
       return;
     }
 
@@ -249,7 +318,11 @@ export class ProtectLiveviews {
 
     // Nothing configured for this view. We're done.
     if(!targetCameraIds.length) {
-      callback(null);
+
+      if(callback) {
+        callback(null);
+      }
+
       return;
     }
 
@@ -279,6 +352,13 @@ export class ProtectLiveviews {
     }
 
     liveviewSwitch.context.switchState = value === true;
-    callback(null);
+
+    if(callback) {
+      callback(null);
+    }
+
+    // Publish to MQTT, if configured.
+    this.nvr.mqtt?.publish(this.nvrApi.bootstrap?.nvr.mac ?? "", "liveviews",
+      JSON.stringify([{name: liveviewSwitch.context.liveview as string, state: liveviewSwitch.context.switchState as boolean}]));
   }
 }
