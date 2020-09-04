@@ -105,9 +105,7 @@ Audio on cameras is tricky in the HomeKit world to begin with, and when you thro
 ```
 
 ### Things to be aware of
-- **Beginning with v3.0, this plugin requires Homebridge v1.0 on greater to work. For some, this may be a breaking change if you are running on older versions of Homebridge.**
-
-- Also beginning with v3.0, the `platform` configuration block for this plugin in your Homebridge `config.json` has been renamed to `UniFi Protect` (and note that the name is case sensitive as well). See the [plugin configuration section below](#plugin-configuration) for details. **This is a breaking change for those upgrading from v2.x and you will need to update your `config.json` to reflect the updates or your homebridge installation may not start properly**.
+- **Beginning with v3.6.0, this plugin requires Homebridge v1.1.3 on greater to work. For some, this may be a breaking change if you are running on older versions of Homebridge.**
 
 ## Plugin configuration
 If you choose to configure this plugin directly instead of using the [Homebridge Configuration web UI](https://github.com/oznu/homebridge-config-ui-x), you'll need to add the platform to your `config.json` in your home directory inside `.homebridge`.
