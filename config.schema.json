@@ -151,11 +151,11 @@
         "description": "Duration of a single motion event. Setting this too low will potentially cause a lot of excess notifications. Default: 10."
       },
 
-      "debug": {
+      "verboseFfmpeg": {
         "type": "boolean",
-        "title": "Debug Logging",
+        "title": "Verbose FFmpeg Logging",
         "required": false,
-        "description": "Enable additional debug logging for this plugin. This will create a lot of logging. Default: false."
+        "description": "Enable additional logging for FFmpeg. This will create a lot of logging when video streams are running. Default: false."
       }
     }
   },
@@ -270,7 +270,7 @@
             "videoProcessor",
             "ffmpegOptions",
             "motionDuration",
-            "debug"
+            "verboseFfmpeg"
           ]
         }
       ]
