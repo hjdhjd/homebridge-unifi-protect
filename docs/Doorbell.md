@@ -147,7 +147,7 @@ There are also two Fature Options that you can use to either disable the message
 To learn more about Feature Options and how to use them, see the [Feature Options](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/FeatureOptions.md) page.
 
 #### MQTT Support
-[MQTT support](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/MQTT.md) is available for doorbells. In addition to all the MQTT functionality that is supported for all UniFi Protect cameras, there are two doorbell-specific MQTT messages that are supported:
+[MQTT support](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/MQTT.md) is available for doorbells. In addition to all the MQTT functionality that is supported for all UniFi Protect cameras, there are two doorbell-specific MQTT actions that are supported:
 
   * When the doorbell is rung, a message will be published to MQTT.
   * You can set Doorbell messages through MQTT. This provides a more rich experience by allowing you to set any arbitrary message on a dynamic basis.
