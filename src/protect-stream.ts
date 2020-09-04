@@ -26,14 +26,12 @@ import {
   StreamRequestCallback,
   StreamRequestTypes
 } from "homebridge";
-import os from "os";
 import { ProtectCamera } from "./protect-camera";
 import { FfmpegProcess } from "./protect-ffmpeg";
 import { ProtectPlatform } from "./protect-platform";
 import { RtpSplitter, RtpUtils } from "./protect-rtp";
 import { ProtectCameraConfig, ProtectOptions } from "./protect-types";
 import { PROTECT_FFMPEG_VERBOSE_DURATION } from "./settings";
-import { networkInterfaceDefault } from "systeminformation";
 
 // Increase the listener limits to support Protect installations with more than 10 cameras. 100 seems like a reasonable default.
 // eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-unsafe-member-access
@@ -217,17 +215,8 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       audioSSRC: audioSSRC
     };
 
-    // Grab our IP address. This is no longer needed in homebridge 1.1.3 and beyond - it handles this for us.
-    const currentAddress = await this.getDefaultIpAddress(request.addressVersion);
-
-    if(!currentAddress) {
-      callback(new Error("Unable to determine the right IP address to use. This is likely due to running homebridge in an environment with multiple NICs."));
-      return;
-    }
-
     // Prepare the response stream.
     const response: PrepareStreamResponse = {
-      address: currentAddress,
 
       video: {
         port: videoReturnPort,
@@ -564,31 +553,5 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       PROTECT_FFMPEG_VERBOSE_DURATION);
 
     this.platform.verboseFfmpeg = true;
-  }
-
-  // Utility function to grab the default external IP address.
-  private async getDefaultIpAddress(addressVersion: ("ipv6" | "ipv4")): Promise<string | null> {
-
-    const interfaceName = await networkInterfaceDefault();
-    const interfaces = os.networkInterfaces();
-
-    // Find all the external interfaces.
-    const externalInfo = interfaces[interfaceName]?.filter((info) => {
-      return !info.internal;
-    });
-
-    // Which IP version are we looking for?
-    const preferredFamily = addressVersion === "ipv6" ? "IPv6" : "IPv4";
-
-    // Get the address information.
-    const addressInfo = externalInfo?.find((info) => {
-      return info.family === preferredFamily;
-    }) || externalInfo?.[0];
-
-    if(!addressInfo) {
-      return null;
-    }
-
-    return addressInfo.address;
   }
 }
