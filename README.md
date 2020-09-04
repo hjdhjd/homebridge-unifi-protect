@@ -58,6 +58,7 @@ I hope to continue to work on this one to get AEC working for two-way audio. [Yo
 * Getting going
   * [Installation](#installation): installing this plugin, including system requirements.
   * [Plugin Configuration](#plugin-configuration): how to quickly get up and running.
+  * [Troubleshooting](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/Troubleshooting.md): run into login problems or streaming problems? Give this a read.
 * Advanced Topics
   * [Autoconfiguration](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/Autoconfiguration.md): what it is, design choices that I've made, and why.
   * [Feature Options](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/FeatureOptions.md): granular options to allow you to set the camera quality individually, show or hide specific cameras, controllers, and more.
