@@ -49,7 +49,14 @@ These Feature Options are available on ***all*** UniFi Protect devices available
 | `Enable.TwoWayAudio`                          | Enable two-way audio support using the Home app for supported cameras and doorbells (G3 Micro and G4 Doorbell, currently). *(Default)*<BR>**Note that acoustic echo cancellation (AEC) is not currently available and you *will* hear an echo when using the Home app, however those standing at the doorbell (or camera) will hear things correctly.**</BR>
 | `Disable.TwoWayAudio`                         | Disable two-way audio support.
 
-In addition to the Feature Options available to all UniFi Protect devices, these are available for UniFi Protect doorbell devices:
+In addition to the Feature Options available to all UniFi Protect devices, these are available for UniFi Protect controllers:
+
+| Option                                        | Description
+|-----------------------------------------------|----------------------------------
+| `Enable.SecurityAlarm`                        | Enable a switch that can trigger the security alarm on the security system accessory. This requires configuring [liveview scenes](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/Liveviews.md#security-system) in order to enable to security system accessory.
+| `Disable.SecurityAlarm`                       | Remove the security alarm switch on the security system accessory. *(Default)*
+
+In addition to the Feature Options available to all UniFi Protect devices, these are available for UniFi Protect [doorbells](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/Doorbell.md):
 
 | Option                                        | Description
 |-----------------------------------------------|----------------------------------
