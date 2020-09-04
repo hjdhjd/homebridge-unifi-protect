@@ -151,7 +151,7 @@ export class ProtectMqtt {
 
     const expandedTopic = this.config.mqttTopic + "/" + mac + "/" + topic;
 
-    this.log("%s: MQTT subscribe: %s.", this.nvrApi.getNvrName(), expandedTopic);
+    this.debug("%s: MQTT subscribe: %s.", this.nvrApi.getNvrName(), expandedTopic);
 
     // Add to our callback list.
     this.subscriptions[expandedTopic] = callback;
