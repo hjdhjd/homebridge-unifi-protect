@@ -31,5 +31,5 @@ For example, we default the UVC G4 Pro camera to a medium quality stream (1280x7
 | UVC G4 Bullet          | Medium, Low, High
 | All others             | High, Medium, Low
 
-Of course, you can override any of the defaults to your liking (see [feature options](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/FeatureOptions.md) for more detail).
+Of course, you can override any of the defaults to your liking (see [Feature Options](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/FeatureOptions.md) for more detail).
 
