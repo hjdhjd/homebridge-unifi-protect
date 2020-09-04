@@ -1,6 +1,6 @@
 {
   "name": "homebridge-unifi-protect2",
-  "version": "3.5.1",
+  "version": "3.6.0",
   "displayName": "Homebridge UniFi Protect",
   "description": "Complete HomeKit integration for UniFi Protect with full support for most features including autoconfiguration, motion detection, and multiple controllers.",
   "author": "HJD https://github.com/hjdhjd",
@@ -45,7 +45,7 @@
     "uvc g4 pro"
   ],
   "engines": {
-    "homebridge": ">=1.1.0"
+    "homebridge": ">=1.1.3"
   },
   "scripts": {
     "build": "rimraf ./dist && tsc",
@@ -66,23 +66,22 @@
   "main": "dist/index.js",
   "devDependencies": {
     "@types/ip": "^1.1.0",
-    "@types/node": "^14.6.1",
+    "@types/node": "^14.6.4",
     "@types/node-fetch": "^2.5.7",
     "@types/ws": "^7.2.6",
-    "@typescript-eslint/eslint-plugin": "^3.10.1",
-    "@typescript-eslint/parser": "^3.10.1",
-    "eslint": "^7.7.0",
-    "homebridge": "^1.1.2",
+    "@typescript-eslint/eslint-plugin": "^4.0.1",
+    "@typescript-eslint/parser": "^4.0.1",
+    "eslint": "^7.8.1",
+    "homebridge": "^1.1.3",
     "rimraf": "^3.0.2",
     "typescript": "^4.0.2"
   },
   "dependencies": {
     "execa": "^4.0.3",
-    "ffmpeg-for-homebridge": "0.0.7",
+    "ffmpeg-for-homebridge": "0.0.9",
     "get-port": "^5.1.1",
     "mqtt": "^4.2.1",
     "node-fetch": "^2.6.0",
-    "systeminformation": "^4.27.3",
     "ws": "^7.3.1"
   }
 }

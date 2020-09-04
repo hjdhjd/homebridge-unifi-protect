@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 3.6.0
+  * **This version requires homebridge 1.1.3 or greater. Video streaming will not work unless you upgrade your homebridge version.** The updated version of homebridge resolves a long-standing issue relating to those who can get snapshots but not stream video. The source of the issue is related to network interface and IP address confusion that should now be resolved.
+  * New feature: Motion trigger switches. You can automate the triggering of a motion event. See the new `MotionTrigger` [feature option](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/FeatureOptions.md) for details.
+  * Enhancement: Security system alarm support. You can now optionally add in support for setting and clearing alarm states on the security system accessory. See the [liveview scenes documentation](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/Liveviews.md#security-system) for more details.
+  * Enhancement: Significant update in MQTT capabilities. Get snapshots, the current message on a doorbell, or trigger a motion event...and more. For more details, [read here](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/MQTT.md).
+  * Added documentation for troubleshooting.
+
 ## 3.5.1 (2020-08-27)
   * Minor fixes and address a potential ffmpeg edge case.
 
@@ -10,12 +17,12 @@ All notable changes to this project will be documented in this file. This projec
   * Enhancement: Improved default network interface detection.
 
 ## 3.4.0 (2020-08-22)
-  * New feature: Complete doorbell message support. For those who have G4 Doorbells, you now have the ability to set the message on the doorbell from within HomeKit. TL;DR - a switch will appear on your doorbell for each message that's configured. [Full details here] (https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/Doorbell.md). Oh...and you can use MQTT to set arbitrary doorbell message too. :smile:
-  * New feature: You can now create HomeKit automations based on doorbell ring events. This feature really should exist in HomeKit, but unfortunately Apple doesn't allow you to create automations for doorbell ring events. [Full details here] (https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/Doorbell.md).
+  * New feature: Complete doorbell message support. For those who have G4 Doorbells, you now have the ability to set the message on the doorbell from within HomeKit. TL;DR - a switch will appear on your doorbell for each message that's configured. [Full details here](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/Doorbell.md). Oh...and you can use MQTT to set arbitrary doorbell message too. :smile:
+  * New feature: You can now create HomeKit automations based on doorbell ring events. This feature really should exist in HomeKit, but unfortunately Apple doesn't allow you to create automations for doorbell ring events. [Full details here](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/Doorbell.md).
   * Minor housekeeping throughout the plugin.
 
 ## 3.3.2 (2020-08-18)
-  * Houskeeping updates to the plugin configuration webUI and streaming.
+  * Housekeeping updates to the plugin configuration webUI and streaming.
 
 ## 3.3.1 (2020-08-18)
   * Enhancement: publish motion sensor reset events to MQTT.
