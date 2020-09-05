@@ -19,13 +19,20 @@
 
 [MQTT](https://mqtt.org) is a popular Internet of Things (IoT) messaging protocol that can be used to weave together different smart devices and orchestrate or instrument them in an infinite number of ways. In short - it lets things that might not normally be able to talk to each other communicate across ecosystems, provided they can support MQTT.
 
-I've provided MQTT support for those that are interested - I'm genuinely curious, if not a bit skeptical, at how many people actually want to use this capability. MQTT has a lot of nerd-credibility, and it was a fun small side project to mess around with. :smile:
+I've provided MQTT support for those that are interested - I'm genuinely curious, if not a bit skeptical, at how many people actually want to use this capability. MQTT has a lot of nerd-credibility, and it was a fun side project to mess around with. :smile:
+
+`homebridge-unifi-protect2` will publish MQTT events if you've configured a broker in the controller-specific settings. The plugin supports a rich set of capabilities over MQTT. This includes:
+
+  * Camera-specific RTSP information.
+  * Doorbell message events. See [doorbell message events](#doorbell-messages) for additional details.
+  * Doorbell ring events.
+  * Liveview-related events, including the security system accessory and security alarm.
+  * Motion events.
+  * Snapshot events,including publishing the actual images over MQTT.
 
 ### How to configure and use this feature
 
 This documentation assumes you know what MQTT is, what an MQTT broker does, and how to configure it. Setting up an MQTT broker is beyond the scope of this documentation. There are plenty of guides available on how to do so just a search away.
-
-`homebridge-unifi-protect2` will publish MQTT events if you've configured a broker in the controller-specific settings. We currently support publishing doorbell rings and motion sensor events over MQTT, and we publish and subscribe to [doorbell message events](#doorbell-messages).
 
 You configure MQTT settings within a `controller` configuration block. The settings are:
 
@@ -45,6 +52,7 @@ unifi/protect/ABCDEF123456/doorbell
 
 In the above examples, `1234567890AB` and `ABCDEF123456` are the MAC addresses of your cameras or doorbells. We use MAC addresses as an easy way to guarantee unique identifiers that won't change. `homebridge-unifi-protect2` provides you information about your cameras and their respective MAC addresses in the homebridge log on startup. Additionally, you can use the UniFi Protect app or webUI to lookup what the MAC addresses are of your cameras, should you need to do so.
 
+### <A NAME="publish"></A>Topics Published
 The topics and messages that `homebridge-unifi-protect2` publishes are:
 
 | Topic                 | Message Published
@@ -63,15 +71,18 @@ The topics and messages that `homebridge-unifi-protect2` publishes are:
 |                       |
 | **snapshot**          | A [data URL](https://developer.mozilla.org/en-US/docs/Web/HTTP/Basics_of_HTTP/Data_URIs) containing a base64-encoded JPEG of the snapshot that was requested (either by HomeKit or MQTT).
 
+Messages are published to MQTT when an action occurs on a camera, controller, or doorbell that triggers the respective event, or when an MQTT message is received for one of the topics `homebridge-unifi-protect2` subscribes to. For example, snapshot images are published every time HomeKit requests a snapshot as well as when a request is received through MQTT to trigger a new snapshot.
+
+### <A NAME="subscribe"></A>Topics Subscribed
 The topics that `homebridge-unifi-protect2` subscribes to are:
 
 | Topic                   | Message Expected
 |-------------------------|----------------------------------
 | **liveviews/get**       | `true` will request that the plugin publish the current state of all liveviews to the `liveviews` topic.
-| **liveviews/set**       | An array in the format `[{"name": "view1", "state": true }, ...]` This will activate or deactivate one of more liveviews, depending on the respective state.
+| **liveviews/set**       | A JSON-compatible array in the format `[{"name": "view1", "state": true }, ...]` This will activate or deactivate one of more liveviews, depending on the respective state.
 |                         |
 | **message/get**         | `true` will request that the plugin publish a message to the `message` topic containing the current message JSON for the doorbell. See [Doorbell Messages](#doorbell-messages) for additional documentation.
-| **message/set**         | `{"message":"Some Message","duration":60}`. See [Doorbell Messages](#doorbell-messages) for additional documentation.
+| **message/set**         | A JSON in the format `{"message":"Some Message","duration":60}`. See [Doorbell Messages](#doorbell-messages) for additional documentation.
 |                         |
 | **motion/trigger**      | `true` will trigger a motion event on the camera or doorbell.
 |                         |
@@ -114,3 +125,4 @@ The accepted values for `duration` are:
   * MQTT is configured per-controller. This allows you to have different MQTT brokers for different Protect controllers, if needed.
   * If connectivity to the broker is lost, it will perpetually retry to connect in one-minute intervals.
   * If a bad URL is provided, MQTT support will not be enabled.
+  * Some messages are controller-specific, such as those for the liveviews and securitysystem topics. To use these topics, make sure you use the controller MAC address when you create your topic strings.
