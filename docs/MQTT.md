@@ -28,7 +28,7 @@ I've provided MQTT support for those that are interested - I'm genuinely curious
   * Doorbell ring events.
   * Liveview-related events, including the security system accessory and security alarm.
   * Motion events.
-  * Snapshot events,including publishing the actual images over MQTT.
+  * Snapshot events, including publishing the actual images over MQTT.
 
 ### How to configure and use this feature
 
