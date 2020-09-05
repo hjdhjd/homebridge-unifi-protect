@@ -431,7 +431,7 @@ export class ProtectCamera extends ProtectAccessory {
         return;
       }
 
-      void this.stream?.getSnapshot({ width: 0, height: 0 });
+      void this.stream?.getSnapshot();
       this.log("%s: Snapshot triggered via MQTT.", this.name());
     });
 
