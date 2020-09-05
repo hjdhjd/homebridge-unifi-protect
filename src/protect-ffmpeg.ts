@@ -26,7 +26,7 @@ export class FfmpegProcess {
   private sessionId: string;
   private timeout?: NodeJS.Timeout;
 
-  constructor(delegate: ProtectStreamingDelegate, sessionId: string, command: string, returnPort?: PortInterface, callback?: StreamRequestCallback) {
+  constructor(delegate: ProtectStreamingDelegate, sessionId: string, command: string[], returnPort?: PortInterface, callback?: StreamRequestCallback) {
 
     this.debug = delegate.platform.debug.bind(this);
     this.delegate = delegate;
@@ -79,13 +79,13 @@ export class FfmpegProcess {
   }
 
   // Start our FFmpeg process.
-  private async startFfmpeg(ffmpegCommandLine: string, callback?: StreamRequestCallback): Promise<void> {
+  private async startFfmpeg(ffmpegCommandLine: string[], callback?: StreamRequestCallback): Promise<void> {
 
     // Track if we've started receiving data.
     let started = false;
 
     // Prepare the command line we want to execute.
-    this.process = execa.command(this.delegate.videoProcessor + " " + ffmpegCommandLine);
+    this.process = execa(this.delegate.videoProcessor, ffmpegCommandLine);
 
     // Handle errors on stdin.
     this.process.stdin?.on("error", (error: Error) => {

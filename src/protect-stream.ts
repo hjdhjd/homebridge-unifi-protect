@@ -132,42 +132,20 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   }
 
   // HomeKit image snapshot request handler.
-  public async handleSnapshotRequest(request: SnapshotRequest, callback: SnapshotRequestCallback | null): Promise<void> {
-    const params = new URLSearchParams({ force: "true", width: request.width.toString(), height: request.height.toString() });
+  public async handleSnapshotRequest(request: SnapshotRequest, callback: SnapshotRequestCallback): Promise<void> {
 
-    this.debug("%s: HomeKit snapshot request: %sx%s. Retrieving image from Protect: %s?%s",
-      this.protectCamera.name(), request.width, request.height, this.protectCamera.snapshotUrl, params);
+    const snapshot = await this.getSnapshot(request);
 
-    const response = await this.protectCamera.nvr.nvrApi.fetch(this.protectCamera.snapshotUrl + "?" + params.toString(), { method: "GET" }, true, false);
-
-    if(!response?.ok) {
-      this.log("%s: Unable to retrieve snapshot.", this.protectCamera.name());
-      if(callback) {
-        callback(new Error(this.name + ": Unable to retrieve snapshot."));
-      }
+    if(!snapshot) {
+      callback(new Error(this.name + ": Unable to retrieve snapshot."));
       return;
     }
 
-    try {
+    // Return the image to HomeKit.
+    callback(undefined, snapshot);
 
-      // Process the image and send it to HomeKit.
-      const buffer = await response.buffer();
-
-      if(callback) {
-        callback(undefined, buffer);
-      }
-
-      // Publish the snapshot as a data URL to MQTT, if configured.
-      this.protectCamera.nvr.mqtt?.publish(this.protectCamera.accessory, "snapshot", "data:image/jpeg;base64," + buffer.toString("base64"));
-
-    } catch(error) {
-
-      this.log.error("%s: An error occurred while making a snapshot request: %s.", this.protectCamera.name(), error);
-
-      if(callback) {
-        callback(error);
-      }
-    }
+    // Publish the snapshot as a data URL to MQTT, if configured.
+    this.protectCamera.nvr.mqtt?.publish(this.protectCamera.accessory, "snapshot", "data:image/jpeg;base64," + snapshot.toString("base64"));
   }
 
   // Prepare to launch the video stream.
@@ -273,7 +251,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     const audiomtu = 188 * 1;
 
     // -rtsp_transport tcp: tell the RTSP stream handler that we're looking for a TCP connection.
-    let fcmd = "-hide_banner -rtsp_transport tcp -i " + this.protectCamera.cameraUrl;
+    const fcmd = [ "-hide_banner", "-rtsp_transport", "tcp", "-i", this.protectCamera.cameraUrl ];
 
     this.log("%s: HomeKit video stream request received: %sx%s, %s fps, %s kbps.",
       this.protectCamera.name(), request.video.width, request.video.height, request.video.fps, request.video.max_bit_rate);
@@ -293,18 +271,17 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     //                    create a constant bitrate.
     // -payload_type num  payload type for the RTP stream. This is negotiated by HomeKit and is usually 99 for H.264 video.
     const ffmpegVideoArgs = [
-      "",
-      "-map 0:v",
-      "-vcodec copy",
-      "-f rawvideo",
-      "-pix_fmt yuvj420p",
-      "-r " + request.video.fps.toString(),
-      this.platform.config.ffmpegOptions,
-      "-b:v " + request.video.max_bit_rate.toString() + "k",
-      "-bufsize " + (2 * request.video.max_bit_rate).toString() + "k",
-      "-maxrate " + request.video.max_bit_rate.toString() + "k",
-      "-payload_type " + request.video.pt.toString()
-    ].join(" ");
+      "-map", "0:v",
+      "-vcodec", "copy",
+      "-f", "rawvideo",
+      "-pix_fmt", "yuvj420p",
+      "-r", request.video.fps.toString(),
+      ...this.platform.config.ffmpegOptions.split(" "),
+      "-b:v", request.video.max_bit_rate.toString() + "k",
+      "-bufsize", (2 * request.video.max_bit_rate).toString() + "k",
+      "-maxrate", request.video.max_bit_rate.toString() + "k",
+      "-payload_type", request.video.pt.toString()
+    ];
 
     // Add the required RTP settings and encryption for the stream:
     // -ssrc                   synchronization source stream identifier. Random number negotiated by HomeKit to identify this stream.
@@ -312,18 +289,16 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     // -srtp_out_suite enc     specify the output encryption encoding suites.
     // -srtp_out_params params specify the output encoding parameters. This is negotiated by HomeKit.
     const ffmpegVideoStream = [
-      "",
-      "-ssrc " + sessionInfo.videoSSRC.toString(),
-      "-f rtp",
-      "-srtp_out_suite AES_CM_128_HMAC_SHA1_80",
-      "-srtp_out_params " + sessionInfo.videoSRTP.toString("base64"),
+      "-ssrc", sessionInfo.videoSSRC.toString(),
+      "-f", "rtp",
+      "-srtp_out_suite", "AES_CM_128_HMAC_SHA1_80",
+      "-srtp_out_params", sessionInfo.videoSRTP.toString("base64"),
       "srtp://" + sessionInfo.address + ":" + sessionInfo.videoPort.toString() + "?rtcpport=" + sessionInfo.videoPort.toString() +
       "&localrtcpport=" + sessionInfo.videoPort.toString() + "&pkt_size=" + videomtu.toString()
-    ].join(" ");
+    ];
 
     // Assemble the final video command line.
-    fcmd += ffmpegVideoArgs;
-    fcmd += ffmpegVideoStream;
+    fcmd.push(...ffmpegVideoArgs, ...ffmpegVideoStream);
 
     // Configure the audio portion of the command line, if we have a version of FFmpeg supports libfdk_aac. Options we use are:
     //
@@ -344,18 +319,17 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
       // Configure our video parameters.
       const ffmpegAudioArgs = [
-        "",
-        "-map 0:a",
-        "-acodec libfdk_aac",
-        "-profile:a aac_eld",
-        "-flags +global_header",
-        "-f null",
-        "-ar " + request.audio.sample_rate.toString() + "k",
-        "-b:a " + request.audio.max_bit_rate.toString() + "k",
-        "-bufsize " + (2 * request.audio.max_bit_rate).toString() + "k",
-        "-ac 1",
-        "-payload_type " + request.audio.pt.toString()
-      ].join(" ");
+        "-map", "0:a",
+        "-acodec", "libfdk_aac",
+        "-profile:a", "aac_eld",
+        "-flags", "+global_header",
+        "-f", "null",
+        "-ar", request.audio.sample_rate.toString() + "k",
+        "-b:a", request.audio.max_bit_rate.toString() + "k",
+        "-bufsize", (2 * request.audio.max_bit_rate).toString() + "k",
+        "-ac", "1",
+        "-payload_type", request.audio.pt.toString()
+      ];
 
       // Add the required RTP settings and encryption for the stream:
       // -ssrc                   synchronization source stream identifier. Random number negotiated by HomeKit to identify this stream.
@@ -363,24 +337,22 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       // -srtp_out_suite enc     specify the output encryption encoding suites.
       // -srtp_out_params params specify the output encoding parameters. This is negotiated by HomeKit.
       const ffmpegAudioStream = [
-        "",
-        "-ssrc " + sessionInfo.audioSSRC.toString(),
-        "-f rtp",
-        "-srtp_out_suite AES_CM_128_HMAC_SHA1_80",
-        "-srtp_out_params " + sessionInfo.audioSRTP.toString("base64"),
+        "-ssrc", sessionInfo.audioSSRC.toString(),
+        "-f", "rtp",
+        "-srtp_out_suite", "AES_CM_128_HMAC_SHA1_80",
+        "-srtp_out_params", sessionInfo.audioSRTP.toString("base64"),
         "srtp://" + sessionInfo.address + ":" + sessionInfo.audioPort.toString() + "?rtcpport=" + sessionInfo.audioPort.toString() +
         "&localrtcpport=" + sessionInfo.audioPort.toString() + "&pkt_size=" + audiomtu.toString()
-      ].join(" ");
+      ];
 
-      fcmd += ffmpegAudioArgs;
-      fcmd += ffmpegAudioStream;
+      fcmd.push(...ffmpegAudioArgs, ...ffmpegAudioStream);
     }
 
     // Additional logging, but only if we're debugging.
     if(this.platform.verboseFfmpeg) {
-      fcmd += " -loglevel level+verbose";
+      fcmd.push("-loglevel", "level+verbose");
     } else if(this.platform.debugMode) {
-      fcmd += " -loglevel level+debug";
+      fcmd.push("-loglevel", "level+debug");
     }
 
     // Combine everything and start an instance of FFmpeg.
@@ -441,27 +413,27 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     // -b:a bitrate          bitrate to use for this audio. This is specified by Protect.
     // -ac 1                 set the number of audio channels to 1. This is specified by Protect.
     // -f adts               transmit an ADTS stream.
-    let ffmpegReturnAudioCmd = [
+    const ffmpegReturnAudioCmd = [
       "-hide_banner",
-      "-protocol_whitelist pipe,udp,rtp,file,crypto",
-      "-f sdp",
-      "-acodec libfdk_aac",
-      "-i pipe:0",
-      "-map 0:a",
-      "-acodec " + camera.talkbackSettings.typeFmt,
-      "-flags +global_header",
-      "-ar " + camera.talkbackSettings.samplingRate.toString(),
-      "-b:a 64k",
-      "-ac " + camera.talkbackSettings.channels.toString(),
-      "-f adts",
+      "-protocol_whitelist", "pipe,udp,rtp,file,crypto",
+      "-f", "sdp",
+      "-acodec", "libfdk_aac",
+      "-i", "pipe:0",
+      "-map", "0:a",
+      "-acodec", camera.talkbackSettings.typeFmt,
+      "-flags", "+global_header",
+      "-ar", camera.talkbackSettings.samplingRate.toString(),
+      "-b:a", "64k",
+      "-ac", camera.talkbackSettings.channels.toString(),
+      "-f", "adts",
       "udp://" + camera.host + ":" + camera.talkbackSettings.bindPort.toString()
-    ].join(" ");
+    ];
 
     // Additional logging, but only if we're debugging.
     if(this.platform.verboseFfmpeg) {
-      ffmpegReturnAudioCmd += " -loglevel level+verbose";
+      ffmpegReturnAudioCmd.push("-loglevel", "level+verbose");
     } else if(this.platform.debugMode) {
-      ffmpegReturnAudioCmd += " -loglevel level+debug";
+      ffmpegReturnAudioCmd.push("-loglevel", "level+debug");
     }
 
     const ffmpegReturnAudio = new FfmpegProcess(this, request.sessionID, ffmpegReturnAudioCmd);
@@ -494,6 +466,37 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
         this.stopStream(request.sessionID);
         callback();
         break;
+    }
+  }
+
+  // Take a snapshot.
+  public async getSnapshot(request?: SnapshotRequest): Promise<Buffer | null> {
+
+    const params = new URLSearchParams({ force: "true" });
+
+    // If we have details of the snapshot request, use it to request the right size.
+    if(request) {
+      params.append("width", request.width.toString());
+      params.append("height", request.height.toString());
+    }
+
+    // Request the image.
+    const response = await this.protectCamera.nvr.nvrApi.fetch(this.protectCamera.snapshotUrl + "?" + params.toString(), { method: "GET" }, true, false);
+
+    if(!response?.ok) {
+      this.log("%s: Unable to retrieve snapshot.", this.protectCamera.name());
+      return null;
+    }
+
+    try {
+
+      // Process and return the image.
+      return await response.buffer();
+
+    } catch(error) {
+
+      this.log.error("%s: An error occurred while making a snapshot request: %s.", this.protectCamera.name(), error);
+      return null;
     }
   }
 
