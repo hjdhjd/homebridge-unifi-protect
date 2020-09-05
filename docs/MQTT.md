@@ -93,7 +93,9 @@ The topics that `homebridge-unifi-protect2` subscribes to are:
 |                         |
 | **snapshot/trigger**    | `true` will trigger the camera or doorbell to generate a snapshot.
 
-#### <A NAME="doorbell-messages"></A>Doorbell Messages
+Some messages, such as those for the liveviews and securitysystem topics, are controller-specific. To use these topics, make sure you use the controller MAC address when you create your topic strings.
+
+### <A NAME="doorbell-messages"></A>Doorbell Messages
 Doorbell messages are a fun feature available in UniFi Protect doorbells. You can read the [doorbell documentation](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/Doorbell.md) for more information about what the feature is and how it works.
 
 Doorbell messages are published to MQTT using the topic `message`. `homebridge-unifi-protect2` will publish the following JSON every time the plugin sets a message to the `message` topic:
@@ -120,9 +122,7 @@ The accepted values for `duration` are:
 `homebridge-unifi-protect2` subscribes to messages sent to the topic `message/get`. If you publish an MQTT message containing `true` to the `message/get` topic, a message will be published to the `message` topic containing the current doorbell message and remaining duration in the JSON message format above.
 
 ### Some Fun Facts
-
   * MQTT support is disabled by default. It's enabled when an MQTT broker is specified in the configuration.
   * MQTT is configured per-controller. This allows you to have different MQTT brokers for different Protect controllers, if needed.
   * If connectivity to the broker is lost, it will perpetually retry to connect in one-minute intervals.
   * If a bad URL is provided, MQTT support will not be enabled.
-  * Some messages are controller-specific, such as those for the liveviews and securitysystem topics. To use these topics, make sure you use the controller MAC address when you create your topic strings.
