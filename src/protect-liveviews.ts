@@ -25,7 +25,6 @@ export class ProtectLiveviews extends ProtectBase {
   private isMqttConfigured: boolean;
   private liveviews: ProtectNvrLiveviewConfig[] | undefined;
   private liveviewSwitches: PlatformAccessory[];
-
   private securityAccessory: PlatformAccessory | null | undefined;
   private securitySystem: ProtectSecuritySystem | null;
 
