@@ -5,10 +5,10 @@ All notable changes to this project will be documented in this file. This projec
 ## 3.6.2 (2020-09-05)
   * Minor bugfixes and dependency updates.
 
-## 3.6.1 (2020-09-03)
+## 3.6.1 (2020-09-04)
   * Update to support older versions of Node.
 
-## 3.6.0 (2020-09-03)
+## 3.6.0 (2020-09-04)
   * **This version requires homebridge 1.1.3 or greater. Video streaming will not work unless you upgrade your homebridge version.** The updated version of homebridge resolves a long-standing issue relating to those who can get snapshots but not stream video. The source of the issue is related to network interface and IP address confusion that should now be resolved.
   * New feature: Motion trigger switches. You can automate the triggering of a motion event. See the new `MotionTrigger` [feature option](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/FeatureOptions.md) for details.
   * Enhancement: Security system alarm support. You can now optionally add in support for setting and clearing alarm states on the security system accessory. See the [liveview scenes documentation](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/Liveviews.md#security-system) for more details.
