@@ -541,14 +541,14 @@ export class ProtectNvr {
   }
 
   // Periodically poll the Protect API for status.
-  public async poll(refresh: number): Promise<void> {
+  public async poll(): Promise<void> {
 
     // Loop forever.
     for(;;) {
 
       // Sleep until our next update.
       // eslint-disable-next-line no-await-in-loop
-      await this.sleep(refresh * 1000);
+      await this.sleep(this.refreshInterval * 1000);
 
       // Refresh our Protect device information and gracefully handle Protect errors.
       // eslint-disable-next-line no-await-in-loop

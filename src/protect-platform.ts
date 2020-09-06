@@ -131,7 +131,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
   private pollControllers(): void {
 
     for(const controller of this.controllers) {
-      void controller.poll(0);
+      void controller.poll();
     }
   }
 
