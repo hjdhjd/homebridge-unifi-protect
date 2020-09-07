@@ -273,7 +273,7 @@ export class ProtectNvr {
     // in order to determine where there is motion.
     for(const camera of this.nvrApi.Cameras) {
       // We only want cameras that are managed.
-      if(!camera.isManaged) {
+      if(!camera.isManaged || !camera.lastRing) {
         continue;
       }
 
@@ -465,7 +465,7 @@ export class ProtectNvr {
   }
 
   // Doorbell event processing from UniFi Protect and delivered to HomeKit.
-  private doorbellEventHandler(accessory: PlatformAccessory, lastRing: number): void {
+  private doorbellEventHandler(accessory: PlatformAccessory, lastRing: number | null): void {
     const camera = accessory.context.camera as ProtectCameraConfig;
     const hap = this.hap;
 
