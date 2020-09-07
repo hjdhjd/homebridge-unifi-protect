@@ -111,7 +111,10 @@ export interface ProtectCameraConfigInterface {
   audioBitrate: number,
   canManage: boolean,
   channels: ProtectCameraChannelConfigInterface[],
+  chimeDuration: number,
+  connectedSince: number,
   connectionHost: string,
+  elementInfo: null,
   featureFlags: {
     canAdjustIrLedLevel: boolean,
     canMagicZoom: boolean,
@@ -133,6 +136,7 @@ export interface ProtectCameraConfigInterface {
     hasLineIn: boolean,
     hasMic: boolean,
     hasMotionZones: boolean,
+    hasNewMotionAlgorithm: boolean,
     hasPrivacyMask: boolean,
     hasRtc: boolean,
     hasSdCard: boolean,
@@ -193,7 +197,7 @@ export interface ProtectCameraConfigInterface {
     zoomPosition: number
   },
   lastMotion: number,
-  lastRing: number,
+  lastRing: number | null,
   lastSeen: number,
   lcdMessage: {
     resetAt: number | null,
@@ -222,7 +226,57 @@ export interface ProtectCameraConfigInterface {
     timelapseTransferInterval: number
   },
   platform: string,
+  recordingSchedule: null,
+  recordingSettings: {
+    enablePirTimelapse: boolean,
+    endMotionEventDelay: number,
+    geofencing: string,
+    minMotionEventTrigger: number,
+    mode: string,
+    postPaddingSecs: number,
+    prePaddingSecs: number,
+    retentionDurationMs: number | null,
+    suppressIlluminationSurge: boolean,
+    useNewMotionAlgorithm: boolean
+  },
+  speakerSettings: {
+    areSystemSoundsEnabled: boolean,
+    isEnabled: boolean,
+    volume: number
+  },
   state: string,
+  stats: {
+    battery: {
+      isCharging: boolean,
+      percentage: number | null,
+      sleepState: string
+    },
+    rxBytes: number,
+    storage: {
+      rate: number,
+      used: number
+    },
+    txBytes: number,
+    video: {
+      recordingEnd: number,
+      recordingEndLQ: number,
+      recordingStart: number,
+      recordingStartLQ: number,
+      timelapseEnd: number,
+      timelapseEndLQ: number,
+      timelapseStart: number,
+      timelapseStartLQ: number
+    },
+    wifi: {
+      channel: number | null,
+      frequency: number | null,
+      linkSpeedMbps: number | null,
+      signalQuality: number,
+      signalStrength: number
+    },
+    wifiQuality: number,
+    wifiStrength: number
+  },
   talkbackSettings: {
     bindAddr: string,
     bindPort: number,
@@ -236,12 +290,16 @@ export interface ProtectCameraConfigInterface {
     samplingRate: number
   },
   type: string,
+  upSince: number,
   wifiConnectionState: {
-    channel: number,
-    frequency: number,
-    phyRate: number,
-    signalQuality: number,
-    signalStrength: number
+    channel: number | null,
+    frequency: number | null,
+    phyRate: number | null,
+    signalQuality: number | null,
+    signalStrength: number | null
+  },
+  wiredConnectionState: {
+    phyRate: number
   }
 }
 
@@ -319,7 +377,7 @@ export interface ProtectNvrSystemEventInterface {
 
 // A semi-complete description of the UniFi Protect system events controller JSON.
 export interface ProtectNvrSystemEventControllerInterface {
-  harddriveRequired: true,
+  harddriveRequired: boolean,
   info: {
     events: number[],
     isAdopted: boolean,
@@ -371,6 +429,14 @@ export interface ProtectNvrSystemEventControllerInterface {
   version: string
 }
 
+// A complete view of the UniFi OS update JSON.
+export interface ProtectNvrUpdateEventInterface {
+  action: string,
+  id: string,
+  modelKey: string,
+  newUpdateId: string
+}
+
 // Plugin configuration options.
 export interface ProtectOptions {
   controllers: ProtectNvrOptions[],
@@ -415,4 +481,5 @@ export type ProtectCameraChannelConfig = Readonly<ProtectCameraChannelConfigInte
 export type ProtectNvrLiveviewConfig = Readonly<ProtectNvrLiveviewConfigInterface>;
 export type ProtectNvrSystemEvent = Readonly<ProtectNvrSystemEventInterface>;
 export type ProtectNvrSystemEventController = Readonly<ProtectNvrSystemEventControllerInterface>;
+export type ProtectNvrUpdateEventHeader = Readonly<ProtectNvrUpdateEventInterface>;
 export type ProtectNvrUserConfig = Readonly<ProtectNvrUserConfigInterface>;
