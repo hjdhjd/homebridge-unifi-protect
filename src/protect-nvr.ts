@@ -247,7 +247,7 @@ export class ProtectNvr {
       this.mqtt = new ProtectMqtt(this);
     }
 
-    // Check for doorbell events (all OSs) and motion events for non-UniFi OS controllers.
+    // For non-UniFi OS controllers, poll for doorbell and motion events.
     this.checkProtectEvents();
 
     // Configure our updates API listener, if needed.
@@ -265,13 +265,8 @@ export class ProtectNvr {
   // Check for doorbell and motion events for non-UniFi OS controllers.
   private checkProtectEvents(): boolean {
 
-    // Ensure we're up and running.
-    if(!this.nvrApi.Cameras) {
-      return false;
-    }
-
-    // For UniFi OS devices, we use the realtime update events API.
-    if(this.nvrApi.isUnifiOs) {
+    // Ensure we're not a UniFi OS controller and that we're up and running.
+    if(this.nvrApi.isUnifiOs || !this.nvrApi.Cameras) {
       return false;
     }
 
@@ -280,15 +275,7 @@ export class ProtectNvr {
     for(const camera of this.nvrApi.Cameras) {
 
       // We only want cameras that are managed.
-      if(!camera.isManaged || !camera.lastRing) {
-        continue;
-      }
-
-      // If we don't have a doorbell configured, this is always false. If we do, only process ring events within 2 * refreshInterval.
-      const isRingDetected = this.doorbellCount ? (this.refreshInterval * 2 * 1000) > (Date.now() - (camera.lastRing * 1000)) : false;
-
-      // If we have no recent motion events and ring events to process, we're done.
-      if(!camera.isMotionDetected && !isRingDetected) {
+      if(!camera.isManaged) {
         continue;
       }
 
@@ -302,12 +289,10 @@ export class ProtectNvr {
         continue;
       }
 
-      // We process UniFi OS motion events elsewhere through the realtime API. UCK, we process here.
-      if(!this.nvrApi.isUnifiOs) {
-        void this.motionEventHandler(accessory, camera.lastMotion);
-      }
+      // Handle motion events.
+      void this.motionEventHandler(accessory, camera.lastMotion);
 
-      // No realtime API yet for doorbells, so we resort to polling.
+      // Handle doorbell events.
       void this.doorbellEventHandler(accessory, camera.lastRing);
     }
 
@@ -568,8 +553,8 @@ export class ProtectNvr {
       return;
     }
 
-    // We only consider events that have happened within the last two refresh intervals. Otherwise,
-    // we assume it's stale data and don't inform the user.
+    // We only consider events that have happened within the last two refresh intervals. Otherwise, we assume it's stale
+    // data and don't inform the user.
     if((Date.now() - lastRing) > (this.refreshInterval * 2 * 1000)) {
       this.debug("%s: Skipping doorbell ring due to stale data.", this.nvrApi.getFullName(camera));
       return;
