@@ -17,7 +17,6 @@ All notable changes to this project will be documented in this file. This projec
   * Enhancement: after several weeks of testing, I've shifted our realtime events API over to the updates realtime events API. This took some time to reverse engineer because it's a binary protocol, and I wanted to ensure it was solid before releasing it. What's new for you? Doorbell events should be even faster now for those on UniFi OS-based controllers.
   * Fix: messages weren't always properly reset when using the messages switch feature on doorbells.
 
-
 ## 3.6.2 (2020-09-05)
   * Minor bugfixes and dependency updates.
 
