@@ -25,10 +25,13 @@ The priority given to these options works in the following order, from highest t
 * Controller options that are enabled or disabled.
 * Global options that are enabled or disabled.
 
+All of the options below can be set at any scope level. If an option isn't applicable to a particular category of device, it is ignored. For example, if you have two doorbells in your environment, and want to enable the same feature options on both, you can enable the doorbell feature options globally instead of having to specify them individually. If you want to override a global feature option you've set, you can specify those overrides for the individual doorbell, in this example.
+
 To specify the scope of an option, you append the option with `.MAC`, where `MAC` is the MAC address of either a UniFi Protect controller or a camera. If you don't append a MAC address to an option, it will be applied globally, unless a more specifically scoped option is specified elsewhere. The plugin will log all devices it encounters and knows about, including MAC addresses. You can use that to guide what features you would like to enable ot disable.
 
 The `options` setting is an array of strings used to customize Feature Options in your `config.json`. I would encourage most users, however, to use the [Homebridge webUI](https://github.com/oznu/homebridge-config-ui-x), to configure Feature Options as well as other options in this plugin. It contains additional validation checking of parameters to ensure the configuration is always valid.
 
+#### <A NAME="general"></A>General Feature Options
 These Feature Options are available on ***all*** UniFi Protect devices available through this plugin:
 
 | Option                                        | Description
@@ -36,9 +39,8 @@ These Feature Options are available on ***all*** UniFi Protect devices available
 | <CODE>Enable.<I>MAC</I></CODE>                | Show the camera or controller identified by MAC address `MAC` from HomeKit.
 | <CODE>Disable.<I>MAC</I></CODE>               | Hide the camera or controller identified by MAC address `MAC` from HomeKit.
 |                                               |
-| <CODE>Enable.Stream.<I>Quality</I></CODE>     | Show the stream of quality *Quality* from HomeKit. Valid quality settings are `Low`, `Medium`, `High`.
-| <CODE>Disable.Stream.<I>Quality</I></CODE>    | Hide the stream of quality *Quality* from HomeKit. Valid quality settings are `Low`, `Medium`, `High`.
-| <CODE>Enable.StreamOnly.<I>Quality</I></CODE> | Only allow the stream of quality *Quality* to be used in HomeKit. Valid quality settings are `Low`, `Medium`, `High`.
+| `Enable.LogMotion`                            | Enable the logging, in Homebridge, of motion events. *(Default)*
+| `Disable.LogMotion`                           | Disable the logging, in Homebridge, of motion events.
 |                                               |
 | `Enable.MotionSensor`                         | Add a motion sensor accessory to HomeKit to enable motion detection. *(Default)*
 | `Disable.MotionSensor`                        | Remove the motion sensor and motion sensor switch accessories to disable motion detection capabilities
@@ -46,9 +48,14 @@ These Feature Options are available on ***all*** UniFi Protect devices available
 | `Enable.MotionSwitch`                         | Add a switch accessory to activate or deactivate motion detection in HomeKit. *(Default)*
 | `Disable.MotionSwitch`                        | Remove the switch accessory used to enable or disable motion detection. *Note: this will not disable motion detection, just remove the ability to selectively activate and deactivate it in HomeKit.*
 |                                               |
+| <CODE>Enable.Stream.<I>Quality</I></CODE>     | Show the stream of quality *Quality* from HomeKit. Valid quality settings are `Low`, `Medium`, `High`.
+| <CODE>Disable.Stream.<I>Quality</I></CODE>    | Hide the stream of quality *Quality* from HomeKit. Valid quality settings are `Low`, `Medium`, `High`.
+| <CODE>Enable.StreamOnly.<I>Quality</I></CODE> | Only allow the stream of quality *Quality* to be used in HomeKit. Valid quality settings are `Low`, `Medium`, `High`.
+|                                               |
 | `Enable.TwoWayAudio`                          | Enable two-way audio support using the Home app for supported cameras and doorbells (G3 Micro and G4 Doorbell, currently). *(Default)*<BR>**Note that acoustic echo cancellation (AEC) is not currently available and you *will* hear an echo when using the Home app, however those standing at the doorbell (or camera) will hear things correctly.**</BR>
 | `Disable.TwoWayAudio`                         | Disable two-way audio support.
 
+#### <A NAME="controller"></A>Protect Controller Feature Options
 In addition to the Feature Options available to all UniFi Protect devices, these are available for UniFi Protect controllers:
 
 | Option                                        | Description
@@ -56,12 +63,15 @@ In addition to the Feature Options available to all UniFi Protect devices, these
 | `Enable.SecurityAlarm`                        | Enable a switch that can trigger the security alarm on the security system accessory. This requires configuring [liveview scenes](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/Liveviews.md#security-system) in order to enable to security system accessory.
 | `Disable.SecurityAlarm`                       | Remove the security alarm switch on the security system accessory. *(Default)*
 
+#### <A NAME="doorbell"></A>Doorbell Feature Options
 In addition to the Feature Options available to all UniFi Protect devices, these are available for UniFi Protect [doorbells](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/Doorbell.md):
 
 | Option                                        | Description
 |-----------------------------------------------|----------------------------------
 | `Enable.ContactSensor`                        | Add a contact sensor accessory that is triggered when the doorbell rings. This is useful when trying to create HomeKit automations for doorbell ring events.
 | `Disable.ContactSensor`                       | Remove the contact sensor accessory.  *(Default)*
+| `Enable.LogDoorbell`                          | Enable the logging, in Homebridge, of doorbell ring events. *(Default)*
+| `Disable.LogDoorbell`                         | Disable the logging, in Homebridge, of doorbell ring events.
 | `Enable.Messages`                             | Enable the doorbell messages feature on UniFi Protect doorbells. *(Default)*
 | `Disable.Messages`                            | Disable the doorbell messages feature on UniFi Protect doorbells.
 | `Enable.Messages.FromDoorbell`                | Allow messages saved on the UniFi Protect doorbell to appear as switches in HomeKit. *(Default)*

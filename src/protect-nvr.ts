@@ -524,7 +524,9 @@ export class ProtectNvr {
     // Publish to MQTT, if the user has configured it.
     this.mqtt?.publish(accessory, "motion", "true");
 
-    this.log("%s: Motion detected.", this.nvrApi.getFullName(camera));
+    if(this.optionEnabled(camera, "LogMotion")) {
+      this.log("%s: Motion detected.", this.nvrApi.getFullName(camera));
+    }
 
     // Reset our motion event after motionDuration.
     this.eventTimers[camera.mac] = setTimeout(() => {
@@ -619,7 +621,9 @@ export class ProtectNvr {
     // Publish to MQTT, if the user has configured it.
     this.mqtt?.publish(accessory, "doorbell", "true");
 
-    this.log("%s: Doorbell ring detected.", this.nvrApi.getFullName(camera));
+    if(this.optionEnabled(camera, "LogDoorbell")) {
+      this.log("%s: Doorbell ring detected.", this.nvrApi.getFullName(camera));
+    }
   }
 
   // Periodically poll the Protect API for status.
