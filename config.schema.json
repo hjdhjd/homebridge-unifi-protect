@@ -1,7 +1,7 @@
 {
   "pluginAlias": "UniFi Protect",
   "pluginType": "platform",
-  "headerDisplay": "Full HomeKit support UniFi Protect devices. See the [homebridge-unifi-protect2](https://github.com/hjdhjd/homebridge-unifi-protect2) developer page for detailed documentation.",
+  "headerDisplay": "Full HomeKit support UniFi Protect devices. See the [homebridge-unifi-protect](https://github.com/hjdhjd/homebridge-unifi-protect) developer page for detailed documentation.",
   "footerDisplay": "A working **ffmpeg** installation is required for this plugin to work. For audio support, make sure your version of ffmpeg is compiled with support for **fdk-aac**.",
   "singular": true,
 

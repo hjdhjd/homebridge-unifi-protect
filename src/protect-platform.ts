@@ -1,6 +1,6 @@
 /* Copyright(C) 2017-2020, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * protect-platform.ts: homebridge-unifi-protect2 platform class.
+ * protect-platform.ts: homebridge-unifi-protect platform class.
  */
 import {
   API,
