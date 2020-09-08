@@ -18,7 +18,18 @@
 ### Realtime Updates API
 So...how does UniFi Protect provide realtime updates? On UniFi OS-based controllers, it uses a websocket called `updates`. This connection provides a realtime stream of health, status, and events that the cameras encounter - including motion events and doorbell ring events.
 
+Reverse engineering the realtime updates API was more difficult than the realtime system events API because it's based on a binary protocol. The Protect system events API is a steading stream of JSONs published on all UniFi OS controllers over the `system` websocket. It's used by more than just UniFi Protect, which makes it interesting for future exploration.
+
+The Protect realtime updates API, however, is a binary protocol published over the `updates` websocket, and until now has been undocumented. I spent time analyzing what's happening in the Protect browser webUI as well as observing the controller and various Protect versions themselves to reverse engineer what's going on. Pouring through obfuscated code is like solving a puzzle with all the pieces in front of you - you know it's all there, you're just not always sure how it fits together.
+
 For the impatient, you can take a look at the code for how to decode and read the binary protocol here in [protect-updates-api.ts](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/src/protect-updates-api.ts). Aside from Homebridge-specific logging support, the code is independent and portable to other platforms. You'll probably want to grab type and interface information from [protect-types.ts](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/src/protect-types.ts) as well.
+
+I welcome any additions or corrections to the protocol for the benefit of the community. I hope this helps others launch their own exploration and create new and interesting Protect-enabled capabilities.
+
+#### Non-Ubiquiti Apps Using the Protect API
+ This list represents all known apps that are using the realtime updates API for UniFi Protect. If you're using the information you discovered on this page for your own UniFi Protect-based solution, please open an issue and I'm happy to add a link to it below. I hope this can serve as a repository of sorts for UniFi Protect-based apps and solutions in the community.
+
+ * [homebridge-unifi-protect](https://github.com/hjdhjd/homebridge-unifi-protect): Seamless integration of UniFi Protect into HomeKit with support for cameras, doorbells, and more.
 
 #### Connecting
  * Login to the UniFi Protect controller and obtain the bootstrap JSON. The URL is: `https://protect-nvr-ip/proxy/protect/api/bootstrap`. You can look through [protect-api.ts](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/src/protect-api.ts) for a better understanding of the Protect login process and how to obtain the bootstrap JSON.
