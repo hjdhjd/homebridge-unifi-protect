@@ -5,7 +5,6 @@
 import { Logging } from "homebridge";
 import https, { Agent } from "https";
 import fetch, { FetchError, Headers, Response, RequestInfo, RequestInit } from "node-fetch";
-import WebSocket from "ws";
 import { ProtectPlatform } from "./protect-platform";
 import {
   ProtectCameraChannelConfigInterface,
@@ -17,6 +16,7 @@ import {
 } from "./protect-types";
 import { PROTECT_API_ERROR_LIMIT, PROTECT_API_RETRY_INTERVAL, PROTECT_EVENTS_HEARTBEAT_INTERVAL, PROTECT_LOGIN_REFRESH_INTERVAL } from "./settings";
 import util from "util";
+import WebSocket from "ws";
 
 /*
  * The UniFi Protect API is largely undocumented and has been reverse engineered mostly through
@@ -26,7 +26,7 @@ import util from "util";
  *
  * 1. Login to the UniFi Protect NVR device (UCKgen2+, UDM-Pro, UNVR) and acquire security
  *    credentials for further calls to the API. The method for doing so varies between
- *    UnifiOS and non-UnifiOS devices.
+ *    UniFi OS and non-UniFi OS devices.
  *
  * 2. Enumerate the list of UniFi Protect devices by calling the bootstrap URL. This
  *    contains almost everything you would want to know about this particular UniFi Protect NVR
@@ -218,11 +218,11 @@ export class ProtectApi {
     this.checkAdminUserStatus(firstRun);
 
     // We're good. Now connect to the event listener API if we're a UniFi OS device, otherwise, we're done.
-    return this.isUnifiOs ? this.launchEventListener() : true;
+    return this.isUnifiOs ? this.launchUpdatesListener() : true;
   }
 
-  // Connect to the UniFi OS realtime events API.
-  private async launchEventListener(): Promise<boolean> {
+  // Connect to the UniFi OS realtime updates API.
+  private async launchUpdatesListener(): Promise<boolean> {
     // Log us in if needed.
     if(!(await this.loginProtect())) {
       return false;
@@ -233,10 +233,12 @@ export class ProtectApi {
       return true;
     }
 
-    this.debug("System listener: %s", this.systemEventsUrl());
+    const params = new URLSearchParams({ lastUpdateId: this.bootstrap?.lastUpdateId ?? "" });
+
+    this.debug("Update listener: %s", this.updateEventsUrl() + "?" + params.toString());
 
     try {
-      const ws = new WebSocket(this.systemEventsUrl(), {
+      const ws = new WebSocket(this.updateEventsUrl() + "?" + params.toString(), {
         rejectUnauthorized: false,
         headers: {
           Cookie: this.headers.get("Cookie") ?? ""
@@ -244,7 +246,7 @@ export class ProtectApi {
       });
 
       if(!ws) {
-        this.log("Unable to connect to system events API. Will retry again later.");
+        this.log("Unable to connect to update events API. Will retry again later.");
         this.eventListener = null;
         this.eventListenerConfigured = false;
         return false;
@@ -257,10 +259,13 @@ export class ProtectApi {
       this.eventListener.on("open", this.heartbeatEventListener.bind(this));
       this.eventListener.on("ping", this.heartbeatEventListener.bind(this));
       this.eventListener.on("close", () => {
+
         clearTimeout(this.eventHeartbeatTimer);
+
       });
 
       this.eventListener.on("error", (error) => {
+
         // If we're closing before fully established it's because we're shutting down the API - ignore it.
         if(error.message !== "WebSocket was closed before the connection was established") {
           this.log("%s: %s", this.getNvrName(), error);
@@ -269,11 +274,12 @@ export class ProtectApi {
         this.eventListener?.terminate();
         this.eventListener = null;
         this.eventListenerConfigured = false;
+
       });
 
-      this.log("%s: Connected to the UniFi realtime system events API.", this.getNvrName());
+      this.log("%s: Connected to the UniFi realtime update events API.", this.getNvrName());
     } catch(error) {
-      this.log("%s: Error connecting to the system events API: %s", this.getNvrName(), error);
+      this.log("%s: Error connecting to the update events API: %s", this.getNvrName(), error);
     }
 
     return true;
@@ -450,6 +456,7 @@ export class ProtectApi {
 
   // Update a camera object.
   public async updateCamera(device: ProtectCameraConfig, payload: ProtectCameraConfigPayload): Promise<ProtectCameraConfig | null> {
+
     // No device object, we're done.
     if(!device) {
       return null;
@@ -548,6 +555,16 @@ export class ProtectApi {
     return "wss://" + this.nvrAddress + "/api/ws/system";
   }
 
+  // Return the update events API URL, if it's supported by this UniFi Protect device type.
+  private updateEventsUrl(): string {
+    // UCK Gen2+ devices don't support the websockets events API.
+    if(!this.isUnifiOs) {
+      return "";
+    }
+
+    return "wss://" + this.nvrAddress + "/proxy/protect/ws/updates";
+  }
+
   // Utility to check the heartbeat of our listener.
   private heartbeatEventListener(): void {
 
@@ -642,7 +659,7 @@ export class ProtectApi {
       // Some other unknown error occurred.
       if(!response.ok) {
         this.apiErrorCount++;
-        this.log("Error: %s - %s", response.status, response.statusText);
+        this.log("API access error: %s - %s", response.status, response.statusText);
         return null;
       }
 

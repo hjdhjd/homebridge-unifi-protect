@@ -17,10 +17,12 @@ import { ProtectMqtt } from "./protect-mqtt";
 import { ProtectPlatform } from "./protect-platform";
 import {
   ProtectCameraConfig,
+  ProtectCameraConfigPayload,
   ProtectNvrOptions,
   ProtectNvrSystemEvent,
   ProtectNvrSystemEventController
 } from "./protect-types";
+import { ProtectUpdatesApi } from "./protect-updates-api";
 import {
   PLATFORM_NAME,
   PLUGIN_NAME,
@@ -200,7 +202,7 @@ export class ProtectNvr {
     }
 
     // Set a name for this NVR, if we haven't configured one for ourselves.
-    if(!this.name && this.nvrApi?.bootstrap?.nvr) {
+    if(!this.name && this.nvrApi.bootstrap?.nvr) {
       this.name = this.nvrApi.bootstrap.nvr.name;
     }
 
@@ -225,14 +227,17 @@ export class ProtectNvr {
       refreshUpdated = true;
     }
 
-    // If we have doorbells, we need to poll more frequently.
-    if(this.doorbellCount && this.refreshInterval !== PROTECT_NVR_DOORBELL_REFRESH_INTERVAL) {
+    // If we have doorbells on non-UniFi OS controllers, we need to poll more frequently.
+    if(!this.nvrApi.isUnifiOs && this.doorbellCount && (this.refreshInterval !== PROTECT_NVR_DOORBELL_REFRESH_INTERVAL)) {
+
       this.refreshInterval = PROTECT_NVR_DOORBELL_REFRESH_INTERVAL;
       this.log("%s: A doorbell has been detected. Setting the controller refresh interval to %s seconds.", this.nvrApi.getNvrName(), this.refreshInterval);
+
     } else if(refreshUpdated || !this.isEnabled) {
 
       // On startup or refresh interval change, we want to notify the user.
       this.log("%s: Controller refresh interval set to %s seconds.", this.nvrApi.getNvrName(), this.refreshInterval);
+
     }
 
     this.isEnabled = true;
@@ -245,8 +250,8 @@ export class ProtectNvr {
     // Check for doorbell events (all OSs) and motion events for non-UniFi OS controllers.
     this.checkProtectEvents();
 
-    // Configure our event listener, if needed.
-    this.configureEventListener();
+    // Configure our updates API listener, if needed.
+    this.configureUpdatesListener();
 
     // Sync status and check for any new or removed accessories.
     this.discoverAndSyncAccessories();
@@ -257,21 +262,23 @@ export class ProtectNvr {
     return true;
   }
 
-  // Check for doorbell events (all OSs) and motion events for non-UniFi OS controllers.
+  // Check for doorbell and motion events for non-UniFi OS controllers.
   private checkProtectEvents(): boolean {
+
     // Ensure we're up and running.
-    if(!this.nvrApi?.Cameras) {
+    if(!this.nvrApi.Cameras) {
       return false;
     }
 
-    // For UniFi OS devices, we only check doorbell events here. Motion events are dealt with in the realtime API.
-    if(this.nvrApi?.isUnifiOs && !this.doorbellCount) {
+    // For UniFi OS devices, we use the realtime update events API.
+    if(this.nvrApi.isUnifiOs) {
       return false;
     }
 
     // Iterate through the list of cameras, looking for the isMotionDetected event on each camera
     // in order to determine where there is motion.
     for(const camera of this.nvrApi.Cameras) {
+
       // We only want cameras that are managed.
       if(!camera.isManaged || !camera.lastRing) {
         continue;
@@ -287,7 +294,7 @@ export class ProtectNvr {
 
       // Find the accessory associated with this camera.
       const uuid = this.hap.uuid.generate(camera.mac);
-      const accessory = this.platform.accessories.find((x: PlatformAccessory) => x.UUID === uuid);
+      const accessory = this.platform.accessories.find(x => x.UUID === uuid);
 
       // If we don't have an accessory, it's probably because we've chosen to hide it. In that case,
       // just ignore and move on.
@@ -307,8 +314,10 @@ export class ProtectNvr {
     return true;
   }
 
-  // Configure the realtime API event listener to trigger events on accessories, like motion.
-  private configureEventListener(): boolean {
+  // Configure the realtime system event API listener to trigger events on accessories, like motion.
+  // This is now deprecated in favor of the realtime updates event API, which provides for more event types
+  // than the realtime system events API.
+  private configureSystemEventListener(): boolean {
 
     // The event listener API only works on UniFi OS devices.
     if(!this.nvrApi.isUnifiOs) {
@@ -355,7 +364,7 @@ export class ProtectNvr {
       }
 
       // Find the camera in our list of accessories so we can fire off the motion event.
-      const foundCamera = Object.keys(this.configuredCameras).find((x: string) =>
+      const foundCamera = Object.keys(this.configuredCameras).find(x =>
         (this.configuredCameras[x].accessory.context.camera as ProtectCameraConfig).host === controller.info.lastMotionCameraAddress);
 
       // Nothing here - we may have disabled this camera or it's associated NVR.
@@ -375,6 +384,84 @@ export class ProtectNvr {
 
       // The UniFi OS realtime API returns lastMotion in seconds rather than milliseconds.
       this.motionEventHandler(accessory, controller.info.lastMotion * 1000);
+    });
+
+    // Mark the listener as configured.
+    this.nvrApi.eventListenerConfigured = true;
+    return true;
+  }
+
+  // Configure the realtime update event API listener to trigger events on accessories, like motion.
+  private configureUpdatesListener(): boolean {
+
+    // The event listener API only works on UniFi OS devices.
+    if(!this.nvrApi.isUnifiOs) {
+      return false;
+    }
+
+    // Only configure the event listener if it exists and it's not already configured.
+    if(!this.nvrApi.eventListener || this.nvrApi.eventListenerConfigured) {
+      return true;
+    }
+
+    // Listen for any messages coming in from our listener.
+    this.nvrApi.eventListener.on("message", (event: Buffer) => {
+
+      const updatePacket = ProtectUpdatesApi.decodeUpdatePacket(this.log, event);
+
+      if(!updatePacket) {
+        this.log("%s: Unable to process message from the realtime update events API.", this.nvrApi.getNvrName());
+        return;
+      }
+
+      // Update actions that we care about (doorbell rings, motion detection) look like this:
+      //
+      // action: "update"
+      // id: "someCameraId"
+      // modelKey: "camera"
+      // newUpdateId: "ignorethis"
+      //
+      // The payloads are what differentiate them - one updates lastMotion and the other lastRing.
+
+      // Filter on what actions we're interested in only.
+      if((updatePacket.action.action !== "update") || (updatePacket.action.modelKey !== "camera")) {
+        return;
+      }
+
+      // Grab the payload - it should be a subset of the camera configuration JSON.
+      const payload = updatePacket.payload as ProtectCameraConfigPayload;
+
+      // Now filter out payloads we aren't interested in. We only want motion detection and doorbell rings for now.
+      if(!payload.isMotionDetected && !payload.lastRing) {
+        return;
+      }
+
+      // Lookup the accessory associated with this camera.
+      const accessory = this.accessoryLookup(updatePacket.action.id);
+
+      // We don't know about this camera - we're done.
+      if(!accessory) {
+        return;
+      }
+
+      // It's a motion event - process it accordingly.
+      if(payload.isMotionDetected) {
+
+        // Call our motion handler and we're done.
+        if(payload.lastMotion) {
+          this.motionEventHandler(accessory, payload.lastMotion);
+        }
+
+        return;
+      }
+
+      // It's a ring event - process it accordingly.
+      if(payload.lastRing) {
+
+        // Call our doorbell handler and we're done.
+        this.doorbellEventHandler(accessory, payload.lastRing);
+        return;
+      }
     });
 
     // Mark the listener as configured.
@@ -535,11 +622,6 @@ export class ProtectNvr {
     this.log("%s: Doorbell ring detected.", this.nvrApi.getFullName(camera));
   }
 
-  // Emulate a sleep function.
-  private sleep(ms: number): Promise<NodeJS.Timeout> {
-    return new Promise(resolve => setTimeout(resolve, ms));
-  }
-
   // Periodically poll the Protect API for status.
   public async poll(): Promise<void> {
 
@@ -611,6 +693,19 @@ export class ProtectNvr {
     }
   }
 
+  // Lookup a camera by it's identifier and return the associated accessory, if any.
+  private accessoryLookup(cameraId: string | undefined | null): PlatformAccessory | undefined {
+
+    if(!cameraId) {
+      return undefined;
+    }
+
+    // Find the camera in our list of accessories.
+    const foundCamera = Object.keys(this.configuredCameras).find(x => (this.configuredCameras[x].accessory.context.camera as ProtectCameraConfig).id === cameraId);
+
+    return foundCamera ? this.configuredCameras[foundCamera].accessory : undefined;
+  }
+
   // Utility function to let us know if a Protect device or feature should be enabled in HomeKit or not.
   public optionEnabled(device: ProtectCameraConfig | null, option = "", defaultReturnValue = true): boolean {
 
@@ -655,7 +750,7 @@ export class ProtectNvr {
     }
 
     // If we don't have a managing device attached, we're done here.
-    if(!this.nvrApi?.bootstrap?.nvr?.mac) {
+    if(!this.nvrApi.bootstrap?.nvr?.mac) {
       return defaultReturnValue;
     }
 
@@ -697,5 +792,10 @@ export class ProtectNvr {
 
     // Nothing special to do - assume the option is defaultReturnValue.
     return defaultReturnValue;
+  }
+
+  // Emulate a sleep function.
+  private sleep(ms: number): Promise<NodeJS.Timeout> {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 }

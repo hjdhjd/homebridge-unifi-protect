@@ -429,14 +429,6 @@ export interface ProtectNvrSystemEventControllerInterface {
   version: string
 }
 
-// A complete view of the UniFi OS update JSON.
-export interface ProtectNvrUpdateEventInterface {
-  action: string,
-  id: string,
-  modelKey: string,
-  newUpdateId: string
-}
-
 // Plugin configuration options.
 export interface ProtectOptions {
   controllers: ProtectNvrOptions[],
@@ -481,5 +473,4 @@ export type ProtectCameraChannelConfig = Readonly<ProtectCameraChannelConfigInte
 export type ProtectNvrLiveviewConfig = Readonly<ProtectNvrLiveviewConfigInterface>;
 export type ProtectNvrSystemEvent = Readonly<ProtectNvrSystemEventInterface>;
 export type ProtectNvrSystemEventController = Readonly<ProtectNvrSystemEventControllerInterface>;
-export type ProtectNvrUpdateEventHeader = Readonly<ProtectNvrUpdateEventInterface>;
 export type ProtectNvrUserConfig = Readonly<ProtectNvrUserConfigInterface>;
