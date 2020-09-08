@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 3.6.4 (2020-09-08)
+  * New [feature options](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/FeatureOptions.md) `LogMotion` and `LogDoorbell` to control whether motion or doorbell events get logged. You can set this for the entire controller, or individual cameras, like all feature options.
+  * Fix a regression that was introduced in 3.6.3 for non-UniFi OS users where motion detection and doorbell events weren't being sent.
+  * **Note: starting with v3.6.4, this plugin will only publish updates as `homebridge-unifi-protect`. See below for more information on the deprecation of the `homebridge-unifi-protect2` name.**
+
 ## 3.6.3 (2020-09-07)
   * **IMPORTANT: NAME CHANGE.** Starting with this release, this plugin is now renamed to `homebridge-unifi-protect`. My thanks to the previous owner of the NPM name for `homebridge-unifi-protect` for graciously transitioning it to me. What does this mean for you?
     * You should uninstall this package and reinstall it under it's new name, `homebridge-unifi-protect`. That should do the trick. Your configuration won't be impacted. Apologies for any extra gymnastics this might cause some people, but it will help future users and make this plugin more discoverable.
