@@ -15,7 +15,7 @@
 
 `homebridge-unifi-protect` is a [Homebridge](https://homebridge.io) plugin that provides HomeKit support to the [UniFi Protect](https://unifi-network.ui.com/video-security) device ecosystem. [UniFi Protect](https://unifi-network.ui.com/video-security) is [Ubiquiti's](https://www.ui.com) next-generation video security platform, with rich camera, doorbell, and NVR controller hardware options for you to choose from, as well as an app which you can use to view, configure and manage your video camera and doorbells.
 
-### Realtime Updates API
+### UniFi Protect Realtime Updates API
 So...how does UniFi Protect provide realtime updates? On UniFi OS-based controllers, it uses a websocket called `updates`. This connection provides a realtime stream of health, status, and events that the cameras encounter - including motion events and doorbell ring events.
 
 Reverse engineering the realtime updates API was more difficult than the realtime system events API because it's based on a binary protocol. The Protect system events API is a steading stream of JSONs published on all UniFi OS controllers over the `system` websocket. It's used by more than just UniFi Protect, which makes it interesting for future exploration.
@@ -38,8 +38,10 @@ I welcome any additions or corrections to the protocol for the benefit of the co
 
 Those are the basics and gets us up and running. Now, to explain how the updates API works...
 
-#### Updates API Format
+#### Updates Websocket Binary Format
 UniFi OS update data packets are used to provide a realtime stream of updates to Protect. It differs from the system events API in that the system events API appears to be shared across other applications (Network, Access, etc.) while the updates events API appears to only be utilized by Protect and not shared by other applications, although the protocol is shared.
+
+The `updates` websocket is used by the UniFi Protect webUI and native applications to provide realtime updates back to the controller. UniFi cameras and doorbells also use a websocket to provide those same updates to the Protect controller. The `updates` websocket uses a binary protocol to encode data largely to minimize bandwidth requirements, and provide access to more than JSON data, if needed.
 
 So how does it all work? Cameras continuously stream updates to the UniFi Protect controller containing things like camera health, statistics, and - crucially for us - events such as motion and doorbell ring. A complete update packet is composed of four frames:
 
@@ -52,6 +54,8 @@ So how does it all work? Cameras continuously stream updates to the UniFi Protec
  ----------------------
  Data Frame
 ```
+
+Let's look at each of these.
 
 ##### Header Frame
 The header frame is required overhead since websockets provide only a transport medium. It's purpose is to tell us what's coming in the frame that follows.
@@ -78,7 +82,8 @@ The action frame identifies what the action and category that the update contain
 | modelKey    |  The device model category that we're updating.
 | newUpdateId |  A new UUID generated on a per-update basis. This can be safely ignored it seems.
 
-The final part of the update packet is the data frame. The data frame can be three different types of data - although in practice, I've only seen JSONs come across. Those types are:
+##### Data Frame
+The final part of the update packet is the data frame. The data frame can be three different types of data - although in practice, JSONs are all that come across, I've found. Those types are:
 
 | Payload Type |  Description
 |--------------|------------------------------------------------------------------------------------
