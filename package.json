@@ -1,6 +1,6 @@
 {
   "name": "homebridge-unifi-protect2",
-  "version": "3.6.2",
+  "version": "3.6.3",
   "displayName": "Homebridge UniFi Protect",
   "description": "Complete HomeKit integration for UniFi Protect with full support for most features including autoconfiguration, motion detection, and multiple controllers.",
   "author": "HJD https://github.com/hjdhjd",

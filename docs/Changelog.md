@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 3.6.3 (2020-09-07)
+  * **IMPORTANT: NAME CHANGE.** Starting with this release, this plugin is now renamed to `homebridge-unifi-protect`. My thanks to the previous owner of the NPM name for `homebridge-unifi-protect` for graciously transitioning the name to me. What does this mean to you?
+    * You should uninstall this package and reinstall it under it's new name, `homebridge-unifi-protect`. That should do the trick. Your configuration won't be impacted. Apologies for any extra gymnastics this might cause some people, but it will help future users and making this plugin more discoverable.
+    * `homebridge-unifi-protect2` will soon be deprecated. You'll receive a warning message that the package has been deprecated and to install `homebridge-unifi-protect` instead.
+    * Again my apologies for any extra work this causes people, but I hope it will be a mostly painless transition.
+
+  * Enhancement: after several weeks of testing, I've shifted our realtime events API over to the updates realtime events API. This took some time to reverse engineer because it's a binary protocol, and I wanted to ensure it was solid before releasing it. What's new for you? Doorbell events should be even faster now for those on UniFi OS-based controllers.
+  * Fix: messages weren't always properly reset when using the messages switch feature on doorbells.
+
+
 ## 3.6.2 (2020-09-05)
   * Minor bugfixes and dependency updates.
 
