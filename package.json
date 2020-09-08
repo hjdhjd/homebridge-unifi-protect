@@ -2,7 +2,7 @@
   "name": "homebridge-unifi-protect2",
   "version": "3.6.3",
   "displayName": "Homebridge UniFi Protect",
-  "description": "Complete HomeKit integration for UniFi Protect with full support for most features including autoconfiguration, motion detection, and multiple controllers.",
+  "description": "Homebridge UniFi Protect plugin providing complete HomeKit integration for UniFi Protect with full support for most features including autoconfiguration, motion detection, multiple controllers, and realtime updates.",
   "author": "HJD https://github.com/hjdhjd",
   "homepage": "https://github.com/hjdhjd/homebridge-unifi-protect#readme",
   "license": "ISC",
