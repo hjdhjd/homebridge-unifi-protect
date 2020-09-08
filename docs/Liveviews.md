@@ -1,19 +1,19 @@
 <SPAN ALIGN="CENTER" STYLE="text-align:center">
 <DIV ALIGN="CENTER" STYLE="text-align:center">
 
-[![homebridge-unifi-protect2: Native HomeKit support for UniFi Protect](https://raw.githubusercontent.com/hjdhjd/homebridge-unifi-protect2/master/homebridge-protect.svg)](https://github.com/hjdhjd/homebridge-unifi-protect2)
+[![homebridge-unifi-protect: Native HomeKit support for UniFi Protect](https://raw.githubusercontent.com/hjdhjd/homebridge-unifi-protect/master/homebridge-protect.svg)](https://github.com/hjdhjd/homebridge-unifi-protect)
 
-# Homebridge UniFi Protect<SUP STYLE="font-size: smaller; color:#0559C9;">2</SUP>
+# Homebridge UniFi Protect
 
-[![Downloads](https://img.shields.io/npm/dt/homebridge-unifi-protect2?color=%230559C9&logo=icloud&logoColor=%23FFFFFF&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect2)
-[![Version](https://img.shields.io/npm/v/homebridge-unifi-protect2?color=%230559C9&label=UniFi%20Protect%202&logo=ubiquiti&logoColor=%23FFFFFF&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect2)
+[![Downloads](https://img.shields.io/npm/dt/homebridge-unifi-protect2?color=%230559C9&logo=icloud&logoColor=%23FFFFFF&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect)
+[![Version](https://img.shields.io/npm/v/homebridge-unifi-protect2?color=%230559C9&label=UniFi%20Protect&logo=ubiquiti&logoColor=%23FFFFFF&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect)
 [![verified-by-homebridge](https://img.shields.io/badge/homebridge-verified-blueviolet?color=%2357277C&style=for-the-badge)](https://github.com/homebridge/homebridge/wiki/Verified-Plugins)
 
 ## HomeKit support for the UniFi Protect ecosystem using [Homebridge](https://homebridge.io).
 </DIV>
 </SPAN>
 
-`homebridge-unifi-protect2` is a [Homebridge](https://homebridge.io) plugin that provides HomeKit support to the [UniFi Protect](https://unifi-network.ui.com/video-security) device ecosystem. [UniFi Protect](https://unifi-network.ui.com/video-security) is [Ubiquiti's](https://www.ui.com) next-generation video security platform, with rich camera, doorbell, and NVR controller hardware options for you to choose from, as well as an app which you can use to view, configure and manage your video camera and doorbells.
+`homebridge-unifi-protect` is a [Homebridge](https://homebridge.io) plugin that provides HomeKit support to the [UniFi Protect](https://unifi-network.ui.com/video-security) device ecosystem. [UniFi Protect](https://unifi-network.ui.com/video-security) is [Ubiquiti's](https://www.ui.com) next-generation video security platform, with rich camera, doorbell, and NVR controller hardware options for you to choose from, as well as an app which you can use to view, configure and manage your video camera and doorbells.
 
 ### Liveview Scenes
 
@@ -41,10 +41,10 @@ First, we need to understand the security system accessory in [HomeKit](https://
 
 Next, you have the UniFi Protect *Liveview* functionality in the Protect webUI. You can manage your liveviews by going to `https://your-protect-controller/liveview`. You can add, remove, or modify any liveviews you have setup in this interface.
 
-Now, to put all the pieces together. What `homebridge-unifi-protect2` does is:
+Now, to put all the pieces together. What `homebridge-unifi-protect` does is:
 
  * Periodically check the controller to see if we have certain liveviews configured.
- * If there are no liveviews specific to this plugin, then `homebridge-unifi-protect2` will remove the security system accessory (if it was previously present) from [HomeKit](https://www.apple.com/ios/home/) so we don't clutter up with unneeded accessories.
+ * If there are no liveviews specific to this plugin, then `homebridge-unifi-protect` will remove the security system accessory (if it was previously present) from [HomeKit](https://www.apple.com/ios/home/) so we don't clutter up with unneeded accessories.
  * If you have configured plugin-specific liveviews, they will be linked to the security system state settings above. You don't need to configure all of them, you can configure certain ones and not others. If there's at least one plugin-specific liveview present, the security system accessory will appear in [HomeKit](https://www.apple.com/ios/home/).
 
 Creating plugin-specific liveviews are as simple as ensuring they are named:
@@ -58,18 +58,18 @@ Creating plugin-specific liveviews are as simple as ensuring they are named:
 
 Once configured, you can set the security system state in the Home app. When you select a setting - *Away* for example - it will lookup all the cameras associated with that liveview and activate motion detection for those cameras, and **it will disable motion detection on all other cameras**. Put another way - when using this feature, and you enable a specific security system state, only those cameras will have motion detection active. All other cameras will have motion detection set to off.
 
-The security system accessory in HomeKit has an additional state - *alarm triggered*. In HomeKit, this state isn't really a true state in the way `Home` or `Away` might be. Instead, think of it as an alert to let you know that there's something you should look at. Once the alarm state is cleared, that alert disappears within HomeKit and the Home app. In all cases, the existing liveview scene that's set is the one that remains. Setting a new state for the security system - say going from `Home` to `Away` will clear the alarm alert. For those that want to access this alarm functionality, you can choose to enable the `SecurityAlarm` [Feature Option](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/FeatureOptions.md). Why might you want to? In a word - automation. If you have a specific camera or set of cameras you want to be uniquely alerted for, you might choose to turn on the security alarm through automation when motion is detected or a specific set of conditions occur. The security alarm switch is an additional service that will be enabled on the security system accessory. You can toggle it on or off to activate or deactivate the alarm as desired, or simply change security system states (e.g. from Home to Away) to clear the alarm state.
+The security system accessory in HomeKit has an additional state - *alarm triggered*. In HomeKit, this state isn't really a true state in the way `Home` or `Away` might be. Instead, think of it as an alert to let you know that there's something you should look at. Once the alarm state is cleared, that alert disappears within HomeKit and the Home app. In all cases, the existing liveview scene that's set is the one that remains. Setting a new state for the security system - say going from `Home` to `Away` will clear the alarm alert. For those that want to access this alarm functionality, you can choose to enable the `SecurityAlarm` [Feature Option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md). Why might you want to? In a word - automation. If you have a specific camera or set of cameras you want to be uniquely alerted for, you might choose to turn on the security alarm through automation when motion is detected or a specific set of conditions occur. The security alarm switch is an additional service that will be enabled on the security system accessory. You can toggle it on or off to activate or deactivate the alarm as desired, or simply change security system states (e.g. from Home to Away) to clear the alarm state.
 
 ### <A NAME="switch"></A>Configuring the Liveview Switch Feature
 
-In addition to the above, `homebridge-unifi-protect2` can create switches based on arbitrary liveviews that you create. To use this feature, you create a liveview and choose a name for it beginning with `Protect-` followed by whatever you want to call this switch. The only reserved names are the ones above for the security system feature.
+In addition to the above, `homebridge-unifi-protect` can create switches based on arbitrary liveviews that you create. To use this feature, you create a liveview and choose a name for it beginning with `Protect-` followed by whatever you want to call this switch. The only reserved names are the ones above for the security system feature.
 
 For example, if you configure a liveview named `Protect-Outside`, you'll see a switch created in the Home app called *UDM-Pro Outside*, assuming your controller is named UDM-Pro. Toggling the switch on and off will turn on and off motion detection in the cameras configured in the liveview.
 
 There's a crucial difference between liveview switches and the liveview security system accessory: ***liveview switches only impact the cameras you've configured in that liveview***. The security system accessory will disable motion detection on all cameras not explicitly configured in a given liveview scene (with the exception of the *Off* scene, which is special - [see above](#security-system)).
 
 ### MQTT Support
-[MQTT support](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/MQTT.md) is available for liveviews. You can set liveviews, as well as security system states, using MQTT. The following MQTT actions are supported:
+[MQTT support](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/MQTT.md) is available for liveviews. You can set liveviews, as well as security system states, using MQTT. The following MQTT actions are supported:
 
   * When the security system state is changed, a message will be published to MQTT.
   * You can set the security system state using MQTT.
@@ -77,11 +77,11 @@ There's a crucial difference between liveview switches and the liveview security
   * You can get the state of all liveview scenes using MQTT.
   * You can set a liveview scene using MQTT.
 
-To learn more about the MQTT support provided by this plugin, see the [MQTT](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/MQTT.md) page.
+To learn more about the MQTT support provided by this plugin, see the [MQTT](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/MQTT.md) page.
 
 ### Some Fun Facts
   * You don't need to configure all the liveviews. If you have at least one, the security system accessory will appear. For security system states with no corresponding liveviews, nothing will happen.
-  * UniFi Protect will allow you to have multiple liveviews with the same name. In this case, `homebridge-unifi-protect2` will pull all the cameras in all the liveviews with the same name and control them together.
-  * There is a setting when editing liveviews called `Share view with others`. This makes a given liveview available to all users, instead of just the user you're currently logged in with. Why does this matter? If you use a different username and password for `homebridge-unifi-protect2` than the one you use to login, you'll want to ensure that any views you create are shared with all users so they can be used with other usernames. Alternatively, login to the Protect webUI with the same username you configured `homebridge-unifi-protect2` to configure liveviews for that user.
+  * UniFi Protect will allow you to have multiple liveviews with the same name. In this case, `homebridge-unifi-protect` will pull all the cameras in all the liveviews with the same name and control them together.
+  * There is a setting when editing liveviews called `Share view with others`. This makes a given liveview available to all users, instead of just the user you're currently logged in with. Why does this matter? If you use a different username and password for `homebridge-unifi-protect` than the one you use to login, you'll want to ensure that any views you create are shared with all users so they can be used with other usernames. Alternatively, login to the Protect webUI with the same username you configured `homebridge-unifi-protect` to configure liveviews for that user.
   * You don't need to restart the plugin to make any of this work. When you configure liveviews, they'll get detected and configured automagically.
   * The *Off* state is special. If you don't have a plugin-specific liveview for Off, it will default to turning off motion detection in [HomeKit](https://www.apple.com/ios/home/) for all cameras attached to this Protect controller. If you do create a plugin-specific liveview for *Off*, it will honor those settings instead.

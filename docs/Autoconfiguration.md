@@ -1,19 +1,19 @@
 <SPAN ALIGN="CENTER" STYLE="text-align:center">
 <DIV ALIGN="CENTER" STYLE="text-align:center">
 
-[![homebridge-unifi-protect2: Native HomeKit support for UniFi Protect](https://raw.githubusercontent.com/hjdhjd/homebridge-unifi-protect2/master/homebridge-protect.svg)](https://github.com/hjdhjd/homebridge-unifi-protect2)
+[![homebridge-unifi-protect: Native HomeKit support for UniFi Protect](https://raw.githubusercontent.com/hjdhjd/homebridge-unifi-protect/master/homebridge-protect.svg)](https://github.com/hjdhjd/homebridge-unifi-protect)
 
-# Homebridge UniFi Protect<SUP STYLE="font-size: smaller; color:#0559C9;">2</SUP>
+# Homebridge UniFi Protect
 
-[![Downloads](https://img.shields.io/npm/dt/homebridge-unifi-protect2?color=%230559C9&logo=icloud&logoColor=%23FFFFFF&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect2)
-[![Version](https://img.shields.io/npm/v/homebridge-unifi-protect2?color=%230559C9&label=UniFi%20Protect%202&logo=ubiquiti&logoColor=%23FFFFFF&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect2)
+[![Downloads](https://img.shields.io/npm/dt/homebridge-unifi-protect2?color=%230559C9&logo=icloud&logoColor=%23FFFFFF&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect)
+[![Version](https://img.shields.io/npm/v/homebridge-unifi-protect2?color=%230559C9&label=UniFi%20Protect&logo=ubiquiti&logoColor=%23FFFFFF&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect)
 [![verified-by-homebridge](https://img.shields.io/badge/homebridge-verified-blueviolet?color=%2357277C&style=for-the-badge)](https://github.com/homebridge/homebridge/wiki/Verified-Plugins)
 
 ## HomeKit support for the UniFi Protect ecosystem using [Homebridge](https://homebridge.io).
 </DIV>
 </SPAN>
 
-`homebridge-unifi-protect2` is a [Homebridge](https://homebridge.io) plugin that provides HomeKit support to the [UniFi Protect](https://unifi-network.ui.com/video-security) device ecosystem. [UniFi Protect](https://unifi-network.ui.com/video-security) is [Ubiquiti's](https://www.ui.com) next-generation video security platform, with rich camera, doorbell, and NVR controller hardware options for you to choose from, as well as an app which you can use to view, configure and manage your video camera and doorbells.
+`homebridge-unifi-protect` is a [Homebridge](https://homebridge.io) plugin that provides HomeKit support to the [UniFi Protect](https://unifi-network.ui.com/video-security) device ecosystem. [UniFi Protect](https://unifi-network.ui.com/video-security) is [Ubiquiti's](https://www.ui.com) next-generation video security platform, with rich camera, doorbell, and NVR controller hardware options for you to choose from, as well as an app which you can use to view, configure and manage your video camera and doorbells.
 
 ### Autoconfiguration
 
@@ -21,7 +21,7 @@ This plugin will attempt to autoconfigure all devices it detects attached to a U
 
 Why is enabling all RTSP streams a good idea? In short - it's free and gives you optionality later, should you choose to use it. For this plugin to work correctly, you will need to enable at least one RTSP stream on each camera you want to see in HomeKit. There's really no good reason not to enable all the RTSP streams, which just gives you more flexibility in the stream quality you have available to use, should you choose to do so. Unless you are actively streaming multiple streams at once from a camera, you aren't negatively impacting that camera's performance.
 
-Which leads to the final point on autoconfiguration - ***sane*** defaults. [This plugin's north star](https://github.com/hjdhjd/homebridge-unifi-protect2#readme) is to make it as easy and seamless to integrate with HomeKit as possible in order to provide a terrific user experience -- and that includes great video streaming performance. By default, this plugin prioritizes configuring each camera's streaming quality by understanding HomeKit's limitations and selecting a stream that provides a reasonable balance between quality and speed of stream startup.
+Which leads to the final point on autoconfiguration - ***sane*** defaults. [This plugin's north star](https://github.com/hjdhjd/homebridge-unifi-protect#readme) is to make it as easy and seamless to integrate with HomeKit as possible in order to provide a terrific user experience -- and that includes great video streaming performance. By default, this plugin prioritizes configuring each camera's streaming quality by understanding HomeKit's limitations and selecting a stream that provides a reasonable balance between quality and speed of stream startup.
 
 For example, we default the UVC G4 Pro camera to a medium quality stream (1280x720 in this case) rather than using the high quality stream (3840x2160). **The reason for this is that HomeKit only supports streams of up to 1920x1080 (aka 1080p) as of iOS 13**, and in my testing, having ffmpeg try to handle reencoding a stream with that much data to a lower quality results in a jittery and unsatisfying camera streaming experience in HomeKit. The table below lists the current autoconfiguration defaults:
 
@@ -31,5 +31,5 @@ For example, we default the UVC G4 Pro camera to a medium quality stream (1280x7
 | UVC G4 Bullet          | Medium, Low, High
 | All others             | High, Medium, Low
 
-Of course, you can override any of the defaults to your liking (see [Feature Options](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/FeatureOptions.md) for more detail).
+Of course, you can override any of the defaults to your liking (see [Feature Options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md) for more detail).
 

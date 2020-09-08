@@ -1,42 +1,41 @@
 <SPAN ALIGN="CENTER" STYLE="text-align:center">
 <DIV ALIGN="CENTER" STYLE="text-align:center">
 
-[![homebridge-unifi-protect2: Native HomeKit support for UniFi Protect](https://raw.githubusercontent.com/hjdhjd/homebridge-unifi-protect2/master/homebridge-protect.svg)](https://github.com/hjdhjd/homebridge-unifi-protect2)
+[![homebridge-unifi-protect: Native HomeKit support for UniFi Protect](https://raw.githubusercontent.com/hjdhjd/homebridge-unifi-protect/master/homebridge-protect.svg)](https://github.com/hjdhjd/homebridge-unifi-protect)
 
-# Homebridge UniFi Protect<SUP STYLE="font-size: smaller; color:#0559C9;">2</SUP>
+# Homebridge UniFi Protect
 
-[![Downloads](https://img.shields.io/npm/dt/homebridge-unifi-protect2?color=%230559C9&logo=icloud&logoColor=%23FFFFFF&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect2)
-[![Version](https://img.shields.io/npm/v/homebridge-unifi-protect2?color=%230559C9&label=UniFi%20Protect%202&logo=ubiquiti&logoColor=%23FFFFFF&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect2)
+[![Downloads](https://img.shields.io/npm/dt/homebridge-unifi-protect2?color=%230559C9&logo=icloud&logoColor=%23FFFFFF&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect)
+[![Version](https://img.shields.io/npm/v/homebridge-unifi-protect2?color=%230559C9&label=UniFi%20Protect&logo=ubiquiti&logoColor=%23FFFFFF&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect)
 [![verified-by-homebridge](https://img.shields.io/badge/homebridge-verified-blueviolet?color=%2357277C&style=for-the-badge)](https://github.com/homebridge/homebridge/wiki/Verified-Plugins)
 
 ## HomeKit support for the UniFi Protect ecosystem using [Homebridge](https://homebridge.io).
 </DIV>
 </SPAN>
 
-`homebridge-unifi-protect2` is a [Homebridge](https://homebridge.io) plugin that provides HomeKit support to the [UniFi Protect](https://unifi-network.ui.com/video-security) device ecosystem. [UniFi Protect](https://unifi-network.ui.com/video-security) is [Ubiquiti's](https://www.ui.com) next-generation video security platform, with rich camera, doorbell, and NVR controller hardware options for you to choose from, as well as an app which you can use to view, configure and manage your video camera and doorbells.
+`homebridge-unifi-protect` is a [Homebridge](https://homebridge.io) plugin that provides HomeKit support to the [UniFi Protect](https://unifi-network.ui.com/video-security) device ecosystem. [UniFi Protect](https://unifi-network.ui.com/video-security) is [Ubiquiti's](https://www.ui.com) next-generation video security platform, with rich camera, doorbell, and NVR controller hardware options for you to choose from, as well as an app which you can use to view, configure and manage your video camera and doorbells.
 
 ### Doorbell Support
-
 If you're reading this, chances are you own, or would like to own, a UniFi Protect doorbell. Currently, Ubiquiti sells one doorbell - the [UniFi Protect G4 Doorbell](https://store.ui.com/collections/unifi-protect-cameras/products/uvc-g4-doorbell), and it's quite a nice device. You can read all about the features and specs elsewhere, but for our purposes, I'm going to focus on talking about the handful of features that are most relevant for [HomeKit](https://www.apple.com/ios/home/) users in particular:
 
   * Two-way Audio Support
-    * `homebridge-unifi-protect2` supports two-way audio, and it works well with one notable caveat: a lack of acoustic echo cancelation, or AEC.
+    * `homebridge-unifi-protect` supports two-way audio, and it works well with one notable caveat: a lack of acoustic echo cancelation, or AEC.
 
   * Doorbell Ring Support
-    * `homebridge-unifi-protect2` fully supports doorbell ring notifications. When you ring the doorbell, you'll get a notification on your iOS/macOS devices, including a snapshot of whose at the door. These snapshots tied to notifications are often called *rich notifications*.
+    * `homebridge-unifi-protect` fully supports doorbell ring notifications. When you ring the doorbell, you'll get a notification on your iOS/macOS devices, including a snapshot of whose at the door. These snapshots tied to notifications are often called *rich notifications*.
 
   * Doorbell Camera and Motion Detection Support
-    * Since the G4 Doorbell is essentially a camera as far as UniFi Protect goes, `homebridge-unifi-protect2` supports all the same features as other UniFi Protect cameras, including motion detection and blazing fast and responsive video streaming.
+    * Since the G4 Doorbell is essentially a camera as far as UniFi Protect goes, `homebridge-unifi-protect` supports all the same features as other UniFi Protect cameras, including motion detection and blazing fast and responsive video streaming.
 
   * Doorbell Messages
-    * An interesting and novel feature of the G4 Doorbell is that it has it's own LCD screen. You can choose to set a message on this screen for people to see. Messages can be set indefinitely, selected from a preexisting list after the doorbell is rung, or you can type in a message in realtime at any point. `homebridge-unifi-protect2` has full support for setting messages on your doorbell.
+    * An interesting and novel feature of the G4 Doorbell is that it has it's own LCD screen. You can choose to set a message on this screen for people to see. Messages can be set indefinitely, selected from a preexisting list after the doorbell is rung, or you can type in a message in realtime at any point. `homebridge-unifi-protect` has full support for setting messages on your doorbell.
 
 ### <A NAME="doorbell-twoway"></A>Two-way Audio
   * Protect cameras and doorbells that support two-way audio are *full-duplex*, meaning they transmit and receive audio simultaneously. This creates a problem - without using some method to eliminate your own voice from what gets picked up by the speaker, ***you will inevitably hear your own voice back whenever you use the microphone in the Home app***, however the person standing in front of the doorbell will hear things normally.
 
   * Unfortunately, AEC is not a solved problem in the open source community quite yet, though there are great commercial options. There are a couple of glimmers of hope: Protect cameras appear to actually support AEC, though there doesn't appear to be a straightforward way to access this capability at the moment. The second is that, things *do* work quite well, aside from the unfortunate challenge around AEC for the person using the Home app.
 
-  * Two-way audio is enabled by default. You can disable it, through the [Feature Option](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/FeatureOptions.md), `TwoWayAudio`.
+  * Two-way audio is enabled by default. You can disable it, through the [Feature Option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md), `TwoWayAudio`.
 
   * Finally, since someone will inevitably ask: Ring and Nest-Cam (terrific plugins by terrific developers) - don't have this problem because Ring and Nest send all audio back to Ring and Nest's servers where audio is processed and dealt with, including AEC.
 
@@ -48,7 +47,7 @@ This plugin supports HomeKit's native video doorbell and doorbell ring functiona
 
 Enter automation support for doorbell ring events in this plugin. If you choose to enable support for doorbell ring automation, you can create HomeKit automations based on doorbell ring events. Here's how it works:
 
-  * Enable the `Doorbell.ContactSensor` Feature Option in the plugin configuration. See the [Feature Options](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/FeatureOptions.md) documentation for more information on Feature Options.
+  * Enable the `Doorbell.ContactSensor` Feature Option in the plugin configuration. See the [Feature Options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md) documentation for more information on Feature Options.
 
   * This will create a contact sensor service on the doorbell. Whenever the doorbell rings, the contact sensor will be triggered and set to the *open* state for two seconds, before resetting to the *closed* state again.
 
@@ -73,13 +72,13 @@ These messages are always available to you in the UniFi Protect app and they can
 
 When you select a message to be displayed, you can also set a duration on that message. The message duration tells UniFi Protect how long to leave the message on the screen before returning to the default message *WELCOME*. By default, when a message is selected, it remains visible for 60 seconds. You can set a message to remain in place indefinitely, or at various preconfigured durations within the UniFi Protect app.
 
-#### How Doorbell Messages Work In `homebridge-unifi-protect2`
+#### How Doorbell Messages Work In `homebridge-unifi-protect`
 
 There are a few challenges in implementing this feature for HomeKit, but the most significant one is that there's no way to take direct user input, like text. So what do we do? I decided to take the essence of this feature - preconfigured messages that you can set for arbitrary durations - and make it available through HomeKit as a switch.
 
 Here's how it works:
 
-  * `homebridge-unifi-protect2` will read, in realtime, any messages that are saved in UniFi Protect. That means at a minimum, you'll always have the built in *Do not disturb* and *Leave package at door* messages available to you, in addition to any other messages you choose to setup in the UniFi Protect app.
+  * `homebridge-unifi-protect` will read, in realtime, any messages that are saved in UniFi Protect. That means at a minimum, you'll always have the built in *Do not disturb* and *Leave package at door* messages available to you, in addition to any other messages you choose to setup in the UniFi Protect app.
 
     * This gives you the flexibility to add and remove messages at a whim, and this plugin will make sure those messages are available for you to use in HomeKit on a dynamic basis. What you get, is the simplicity of having a single place for all the messages you want to use with your doorbell - whether it's using the UniFi Protect iOS app or the Home app.
 
@@ -134,7 +133,7 @@ For those of the command-line persuasion, you can see what an example `config.js
 | `message`           | The message text to display on the doorbell.
 | `duration`          | The duration, in seconds, that you want to display the message for on the doorbell. If not specified, it defaults to the UniFi Protect default, 60 seconds. If set to 0, the message will display indefinitely.
 
-There are also two Fature Options that you can use to either disable the messages feature entirely, or, to tell `homebridge-unifi-protect2` to only display the messages you've configured within Homebridge in HomeKit:
+There are also two Fature Options that you can use to either disable the messages feature entirely, or, to tell `homebridge-unifi-protect` to only display the messages you've configured within Homebridge in HomeKit:
 
 | Feature Options        | Description
 |-----------------------|----------------------------------
@@ -144,20 +143,20 @@ There are also two Fature Options that you can use to either disable the message
 | `Enable.Messages.FromDoorbell`                | Allow messages saved on the UniFi Protect doorbell to appear as switches in HomeKit. *(Default)*
 | `Disable.Messages.FromDoorbell`               | Prevent messages saved on the UniFi Protect doorbell from appearing as switches in HomeKit.
 
-To learn more about Feature Options and how to use them, see the [Feature Options](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/FeatureOptions.md) page.
+To learn more about Feature Options and how to use them, see the [Feature Options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md) page.
 
 #### MQTT Support
-[MQTT support](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/MQTT.md) is available for doorbells. In addition to all the MQTT functionality that is supported for all UniFi Protect cameras, there are two doorbell-specific MQTT actions that are supported:
+[MQTT support](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/MQTT.md) is available for doorbells. In addition to all the MQTT functionality that is supported for all UniFi Protect cameras, there are two doorbell-specific MQTT actions that are supported:
 
   * When the doorbell is rung, a message will be published to MQTT.
   * You can set Doorbell messages through MQTT. This provides a more rich experience by allowing you to set any arbitrary message on a dynamic basis.
 
-To learn more about the MQTT support provided by this plugin, see the [MQTT](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/MQTT.md) page.
+To learn more about the MQTT support provided by this plugin, see the [MQTT](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/MQTT.md) page.
 
 ### Some Fun Facts
   * There is a 30 character limit to what can be displayed on the LCD.
   * No, you can't use emojis. Would've been nice, right?
-  * No, you can't have newlines / carriage returns either. These are limitations in what the doorbell displays, not ones imposed by `homebridge-unifi-protect2`. In my testing, it supports basic formatting and regular text, and that's it.
+  * No, you can't have newlines / carriage returns either. These are limitations in what the doorbell displays, not ones imposed by `homebridge-unifi-protect`. In my testing, it supports basic formatting and regular text, and that's it.
   * No, you can't display cool icons like the builtin *do not disturb* and *leave package at door* settings do. Would be nice, but these just aren't accessible. Would be an awesome feature to have though, if Ubiquiti chooses to make it customizable in the future.
-  * You get more flexibility in formatting when using the plugin-centric configuration option rather than configuring messages in Protect directly. Protect will always uppercase any message you enter. `homebridge-unifi-protect2` will honor whatever case and formatting you enter.
+  * You get more flexibility in formatting when using the plugin-centric configuration option rather than configuring messages in Protect directly. Protect will always uppercase any message you enter. `homebridge-unifi-protect` will honor whatever case and formatting you enter.
   * There's no practical limit to the number of messages you can configure.
