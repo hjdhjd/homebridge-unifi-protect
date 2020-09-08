@@ -42,11 +42,11 @@ export const PROTECT_NVR_DOORBELL_REFRESH_INTERVAL = 2;
 
 // How often, in seconds, should we check UniFi Cloud Key Gen2+ Protect controllers for motion, other events, or new or removed devices.
 // This WILL impact motion and event detection resolution on UCK Gen2+ controllers.
-export const PROTECT_NVR_UCK_REFRESH_INTERVAL = 10;
+export const PROTECT_NVR_UCK_REFRESH_INTERVAL = 5;
 
 // How often, in seconds, should we check Protect controllers for new or removed devices.
-// This will NOT impact motion detection on UniFi OS devices, but will impact doorbell event detection.
-export const PROTECT_NVR_UNIFIOS_REFRESH_INTERVAL = 5;
+// This will NOT impact motion or doorbell event detection on UniFi OS devices.
+export const PROTECT_NVR_UNIFIOS_REFRESH_INTERVAL = 10;
 
 // How often, in seconds, should we heartbeat FFmpeg in two-way audio sessions. This should be less than 5 seconds, which is
 // FFmpeg's input timeout interval.
