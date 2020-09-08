@@ -76,7 +76,7 @@ The final part of the update packet is the data frame. The data frame can be thr
 | 3            | Node Buffer.
 
 #### Tips
- * `update` actions are always tied to the following modelKeys: `camera`, `event`, `nvr`, and `user`.
+ * `update` actions are always tied to any valid modelKey that exists in the bootstrap JSON. The exception is `events` which is tied to the Protect events history list that it maintains (but we're uninterested in, for HomeKit purposes). The supported modelKeys from the bootstrap JSON are: `bridge`, `camera`, `group`, `light`, `liveview` `nvr`, `sensor`, `user`, and `viewer`.
  * `add` actions are always tied to the `event` modelKey and indicate the beginning of an event item in the Protect events list. A subsequent `update` action is sent signaling the end of the event capture, and it's confidence score for motion detection.
  * This is **not** the same thing as motion detection. If you want to detect motion, you should watch the `update` action for `camera` modelKeys, and look for a JSON that updates lastMotion. For doorbell rings, lastRing. The Protect events list is useful for the Protect app, but it's of limited utility to HomeKit, and it's slow relative to just looking for the lastMotion JSON that is. If you want true realtime updates, you want to look at the `update` action.
  * JSONs are only payload type that seems to be sent, although the protocol is designed to accept all three.
