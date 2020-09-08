@@ -18,10 +18,12 @@
 ### Realtime Updates API
 So...how does UniFi Protect provide realtime updates? On UniFi OS-based controllers, it uses a websocket called `updates`. This connection provides a realtime stream of health, status, and events that the cameras encounter - including motion events and doorbell ring events.
 
+For the impatient, you can take a look at the code for how to decode and read the binary protocol here in [protect-updates-api.ts](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/src/protect-updates-api.ts). Aside from Homebridge-specific logging support, the code is independent and portable to other platforms. You'll probably want to grab type and interface information from [protect-types.ts](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/src/protect-types.ts) as well.
+
 #### Connecting
- * Login to the UniFi Protect controller, obtain the bootstrap JSON. The URL is: `https://protect-nvr-ip/proxy/protect/api/bootstrap`.
- * Open the websocket to the updates URL. The URL is: `https://protect-nvr-ip/proxy/protect/ws/update?lastUpdateId?lastUpdateId=X`. You can grab lastUpdateId from the bootstrap JSON in the prior step. You can [see an example in protect-api.ts](https://github.com/hjdhjd/homebridge-unifi-protect/blob/373a7eed543e2cc6f6719122b7728cf8c0c9d238/src/protect-api.ts#L225).
- * Then you're ready to listen to messages. You can see an [example of this in protect-nvr.ts](https://github.com/hjdhjd/homebridge-unifi-protect/blob/373a7eed543e2cc6f6719122b7728cf8c0c9d238/src/protect-nvr.ts#L408).
+ * Login to the UniFi Protect controller and obtain the bootstrap JSON. The URL is: `https://protect-nvr-ip/proxy/protect/api/bootstrap`. You can look through [protect-api.ts](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/src/protect-api.ts) for a better understanding of the Protect login process and how to obtain the bootstrap JSON.
+ * Open the websocket to the updates URL. The URL is: `https://protect-nvr-ip/proxy/protect/ws/update?lastUpdateId?lastUpdateId=X`. You can grab lastUpdateId from the bootstrap JSON in the prior step. You can [see an example in protect-api.ts](https://github.com/hjdhjd/homebridge-unifi-protect/blob/1d0d28a8b020878ee8f478244bed7ec361b33779/src/protect-api.ts#L225).
+ * Then you're ready to listen to messages. You can see an [example of this in protect-nvr.ts](https://github.com/hjdhjd/homebridge-unifi-protect/blob/1d0d28a8b020878ee8f478244bed7ec361b33779/src/protect-nvr.ts#L408).
 
 Those are the basics and gets us up and running. Now, to explain how the updates API works...
 
@@ -69,7 +71,7 @@ The final part of the update packet is the data frame. The data frame can be thr
 
 | Payload Type |  Description
 |--------------|------------------------------------------------------------------------------------
-| 1            | JSON. If the action frame's `action` property is set to `update` and the `modelKey` property is not set to `event` (e.g. `camera`), this will **always** a subset of the [configuration bootstrap JSON](https://github.com/hjdhjd/homebridge-unifi-protect/blob/6743d06170f5cfb052db4d38244c1185c1c3b002/src/protect-types.ts#L6).
+| 1            | JSON. If the action frame's `action` property is set to `update` and the `modelKey` property is not set to `event` (e.g. `camera`), this will **always** a subset of the [configuration bootstrap JSON](https://github.com/hjdhjd/homebridge-unifi-protect/blob/1d0d28a8b020878ee8f478244bed7ec361b33779/src/protect-types.ts#L6).
 | 2            | A UTF8-encoded string.
 | 3            | Node Buffer.
 
@@ -78,4 +80,4 @@ The final part of the update packet is the data frame. The data frame can be thr
  * `add` actions are always tied to the `event` modelKey and indicate the beginning of an event item in the Protect events list. A subsequent `update` action is sent signaling the end of the event capture, and it's confidence score for motion detection.
  * This is **not** the same thing as motion detection. If you want to detect motion, you should watch the `update` action for `camera` modelKeys, and look for a JSON that updates lastMotion. For doorbell rings, lastRing. The Protect events list is useful for the Protect app, but it's of limited utility to HomeKit, and it's slow relative to just looking for the lastMotion JSON that is. If you want true realtime updates, you want to look at the `update` action.
  * JSONs are only payload type that seems to be sent, although the protocol is designed to accept all three.
- * With the exception of `update` actions with a `modelKey` of `event`, JSONs are always a subset of the bootstrap JSON, indexed off of `modelKey`. So for a `modelKey` of `camera`, the data payload is always a subset of ProtectCameraConfigInterface (see [protect-types.ts](https://github.com/hjdhjd/homebridge-unifi-protect/blob/373a7eed543e2cc6f6719122b7728cf8c0c9d238/src/protect-types.ts#L108)).
+ * With the exception of `update` actions with a `modelKey` of `event`, JSONs are always a subset of the bootstrap JSON, indexed off of `modelKey`. So for a `modelKey` of `camera`, the data payload is always a subset of ProtectCameraConfigInterface (see [protect-types.ts](https://github.com/hjdhjd/homebridge-unifi-protect/blob/1d0d28a8b020878ee8f478244bed7ec361b33779/src/protect-types.ts#L108)).
