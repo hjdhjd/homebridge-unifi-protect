@@ -20,8 +20,8 @@ So...how does UniFi Protect provide realtime updates? On UniFi OS-based controll
 
 #### Connecting
  * Login to the UniFi Protect controller, obtain the bootstrap JSON.
- * Open the websocket to the updates URL (see protect-api.ts for an example).
- * Then you're ready to listen to messages. You can see an example of this in protect-nvr.ts.
+ * Open the websocket to the updates URL ([see an example in protect-api.ts](https://github.com/hjdhjd/homebridge-unifi-protect/blob/373a7eed543e2cc6f6719122b7728cf8c0c9d238/src/protect-api.ts#L225)).
+ * Then you're ready to listen to messages. You can see an [example of this in protect-nvr.ts](https://github.com/hjdhjd/homebridge-unifi-protect/blob/373a7eed543e2cc6f6719122b7728cf8c0c9d238/src/protect-nvr.ts#L408).
 
 Those are the basics and gets us up and running. Now, to explain how the updates API works...
 
@@ -79,4 +79,4 @@ The final part of the update packet is the data frame. The data frame can be thr
  * `add` actions are always tied to the `event` modelKey and indicate the beginning of an event item in the Protect events list. A subsequent `update` action is sent signaling the end of the event capture, and it's confidence score for motion detection.
  * This is **not** the same thing as motion detection. If you want to detect motion, you should watch the `update` action for `camera` modelKeys, and look for a JSON that updates lastMotion. For doorbell rings, lastRing. The Protect events list is useful for the Protect app, but it's of limited utility to HomeKit, and it's slow relative to just looking for the lastMotion JSON that is. If you want true realtime updates, you want to look at the `update` action.
  * JSONs are only payload type that seems to be sent, although the protocol is designed to accept all three.
- * With the exception of `update` actions with a `modelKey` of `event`, JSONs are always a subset of the bootstrap JSON, indexed off of `modelKey`. So for a `modelKey` of `camera`, the data payload is always a subset of ProtectCameraConfigInterface (see protect-types.ts).
+ * With the exception of `update` actions with a `modelKey` of `event`, JSONs are always a subset of the bootstrap JSON, indexed off of `modelKey`. So for a `modelKey` of `camera`, the data payload is always a subset of ProtectCameraConfigInterface (see [protect-types.ts](https://github.com/hjdhjd/homebridge-unifi-protect/blob/373a7eed543e2cc6f6719122b7728cf8c0c9d238/src/protect-types.ts#L108)).
