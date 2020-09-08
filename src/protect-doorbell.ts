@@ -210,7 +210,7 @@ export class ProtectDoorbell extends ProtectCamera {
 
       // No message defined...we assume we're resetting the message.
       if(!incomingPayload.message.length) {
-        outboundPayload = { lcdMessage: {} };
+        outboundPayload = { lcdMessage: { resetAt: 0 } };
         this.log("%s: Received MQTT doorbell message reset.", this.name());
       } else {
         outboundPayload = { lcdMessage: { duration: incomingPayload.duration, text: incomingPayload.message, type: "CUSTOM_MESSAGE" } };
@@ -420,7 +420,7 @@ export class ProtectDoorbell extends ProtectCamera {
     if(messageSwitch.state !== value) {
       const payload: ProtectMessageJSONInterface = (value === true) ?
         { lcdMessage: { duration: messageSwitch.duration, text: messageSwitch.text, type: messageSwitch.type } } :
-        { lcdMessage: {} };
+        { lcdMessage: { resetAt: 0 } };
 
       // Set the message and sync our states.
       void this.setMessage(payload);
@@ -430,12 +430,17 @@ export class ProtectDoorbell extends ProtectCamera {
   }
 
   // Set the message on the doorbell.
-  private async setMessage(payload: ProtectMessageJSONInterface = { lcdMessage: {} }): Promise<boolean> {
+  private async setMessage(payload: ProtectMessageJSONInterface = { lcdMessage: { resetAt: 0 } }): Promise<boolean> {
 
     // We take the duration and save it for MQTT and then translate the payload into what Protect is expecting from us.
     if("duration" in payload.lcdMessage) {
       payload.lcdMessage.resetAt = (payload.lcdMessage.duration ? Date.now() + payload.lcdMessage.duration : null);
       delete payload.lcdMessage.duration;
+    }
+
+    // An empty payload means we're resetting. Set the reset timer to 0 and we're done.
+    if(!Object.keys(payload.lcdMessage).length) {
+      payload.lcdMessage.resetAt = 0;
     }
 
     // Push the update to the doorbell.
