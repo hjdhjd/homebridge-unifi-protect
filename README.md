@@ -68,7 +68,7 @@ I hope to continue to work on this one to get AEC working for two-way audio. [Yo
   * [Liveview Scenes](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/Liveviews.md): use the UniFi Protect liveviews feature (available in the UniFi Protect controller webUI) to create motion-detection scenes.
   * [MQTT](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/MQTT.md): how to configure MQTT support.
   * [Advanced Configuration](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/AdvancedOptions.md): complete list of configuration options available in this plugin.
-  * [Realtime API Documentation](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/ProtectApi.md): documentation of how the Ubiquiti realtime updates API works and how to decode the binary protocol.
+  * [Realtime API Documentation](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/ProtectAPI.md): documentation of how the Ubiquiti realtime updates API works and how to decode the binary protocol.
   * [Changelog](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/Changelog.md): changes and release history of this plugin, starting with v3.0.
 
 ## Installation
