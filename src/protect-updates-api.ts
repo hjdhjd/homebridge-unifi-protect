@@ -1,6 +1,6 @@
 /* Copyright(C) 2020, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * protect-api-updates.ts: Our UniFi Protect realtime updates API implementation.
+ * protect-api-updates.ts: Our UniFi Protect realtime updates event API implementation.
  */
 import { Logging } from "homebridge";
 import zlib from "zlib";

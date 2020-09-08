@@ -341,7 +341,7 @@ export class ProtectNvr {
       } catch(error) {
 
         if(error instanceof SyntaxError) {
-          this.log("%s: Unable to process message from the realtime events API: \"%s\". Error: %s.", this.nvrApi.getNvrName(), event, error.message);
+          this.log("%s: Unable to process message from the realtime system events API: \"%s\". Error: %s.", this.nvrApi.getNvrName(), event, error.message);
         } else {
           this.log("%s: Unknown error has occurred: %s.", this.nvrApi.getNvrName(), error);
         }
@@ -382,7 +382,7 @@ export class ProtectNvr {
         return;
       }
 
-      // The UniFi OS realtime API returns lastMotion in seconds rather than milliseconds.
+      // The UniFi OS system events realtime API returns lastMotion in seconds rather than milliseconds.
       this.motionEventHandler(accessory, controller.info.lastMotion * 1000);
     });
 
@@ -391,7 +391,7 @@ export class ProtectNvr {
     return true;
   }
 
-  // Configure the realtime update event API listener to trigger events on accessories, like motion.
+  // Configure the realtime update events API listener to trigger events on accessories, like motion.
   private configureUpdatesListener(): boolean {
 
     // The event listener API only works on UniFi OS devices.

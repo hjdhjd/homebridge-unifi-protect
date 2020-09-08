@@ -221,8 +221,9 @@ export class ProtectApi {
     return this.isUnifiOs ? this.launchUpdatesListener() : true;
   }
 
-  // Connect to the UniFi OS realtime updates API.
+  // Connect to the UniFi OS realtime update events API.
   private async launchUpdatesListener(): Promise<boolean> {
+
     // Log us in if needed.
     if(!(await this.loginProtect())) {
       return false;
@@ -235,10 +236,10 @@ export class ProtectApi {
 
     const params = new URLSearchParams({ lastUpdateId: this.bootstrap?.lastUpdateId ?? "" });
 
-    this.debug("Update listener: %s", this.updateEventsUrl() + "?" + params.toString());
+    this.debug("Update listener: %s", this.updatesUrl() + "?" + params.toString());
 
     try {
-      const ws = new WebSocket(this.updateEventsUrl() + "?" + params.toString(), {
+      const ws = new WebSocket(this.updatesUrl() + "?" + params.toString(), {
         rejectUnauthorized: false,
         headers: {
           Cookie: this.headers.get("Cookie") ?? ""
@@ -246,7 +247,7 @@ export class ProtectApi {
       });
 
       if(!ws) {
-        this.log("Unable to connect to update events API. Will retry again later.");
+        this.log("Unable to connect to the realtime update events API. Will retry again later.");
         this.eventListener = null;
         this.eventListenerConfigured = false;
         return false;
@@ -279,7 +280,7 @@ export class ProtectApi {
 
       this.log("%s: Connected to the UniFi realtime update events API.", this.getNvrName());
     } catch(error) {
-      this.log("%s: Error connecting to the update events API: %s", this.getNvrName(), error);
+      this.log("%s: Error connecting to the realtime update events API: %s", this.getNvrName(), error);
     }
 
     return true;
@@ -545,8 +546,8 @@ export class ProtectApi {
     return "https://" + this.nvrAddress + (this.isUnifiOs ? "/proxy/protect/api/bootstrap" : ":7443/api/bootstrap");
   }
 
-  // Return the system events API URL, if it's supported by this UniFi Protect device type.
-  private systemEventsUrl(): string {
+  // Return the realtime system events API URL, if it's supported by this UniFi Protect device type.
+  private systemUrl(): string {
     // UCK Gen2+ devices don't support the websockets events API.
     if(!this.isUnifiOs) {
       return "";
@@ -555,8 +556,9 @@ export class ProtectApi {
     return "wss://" + this.nvrAddress + "/api/ws/system";
   }
 
-  // Return the update events API URL, if it's supported by this UniFi Protect device type.
-  private updateEventsUrl(): string {
+  // Return the realtime update events API URL, if it's supported by this UniFi Protect device type.
+  private updatesUrl(): string {
+
     // UCK Gen2+ devices don't support the websockets events API.
     if(!this.isUnifiOs) {
       return "";
@@ -611,6 +613,7 @@ export class ProtectApi {
     options.headers = this.headers;
 
     try {
+
       const now = Date.now();
 
       // Throttle this after PROTECT_API_ERROR_LIMIT attempts.
@@ -666,7 +669,9 @@ export class ProtectApi {
       this.apiLastSuccess = Date.now();
       this.apiErrorCount = 0;
       return response;
+
     } catch(error) {
+
       this.apiErrorCount++;
 
       if(error instanceof FetchError) {
@@ -692,6 +697,7 @@ export class ProtectApi {
       }
 
       return null;
+
     }
   }
 }

@@ -19,8 +19,8 @@
 So...how does UniFi Protect provide realtime updates? On UniFi OS-based controllers, it uses a websocket called `updates`. This connection provides a realtime stream of health, status, and events that the cameras encounter - including motion events and doorbell ring events.
 
 #### Connecting
- * Login to the UniFi Protect controller, obtain the bootstrap JSON.
- * Open the websocket to the updates URL ([see an example in protect-api.ts](https://github.com/hjdhjd/homebridge-unifi-protect/blob/373a7eed543e2cc6f6719122b7728cf8c0c9d238/src/protect-api.ts#L225)).
+ * Login to the UniFi Protect controller, obtain the bootstrap JSON. The URL is: `https://protect-nvr-ip/proxy/protect/api/bootstrap`.
+ * Open the websocket to the updates URL. The URL is: `https://protect-nvr-ip/proxy/protect/ws/update?lastUpdateId?lastUpdateId=X`. You can grab lastUpdateId from the bootstrap JSON in the prior step. You can [see an example in protect-api.ts](https://github.com/hjdhjd/homebridge-unifi-protect/blob/373a7eed543e2cc6f6719122b7728cf8c0c9d238/src/protect-api.ts#L225).
  * Then you're ready to listen to messages. You can see an [example of this in protect-nvr.ts](https://github.com/hjdhjd/homebridge-unifi-protect/blob/373a7eed543e2cc6f6719122b7728cf8c0c9d238/src/protect-nvr.ts#L408).
 
 Those are the basics and gets us up and running. Now, to explain how the updates API works...
