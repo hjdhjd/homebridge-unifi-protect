@@ -49,7 +49,7 @@ A packet header is composed of 8 bytes in this order:
 |----------------|-----------------|---------|-----------------------------------------
 | 0              | Packet Type     | 8       | 1 - action frame, 2 - payload frame.
 | 1              | Payload Format  | 8       | 1 - JSON object, 2 - UTF8-encoded string, 3 - Node Buffer.
-| 2              | Deflated        | 8       | 0 - uncompressed, 1 - deflated / compressed (zlib-based compression).
+| 2              | Deflated        | 8       | 0 - uncompressed, 1 - deflated / compressed ([zlib](https://www.npmjs.com/package/zlib)-based).
 | 3              | Unknown         | 8       | Always 0. Possibly reserved for future use by Ubiquiti?
 | 4-7            | Payload Size    | 32      | Size of payload in network-byte order (big endian).
 
@@ -69,12 +69,11 @@ The final part of the update packet is the data frame. The data frame can be thr
 
 | Payload Type |  Description
 |--------------|------------------------------------------------------------------------------------
-| 1            | JSON. For update actions that are not events, this is **always** a subset of the configuration bootstrap JSON.
-| 2            | A UTF8-encoded string
-| 3            | Node Buffer
+| 1            | JSON. If the action frame's `action` property is set to `update` and the `modelKey` property is not set to `event` (e.g. `camera`), this will **always** a subset of the [configuration bootstrap JSON](https://github.com/hjdhjd/homebridge-unifi-protect/blob/6743d06170f5cfb052db4d38244c1185c1c3b002/src/protect-types.ts#L6).
+| 2            | A UTF8-encoded string.
+| 3            | Node Buffer.
 
 #### Tips
-
  * `update` actions are always tied to the following modelKeys: `camera`, `event`, `nvr`, and `user`.
  * `add` actions are always tied to the `event` modelKey and indicate the beginning of an event item in the Protect events list. A subsequent `update` action is sent signaling the end of the event capture, and it's confidence score for motion detection.
  * This is **not** the same thing as motion detection. If you want to detect motion, you should watch the `update` action for `camera` modelKeys, and look for a JSON that updates lastMotion. For doorbell rings, lastRing. The Protect events list is useful for the Protect app, but it's of limited utility to HomeKit, and it's slow relative to just looking for the lastMotion JSON that is. If you want true realtime updates, you want to look at the `update` action.
