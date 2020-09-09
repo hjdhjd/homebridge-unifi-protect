@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 3.6.5 (2020-09-09)
+ * Fix: minor update to cleanup aspects of logging.
+
 ## 3.6.4 (2020-09-08)
   * New [feature options](https://github.com/hjdhjd/homebridge-unifi-protect2/blob/master/docs/FeatureOptions.md) `LogMotion` and `LogDoorbell` to control whether motion or doorbell events get logged. You can set this for the entire controller, or individual cameras, like all feature options.
   * Fix a regression that was introduced in 3.6.3 for non-UniFi OS users where motion detection and doorbell events weren't being sent.
