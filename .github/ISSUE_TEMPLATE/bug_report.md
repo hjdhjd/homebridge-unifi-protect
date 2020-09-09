@@ -7,7 +7,7 @@ assignees: ''
 ---
 
 <!-- You must use the issue template below. -->
-<!-- Please ensure you read the documentation before creating a support request, especially the Troubleshooting page -->
+<!-- Please ensure you read the documentation before creating a support request, especially the Troubleshooting page. -->
 
 **Describe The Problem:**
 <!-- A clear and concise description of what the bug is. -->
