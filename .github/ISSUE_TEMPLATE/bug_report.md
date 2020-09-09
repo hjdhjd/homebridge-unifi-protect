@@ -1,6 +1,6 @@
 ---
 name: Support Request
-about: Report a bug or request help. Please read the [documentation](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/README.md), especially the [Feature Options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md) and [Troubleshooting](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/Troubleshooting.md).
+about: Report a bug or request help. Please read the documentation first, especially the Feature Options and Troubleshooting pages.
 title: ''
 assignees: ''
 
