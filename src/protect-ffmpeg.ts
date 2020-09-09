@@ -37,9 +37,9 @@ export class FfmpegProcess {
     this.isVerbose = this.delegate.platform.verboseFfmpeg;
 
     if(this.isVerbose) {
-      this.log("%s: ffmpeg command: %s %s", delegate.protectCamera.name(), delegate.videoProcessor, command);
+      this.log("%s: ffmpeg command: %s %s", delegate.protectCamera.name(), delegate.videoProcessor, command.join(" "));
     } else {
-      this.debug("%s: ffmpeg command: %s %s", delegate.protectCamera.name(), delegate.videoProcessor, command);
+      this.debug("%s: ffmpeg command: %s %s", delegate.protectCamera.name(), delegate.videoProcessor, command.join(" "));
     }
 
     // Create the return port for FFmpeg, if requested to do so. The only time we don't do this is when we're standing up
