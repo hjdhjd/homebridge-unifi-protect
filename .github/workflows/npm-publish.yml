@@ -7,7 +7,7 @@ on:
 
 jobs:
   publish-npm:
-    # publish only if we are on our own repo, event was 'release' (a tag was created) and the tag starts with "v" (aka version tag)
+    # publish only if the event is 'release' (a tag was created) and the tag starts with "v" (aka version tag).
     if: github.event_name == 'release' && startsWith(github.ref, 'refs/tags/v')
 
     runs-on: ubuntu-latest
