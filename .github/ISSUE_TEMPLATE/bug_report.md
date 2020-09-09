@@ -1,12 +1,13 @@
 ---
 name: Support Request
-about: Report a bug or request help. Please read the documentation first, especially the Feature Options and Troubleshooting pages **before** creating a support request.
+about: Report a bug or request help. Please read the documentation first, especially the Feature Options and Troubleshooting pages before creating a support request.
 title: ''
 assignees: ''
 
 ---
 
-<!-- You must use the issue template below -->
+<!-- You must use the issue template below. -->
+<!-- Please ensure you read the documentation before creating a support request, especially the Troubleshooting page -->
 
 **Describe The Problem:**
 <!-- A clear and concise description of what the bug is. -->
@@ -25,7 +26,7 @@ Remove any sensitive information.
 **Homebridge Configuration:**
 
 ```json
-Show your homebridge config.json here.
+Show the relevant portion of your homebridge config.json here, if needed.
 Remove any sensitive information.
 ```
 
