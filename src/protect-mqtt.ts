@@ -38,11 +38,16 @@ export class ProtectMqtt {
 
   // Connect to the MQTT broker.
   private configure(): void {
+
     // Try to connect to the MQTT broker and make sure we catch any URL errors.
     try {
+
       this.mqtt = mqtt.connect(this.config.mqttUrl, { reconnectPeriod: PROTECT_MQTT_RECONNECT_INTERVAL * 1000});
+
     } catch(error) {
+
       if(error instanceof Error) {
+
         switch(error.message) {
           case "Missing protocol":
             this.log("%s MQTT Broker: Invalid URL provided: %s.", this.nvrApi.getNvrName(), this.config.mqttUrl);
@@ -52,7 +57,9 @@ export class ProtectMqtt {
             this.log("%s MQTT Broker: Error: %s.", this.nvrApi.getNvrName(), error.message);
             break;
         }
+
       }
+
     }
 
     // We've been unable to even attempt to connect. It's likely we have a configuration issue - we're done here.

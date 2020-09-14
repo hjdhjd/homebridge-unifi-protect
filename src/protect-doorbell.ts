@@ -332,6 +332,7 @@ export class ProtectDoorbell extends ProtectCamera {
 
           // Publish to MQTT, if the user has configured it.
           this.nvr.mqtt?.publish(this.accessory, "message", JSON.stringify({ message: lcdEntry.text, duration: lcdEntry.duration / 1000 }));
+
         }
       }
     }
