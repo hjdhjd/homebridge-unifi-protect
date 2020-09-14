@@ -6,7 +6,8 @@
 # Homebridge UniFi Protect<SUP STYLE="font-size: smaller; color:#0559C9;">2</SUP>
 
 [![Downloads](https://img.shields.io/npm/dt/homebridge-unifi-protect2?color=%230559C9&logo=icloud&logoColor=%23FFFFFF&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect)
-[![Version](https://img.shields.io/npm/v/homebridge-unifi-protect?color=%230559C9&label=UniFi%20Protect%202&logo=ubiquiti&logoColor=%23FFFFFF&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect)
+[![Version](https://img.shields.io/npm/v/homebridge-unifi-protect?color=%230559C9&label=UniFi%20Protect&logo=ubiquiti&logoColor=%23FFFFFF&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect)
+[![UniFi Protect@Homebridge Discord](https://img.shields.io/discord/432663330281226270?color=0559C9&label=Discord&logo=discord&logoColor=%23FFFFFF&style=for-the-badge)](https://discord.gg/QXqfHEW)
 [![verified-by-homebridge](https://img.shields.io/badge/homebridge-verified-blueviolet?color=%23491F59&style=for-the-badge)](https://github.com/homebridge/homebridge/wiki/Verified-Plugins)
 
 ## HomeKit support for the UniFi Protect ecosystem using [Homebridge](https://homebridge.io).
@@ -44,12 +45,21 @@ Getting `homebridge-unifi-protect` connected to UniFi Protect is the foundationa
 * You can login, but nothing seems to work.
   * This is almost certainly a permissions problem. If you look in the homebridge logs, you should see messages suggesting that you enable the administrator role for the user you're using to login to Protect. Granting the administrator role to the user you use for this plugin will provide you the most streamlined experience with the least amount of manual configuration on your part, and I'd strongly encourage you to do so.
 
-### Network Issues (Read This First)
+### Network Issues
 If you run homebridge in Docker, or a VM or VM-like environment, you might run into a network issue without realizing it due to situations with multiple network interface cards (NICs). By default, Homebridge listens for HomeKit requests on all the network interfaces it finds when it starts up. Historically, this has created a challenge for video-streaming plugins like `homebridge-unifi-protect` because the plugin doesn't have a way of knowing which interface the streaming request came from. So what this plugin, and pretty much all the other similar plugins do, is guess by looking for the default network interface on the system and assuming that's where video should be sent out of.
 
 The good news is that the leading camera plugin developers and the Homebridge developers have been collaborating on a solution for this, and as of Homebridge 1.1.3, Homebridge now takes over responsibility for determining which interface and IP address to use when streaming video. This is an ideal solution because Homebridge is really who knows where the request came from and is in the best position to determine which interface to use to stream from.
 
 If you're having issues with this plugin, or others, not using the correct network interface, I'd encourage you to upgrade to Homebridge 1.1.3 or greater and see if that resolves the issue.
+
+### Push Notification Issues
+The good news is that push notifications should just work by default. If they don't, and you've ruled out network issues as a cause, the next thing to look at is your system clock. Wait...what does your system clock have to do with notifications?
+
+UniFi Protect provides a lot of notifications, and sometimes those notifications are duplicates or old ones we aren't interested in that happened in the past. As a result, `homebridge-unifi-protect` only alerts you to notifications that UniFi Protect alerts it to that happened in the last few seconds.
+
+Why does this matter?
+
+If you run `homebridge-unifi-protect` on a server that doesn't have a similar internal time to what UniFi Protect thinks is the time, then you might miss notifications if they're significantly different. By default most computers and UniFi Protect synchronize their clocks with the worldwide [NTP](https://www.ntp.org) time servers. Make sure that the server you run Homebridge on and UniFi Protect both agree on what time it is.
 
 ### Video Streaming
 There are lots of things that can go wrong with video streaming, unfortunately. I want to start by providing a bit of background on how streaming actually works in HomeKit, homebridge and this plugin before getting into where things can break.
