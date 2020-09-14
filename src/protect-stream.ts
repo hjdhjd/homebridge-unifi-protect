@@ -456,7 +456,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
       case StreamRequestTypes.RECONFIGURE:
         // Once ffmpeg is updated to support this, we'll enable this one.
-        this.log("%s: Ignoring request to reconfigure: %sx%s, %s fps, %s kbps.",
+        this.debug("%s: Ignoring request to reconfigure: %sx%s, %s fps, %s kbps.",
           this.protectCamera.name(), request.video.width, request.video.height, request.video.fps, request.video.max_bit_rate);
         callback();
         break;
