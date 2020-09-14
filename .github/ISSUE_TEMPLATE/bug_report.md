@@ -1,6 +1,6 @@
 ---
 name: Support Request
-about: Report a bug or request help. Please read the documentation first, especially the Feature Options and Troubleshooting pages before creating a support request.
+about: Report a bug or request help. Please read the documentation first, especially the Feature Options and Troubleshooting pages, before creating a support request.
 title: ''
 assignees: ''
 
@@ -10,7 +10,7 @@ assignees: ''
 <!-- Please ensure you read the documentation before creating a support request, especially the Troubleshooting page. -->
 
 **Describe The Problem:**
-<!-- A clear and concise description of what the bug is. -->
+<!-- A clear and concise description of what the issue is. -->
 
 **To Reproduce:**
 <!-- Steps to reproduce the behavior. -->
