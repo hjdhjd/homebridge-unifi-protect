@@ -239,19 +239,12 @@ export class ProtectCamera extends ProtectAccessory {
   private configureTwoWayAudio(): boolean {
 
     // Identify twoway-capable devices.
-    switch((this.accessory.context.camera as ProtectCameraConfig)?.type) {
-      case "UVC G3 Micro":
-      case "UVC G4 Doorbell":
-        // Enabled by default unless disabled by the user.
-        this.twoWayAudio = this.nvr?.optionEnabled(this.accessory.context.camera as ProtectCameraConfig, "TwoWayAudio");
-        break;
-
-      default:
-        this.twoWayAudio = false;
-        break;
+    if(!(this.accessory.context.camera as ProtectCameraConfig).hasSpeaker) {
+      return this.twoWayAudio = false;
     }
 
-    return true;
+    // Enabled by default unless disabled by the user.
+    return this.twoWayAudio = this.nvr?.optionEnabled(this.accessory.context.camera as ProtectCameraConfig, "TwoWayAudio");
   }
 
   // Configure a camera accessory for HomeKit.
