@@ -26,6 +26,7 @@ import {
   StreamRequestCallback,
   StreamRequestTypes
 } from "homebridge";
+import { Response } from "node-fetch";
 import { ProtectCamera } from "./protect-camera";
 import { FfmpegProcess } from "./protect-ffmpeg";
 import { ProtectPlatform } from "./protect-platform";
@@ -65,7 +66,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   public debug: (message: string, ...parameters: unknown[]) => void;
   private readonly hap: HAP;
   public readonly log: Logging;
-  public readonly name: string;
+  public readonly name: () => string;
   private ongoingSessions: { [index: string]: { ffmpeg: FfmpegProcess[], rtpSplitter: RtpSplitter | null } };
   private pendingSessions: { [index: string]: SessionInfo };
   public readonly platform: ProtectPlatform;
@@ -80,7 +81,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     this.debug = camera.debug.bind(camera.platform);
     this.hap = camera.api.hap;
     this.log = camera.platform.log;
-    this.name = camera.accessory.displayName;
+    this.name = camera.name.bind(camera);
     this.ongoingSessions = {};
     this.pendingSessions = {};
     this.platform = camera.platform;
@@ -137,7 +138,6 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     const snapshot = await this.getSnapshot(request);
 
     if(!snapshot) {
-      callback(new Error(this.name + ": Unable to retrieve snapshot."));
       return;
     }
 
@@ -161,8 +161,8 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     const audioSSRC = this.hap.CameraController.generateSynchronisationSource();
 
     if(!hasLibFdk) {
-      this.log("%s: Audio support disabled. A version of FFmpeg that is compiled with fdk_aac support is required to support audio.",
-        this.protectCamera.name());
+      this.log.info("%s: Audio support disabled. A version of FFmpeg that is compiled with fdk_aac support is required to support audio.",
+        this.name());
     }
 
     // Setup the RTP splitter for two-way audio scenarios.
@@ -253,8 +253,8 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     // -rtsp_transport tcp: tell the RTSP stream handler that we're looking for a TCP connection.
     const fcmd = [ "-hide_banner", "-rtsp_transport", "tcp", "-i", this.protectCamera.cameraUrl ];
 
-    this.log("%s: HomeKit video stream request received: %sx%s, %s fps, %s kbps.",
-      this.protectCamera.name(), request.video.width, request.video.height, request.video.fps, request.video.max_bit_rate);
+    this.log.info("%s: HomeKit video stream request received: %sx%s, %s fps, %s kbps.",
+      this.name(), request.video.width, request.video.height, request.video.fps, request.video.max_bit_rate);
 
     // Configure our video parameters:
     // -map 0:v           selects the first available video track from the stream. Protect actually maps audio
@@ -389,7 +389,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     const sdpReturnAudio = [
       "v=0",
       "o=- 0 0 IN " + sdpIpVersion + " 127.0.0.1",
-      "s=" + this.name + " Audio Talkback",
+      "s=" + this.name() + " Audio Talkback",
       "c=IN " + sdpIpVersion + " " + sessionInfo.address,
       "t=0 0",
       "m=audio " + sessionInfo.audioTwoWayPort.toString() + " RTP/AVP 110",
@@ -457,7 +457,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       case StreamRequestTypes.RECONFIGURE:
         // Once ffmpeg is updated to support this, we'll enable this one.
         this.debug("%s: Ignoring request to reconfigure: %sx%s, %s fps, %s kbps.",
-          this.protectCamera.name(), request.video.width, request.video.height, request.video.fps, request.video.max_bit_rate);
+          this.name(), request.video.width, request.video.height, request.video.fps, request.video.max_bit_rate);
         callback();
         break;
 
@@ -480,11 +480,27 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       params.append("height", request.height.toString());
     }
 
-    // Request the image.
-    const response = await this.protectCamera.nvr.nvrApi.fetch(this.protectCamera.snapshotUrl + "?" + params.toString(), { method: "GET" }, true, false);
+    let response: Response | null = null;
+
+    // Occasional snapshot failures will happen. The controller isn't always able to generate them if
+    // it's already generating one, or it's requested too quickly after the last one. We retry getting
+    // the snapshot three times before giving up.
+    for(let i = 0; i < 3; i++) {
+
+      // Request the image from the controller.
+      // eslint-disable-next-line no-await-in-loop
+      response = await this.protectCamera.nvr.nvrApi.fetch(this.protectCamera.snapshotUrl + "?" + params.toString(), { method: "GET" }, true, false);
+
+      if(!response?.ok) {
+        continue;
+      }
+
+      break;
+
+    }
 
     if(!response?.ok) {
-      this.log("%s: Unable to retrieve snapshot.", this.protectCamera.name());
+      this.log.info("%s: Unable to retrieve snapshot: %s.", this.name());
       return null;
     }
 
@@ -495,7 +511,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
     } catch(error) {
 
-      this.log.error("%s: An error occurred while making a snapshot request: %s.", this.protectCamera.name(), error);
+      this.log.error("%s: An error occurred while making a snapshot request: %s.", this.name(), error);
       return null;
     }
   }
@@ -520,11 +536,11 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       delete this.ongoingSessions[sessionId];
 
       // Inform the user.
-      this.log.info("%s: Stopped video streaming session.", this.protectCamera.name());
+      this.log.info("%s: Stopped video streaming session.", this.name());
 
     } catch(error) {
 
-      this.log.error("%s: Error occurred while ending the FFmpeg video processes: %s.", this.protectCamera.name(), error);
+      this.log.error("%s: Error occurred while ending the FFmpeg video processes: %s.", this.name(), error);
     }
   }
 
@@ -546,14 +562,14 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     // Set a timer to revert back to normal behavior.
     this.verboseFfmpegTimer = setTimeout(() => {
       this.platform.verboseFfmpeg = false;
-      this.log("Returning FFmpeg logging output to normal levels.");
+      this.log.info("Returning FFmpeg logging output to normal levels.");
 
       // Clear out the old timer.
       this.verboseFfmpegTimer = null;
     }, PROTECT_FFMPEG_VERBOSE_DURATION * 60 * 1000);
 
-    this.log("FFmpeg exited unexpectedly. Increasing logging output of FFmpeg for the next %s minutes to provide additional detail for future attempts to stream video.",
-      PROTECT_FFMPEG_VERBOSE_DURATION);
+    this.log.info("FFmpeg exited unexpectedly." +
+      " Increasing logging output of FFmpeg for the next %s minutes to provide additional detail for future attempts to stream video.", PROTECT_FFMPEG_VERBOSE_DURATION);
 
     this.platform.verboseFfmpeg = true;
   }
