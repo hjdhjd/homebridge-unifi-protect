@@ -200,7 +200,7 @@ export class ProtectSecuritySystem extends ProtectAccessory {
 
     // Handlers to get our current state, and initialize on startup.
     accessory.addService(securityService)
-      .setCharacteristic(SecuritySystemCurrentState, accessory.context.securityState)
+      .setCharacteristic(SecuritySystemCurrentState, accessory.context.securityState as CharacteristicValue)
       .getCharacteristic(SecuritySystemCurrentState)
       ?.on(CharacteristicEventTypes.GET, this.getSecurityState.bind(this));
 
@@ -290,7 +290,9 @@ export class ProtectSecuritySystem extends ProtectAccessory {
 
   // Get the current security system state.
   private getSecurityState(callback: CharacteristicGetCallback): void {
-    callback(null, this.isAlarmTriggered ? this.hap.Characteristic.SecuritySystemCurrentState.ALARM_TRIGGERED : this.accessory.context.securityState);
+    callback(null, this.isAlarmTriggered ?
+      this.hap.Characteristic.SecuritySystemCurrentState.ALARM_TRIGGERED :
+      this.accessory.context.securityState as CharacteristicValue);
   }
 
   // Change the security system state, and enable or disable motion detection accordingly.
@@ -393,7 +395,7 @@ export class ProtectSecuritySystem extends ProtectAccessory {
         const motionSwitch = targetAccessory.getServiceById(hap.Service.Switch, PROTECT_SWITCH_MOTION);
 
         if(motionSwitch) {
-          motionSwitch.getCharacteristic(hap.Characteristic.On)?.updateValue(targetAccessory.context.detectMotion);
+          motionSwitch.getCharacteristic(hap.Characteristic.On)?.updateValue(targetAccessory.context.detectMotion as boolean);
         }
 
         this.log("%s: %s -> %s: Motion detection %s.", this.name(), viewScene, targetAccessory.displayName,
@@ -435,7 +437,9 @@ export class ProtectSecuritySystem extends ProtectAccessory {
     this.accessory
       .getService(this.hap.Service.SecuritySystem)
       ?.getCharacteristic(this.hap.Characteristic.SecuritySystemCurrentState)
-      .updateValue(this.isAlarmTriggered ? this.hap.Characteristic.SecuritySystemCurrentState.ALARM_TRIGGERED : this.accessory.context.securityState);
+      .updateValue(this.isAlarmTriggered ?
+        this.hap.Characteristic.SecuritySystemCurrentState.ALARM_TRIGGERED :
+        this.accessory.context.securityState as CharacteristicValue);
 
     // Update the security alarm state.
     this.accessory.getService(this.hap.Service.Switch)?.getCharacteristic(this.hap.Characteristic.On).updateValue(this.isAlarmTriggered);

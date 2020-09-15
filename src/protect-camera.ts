@@ -118,7 +118,7 @@ export class ProtectCamera extends ProtectAccessory {
     }
 
     // Have we disabled motion sensors?
-    if(!this.nvr?.optionEnabled(accessory.context.camera, "MotionSensor")) {
+    if(!this.nvr?.optionEnabled(accessory.context.camera as ProtectCameraConfig, "MotionSensor")) {
       this.log("%s: Disabling motion sensor.", this.name());
       return false;
     }
@@ -141,8 +141,8 @@ export class ProtectCamera extends ProtectAccessory {
     }
 
     // Have we disabled motion sensors or the motion switch?
-    if(!this.nvr?.optionEnabled(this.accessory.context.camera, "MotionSensor") ||
-      !this.nvr?.optionEnabled(this.accessory.context.camera, "MotionSwitch")) {
+    if(!this.nvr?.optionEnabled(this.accessory.context.camera as ProtectCameraConfig, "MotionSensor") ||
+      !this.nvr?.optionEnabled(this.accessory.context.camera as ProtectCameraConfig, "MotionSwitch")) {
       this.log("%s: Disabling motion sensor switch.", this.name());
 
       // If we disable the switch, make sure we fully reset it's state.
@@ -167,7 +167,7 @@ export class ProtectCamera extends ProtectAccessory {
         this.accessory.context.detectMotion = value === true;
         callback(null);
       })
-      .updateValue(this.accessory.context.detectMotion);
+      .updateValue(this.accessory.context.detectMotion as boolean);
 
     return true;
   }
@@ -183,8 +183,8 @@ export class ProtectCamera extends ProtectAccessory {
     }
 
     // Motion triggers are disabled by default and primarily exist for automation purposes.
-    if(!this.nvr?.optionEnabled(this.accessory.context.camera, "MotionSensor") ||
-      !this.nvr?.optionEnabled(this.accessory.context.camera, "MotionTrigger", false)) {
+    if(!this.nvr?.optionEnabled(this.accessory.context.camera as ProtectCameraConfig, "MotionSensor") ||
+      !this.nvr?.optionEnabled(this.accessory.context.camera as ProtectCameraConfig, "MotionTrigger", false)) {
       return false;
     }
 
@@ -243,7 +243,7 @@ export class ProtectCamera extends ProtectAccessory {
       case "UVC G3 Micro":
       case "UVC G4 Doorbell":
         // Enabled by default unless disabled by the user.
-        this.twoWayAudio = this.nvr?.optionEnabled(this.accessory.context.camera, "TwoWayAudio");
+        this.twoWayAudio = this.nvr?.optionEnabled(this.accessory.context.camera as ProtectCameraConfig, "TwoWayAudio");
         break;
 
       default:
@@ -265,7 +265,7 @@ export class ProtectCamera extends ProtectAccessory {
       return false;
     }
 
-    const camera = await nvrApi.enableRtsp(this.accessory.context.camera) ?? (this.accessory.context.camera as ProtectCameraConfig);
+    const camera = await nvrApi.enableRtsp(this.accessory.context.camera as ProtectCameraConfig) ?? (this.accessory.context.camera as ProtectCameraConfig);
     let forceQuality = "";
     let newCameraQuality = "";
     let newCameraUrl = "";

@@ -55,12 +55,12 @@ export class ProtectDoorbell extends ProtectCamera {
     }
 
     // The user has disabled the doorbell message functionality.
-    if(!this.nvr.optionEnabled(this.accessory.context.camera, "Messages")) {
+    if(!this.nvr.optionEnabled(this.accessory.context.camera as ProtectCameraConfig, "Messages")) {
       this.isMessagesEnabled = false;
     }
 
     // The user has disabled the doorbell message functionality.
-    if(!this.nvr.optionEnabled(this.accessory.context.camera, "Messages.FromDoorbell")) {
+    if(!this.nvr.optionEnabled(this.accessory.context.camera as ProtectCameraConfig, "Messages.FromDoorbell")) {
       this.isMessagesFromControllerEnabled = false;
     }
 
@@ -117,7 +117,7 @@ export class ProtectDoorbell extends ProtectCamera {
     }
 
     // If we haven't asked for a contact sensor, we're done here.
-    if(!this.nvr.optionEnabled(this.accessory.context.camera, "ContactSensor", false)) {
+    if(!this.nvr.optionEnabled(this.accessory.context.camera as ProtectCameraConfig, "ContactSensor", false)) {
       return false;
     }
 
@@ -445,7 +445,7 @@ export class ProtectDoorbell extends ProtectCamera {
     }
 
     // Push the update to the doorbell.
-    const newCamera = await this.nvr.nvrApi.updateCamera(this.accessory.context.camera, payload);
+    const newCamera = await this.nvr.nvrApi.updateCamera(this.accessory.context.camera as ProtectCameraConfig, payload);
 
     if(!newCamera) {
       this.log("%s: Unable to set doorbell message. Please ensure this username has the Administrator role in UniFi Protect.", this.name());

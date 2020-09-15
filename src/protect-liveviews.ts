@@ -206,7 +206,7 @@ export class ProtectLiveviews extends ProtectBase {
         .getCharacteristic(this.hap.Characteristic.On)
         ?.on(CharacteristicEventTypes.GET, this.getSwitchState.bind(this, newAccessory))
         .on(CharacteristicEventTypes.SET, this.setSwitchState.bind(this, newAccessory))
-        .updateValue(newAccessory.context.switchState);
+        .updateValue(newAccessory.context.switchState as boolean);
 
       this.log("%s: Plugin-specific liveview %s has been detected. Configuring a switch accessory for it.", this.nvrApi.getNvrName(), viewName);
     }
@@ -283,7 +283,7 @@ export class ProtectLiveviews extends ProtectBase {
 
         // Set the switch state and update the switch in HomeKit.
         this.setSwitchState(accessory, entry.state);
-        accessory.getService(this.hap.Service.Switch)?.getCharacteristic(this.hap.Characteristic.On).updateValue(accessory.context.switchState);
+        accessory.getService(this.hap.Service.Switch)?.getCharacteristic(this.hap.Characteristic.On).updateValue(accessory.context.switchState as boolean);
         this.log("%s: Liveview scene updated via MQTT: %s.", this.name(), accessory.context.liveview);
       }
     });
@@ -291,7 +291,7 @@ export class ProtectLiveviews extends ProtectBase {
 
   // Get the current liveview switch state.
   private getSwitchState(accessory: PlatformAccessory, callback: CharacteristicGetCallback): void {
-    callback(null, accessory.context.switchState);
+    callback(null, accessory.context.switchState as boolean);
   }
 
   // Toggle the liveview switch state.
@@ -342,7 +342,7 @@ export class ProtectLiveviews extends ProtectBase {
         const motionSwitch = targetAccessory.getService(this.hap.Service.Switch);
 
         if(motionSwitch) {
-          motionSwitch.getCharacteristic(this.hap.Characteristic.On)?.updateValue(targetAccessory.context.detectMotion);
+          motionSwitch.getCharacteristic(this.hap.Characteristic.On)?.updateValue(targetAccessory.context.detectMotion as boolean);
         }
 
         this.log("%s: %s -> %s: Motion detection %s.", this.nvrApi.getNvrName(), liveviewSwitch.context.liveview, targetAccessory.displayName,

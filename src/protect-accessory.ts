@@ -11,6 +11,7 @@ import {
 import { ProtectApi } from "./protect-api";
 import { ProtectNvr } from "./protect-nvr";
 import { ProtectPlatform } from "./protect-platform";
+import { ProtectCameraConfig } from "./protect-types";
 
 // List the optional methods of our subclasses that we want to expose commonly.
 export interface ProtectAccessory {
@@ -67,6 +68,6 @@ export abstract class ProtectAccessory extends ProtectBase {
 
   // Utility function to return the fully enumerated name of this camera.
   public name(): string {
-    return this.nvr.nvrApi.getFullName(this.accessory.context.camera ?? null);
+    return this.nvr.nvrApi.getFullName((this.accessory.context.camera as ProtectCameraConfig) ?? null);
   }
 }
