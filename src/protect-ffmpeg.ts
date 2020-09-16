@@ -18,28 +18,31 @@ interface PortInterface {
 }
 
 export class FfmpegProcess {
+  public readonly command: string;
   private readonly debug: (message: string, ...parameters: unknown[]) => void;
   private delegate: ProtectStreamingDelegate;
   private isVerbose: boolean;
   private readonly log: Logging;
+  private readonly name: () => string;
   private process!: ExecaChildProcess;
   private sessionId: string;
-  private timeout?: NodeJS.Timeout;
 
   constructor(delegate: ProtectStreamingDelegate, sessionId: string, command: string[], returnPort?: PortInterface, callback?: StreamRequestCallback) {
 
-    this.debug = delegate.platform.debug.bind(this);
+    this.command = command.join(" ");
+    this.debug = delegate.platform.debug.bind(delegate.platform);
     this.delegate = delegate;
     this.log = delegate.platform.log;
+    this.name = delegate.name.bind(delegate.protectCamera);
     this.sessionId = sessionId;
 
     // Toggle FFmpeg logging, if configured.
     this.isVerbose = this.delegate.platform.verboseFfmpeg;
 
     if(this.isVerbose) {
-      this.log("%s: ffmpeg command: %s %s", delegate.protectCamera.name(), delegate.videoProcessor, command.join(" "));
+      this.log.info("%s: ffmpeg command: %s %s", this.name(), delegate.videoProcessor, command.join(" "));
     } else {
-      this.debug("%s: ffmpeg command: %s %s", delegate.protectCamera.name(), delegate.videoProcessor, command.join(" "));
+      this.debug("%s: ffmpeg command: %s %s", this.name(), delegate.videoProcessor, command.join(" "));
     }
 
     // Create the return port for FFmpeg, if requested to do so. The only time we don't do this is when we're standing up
@@ -58,21 +61,10 @@ export class FfmpegProcess {
 
     // Handle potential network errors.
     socket.on("error", (error: Error) => {
-      this.log.error("%s: Socket error: ", this.delegate.protectCamera.name(), error.name);
+
+      this.log.error("%s: Socket error: %s.", this.name(), error.name);
       this.delegate.stopStream(this.sessionId);
-    });
 
-    // Kill zombie video streams.
-    socket.on("message", () => {
-      if(this.timeout) {
-        clearTimeout(this.timeout);
-      }
-
-      this.timeout = setTimeout(() => {
-        this.log("%s: Device appears to be inactive for over 5 seconds. Stopping stream.", this.delegate.protectCamera.name());
-        this.delegate.controller.forceStopStreamingSession(this.sessionId);
-        this.delegate.stopStream(this.sessionId);
-      }, 5000);
     });
 
     socket.bind(portInfo.port);
@@ -89,16 +81,19 @@ export class FfmpegProcess {
 
     // Handle errors on stdin.
     this.process.stdin?.on("error", (error: Error) => {
+
       if(!error.message.includes("EPIPE")) {
-        this.log.error("%s: FFmpeg error: %s", this.delegate.protectCamera.name(), error.message);
+        this.log.error("%s: FFmpeg error: %s.", this.name(), error.message);
       }
+
     });
 
     // Handle logging output that gets sent to stderr.
     this.process.stderr?.on("data", (data: Buffer) => {
+
       if(!started) {
         started = true;
-        this.debug("%s: Received the first frame.", this.delegate.protectCamera.name());
+        this.debug("%s: Received the first frame.", this.name());
 
         // Always remember to execute the callback once we're setup to let homebridge know we're streaming.
         if(callback) {
@@ -109,9 +104,10 @@ export class FfmpegProcess {
       // Debugging and additional logging, if requested.
       if(this.isVerbose || this.delegate.platform.debugMode) {
         data.toString().split(/\n/).forEach((line: string) => {
-          this.log(line);
+          this.log.info(line);
         });
       }
+
     });
 
     try {
@@ -124,7 +120,7 @@ export class FfmpegProcess {
       // You might think this should be ExecaError, but ExecaError is a type, not a class, and instanceof
       // only operates on classes.
       if(!(error instanceof Error)) {
-        this.log("Unknown error received while attempting to start FFmpeg: %s.", error);
+        this.log.error("Unknown error received while attempting to start FFmpeg: %s.", error);
         return;
       }
 
@@ -132,7 +128,7 @@ export class FfmpegProcess {
       const execError = error as ExecaError;
 
       // Some utilities to streamline things.
-      const logPrefix = this.delegate.protectCamera.name() + ": FFmpeg process ended ";
+      const logPrefix = this.name() + ": FFmpeg process ended ";
       const code = execError.exitCode ?? null;
       const signal = execError.signal ?? null;
 
@@ -144,7 +140,7 @@ export class FfmpegProcess {
 
       // FFmpeg ended for another reason.
       const errorMessage = logPrefix + "(Error)." + (code === null ? "" : " Exit code: " + code.toString() + ".") + (signal === null ? "" : " Signal: " + signal + ".");
-      this.log.error("%s: %s", this.delegate.protectCamera.name(), execError.message);
+      this.log.error("%s: %s", this.name(), execError.message);
 
       // Stop the stream.
       this.delegate.stopStream(this.sessionId);
@@ -155,9 +151,11 @@ export class FfmpegProcess {
       // Let homebridge know what happened and stop the stream if we've already started.
       if(!started && callback) {
         callback(new Error(errorMessage));
-      } else {
-        this.delegate.controller.forceStopStreamingSession(this.sessionId);
+        return;
       }
+
+      this.delegate.controller.forceStopStreamingSession(this.sessionId);
+
     }
   }
 
@@ -167,25 +165,27 @@ export class FfmpegProcess {
     // Cancel our process.
     this.process.cancel();
 
-    // Kill our heartbeat monitoring.
-    if(this.timeout) {
-      clearTimeout(this.timeout);
-    }
   }
 
   // Grab the standard input.
   public getStdin(): Writable | null {
+
     return this.process.stdin;
+
   }
 
   // Grab the standard output.
   public getStdout(): Readable | null {
+
     return this.process.stdout;
+
   }
 
   // Validate whether or not we have a specific codec available to us in FFmpeg.
   public static async codecEnabled(videoProcessor: string, codec: string): Promise<boolean> {
+
     const output = await execa(videoProcessor, ["-codecs"]);
     return output.stdout.includes(codec);
+
   }
 }
