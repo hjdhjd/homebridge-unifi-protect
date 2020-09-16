@@ -18,7 +18,13 @@ export const PROTECT_API_RETRY_INTERVAL = 300;
 // UniFi OS expects to hear from us every 15 seconds.
 export const PROTECT_EVENTS_HEARTBEAT_INTERVAL = 10;
 
-// Magic incantantion to further streamline ffmpeg for Protect.
+// FFmpeg highpass audio filter defaults - this setting attenuates (eliminates) frequencies below the value.
+export const PROTECT_FFMPEG_AUDIO_FILTER_HIGHPASS = 200;
+
+// FFmpeg lowpass audio filter defaults - this setting attenuates (eliminates) frequencies above the value.
+export const PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS = 1000;
+
+// Magic incantantion to further streamline FFmpeg for Protect.
 export const PROTECT_FFMPEG_OPTIONS = "-probesize 32 -analyzeduration 0 -fflags nobuffer";
 
 // Duration, in minutes, to increase the level of logging for FFmpeg when we encounter errors.
