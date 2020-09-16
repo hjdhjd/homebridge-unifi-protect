@@ -43,7 +43,7 @@ export class RtpSplitter {
 
     // Catch errors when they happen on our splitter.
     this.socket.on("error", (error)  => {
-      this.log("%s: RTPSplitter Error: %s", this.delegate.protectCamera.name(), error);
+      this.log.error("%s: RTPSplitter Error: %s", this.delegate.protectCamera.name(), error);
       this.socket.close();
     });
 

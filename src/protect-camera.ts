@@ -119,7 +119,7 @@ export class ProtectCamera extends ProtectAccessory {
 
     // Have we disabled motion sensors?
     if(!this.nvr?.optionEnabled(accessory.context.camera as ProtectCameraConfig, "MotionSensor")) {
-      this.log("%s: Disabling motion sensor.", this.name());
+      this.log.info("%s: Disabling motion sensor.", this.name());
       return false;
     }
 
@@ -149,7 +149,7 @@ export class ProtectCamera extends ProtectAccessory {
       return false;
     }
 
-    this.log("%s: Enabling motion sensor switch.", this.name());
+    this.log.info("%s: Enabling motion sensor switch.", this.name());
 
     // Add the switch to the camera.
     switchService = new this.hap.Service.Switch(this.accessory.displayName + " Motion Events", PROTECT_SWITCH_MOTION);
@@ -162,7 +162,7 @@ export class ProtectCamera extends ProtectAccessory {
       })
       .on(CharacteristicEventTypes.SET, (value: CharacteristicValue, callback: CharacteristicSetCallback) => {
         if(this.accessory.context.detectMotion !== value) {
-          this.log("%s: Motion detection %s.", this.name(), (value === true) ? "enabled" : "disabled");
+          this.log.info("%s: Motion detection %s.", this.name(), (value === true) ? "enabled" : "disabled");
         }
 
         this.accessory.context.detectMotion = value === true;
@@ -214,7 +214,7 @@ export class ProtectCamera extends ProtectAccessory {
 
             // Trigger the motion event.
             this.nvr.motionEventHandler(this.accessory, Date.now());
-            this.log("%s: Motion event triggered.", this.name());
+            this.log.info("%s: Motion event triggered.", this.name());
           }
 
         } else {
@@ -231,7 +231,7 @@ export class ProtectCamera extends ProtectAccessory {
       })
       .updateValue(false);
 
-    this.log("%s: Enabling motion sensor automation trigger.", this.name());
+    this.log.info("%s: Enabling motion sensor automation trigger.", this.name());
 
     return true;
   }
@@ -339,7 +339,7 @@ export class ProtectCamera extends ProtectAccessory {
     if(!newCameraUrl) {
       // Notify only if this is a new change.
       if(!this.isVideoConfigured || this.cameraUrl) {
-        this.log("%s: No RTSP stream has been configured for this camera. %s",
+        this.log.info("%s: No RTSP stream has been configured for this camera. %s",
           this.name(),
           "Enable an RTSP stream in the UniFi Protect webUI to resolve this issue or " +
           "assign the Administrator role to the user configured for this plugin to allow it to automatically configure itself."
@@ -350,7 +350,7 @@ export class ProtectCamera extends ProtectAccessory {
       newCameraUrl = "rtsp://" + bootstrap.nvr.host + ":" + bootstrap.nvr.ports.rtsp.toString() + "/" + newCameraUrl;
 
       if(this.cameraUrl !== newCameraUrl) {
-        this.log("%s: Stream quality configured: %s.", this.name(), newCameraQuality);
+        this.log.info("%s: Stream quality configured: %s.", this.name(), newCameraQuality);
       }
     }
 
@@ -384,7 +384,7 @@ export class ProtectCamera extends ProtectAccessory {
 
       // Trigger the motion event.
       this.nvr.motionEventHandler(this.accessory, Date.now());
-      this.log("%s: Motion event triggered via MQTT.", this.name());
+      this.log.info("%s: Motion event triggered via MQTT.", this.name());
     });
 
     // Return the RTSP URLs when requested.
@@ -413,7 +413,7 @@ export class ProtectCamera extends ProtectAccessory {
       }
 
       this.nvr.mqtt?.publish(this.accessory, "rtsp", JSON.stringify(urlInfo));
-      this.log("%s: RTSP information published via MQTT.", this.name());
+      this.log.info("%s: RTSP information published via MQTT.", this.name());
     });
 
     // Trigger snapshots when requested.
@@ -426,7 +426,7 @@ export class ProtectCamera extends ProtectAccessory {
       }
 
       void this.stream?.getSnapshot();
-      this.log("%s: Snapshot triggered via MQTT.", this.name());
+      this.log.info("%s: Snapshot triggered via MQTT.", this.name());
     });
 
     return true;

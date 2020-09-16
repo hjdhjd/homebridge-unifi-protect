@@ -21,7 +21,6 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
   public readonly config!: ProtectOptions;
   public readonly configOptions: string[];
   private readonly controllers: ProtectNvr[];
-  public debugMode: boolean;
   public readonly log: Logging;
   public verboseFfmpeg: boolean;
 
@@ -30,7 +29,6 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
     this.api = api;
     this.configOptions = [];
     this.controllers = [];
-    this.debugMode = false;
     this.verboseFfmpeg = false;
     this.log = log;
 
@@ -52,20 +50,17 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
 
     // We need a UniFi Protect controller configured to do anything.
     if(!this.config.controllers) {
-      this.log("No UniFi Protect controllers have been configured.");
+      this.log.info("No UniFi Protect controllers have been configured.");
       return;
     }
 
     // Debugging - most people shouldn't enable this.
-    if(this.config.debugAll) {
-      this.debugMode = true;
-      this.debug("Debug logging on. Expect a lot of data.");
-    }
+    this.debug("Debug logging on. Expect a lot of data.");
 
     // Debug FFmpeg.
     if(this.config.verboseFfmpeg) {
       this.verboseFfmpeg = true;
-      this.log("Verbose logging of video streaming sessions enabled. Expect a lot of data.");
+      this.log.info("Verbose logging of video streaming sessions enabled. Expect a lot of data.");
     }
 
     // If we have feature options, put them into their own array, upper-cased for future reference.
@@ -85,13 +80,13 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
 
       // We need an address, or there's nothing to do.
       if(!controllerConfig.address) {
-        this.log("No host or IP address has been configured.");
+        this.log.info("No host or IP address has been configured.");
         continue;
       }
 
       // We need login credentials or we're skipping this one.
       if(!controllerConfig.username || !controllerConfig.password) {
-        this.log("No UniFi Protect login credentials have been configured.");
+        this.log.info("No UniFi Protect login credentials have been configured.");
         continue;
       }
 
@@ -137,8 +132,8 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
 
   // Utility for debug logging.
   public debug(message: string, ...parameters: unknown[]): void {
-    if(this.debugMode) {
-      this.log(util.format(message, ...parameters));
+    if(this.config.debugAll) {
+      this.log.info(util.format(message, ...parameters));
     }
   }
 }

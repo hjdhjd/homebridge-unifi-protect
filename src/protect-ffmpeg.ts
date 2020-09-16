@@ -102,7 +102,7 @@ export class FfmpegProcess {
       }
 
       // Debugging and additional logging, if requested.
-      if(this.isVerbose || this.delegate.platform.debugMode) {
+      if(this.isVerbose || this.delegate.platform.config.debugAll) {
         data.toString().split(/\n/).forEach((line: string) => {
           this.log.info(line);
         });

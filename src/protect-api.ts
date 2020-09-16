@@ -176,7 +176,7 @@ export class ProtectApi {
     const response = await this.fetch(this.bootstrapUrl(), { method: "GET" });
 
     if(!response?.ok) {
-      this.log("%s: Unable to retrieve NVR configuration information from UniFi Protect. Will retry again later.",
+      this.log.error("%s: Unable to retrieve NVR configuration information from UniFi Protect. Will retry again later.",
         this.getNvrName());
 
       // Clear out our login credentials and reset for another try.
@@ -191,12 +191,12 @@ export class ProtectApi {
       data = await response.json() as ProtectNvrBootstrap;
     } catch(error) {
       data = null;
-      this.log("%s: Unable to parse response from UniFi Protect. Will retry again later.", this.getNvrName());
+      this.log.error("%s: Unable to parse response from UniFi Protect. Will retry again later.", this.getNvrName());
     }
 
     // No camera information returned.
     if(!data?.cameras) {
-      this.log("%s: Unable to retrieve camera information from UniFi Protect. Will retry again later.", this.getNvrName());
+      this.log.error("%s: Unable to retrieve camera information from UniFi Protect. Will retry again later.", this.getNvrName());
 
       // Clear out our login credentials and reset for another try.
       this.clearLoginCredentials();
@@ -208,7 +208,7 @@ export class ProtectApi {
     this.bootstrap = data;
 
     if(firstRun) {
-      this.log("%s: Connected to the Protect controller API (address: %s mac: %s).", this.getNvrName(), data.nvr.host, data.nvr.mac);
+      this.log.info("%s: Connected to the Protect controller API (address: %s mac: %s).", this.getNvrName(), data.nvr.host, data.nvr.mac);
     }
 
     // Capture the bootstrap if we're debugging.
@@ -247,7 +247,7 @@ export class ProtectApi {
       });
 
       if(!ws) {
-        this.log("Unable to connect to the realtime update events API. Will retry again later.");
+        this.log.error("Unable to connect to the realtime update events API. Will retry again later.");
         this.eventListener = null;
         this.eventListenerConfigured = false;
         return false;
@@ -269,7 +269,7 @@ export class ProtectApi {
 
         // If we're closing before fully established it's because we're shutting down the API - ignore it.
         if(error.message !== "WebSocket was closed before the connection was established") {
-          this.log("%s: %s", this.getNvrName(), error);
+          this.log.error("%s: %s", this.getNvrName(), error);
         }
 
         this.eventListener?.terminate();
@@ -278,9 +278,9 @@ export class ProtectApi {
 
       });
 
-      this.log("%s: Connected to the UniFi realtime update events API.", this.getNvrName());
+      this.log.info("%s: Connected to the UniFi realtime update events API.", this.getNvrName());
     } catch(error) {
-      this.log("%s: Error connecting to the realtime update events API: %s", this.getNvrName(), error);
+      this.log.error("%s: Error connecting to the realtime update events API: %s", this.getNvrName(), error);
     }
 
     return true;
@@ -311,7 +311,7 @@ export class ProtectApi {
         }
 
         // We've discovered a new device.
-        this.log("%s: Discovered %s: %s.",
+        this.log.info("%s: Discovered %s: %s.",
           this.getNvrName(), newDevice.modelKey, this.getDeviceName(newDevice, newDevice.name, true));
 
         this.debug(util.inspect(newDevice, { colors: true, sorted: true, depth: 10 }));
@@ -387,10 +387,10 @@ export class ProtectApi {
 
     // Only admin users can activate RTSP streams. Inform the user on startup, or if we detect a role change.
     if(firstRun && !this.isAdminUser) {
-      this.log("%s: The user '%s' requires the Administrator role in order to automatically configure camera RTSP streams.",
+      this.log.info("%s: The user '%s' requires the Administrator role in order to automatically configure camera RTSP streams.",
         this.getNvrName(), this.username);
     } else if(!firstRun && (oldAdminStatus !== this.isAdminUser)) {
-      this.log("%s: Detected a role change for user '%s': the Administrator role has been %s.",
+      this.log.info("%s: Detected a role change for user '%s': the Administrator role has been %s.",
         this.getNvrName(), this.username, this.isAdminUser ? "enabled" : "disabled");
     }
 
@@ -437,10 +437,10 @@ export class ProtectApi {
       this.apiErrorCount++;
 
       if(response?.status === 403) {
-        this.log("%s: Insufficient privileges to enable RTSP on all channels. Please ensure this username has the Administrator role assigned in UniFi Protect.",
+        this.log.error("%s: Insufficient privileges to enable RTSP on all channels. Please ensure this username has the Administrator role assigned in UniFi Protect.",
           this.getFullName(device));
       } else {
-        this.log("%s: Unable to enable RTSP on all channels: %s.", this.getFullName(device), response?.status);
+        this.log.error("%s: Unable to enable RTSP on all channels: %s.", this.getFullName(device), response?.status);
       }
 
       // We still return our camera object if there is at least one RTSP channel enabled.
@@ -482,7 +482,7 @@ export class ProtectApi {
     });
 
     if(!response?.ok) {
-      this.log("%s: Unable to configure the camera: %s.", this.getFullName(device), response?.status);
+      this.log.error("%s: Unable to configure the camera: %s.", this.getFullName(device), response?.status);
       return null;
     }
 
@@ -620,7 +620,7 @@ export class ProtectApi {
       if(this.apiErrorCount >= PROTECT_API_ERROR_LIMIT) {
         // Let the user know we've got an API problem.
         if(this.apiErrorCount === PROTECT_API_ERROR_LIMIT) {
-          this.log("%s: Throttling API calls due to errors with the %s previous attempts. I'll retry again in %s minutes.",
+          this.log.info("%s: Throttling API calls due to errors with the %s previous attempts. I'll retry again in %s minutes.",
             this.getNvrName(), this.apiErrorCount, PROTECT_API_RETRY_INTERVAL / 60);
           this.apiErrorCount++;
           this.apiLastSuccess = now;
@@ -633,7 +633,7 @@ export class ProtectApi {
         }
 
         // Inform the user that we're out of the penalty box and try again.
-        this.log("%s: Resuming connectivity to the UniFi Protect API after throttling for %s minutes.",
+        this.log.info("%s: Resuming connectivity to the UniFi Protect API after throttling for %s minutes.",
           this.getNvrName(), PROTECT_API_RETRY_INTERVAL / 60);
         this.apiErrorCount = 0;
       }
@@ -647,7 +647,7 @@ export class ProtectApi {
 
       // Bad username and password.
       if(response.status === 401) {
-        this.log("Invalid login credentials given. Please check your login and password.");
+        this.log.error("Invalid login credentials given. Please check your login and password.");
         this.apiErrorCount++;
         return null;
       }
@@ -655,14 +655,14 @@ export class ProtectApi {
       // Insufficient privileges.
       if(response.status === 403) {
         this.apiErrorCount++;
-        this.log("Insufficient privileges for this user. Please check the roles assigned to this user and ensure it has sufficient privileges.");
+        this.log.error("Insufficient privileges for this user. Please check the roles assigned to this user and ensure it has sufficient privileges.");
         return null;
       }
 
       // Some other unknown error occurred.
       if(!response.ok) {
         this.apiErrorCount++;
-        this.log("API access error: %s - %s", response.status, response.statusText);
+        this.log.error("API access error: %s - %s", response.status, response.statusText);
         return null;
       }
 
@@ -677,21 +677,21 @@ export class ProtectApi {
       if(error instanceof FetchError) {
         switch(error.code) {
           case "ECONNREFUSED":
-            this.log("%s: controller API API connection refused.", this.getNvrName());
+            this.log.error("%s: controller API API connection refused.", this.getNvrName());
             break;
 
           case "ECONNRESET":
-            this.log("%s: controller API connection reset.", this.getNvrName());
+            this.log.error("%s: controller API connection reset.", this.getNvrName());
             break;
 
           case "ENOTFOUND":
-            this.log("%s: Hostname or IP address not found. Please ensure the address you configured for this UniFi Protect controller is correct.",
+            this.log.error("%s: Hostname or IP address not found. Please ensure the address you configured for this UniFi Protect controller is correct.",
               this.getNvrName());
             break;
 
           default:
             if(logErrors) {
-              this.log(error.message);
+              this.log.error(error.message);
             }
         }
       }

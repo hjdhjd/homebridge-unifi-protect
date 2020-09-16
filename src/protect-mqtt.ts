@@ -50,11 +50,11 @@ export class ProtectMqtt {
 
         switch(error.message) {
           case "Missing protocol":
-            this.log("%s MQTT Broker: Invalid URL provided: %s.", this.nvrApi.getNvrName(), this.config.mqttUrl);
+            this.log.error("%s MQTT Broker: Invalid URL provided: %s.", this.nvrApi.getNvrName(), this.config.mqttUrl);
             break;
 
           default:
-            this.log("%s MQTT Broker: Error: %s.", this.nvrApi.getNvrName(), error.message);
+            this.log.error("%s MQTT Broker: Error: %s.", this.nvrApi.getNvrName(), error.message);
             break;
         }
 
@@ -70,14 +70,14 @@ export class ProtectMqtt {
     // Notify the user when we connect to the broker.
     this.mqtt.on("connect", () => {
       this.isConnected = true;
-      this.log("%s: Connected to MQTT broker: %s (topic: %s)", this.nvrApi.getNvrName(), this.config.mqttUrl, this.config.mqttTopic);
+      this.log.info("%s: Connected to MQTT broker: %s (topic: %s).", this.nvrApi.getNvrName(), this.config.mqttUrl, this.config.mqttTopic);
     });
 
     // Notify the user when we've disconnected.
     this.mqtt.on("close", () => {
       if(this.isConnected) {
         this.isConnected = false;
-        this.log("%s: Disconnected from MQTT broker: %s", this.nvrApi.getNvrName(), this.config.mqttUrl);
+        this.log.info("%s: Disconnected from MQTT broker: %s.", this.nvrApi.getNvrName(), this.config.mqttUrl);
       }
     });
 
@@ -93,24 +93,24 @@ export class ProtectMqtt {
     this.mqtt.on("error", (error: NodeJS.ErrnoException) => {
       switch(error.code) {
         case "ECONNREFUSED":
-          this.log("%s MQTT Broker: Connection refused (url: %s). Will retry again in %s minute%s.",
+          this.log.error("%s MQTT Broker: Connection refused (url: %s). Will retry again in %s minute%s.",
             this.nvrApi.getNvrName(), this.config.mqttUrl,
             PROTECT_MQTT_RECONNECT_INTERVAL / 60, PROTECT_MQTT_RECONNECT_INTERVAL / 60 > 1 ? "s": "");
           break;
 
         case "ECONNRESET":
-          this.log("%s MQTT Broker: Connection reset (url: %s). Will retry again in %s minute%s.",
+          this.log.error("%s MQTT Broker: Connection reset (url: %s). Will retry again in %s minute%s.",
             this.nvrApi.getNvrName(), this.config.mqttUrl,
             PROTECT_MQTT_RECONNECT_INTERVAL / 60, PROTECT_MQTT_RECONNECT_INTERVAL / 60 > 1 ? "s": "");
           break;
 
         case "ENOTFOUND":
           this.mqtt?.end(true);
-          this.log("%s MQTT Broker: Hostname or IP address not found. (url: %s).", this.nvrApi.getNvrName(), this.config.mqttUrl);
+          this.log.error("%s MQTT Broker: Hostname or IP address not found. (url: %s).", this.nvrApi.getNvrName(), this.config.mqttUrl);
           break;
 
         default:
-          this.log("%s MQTT Broker: %s (url: %s). Will retry again in %s minute%s.",
+          this.log.error("%s MQTT Broker: %s (url: %s). Will retry again in %s minute%s.",
             this.nvrApi.getNvrName(), error, this.config.mqttUrl,
             PROTECT_MQTT_RECONNECT_INTERVAL / 60, PROTECT_MQTT_RECONNECT_INTERVAL / 60 > 1 ? "s": "");
           break;

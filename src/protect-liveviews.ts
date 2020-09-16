@@ -73,7 +73,7 @@ export class ProtectLiveviews extends ProtectBase {
       const oldAccessory = this.platform.accessories.find((x: PlatformAccessory) => x.UUID === uuid);
 
       if(oldAccessory) {
-        this.log("%s: No plugin-specific liveviews found. Disabling the security system accessory associated with this UniFi Protect controller.",
+        this.log.info("%s: No plugin-specific liveviews found. Disabling the security system accessory associated with this UniFi Protect controller.",
           this.nvrApi.getNvrName());
 
         // Unregister the accessory and delete it's remnants from HomeKit and the plugin.
@@ -99,11 +99,11 @@ export class ProtectLiveviews extends ProtectBase {
       }
 
       if(!this.securityAccessory) {
-        this.log("%s: Unable to create the security system accessory.", this.nvrApi.getNvrName());
+        this.log.error("%s: Unable to create the security system accessory.", this.nvrApi.getNvrName());
         return;
       }
 
-      this.log("%s: Plugin-specific liveviews have been detected. Enabling the security system accessory.", this.nvrApi.getNvrName());
+      this.log.info("%s: Plugin-specific liveviews have been detected. Enabling the security system accessory.", this.nvrApi.getNvrName());
     }
 
     // We have the security system accessory, now let's configure it.
@@ -111,7 +111,7 @@ export class ProtectLiveviews extends ProtectBase {
       this.securitySystem = new ProtectSecuritySystem(this.nvr, this.securityAccessory);
 
       if(!this.securitySystem) {
-        this.log("%s: Unable to configure the security system accessory.", this.nvrApi.getNvrName());
+        this.log.error("%s: Unable to configure the security system accessory.", this.nvrApi.getNvrName());
         return;
       }
     }
@@ -136,7 +136,7 @@ export class ProtectLiveviews extends ProtectBase {
       }
 
       // The switch has no associated liveview - let's get rid of it.
-      this.log("%s: The plugin-specific liveview %s has been removed or renamed. Removing the switch associated with this liveview.",
+      this.log.info("%s: The plugin-specific liveview %s has been removed or renamed. Removing the switch associated with this liveview.",
         this.nvrApi.getNvrName(), liveviewSwitch.context.liveview);
 
       // Unregister the accessory and delete it's remnants from HomeKit and the plugin.
@@ -181,7 +181,7 @@ export class ProtectLiveviews extends ProtectBase {
       }
 
       if(!newAccessory) {
-        this.log("%s: Unable to create the switch for liveview: %s.", this.nvrApi.getNvrName(), viewName);
+        this.log.error("%s: Unable to create the switch for liveview: %s.", this.nvrApi.getNvrName(), viewName);
         return;
       }
 
@@ -208,7 +208,7 @@ export class ProtectLiveviews extends ProtectBase {
         .on(CharacteristicEventTypes.SET, this.setSwitchState.bind(this, newAccessory))
         .updateValue(newAccessory.context.switchState as boolean);
 
-      this.log("%s: Plugin-specific liveview %s has been detected. Configuring a switch accessory for it.", this.nvrApi.getNvrName(), viewName);
+      this.log.info("%s: Plugin-specific liveview %s has been detected. Configuring a switch accessory for it.", this.nvrApi.getNvrName(), viewName);
     }
   }
 
@@ -236,7 +236,7 @@ export class ProtectLiveviews extends ProtectBase {
         ({ name: x.context.liveview as string, state: x.getService(this.hap.Service.Switch)?.getCharacteristic(this.hap.Characteristic.On).value }));
 
       this.nvr.mqtt?.publish(this.nvrApi.bootstrap?.nvr.mac ?? "", "liveviews", JSON.stringify(liveviews));
-      this.log("%s: Liveview scenes list published via MQTT.", this.name());
+      this.log.info("%s: Liveview scenes list published via MQTT.", this.name());
     });
 
     // Set the status of one or more liveviews.
@@ -261,9 +261,9 @@ export class ProtectLiveviews extends ProtectBase {
       } catch(error) {
 
         if(error instanceof SyntaxError) {
-          this.log("%s: Unable to process MQTT liveview setting: \"%s\". Error: %s.", this.name(), message.toString(), error.message);
+          this.log.error("%s: Unable to process MQTT liveview setting: \"%s\". Error: %s.", this.name(), message.toString(), error.message);
         } else {
-          this.log("%s: Unknown error has occurred: %s.", this.name(), error);
+          this.log.error("%s: Unknown error has occurred: %s.", this.name(), error);
         }
 
         // Errors mean that we're done now.
@@ -284,7 +284,7 @@ export class ProtectLiveviews extends ProtectBase {
         // Set the switch state and update the switch in HomeKit.
         this.setSwitchState(accessory, entry.state);
         accessory.getService(this.hap.Service.Switch)?.getCharacteristic(this.hap.Characteristic.On).updateValue(accessory.context.switchState as boolean);
-        this.log("%s: Liveview scene updated via MQTT: %s.", this.name(), accessory.context.liveview);
+        this.log.info("%s: Liveview scene updated via MQTT: %s.", this.name(), accessory.context.liveview);
       }
     });
   }
@@ -345,7 +345,7 @@ export class ProtectLiveviews extends ProtectBase {
           motionSwitch.getCharacteristic(this.hap.Characteristic.On)?.updateValue(targetAccessory.context.detectMotion as boolean);
         }
 
-        this.log("%s: %s -> %s: Motion detection %s.", this.nvrApi.getNvrName(), liveviewSwitch.context.liveview, targetAccessory.displayName,
+        this.log.info("%s: %s -> %s: Motion detection %s.", this.nvrApi.getNvrName(), liveviewSwitch.context.liveview, targetAccessory.displayName,
           targetAccessory.context.detectMotion === true ? "enabled" : "disabled");
       }
     }

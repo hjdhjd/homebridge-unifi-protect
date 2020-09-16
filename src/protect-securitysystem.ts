@@ -96,7 +96,7 @@ export class ProtectSecuritySystem extends ProtectAccessory {
 
       // Publish the current status of the security system.
       this.publishSecurityState();
-      this.log("%s: Security system status published via MQTT.", this.name());
+      this.log.info("%s: Security system status published via MQTT.", this.name());
     });
 
     // Set the security system state.
@@ -139,21 +139,21 @@ export class ProtectSecuritySystem extends ProtectAccessory {
 
         default:
           // The user sent a bad value. Ignore it and we're done.
-          this.log("%s: Unable to process MQTT security system setting: %s.", this.name(), message.toString());
+          this.log.error("%s: Unable to process MQTT security system setting: %s.", this.name(), message.toString());
           return;
       }
 
       // The security alarm gets handled differently than the other state settings.
       if(targetState === SecuritySystemCurrentState.ALARM_TRIGGERED) {
         this.setSecurityAlarm(alarmState);
-        this.log("%s: Security alarm %s via MQTT.", this.name(), alarmState ? "triggered" : "reset");
+        this.log.info("%s: Security alarm %s via MQTT.", this.name(), alarmState ? "triggered" : "reset");
         return;
       }
 
       // Set the security state, and we're done.
       this.accessory.getService(this.hap.Service.SecuritySystem)?.getCharacteristic(SecuritySystemTargetState).updateValue(targetState);
       this.setSecurityState(targetState);
-      this.log("%s: Security system state set via MQTT: %s.", this.name(), value.charAt(0).toUpperCase() + value.slice(1));
+      this.log.info("%s: Security system state set via MQTT: %s.", this.name(), value.charAt(0).toUpperCase() + value.slice(1));
     });
 
     return true;
@@ -235,7 +235,7 @@ export class ProtectSecuritySystem extends ProtectAccessory {
     }
 
     // Notify the user that we're enabled.
-    this.log("%s: Enabling the security alarm switch on the security system accessory.", this.name());
+    this.log.info("%s: Enabling the security alarm switch on the security system accessory.", this.name());
 
     // Add the switch to the security system.
     switchService = new this.hap.Service.Switch(this.accessory.displayName + " Security Alarm");
@@ -248,7 +248,7 @@ export class ProtectSecuritySystem extends ProtectAccessory {
       })
       .on(CharacteristicEventTypes.SET, (value: CharacteristicValue, callback: CharacteristicSetCallback) => {
         this.setSecurityAlarm(value === true);
-        this.log("%s: Security system alarm %s.", this.name(), (value === true) ? "triggered" : "reset");
+        this.log.info("%s: Security system alarm %s.", this.name(), (value === true) ? "triggered" : "reset");
         callback(null);
       })
       .updateValue(this.isAlarmTriggered);
@@ -355,7 +355,7 @@ export class ProtectSecuritySystem extends ProtectAccessory {
 
     // We don't have a liveview for this state and we aren't disarming - update state for the user and we're done.
     if(newState !== SecuritySystemCurrentState.DISARMED && !targetCameraIds.length) {
-      this.log("%s: No liveview configured for this security system state. Create a liveview named %s in the Protect webUI to use this feature.",
+      this.log.info("%s: No liveview configured for this security system state. Create a liveview named %s in the Protect webUI to use this feature.",
         this.name(), viewScene);
 
       accessory.context.securityState = newState;
@@ -368,7 +368,7 @@ export class ProtectSecuritySystem extends ProtectAccessory {
       return;
     }
 
-    this.log("%s: Setting the liveview scene: %s.", this.name(), viewScene);
+    this.log.info("%s: Setting the liveview scene: %s.", this.name(), viewScene);
 
     // Iterate through the list of accessories and set the Protect scene.
     for(const targetAccessory of this.platform.accessories) {
@@ -398,7 +398,7 @@ export class ProtectSecuritySystem extends ProtectAccessory {
           motionSwitch.getCharacteristic(hap.Characteristic.On)?.updateValue(targetAccessory.context.detectMotion as boolean);
         }
 
-        this.log("%s: %s -> %s: Motion detection %s.", this.name(), viewScene, targetAccessory.displayName,
+        this.log.info("%s: %s -> %s: Motion detection %s.", this.name(), viewScene, targetAccessory.displayName,
           targetAccessory.context.detectMotion === true ? "enabled" : "disabled");
       }
     }

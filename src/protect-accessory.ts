@@ -21,7 +21,6 @@ export interface ProtectAccessory {
 export abstract class ProtectBase {
   public readonly api: API;
   public debug: (message: string, ...parameters: unknown[]) => void;
-  protected readonly debugMode: boolean;
   protected readonly hap: HAP;
   protected readonly log: Logging;
   public readonly nvr: ProtectNvr;
@@ -32,7 +31,6 @@ export abstract class ProtectBase {
   constructor(nvr: ProtectNvr) {
     this.api = nvr.platform.api;
     this.debug = nvr.platform.debug.bind(this);
-    this.debugMode = nvr.platform.debugMode;
     this.hap = this.api.hap;
     this.log = nvr.platform.log;
     this.nvr = nvr;

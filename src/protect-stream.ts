@@ -381,7 +381,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     // Additional logging, but only if we're debugging.
     if(this.platform.verboseFfmpeg) {
       fcmd.push("-loglevel", "level+verbose");
-    } else if(this.platform.debugMode) {
+    } else if(this.platform.config.debugAll) {
       fcmd.push("-loglevel", "level+debug");
     }
 
@@ -462,7 +462,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     // Additional logging, but only if we're debugging.
     if(this.platform.verboseFfmpeg) {
       ffmpegReturnAudioCmd.push("-loglevel", "level+verbose");
-    } else if(this.platform.debugMode) {
+    } else if(this.platform.config.debugAll) {
       ffmpegReturnAudioCmd.push("-loglevel", "level+debug");
     }
 
@@ -529,7 +529,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     }
 
     if(!response?.ok) {
-      this.log.info("%s: Unable to retrieve snapshot: %s.", this.name());
+      this.log.error("%s: Unable to retrieve snapshot: %s.", this.name());
       return null;
     }
 

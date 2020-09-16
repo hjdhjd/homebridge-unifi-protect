@@ -121,7 +121,7 @@ export class ProtectNvr {
         // Notify the user we see this camera, but we aren't adding it to HomeKit.
         this.unsupportedDevices[camera.mac] = true;
 
-        this.log("%s: UniFi Protect camera type '%s' is not currently supported, ignoring: %s.",
+        this.log.info("%s: UniFi Protect camera type '%s' is not currently supported, ignoring: %s.",
           this.nvrApi.getNvrName(), camera.modelKey, this.nvrApi.getDeviceName(camera));
 
         continue;
@@ -141,7 +141,7 @@ export class ProtectNvr {
       if((accessory = this.platform.accessories.find(x => x.UUID === uuid)) === undefined) {
         accessory = new this.api.platformAccessory(camera.name, uuid);
 
-        this.log("%s: Adding %s to HomeKit.", this.nvrApi.getFullName(camera), camera.modelKey);
+        this.log.info("%s: Adding %s to HomeKit.", this.nvrApi.getFullName(camera), camera.modelKey);
 
         // Register this accessory with homebridge and add it to the accessory array so we can track it.
         this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
@@ -195,7 +195,7 @@ export class ProtectNvr {
     // This NVR has been disabled. Stop polling for updates and let the user know that we're done here.
     // Only run this check once, since we don't need to repeat it again.
     if(!this.isEnabled && !this.optionEnabled(null)) {
-      this.log("%s: Disabling this Protect controller.", this.nvrApi.getNvrName());
+      this.log.info("%s: Disabling this Protect controller.", this.nvrApi.getNvrName());
       this.nvrApi.clearLoginCredentials();
       return false;
     }
@@ -230,12 +230,12 @@ export class ProtectNvr {
     if(!this.nvrApi.isUnifiOs && this.doorbellCount && (this.refreshInterval !== PROTECT_NVR_DOORBELL_REFRESH_INTERVAL)) {
 
       this.refreshInterval = PROTECT_NVR_DOORBELL_REFRESH_INTERVAL;
-      this.log("%s: A doorbell has been detected. Setting the controller refresh interval to %s seconds.", this.nvrApi.getNvrName(), this.refreshInterval);
+      this.log.info("%s: A doorbell has been detected. Setting the controller refresh interval to %s seconds.", this.nvrApi.getNvrName(), this.refreshInterval);
 
     } else if(refreshUpdated || !this.isEnabled) {
 
       // On startup or refresh interval change, we want to notify the user.
-      this.log("%s: Controller refresh interval set to %s seconds.", this.nvrApi.getNvrName(), this.refreshInterval);
+      this.log.info("%s: Controller refresh interval set to %s seconds.", this.nvrApi.getNvrName(), this.refreshInterval);
 
     }
 
@@ -325,9 +325,9 @@ export class ProtectNvr {
       } catch(error) {
 
         if(error instanceof SyntaxError) {
-          this.log("%s: Unable to process message from the realtime system events API: \"%s\". Error: %s.", this.nvrApi.getNvrName(), event, error.message);
+          this.log.error("%s: Unable to process message from the realtime system events API: \"%s\". Error: %s.", this.nvrApi.getNvrName(), event, error.message);
         } else {
-          this.log("%s: Unknown error has occurred: %s.", this.nvrApi.getNvrName(), error);
+          this.log.error("%s: Unknown error has occurred: %s.", this.nvrApi.getNvrName(), error);
         }
 
         // Errors mean that we're done now.
@@ -394,7 +394,7 @@ export class ProtectNvr {
       const updatePacket = ProtectUpdatesApi.decodeUpdatePacket(this.log, event);
 
       if(!updatePacket) {
-        this.log("%s: Unable to process message from the realtime update events API.", this.nvrApi.getNvrName());
+        this.log.error("%s: Unable to process message from the realtime update events API.", this.nvrApi.getNvrName());
         return;
       }
 
@@ -510,7 +510,7 @@ export class ProtectNvr {
 
     // Log the event, if configured to do so.
     if(this.optionEnabled(camera, "LogMotion", false)) {
-      this.log("%s: Motion detected.", this.nvrApi.getFullName(camera));
+      this.log.info("%s: Motion detected.", this.nvrApi.getFullName(camera));
     }
 
     // Reset our motion event after motionDuration.
@@ -607,7 +607,7 @@ export class ProtectNvr {
     this.mqtt?.publish(accessory, "doorbell", "true");
 
     if(this.optionEnabled(camera, "LogDoorbell")) {
-      this.log("%s: Doorbell ring detected.", this.nvrApi.getFullName(camera));
+      this.log.info("%s: Doorbell ring detected.", this.nvrApi.getFullName(camera));
     }
   }
 
@@ -670,7 +670,7 @@ export class ProtectNvr {
       }
 
       // Remove this device.
-      this.log("%s %s: Removing %s from HomeKit.", this.nvrApi.getNvrName(),
+      this.log.info("%s %s: Removing %s from HomeKit.", this.nvrApi.getNvrName(),
         oldCamera ? this.nvrApi.getDeviceName(oldCamera) : oldAccessory.displayName,
         oldCamera ? oldCamera.modelKey : "device");
 
