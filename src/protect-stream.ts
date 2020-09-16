@@ -26,7 +26,6 @@ import {
   StreamRequestCallback,
   StreamRequestTypes
 } from "homebridge";
-import { Response } from "node-fetch";
 import { ProtectCamera } from "./protect-camera";
 import { FfmpegProcess } from "./protect-ffmpeg";
 import { ProtectPlatform } from "./protect-platform";
@@ -510,26 +509,14 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       params.append("height", request.height.toString());
     }
 
-    let response: Response | null = null;
-
     // Occasional snapshot failures will happen. The controller isn't always able to generate them if
-    // it's already generating one, or it's requested too quickly after the last one. We retry getting
-    // the snapshot three times before giving up.
-    for(let i = 0; i < 3; i++) {
+    // it's already generating one, or it's requested too quickly after the last one.
 
-      // Request the image from the controller.
-      // eslint-disable-next-line no-await-in-loop
-      response = await this.protectCamera.nvr.nvrApi.fetch(this.protectCamera.snapshotUrl + "?" + params.toString(), { method: "GET" }, true, false);
-
-      if(!response?.ok) {
-        continue;
-      }
-
-      break;
-    }
+    // Request the image from the controller.
+    const response = await this.protectCamera.nvr.nvrApi.fetch(this.protectCamera.snapshotUrl + "?" + params.toString(), { method: "GET" }, true, false);
 
     if(!response?.ok) {
-      this.log.error("%s: Unable to retrieve snapshot: %s.", this.name());
+      this.log.error("%s: Unable to retrieve snapshot.", this.name());
       return null;
     }
 
