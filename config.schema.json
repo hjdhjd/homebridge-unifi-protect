@@ -137,8 +137,8 @@
         "type": "string",
         "title": "Custom ffmpeg command line options.",
         "required": false,
-        "placeholder": "e.g. -probesize 32 -analyzeduration 0 -fflags nobuffer -strict experimental",
-        "description": "Command line options to use for ffmpeg. Use with care. Default: see project page."
+        "placeholder": "e.g. -probesize 32 -analyzeduration 0 -fflags nobuffer",
+        "description": "Command line options to use for ffmpeg. Use with care - the defaults are correct for almost all users. Default: see project page."
       },
 
       "motionDuration": {
