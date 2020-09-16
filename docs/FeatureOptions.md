@@ -6,7 +6,7 @@
 # Homebridge UniFi Protect
 
 [![Downloads](https://img.shields.io/npm/dt/homebridge-unifi-protect2?color=%230559C9&logo=icloud&logoColor=%23FFFFFF&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect)
-[![Version](https://img.shields.io/npm/v/homebridge-unifi-protect?color=%230559C9&label=UniFi%20Protect&logo=ubiquiti&logoColor=%23FFFFFF&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect)
+[![Version](https://img.shields.io/npm/v/homebridge-unifi-protect?color=%230559C9&label=Homebridge%20UniFi%20Protect&logo=ubiquiti&logoColor=%23FFFFFF&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect)
 [![UniFi Protect@Homebridge Discord](https://img.shields.io/discord/432663330281226270?color=0559C9&label=Discord&logo=discord&logoColor=%23FFFFFF&style=for-the-badge)](https://discord.gg/QXqfHEW)
 [![verified-by-homebridge](https://img.shields.io/badge/homebridge-verified-blueviolet?color=%2357277C&style=for-the-badge&logoColor=%23FFFFFF&logo=data:image/svg%2bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI5OTIuMDkiIGhlaWdodD0iMTAwMCIgdmlld0JveD0iMCAwIDk5Mi4wOSAxMDAwIj48ZGVmcz48c3R5bGU+LmF7ZmlsbDojZmZmO308L3N0eWxlPjwvZGVmcz48cGF0aCBjbGFzcz0iYSIgZD0iTTk1MC4xOSw1MDguMDZhNDEuOTEsNDEuOTEsMCwwLDEtNDItNDEuOWMwLS40OC4zLS45MS4zLTEuNDJMODI1Ljg2LDM4Mi4xYTc0LjI2LDc0LjI2LDAsMCwxLTIxLjUxLTUyVjEzOC4yMmExNi4xMywxNi4xMywwLDAsMC0xNi4wOS0xNkg3MzYuNGExNi4xLDE2LjEsMCwwLDAtMTYsMTZWMjc0Ljg4bC0yMjAuMDktMjEzYTE2LjA4LDE2LjA4LDAsMCwwLTIyLjY0LjE5TDYyLjM0LDQ3Ny4zNGExNiwxNiwwLDAsMCwwLDIyLjY1bDM5LjM5LDM5LjQ5YTE2LjE4LDE2LjE4LDAsMCwwLDIyLjY0LDBMNDQzLjUyLDIyNS4wOWE3My43Miw3My43MiwwLDAsMSwxMDMuNjIuNDVMODYwLDUzOC4zOGE3My42MSw3My42MSwwLDAsMSwwLDEwNGwtMzguNDYsMzguNDdhNzMuODcsNzMuODcsMCwwLDEtMTAzLjIyLjc1TDQ5OC43OSw0NjguMjhhMTYuMDUsMTYuMDUsMCwwLDAtMjIuNjUuMjJMMjY1LjMsNjgwLjI5YTE2LjEzLDE2LjEzLDAsMCwwLDAsMjIuNjZsMzguOTIsMzlhMTYuMDYsMTYuMDYsMCwwLDAsMjIuNjUsMGwxMTQtMTEyLjM5YTczLjc1LDczLjc1LDAsMCwxLDEwMy4yMiwwbDExMywxMTEsLjQyLjQyYTczLjU0LDczLjU0LDAsMCwxLDAsMTA0TDU0NS4wOCw5NTcuMzV2LjcxYTQxLjk1LDQxLjk1LDAsMSwxLTQyLTQxLjk0Yy41MywwLC45NS4zLDEuNDQuM0w2MTYuNDMsODA0LjIzYTE2LjA5LDE2LjA5LDAsMCwwLDQuNzEtMTEuMzMsMTUuODUsMTUuODUsMCwwLDAtNC43OS0xMS4zMmwtMTEzLTExMWExNi4xMywxNi4xMywwLDAsMC0yMi42NiwwTDM2Ny4xNiw3ODIuNzlhNzMuNjYsNzMuNjYsMCwwLDEtMTAzLjY3LS4yN2wtMzktMzlhNzMuNjYsNzMuNjYsMCwwLDEsMC0xMDMuODZMNDM1LjE3LDQyNy44OGE3My43OSw3My43OSwwLDAsMSwxMDMuMzctLjlMNzU4LjEsNjM5Ljc1YTE2LjEzLDE2LjEzLDAsMCwwLDIyLjY2LDBsMzguNDMtMzguNDNhMTYuMTMsMTYuMTMsMCwwLDAsMC0yMi42Nkw1MDYuNSwyNjUuOTNhMTYuMTEsMTYuMTEsMCwwLDAtMjIuNjYsMEwxNjQuNjksNTgwLjQ0QTczLjY5LDczLjY5LDAsMCwxLDYxLjEsNTgwTDIxLjU3LDU0MC42OWwtLjExLS4xMmE3My40Niw3My40NiwwLDAsMSwuMTEtMTAzLjg4TDQzNi44NSwyMS40MUE3My44OSw3My44OSwwLDAsMSw1NDAsMjAuNTZMNjYyLjYzLDEzOS4zMnYtMS4xYTczLjYxLDczLjYxLDAsMCwxLDczLjU0LTczLjVINzg4YTczLjYxLDczLjYxLDAsMCwxLDczLjUsNzMuNVYzMjkuODFhMTYsMTYsMCwwLDAsNC43MSwxMS4zMmw4My4wNyw4My4wNWguNzlhNDEuOTQsNDEuOTQsMCwwLDEsLjA4LDgzLjg4WiIvPjwvc3ZnPg==)](https://github.com/homebridge/homebridge/wiki/Verified-Plugins)
 
@@ -40,14 +40,19 @@ These Feature Options are available on ***all*** UniFi Protect devices available
 | <CODE>Enable.<I>MAC</I></CODE>                | Show the camera or controller identified by MAC address `MAC` from HomeKit.
 | <CODE>Disable.<I>MAC</I></CODE>               | Hide the camera or controller identified by MAC address `MAC` from HomeKit.
 |                                               |
-| `Enable.LogMotion`                            | Enable the logging, in Homebridge, of motion events. *(Default)*
-| `Disable.LogMotion`                           | Disable the logging, in Homebridge, of motion events.
+| `Enable.LogMotion`                            | Enable the logging, in Homebridge, of motion events.
+| `Disable.LogMotion`                           | Disable the logging, in Homebridge, of motion events. *(Default)*
 |                                               |
 | `Enable.MotionSensor`                         | Add a motion sensor accessory to HomeKit to enable motion detection. *(Default)*
 | `Disable.MotionSensor`                        | Remove the motion sensor and motion sensor switch accessories to disable motion detection capabilities
 |                                               |
-| `Enable.MotionSwitch`                         | Add a switch accessory to activate or deactivate motion detection in HomeKit. *(Default)*
-| `Disable.MotionSwitch`                        | Remove the switch accessory used to enable or disable motion detection. *Note: this will not disable motion detection, just remove the ability to selectively activate and deactivate it in HomeKit.*
+| `Enable.MotionSwitch`                         | Add a switch accessory to activate or deactivate motion detection in HomeKit.
+| `Disable.MotionSwitch`                        | Remove the switch accessory used to enable or disable motion detection. *(Default)* *Note: this will not disable motion detection, just remove the ability to selectively activate and deactivate it in HomeKit.*
+|                                               |
+| `Enable.NoiseFilter`                          | Enable the [audio noise filter](#noise-filter) to enhance voices over background noise.
+| `Disable.NoiseFilter`                         | Disable the [audio noise filter](#noise-filter). *(Default)*
+| <CODE>Enable.NoiseFilter.HighPass.<I>Number</I> | Set the high pass filter to attenuate (eliminate) frequencies below *number*. *Default: 200*
+| <CODE>Enable.NoiseFilter.LowPass.<I>Number</I> | Set the low pass filter to attenuate (eliminate) frequencies above *number*. *Default: 1000*
 |                                               |
 | <CODE>Enable.Stream.<I>Quality</I></CODE>     | Show the stream of quality *Quality* from HomeKit. Valid quality settings are `Low`, `Medium`, `High`.
 | <CODE>Disable.Stream.<I>Quality</I></CODE>    | Hide the stream of quality *Quality* from HomeKit. Valid quality settings are `Low`, `Medium`, `High`.
@@ -80,9 +85,9 @@ In addition to the Feature Options available to all UniFi Protect devices, these
 
 Before using these features, you should understand how Feature Options propagate to controllers and the devices attached to them. If you choose to disable a controller from being available to HomeKit, you will also disable all the cameras attached to that controller. If you've disabled a controller, and all it's devices with it, you can selectively enable a single device associated with that controller by explicitly setting an `Enable.` Feature Option. This provides you a lot of richness in how you enable or disable devices for HomeKit use.
 
-### Example
 
-An example `options` setting might look like this:
+### Example Configuration
+An example `options` setting might look like this in your config.json:
 
 ```js
 "platforms": [
@@ -113,3 +118,5 @@ In this example:
 
 * The first line `Disable.Stream.High` disables the high quality stream on all UniFi Protect devices that appear in HomeKit.
 * The second line, overrides the first and enables the high quality stream on the G3 Flex because specifying device-specific options always overrides global settings.
+
+**Note: it's strongly recommended that you use the Homebridge webUI to configure this plugin - it's easier to use for most people, and will ensure you always have a valid configuration.**
