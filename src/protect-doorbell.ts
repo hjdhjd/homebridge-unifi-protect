@@ -43,14 +43,15 @@ export class ProtectDoorbell extends ProtectCamera {
 
   // Configure the doorbell for HomeKit.
   protected async configureDevice(): Promise<boolean> {
+
     this.defaultDuration = this.nvr?.nvrApi?.bootstrap?.nvr?.doorbellSettings?.defaultMessageResetTimeoutMs === undefined ? 60000 :
       this.nvr.nvrApi.bootstrap.nvr.doorbellSettings.defaultMessageResetTimeoutMs;
     this.isMessagesEnabled = true;
     this.isMessagesFromControllerEnabled = true;
     this.messageSwitches = [];
 
-    // We only want to deal with the G4 Doorbell for now.
-    if((this.accessory.context.camera as ProtectCameraConfig)?.type !== "UVC G4 Doorbell") {
+    // We only want to deal with cameras with chimes.
+    if(!(this.accessory.context.camera as ProtectCameraConfig)?.featureFlags.hasChime) {
       return false;
     }
 
@@ -76,6 +77,7 @@ export class ProtectDoorbell extends ProtectCamera {
 
     // Now, make the doorbell LCD message functionality available.
     return this.configureDoorbellLcdSwitch();
+
   }
 
   // Configure the doorbell service for HomeKit.
@@ -348,8 +350,8 @@ export class ProtectDoorbell extends ProtectCamera {
       return false;
     }
 
-    // At the moment, we only know about doing this for the G4 Doorbell.
-    if((camera?.modelKey !== "camera") || (camera?.type !== "UVC G4 Doorbell")) {
+    // Make sure we're configuring a camera device with an LCD screen (aka a doorbell).
+    if((camera?.modelKey !== "camera") || !camera?.featureFlags.hasLcdScreen) {
       return false;
     }
 
