@@ -606,7 +606,7 @@ export class ProtectNvr {
     // Publish to MQTT, if the user has configured it.
     this.mqtt?.publish(accessory, "doorbell", "true");
 
-    if(this.optionEnabled(camera, "LogDoorbell")) {
+    if(this.optionEnabled(camera, "LogDoorbell", false)) {
       this.log.info("%s: Doorbell ring detected.", this.nvrApi.getFullName(camera));
     }
   }
