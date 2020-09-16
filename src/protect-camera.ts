@@ -140,15 +140,16 @@ export class ProtectCamera extends ProtectAccessory {
       this.accessory.removeService(switchService);
     }
 
-    // Have we disabled motion sensors or the motion switch?
+    // Have we disabled motion sensors or the motion switch? Motion switches are disabled by default.
     if(!this.nvr?.optionEnabled(this.accessory.context.camera as ProtectCameraConfig, "MotionSensor") ||
-      !this.nvr?.optionEnabled(this.accessory.context.camera as ProtectCameraConfig, "MotionSwitch")) {
-      this.log("%s: Disabling motion sensor switch.", this.name());
+      !this.nvr?.optionEnabled(this.accessory.context.camera as ProtectCameraConfig, "MotionSwitch", false)) {
 
       // If we disable the switch, make sure we fully reset it's state.
       this.accessory.context.detectMotion = true;
       return false;
     }
+
+    this.log("%s: Enabling motion sensor switch.", this.name());
 
     // Add the switch to the camera.
     switchService = new this.hap.Service.Switch(this.accessory.displayName + " Motion Events", PROTECT_SWITCH_MOTION);
