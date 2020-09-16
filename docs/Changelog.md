@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
-## 3.7.0 (2020-09-15)
+## 3.7.0 (2020-09-16)
  * New feature: noise filters. Read the [documentation](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/AudioOptions.md) and the associated [feature options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md)
  * Enhancement: improved device detection support in anticipation of more types of UniFi Protect cameras in the future.
  * Enhancement: support for self-signed TLS certificates for those with MQTT brokers.
