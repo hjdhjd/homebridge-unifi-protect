@@ -66,6 +66,7 @@ I hope to continue to work on this one to get AEC working for two-way audio. [Yo
 * Advanced Topics
   * [Autoconfiguration](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/Autoconfiguration.md): what it is, design choices that I've made, and why.
   * [Feature Options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md): granular options to allow you to set the camera quality individually, show or hide specific cameras, controllers, and more.
+  * [Audio Options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/AudioOptions.md): options to further tailor how audio is handled from Protect, such as background noise reduction.
   * [Doorbells](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/Doorbell.md): how UniFi Protect doorbell support works in this plugin, and how to use all the available features including doorbell messages.
   * [Liveview Scenes](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/Liveviews.md): use the UniFi Protect liveviews feature (available in the UniFi Protect controller webUI) to create motion-detection scenes.
   * [MQTT](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/MQTT.md): how to configure MQTT support.
