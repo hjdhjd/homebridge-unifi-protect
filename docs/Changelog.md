@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 3.7.4 (2020-09-16)
+ * Housekeeping fixes.
+
 ## 3.7.3 (2020-09-16)
  * Fix: Really fix that pesky logging regression.
 
