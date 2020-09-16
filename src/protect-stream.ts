@@ -32,7 +32,11 @@ import { FfmpegProcess } from "./protect-ffmpeg";
 import { ProtectPlatform } from "./protect-platform";
 import { RtpSplitter, RtpUtils } from "./protect-rtp";
 import { ProtectCameraConfig, ProtectOptions } from "./protect-types";
-import { PROTECT_FFMPEG_VERBOSE_DURATION } from "./settings";
+import {
+  PROTECT_FFMPEG_AUDIO_FILTER_HIGHPASS,
+  PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS,
+  PROTECT_FFMPEG_VERBOSE_DURATION
+} from "./settings";
 
 // Increase the listener limits to support Protect installations with more than 10 cameras. 100 seems like a reasonable default.
 // eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-unsafe-member-access
@@ -314,7 +318,6 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     // -b:a bitrate          bitrate to use for this audio. This is specified by HomeKit.
     // -bufsize size         this is the decoder buffer size, which drives the variability / quality of the output bitrate.
     // -ac 1                 set the number of audio channels to 1.
-    // -payload_type num     payload type for the RTP stream. This is negotiated by HomeKit and is usually 110 for AAC-ELD audio.
     if(sessionInfo.hasLibFdk) {
 
       // Configure our video parameters.
@@ -327,16 +330,43 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
         "-ar", request.audio.sample_rate.toString() + "k",
         "-b:a", request.audio.max_bit_rate.toString() + "k",
         "-bufsize", (2 * request.audio.max_bit_rate).toString() + "k",
-        "-ac", "1",
-        "-payload_type", request.audio.pt.toString()
+        "-ac", "1"
       ];
+
+      const cameraConfig = this.protectCamera.accessory.context.camera as ProtectCameraConfig;
+
+      // If we are audio filtering, address it here.
+      if(this.protectCamera.nvr.optionEnabled(cameraConfig, "NoiseFilter", false)) {
+        let highpass;
+        let lowpass;
+
+        // See what the user has set for the highpass filter for this camera.
+        highpass = parseInt(this.protectCamera.nvr.optionGet(cameraConfig, "NoiseFilter.HighPass") ?? "");
+
+        // If we have an invalid setting, use the defaults.
+        if((highpass !== highpass) || (highpass < 0)) {
+          highpass = PROTECT_FFMPEG_AUDIO_FILTER_HIGHPASS;
+        }
+
+        // See what the user has set for the highpass filter for this camera.
+        lowpass = parseInt(this.protectCamera.nvr.optionGet(cameraConfig, "NoiseFilter.LowPass") ?? "");
+
+        // If we have an invalid setting, use the defaults.
+        if((lowpass !== lowpass) || (lowpass < 0)) {
+          lowpass = PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS;
+        }
+
+        ffmpegAudioArgs.push("-af", "highpass=f=" + highpass.toString() + ",lowpass=f=" + lowpass.toString());
+      }
 
       // Add the required RTP settings and encryption for the stream:
       // -ssrc                   synchronization source stream identifier. Random number negotiated by HomeKit to identify this stream.
       // -f rtp                  specify that we're using the RTP protocol.
       // -srtp_out_suite enc     specify the output encryption encoding suites.
       // -srtp_out_params params specify the output encoding parameters. This is negotiated by HomeKit.
+      // -payload_type num     payload type for the RTP stream. This is negotiated by HomeKit and is usually 110 for AAC-ELD audio.
       const ffmpegAudioStream = [
+        "-payload_type", request.audio.pt.toString(),
         "-ssrc", sessionInfo.audioSSRC.toString(),
         "-f", "rtp",
         "-srtp_out_suite", "AES_CM_128_HMAC_SHA1_80",
@@ -496,7 +526,6 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       }
 
       break;
-
     }
 
     if(!response?.ok) {
