@@ -677,11 +677,11 @@ export class ProtectApi {
       if(error instanceof FetchError) {
         switch(error.code) {
           case "ECONNREFUSED":
-            this.log("%s: Connection refused.", this.getNvrName());
+            this.log("%s: controller API API connection refused.", this.getNvrName());
             break;
 
           case "ECONNRESET":
-            this.log("%s: Connection reset.", this.getNvrName());
+            this.log("%s: controller API connection reset.", this.getNvrName());
             break;
 
           case "ENOTFOUND":
