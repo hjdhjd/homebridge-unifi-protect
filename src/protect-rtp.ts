@@ -35,7 +35,7 @@ export class RtpSplitter {
   // Create an instance of RTPSplitter.
   constructor(streamingDelegate: ProtectStreamingDelegate, ipFamily: ("ipv4" | "ipv6") , serverPort: number, returnAudioPort: number, twowayAudioPort: number) {
 
-    this.debug = streamingDelegate.debug.bind(this);
+    this.debug = streamingDelegate.platform.debug.bind(streamingDelegate.platform);
     this.delegate = streamingDelegate;
     this.log = streamingDelegate.log;
     this.serverPort = serverPort;
