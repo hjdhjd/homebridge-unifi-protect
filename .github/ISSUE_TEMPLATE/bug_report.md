@@ -6,7 +6,7 @@ assignees: ''
 
 ---
 
-<!-- You must use the issue template below. -->
+<!-- You must use the issue template below. Reports that don't conform to the format below may be closed without warning. The form is here for a reason. :) -->
 <!-- Please ensure you read the documentation before creating a support request, especially the Troubleshooting page. -->
 
 **Describe The Problem:**
