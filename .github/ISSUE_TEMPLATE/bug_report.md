@@ -36,6 +36,7 @@ Remove any sensitive information.
 **Environment:**
 
 * **Homebridge Version**: <!-- homebridge -V -->
+* **Node Version**: <!-- node -v -->
 * **Homebridge UniFi Protect Version**:
 * **Operating System and OS Version**: <!-- Raspbian / Ubuntu / Debian / Windows / macOS / Docker -->
 
