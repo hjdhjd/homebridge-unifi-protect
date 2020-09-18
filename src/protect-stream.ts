@@ -66,7 +66,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   private readonly api: API;
   private readonly config: ProtectOptions;
   public controller: CameraController;
-  public debug: (message: string, ...parameters: unknown[]) => void;
+  private debug: (message: string, ...parameters: unknown[]) => void;
   private readonly hap: HAP;
   public readonly log: Logging;
   public readonly name: () => string;
@@ -81,7 +81,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     this.api = camera.api;
     this.protectCamera = camera;
     this.config = camera.platform.config;
-    this.debug = camera.debug.bind(camera.platform);
+    this.debug = camera.platform.debug.bind(camera.platform);
     this.hap = camera.api.hap;
     this.log = camera.platform.log;
     this.name = camera.name.bind(camera);

@@ -132,6 +132,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
 
   // Utility for debug logging.
   public debug(message: string, ...parameters: unknown[]): void {
+
     if(this.config.debugAll) {
       this.log.info(util.format(message, ...parameters));
     }

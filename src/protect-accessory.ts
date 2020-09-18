@@ -20,7 +20,7 @@ export interface ProtectAccessory {
 
 export abstract class ProtectBase {
   public readonly api: API;
-  public debug: (message: string, ...parameters: unknown[]) => void;
+  private debug: (message: string, ...parameters: unknown[]) => void;
   protected readonly hap: HAP;
   protected readonly log: Logging;
   public readonly nvr: ProtectNvr;
