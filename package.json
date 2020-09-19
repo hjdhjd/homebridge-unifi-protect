@@ -74,7 +74,7 @@
     "eslint": "^7.9.0",
     "homebridge": "^1.2.2",
     "rimraf": "^3.0.2",
-    "typescript": "^4.0.2"
+    "typescript": "^4.0.3"
   },
   "dependencies": {
     "execa": "^4.0.3",
