@@ -38,6 +38,7 @@ Remove any sensitive information.
 * **Homebridge Version**: <!-- homebridge -V -->
 * **Node Version**: <!-- node -v -->
 * **Homebridge UniFi Protect Version**:
+* **Apple Device and iOS / macOS / iPadOS / tvOS Version**:<!-- Type of Apple device you're using and associated OS version -->
 * **Operating System and OS Version**: <!-- Raspbian / Ubuntu / Debian / Windows / macOS / Docker -->
 
 
