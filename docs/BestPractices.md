@@ -21,6 +21,14 @@ I firmly believe that good software is opinionated. It should have a strong sens
 
 These best practices will evolve over time, but I wanted to provide some thoughts on some of the design choices I've made, and how you can enhance and tailor your own experience.
 
+#### User Accounts
+If you want to make your `homebridge-unifi-protect` life easy and allow the plugin to configure UniFi Protect automagically for you:
+
+  * Create a local user account just for Homebridge.
+  * Give that account the `administrator` role.
+
+But wait, you're thinking, am I just giving a random plugin the ability to do crazy things on my system?! Nope. The administrator role in UniFi Protect allows that user to be able to change individual camera settings, create liveviews, and do a handful of other relatively benign things. You're not giving the user the keys to your kingdom, but you are allowing that user to directly configure the UniFi Protect controller to more optimally work with `homebridge-unifi-protect`. If you don't feel comfortable doing so, that's your perrogative. The plugin will log warnings when things aren't configured as optimally as it would prefer to.
+
 #### Motion Sensors, Motion Switches and Push Notifications
 I suspect that by far the most used feature of `homebridge-unifi-protect` is the instantaneous rich notifications it provides to HomeKit when Protect detects motion. However, for environments where you have more than a couple of cameras, having notifications on all the time can lead to notification spam, particularly if you haven't taken the time to customize motion detection in Protect.
 
