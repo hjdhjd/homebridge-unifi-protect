@@ -39,12 +39,6 @@ export class FfmpegProcess {
     // Toggle FFmpeg logging, if configured.
     this.isVerbose = this.delegate.platform.verboseFfmpeg;
 
-    if(this.isVerbose) {
-      this.log.info("%s: ffmpeg command: %s %s", this.name(), delegate.videoProcessor, command.join(" "));
-    } else {
-      this.debug("%s: ffmpeg command: %s %s", this.name(), delegate.videoProcessor, command.join(" "));
-    }
-
     // Create the return port for FFmpeg, if requested to do so. The only time we don't do this is when we're standing up
     // a two-way audio stream - in that case, the audio work is done through RtpSplitter and not here.
     if(returnPort) {
@@ -73,8 +67,22 @@ export class FfmpegProcess {
   // Start our FFmpeg process.
   private async startFfmpeg(ffmpegCommandLine: string[], callback?: StreamRequestCallback): Promise<void> {
 
+    // See if we should display ffmpeg command output.
+    let hasLogging = false;
+
     // Track if we've started receiving data.
     let started = false;
+
+    // If we've got a loglevel specified, ensure we display it.
+    if(ffmpegCommandLine.indexOf("-loglevel") !== -1) {
+      hasLogging = true;
+    }
+
+    if(hasLogging || this.isVerbose || this.delegate.platform.config.debugAll) {
+      this.log.info("%s: ffmpeg command: %s %s", this.name(), this.delegate.videoProcessor, ffmpegCommandLine.join(" "));
+    } else {
+      this.debug("%s: ffmpeg command: %s %s", this.name(), this.delegate.videoProcessor, ffmpegCommandLine.join(" "));
+    }
 
     // Prepare the command line we want to execute.
     this.process = execa(this.delegate.videoProcessor, ffmpegCommandLine);
@@ -102,7 +110,7 @@ export class FfmpegProcess {
       }
 
       // Debugging and additional logging, if requested.
-      if(this.isVerbose || this.delegate.platform.config.debugAll) {
+      if(hasLogging || this.isVerbose || this.delegate.platform.config.debugAll) {
         data.toString().split(/\n/).forEach((line: string) => {
           this.log.info(line);
         });
