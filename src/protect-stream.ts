@@ -92,7 +92,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
     // Setup for our camera controller.
     const options: CameraControllerOptions = {
-      cameraStreamCount: 2, // HomeKit requires at least 2 streams, and HomeKit Secure Video requires 1.
+      cameraStreamCount: 10, // HomeKit requires at least 2 streams, and HomeKit Secure Video requires 1.
       delegate: this,
       streamingOptions: {
         supportedCryptoSuites: [this.hap.SRTPCryptoSuites.AES_CM_128_HMAC_SHA1_80],
@@ -228,7 +228,9 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   // Launch the Protect video (and audio) stream.
   private startStream(request: StartStreamRequest, callback: StreamRequestCallback): void {
 
+    const cameraConfig = this.protectCamera.accessory.context.camera as ProtectCameraConfig;
     const sessionInfo = this.pendingSessions[request.sessionID];
+    const sdpIpVersion = sessionInfo.addressVersion === "ipv6" ? "IP6 ": "IP4";
 
     // Set our packet size to be 564. Why? MPEG transport stream (TS) packets are 188 bytes in size each.
     // These packets transmit the video data that you ultimately see on your screen and are transmitted using
@@ -254,7 +256,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     const audiomtu = 188 * 1;
 
     // -rtsp_transport tcp: tell the RTSP stream handler that we're looking for a TCP connection.
-    const fcmd = [ "-hide_banner", "-rtsp_transport", "tcp", "-i", this.protectCamera.cameraUrl ];
+    const ffmpegArgs = [ "-hide_banner", "-rtsp_transport", "tcp", "-i", this.protectCamera.cameraUrl ];
 
     this.log.info("%s: HomeKit video stream request received: %sx%s, %s fps, %s kbps.",
       this.name(), request.video.width, request.video.height, request.video.fps, request.video.max_bit_rate);
@@ -273,7 +275,11 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     // -maxrate bitrate   the maximum bitrate tolerance, used with -bufsize. We set this to max_bit_rate to effectively
     //                    create a constant bitrate.
     // -payload_type num  payload type for the RTP stream. This is negotiated by HomeKit and is usually 99 for H.264 video.
-    const ffmpegVideoArgs = [
+    // -ssrc                   synchronization source stream identifier. Random number negotiated by HomeKit to identify this stream.
+    // -f rtp                  specify that we're using the RTP protocol.
+    // -srtp_out_suite enc     specify the output encryption encoding suites.
+    // -srtp_out_params params specify the output encoding parameters. This is negotiated by HomeKit.
+    ffmpegArgs.push(
       "-map", "0:v",
       "-vcodec", "copy",
       "-f", "rawvideo",
@@ -283,25 +289,14 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       "-b:v", request.video.max_bit_rate.toString() + "k",
       "-bufsize", (2 * request.video.max_bit_rate).toString() + "k",
       "-maxrate", request.video.max_bit_rate.toString() + "k",
-      "-payload_type", request.video.pt.toString()
-    ];
-
-    // Add the required RTP settings and encryption for the stream:
-    // -ssrc                   synchronization source stream identifier. Random number negotiated by HomeKit to identify this stream.
-    // -f rtp                  specify that we're using the RTP protocol.
-    // -srtp_out_suite enc     specify the output encryption encoding suites.
-    // -srtp_out_params params specify the output encoding parameters. This is negotiated by HomeKit.
-    const ffmpegVideoStream = [
+      "-payload_type", request.video.pt.toString(),
       "-ssrc", sessionInfo.videoSSRC.toString(),
       "-f", "rtp",
       "-srtp_out_suite", "AES_CM_128_HMAC_SHA1_80",
       "-srtp_out_params", sessionInfo.videoSRTP.toString("base64"),
       "srtp://" + sessionInfo.address + ":" + sessionInfo.videoPort.toString() + "?rtcpport=" + sessionInfo.videoPort.toString() +
       "&localrtcpport=" + sessionInfo.videoPort.toString() + "&pkt_size=" + videomtu.toString()
-    ];
-
-    // Assemble the final video command line.
-    fcmd.push(...ffmpegVideoArgs, ...ffmpegVideoStream);
+    );
 
     // Configure the audio portion of the command line, if we have a version of FFmpeg supports libfdk_aac. Options we use are:
     //
@@ -319,8 +314,8 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     // -ac 1                 set the number of audio channels to 1.
     if(sessionInfo.hasLibFdk) {
 
-      // Configure our video parameters.
-      const ffmpegAudioArgs = [
+      // Configure our audio parameters.
+      ffmpegArgs.push(
         "-map", "0:a",
         "-acodec", "libfdk_aac",
         "-profile:a", "aac_eld",
@@ -330,9 +325,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
         "-b:a", request.audio.max_bit_rate.toString() + "k",
         "-bufsize", (2 * request.audio.max_bit_rate).toString() + "k",
         "-ac", "1"
-      ];
-
-      const cameraConfig = this.protectCamera.accessory.context.camera as ProtectCameraConfig;
+      );
 
       // If we are audio filtering, address it here.
       if(this.protectCamera.nvr.optionEnabled(cameraConfig, "NoiseFilter", false)) {
@@ -355,7 +348,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
           lowpass = PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS;
         }
 
-        ffmpegAudioArgs.push("-af", "highpass=f=" + highpass.toString() + ",lowpass=f=" + lowpass.toString());
+        ffmpegArgs.push("-af", "highpass=f=" + highpass.toString() + ",lowpass=f=" + lowpass.toString());
       }
 
       // Add the required RTP settings and encryption for the stream:
@@ -364,7 +357,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       // -srtp_out_suite enc     specify the output encryption encoding suites.
       // -srtp_out_params params specify the output encoding parameters. This is negotiated by HomeKit.
       // -payload_type num     payload type for the RTP stream. This is negotiated by HomeKit and is usually 110 for AAC-ELD audio.
-      const ffmpegAudioStream = [
+      ffmpegArgs.push(
         "-payload_type", request.audio.pt.toString(),
         "-ssrc", sessionInfo.audioSSRC.toString(),
         "-f", "rtp",
@@ -372,20 +365,20 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
         "-srtp_out_params", sessionInfo.audioSRTP.toString("base64"),
         "srtp://" + sessionInfo.address + ":" + sessionInfo.audioPort.toString() + "?rtcpport=" + sessionInfo.audioPort.toString() +
         "&localrtcpport=" + sessionInfo.audioPort.toString() + "&pkt_size=" + audiomtu.toString()
-      ];
-
-      fcmd.push(...ffmpegAudioArgs, ...ffmpegAudioStream);
+      );
     }
 
     // Additional logging, but only if we're debugging.
     if(this.platform.verboseFfmpeg) {
-      fcmd.push("-loglevel", "level+verbose");
-    } else if(this.platform.config.debugAll) {
-      fcmd.push("-loglevel", "level+debug");
+      ffmpegArgs.push("-loglevel", "level+verbose");
+    }
+
+    if(this.platform.config.debugAll) {
+      ffmpegArgs.push("-loglevel", "level+debug");
     }
 
     // Combine everything and start an instance of FFmpeg.
-    const ffmpeg = new FfmpegProcess(this, request.sessionID, fcmd,
+    const ffmpeg = new FfmpegProcess(this, request.sessionID, ffmpegArgs,
       (sessionInfo.hasLibFdk && this.protectCamera.twoWayAudio) ? undefined : { addressVersion: sessionInfo.addressVersion, port: sessionInfo.videoReturnPort },
       callback);
 
@@ -397,9 +390,6 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     if(!sessionInfo.hasLibFdk || !this.protectCamera.twoWayAudio) {
       return;
     }
-
-    const camera = this.protectCamera.accessory.context.camera as ProtectCameraConfig;
-    const sdpIpVersion = sessionInfo.addressVersion === "ipv6" ? "IP6 ": "IP4";
 
     // Session description protocol message that FFmpeg will share with HomeKit.
     // SDP messages tell the other side of the connection what we're expecting to receive.
@@ -448,20 +438,21 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       "-f", "sdp",
       "-acodec", "libfdk_aac",
       "-i", "pipe:0",
-      "-map", "0:a",
-      "-acodec", camera.talkbackSettings.typeFmt,
+      "-acodec", cameraConfig.talkbackSettings.typeFmt,
       "-flags", "+global_header",
-      "-ar", camera.talkbackSettings.samplingRate.toString(),
+      "-ar", cameraConfig.talkbackSettings.samplingRate.toString(),
       "-b:a", "64k",
-      "-ac", camera.talkbackSettings.channels.toString(),
+      "-ac", cameraConfig.talkbackSettings.channels.toString(),
       "-f", "adts",
-      "udp://" + camera.host + ":" + camera.talkbackSettings.bindPort.toString()
+      "udp://" + cameraConfig.host + ":" + cameraConfig.talkbackSettings.bindPort.toString()
     ];
 
     // Additional logging, but only if we're debugging.
     if(this.platform.verboseFfmpeg) {
       ffmpegReturnAudioCmd.push("-loglevel", "level+verbose");
-    } else if(this.platform.config.debugAll) {
+    }
+
+    if(this.platform.config.debugAll) {
       ffmpegReturnAudioCmd.push("-loglevel", "level+debug");
     }
 
