@@ -8,11 +8,11 @@ import {
   CharacteristicSetCallback,
   CharacteristicValue
 } from "homebridge";
+import { ProtectCameraConfig, ProtectNvrBootstrap } from "./protect-types";
 import { ProtectAccessory } from "./protect-accessory";
 import { ProtectApi } from "./protect-api";
 import { ProtectNvr } from "./protect-nvr";
 import { ProtectStreamingDelegate } from "./protect-stream";
-import { ProtectCameraConfig, ProtectNvrBootstrap } from "./protect-types";
 
 // Manage our switch types.
 export const PROTECT_SWITCH_MOTION = "MotionSensorSwitch";

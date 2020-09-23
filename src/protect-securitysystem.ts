@@ -8,9 +8,9 @@ import {
   CharacteristicSetCallback,
   CharacteristicValue
 } from "homebridge";
-import { ProtectAccessory } from "./protect-accessory";
-import { PROTECT_SWITCH_MOTION } from "./protect-camera";
 import { ProtectCameraConfig, ProtectNvrConfig } from "./protect-types";
+import { PROTECT_SWITCH_MOTION } from "./protect-camera";
+import { ProtectAccessory } from "./protect-accessory";
 
 export class ProtectSecuritySystem extends ProtectAccessory {
   private isAlarmTriggered!: boolean;

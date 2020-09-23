@@ -9,19 +9,6 @@ import {
   Logging,
   PlatformAccessory
 } from "homebridge";
-import { ProtectApi } from "./protect-api";
-import { ProtectCamera, PROTECT_SWITCH_TRIGGER } from "./protect-camera";
-import { ProtectDoorbell } from "./protect-doorbell";
-import { ProtectLiveviews } from "./protect-liveviews";
-import { ProtectMqtt } from "./protect-mqtt";
-import { ProtectPlatform } from "./protect-platform";
-import {
-  ProtectCameraConfig,
-  ProtectCameraConfigPayload,
-  ProtectNvrOptions,
-  ProtectNvrSystemEvent
-} from "./protect-types";
-import { ProtectUpdatesApi } from "./protect-updates-api";
 import {
   PLATFORM_NAME,
   PLUGIN_NAME,
@@ -29,6 +16,19 @@ import {
   PROTECT_NVR_UCK_REFRESH_INTERVAL,
   PROTECT_NVR_UNIFIOS_REFRESH_INTERVAL
 } from "./settings";
+import { PROTECT_SWITCH_TRIGGER, ProtectCamera } from "./protect-camera";
+import {
+  ProtectCameraConfig,
+  ProtectCameraConfigPayload,
+  ProtectNvrOptions,
+  ProtectNvrSystemEvent
+} from "./protect-types";
+import { ProtectApi } from "./protect-api";
+import { ProtectDoorbell } from "./protect-doorbell";
+import { ProtectLiveviews } from "./protect-liveviews";
+import { ProtectMqtt } from "./protect-mqtt";
+import { ProtectPlatform } from "./protect-platform";
+import { ProtectUpdatesApi } from "./protect-updates-api";
 
 export class ProtectNvr {
   private api: API;

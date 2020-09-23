@@ -9,9 +9,9 @@ import {
   PlatformAccessory
 } from "homebridge";
 import { ProtectApi } from "./protect-api";
+import { ProtectCameraConfig } from "./protect-types";
 import { ProtectNvr } from "./protect-nvr";
 import { ProtectPlatform } from "./protect-platform";
-import { ProtectCameraConfig } from "./protect-types";
 
 // List the optional methods of our subclasses that we want to expose commonly.
 export interface ProtectAccessory {

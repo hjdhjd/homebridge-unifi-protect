@@ -2,10 +2,7 @@
  *
  * protect-api.ts: Our UniFi Protect API implementation.
  */
-import { Logging } from "homebridge";
-import https, { Agent } from "https";
-import fetch, { FetchError, Headers, Response, RequestInfo, RequestInit } from "node-fetch";
-import { ProtectPlatform } from "./protect-platform";
+import { PROTECT_API_ERROR_LIMIT, PROTECT_API_RETRY_INTERVAL, PROTECT_EVENTS_HEARTBEAT_INTERVAL, PROTECT_LOGIN_REFRESH_INTERVAL } from "./settings";
 import {
   ProtectCameraChannelConfigInterface,
   ProtectCameraConfig,
@@ -14,9 +11,12 @@ import {
   ProtectNvrBootstrap,
   ProtectNvrUserConfig
 } from "./protect-types";
-import { PROTECT_API_ERROR_LIMIT, PROTECT_API_RETRY_INTERVAL, PROTECT_EVENTS_HEARTBEAT_INTERVAL, PROTECT_LOGIN_REFRESH_INTERVAL } from "./settings";
-import util from "util";
+import fetch, { FetchError, Headers, RequestInfo, RequestInit, Response } from "node-fetch";
+import https, { Agent } from "https";
+import { Logging } from "homebridge";
+import { ProtectPlatform } from "./protect-platform";
 import WebSocket from "ws";
+import util from "util";
 
 /*
  * The UniFi Protect API is largely undocumented and has been reverse engineered mostly through
@@ -90,7 +90,7 @@ export class ProtectApi {
         this.isUnifiOs = true;
 
         // UniFi OS has support for keepalive. Let's take advantage of that and reduce the workload on controllers.
-        this.httpsAgent = new https.Agent({ rejectUnauthorized: false, keepAlive: true, maxSockets: 10, maxFreeSockets: 5, timeout: 60 * 1000 });
+        this.httpsAgent = new https.Agent({ keepAlive: true, maxFreeSockets: 5, maxSockets: 10, rejectUnauthorized: false, timeout: 60 * 1000 });
         return true;
       }
     }
@@ -130,7 +130,7 @@ export class ProtectApi {
 
     // Log us in.
     const response = await this.fetch(this.authUrl(), {
-      body: JSON.stringify({ username: this.username, password: this.password }),
+      body: JSON.stringify({ password: this.password, username: this.username }),
       method: "POST"
     });
 
@@ -212,7 +212,7 @@ export class ProtectApi {
     }
 
     // Capture the bootstrap if we're debugging.
-    this.debug(util.inspect(this.bootstrap, { colors: true, sorted: true, depth: 10 }));
+    this.debug(util.inspect(this.bootstrap, { colors: true, depth: 10, sorted: true }));
 
     // Check for admin user privileges or role changes.
     this.checkAdminUserStatus(firstRun);
@@ -240,10 +240,10 @@ export class ProtectApi {
 
     try {
       const ws = new WebSocket(this.updatesUrl() + "?" + params.toString(), {
-        rejectUnauthorized: false,
         headers: {
           Cookie: this.headers.get("Cookie") ?? ""
-        }
+        },
+        rejectUnauthorized: false
       });
 
       if(!ws) {
@@ -293,7 +293,7 @@ export class ProtectApi {
       return false;
     }
 
-    this.debug(util.inspect(this.bootstrap, { colors: true, sorted: true, depth: 10 }));
+    this.debug(util.inspect(this.bootstrap, { colors: true, depth: 10, sorted: true }));
 
     const newDeviceList: ProtectCameraConfig[] | undefined = this.bootstrap?.cameras;
 
@@ -314,7 +314,7 @@ export class ProtectApi {
         this.log.info("%s: Discovered %s: %s.",
           this.getNvrName(), newDevice.modelKey, this.getDeviceName(newDevice, newDevice.name, true));
 
-        this.debug(util.inspect(newDevice, { colors: true, sorted: true, depth: 10 }));
+        this.debug(util.inspect(newDevice, { colors: true, depth: 10, sorted: true }));
       }
     }
 
@@ -330,7 +330,7 @@ export class ProtectApi {
         // We've had a device disappear.
         this.debug("%s: Detected %s removal.", this.getFullName(existingDevice), existingDevice.modelKey);
 
-        this.debug(util.inspect(existingDevice, { colors: true, sorted: true, depth: 10 }));
+        this.debug(util.inspect(existingDevice, { colors: true, depth: 10, sorted: true }));
       }
     }
 
@@ -473,7 +473,7 @@ export class ProtectApi {
       return null;
     }
 
-    this.debug("%s: %s", this.getFullName(device), util.inspect(payload, { colors: true, sorted: true, depth: 10 }));
+    this.debug("%s: %s", this.getFullName(device), util.inspect(payload, { colors: true, depth: 10, sorted: true }));
 
     // Update Protect with the new configuration.
     const response = await this.fetch(this.camerasUrl() + "/" + device.id, {

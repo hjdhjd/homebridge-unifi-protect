@@ -10,9 +10,9 @@ import {
   PlatformAccessory,
   PlatformConfig
 } from "homebridge";
-import { ProtectNvr } from "./protect-nvr";
-import { ProtectNvrOptions, ProtectOptions } from "./protect-types";
 import { PROTECT_FFMPEG_OPTIONS, PROTECT_MOTION_DURATION, PROTECT_MQTT_TOPIC } from "./settings";
+import { ProtectNvrOptions, ProtectOptions } from "./protect-types";
+import { ProtectNvr } from "./protect-nvr";
 import util from "util";
 
 export class ProtectPlatform implements DynamicPlatformPlugin {

@@ -5,11 +5,11 @@
  * This module is heavily inspired by the homebridge and homebridge-camera-ffmpeg source code and
  * borrows heavily from both. Thank you for your contributions to the HomeKit world.
  */
-import { createSocket } from "dgram";
-import execa, { ExecaChildProcess, ExecaError } from "execa";
 import { Logging, StreamRequestCallback } from "homebridge";
-import { ProtectStreamingDelegate } from "./protect-stream";
 import { Readable, Writable } from "stream";
+import execa, { ExecaChildProcess, ExecaError } from "execa";
+import { ProtectStreamingDelegate } from "./protect-stream";
+import { createSocket } from "dgram";
 
 // Port and IP version information.
 interface PortInterface {

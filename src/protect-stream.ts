@@ -5,7 +5,6 @@
  * This module is heavily inspired by the homebridge and homebridge-camera-ffmpeg source code and
  * borrows heavily from both. Thank you for your contributions to the HomeKit world.
  */
-import ffmpegPath from "ffmpeg-for-homebridge";
 import {
   API,
   AudioStreamingCodecType,
@@ -18,24 +17,25 @@ import {
   PrepareStreamCallback,
   PrepareStreamRequest,
   PrepareStreamResponse,
+  SRTPCryptoSuites,
   SnapshotRequest,
   SnapshotRequestCallback,
-  SRTPCryptoSuites,
   StartStreamRequest,
-  StreamingRequest,
   StreamRequestCallback,
-  StreamRequestTypes
+  StreamRequestTypes,
+  StreamingRequest
 } from "homebridge";
-import { ProtectCamera } from "./protect-camera";
-import { FfmpegProcess } from "./protect-ffmpeg";
-import { ProtectPlatform } from "./protect-platform";
-import { RtpSplitter, RtpUtils } from "./protect-rtp";
-import { ProtectCameraConfig, ProtectOptions } from "./protect-types";
 import {
   PROTECT_FFMPEG_AUDIO_FILTER_HIGHPASS,
   PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS,
   PROTECT_FFMPEG_VERBOSE_DURATION
 } from "./settings";
+import { ProtectCameraConfig, ProtectOptions } from "./protect-types";
+import { RtpSplitter, RtpUtils } from "./protect-rtp";
+import { FfmpegProcess } from "./protect-ffmpeg";
+import { ProtectCamera } from "./protect-camera";
+import { ProtectPlatform } from "./protect-platform";
+import ffmpegPath from "ffmpeg-for-homebridge";
 
 // Increase the listener limits to support Protect installations with more than 10 cameras. 100 seems like a reasonable default.
 // eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-unsafe-member-access
@@ -95,9 +95,25 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       cameraStreamCount: 10, // HomeKit requires at least 2 streams, and HomeKit Secure Video requires 1.
       delegate: this,
       streamingOptions: {
+        audio: {
+          codecs: [
+            {
+              samplerate: AudioStreamingSamplerate.KHZ_16,
+              type: AudioStreamingCodecType.AAC_ELD
+            }
+          ],
+
+          twoWayAudio: this.protectCamera.twoWayAudio
+        },
+
         supportedCryptoSuites: [this.hap.SRTPCryptoSuites.AES_CM_128_HMAC_SHA1_80],
 
         video: {
+          codec: {
+            levels: [this.hap.H264Level.LEVEL3_1, this.hap.H264Level.LEVEL3_2, this.hap.H264Level.LEVEL4_0],
+            profiles: [this.hap.H264Profile.BASELINE, this.hap.H264Profile.MAIN, this.hap.H264Profile.HIGH]
+          },
+
           resolutions: [
             // Width, height, framerate.
             [1920, 1080, 30],
@@ -111,23 +127,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
             [320, 240, 30],
             [320, 240, 15],   // Apple Watch requires this configuration
             [320, 180, 30]
-          ],
-
-          codec: {
-            profiles: [this.hap.H264Profile.BASELINE, this.hap.H264Profile.MAIN, this.hap.H264Profile.HIGH],
-            levels: [this.hap.H264Level.LEVEL3_1, this.hap.H264Level.LEVEL3_2, this.hap.H264Level.LEVEL4_0]
-          }
-        },
-
-        audio: {
-          codecs: [
-            {
-              type: AudioStreamingCodecType.AAC_ELD,
-              samplerate: AudioStreamingSamplerate.KHZ_16
-            }
-          ],
-
-          twoWayAudio: this.protectCamera.twoWayAudio
+          ]
         }
       }
     };
@@ -180,38 +180,37 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       address: request.targetAddress,
       addressVersion: request.addressVersion,
 
-      videoPort: request.video.port,
-      videoReturnPort: videoReturnPort,
-      videoCryptoSuite: request.video.srtpCryptoSuite,
-      videoSRTP: Buffer.concat([request.video.srtp_key, request.video.srtp_salt]),
-      videoSSRC: videoSSRC,
+      audioCryptoSuite: request.audio.srtpCryptoSuite,
+      audioPort: request.audio.port,
+      audioReturnPort: audioReturnPort,
+      audioSRTP: Buffer.concat([request.audio.srtp_key, request.audio.srtp_salt]),
+      audioSSRC: audioSSRC,
+      audioTwoWayPort: audioTwoWayPort,
 
       hasLibFdk: hasLibFdk,
-      audioPort: request.audio.port,
-      audioTwoWayPort: audioTwoWayPort,
       rtpSplitter: rtpSplitter,
-      audioReturnPort: audioReturnPort,
-      audioCryptoSuite: request.audio.srtpCryptoSuite,
-      audioSRTP: Buffer.concat([request.audio.srtp_key, request.audio.srtp_salt]),
-      audioSSRC: audioSSRC
+
+      videoCryptoSuite: request.video.srtpCryptoSuite,
+      videoPort: request.video.port,
+      videoReturnPort: videoReturnPort,
+      videoSRTP: Buffer.concat([request.video.srtp_key, request.video.srtp_salt]),
+      videoSSRC: videoSSRC
     };
 
     // Prepare the response stream.
     const response: PrepareStreamResponse = {
+      audio: {
+        port: (hasLibFdk && this.protectCamera.twoWayAudio) ? audioServerPort : audioReturnPort,
+        srtp_key: request.audio.srtp_key,
+        srtp_salt: request.audio.srtp_salt,
+        ssrc: audioSSRC
+      },
 
       video: {
         port: videoReturnPort,
-        ssrc: videoSSRC,
-
         srtp_key: request.video.srtp_key,
-        srtp_salt: request.video.srtp_salt
-      },
-
-      audio: {
-        port: (hasLibFdk && this.protectCamera.twoWayAudio) ? audioServerPort : audioReturnPort,
-        ssrc: audioSSRC,
-        srtp_key: request.audio.srtp_key,
-        srtp_salt: request.audio.srtp_salt
+        srtp_salt: request.video.srtp_salt,
+        ssrc: videoSSRC
       }
     };
 

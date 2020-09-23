@@ -5,11 +5,11 @@
  * This module is heavily inspired by the homebridge and homebridge-camera-ffmpeg source code and
  * borrows heavily from both. Thank you for your contributions to the HomeKit world.
  */
+import { Logging } from "homebridge";
+import { PROTECT_TWOWAY_HEARTBEAT_INTERVAL } from "./settings";
+import { ProtectStreamingDelegate } from "./protect-stream";
 import { createSocket } from "dgram";
 import getPort from "get-port";
-import { Logging } from "homebridge";
-import { ProtectStreamingDelegate } from "./protect-stream";
-import { PROTECT_TWOWAY_HEARTBEAT_INTERVAL } from "./settings";
 
 // What this function does is create two socket pipes to split traffic coming in from serverPort and
 // pipe it out to returnAudioPort and twowayAudioPort.

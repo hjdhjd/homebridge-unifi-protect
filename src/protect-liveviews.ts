@@ -9,17 +9,17 @@ import {
   CharacteristicValue,
   PlatformAccessory
 } from "homebridge";
-import { ProtectBase } from "./protect-accessory";
-import { ProtectNvr } from "./protect-nvr";
-import { ProtectSecuritySystem } from "./protect-securitysystem";
-import {
-  ProtectCameraConfig,
-  ProtectNvrLiveviewConfig
-} from "./protect-types";
 import {
   PLATFORM_NAME,
   PLUGIN_NAME
 } from "./settings";
+import {
+  ProtectCameraConfig,
+  ProtectNvrLiveviewConfig
+} from "./protect-types";
+import { ProtectBase } from "./protect-accessory";
+import { ProtectNvr } from "./protect-nvr";
+import { ProtectSecuritySystem } from "./protect-securitysystem";
 
 export class ProtectLiveviews extends ProtectBase {
   private isMqttConfigured: boolean;

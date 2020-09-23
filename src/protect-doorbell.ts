@@ -154,7 +154,7 @@ export class ProtectDoorbell extends ProtectCamera {
         Math.round((camera.lcdMessage.resetAt - Date.now()) / 1000) : 0;
 
       // Publish the current message.
-      this.nvr.mqtt?.publish(this.accessory, "message", JSON.stringify({ message: doorbellMessage, duration: doorbellDuration }));
+      this.nvr.mqtt?.publish(this.accessory, "message", JSON.stringify({ duration: doorbellDuration, message: doorbellMessage }));
       this.log.info("%s: Doorbell message information published via MQTT.", this.name());
     });
 
@@ -333,7 +333,7 @@ export class ProtectDoorbell extends ProtectCamera {
             this.name(), lcdEntry.duration ? " (" + (lcdEntry.duration / 1000).toString() + " seconds)" : "", lcdEntry.text);
 
           // Publish to MQTT, if the user has configured it.
-          this.nvr.mqtt?.publish(this.accessory, "message", JSON.stringify({ message: lcdEntry.text, duration: lcdEntry.duration / 1000 }));
+          this.nvr.mqtt?.publish(this.accessory, "message", JSON.stringify({ duration: lcdEntry.duration / 1000, message: lcdEntry.text }));
 
         }
       }
