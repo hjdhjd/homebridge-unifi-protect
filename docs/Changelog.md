@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 3.7.6 (2020-09-22)
+ * Housekeeping updates and minor optimizations.
+
 ## 3.7.5 (2020-09-18)
  * Housekeeping fixes.
 
