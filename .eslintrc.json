@@ -14,6 +14,7 @@
   "ignorePatterns": [ "dist" ],
   "rules": {
     "brace-style": [ "warn" ],
+    "camelcase": [ "warn" ],
     "comma-dangle": [ "error" ],
     "curly": [ "warn", "all" ],
     "dot-notation": "warn",
@@ -35,6 +36,6 @@
     "@typescript-eslint/no-explicit-any": [ "warn" ],
     "@typescript-eslint/no-non-null-assertion": [ "warn" ],
     "@typescript-eslint/no-this-alias": [ "warn" ],
-    "@typescript-eslint/prefer-regexp-exec": "off"
+    "@typescript-eslint/prefer-regexp-exec": [ "off" ]
   }
 }

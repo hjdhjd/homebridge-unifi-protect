@@ -201,14 +201,18 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     const response: PrepareStreamResponse = {
       audio: {
         port: (hasLibFdk && this.protectCamera.twoWayAudio) ? audioServerPort : audioReturnPort,
+        // eslint-disable-next-line camelcase
         srtp_key: request.audio.srtp_key,
+        // eslint-disable-next-line camelcase
         srtp_salt: request.audio.srtp_salt,
         ssrc: audioSSRC
       },
 
       video: {
         port: videoReturnPort,
+        // eslint-disable-next-line camelcase
         srtp_key: request.video.srtp_key,
+        // eslint-disable-next-line camelcase
         srtp_salt: request.video.srtp_salt,
         ssrc: videoSSRC
       }
