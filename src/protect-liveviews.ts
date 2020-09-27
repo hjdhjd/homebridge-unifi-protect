@@ -150,7 +150,7 @@ export class ProtectLiveviews extends ProtectBase {
       const reLiveviewScene = /^Protect-((?!Away$|Off$|Home$|Night$).+)$/i;
 
       // Only match on views beginning with Protect- that are not reserved for the security system.
-      const viewMatch = liveview.name.match(reLiveviewScene);
+      const viewMatch = reLiveviewScene.exec(liveview.name);
 
       // No match found, we're not interested in it.
       if(!viewMatch) {
