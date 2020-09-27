@@ -70,7 +70,12 @@ export class ProtectMqtt {
     // Notify the user when we connect to the broker.
     this.mqtt.on("connect", () => {
       this.isConnected = true;
-      this.log.info("%s: Connected to MQTT broker: %s (topic: %s).", this.nvrApi.getNvrName(), this.config.mqttUrl, this.config.mqttTopic);
+
+      // Magic incantation to redact passwords.
+      const redact = /^(?<pre>.*:\/{0,2}.*:)(?<pass>.*)(?<post>@.*)/;
+
+      this.log.info("%s: Connected to MQTT broker: %s (topic: %s).",
+        this.nvrApi.getNvrName(), this.config.mqttUrl.replace(redact, "$<pre>REDACTED$<post>"), this.config.mqttTopic);
     });
 
     // Notify the user when we've disconnected.
