@@ -97,7 +97,7 @@ An example `options` setting might look like this in your config.json:
     "options": [
       "Disable.Stream.High",
       "Enable.Stream.High.BBBBBBBBBBBB"
-    ]
+    ],
 
     "controllers": [
       {
