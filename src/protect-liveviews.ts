@@ -145,9 +145,11 @@ export class ProtectLiveviews extends ProtectBase {
       this.liveviewSwitches.splice(this.liveviewSwitches.indexOf(liveviewSwitch), 1);
     }
 
+    // Initialize the regular expression here so we don't have to reinitialize it in each iteration below.
+    const reLiveviewScene = /^Protect-((?!Away$|Off$|Home$|Night$).+)$/i;
+
     // Check for any new plugin-specific liveviews.
     for(const liveview of this.liveviews) {
-      const reLiveviewScene = /^Protect-((?!Away$|Off$|Home$|Night$).+)$/i;
 
       // Only match on views beginning with Protect- that are not reserved for the security system.
       const viewMatch = reLiveviewScene.exec(liveview.name);
