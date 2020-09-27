@@ -35,7 +35,6 @@
     "@typescript-eslint/explicit-module-boundary-types": [ "warn" ],
     "@typescript-eslint/no-explicit-any": [ "warn" ],
     "@typescript-eslint/no-non-null-assertion": [ "warn" ],
-    "@typescript-eslint/no-this-alias": [ "warn" ],
-    "@typescript-eslint/prefer-regexp-exec": [ "off" ]
+    "@typescript-eslint/no-this-alias": [ "warn" ]
   }
 }
