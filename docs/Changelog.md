@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 3.7.7 (2020-09-27)
+ * Fix: Redact MQTT password information in Homebridge logs.
+
 ## 3.7.6 (2020-09-22)
  * Housekeeping updates and minor optimizations.
 
