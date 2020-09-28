@@ -4,7 +4,6 @@ about: Suggest an idea for an enhancement.
 title: ''
 labels: enhancement
 assignees: ''
-
 ---
 
 **Is your feature request related to a problem? Please describe:**
@@ -18,6 +17,5 @@ assignees: ''
 
 **Additional context:**
 <!-- Add any other context or screenshots about the feature request here. -->
-
 
 <!-- Click the "Preview" tab before you submit to ensure the formatting is correct. -->

@@ -3,7 +3,6 @@ name: Support Request
 about: Report a bug or request help. Please read the documentation first, especially the Feature Options and Troubleshooting pages, before creating a support request.
 title: ''
 assignees: ''
-
 ---
 
 <!-- You must use the issue template below. Reports that don't conform to the format below may be closed without warning. The form is here for a reason. :) -->
@@ -35,12 +34,10 @@ Remove any sensitive information.
 
 **Environment:**
 
-* **Homebridge Version**: <!-- homebridge -V -->
-* **Node Version**: <!-- node -v -->
-* **Homebridge UniFi Protect Version**:
-* **Apple Device and iOS / macOS / iPadOS / tvOS Version**:<!-- Type of Apple device you're using and associated OS version -->
-* **Operating System and OS Version**: <!-- Raspbian / Ubuntu / Debian / Windows / macOS / Docker -->
-
+* **Homebridge Version:** <!-- homebridge -V -->
+* **Node Version:** <!-- node -v -->
+* **Homebridge-UniFi-Protect Plugin Version:**
+* **Apple Device and iOS / macOS / iPadOS / tvOS Version:**<!-- Type of Apple device you're using and associated OS version -->
+* **Operating System and OS Version:** <!-- Raspbian / Ubuntu / Debian / Windows / macOS / Docker -->
 
 <!-- Click the "Preview" tab before you submit to ensure the formatting is correct. -->
-
