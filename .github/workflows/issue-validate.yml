@@ -2,7 +2,7 @@ name: Close Non-Conforming Issues
 
 on:
   issues:
-  types: [opened]
+    types: [opened]
 
 jobs:
   autoclose:

@@ -2,7 +2,7 @@ name: Close Stale Issues
 
 on:
   issues:
-  types: [reopened]
+    types: [reopened]
   schedule:
   - cron: "*/60 * * * *"
 
