@@ -12,5 +12,5 @@ jobs:
       uses: roots/issue-closer@v1.1
       with:
         issue-close-message: "@${issue.user.login} - this issue is being automatically closed because it does not follow either the feature request or bug report issue template. The issue templates have been designed to help in the troubleshooting (or feature request) process. Please use them and populate it as completely as possible to streamline the troubleshooting or feature request discussion."
-        issue-pattern: "/Describe alternatives you've considered|Homebridge-UniFi-Protect Plugin Version/gm"
+        issue-pattern: "Describe alternatives you've considered|Homebridge-UniFi-Protect Plugin Version"
         repo-token: ${{ secrets.GITHUB_TOKEN }}
