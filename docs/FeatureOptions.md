@@ -51,7 +51,7 @@ These Feature Options are available on ***all*** UniFi Protect devices available
 |                                               |
 | `Enable.MotionTrigger`                        | Add a switch accessory to to manually trigger a motion detection event in HomeKit. This is useful in certain automation scenarios where you want to trigger a rich notification based on some other event.
 | `Disable.MotionTrigger`                       | Remove the switch accessory used to manually trigger a motion detection event. *(Default)*
-|
+|                                               |
 | `Enable.NoiseFilter`                          | Enable the [audio noise filter](#noise-filter) to enhance voices over background noise.
 | `Disable.NoiseFilter`                         | Disable the [audio noise filter](#noise-filter). *(Default)*
 | <CODE>Enable.NoiseFilter.HighPass.<I>Number</I> | Set the high pass filter to attenuate (eliminate) frequencies below *number*. *Default: 200*
