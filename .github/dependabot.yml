@@ -1,5 +1,5 @@
 # Query daily for npm dependency updates.
-
+#
 version: 2
 
 updates:
@@ -10,7 +10,7 @@ updates:
     # Look for ".github/workflows" in the "root" directory.
     directory: "/"
 
-    # Check for updated GitHub Actions every weekdays.
+    # Check for updated GitHub Actions every weekday.
     schedule:
       interval: "daily"
 

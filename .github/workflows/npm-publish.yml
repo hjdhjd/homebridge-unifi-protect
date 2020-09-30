@@ -1,6 +1,7 @@
+# Publish a semver-tagged release to NPM (aka vX.Y.Z).
+#
 name: "NPM Publish"
 
-# Publish to NPM only if we're creating a release, and the tag starts with "v" (aka version tag).
 on:
   push:
     tags: v[0-9]+.[0-9]+.[0-9]+
