@@ -1,0 +1,5 @@
+# Merge all dependencies as long within ${TARGET} scope (defined in workflows/dependabot-automerge.yml).
+#
+- match:
+    dependency_type: all
+    update_type: semver:${TARGET}
