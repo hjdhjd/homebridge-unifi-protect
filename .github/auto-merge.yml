@@ -2,4 +2,4 @@
 #
 - match:
     dependency_type: all
-    update_type: semver:${TARGET}
+    update_type: semver:minor
