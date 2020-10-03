@@ -79,13 +79,13 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
   constructor(camera: ProtectCamera) {
     this.api = camera.api;
-    this.protectCamera = camera;
     this.config = camera.platform.config;
     this.debug = camera.platform.debug.bind(camera.platform);
     this.hap = camera.api.hap;
     this.log = camera.platform.log;
     this.name = camera.name.bind(camera);
     this.ongoingSessions = {};
+    this.protectCamera = camera;
     this.pendingSessions = {};
     this.platform = camera.platform;
     this.videoProcessor = this.config.videoProcessor || ffmpegPath || "ffmpeg";
@@ -141,6 +141,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     const snapshot = await this.getSnapshot(request);
 
     if(!snapshot) {
+      callback(new Error(this.name() + ": Unable to retrieve snapshot"));
       return;
     }
 
@@ -234,6 +235,15 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     const cameraConfig = this.protectCamera.accessory.context.camera as ProtectCameraConfig;
     const sessionInfo = this.pendingSessions[request.sessionID];
     const sdpIpVersion = sessionInfo.addressVersion === "ipv6" ? "IP6 ": "IP4";
+
+    // If we aren't connected, we're done.
+    if(cameraConfig.state !== "CONNECTED") {
+      const errorMessage = "Unable to start video stream - the camera is offline or unavailable.";
+
+      this.log.error("%s: %s", this.name(), errorMessage);
+      callback(new Error(this.name() + ": " + errorMessage));
+      return;
+    }
 
     // Set our packet size to be 564. Why? MPEG transport stream (TS) packets are 188 bytes in size each.
     // These packets transmit the video data that you ultimately see on your screen and are transmitted using
@@ -495,7 +505,14 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   // Take a snapshot.
   public async getSnapshot(request?: SnapshotRequest): Promise<Buffer | null> {
 
+    const cameraConfig = this.protectCamera.accessory.context.camera as ProtectCameraConfig;
     const params = new URLSearchParams({ force: "true" });
+
+    // If we aren't connected, we're done.
+    if(cameraConfig.state !== "CONNECTED") {
+      this.log.error("%s: Unable to retrieve snapshot - the camera is offline or unavailable.", this.name());
+      return null;
+    }
 
     // If we have details of the snapshot request, use it to request the right size.
     if(request) {
