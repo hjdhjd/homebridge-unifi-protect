@@ -26,6 +26,7 @@ export class FfmpegProcess {
   private readonly name: () => string;
   private process!: ExecaChildProcess;
   private sessionId: string;
+  private streamTimeout?: NodeJS.Timeout;
 
   constructor(delegate: ProtectStreamingDelegate, sessionId: string, command: string[], returnPort?: PortInterface, callback?: StreamRequestCallback) {
 
@@ -59,6 +60,24 @@ export class FfmpegProcess {
       this.log.error("%s: Socket error: %s.", this.name(), error.name);
       this.delegate.stopStream(this.sessionId);
 
+    });
+
+    // Manage our video streams in case we haven't received a stop request, but we're in fact dead zombies.
+    socket.on("message", () => {
+
+      // Clear our last canary.
+      if(this.streamTimeout) {
+        clearTimeout(this.streamTimeout);
+      }
+
+      // Set our new canary.
+      this.streamTimeout = setTimeout(() => {
+
+        this.debug("%s: video stream appears to be inactive for 5 seconds. Stopping stream.", this.name());
+        this.delegate.controller.forceStopStreamingSession(this.sessionId);
+        this.delegate.stopStream(this.sessionId);
+
+      }, 5000);
     });
 
     socket.bind(portInfo.port);
