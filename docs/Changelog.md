@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 3.7.9 (2020-10-10)
+ * Housekeeping updates and minor optimizations.
+
 ## 3.7.8 (2020-10-02)
  * Enhancement: streamlined handling when Protect devices become unavailable.
  * Fix: workaround a limitation in Homebridge where it doesn't notify us of a video stream disappearing. This will hopefully be addressed in a future Homebridge release.
