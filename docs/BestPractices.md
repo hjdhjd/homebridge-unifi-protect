@@ -17,7 +17,10 @@
 `homebridge-unifi-protect` is a [Homebridge](https://homebridge.io) plugin that provides HomeKit support to the [UniFi Protect](https://unifi-network.ui.com/video-security) device ecosystem. [UniFi Protect](https://unifi-network.ui.com/video-security) is [Ubiquiti's](https://www.ui.com) next-generation video security platform, with rich camera, doorbell, and NVR controller hardware options for you to choose from, as well as an app which you can use to view, configure and manage your video camera and doorbells.
 
 ### Best Practices
-I firmly believe that good software is opinionated. It should have a strong sense of what it's [north star is](https://github.com/hjdhjd/homebridge-unifi-protect#why), and what the user experience journey looks like. I'm trying to create the very best HomeKit user experience for UniFi Protect users by making Protect integration as seamless as possible within the HomeKit ecosystem. Another north star is to have things work in as native a manner as possible and honor the intent behind the design decisions Apple has chosen to make with HomeKit. In the areas where I've provided functionality that deviates from that principle, it's always disabled by default unless a user explicitly wishes to use that capability.
+I firmly believe that good software is opinionated. It should have a strong sense of what it's [north star is](https://github.com/hjdhjd/homebridge-unifi-protect#why), and what the user experience journey looks like. My north stars for `homebridge-unifi-protect`:
+
+  * Create the very best HomeKit user experience for UniFi Protect users by making Protect integration as seamless as possible within the HomeKit ecosystem.
+  * Have things work in as native a manner as possible and honor the *intent* behind the design decisions Apple has chosen to make with HomeKit. In the areas where I've provided functionality that deviates from that principle, it will always disabled by default unless a user explicitly wishes to use that capability.
 
 These best practices will evolve over time, but I wanted to provide some thoughts on some of the design choices I've made, and how you can enhance and tailor your own experience.
 

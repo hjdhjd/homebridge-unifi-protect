@@ -18,11 +18,11 @@
 
 ## <A NAME="why"></A>Why use this plugin for UniFi Protect support in HomeKit?
 
-This plugin attempts to bridge a gap in the UniFi Protect ecosystem by providing native HomeKit support on par with what you would expect from a first-party of native HomeKit solution. My north star is to create a plugin that *just works* with minimal required configuration by you, the end user, to get up and running. The goal is to provide as close to a streamlined experience as you would expect from a first-party or native HomeKit solution. For the adventurous, there are more granular options available to enable you to further tailor your experience.
+This plugin attempts to bridge a gap in the UniFi Protect ecosystem by providing native HomeKit support on par with what you would expect from a first-party of native HomeKit solution. My north star is to create a plugin that *just works* with minimal required configuration by you to get up and running. The goal is to provide as close to a streamlined experience as you would expect from a first-party or native HomeKit solution. For the adventurous, there are more granular options available to enable you to further tailor your experience.
 
 What does *just works* mean in practice? It means that this plugin will discover all your supported UniFi Protect devices and make them available in HomeKit. It supports all known UniFi Protect controller configurations (UniFi CloudKey Gen2+, UniFi Dream Machine Pro, and UniFi Protect NVR).
 
-For the more technically inclined - this plugin has continued to pioneer the HomeKit user experience for UniFi Protect by being the ***first*** Homebridge plugin to successfully reverse engineer the UniFi Protect realtime events API that was introduced with UniFi OS. This means that rather than poll the controller every few seconds to catch events, we're able to capture motion and doorbell ring events in realtime, providing an extremely responsive HomeKit experience, and reducing the performance impact to Protect controllers.
+For the more technically inclined - this plugin has continued to pioneer the HomeKit user experience for UniFi Protect by being the ***first*** Homebridge plugin to successfully reverse engineer the UniFi Protect realtime events API that was introduced with UniFi OS. This means that rather than poll the Protect controller every few seconds to catch events, we're able to capture motion and doorbell ring events in realtime, providing an extremely responsive HomeKit experience, and reducing the performance impact to Protect controllers.
 
 ### Features
 - ***Easy* configuration - all you need is your UniFi Protect controller IP address, username, and password to get started.** The defaults work for the vast majority of users. When you want more, there are [advanced options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/AdvancedOptions.md) you can play with, if you choose.
@@ -52,8 +52,6 @@ For the more technically inclined - this plugin has continued to pioneer the Hom
 ### What's not in this plugin right now
 
 Acoustic Echo Cancellation (AEC) support for two-way audio in UniFi Protect. We're most of the way there with two-way audio support, and hopefully AEC support can be reverse-engineered in the future.
-
-Currently, we support doorbell ring events, motion sensor, incoming video, and two-way audio.
 
 I hope to continue to work on this one to get AEC working for two-way audio. [You can also read more on about two-way audio support here](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/Doorbell.md#doorbell-twoway).
 
