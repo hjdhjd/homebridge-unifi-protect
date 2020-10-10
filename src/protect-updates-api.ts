@@ -139,7 +139,7 @@ export class ProtectUpdatesApi {
 
     } catch(error) {
 
-      log("Realtime update API: error decoding update packet: %s", error);
+      log.error("Realtime update API: error decoding update packet: %s.", error);
       return null;
 
     }
@@ -194,7 +194,7 @@ export class ProtectUpdatesApi {
         break;
 
       default:
-        log("Unknown payload packet type received in the realtime update events API: %s.", payloadFormat);
+        log.error("Unknown payload packet type received in the realtime update events API: %s.", payloadFormat);
         return null;
         break;
     }
