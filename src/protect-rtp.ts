@@ -11,34 +11,32 @@ import { ProtectStreamingDelegate } from "./protect-stream";
 import { createSocket } from "dgram";
 import getPort from "get-port";
 
-// What this function does is create two socket pipes to split traffic coming in from serverPort and
-// pipe it out to returnAudioPort and twowayAudioPort.
-//
-// In order to support two-way audio, we send out the inbound RTP traffic from serverPort to twowayAudioPort.
-//
-// For the audio channel that supports the video stream we're sending to the user, we only want to send the RTCP
-// information, because that channel is receiving all it's data (audio and video) from the video stream. RTCP
-// provides quality and statistics information back to HomeKit.
-//
-// Credit to @dgreif and @brandawg93 who graciously shared their code as a starting point, and their collaboration
-// in answering the questions needed to bring all this together. A special thank you to @Sunoo for the many hours of
-// discussion and brainstorming on this and other topics.
-export class RtpSplitter {
+/*
+ * Here's the problem this class solves: FFmpeg doesn't support multiplexing RTP and RTCP data on a single UDP port (RFC 5761).
+ * If it did, we wouldn't need this workaround for HomeKit compatibility, which does multiplex RTP and RTCP over a single UDP port.
+ *
+ * This class inspects all packets coming in from inputPort and demultiplexes RTP and RTCP traffic to rtpPort and rtcpPort, respectively.
+ *
+ * Credit to @dgreif and @brandawg93 who graciously shared their code as a starting point, and their collaboration
+ * in answering the questions needed to bring all this together. A special thank you to @Sunoo for the many hours of
+ * discussion and brainstorming on this and other topics.
+ */
+export class RtpDemuxer {
   private debug: (message: string, ...parameters: unknown[]) => void;
   private delegate: ProtectStreamingDelegate;
   private heartbeatTimer!: NodeJS.Timeout;
   private heartbeatMsg!: Buffer;
   private log: Logging;
-  private serverPort: number;
+  private inputPort: number;
   public readonly socket;
 
   // Create an instance of RTPSplitter.
-  constructor(streamingDelegate: ProtectStreamingDelegate, ipFamily: ("ipv4" | "ipv6") , serverPort: number, returnAudioPort: number, twowayAudioPort: number) {
+  constructor(streamingDelegate: ProtectStreamingDelegate, ipFamily: ("ipv4" | "ipv6") , inputPort: number, rtcpPort: number, rtpPort: number) {
 
     this.debug = streamingDelegate.platform.debug.bind(streamingDelegate.platform);
     this.delegate = streamingDelegate;
     this.log = streamingDelegate.log;
-    this.serverPort = serverPort;
+    this.inputPort = inputPort;
     this.socket = createSocket(ipFamily === "ipv6" ? "udp6" : "udp4" );
 
     // Catch errors when they happen on our splitter.
@@ -50,28 +48,30 @@ export class RtpSplitter {
     // Split the message into RTP and RTCP packets.
     this.socket.on("message", (msg) => {
 
-      // Send RTP packets to the return audio port.
+      // Send RTP packets to the RTP port.
       if(this.isRtpMessage(msg)) {
-        this.socket.send(msg, twowayAudioPort, "127.0.0.1");
+        this.socket.send(msg, rtpPort);
       } else {
 
-        // Save this RTCP message for heartbeat purposes for the return audio port.
+        // Save this RTCP message for heartbeat purposes for the RTP port. This works because RTCP packets will be ignored
+        // by ffmpeg on the RTP port, effectively providing a heartbeat to ensure FFmpeg doesn't timeout if there's an
+        // extended delay between data transmission.
         this.heartbeatMsg = Buffer.from(msg);
 
         // Clear the old heartbeat timer.
         clearTimeout(this.heartbeatTimer);
-        this.heartbeat(twowayAudioPort);
+        this.heartbeat(rtpPort);
 
         // RTCP control packets should go to the RTCP port.
-        this.socket.send(msg, returnAudioPort, "127.0.0.1");
+        this.socket.send(msg, rtcpPort);
       }
     });
 
-    this.debug("%s: Creating an RtpSplitter instance - inbound port: %s, twoway audio port: %s, return audio port: %s.",
-      this.delegate.protectCamera.name(), this.serverPort, twowayAudioPort, returnAudioPort);
+    this.debug("%s: Creating an RtpSplitter instance - inbound port: %s, RTCP port: %s, RTP port: %s.",
+      this.delegate.protectCamera.name(), this.inputPort, rtcpPort, rtpPort);
 
     // Take the socket live.
-    this.socket.bind(this.serverPort);
+    this.socket.bind(this.inputPort);
   }
 
   // Send a regular heartbeat to FFmpeg to ensure the pipe remains open and the process alive.
@@ -80,20 +80,20 @@ export class RtpSplitter {
     // Clear the old heartbeat timer.
     clearTimeout(this.heartbeatTimer);
 
-    // Send a heartbeat to FFmpeg every 3.5 seconds to keep things open. FFmpeg has a five-second timeout
+    // Send a heartbeat to FFmpeg every few seconds to keep things open. FFmpeg has a five-second timeout
     // in reading input, and we want to be comfortably within the margin for error to ensure the process
     // continues to run.
     this.heartbeatTimer = setTimeout(() => {
       this.debug("Sending ffmpeg a heartbeat.");
 
-      this.socket.send(this.heartbeatMsg, port, "127.0.0.1");
+      this.socket.send(this.heartbeatMsg, port);
       this.heartbeat(port);
     }, PROTECT_TWOWAY_HEARTBEAT_INTERVAL * 1000);
   }
 
   // Close the socket and cleanup.
   public close(): void {
-    this.debug("%s: Closing the RtpSplitter instance on port %s.", this.delegate.protectCamera.name(), this.serverPort);
+    this.debug("%s: Closing the RtpSplitter instance on port %s.", this.delegate.protectCamera.name(), this.inputPort);
 
     clearTimeout(this.heartbeatTimer);
     this.socket.close();
