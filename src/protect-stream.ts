@@ -31,7 +31,7 @@ import {
   PROTECT_FFMPEG_VERBOSE_DURATION
 } from "./settings";
 import { ProtectCameraConfig, ProtectOptions } from "./protect-types";
-import { RtpSplitter, RtpUtils } from "./protect-rtp";
+import { RtpDemuxer, RtpUtils } from "./protect-rtp";
 import { FfmpegProcess } from "./protect-ffmpeg";
 import { ProtectCamera } from "./protect-camera";
 import { ProtectPlatform } from "./protect-platform";
@@ -53,9 +53,9 @@ type SessionInfo = {
 
   hasLibFdk: boolean; // Does the user have a version of ffmpeg that supports AAC?
   audioPort: number;
-  audioReturnPort: number;
-  audioTwoWayPort: number; // Port to receive audio from the HomeKit microphone.
-  rtpSplitter: RtpSplitter | null; // RTP splitter needed for two-way audio.
+  audioIncomingRtcpPort: number;
+  audioIncomingRtpPort: number; // Port to receive audio from the HomeKit microphone.
+  rtpDemuxer: RtpDemuxer | null; // RTP demuxer needed for two-way audio.
   audioCryptoSuite: SRTPCryptoSuites;
   audioSRTP: Buffer;
   audioSSRC: number;
@@ -70,7 +70,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   private readonly hap: HAP;
   public readonly log: Logging;
   public readonly name: () => string;
-  private ongoingSessions: { [index: string]: { ffmpeg: FfmpegProcess[], rtpSplitter: RtpSplitter | null } };
+  private ongoingSessions: { [index: string]: { ffmpeg: FfmpegProcess[], rtpDemuxer: RtpDemuxer | null } };
   private pendingSessions: { [index: string]: SessionInfo };
   public readonly platform: ProtectPlatform;
   public readonly protectCamera: ProtectCamera;
@@ -155,13 +155,13 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   // Prepare to launch the video stream.
   public async prepareStream(request: PrepareStreamRequest, callback: PrepareStreamCallback): Promise<void> {
 
-    // We need to check for AAC support because it's going to inform our audio support.
+    // We need to check for AAC support because it's going to determine whether we support audio.
     const hasLibFdk = await FfmpegProcess.codecEnabled(this.videoProcessor, "libfdk_aac");
 
     // Setup our audio plumbing.
-    const audioReturnPort = (await RtpUtils.reservePorts())[0];
-    const audioServerPort = (hasLibFdk && this.protectCamera.twoWayAudio) ? (await RtpUtils.reservePorts())[0] : -1;
-    const audioTwoWayPort = (hasLibFdk && this.protectCamera.twoWayAudio) ? (await RtpUtils.reservePorts(2))[0] : -1;
+    const audioIncomingRtcpPort = (await RtpUtils.reservePorts())[0];
+    const audioIncomingPort = (hasLibFdk && this.protectCamera.twoWayAudio) ? (await RtpUtils.reservePorts())[0] : -1;
+    const audioIncomingRtpPort = (hasLibFdk && this.protectCamera.twoWayAudio) ? (await RtpUtils.reservePorts(2))[0] : -1;
     const audioSSRC = this.hap.CameraController.generateSynchronisationSource();
 
     if(!hasLibFdk) {
@@ -169,9 +169,9 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
         this.name());
     }
 
-    // Setup the RTP splitter for two-way audio scenarios.
-    const rtpSplitter = (hasLibFdk && this.protectCamera.twoWayAudio) ?
-      new RtpSplitter(this, request.addressVersion, audioServerPort, audioReturnPort, audioTwoWayPort) : null;
+    // Setup the RTP demuxer for two-way audio scenarios.
+    const rtpDemuxer = (hasLibFdk && this.protectCamera.twoWayAudio) ?
+      new RtpDemuxer(this, request.addressVersion, audioIncomingPort, audioIncomingRtcpPort, audioIncomingRtpPort) : null;
 
     // Setup our video plumbing.
     const videoReturnPort = (await RtpUtils.reservePorts())[0];
@@ -182,14 +182,14 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       addressVersion: request.addressVersion,
 
       audioCryptoSuite: request.audio.srtpCryptoSuite,
+      audioIncomingRtcpPort: audioIncomingRtcpPort,
+      audioIncomingRtpPort: audioIncomingRtpPort,
       audioPort: request.audio.port,
-      audioReturnPort: audioReturnPort,
       audioSRTP: Buffer.concat([request.audio.srtp_key, request.audio.srtp_salt]),
       audioSSRC: audioSSRC,
-      audioTwoWayPort: audioTwoWayPort,
 
       hasLibFdk: hasLibFdk,
-      rtpSplitter: rtpSplitter,
+      rtpDemuxer: rtpDemuxer,
 
       videoCryptoSuite: request.video.srtpCryptoSuite,
       videoPort: request.video.port,
@@ -198,10 +198,12 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       videoSSRC: videoSSRC
     };
 
-    // Prepare the response stream.
+    // Prepare the response stream. Here's where we figure out if we're doing two-way audio or not. For two-way audio,
+    // we need to use a demuxer to separate RTP and RTCP packets. For traditional video/audio streaming, we want to keep
+    // it simple and don't use a demuxer.
     const response: PrepareStreamResponse = {
       audio: {
-        port: (hasLibFdk && this.protectCamera.twoWayAudio) ? audioServerPort : audioReturnPort,
+        port: (hasLibFdk && this.protectCamera.twoWayAudio) ? audioIncomingPort : audioIncomingRtcpPort,
         // eslint-disable-next-line camelcase
         srtp_key: request.audio.srtp_key,
         // eslint-disable-next-line camelcase
@@ -218,11 +220,6 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
         ssrc: videoSSRC
       }
     };
-
-    // Figure out if we have the ability to deal with audio. If we do, we next have to figure out
-    // if we're doing two-way audio or not. For two-way audio, we need to use a splitter to bring all
-    // the pieces together. For traditional video/audio streaming, we want to keep it simple and don't
-    // use a splitter.
 
     // Add it to the pending session queue so we're ready to start when we're called upon.
     this.pendingSessions[request.sessionID] = sessionInfo;
@@ -249,25 +246,25 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     // These packets transmit the video data that you ultimately see on your screen and are transmitted using
     // UDP. Each UDP packet is 1316 bytes in size, before being encapsulated in IP. We want to get as many
     // TS packets as we can, within reason, in those UDP packets. This translates to 1316 / 188 = 7 TS packets
-    // as a limit of what can be pushed through over a network connection. Here's the problem...you need to have
+    // as a limit of what can be pushed through a single UDP packet. Here's the problem...you need to have
     // enough data to fill that pipe, all the time. Network latency, ffmpeg overhead, and the speed / quality of
     // the original camera stream all play a role here, and as you can imagine, there's a nearly endless set of
-    // combinations to deciding how to fill that pipe. Set it too low, and you're incurring extra overhead in
-    // pushing less data to clients, though you're increasing interactivity by getting whatever data you have to
-    // the end user. Set it too high, and startup latency becomes unacceptable when you're trying to stream.
+    // combinations to decide how to best fill that pipe. Set it too low, and you're incurring extra overhead by
+    // pushing less video data to clients in each packet, though you're increasing interactivity by getting
+    // whatever data you have to the end user. Set it too high, and startup latency becomes unacceptable
+    // when you begin a stream.
     //
     // For audio, you have a latency problem and a packet size that's too big will force the audio to sound choppy
     // - so we opt to increase responsiveness at the risk of more overhead. This gives the end user a much better
-    // audio experience, at a very marginal cost in bandwidth overhead.
+    // audio experience, at a marginal cost in bandwidth overhead.
     //
-    // Through experimentation, I've found a sweet spot of 188 * 3 = 564 for video on Protect cameras. This works
-    // very well for G3-series cameras, and pretty well for G4-series cameras. The G4s tend to push a lot more data
-    // which drives the latency higher when you're first starting up a stream. In my testing, adjusting the packet
-    // size beyond 564 did not have a material impact in improving the startup time of a G4 camera, but did have
-    // a negative impact on G3 cameras.
+    // Through experimentation, I've found a sweet spot of 188 * 3 = 564 for video on Protect cameras. In my testing,
+    // adjusting the packet size beyond 564 did not have a material impact in improving the startup time, and often had
+    // a negative impact.
     const videomtu = 188 * 3;
     const audiomtu = 188 * 1;
 
+    // -hide_banner:        suppress printing the startup banner in FFmpeg.
     // -rtsp_transport tcp: tell the RTSP stream handler that we're looking for a TCP connection.
     const ffmpegArgs = [ "-hide_banner", "-rtsp_transport", "tcp", "-i", this.protectCamera.cameraUrl ];
 
@@ -365,11 +362,11 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       }
 
       // Add the required RTP settings and encryption for the stream:
+      // -payload_type num       payload type for the RTP stream. This is negotiated by HomeKit and is usually 110 for AAC-ELD audio.
       // -ssrc                   synchronization source stream identifier. Random number negotiated by HomeKit to identify this stream.
       // -f rtp                  specify that we're using the RTP protocol.
       // -srtp_out_suite enc     specify the output encryption encoding suites.
       // -srtp_out_params params specify the output encoding parameters. This is negotiated by HomeKit.
-      // -payload_type num     payload type for the RTP stream. This is negotiated by HomeKit and is usually 110 for AAC-ELD audio.
       ffmpegArgs.push(
         "-payload_type", request.audio.pt.toString(),
         "-ssrc", sessionInfo.audioSSRC.toString(),
@@ -395,8 +392,8 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       (sessionInfo.hasLibFdk && this.protectCamera.twoWayAudio) ? undefined : { addressVersion: sessionInfo.addressVersion, port: sessionInfo.videoReturnPort },
       callback);
 
-    // Some housekeeping for our FFmpeg and splitter sessions.
-    this.ongoingSessions[request.sessionID] = { ffmpeg: [ ffmpeg ], rtpSplitter: sessionInfo.rtpSplitter };
+    // Some housekeeping for our FFmpeg and demuxer sessions.
+    this.ongoingSessions[request.sessionID] = { ffmpeg: [ ffmpeg ], rtpDemuxer: sessionInfo.rtpDemuxer };
     delete this.pendingSessions[request.sessionID];
 
     // If we aren't doing two-way audio, we're done here. For two-way audio...we have some more plumbing to do.
@@ -424,7 +421,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       "s=" + this.name() + " Audio Talkback",
       "c=IN " + sdpIpVersion + " " + sessionInfo.address,
       "t=0 0",
-      "m=audio " + sessionInfo.audioTwoWayPort.toString() + " RTP/AVP 110",
+      "m=audio " + sessionInfo.audioIncomingRtpPort.toString() + " RTP/AVP 110",
       "b=AS:24",
       "a=rtpmap:110 MPEG4-GENERIC/16000/1",
       "a=fmtp:110 profile-level-id=1;mode=AAC-hbr;sizelength=13;indexlength=3;indexdeltalength=3; config=F8F0212C00BC00",
@@ -555,8 +552,8 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
         }
       }
 
-      // Close the splitter, if we have one.
-      this.ongoingSessions[sessionId]?.rtpSplitter?.close();
+      // Close the demuxer, if we have one.
+      this.ongoingSessions[sessionId]?.rtpDemuxer?.close();
 
       // Delete the entries.
       delete this.pendingSessions[sessionId];
