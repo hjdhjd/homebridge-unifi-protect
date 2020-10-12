@@ -37,7 +37,7 @@ Getting `homebridge-unifi-protect` connected to UniFi Protect is the foundationa
   * For most people, I'd recommend using an IP address over a hostname. This provides you more certainty and eliminates another potential error vector (DNS / hostname resolution) from being a factor.
 
 * Have you correctly entered your username and password?
-  * I know this is a basic one...but believe me, it happens more than you think to all of us!
+  * I know this is a basic one...but believe me, it happens to all of us more than you think!
 
 * Are you using a Ubiquiti cloud account to login and have two-factor authentication configured?
   * Unfortunately, `homebridge-unifi-protect` does not support two-factor authentication currently. You can create an additional local user within UniFi Protect and use that to login.
@@ -66,6 +66,13 @@ UniFi Protect provides a lot of notifications, and sometimes those notifications
 Why does this matter?
 
 If you run `homebridge-unifi-protect` on a server that doesn't have a similar internal time to what UniFi Protect thinks is the time, then you might miss notifications if they're significantly different. By default most computers and UniFi Protect synchronize their clocks with the worldwide [NTP](https://www.ntp.org) time servers. Make sure that the server you run Homebridge on and UniFi Protect both agree on what time it is.
+
+Assuming you've setup all of the above, the most common issue people have:
+
+* Everything above is setup correctly, but you still don't receive notifications when motion or doorbell ring events happen.
+  * This is almost certainly a clock-related issue on your UniFi Protect controller or the device where you are running Homebridge.
+  * `homebridge-unifi-protect` checks the timestamps on any events received from Protect to ensure it's reasonably recent. If the event is too far in the past, it will be ignored.
+  * To fix this, ensure the clock is accurate and up-to-date on your Protect controller and on the device where Homebridge is running.
 
 ### Video Streaming
 There are lots of things that can go wrong with video streaming, unfortunately. I want to start by providing a bit of background on how streaming actually works in HomeKit, homebridge and this plugin before getting into where things can break.
