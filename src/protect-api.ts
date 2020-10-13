@@ -212,7 +212,7 @@ export class ProtectApi {
     }
 
     // Capture the bootstrap if we're debugging.
-    this.debug(util.inspect(this.bootstrap, { colors: true, depth: 10, sorted: true }));
+    this.debug(util.inspect(this.bootstrap, { colors: true, depth: null, sorted: true }));
 
     // Check for admin user privileges or role changes.
     this.checkAdminUserStatus(firstRun);
@@ -293,7 +293,7 @@ export class ProtectApi {
       return false;
     }
 
-    this.debug(util.inspect(this.bootstrap, { colors: true, depth: 10, sorted: true }));
+    this.debug(util.inspect(this.bootstrap, { colors: true, depth: null, sorted: true }));
 
     const newDeviceList: ProtectCameraConfig[] | undefined = this.bootstrap?.cameras;
 
@@ -314,7 +314,7 @@ export class ProtectApi {
         this.log.info("%s: Discovered %s: %s.",
           this.getNvrName(), newDevice.modelKey, this.getDeviceName(newDevice, newDevice.name, true));
 
-        this.debug(util.inspect(newDevice, { colors: true, depth: 10, sorted: true }));
+        this.debug(util.inspect(newDevice, { colors: true, depth: null, sorted: true }));
       }
     }
 
@@ -330,7 +330,7 @@ export class ProtectApi {
         // We've had a device disappear.
         this.debug("%s: Detected %s removal.", this.getFullName(existingDevice), existingDevice.modelKey);
 
-        this.debug(util.inspect(existingDevice, { colors: true, depth: 10, sorted: true }));
+        this.debug(util.inspect(existingDevice, { colors: true, depth: null, sorted: true }));
       }
     }
 
@@ -473,7 +473,7 @@ export class ProtectApi {
       return null;
     }
 
-    this.debug("%s: %s", this.getFullName(device), util.inspect(payload, { colors: true, depth: 10, sorted: true }));
+    this.debug("%s: %s", this.getFullName(device), util.inspect(payload, { colors: true, depth: null, sorted: true }));
 
     // Update Protect with the new configuration.
     const response = await this.fetch(this.camerasUrl() + "/" + device.id, {
