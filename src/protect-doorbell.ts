@@ -9,8 +9,8 @@ import {
   CharacteristicValue,
   Service
 } from "homebridge";
+import { ProtectCameraConfig, ProtectCameraLcdMessagePayload } from "./protect-types";
 import { ProtectCamera } from "./protect-camera";
-import { ProtectCameraConfig } from "./protect-types";
 
 // A doorbell message entry.
 interface MessageInterface {
@@ -23,16 +23,6 @@ interface MessageInterface {
 interface MessageSwitchInterface extends MessageInterface {
   service: Service,
   state: boolean
-}
-
-// JSON payload for the doorbell message.
-interface ProtectMessageJSONInterface {
-  lcdMessage: {
-    duration?: number,
-    resetAt?: number | null,
-    text?: string,
-    type?: string
-  }
 }
 
 export class ProtectDoorbell extends ProtectCamera {
@@ -217,8 +207,8 @@ export class ProtectDoorbell extends ProtectCamera {
         .on(CharacteristicEventTypes.SET, this.setSwitchState.bind(this, this.messageSwitches[this.messageSwitches.length - 1]));
     }
 
-    // Sync message switch states between HomeKit and the doorbell.
-    this.syncSwitches();
+    // Update the message switch state in HomeKit.
+    this.updateLcdSwitch(camera.lcdMessage);
 
     return true;
   }
@@ -303,14 +293,14 @@ export class ProtectDoorbell extends ProtectCamera {
 
       // No message defined...we assume we're resetting the message.
       if(!incomingPayload.message.length) {
-        outboundPayload = { lcdMessage: { resetAt: 0 } };
+        outboundPayload = { resetAt: 0 };
         this.log.info("%s: Received MQTT doorbell message reset.", this.name());
       } else {
-        outboundPayload = { lcdMessage: { duration: incomingPayload.duration, text: incomingPayload.message, type: "CUSTOM_MESSAGE" } };
+        outboundPayload = { duration: incomingPayload.duration, text: incomingPayload.message, type: "CUSTOM_MESSAGE" };
         this.log.info("%s: Received MQTT doorbell message%s: %s.",
           this.name(),
-          outboundPayload.lcdMessage.duration ? " (" + (outboundPayload.lcdMessage.duration / 1000).toString() + " seconds)" : "",
-          outboundPayload.lcdMessage.text);
+          outboundPayload.duration ? " (" + (outboundPayload.duration / 1000).toString() + " seconds)" : "",
+          outboundPayload.text);
       }
 
       // Send it to the doorbell and we're done.
@@ -370,17 +360,14 @@ export class ProtectDoorbell extends ProtectCamera {
 
       this.log.info("%s: Removing saved doorbell message: %s.", this.name(), entry.text);
 
-      // This entry is now stale, delete it.
+      // The message has been deleted on the doorbell, remove it in HomeKit.
       this.accessory.removeService(entry.service);
       this.messageSwitches.splice(this.messageSwitches.indexOf(entry), 1);
     }
-  }
 
-  // Sync our HomeKit switch states with what we see on the doorbell.
-  private syncSwitches(): void {
-    const camera = this.accessory.context.camera as ProtectCameraConfig;
-
-    // Loop through the list of services on our doorbell accessory.
+    // Loop through the list of services on our doorbell accessory and sync the message switches.
+    // We do this to catch the scenario where Homebridge was shutdown, and the list of saved messages
+    // on the controller changes.
     for(const switchService of this.accessory.services) {
 
       // We only want to look at switches.
@@ -393,41 +380,58 @@ export class ProtectDoorbell extends ProtectCamera {
         continue;
       }
 
-      // Find this entry in the list we maintain.
-      const lcdEntry = this.messageSwitches?.find(x => (x.type + "." + x.text) === switchService.subtype);
-
-      // The message has been deleted on the doorbell - remove it from HomeKit and inform the user about it.
-      if(!lcdEntry) {
-        this.log.info("%s: Removing saved doorbell message: %s.",
-          this.name(), switchService.subtype?.slice(switchService.subtype.indexOf(".") + 1));
-        this.accessory.removeService(switchService);
+      // The message exists on the doorbell.
+      if(this.messageSwitches?.some(x => (x.type + "." + x.text) === switchService.subtype)) {
         continue;
       }
 
-      // We have this one in our known list of messages. Compare it with the message on the doorbell, and sync.
-      const switchState = switchService.subtype === (camera.lcdMessage?.type + "." + camera.lcdMessage?.text);
+      // The message has been deleted on the doorbell - remove it from HomeKit and inform the user about it.
+      this.log.info("%s: Removing saved doorbell message: %s.", this.name(), switchService.subtype?.slice(switchService.subtype.indexOf(".") + 1));
+      this.accessory.removeService(switchService);
+    }
+  }
 
-      // Update the switch state, but only if needed.
-      if(switchService.getCharacteristic(this.hap.Characteristic.On).value !== switchState) {
-        switchService.getCharacteristic(this.hap.Characteristic.On).updateValue(switchState);
+  // Update the message switch state in HomeKit.
+  public updateLcdSwitch(lcdMessage: ProtectCameraLcdMessagePayload): void {
+
+    // The message has been cleared on the doorbell, turn off all message switches in HomeKit.
+    if(!Object.keys(lcdMessage).length) {
+      for(const lcdEntry of this.messageSwitches) {
+        lcdEntry.state = false;
+        lcdEntry.service.getCharacteristic(this.hap.Characteristic.On).updateValue(false);
       }
 
-      // Update our state information in the known list of messages.
-      if(lcdEntry.state !== switchState) {
+      return;
+    }
 
-        lcdEntry.state = switchState;
+    // Sanity check.
+    if(!("type" in lcdMessage) || !("text" in lcdMessage)) {
+      return;
+    }
 
-        // Inform the user that the message has been set.
-        if(switchState) {
+    // The message has been set on the doorbell. Update HomeKit accordingly.
+    for(const lcdEntry of this.messageSwitches) {
 
-          this.log.info("%s: Doorbell message set%s: %s.",
-            this.name(), lcdEntry.duration ? " (" + (lcdEntry.duration / 1000).toString() + " seconds)" : "", lcdEntry.text);
-
-          // Publish to MQTT, if the user has configured it.
-          this.nvr.mqtt?.publish(this.accessory, "message", JSON.stringify({ duration: lcdEntry.duration / 1000, message: lcdEntry.text }));
-
-        }
+      // If it's not the message we're interested in, make sure it's off and keep going.
+      if(lcdEntry.service.subtype !== ((lcdMessage.type as string) + "." + (lcdMessage.text as string))) {
+        lcdEntry.state = false;
+        lcdEntry.service.getCharacteristic(this.hap.Characteristic.On).updateValue(false);
+        continue;
       }
+
+      // If the message switch is already on, we're done.
+      if(lcdEntry.state) {
+        continue;
+      }
+
+      // Set the message state and update HomeKit.
+      lcdEntry.state = true;
+      lcdEntry.service.getCharacteristic(this.hap.Characteristic.On).updateValue(true);
+
+      this.log.info("%s: Doorbell message set%s: %s.", this.name(), lcdEntry.duration ? " (" + (lcdEntry.duration / 1000).toString() + " seconds)" : "", lcdEntry.text);
+
+      // Publish to MQTT, if the user has configured it.
+      this.nvr.mqtt?.publish(this.accessory, "message", JSON.stringify({ duration: lcdEntry.duration / 1000, message: lcdEntry.text }));
     }
   }
 
@@ -441,9 +445,9 @@ export class ProtectDoorbell extends ProtectCamera {
 
     // Tell the doorbell to display our message.
     if(messageSwitch.state !== value) {
-      const payload: ProtectMessageJSONInterface = (value === true) ?
-        { lcdMessage: { duration: messageSwitch.duration, text: messageSwitch.text, type: messageSwitch.type } } :
-        { lcdMessage: { resetAt: 0 } };
+      const payload: ProtectCameraLcdMessagePayload = (value === true) ?
+        { duration: messageSwitch.duration, text: messageSwitch.text, type: messageSwitch.type } :
+        { resetAt: 0 };
 
       // Set the message and sync our states.
       void this.setMessage(payload);
@@ -453,21 +457,21 @@ export class ProtectDoorbell extends ProtectCamera {
   }
 
   // Set the message on the doorbell.
-  private async setMessage(payload: ProtectMessageJSONInterface = { lcdMessage: { resetAt: 0 } }): Promise<boolean> {
+  private async setMessage(payload: ProtectCameraLcdMessagePayload = { resetAt: 0 }): Promise<boolean> {
 
     // We take the duration and save it for MQTT and then translate the payload into what Protect is expecting from us.
-    if("duration" in payload.lcdMessage) {
-      payload.lcdMessage.resetAt = (payload.lcdMessage.duration ? Date.now() + payload.lcdMessage.duration : null);
-      delete payload.lcdMessage.duration;
+    if("duration" in payload) {
+      payload.resetAt = (payload.duration ? Date.now() + payload.duration : null);
+      delete payload.duration;
     }
 
     // An empty payload means we're resetting. Set the reset timer to 0 and we're done.
-    if(!Object.keys(payload.lcdMessage).length) {
-      payload.lcdMessage.resetAt = 0;
+    if(!Object.keys(payload).length) {
+      payload.resetAt = 0;
     }
 
     // Push the update to the doorbell.
-    const newCamera = await this.nvr.nvrApi.updateCamera(this.accessory.context.camera as ProtectCameraConfig, payload);
+    const newCamera = await this.nvr.nvrApi.updateCamera(this.accessory.context.camera as ProtectCameraConfig, { lcdMessage: payload });
 
     if(!newCamera) {
       this.log.error("%s: Unable to set doorbell message. Please ensure this username has the Administrator role in UniFi Protect.", this.name());

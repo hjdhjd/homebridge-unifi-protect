@@ -20,6 +20,7 @@ import { PROTECT_SWITCH_TRIGGER, ProtectCamera } from "./protect-camera";
 import {
   ProtectCameraConfig,
   ProtectCameraConfigPayload,
+  ProtectCameraLcdMessagePayload,
   ProtectNvrOptions,
   ProtectNvrSystemEvent
 } from "./protect-types";
@@ -416,7 +417,7 @@ export class ProtectNvr {
       const payload = updatePacket.payload as ProtectCameraConfigPayload;
 
       // Now filter out payloads we aren't interested in. We only want motion detection and doorbell rings for now.
-      if(!payload.isMotionDetected && !payload.lastRing) {
+      if(!payload.isMotionDetected && !payload.lastRing && !payload.lcdMessage) {
         return;
       }
 
@@ -446,6 +447,14 @@ export class ProtectNvr {
         this.doorbellEventHandler(accessory, payload.lastRing);
         return;
       }
+
+      // It's a doorbell LCD message event - process it accordingly.
+      if(payload.lcdMessage) {
+
+        // Call our LCD message handler and we're done.
+        this.lcdMessageEventHandler(accessory, payload.lcdMessage);
+        return;
+      }
     });
 
     // Mark the listener as configured.
@@ -456,7 +465,6 @@ export class ProtectNvr {
   // Motion event processing from UniFi Protect and delivered to HomeKit.
   public motionEventHandler(accessory: PlatformAccessory, lastMotion: number): void {
     const camera = accessory.context.camera as ProtectCameraConfig;
-    const hap = this.hap;
 
     if(!accessory || !camera || !lastMotion) {
       return;
@@ -484,7 +492,7 @@ export class ProtectNvr {
     }
 
     // Only notify the user if we have a motion sensor and it's active.
-    const motionService = accessory.getService(hap.Service.MotionSensor);
+    const motionService = accessory.getService(this.hap.Service.MotionSensor);
 
     if(!motionService) {
       return;
@@ -496,13 +504,13 @@ export class ProtectNvr {
     }
 
     // Trigger the motion event in HomeKit.
-    motionService.getCharacteristic(hap.Characteristic.MotionDetected).updateValue(true);
+    motionService.getCharacteristic(this.hap.Characteristic.MotionDetected).updateValue(true);
 
     // Check to see if we have a motion trigger switch configured. If we do, update it.
-    const triggerService = accessory.getServiceById(hap.Service.Switch, PROTECT_SWITCH_TRIGGER);
+    const triggerService = accessory.getServiceById(this.hap.Service.Switch, PROTECT_SWITCH_TRIGGER);
 
     if(triggerService) {
-      triggerService.getCharacteristic(hap.Characteristic.On).updateValue(true);
+      triggerService.getCharacteristic(this.hap.Characteristic.On).updateValue(true);
     }
 
     // Publish to MQTT, if the user has configured it.
@@ -515,16 +523,16 @@ export class ProtectNvr {
 
     // Reset our motion event after motionDuration.
     this.eventTimers[camera.mac] = setTimeout(() => {
-      const thisMotionService = accessory.getService(hap.Service.MotionSensor);
+      const thisMotionService = accessory.getService(this.hap.Service.MotionSensor);
 
       if(thisMotionService) {
-        thisMotionService.getCharacteristic(hap.Characteristic.MotionDetected).updateValue(false);
+        thisMotionService.getCharacteristic(this.hap.Characteristic.MotionDetected).updateValue(false);
 
         // Check to see if we have a motion trigger switch configured. If we do, update it.
-        const triggerService = accessory.getServiceById(hap.Service.Switch, PROTECT_SWITCH_TRIGGER);
+        const triggerService = accessory.getServiceById(this.hap.Service.Switch, PROTECT_SWITCH_TRIGGER);
 
         if(triggerService) {
-          triggerService.getCharacteristic(hap.Characteristic.On).updateValue(false);
+          triggerService.getCharacteristic(this.hap.Characteristic.On).updateValue(false);
         }
 
         // Publish to MQTT, if the user has configured it.
@@ -541,7 +549,6 @@ export class ProtectNvr {
   // Doorbell event processing from UniFi Protect and delivered to HomeKit.
   private doorbellEventHandler(accessory: PlatformAccessory, lastRing: number | null): void {
     const camera = accessory.context.camera as ProtectCameraConfig;
-    const hap = this.hap;
 
     if(!accessory || !camera || !lastRing) {
       return;
@@ -564,7 +571,7 @@ export class ProtectNvr {
     this.lastRing[camera.mac] = lastRing;
 
     // Only notify the user if we have a doorbell.
-    const doorbellService = accessory.getService(hap.Service.Doorbell);
+    const doorbellService = accessory.getService(this.hap.Service.Doorbell);
 
     if(!doorbellService) {
       return;
@@ -576,7 +583,7 @@ export class ProtectNvr {
       .setValue(this.hap.Characteristic.ProgrammableSwitchEvent.SINGLE_PRESS);
 
     // Trigger the doorbell ring contact sensor, if one is configured.
-    const contactService = accessory.getService(hap.Service.ContactSensor);
+    const contactService = accessory.getService(this.hap.Service.ContactSensor);
 
     if(contactService) {
 
@@ -587,14 +594,14 @@ export class ProtectNvr {
       }
 
       // Trigger the contact event in HomeKit.
-      contactService.getCharacteristic(hap.Characteristic.ContactSensorState).updateValue(hap.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED);
+      contactService.getCharacteristic(this.hap.Characteristic.ContactSensorState).updateValue(this.hap.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED);
 
       // Reset our contact event after two seconds.
       this.eventTimers[camera.mac + ".DoorbellRing"] = setTimeout(() => {
-        const thisContactService = accessory.getService(hap.Service.ContactSensor);
+        const thisContactService = accessory.getService(this.hap.Service.ContactSensor);
 
         if(thisContactService) {
-          contactService.getCharacteristic(hap.Characteristic.ContactSensorState).updateValue(hap.Characteristic.ContactSensorState.CONTACT_DETECTED);
+          contactService.getCharacteristic(this.hap.Characteristic.ContactSensorState).updateValue(this.hap.Characteristic.ContactSensorState.CONTACT_DETECTED);
           this.debug("%s: Resetting contact sensor event.", this.nvrApi.getFullName(camera));
         }
 
@@ -609,6 +616,17 @@ export class ProtectNvr {
     if(this.optionEnabled(camera, "LogDoorbell", false)) {
       this.log.info("%s: Doorbell ring detected.", this.nvrApi.getFullName(camera));
     }
+  }
+
+  // LCD message event processing from UniFi Protect and delivered to HomeKit.
+  private lcdMessageEventHandler(accessory: PlatformAccessory, lcdMessage: ProtectCameraLcdMessagePayload): void {
+    const camera = accessory.context.camera as ProtectCameraConfig;
+
+    if(!accessory || !camera) {
+      return;
+    }
+
+    (this.configuredCameras[accessory.UUID] as ProtectDoorbell).updateLcdSwitch(lcdMessage);
   }
 
   // Periodically poll the Protect API for status.

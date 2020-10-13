@@ -199,11 +199,7 @@ export interface ProtectCameraConfigInterface {
   lastMotion: number,
   lastRing: number | null,
   lastSeen: number,
-  lcdMessage: {
-    resetAt: number | null,
-    text: string,
-    type: string
-  },
+  lcdMessage: ProtectCameraLcdMessageConfigInterface,
   ledSettings: {
     blinkRate: number,
     isEnabled: boolean
@@ -321,6 +317,14 @@ export interface ProtectCameraChannelConfigInterface {
   rtspAlias: string,
   videoId: string,
   width: number
+}
+
+// A semi-complete description of the UniFi Protect LCD message JSON.
+export interface ProtectCameraLcdMessageConfigInterface {
+  duration: number,
+  resetAt: number | null,
+  text: string,
+  type: string
 }
 
 // A semi-complete description of the UniFi Protect NVR liveview JSON.
@@ -470,6 +474,8 @@ export type ProtectNvrConfig = Readonly<ProtectNvrConfigInterface>;
 export type ProtectCameraConfig = Readonly<ProtectCameraConfigInterface>;
 export type ProtectCameraConfigPayload = DeepPartial<ProtectCameraConfigInterface>;
 export type ProtectCameraChannelConfig = Readonly<ProtectCameraChannelConfigInterface>;
+export type ProtectCameraLcdMessageConfig = Readonly<ProtectCameraLcdMessageConfigInterface>;
+export type ProtectCameraLcdMessagePayload = DeepPartial<ProtectCameraLcdMessageConfigInterface>;
 export type ProtectNvrLiveviewConfig = Readonly<ProtectNvrLiveviewConfigInterface>;
 export type ProtectNvrSystemEvent = Readonly<ProtectNvrSystemEventInterface>;
 export type ProtectNvrSystemEventController = Readonly<ProtectNvrSystemEventControllerInterface>;
