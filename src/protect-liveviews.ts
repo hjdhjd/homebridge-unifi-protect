@@ -65,20 +65,19 @@ export class ProtectLiveviews extends ProtectBase {
       return;
     }
 
-    const reLiveviewScene = /^Protect-(Away|Home|Night|Off)$/i;
+    const regexSecuritySystemLiveview = /^Protect-(Away|Home|Night|Off)$/i;
     const uuid = this.hap.uuid.generate(this.nvrApi.bootstrap.nvr.mac + ".Security");
 
     // If the user removed the last Protect-centric liveview for the security system, we remove the security system accessory.
-    if(!this.liveviews?.some((x: ProtectNvrLiveviewConfig) => reLiveviewScene.test(x.name))) {
-      const oldAccessory = this.platform.accessories.find((x: PlatformAccessory) => x.UUID === uuid);
+    if(!this.liveviews?.some((x: ProtectNvrLiveviewConfig) => regexSecuritySystemLiveview.test(x.name))) {
 
-      if(oldAccessory) {
+      if(this.securityAccessory) {
         this.log.info("%s: No plugin-specific liveviews found. Disabling the security system accessory associated with this UniFi Protect controller.",
-          this.nvrApi.getNvrName());
+          this.name());
 
         // Unregister the accessory and delete it's remnants from HomeKit and the plugin.
-        this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [oldAccessory]);
-        this.platform.accessories.splice(this.platform.accessories.indexOf(oldAccessory), 1);
+        this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [this.securityAccessory]);
+        this.platform.accessories.splice(this.platform.accessories.indexOf(this.securityAccessory), 1);
       }
 
       this.securityAccessory = null;
@@ -99,11 +98,11 @@ export class ProtectLiveviews extends ProtectBase {
       }
 
       if(!this.securityAccessory) {
-        this.log.error("%s: Unable to create the security system accessory.", this.nvrApi.getNvrName());
+        this.log.error("%s: Unable to create the security system accessory.", this.name());
         return;
       }
 
-      this.log.info("%s: Plugin-specific liveviews have been detected. Enabling the security system accessory.", this.nvrApi.getNvrName());
+      this.log.info("%s: Plugin-specific liveviews have been detected. Enabling the security system accessory.", this.name());
     }
 
     // We have the security system accessory, now let's configure it.
@@ -111,7 +110,7 @@ export class ProtectLiveviews extends ProtectBase {
       this.securitySystem = new ProtectSecuritySystem(this.nvr, this.securityAccessory);
 
       if(!this.securitySystem) {
-        this.log.error("%s: Unable to configure the security system accessory.", this.nvrApi.getNvrName());
+        this.log.error("%s: Unable to configure the security system accessory.", this.name());
         return;
       }
     }
@@ -137,7 +136,7 @@ export class ProtectLiveviews extends ProtectBase {
 
       // The switch has no associated liveview - let's get rid of it.
       this.log.info("%s: The plugin-specific liveview %s has been removed or renamed. Removing the switch associated with this liveview.",
-        this.nvrApi.getNvrName(), liveviewSwitch.context.liveview);
+        this.name(), liveviewSwitch.context.liveview);
 
       // Unregister the accessory and delete it's remnants from HomeKit and the plugin.
       this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [liveviewSwitch]);
@@ -146,13 +145,13 @@ export class ProtectLiveviews extends ProtectBase {
     }
 
     // Initialize the regular expression here so we don't have to reinitialize it in each iteration below.
-    const reLiveviewScene = /^Protect-((?!Away$|Off$|Home$|Night$).+)$/i;
+    const regexSecuritySystemLiveview = /^Protect-((?!Away$|Off$|Home$|Night$).+)$/i;
 
     // Check for any new plugin-specific liveviews.
     for(const liveview of this.liveviews) {
 
       // Only match on views beginning with Protect- that are not reserved for the security system.
-      const viewMatch = reLiveviewScene.exec(liveview.name);
+      const viewMatch = regexSecuritySystemLiveview.exec(liveview.name);
 
       // No match found, we're not interested in it.
       if(!viewMatch) {
@@ -183,7 +182,7 @@ export class ProtectLiveviews extends ProtectBase {
       }
 
       if(!newAccessory) {
-        this.log.error("%s: Unable to create the switch for liveview: %s.", this.nvrApi.getNvrName(), viewName);
+        this.log.error("%s: Unable to create the switch for liveview: %s.", this.name(), viewName);
         return;
       }
 
@@ -193,24 +192,29 @@ export class ProtectLiveviews extends ProtectBase {
       newAccessory.context.switchState = false;
       this.liveviewSwitches.push(newAccessory);
 
-      // Clear out any previous switch service.
+      // Find the existing liveview switch, if we have one.
       let switchService = newAccessory.getService(this.hap.Service.Switch);
 
-      if(switchService) {
-        newAccessory.removeService(switchService);
+      // Add the liveview switch to the accessory.
+      if(!switchService) {
+        switchService = new this.hap.Service.Switch(newAccessory.displayName);
+
+        if(!switchService) {
+          this.log.error("%s: Unable to create the switch for liveview: %s.", this.name(), viewName);
+          return;
+        }
+
+        newAccessory.addService(switchService);
       }
 
-      // Add the switch to the accessory.
-      switchService = new this.hap.Service.Switch(newAccessory.displayName);
-
       // Activate or deactivate motion detection.
-      newAccessory.addService(switchService)
+      switchService
         .getCharacteristic(this.hap.Characteristic.On)
         ?.on(CharacteristicEventTypes.GET, this.getSwitchState.bind(this, newAccessory))
         .on(CharacteristicEventTypes.SET, this.setSwitchState.bind(this, newAccessory))
         .updateValue(newAccessory.context.switchState as boolean);
 
-      this.log.info("%s: Plugin-specific liveview %s has been detected. Configuring a switch accessory for it.", this.nvrApi.getNvrName(), viewName);
+      this.log.info("%s: Plugin-specific liveview %s has been detected. Configuring a switch accessory for it.", this.name(), viewName);
     }
   }
 
@@ -347,7 +351,7 @@ export class ProtectLiveviews extends ProtectBase {
           motionSwitch.getCharacteristic(this.hap.Characteristic.On)?.updateValue(targetAccessory.context.detectMotion as boolean);
         }
 
-        this.log.info("%s: %s -> %s: Motion detection %s.", this.nvrApi.getNvrName(), liveviewSwitch.context.liveview, targetAccessory.displayName,
+        this.log.info("%s: %s -> %s: Motion detection %s.", this.name(), liveviewSwitch.context.liveview, targetAccessory.displayName,
           targetAccessory.context.detectMotion === true ? "enabled" : "disabled");
       }
     }

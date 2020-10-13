@@ -86,15 +86,20 @@ export class ProtectDoorbell extends ProtectCamera {
     // Clear out any previous doorbell service.
     let doorbellService = this.accessory.getService(this.hap.Service.Doorbell);
 
-    if(doorbellService) {
-      this.accessory.removeService(doorbellService);
-    }
-
     // Add the doorbell service to this Protect doorbell. HomeKit requires the doorbell service to be
     // marked as the primary service on the accessory.
-    doorbellService = new this.hap.Service.Doorbell(this.accessory.displayName);
+    if(!doorbellService) {
+      doorbellService = new this.hap.Service.Doorbell(this.accessory.displayName);
 
-    this.accessory.addService(doorbellService)
+      if(!doorbellService) {
+        this.log.error("%s: Unable to add doorbell.", this.name());
+        return false;
+      }
+
+      this.accessory.addService(doorbellService);
+    }
+
+    doorbellService
       .getCharacteristic(this.hap.Characteristic.ProgrammableSwitchEvent)
       .on(CharacteristicEventTypes.GET, (callback: CharacteristicGetCallback) => {
 
@@ -108,26 +113,112 @@ export class ProtectDoorbell extends ProtectCamera {
 
   // Configure a contact sensor for HomeKit to be used for automation purposes.
   private configureContactSensor(): boolean {
-    const accessory = this.accessory;
-    const hap = this.hap;
 
     // Clear out any previous contact sensor service.
-    let contactService = accessory.getService(hap.Service.ContactSensor);
+    let contactService = this.accessory.getService(this.hap.Service.ContactSensor);
 
-    if(contactService) {
-      accessory.removeService(contactService);
-    }
-
-    // If we haven't asked for a contact sensor, we're done here.
+    // Contact sensors are primarily used for automation scenarios and are disabled by default.
     if(!this.nvr.optionEnabled(this.accessory.context.camera as ProtectCameraConfig, "ContactSensor", false)) {
+
+      if(contactService) {
+        this.accessory.removeService(contactService);
+      }
+
       return false;
     }
 
     this.log.info("%s: Enabling doorbell contact sensor. This sensor can be used for the automation of doorbell ring events in HomeKit.", this.name());
 
+    // We already have the contact sensor configured.
+    if(contactService) {
+      return true;
+    }
+
     // Add the contact sensor to the doorbell.
-    contactService = new hap.Service.ContactSensor(accessory.displayName + " Doorbell");
-    accessory.addService(contactService);
+    contactService = new this.hap.Service.ContactSensor(this.accessory.displayName + " Doorbell");
+
+    if(!contactService) {
+      this.log.error("%s: Unable to add contact sensor.", this.name());
+      return false;
+    }
+
+    this.accessory.addService(contactService);
+
+    return true;
+  }
+
+  // Configure our access to the Doorbell LCD screen.
+  public configureDoorbellLcdSwitch(): boolean {
+
+    const camera = this.accessory?.context.camera as ProtectCameraConfig;
+
+    // If the user has disabled the doorbell message functionality - we're done.
+    if(!this.isMessagesEnabled) {
+      return false;
+    }
+
+    // Make sure we're configuring a camera device with an LCD screen (aka a doorbell).
+    if((camera?.modelKey !== "camera") || !camera?.featureFlags.hasLcdScreen) {
+      return false;
+    }
+
+    // Grab the consolidated list of messages from the doorbell and our configuration.
+    const doorbellMessages = this.getMessages();
+
+    // Check to see if any of our existing doorbell messages have disappeared.
+    this.validateMessageSwitches(doorbellMessages);
+
+    // Look through the combined messages from the doorbell and what the user has configured and tell HomeKit about it.
+    for(const entry of doorbellMessages) {
+
+      // Truncate anything longer than the character limit that the doorbell will accept.
+      if(entry.text.length > 30) {
+        entry.text = entry.text.slice(0, 30);
+      }
+
+      // In the unlikely event someone tries to use words we have reserved for our own use.
+      if(this.isReservedName(entry.text)) {
+        continue;
+      }
+
+      // Check to see if we already have this message switch configured.
+      if(this.messageSwitches?.some(x => (x.type === entry.type) && (x.text === entry.text))) {
+        continue;
+      }
+
+      this.log.info("%s: Discovered doorbell message switch%s: %s.",
+        this.name(), entry.duration ? " (" + (entry.duration / 1000).toString() + " seconds)" : "", entry.text);
+
+      // Use the message switch, if it already exists.
+      let switchService = this.accessory.getServiceById(this.hap.Service.Switch, entry.type + "." + entry.text);
+
+      // It's a new message, let's create the service for it. Each message cannot exceed 30 characters, but
+      // given that HomeKit allows for strings to be up to 64 characters long, this should be fine.
+      if(!switchService) {
+        switchService = new this.hap.Service.Switch(entry.text, entry.type + "." + entry.text);
+
+        if(!switchService) {
+          this.log.error("%s: Unable to add doorbell message switch: %s.", this.name(), entry.text);
+          continue;
+        }
+
+        this.accessory.addService(switchService);
+      }
+
+      const duration = "duration" in entry ? entry.duration : this.defaultDuration;
+
+      // Save the message switch in the list we maintain.
+      this.messageSwitches.push({ duration: duration, service: switchService, state: false, text: entry.text, type: entry.type }) - 1;
+
+      // Configure the message switch.
+      switchService
+        .getCharacteristic(this.hap.Characteristic.On)
+        ?.on(CharacteristicEventTypes.GET, this.getSwitchState.bind(this, this.messageSwitches[this.messageSwitches.length - 1]))
+        .on(CharacteristicEventTypes.SET, this.setSwitchState.bind(this, this.messageSwitches[this.messageSwitches.length - 1]));
+    }
+
+    // Sync message switch states between HomeKit and the doorbell.
+    this.syncSwitches();
 
     return true;
   }
@@ -293,7 +384,7 @@ export class ProtectDoorbell extends ProtectCamera {
     for(const switchService of this.accessory.services) {
 
       // We only want to look at switches.
-      if(!(switchService instanceof this.hap.Service.Switch)) {
+      if(switchService.UUID !== this.hap.Service.Switch.UUID) {
         continue;
       }
 
@@ -305,7 +396,7 @@ export class ProtectDoorbell extends ProtectCamera {
       // Find this entry in the list we maintain.
       const lcdEntry = this.messageSwitches?.find(x => (x.type + "." + x.text) === switchService.subtype);
 
-      // We've no longer got this message - remove it and inform the user about it.
+      // The message has been deleted on the doorbell - remove it from HomeKit and inform the user about it.
       if(!lcdEntry) {
         this.log.info("%s: Removing saved doorbell message: %s.",
           this.name(), switchService.subtype?.slice(switchService.subtype.indexOf(".") + 1));
@@ -321,7 +412,7 @@ export class ProtectDoorbell extends ProtectCamera {
         switchService.getCharacteristic(this.hap.Characteristic.On).updateValue(switchState);
       }
 
-      // Update our state information in our known list of messages.
+      // Update our state information in the known list of messages.
       if(lcdEntry.state !== switchState) {
 
         lcdEntry.state = switchState;
@@ -338,77 +429,6 @@ export class ProtectDoorbell extends ProtectCamera {
         }
       }
     }
-  }
-
-  // Configure our access to the Doorbell LCD screen.
-  public configureDoorbellLcdSwitch(): boolean {
-
-    const camera = this.accessory?.context.camera as ProtectCameraConfig;
-
-    // If the user has disabled the doorbell message functionality - we're done.
-    if(!this.isMessagesEnabled) {
-      return false;
-    }
-
-    // Make sure we're configuring a camera device with an LCD screen (aka a doorbell).
-    if((camera?.modelKey !== "camera") || !camera?.featureFlags.hasLcdScreen) {
-      return false;
-    }
-
-    // Grab the consolidated list of messages from the doorbell and our configuration.
-    const doorbellMessages = this.getMessages();
-
-    // Check to see if any of our existing doorbell messages have disappeared.
-    this.validateMessageSwitches(doorbellMessages);
-
-    // Look through the combined messages from the doorbell and what the user has configured and tell HomeKit about it.
-    for(const entry of doorbellMessages) {
-
-      // Truncate anything longer than the character limit that the doorbell will accept.
-      if(entry.text.length > 30) {
-        entry.text = entry.text.slice(0, 30);
-      }
-
-      // In the unlikely event someone tries to use words we have reserved for our own use.
-      if(this.isReservedName(entry.text)) {
-        continue;
-      }
-
-      // Check to see if we already have this message switch configured.
-      if(this.messageSwitches?.some(x => (x.type === entry.type) && (x.text === entry.text))) {
-        continue;
-      }
-
-      this.log.info("%s: Discovered doorbell message switch%s: %s.",
-        this.name(), entry.duration ? " (" + (entry.duration / 1000).toString() + " seconds)" : "", entry.text);
-
-      // Clear out any previous instance of this service.
-      let switchService = this.accessory.getServiceById(this.hap.Service.Switch, entry.text);
-
-      if(switchService) {
-        this.accessory.removeService(switchService);
-      }
-
-      // It's a new message, let's create the service for it. Each message cannot exceed 30 characters, but
-      // given that HomeKit allows for strings to be up to 64 characters long, this should be fine.
-      switchService = new this.hap.Service.Switch(entry.text, entry.type + "." + entry.text);
-
-      const duration = "duration" in entry ? entry.duration : this.defaultDuration;
-
-      // Save the message switch in the list we maintain.
-      this.messageSwitches.push({ duration: duration, service: switchService, state: false, text: entry.text, type: entry.type }) - 1;
-
-      // Configure the message switch.
-      this.accessory.addService(switchService)
-        .getCharacteristic(this.hap.Characteristic.On)
-        ?.on(CharacteristicEventTypes.GET, this.getSwitchState.bind(this, this.messageSwitches[this.messageSwitches.length - 1]))
-        .on(CharacteristicEventTypes.SET, this.setSwitchState.bind(this, this.messageSwitches[this.messageSwitches.length - 1]));
-    }
-
-    // Sync message switch states between HomeKit and the doorbell.
-    this.syncSwitches();
-
-    return true;
   }
 
   // Get the current state of this message switch.

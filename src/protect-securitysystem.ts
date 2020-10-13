@@ -164,11 +164,19 @@ export class ProtectSecuritySystem extends ProtectAccessory {
     const accessory = this.accessory;
     const hap = this.hap;
 
-    // Clear out any previous motion sensor service.
+    // Find any existing security system service.
     let securityService = accessory.getService(hap.Service.SecuritySystem);
 
-    if(securityService) {
-      accessory.removeService(securityService);
+    // Add the security system service, if needed.
+    if(!securityService) {
+      securityService = new hap.Service.SecuritySystem(accessory.displayName);
+
+      if(!securityService) {
+        this.log.error("%s: Unable to add security system.", this.name());
+        return false;
+      }
+
+      accessory.addService(securityService);
     }
 
     const SecuritySystemCurrentState = this.hap.Characteristic.SecuritySystemCurrentState;
@@ -195,11 +203,8 @@ export class ProtectSecuritySystem extends ProtectAccessory {
         break;
     }
 
-    // Add the security system service to the accessory.
-    securityService = new hap.Service.SecuritySystem(accessory.displayName);
-
     // Handlers to get our current state, and initialize on startup.
-    accessory.addService(securityService)
+    securityService
       .setCharacteristic(SecuritySystemCurrentState, accessory.context.securityState as CharacteristicValue)
       .getCharacteristic(SecuritySystemCurrentState)
       ?.on(CharacteristicEventTypes.GET, this.getSecurityState.bind(this));
@@ -222,26 +227,37 @@ export class ProtectSecuritySystem extends ProtectAccessory {
 
     this.isAlarmTriggered = false;
 
-    // Clear out any previous switch service.
+    // Find the existing security alarm switch service.
     let switchService = this.accessory.getService(this.hap.Service.Switch);
-
-    if(switchService) {
-      this.accessory.removeService(switchService);
-    }
 
     // Have we enabled the security system alarm?
     if(!this.nvr?.optionEnabled(null, "SecurityAlarm", false)) {
+
+      if(switchService) {
+        this.accessory.removeService(switchService);
+      }
+
       return false;
+
+    }
+
+    // Add the security alarm switch to the security system.
+    if(!switchService) {
+      switchService = new this.hap.Service.Switch(this.accessory.displayName + " Security Alarm");
+
+      if(!switchService) {
+        this.log.error("%s: Unable to add security system alarm.", this.name());
+        return false;
+      }
+
+      this.accessory.addService(switchService);
     }
 
     // Notify the user that we're enabled.
     this.log.info("%s: Enabling the security alarm switch on the security system accessory.", this.name());
 
-    // Add the switch to the security system.
-    switchService = new this.hap.Service.Switch(this.accessory.displayName + " Security Alarm");
-
     // Activate or deactivate the security alarm.
-    this.accessory.addService(switchService)
+    switchService
       .getCharacteristic(this.hap.Characteristic.On)
       ?.on(CharacteristicEventTypes.GET, (callback: CharacteristicGetCallback) => {
         callback(null, this.isAlarmTriggered === true);

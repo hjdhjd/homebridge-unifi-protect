@@ -47,13 +47,6 @@ export class ProtectCamera extends ProtectAccessory {
     this.accessory.context.nvr = this.nvr.nvrApi.bootstrap?.nvr.mac;
     this.accessory.context.detectMotion = detectMotion;
 
-    // Clear out any switches on this camera so we can start fresh.
-    let switchService;
-
-    while((switchService = this.accessory.getService(this.hap.Service.Switch))) {
-      this.accessory.removeService(switchService);
-    }
-
     // Configure accessory information.
     this.configureInfo();
 
@@ -113,20 +106,31 @@ export class ProtectCamera extends ProtectAccessory {
     // Clear out any previous motion sensor service.
     let motionService = accessory.getService(hap.Service.MotionSensor);
 
-    if(motionService) {
-      accessory.removeService(motionService);
-    }
-
     // Have we disabled motion sensors?
     if(!this.nvr?.optionEnabled(accessory.context.camera as ProtectCameraConfig, "MotionSensor")) {
+
+      if(motionService) {
+        accessory.removeService(motionService);
+      }
+
       this.log.info("%s: Disabling motion sensor.", this.name());
       return false;
     }
 
-    // Add the motion sensor to the camera.
-    motionService = new hap.Service.MotionSensor(accessory.displayName);
-    accessory.addService(motionService);
+    // The motion sensor has already been configured.
+    if(motionService) {
+      return true;
+    }
 
+    // We don't have it, add the motion sensor to the camera.
+    motionService = new hap.Service.MotionSensor(accessory.displayName);
+
+    if(!motionService) {
+      this.log.error("%s: Unable to add motion sensor.", this.name());
+      return false;
+    }
+
+    accessory.addService(motionService);
     return true;
   }
 
@@ -136,13 +140,13 @@ export class ProtectCamera extends ProtectAccessory {
     // Clear out any previous switch service.
     let switchService = this.accessory.getServiceById(this.hap.Service.Switch, PROTECT_SWITCH_MOTION);
 
-    if(switchService) {
-      this.accessory.removeService(switchService);
-    }
-
     // Have we disabled motion sensors or the motion switch? Motion switches are disabled by default.
     if(!this.nvr?.optionEnabled(this.accessory.context.camera as ProtectCameraConfig, "MotionSensor") ||
       !this.nvr?.optionEnabled(this.accessory.context.camera as ProtectCameraConfig, "MotionSwitch", false)) {
+
+      if(switchService) {
+        this.accessory.removeService(switchService);
+      }
 
       // If we disable the switch, make sure we fully reset it's state.
       this.accessory.context.detectMotion = true;
@@ -151,11 +155,20 @@ export class ProtectCamera extends ProtectAccessory {
 
     this.log.info("%s: Enabling motion sensor switch.", this.name());
 
-    // Add the switch to the camera.
-    switchService = new this.hap.Service.Switch(this.accessory.displayName + " Motion Events", PROTECT_SWITCH_MOTION);
+    // Add the switch to the camera, if needed.
+    if(!switchService) {
+      switchService = new this.hap.Service.Switch(this.accessory.displayName + " Motion Events", PROTECT_SWITCH_MOTION);
+
+      if(!switchService) {
+        this.log.error("%s: Unable to add motion sensor switch.", this.name());
+        return false;
+      }
+
+      this.accessory.addService(switchService);
+    }
 
     // Activate or deactivate motion detection.
-    this.accessory.addService(switchService)
+    switchService
       .getCharacteristic(this.hap.Characteristic.On)
       ?.on(CharacteristicEventTypes.GET, (callback: CharacteristicGetCallback) => {
         callback(null, this.accessory.context.detectMotion === true);
@@ -179,23 +192,34 @@ export class ProtectCamera extends ProtectAccessory {
     // Clear out any previous switch service.
     let triggerService = this.accessory.getServiceById(this.hap.Service.Switch, PROTECT_SWITCH_TRIGGER);
 
-    if(triggerService) {
-      this.accessory.removeService(triggerService);
-    }
-
     // Motion triggers are disabled by default and primarily exist for automation purposes.
     if(!this.nvr?.optionEnabled(this.accessory.context.camera as ProtectCameraConfig, "MotionSensor") ||
       !this.nvr?.optionEnabled(this.accessory.context.camera as ProtectCameraConfig, "MotionTrigger", false)) {
+
+      if(triggerService) {
+        this.accessory.removeService(triggerService);
+      }
+
       return false;
     }
 
-    // Add the switch to the camera.
-    triggerService = new this.hap.Service.Switch(this.accessory.displayName + " Motion Trigger", PROTECT_SWITCH_TRIGGER);
+    // Add the switch to the camera, if needed.
+    if(!triggerService) {
+      triggerService = new this.hap.Service.Switch(this.accessory.displayName + " Motion Trigger", PROTECT_SWITCH_TRIGGER);
+
+      if(!triggerService) {
+        this.log.error("%s: Unable to add motion sensor trigger.", this.name());
+        return false;
+      }
+
+      this.accessory.addService(triggerService);
+    }
+
     const motionService = this.accessory.getService(this.hap.Service.MotionSensor);
     const switchService = this.accessory.getServiceById(this.hap.Service.Switch, PROTECT_SWITCH_MOTION);
 
     // Activate or deactivate motion detection.
-    this.accessory.addService(triggerService)
+    triggerService
       .getCharacteristic(this.hap.Characteristic.On)
       ?.on(CharacteristicEventTypes.GET, (callback: CharacteristicGetCallback) => {
         callback(null, motionService?.getCharacteristic(this.hap.Characteristic.MotionDetected).value);
