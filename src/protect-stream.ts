@@ -154,8 +154,13 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   // Prepare to launch the video stream.
   public async prepareStream(request: PrepareStreamRequest, callback: PrepareStreamCallback): Promise<void> {
 
+    const cameraConfig = this.protectCamera.accessory.context.camera as ProtectCameraConfig;
+
+    // Check if audio support is enabled.
+    const isAudioEnabled = this.protectCamera.nvr.optionEnabled(cameraConfig, "Audio");
+
     // We need to check for AAC support because it's going to determine whether we support audio.
-    const hasLibFdk = await FfmpegProcess.codecEnabled(this.videoProcessor, "libfdk_aac");
+    const hasLibFdk = isAudioEnabled && (await FfmpegProcess.codecEnabled(this.videoProcessor, "libfdk_aac"));
 
     // Setup our audio plumbing.
     const audioIncomingRtcpPort = (await RtpUtils.reservePorts())[0];
@@ -164,8 +169,8 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     const audioSSRC = this.hap.CameraController.generateSynchronisationSource();
 
     if(!hasLibFdk) {
-      this.log.info("%s: Audio support disabled. A version of FFmpeg that is compiled with fdk_aac support is required to support audio.",
-        this.name());
+      this.log.info("%s: Audio support disabled.%s", this.name(),
+        isAudioEnabled ? " A version of FFmpeg that is compiled with fdk_aac support is required to support audio." : "");
     }
 
     // Setup the RTP demuxer for two-way audio scenarios.

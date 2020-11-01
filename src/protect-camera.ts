@@ -275,7 +275,8 @@ export class ProtectCamera extends ProtectAccessory {
     }
 
     // Enabled by default unless disabled by the user.
-    return this.twoWayAudio = this.nvr?.optionEnabled(this.accessory.context.camera as ProtectCameraConfig, "TwoWayAudio");
+    return this.twoWayAudio = this.nvr?.optionEnabled(this.accessory.context.camera as ProtectCameraConfig, "Audio") &&
+      this.nvr?.optionEnabled(this.accessory.context.camera as ProtectCameraConfig, "TwoWayAudio");
   }
 
   // Find an RTSP configuration for a given target resolution.
