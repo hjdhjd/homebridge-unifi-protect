@@ -330,7 +330,7 @@ export class ProtectNvrEvents {
     this.mqtt?.publish(accessory, "motion", "true");
 
     // Log the event, if configured to do so.
-    if(this.nvr.optionEnabled(camera, "LogMotion", false)) {
+    if(this.nvr.optionEnabled(camera, "Log.Motion", false)) {
       this.log.info("%s: Motion detected.", this.nvrApi.getFullName(camera));
     }
 
@@ -432,7 +432,7 @@ export class ProtectNvrEvents {
     // Publish to MQTT, if the user has configured it.
     this.mqtt?.publish(accessory, "doorbell", "true");
 
-    if(this.nvr.optionEnabled(camera, "LogDoorbell", false)) {
+    if(this.nvr.optionEnabled(camera, "Log.Doorbell", false)) {
       this.log.info("%s: Doorbell ring detected.", this.nvrApi.getFullName(camera));
     }
   }

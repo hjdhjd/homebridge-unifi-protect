@@ -231,7 +231,7 @@ export class ProtectSecuritySystem extends ProtectAccessory {
     let switchService = this.accessory.getService(this.hap.Service.Switch);
 
     // Have we enabled the security system alarm?
-    if(!this.nvr?.optionEnabled(null, "SecurityAlarm", false)) {
+    if(!this.nvr?.optionEnabled(null, "SecuritySystem.Alarm", false)) {
 
       if(switchService) {
         this.accessory.removeService(switchService);

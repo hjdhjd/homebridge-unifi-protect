@@ -46,12 +46,12 @@ export class ProtectDoorbell extends ProtectCamera {
     }
 
     // The user has disabled the doorbell message functionality.
-    if(!this.nvr.optionEnabled(this.accessory.context.camera as ProtectCameraConfig, "Messages")) {
+    if(!this.nvr.optionEnabled(this.accessory.context.camera as ProtectCameraConfig, "Doorbell.Messages")) {
       this.isMessagesEnabled = false;
     }
 
     // The user has disabled the doorbell message functionality.
-    if(!this.nvr.optionEnabled(this.accessory.context.camera as ProtectCameraConfig, "Messages.FromDoorbell")) {
+    if(!this.nvr.optionEnabled(this.accessory.context.camera as ProtectCameraConfig, "Doorbell.Messages.FromDoorbell")) {
       this.isMessagesFromControllerEnabled = false;
     }
 

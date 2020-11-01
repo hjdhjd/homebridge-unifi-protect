@@ -122,7 +122,7 @@ export class ProtectCamera extends ProtectAccessory {
     let motionService = accessory.getService(hap.Service.MotionSensor);
 
     // Have we disabled motion sensors?
-    if(!this.nvr?.optionEnabled(accessory.context.camera as ProtectCameraConfig, "MotionSensor")) {
+    if(!this.nvr?.optionEnabled(accessory.context.camera as ProtectCameraConfig, "Motion.Sensor")) {
 
       if(motionService) {
         accessory.removeService(motionService);
@@ -156,8 +156,8 @@ export class ProtectCamera extends ProtectAccessory {
     let switchService = this.accessory.getServiceById(this.hap.Service.Switch, PROTECT_SWITCH_MOTION_SENSOR);
 
     // Have we disabled motion sensors or the motion switch? Motion switches are disabled by default.
-    if(!this.nvr?.optionEnabled(this.accessory.context.camera as ProtectCameraConfig, "MotionSensor") ||
-      !this.nvr?.optionEnabled(this.accessory.context.camera as ProtectCameraConfig, "MotionSwitch", false)) {
+    if(!this.nvr?.optionEnabled(this.accessory.context.camera as ProtectCameraConfig, "Motion.Sensor") ||
+      !this.nvr?.optionEnabled(this.accessory.context.camera as ProtectCameraConfig, "Motion.Switch", false)) {
 
       if(switchService) {
         this.accessory.removeService(switchService);
@@ -210,8 +210,8 @@ export class ProtectCamera extends ProtectAccessory {
     let triggerService = this.accessory.getServiceById(this.hap.Service.Switch, PROTECT_SWITCH_MOTION_TRIGGER);
 
     // Motion triggers are disabled by default and primarily exist for automation purposes.
-    if(!this.nvr?.optionEnabled(this.accessory.context.camera as ProtectCameraConfig, "MotionSensor") ||
-      !this.nvr?.optionEnabled(this.accessory.context.camera as ProtectCameraConfig, "MotionTrigger", false)) {
+    if(!this.nvr?.optionEnabled(this.accessory.context.camera as ProtectCameraConfig, "Motion.Sensor") ||
+      !this.nvr?.optionEnabled(this.accessory.context.camera as ProtectCameraConfig, "Motion.Trigger", false)) {
 
       if(triggerService) {
         this.accessory.removeService(triggerService);
@@ -417,7 +417,7 @@ export class ProtectCamera extends ProtectAccessory {
 
     // Enabled by default unless disabled by the user.
     return this.twoWayAudio = this.nvr?.optionEnabled(this.accessory.context.camera as ProtectCameraConfig, "Audio") &&
-      this.nvr?.optionEnabled(this.accessory.context.camera as ProtectCameraConfig, "TwoWayAudio");
+      this.nvr?.optionEnabled(this.accessory.context.camera as ProtectCameraConfig, "Audio.TwoWay");
   }
 
   // Find an RTSP configuration for a given target resolution.
@@ -481,7 +481,7 @@ export class ProtectCamera extends ProtectAccessory {
     const camera = await nvrApi.enableRtsp(this.accessory.context.camera as ProtectCameraConfig) ?? (this.accessory.context.camera as ProtectCameraConfig);
 
     // Figure out which camera channels are RTSP-enabled, and user-enabled.
-    let cameraChannels = camera.channels.filter(x => x.isRtspEnabled && nvr.optionEnabled(camera, "Stream." + x.name));
+    let cameraChannels = camera.channels.filter(x => x.isRtspEnabled && nvr.optionEnabled(camera, "Video.Stream." + x.name));
 
     // Set the camera and shapshot URLs.
     const cameraUrl = "rtsp://" + bootstrap.nvr.host + ":" + bootstrap.nvr.ports.rtsp.toString() + "/";
@@ -490,11 +490,11 @@ export class ProtectCamera extends ProtectAccessory {
     // Check to see if the user has requested a specific stream quality.
     let forceQuality = "";
 
-    if(nvr.optionEnabled(camera, "StreamOnly.Low", false)) {
+    if(nvr.optionEnabled(camera, "Video.Stream.Only.Low", false)) {
       forceQuality = "Low";
-    } else if(nvr.optionEnabled(camera, "StreamOnly.Medium", false)) {
+    } else if(nvr.optionEnabled(camera, "Video.Stream.Only.Medium", false)) {
       forceQuality = "Medium";
-    } else if(nvr.optionEnabled(camera, "StreamOnly.High", false)) {
+    } else if(nvr.optionEnabled(camera, "Video.Stream.Only.High", false)) {
       forceQuality = "High";
     }
 

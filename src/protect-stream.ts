@@ -355,12 +355,12 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       );
 
       // If we are audio filtering, address it here.
-      if(this.protectCamera.nvr.optionEnabled(cameraConfig, "NoiseFilter", false)) {
+      if(this.protectCamera.nvr.optionEnabled(cameraConfig, "Audio.Filter.Noise", false)) {
         let highpass;
         let lowpass;
 
         // See what the user has set for the highpass filter for this camera.
-        highpass = parseInt(this.protectCamera.nvr.optionGet(cameraConfig, "NoiseFilter.HighPass") ?? "");
+        highpass = parseInt(this.protectCamera.nvr.optionGet(cameraConfig, "Audio.Filter.Noise.HighPass") ?? "");
 
         // If we have an invalid setting, use the defaults.
         if((highpass !== highpass) || (highpass < 0)) {
@@ -368,7 +368,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
         }
 
         // See what the user has set for the highpass filter for this camera.
-        lowpass = parseInt(this.protectCamera.nvr.optionGet(cameraConfig, "NoiseFilter.LowPass") ?? "");
+        lowpass = parseInt(this.protectCamera.nvr.optionGet(cameraConfig, "Audio.Filter.Noise.LowPass") ?? "");
 
         // If we have an invalid setting, use the defaults.
         if((lowpass !== lowpass) || (lowpass < 0)) {
