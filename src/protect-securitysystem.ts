@@ -9,7 +9,7 @@ import {
   CharacteristicValue
 } from "homebridge";
 import { ProtectCameraConfig, ProtectNvrConfig } from "./protect-types";
-import { PROTECT_SWITCH_MOTION } from "./protect-camera";
+import { PROTECT_SWITCH_MOTION_SENSOR } from "./protect-camera";
 import { ProtectAccessory } from "./protect-accessory";
 
 export class ProtectSecuritySystem extends ProtectAccessory {
@@ -408,7 +408,7 @@ export class ProtectSecuritySystem extends ProtectAccessory {
         targetAccessory.context.detectMotion = targetState;
 
         // Update the switch service, if present.
-        const motionSwitch = targetAccessory.getServiceById(hap.Service.Switch, PROTECT_SWITCH_MOTION);
+        const motionSwitch = targetAccessory.getServiceById(hap.Service.Switch, PROTECT_SWITCH_MOTION_SENSOR);
 
         if(motionSwitch) {
           motionSwitch.getCharacteristic(hap.Characteristic.On)?.updateValue(targetAccessory.context.detectMotion as boolean);
