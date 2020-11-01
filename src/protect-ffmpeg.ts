@@ -54,6 +54,14 @@ export class FfmpegProcess {
 
     const socket = createSocket(portInfo.addressVersion === "ipv6" ? "udp6" : "udp4");
 
+    // Cleanup after ourselves when the socket closes.
+    socket.on("close", () => {
+
+      if(this.streamTimeout) {
+        clearTimeout(this.streamTimeout);
+      }
+    });
+
     // Handle potential network errors.
     socket.on("error", (error: Error) => {
 
@@ -74,6 +82,7 @@ export class FfmpegProcess {
       this.streamTimeout = setTimeout(() => {
 
         this.debug("%s: video stream appears to be inactive for 5 seconds. Stopping stream.", this.name());
+
         this.delegate.controller.forceStopStreamingSession(this.sessionId);
         this.delegate.stopStream(this.sessionId);
 
