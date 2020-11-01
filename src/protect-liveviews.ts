@@ -211,8 +211,10 @@ export class ProtectLiveviews extends ProtectBase {
       switchService
         .getCharacteristic(this.hap.Characteristic.On)
         ?.on(CharacteristicEventTypes.GET, this.getSwitchState.bind(this, newAccessory))
-        .on(CharacteristicEventTypes.SET, this.setSwitchState.bind(this, newAccessory))
-        .updateValue(newAccessory.context.switchState as boolean);
+        .on(CharacteristicEventTypes.SET, this.setSwitchState.bind(this, newAccessory));
+
+      // Initialize the switch.
+      switchService.updateCharacteristic(this.hap.Characteristic.On, newAccessory.context.switchState as boolean);
 
       this.log.info("%s: Plugin-specific liveview %s has been detected. Configuring a switch accessory for it.", this.name(), viewName);
     }
@@ -289,7 +291,7 @@ export class ProtectLiveviews extends ProtectBase {
 
         // Set the switch state and update the switch in HomeKit.
         this.setSwitchState(accessory, entry.state);
-        accessory.getService(this.hap.Service.Switch)?.getCharacteristic(this.hap.Characteristic.On).updateValue(accessory.context.switchState as boolean);
+        accessory.getService(this.hap.Service.Switch)?.updateCharacteristic(this.hap.Characteristic.On, accessory.context.switchState as boolean);
         this.log.info("%s: Liveview scene updated via MQTT: %s.", this.name(), accessory.context.liveview);
       }
     });
@@ -348,7 +350,7 @@ export class ProtectLiveviews extends ProtectBase {
         const motionSwitch = targetAccessory.getService(this.hap.Service.Switch);
 
         if(motionSwitch) {
-          motionSwitch.getCharacteristic(this.hap.Characteristic.On)?.updateValue(targetAccessory.context.detectMotion as boolean);
+          motionSwitch.updateCharacteristic(this.hap.Characteristic.On, targetAccessory.context.detectMotion as boolean);
         }
 
         this.log.info("%s: %s -> %s: Motion detection %s.", this.name(), liveviewSwitch.context.liveview, targetAccessory.displayName,

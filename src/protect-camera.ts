@@ -88,27 +88,27 @@ export class ProtectCamera extends ProtectAccessory {
     // Update the manufacturer information for this camera.
     accessory
       .getService(hap.Service.AccessoryInformation)
-      ?.getCharacteristic(hap.Characteristic.Manufacturer).updateValue("Ubiquiti Networks");
+      ?.updateCharacteristic(hap.Characteristic.Manufacturer, "Ubiquiti Networks");
 
     // Update the model information for this camera.
     accessory
       .getService(hap.Service.AccessoryInformation)
-      ?.getCharacteristic(hap.Characteristic.Model).updateValue(camera.type);
+      ?.updateCharacteristic(hap.Characteristic.Model, camera.type);
 
     // Update the serial number for this camera.
     accessory
       .getService(hap.Service.AccessoryInformation)
-      ?.getCharacteristic(hap.Characteristic.SerialNumber).updateValue(camera.mac);
+      ?.updateCharacteristic(hap.Characteristic.SerialNumber, camera.mac);
 
     // Update the hardware revision for this camera.
     accessory
       .getService(hap.Service.AccessoryInformation)
-      ?.getCharacteristic(hap.Characteristic.HardwareRevision).updateValue(camera.hardwareRevision);
+      ?.updateCharacteristic(hap.Characteristic.HardwareRevision, camera.hardwareRevision);
 
     // Update the firmware revision for this camera.
     accessory
       .getService(hap.Service.AccessoryInformation)
-      ?.getCharacteristic(hap.Characteristic.FirmwareRevision).updateValue(camera.firmwareVersion);
+      ?.updateCharacteristic(hap.Characteristic.FirmwareRevision, camera.firmwareVersion);
 
     return true;
   }
@@ -195,8 +195,10 @@ export class ProtectCamera extends ProtectAccessory {
 
         this.accessory.context.detectMotion = value === true;
         callback(null);
-      })
-      .updateValue(this.accessory.context.detectMotion as boolean);
+      });
+
+    // Initialize the switch.
+    switchService.updateCharacteristic(this.hap.Characteristic.On, this.accessory.context.detectMotion as boolean);
 
     return true;
   }
@@ -246,7 +248,7 @@ export class ProtectCamera extends ProtectAccessory {
           // Check to see if motion events are disabled.
           if(switchService && !switchService.getCharacteristic(this.hap.Characteristic.On).value) {
             setTimeout(() => {
-              triggerService?.getCharacteristic(this.hap.Characteristic.On).updateValue(false);
+              triggerService?.updateCharacteristic(this.hap.Characteristic.On, false);
             }, 50);
 
           } else {
@@ -261,14 +263,16 @@ export class ProtectCamera extends ProtectAccessory {
           // If the motion sensor is still on, we should be as well.
           if(motionService?.getCharacteristic(this.hap.Characteristic.MotionDetected).value) {
             setTimeout(() => {
-              triggerService?.getCharacteristic(this.hap.Characteristic.On).updateValue(true);
+              triggerService?.updateCharacteristic(this.hap.Characteristic.On, true);
             }, 50);
           }
         }
 
         callback(null);
-      })
-      .updateValue(false);
+      });
+
+    // Initialize the switch.
+    triggerService.updateCharacteristic(this.hap.Characteristic.On, false);
 
     this.log.info("%s: Enabling motion sensor automation trigger.", this.name());
 

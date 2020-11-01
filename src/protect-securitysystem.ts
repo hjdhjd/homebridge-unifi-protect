@@ -58,24 +58,24 @@ export class ProtectSecuritySystem extends ProtectAccessory {
     // Update the manufacturer information for this security system.
     accessory
       .getService(hap.Service.AccessoryInformation)
-      ?.getCharacteristic(hap.Characteristic.Manufacturer).updateValue("github.com/hjdhjd");
+      ?.updateCharacteristic(hap.Characteristic.Manufacturer, "github.com/hjdhjd");
 
     // Update the model information for this security system.
     accessory
       .getService(hap.Service.AccessoryInformation)
-      ?.getCharacteristic(hap.Characteristic.Model).updateValue("UniFi Protect Liveview Security System");
+      ?.updateCharacteristic(hap.Characteristic.Model, "UniFi Protect Liveview Security System");
 
 
     if(nvrInfo) {
       // Update the serial number for this security system - we base this off of the NVR.
       accessory
         .getService(hap.Service.AccessoryInformation)
-        ?.getCharacteristic(hap.Characteristic.SerialNumber).updateValue(nvrInfo.mac + ".Security");
+        ?.updateCharacteristic(hap.Characteristic.SerialNumber, nvrInfo.mac + ".Security");
 
       // Update the hardware revision for this security system - we base this off of the NVR.
       accessory
         .getService(hap.Service.AccessoryInformation)
-        ?.getCharacteristic(hap.Characteristic.HardwareRevision).updateValue(nvrInfo.hardwareRevision);
+        ?.updateCharacteristic(hap.Characteristic.HardwareRevision, nvrInfo.hardwareRevision);
     }
 
     return true;
@@ -151,7 +151,7 @@ export class ProtectSecuritySystem extends ProtectAccessory {
       }
 
       // Set the security state, and we're done.
-      this.accessory.getService(this.hap.Service.SecuritySystem)?.getCharacteristic(SecuritySystemTargetState).updateValue(targetState);
+      this.accessory.getService(this.hap.Service.SecuritySystem)?.updateCharacteristic(SecuritySystemTargetState, targetState);
       this.setSecurityState(targetState);
       this.log.info("%s: Security system state set via MQTT: %s.", this.name(), value.charAt(0).toUpperCase() + value.slice(1));
     });
@@ -266,8 +266,10 @@ export class ProtectSecuritySystem extends ProtectAccessory {
         this.setSecurityAlarm(value === true);
         this.log.info("%s: Security system alarm %s.", this.name(), (value === true) ? "triggered" : "reset");
         callback(null);
-      })
-      .updateValue(this.isAlarmTriggered);
+      });
+
+    // Initialize the value.
+    switchService.updateCharacteristic(this.hap.Characteristic.On, this.isAlarmTriggered);
 
     return true;
   }
@@ -375,7 +377,7 @@ export class ProtectSecuritySystem extends ProtectAccessory {
         this.name(), viewScene);
 
       accessory.context.securityState = newState;
-      accessory.getService(hap.Service.SecuritySystem)?.getCharacteristic(SecuritySystemCurrentState).updateValue(newState);
+      accessory.getService(hap.Service.SecuritySystem)?.updateCharacteristic(SecuritySystemCurrentState, newState);
 
       if(callback) {
         callback(null);
@@ -411,7 +413,7 @@ export class ProtectSecuritySystem extends ProtectAccessory {
         const motionSwitch = targetAccessory.getServiceById(hap.Service.Switch, PROTECT_SWITCH_MOTION_SENSOR);
 
         if(motionSwitch) {
-          motionSwitch.getCharacteristic(hap.Characteristic.On)?.updateValue(targetAccessory.context.detectMotion as boolean);
+          motionSwitch.updateCharacteristic(hap.Characteristic.On, targetAccessory.context.detectMotion as boolean);
         }
 
         this.log.info("%s: %s -> %s: Motion detection %s.", this.name(), viewScene, targetAccessory.displayName,
@@ -421,13 +423,13 @@ export class ProtectSecuritySystem extends ProtectAccessory {
 
     // Inform the user of our new state.
     accessory.context.securityState = newState;
-    accessory.getService(hap.Service.SecuritySystem)?.getCharacteristic(SecuritySystemCurrentState).updateValue(newState);
+    accessory.getService(hap.Service.SecuritySystem)?.updateCharacteristic(SecuritySystemCurrentState, newState);
 
     // Reset our alarm state and update our alarm switch.
     this.isAlarmTriggered = false;
 
     if(accessory.getService(hap.Service.Switch)?.getCharacteristic(hap.Characteristic.On).value !== this.isAlarmTriggered) {
-      accessory.getService(hap.Service.Switch)?.getCharacteristic(hap.Characteristic.On).updateValue(this.isAlarmTriggered);
+      accessory.getService(hap.Service.Switch)?.updateCharacteristic(hap.Characteristic.On, this.isAlarmTriggered);
     }
 
     // Publish to MQTT, if configured.
@@ -450,15 +452,11 @@ export class ProtectSecuritySystem extends ProtectAccessory {
     this.isAlarmTriggered = value === true;
 
     // Update the security system state.
-    this.accessory
-      .getService(this.hap.Service.SecuritySystem)
-      ?.getCharacteristic(this.hap.Characteristic.SecuritySystemCurrentState)
-      .updateValue(this.isAlarmTriggered ?
-        this.hap.Characteristic.SecuritySystemCurrentState.ALARM_TRIGGERED :
-        this.accessory.context.securityState as CharacteristicValue);
+    this.accessory.getService(this.hap.Service.SecuritySystem)?.updateCharacteristic(this.hap.Characteristic.SecuritySystemCurrentState,
+      this.isAlarmTriggered ? this.hap.Characteristic.SecuritySystemCurrentState.ALARM_TRIGGERED : this.accessory.context.securityState as CharacteristicValue);
 
     // Update the security alarm state.
-    this.accessory.getService(this.hap.Service.Switch)?.getCharacteristic(this.hap.Characteristic.On).updateValue(this.isAlarmTriggered);
+    this.accessory.getService(this.hap.Service.Switch)?.updateCharacteristic(this.hap.Characteristic.On, this.isAlarmTriggered);
 
     // Publish to MQTT, if configured.
     this.publishSecurityState();
