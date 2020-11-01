@@ -140,7 +140,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     const snapshot = await this.getSnapshot(request);
 
     if(!snapshot) {
-      callback(new Error(this.name() + ": Unable to retrieve snapshot"));
+      callback(new Error(this.name() + ": Unable to retrieve a snapshot"));
       return;
     }
 
@@ -536,7 +536,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
     // If we aren't connected, we're done.
     if(cameraConfig.state !== "CONNECTED") {
-      this.log.error("%s: Unable to retrieve snapshot: the camera is offline or unavailable.", this.name());
+      this.log.error("%s: Unable to retrieve a snapshot: the camera is offline or unavailable.", this.name());
       return null;
     }
 
@@ -557,11 +557,11 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       const cachedSnapshot = this.getCachedSnapshot(cameraConfig.mac);
 
       if(cachedSnapshot) {
-        this.log.error("%s: Unable to retrieve snapshot. Using the last snapshot instead.", this.name());
+        this.log.error("%s: Unable to retrieve a snapshot. Using the most recent cached snapshot instead.", this.name());
         return cachedSnapshot;
       }
 
-      this.log.error("%s: Unable to retrieve snapshot.%s",
+      this.log.error("%s: Unable to retrieve a snapshot.%s",
         this.name(),
         response ? " " + response.status.toString() + " - " + response.statusText + "." : "");
 
@@ -585,11 +585,11 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
             cachedSnapshot = this.getCachedSnapshot(cameraConfig.mac);
 
             if(cachedSnapshot) {
-              this.log.error("%s: Unable to retrieve snapshot. Using a cached snapshot instead.", this.name());
+              this.log.error("%s: Unable to retrieve a snapshot. Using a cached snapshot instead.", this.name());
               return cachedSnapshot;
             }
 
-            this.log.error("%s: Unable to retrieve snapshot: the Protect controller closed the connection prematurely.", this.name());
+            this.log.error("%s: Unable to retrieve a snapshot: the Protect controller closed the connection prematurely.", this.name());
             return null;
             break;
 
