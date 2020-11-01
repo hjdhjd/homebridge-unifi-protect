@@ -18,9 +18,15 @@ import { ProtectStreamingDelegate } from "./protect-stream";
 export const PROTECT_SWITCH_MOTION = "MotionSensorSwitch";
 export const PROTECT_SWITCH_TRIGGER = "MotionSensorTrigger";
 
+export interface RtspEntry {
+  name: string,
+  resolution: [ number, number, number],
+  url: string
+}
+
 export class ProtectCamera extends ProtectAccessory {
-  public cameraUrl!: string;
   private isVideoConfigured!: boolean;
+  public rtspEntries!: RtspEntry[];
   public snapshotUrl!: string;
   public stream!: ProtectStreamingDelegate;
   public twoWayAudio!: boolean;
@@ -237,7 +243,7 @@ export class ProtectCamera extends ProtectAccessory {
           } else {
 
             // Trigger the motion event.
-            this.nvr.motionEventHandler(this.accessory, Date.now());
+            this.nvr.events.motionEventHandler(this.accessory, Date.now());
             this.log.info("%s: Motion event triggered.", this.name());
           }
 
@@ -272,21 +278,75 @@ export class ProtectCamera extends ProtectAccessory {
     return this.twoWayAudio = this.nvr?.optionEnabled(this.accessory.context.camera as ProtectCameraConfig, "TwoWayAudio");
   }
 
+  // Find an RTSP configuration for a given target resolution.
+  public findRtsp(rtspEntries: RtspEntry[], width: number, height: number): RtspEntry | null {
+
+    // No RTSP entries to choose from, we're done.
+    if(!rtspEntries || !rtspEntries.length) {
+      return null;
+    }
+
+    // See if we have a match for our desired resolution on the camera. We ignore FPS - HomeKit clients seem
+    // to be able to handle it just fine.
+    const exactRtsp = rtspEntries.find(x => (x.resolution[0] === width) && (x.resolution[1] === height));
+
+    if(exactRtsp) {
+      return exactRtsp;
+    }
+
+    // No match found, let's see what we have that's closest. We try to be a bit smart about how we select our
+    // stream - if it's an HD quality stream request (720p+), we want to try to return something that's HD quality
+    // before looking for something lower resolution.
+    if((width >= 1280) && (height >= 720)) {
+
+      for(const entry of rtspEntries) {
+
+        // Make sure we're looking at an HD resolution.
+        if(entry.resolution[0] < 1280) {
+          continue;
+        }
+
+        // Return the first one we find.
+        return entry;
+      }
+    }
+
+    // If we didn't request an HD resolution, or we couldn't find anything HD to use, we try to find whatever we
+    // can find that's close.
+    for(const entry of rtspEntries) {
+      if(width >= entry.resolution[0]) {
+        return entry;
+      }
+    }
+
+    // We couldn't find a close match, return the lowest resolution we found.
+    return rtspEntries[rtspEntries.length - 1];
+  }
+
   // Configure a camera accessory for HomeKit.
   public async configureVideoStream(): Promise<boolean> {
     const bootstrap: ProtectNvrBootstrap | null = this.nvr.nvrApi.bootstrap;
     const nvr: ProtectNvr = this.nvr;
     const nvrApi: ProtectApi = this.nvr.nvrApi;
+    const rtspEntries: RtspEntry[] = [];
 
     // No channels exist on this camera or we don't have access to the bootstrap configuration.
     if(!(this.accessory.context.camera as ProtectCameraConfig)?.channels || !bootstrap) {
       return false;
     }
 
+    // Enable RTSP on the camera if needed and get the list of RTSP streams we have ultimately configured.
     const camera = await nvrApi.enableRtsp(this.accessory.context.camera as ProtectCameraConfig) ?? (this.accessory.context.camera as ProtectCameraConfig);
+
+    // Figure out which camera channels are RTSP-enabled, and user-enabled.
+    let cameraChannels = camera.channels.filter(x => x.isRtspEnabled && nvr.optionEnabled(camera, "Stream." + x.name));
+
+    // Set the camera and shapshot URLs.
+    const cameraUrl = "rtsp://" + bootstrap.nvr.host + ":" + bootstrap.nvr.ports.rtsp.toString() + "/";
+    this.snapshotUrl = nvrApi.camerasUrl() + "/" + camera.id + "/snapshot";
+
+    // Check to see if the user has requested a specific stream quality.
     let forceQuality = "";
-    let newCameraQuality = "";
-    let newCameraUrl = "";
 
     if(nvr.optionEnabled(camera, "StreamOnly.Low", false)) {
       forceQuality = "Low";
@@ -296,98 +356,74 @@ export class ProtectCamera extends ProtectAccessory {
       forceQuality = "High";
     }
 
-    // Filter the stream the user has explicitly set. If we can't find the stream quality the
-    // user requests, we fail.
+    // Find the stream the user has explicitly requested. If we can't find the requested stream quality, we fail.
     if(forceQuality) {
-      const foundChannel = camera.channels.find(channel => {
-
-        // No RTSP channel here.
-        if(!channel.isRtspEnabled) {
-          return false;
-        }
-
-        return channel.name === forceQuality;
-      });
+      const foundChannel = cameraChannels.find(x => x.name === forceQuality);
+      cameraChannels = [];
 
       if(foundChannel) {
-        newCameraQuality = foundChannel.name;
-        newCameraUrl = foundChannel.rtspAlias;
-      }
-    } else {
-      // Our defaults may seem counterintuitive in some cases but here's the rationale:
-      // The G4-series of cameras, particularly the G4 Pro and the G4 Bullet push out
-      // 3840x2160 and 2688x1520, respectively, if you use the "High" stream setting --
-      // that's a lot of data! HomeKit can only handle up to 1920x1080 (1080p) streams -
-      // trying to push anything larger through to HomeKit is pointless, at least at this
-      // time. Instead, to increase our chances of a smooth and quick playback experience,
-      // we're going to set defaults that make sense within the context of HomeKit.
-      let channelPriority;
-      switch(camera.type) {
-        // Handle very high-resolution cameras with more sane HomeKit defaults.
-        case "UVC G4 Pro":
-        case "UVC G4 Bullet":
-          channelPriority = ["Medium", "Low", "High"];
-          break;
-
-        default:
-          channelPriority = ["High", "Medium", "Low"];
-          break;
-      }
-
-      // Iterate.
-      for(const quality of channelPriority) {
-        const foundChannel = camera.channels.find(channel => {
-
-          // No RTSP channel here.
-          if(!channel.isRtspEnabled) {
-            return false;
-          }
-
-          // Honor the user's quality biases.
-          if(!nvr.optionEnabled(camera, "Stream." + quality)) {
-            return false;
-          }
-
-          return channel.name === quality;
-        });
-
-        if(foundChannel) {
-          newCameraQuality = foundChannel.name;
-          newCameraUrl = foundChannel.rtspAlias;
-          break;
-        }
+        cameraChannels = [ foundChannel ];
       }
     }
 
-    // No RTSP stream is available.
-    if(!newCameraUrl) {
-      // Notify only if this is a new change.
-      if(!this.isVideoConfigured || this.cameraUrl) {
-        this.log.info("%s: No RTSP stream has been configured for this camera. %s",
-          this.name(),
-          "Enable an RTSP stream in the UniFi Protect webUI to resolve this issue or " +
-          "assign the Administrator role to the user configured for this plugin to allow it to automatically configure itself."
-        );
-      }
-    } else {
-      // Set the selected quality.
-      newCameraUrl = "rtsp://" + bootstrap.nvr.host + ":" + bootstrap.nvr.ports.rtsp.toString() + "/" + newCameraUrl;
+    // No RTSP streams are available that meet our criteria - we're done.
+    if(!cameraChannels.length) {
+      this.log.info("%s: No RTSP streams have been configured for this camera. %s",
+        this.name(),
+        "Enable at least one RTSP stream in the UniFi Protect webUI to resolve this issue or " +
+        "assign the Administrator role to the user configured for this plugin to allow it to automatically configure itself."
+      );
 
-      if(this.cameraUrl !== newCameraUrl) {
-        this.log.info("%s: Stream quality configured: %s.", this.name(), newCameraQuality);
-      }
+      return false;
     }
 
-    // Set the video stream and shapshot URLs.
-    this.cameraUrl = newCameraUrl;
-    this.snapshotUrl = nvrApi.camerasUrl() + "/" + camera.id + "/snapshot";
+    // Now that we have our RTSP streams, create a list of supported resolutions for HomeKit.
+    for(const channel of cameraChannels) {
+      rtspEntries.push({ name: channel.width.toString() + "x" + channel.height.toString() + "@" + channel.fps.toString() + "fps (" + channel.name + ")",
+        resolution: [ channel.width, channel.height, channel.fps ], url: cameraUrl + channel.rtspAlias });
+    }
+
+    // Sort the list of resolutions, from high to low.
+    rtspEntries.sort(this.sortByResolutions.bind(this));
+
+    // Next, ensure we have mandatory resolutions required by HomeKit, as well as special support for Apple TV and Apple Watch:
+    //   3840x2160@30 (4k).
+    //   1920x1080@30 (1080p).
+    //   1280x720@30 (720p).
+    //   320x240@15 (Apple Watch).
+    for(const entry of [ [3840, 2160, 30], [1920, 1080, 30], [1280, 720, 30], [320, 240, 15] ] ) {
+
+      // We already have this resolution in our list.
+      if(rtspEntries.some(x => (x.resolution[0] === entry[0]) && (x.resolution[1] === entry[1]) && (x.resolution[2] === entry[2]))) {
+        continue;
+      }
+
+      // Find the closest RTSP match for this resolution.
+      const foundRtsp = this.findRtsp(rtspEntries, entry[0], entry[1]);
+
+      if(!foundRtsp) {
+        continue;
+      }
+
+      // Add the resolution to the list of supported resolutions.
+      rtspEntries.push({ name: foundRtsp.name, resolution: [ entry[0], entry[1], entry[2] ], url: foundRtsp.url });
+
+      // Since we added resolutions to the list, resort resolutions, from high to low.
+      rtspEntries.sort(this.sortByResolutions.bind(this));
+    }
+
+    // Publish our updated list of supported resolutions and their URLs.
+    this.rtspEntries = rtspEntries;
+
+    // If we're already configured, we're done here.
+    if(this.isVideoConfigured) {
+      return true;
+    }
 
     // Configure the video stream and inform HomeKit about it, if it's our first time.
-    if(!this.isVideoConfigured) {
-      this.isVideoConfigured = true;
-      this.stream = new ProtectStreamingDelegate(this);
-      this.accessory.configureController(this.stream.controller);
-    }
+    this.stream = new ProtectStreamingDelegate(this);
+    this.accessory.configureController(this.stream.controller);
+    this.isVideoConfigured = true;
 
     return true;
   }
@@ -407,7 +443,7 @@ export class ProtectCamera extends ProtectAccessory {
       }
 
       // Trigger the motion event.
-      this.nvr.motionEventHandler(this.accessory, Date.now());
+      this.nvr.events.motionEventHandler(this.accessory, Date.now());
       this.log.info("%s: Motion event triggered via MQTT.", this.name());
     });
 
@@ -421,11 +457,6 @@ export class ProtectCamera extends ProtectAccessory {
       }
 
       const urlInfo: { [index: string]: string } = {};
-
-      // Include the default URL we're using for the camera.
-      if(this.cameraUrl) {
-        urlInfo.Default = this.cameraUrl;
-      }
 
       // Grab all the available RTSP channels.
       for(const channel of camera.channels) {
@@ -454,6 +485,39 @@ export class ProtectCamera extends ProtectAccessory {
     });
 
     return true;
+  }
+
+  // Utility function for sorting by resolution.
+  private sortByResolutions(a: RtspEntry, b: RtspEntry): number {
+
+    // Check width.
+    if(a.resolution[0] < b.resolution[0]) {
+      return 1;
+    }
+
+    if(a.resolution[0] > b.resolution[0]) {
+      return -1;
+    }
+
+    // Check height.
+    if(a.resolution[1] < b.resolution[1]) {
+      return 1;
+    }
+
+    if(a.resolution[1] > b.resolution[1]) {
+      return -1;
+    }
+
+    // Check FPS.
+    if(a.resolution[2] < b.resolution[2]) {
+      return 1;
+    }
+
+    if(a.resolution[2] > b.resolution[2]) {
+      return -1;
+    }
+
+    return 0;
   }
 
   // Utility function for reserved identifiers for switches.
