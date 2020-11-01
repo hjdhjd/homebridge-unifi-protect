@@ -142,11 +142,6 @@ export class ProtectDoorbell extends ProtectCamera {
 
     const camera = this.accessory?.context.camera as ProtectCameraConfig;
 
-    // If the user has disabled the doorbell message functionality - we're done.
-    if(!this.isMessagesEnabled) {
-      return false;
-    }
-
     // Make sure we're configuring a camera device with an LCD screen (aka a doorbell).
     if((camera?.modelKey !== "camera") || !camera?.featureFlags.hasLcdScreen) {
       return false;
@@ -154,9 +149,6 @@ export class ProtectDoorbell extends ProtectCamera {
 
     // Grab the consolidated list of messages from the doorbell and our configuration.
     const doorbellMessages = this.getMessages();
-
-    // Check to see if any of our existing doorbell messages have disappeared.
-    this.validateMessageSwitches(doorbellMessages);
 
     // Look through the combined messages from the doorbell and what the user has configured and tell HomeKit about it.
     for(const entry of doorbellMessages) {
@@ -209,6 +201,9 @@ export class ProtectDoorbell extends ProtectCamera {
 
     // Update the message switch state in HomeKit.
     this.updateLcdSwitch(camera.lcdMessage);
+
+    // Check to see if any of our existing doorbell messages have disappeared.
+    this.validateMessageSwitches(doorbellMessages);
 
     return true;
   }
@@ -317,7 +312,7 @@ export class ProtectDoorbell extends ProtectCamera {
     const doorbellSettings = this.nvr?.nvrApi?.bootstrap?.nvr?.doorbellSettings;
 
     // Something's not right with the configuration...we're done.
-    if(!doorbellSettings) {
+    if(!doorbellSettings || !this.isMessagesEnabled) {
       return [];
     }
 
