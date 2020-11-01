@@ -8,7 +8,11 @@ import {
   Logging,
   PlatformAccessory
 } from "homebridge";
-import { PROTECT_SWITCH_TRIGGER, ProtectCamera } from "./protect-camera";
+import {
+  PROTECT_SWITCH_DOORBELL_TRIGGER,
+  PROTECT_SWITCH_MOTION_TRIGGER,
+  ProtectCamera
+} from "./protect-camera";
 import {
   ProtectCameraConfig,
   ProtectCameraConfigPayload,
@@ -313,13 +317,13 @@ export class ProtectNvrEvents {
     }
 
     // Trigger the motion event in HomeKit.
-    motionService.getCharacteristic(this.hap.Characteristic.MotionDetected).updateValue(true);
+    motionService.updateCharacteristic(this.hap.Characteristic.MotionDetected, true);
 
     // Check to see if we have a motion trigger switch configured. If we do, update it.
-    const triggerService = accessory.getServiceById(this.hap.Service.Switch, PROTECT_SWITCH_TRIGGER);
+    const triggerService = accessory.getServiceById(this.hap.Service.Switch, PROTECT_SWITCH_MOTION_TRIGGER);
 
     if(triggerService) {
-      triggerService.getCharacteristic(this.hap.Characteristic.On).updateValue(true);
+      triggerService.updateCharacteristic(this.hap.Characteristic.On, true);
     }
 
     // Publish to MQTT, if the user has configured it.
@@ -335,13 +339,14 @@ export class ProtectNvrEvents {
       const thisMotionService = accessory.getService(this.hap.Service.MotionSensor);
 
       if(thisMotionService) {
-        thisMotionService.getCharacteristic(this.hap.Characteristic.MotionDetected).updateValue(false);
+
+        thisMotionService.updateCharacteristic(this.hap.Characteristic.MotionDetected, false);
 
         // Check to see if we have a motion trigger switch configured. If we do, update it.
-        const triggerService = accessory.getServiceById(this.hap.Service.Switch, PROTECT_SWITCH_TRIGGER);
+        const triggerService = accessory.getServiceById(this.hap.Service.Switch, PROTECT_SWITCH_MOTION_TRIGGER);
 
         if(triggerService) {
-          triggerService.getCharacteristic(this.hap.Characteristic.On).updateValue(false);
+          triggerService.updateCharacteristic(this.hap.Characteristic.On, false);
         }
 
         // Publish to MQTT, if the user has configured it.
@@ -356,7 +361,7 @@ export class ProtectNvrEvents {
   }
 
   // Doorbell event processing from UniFi Protect and delivered to HomeKit.
-  private doorbellEventHandler(accessory: PlatformAccessory, lastRing: number | null): void {
+  public doorbellEventHandler(accessory: PlatformAccessory, lastRing: number | null): void {
     const camera = accessory.context.camera as ProtectCameraConfig;
 
     if(!accessory || !camera || !lastRing) {
@@ -387,32 +392,37 @@ export class ProtectNvrEvents {
     }
 
     // Trigger the doorbell.
-    doorbellService
-      .getCharacteristic(this.hap.Characteristic.ProgrammableSwitchEvent)
-      .setValue(this.hap.Characteristic.ProgrammableSwitchEvent.SINGLE_PRESS);
+    doorbellService.updateCharacteristic(this.hap.Characteristic.ProgrammableSwitchEvent, this.hap.Characteristic.ProgrammableSwitchEvent.SINGLE_PRESS);
 
-    // Trigger the doorbell ring contact sensor, if one is configured.
-    const contactService = accessory.getService(this.hap.Service.ContactSensor);
+    // Check to see if we have a doorbell trigger switch configured. If we do, update it.
+    const triggerService = accessory.getServiceById(this.hap.Service.Switch, PROTECT_SWITCH_DOORBELL_TRIGGER);
 
-    if(contactService) {
+    if(triggerService) {
 
-      // Kill any inflight contact reset.
+      // Kill any inflight trigger reset.
       if(this.eventTimers[camera.mac + ".DoorbellRing"]) {
         clearTimeout(this.eventTimers[camera.mac + ".DoorbellRing"]);
         delete this.eventTimers[camera.mac + ".DoorbellRing"];
       }
 
-      // Trigger the contact event in HomeKit.
-      contactService.getCharacteristic(this.hap.Characteristic.ContactSensorState).updateValue(this.hap.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED);
+      const protectCamera = this.nvr.configuredCameras[accessory.UUID];
 
-      // Reset our contact event after two seconds.
+      // Flag that we're ringing.
+      if(protectCamera) {
+        protectCamera.isRinging = true;
+      }
+
+      triggerService.updateCharacteristic(this.hap.Characteristic.On, true);
+
+      // Reset our doorbell trigger after two seconds.
       this.eventTimers[camera.mac + ".DoorbellRing"] = setTimeout(() => {
-        const thisContactService = accessory.getService(this.hap.Service.ContactSensor);
 
-        if(thisContactService) {
-          contactService.getCharacteristic(this.hap.Characteristic.ContactSensorState).updateValue(this.hap.Characteristic.ContactSensorState.CONTACT_DETECTED);
-          this.debug("%s: Resetting contact sensor event.", this.nvrApi.getFullName(camera));
+        if(protectCamera) {
+          protectCamera.isRinging = false;
         }
+
+        triggerService.updateCharacteristic(this.hap.Characteristic.On, false);
+        this.debug("%s: Resetting doorbell ring trigger.", this.nvrApi.getFullName(camera));
 
         // Delete the timer from our motion event tracker.
         delete this.eventTimers[camera.mac + ".DoorbellRing"];

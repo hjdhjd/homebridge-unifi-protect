@@ -67,74 +67,20 @@ export class ProtectDoorbell extends ProtectCamera {
 
     // Now, make the doorbell LCD message functionality available.
     return this.configureDoorbellLcdSwitch();
-
   }
 
-  // Configure the doorbell service for HomeKit.
-  private configureVideoDoorbell(): boolean {
-
-    // Clear out any previous doorbell service.
-    let doorbellService = this.accessory.getService(this.hap.Service.Doorbell);
-
-    // Add the doorbell service to this Protect doorbell. HomeKit requires the doorbell service to be
-    // marked as the primary service on the accessory.
-    if(!doorbellService) {
-      doorbellService = new this.hap.Service.Doorbell(this.accessory.displayName);
-
-      if(!doorbellService) {
-        this.log.error("%s: Unable to add doorbell.", this.name());
-        return false;
-      }
-
-      this.accessory.addService(doorbellService);
-    }
-
-    doorbellService
-      .getCharacteristic(this.hap.Characteristic.ProgrammableSwitchEvent)
-      .on(CharacteristicEventTypes.GET, (callback: CharacteristicGetCallback) => {
-
-        // Provide the status of this doorbell. This must always return null, per the HomeKit spec.
-        callback(null, null);
-      });
-
-    doorbellService.setPrimaryService(true);
-    return true;
-  }
-
-  // Configure a contact sensor for HomeKit to be used for automation purposes.
+  // Deprecated - remove contact sensor service, if it was previously configured.
   private configureContactSensor(): boolean {
 
-    // Clear out any previous contact sensor service.
-    let contactService = this.accessory.getService(this.hap.Service.ContactSensor);
+    // Find the contact sensor service, if it exists.
+    const contactService = this.accessory.getService(this.hap.Service.ContactSensor);
 
-    // Contact sensors are primarily used for automation scenarios and are disabled by default.
-    if(!this.nvr.optionEnabled(this.accessory.context.camera as ProtectCameraConfig, "ContactSensor", false)) {
-
-      if(contactService) {
-        this.accessory.removeService(contactService);
-      }
-
-      return false;
-    }
-
-    this.log.info("%s: Enabling doorbell contact sensor. This sensor can be used for the automation of doorbell ring events in HomeKit.", this.name());
-
-    // We already have the contact sensor configured.
+    // Contact sensors are now deprecated. Remove them if found.
     if(contactService) {
-      return true;
+      this.accessory.removeService(contactService);
     }
 
-    // Add the contact sensor to the doorbell.
-    contactService = new this.hap.Service.ContactSensor(this.accessory.displayName + " Doorbell");
-
-    if(!contactService) {
-      this.log.error("%s: Unable to add contact sensor.", this.name());
-      return false;
-    }
-
-    this.accessory.addService(contactService);
-
-    return true;
+    return false;
   }
 
   // Configure our access to the Doorbell LCD screen.
@@ -393,7 +339,7 @@ export class ProtectDoorbell extends ProtectCamera {
     if(!Object.keys(lcdMessage).length) {
       for(const lcdEntry of this.messageSwitches) {
         lcdEntry.state = false;
-        lcdEntry.service.getCharacteristic(this.hap.Characteristic.On).updateValue(false);
+        lcdEntry.service.updateCharacteristic(this.hap.Characteristic.On, false);
       }
 
       return;
@@ -410,7 +356,7 @@ export class ProtectDoorbell extends ProtectCamera {
       // If it's not the message we're interested in, make sure it's off and keep going.
       if(lcdEntry.service.subtype !== ((lcdMessage.type as string) + "." + (lcdMessage.text as string))) {
         lcdEntry.state = false;
-        lcdEntry.service.getCharacteristic(this.hap.Characteristic.On).updateValue(false);
+        lcdEntry.service.updateCharacteristic(this.hap.Characteristic.On, false);
         continue;
       }
 
@@ -421,7 +367,7 @@ export class ProtectDoorbell extends ProtectCamera {
 
       // Set the message state and update HomeKit.
       lcdEntry.state = true;
-      lcdEntry.service.getCharacteristic(this.hap.Characteristic.On).updateValue(true);
+      lcdEntry.service.updateCharacteristic(this.hap.Characteristic.On, true);
 
       this.log.info("%s: Doorbell message set%s: %s.", this.name(), lcdEntry.duration ? " (" + (lcdEntry.duration / 1000).toString() + " seconds)" : "", lcdEntry.text);
 

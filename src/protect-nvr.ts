@@ -31,7 +31,7 @@ import { ProtectPlatform } from "./protect-platform";
 export class ProtectNvr {
   private api: API;
   public config: ProtectNvrOptions;
-  private readonly configuredCameras: { [index: string]: ProtectCamera | ProtectDoorbell };
+  public readonly configuredCameras: { [index: string]: ProtectCamera | ProtectDoorbell };
   private debug: (message: string, ...parameters: unknown[]) => void;
   public doorbellCount: number;
   public events!: ProtectNvrEvents;

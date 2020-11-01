@@ -15,8 +15,9 @@ import { ProtectNvr } from "./protect-nvr";
 import { ProtectStreamingDelegate } from "./protect-stream";
 
 // Manage our switch types.
-export const PROTECT_SWITCH_MOTION = "MotionSensorSwitch";
-export const PROTECT_SWITCH_TRIGGER = "MotionSensorTrigger";
+export const PROTECT_SWITCH_DOORBELL_TRIGGER = "DoorbellTrigger";
+export const PROTECT_SWITCH_MOTION_SENSOR = "MotionSensorSwitch";
+export const PROTECT_SWITCH_MOTION_TRIGGER = "MotionSensorTrigger";
 
 export interface RtspEntry {
   name: string,
@@ -25,6 +26,8 @@ export interface RtspEntry {
 }
 
 export class ProtectCamera extends ProtectAccessory {
+  private isDoorbellConfigured!: boolean;
+  public isRinging!: boolean;
   private isVideoConfigured!: boolean;
   public rtspEntries!: RtspEntry[];
   public snapshotUrl!: string;
@@ -34,6 +37,8 @@ export class ProtectCamera extends ProtectAccessory {
   // Configure a camera accessory for HomeKit.
   protected async configureDevice(): Promise<boolean> {
 
+    this.isDoorbellConfigured = false;
+    this.isRinging = false;
     this.isVideoConfigured = false;
 
     // Save the camera object before we wipeout the context.
@@ -64,10 +69,14 @@ export class ProtectCamera extends ProtectAccessory {
     this.configureMotionSwitch();
     this.configureMotionTrigger();
 
-    // Configure two-way audio support and our video stream...and we're done.
+    // Configure two-way audio support and our video stream.
     this.configureTwoWayAudio();
+    await this.configureVideoStream();
 
-    return await this.configureVideoStream();
+    // Configure the doorbell trigger.
+    this.configureDoorbellTrigger();
+
+    return true;
   }
 
   // Configure the camera device information for HomeKit.
@@ -109,7 +118,7 @@ export class ProtectCamera extends ProtectAccessory {
     const accessory = this.accessory;
     const hap = this.hap;
 
-    // Clear out any previous motion sensor service.
+    // Find the motion sensor service, if it exists.
     let motionService = accessory.getService(hap.Service.MotionSensor);
 
     // Have we disabled motion sensors?
@@ -143,8 +152,8 @@ export class ProtectCamera extends ProtectAccessory {
   // Configure a switch to easily activate or deactivate motion sensor detection for HomeKit.
   private configureMotionSwitch(): boolean {
 
-    // Clear out any previous switch service.
-    let switchService = this.accessory.getServiceById(this.hap.Service.Switch, PROTECT_SWITCH_MOTION);
+    // Find the switch service, if it exists.
+    let switchService = this.accessory.getServiceById(this.hap.Service.Switch, PROTECT_SWITCH_MOTION_SENSOR);
 
     // Have we disabled motion sensors or the motion switch? Motion switches are disabled by default.
     if(!this.nvr?.optionEnabled(this.accessory.context.camera as ProtectCameraConfig, "MotionSensor") ||
@@ -163,7 +172,7 @@ export class ProtectCamera extends ProtectAccessory {
 
     // Add the switch to the camera, if needed.
     if(!switchService) {
-      switchService = new this.hap.Service.Switch(this.accessory.displayName + " Motion Events", PROTECT_SWITCH_MOTION);
+      switchService = new this.hap.Service.Switch(this.accessory.displayName + " Motion Events", PROTECT_SWITCH_MOTION_SENSOR);
 
       if(!switchService) {
         this.log.error("%s: Unable to add motion sensor switch.", this.name());
@@ -195,8 +204,8 @@ export class ProtectCamera extends ProtectAccessory {
   // Configure a switch to manually trigger a motion sensor event for HomeKit.
   private configureMotionTrigger(): boolean {
 
-    // Clear out any previous switch service.
-    let triggerService = this.accessory.getServiceById(this.hap.Service.Switch, PROTECT_SWITCH_TRIGGER);
+    // Find the switch service, if it exists.
+    let triggerService = this.accessory.getServiceById(this.hap.Service.Switch, PROTECT_SWITCH_MOTION_TRIGGER);
 
     // Motion triggers are disabled by default and primarily exist for automation purposes.
     if(!this.nvr?.optionEnabled(this.accessory.context.camera as ProtectCameraConfig, "MotionSensor") ||
@@ -211,7 +220,7 @@ export class ProtectCamera extends ProtectAccessory {
 
     // Add the switch to the camera, if needed.
     if(!triggerService) {
-      triggerService = new this.hap.Service.Switch(this.accessory.displayName + " Motion Trigger", PROTECT_SWITCH_TRIGGER);
+      triggerService = new this.hap.Service.Switch(this.accessory.displayName + " Motion Trigger", PROTECT_SWITCH_MOTION_TRIGGER);
 
       if(!triggerService) {
         this.log.error("%s: Unable to add motion sensor trigger.", this.name());
@@ -222,7 +231,7 @@ export class ProtectCamera extends ProtectAccessory {
     }
 
     const motionService = this.accessory.getService(this.hap.Service.MotionSensor);
-    const switchService = this.accessory.getServiceById(this.hap.Service.Switch, PROTECT_SWITCH_MOTION);
+    const switchService = this.accessory.getServiceById(this.hap.Service.Switch, PROTECT_SWITCH_MOTION_SENSOR);
 
     // Activate or deactivate motion detection.
     triggerService
@@ -263,6 +272,134 @@ export class ProtectCamera extends ProtectAccessory {
 
     this.log.info("%s: Enabling motion sensor automation trigger.", this.name());
 
+    return true;
+  }
+
+  // Configure a switch to manually trigger a doorbell ring event for HomeKit.
+  private configureDoorbellTrigger(): boolean {
+
+    const camera = (this.accessory.context.camera as ProtectCameraConfig);
+
+    // Find the switch service, if it exists.
+    let triggerService = this.accessory.getServiceById(this.hap.Service.Switch, PROTECT_SWITCH_DOORBELL_TRIGGER);
+
+    // See if we have a doorbell service configured.
+    let doorbellService = this.accessory.getService(this.hap.Service.Doorbell);
+
+    // Doorbell switches are disabled by default and primarily exist for automation purposes.
+    if(!this.nvr?.optionEnabled(this.accessory.context.camera as ProtectCameraConfig, "Doorbell.Trigger", false)) {
+
+      if(triggerService) {
+        this.accessory.removeService(triggerService);
+      }
+
+      // Since we aren't enabling the doorbell trigger on this camera, remove the doorbell service if the camera
+      // isn't actually doorbell-capable hardware.
+      if(!camera.featureFlags.hasChime && doorbellService) {
+        this.accessory.removeService(doorbellService);
+      }
+
+      return false;
+    }
+
+    // We don't have a doorbell service configured, but since we've enabled a doorbell switch, we create the doorbell for
+    // automation purposes.
+    if(!doorbellService) {
+
+      // Configure the doorbell service.
+      if(!this.configureVideoDoorbell()) {
+        return false;
+      }
+
+      // Now find the doorbell service.
+      if(!(doorbellService = this.accessory.getService(this.hap.Service.Doorbell))) {
+        this.log.error("%s: Unable to find the doorbell service.", this.name());
+        return false;
+      }
+    }
+
+    // Add the switch to the camera, if needed.
+    if(!triggerService) {
+      triggerService = new this.hap.Service.Switch(this.accessory.displayName + " Doorbell Trigger", PROTECT_SWITCH_DOORBELL_TRIGGER);
+
+      if(!triggerService) {
+        this.log.error("%s: Unable to add the doorbell trigger.", this.name());
+        return false;
+      }
+
+      this.accessory.addService(triggerService);
+    }
+
+    // Trigger the doorbell.
+    triggerService
+      .getCharacteristic(this.hap.Characteristic.On)
+      ?.on(CharacteristicEventTypes.GET, (callback: CharacteristicGetCallback) => {
+        callback(null, this.isRinging);
+      })
+      .on(CharacteristicEventTypes.SET, (value: CharacteristicValue, callback: CharacteristicSetCallback) => {
+
+        if(value) {
+
+          // Trigger the motion event.
+          this.nvr.events.doorbellEventHandler(this.accessory, Date.now());
+          this.log.info("%s: Doorbell ring event triggered.", this.name());
+
+        } else {
+
+          // If the doorbell ring event is still going, we should be as well.
+          if(this.isRinging) {
+
+            setTimeout(() => {
+              triggerService?.updateCharacteristic(this.hap.Characteristic.On, true);
+            }, 50);
+          }
+        }
+
+        callback(null);
+      });
+
+    // Initialize the switch.
+    triggerService.updateCharacteristic(this.hap.Characteristic.On, false);
+
+    this.log.info("%s: Enabling doorbell automation trigger.", this.name());
+
+    return true;
+  }
+
+  // Configure the doorbell service for HomeKit.
+  protected configureVideoDoorbell(): boolean {
+
+    // Only configure the doorbell service if we haven't configured it before.
+    if(this.isDoorbellConfigured) {
+      return true;
+    }
+
+    // Find the doorbell service, if it exists.
+    let doorbellService = this.accessory.getService(this.hap.Service.Doorbell);
+
+    // Add the doorbell service to this Protect doorbell. HomeKit requires the doorbell service to be
+    // marked as the primary service on the accessory.
+    if(!doorbellService) {
+      doorbellService = new this.hap.Service.Doorbell(this.accessory.displayName);
+
+      if(!doorbellService) {
+        this.log.error("%s: Unable to add doorbell.", this.name());
+        return false;
+      }
+
+      this.accessory.addService(doorbellService);
+    }
+
+    doorbellService
+      .getCharacteristic(this.hap.Characteristic.ProgrammableSwitchEvent)
+      .on(CharacteristicEventTypes.GET, (callback: CharacteristicGetCallback) => {
+
+        // Provide the status of this doorbell. This must always return null, per the HomeKit spec.
+        callback(null, null);
+      });
+
+    doorbellService.setPrimaryService(true);
+    this.isDoorbellConfigured = true;
     return true;
   }
 
@@ -524,6 +661,10 @@ export class ProtectCamera extends ProtectAccessory {
   // Utility function for reserved identifiers for switches.
   protected isReservedName(name: string | undefined): boolean {
     return name === undefined ? false :
-      [ PROTECT_SWITCH_MOTION.toUpperCase(), PROTECT_SWITCH_TRIGGER.toUpperCase() ].includes(name.toUpperCase());
+      [
+        PROTECT_SWITCH_DOORBELL_TRIGGER.toUpperCase(),
+        PROTECT_SWITCH_MOTION_SENSOR.toUpperCase(),
+        PROTECT_SWITCH_MOTION_TRIGGER.toUpperCase()
+      ].includes(name.toUpperCase());
   }
 }
