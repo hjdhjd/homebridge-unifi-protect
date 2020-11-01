@@ -2,7 +2,13 @@
  *
  * protect-api.ts: Our UniFi Protect API implementation.
  */
-import { PROTECT_API_ERROR_LIMIT, PROTECT_API_RETRY_INTERVAL, PROTECT_EVENTS_HEARTBEAT_INTERVAL, PROTECT_LOGIN_REFRESH_INTERVAL } from "./settings";
+import {
+  PROTECT_API_ERROR_LIMIT,
+  PROTECT_API_RETRY_INTERVAL,
+  PROTECT_API_TIMEOUT,
+  PROTECT_EVENTS_HEARTBEAT_INTERVAL,
+  PROTECT_LOGIN_REFRESH_INTERVAL
+} from "./settings";
 import {
   ProtectCameraChannelConfigInterface,
   ProtectCameraConfig,
@@ -11,8 +17,9 @@ import {
   ProtectNvrBootstrap,
   ProtectNvrUserConfig
 } from "./protect-types";
-import fetch, { FetchError, Headers, RequestInfo, RequestInit, Response } from "node-fetch";
+import fetch, { AbortError, FetchError, Headers, RequestInfo, RequestInit, Response } from "node-fetch";
 import https, { Agent } from "https";
+import { AbortController } from "abort-controller";
 import { Logging } from "homebridge";
 import { ProtectPlatform } from "./protect-platform";
 import WebSocket from "ws";
@@ -609,8 +616,16 @@ export class ProtectApi {
   public async fetch(url: RequestInfo, options: RequestInit = { method: "GET" }, logErrors = true, decodeResponse = true): Promise<Response | null> {
     let response: Response;
 
+    const controller = new AbortController();
+
+    // Ensure API responsiveness and guard against hung connections.
+    const timeout = setTimeout(() => {
+      controller.abort();
+    }, 1000 * PROTECT_API_TIMEOUT);
+
     options.agent = this.httpsAgent;
     options.headers = this.headers;
+    options.signal = controller.signal;
 
     try {
 
@@ -618,8 +633,10 @@ export class ProtectApi {
 
       // Throttle this after PROTECT_API_ERROR_LIMIT attempts.
       if(this.apiErrorCount >= PROTECT_API_ERROR_LIMIT) {
+
         // Let the user know we've got an API problem.
         if(this.apiErrorCount === PROTECT_API_ERROR_LIMIT) {
+
           this.log.info("%s: Throttling API calls due to errors with the %s previous attempts. I'll retry again in %s minutes.",
             this.getNvrName(), this.apiErrorCount, PROTECT_API_RETRY_INTERVAL / 60);
           this.apiErrorCount++;
@@ -674,7 +691,13 @@ export class ProtectApi {
 
       this.apiErrorCount++;
 
+      if(error instanceof AbortError) {
+        this.log.error("%s: Controller API connection terminated because it was taking too long. This error can usually be safely ignored.", this.getNvrName());
+        return null;
+      }
+
       if(error instanceof FetchError) {
+
         switch(error.code) {
           case "ECONNREFUSED":
             this.log.error("%s: Controller API connection refused.", this.getNvrName());
@@ -698,6 +721,10 @@ export class ProtectApi {
 
       return null;
 
+    } finally {
+
+      // Clear out our response timeout if needed.
+      clearTimeout(timeout);
     }
   }
 }
