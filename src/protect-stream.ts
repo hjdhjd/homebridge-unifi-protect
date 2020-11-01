@@ -32,6 +32,7 @@ import {
 } from "./settings";
 import { ProtectCameraConfig, ProtectOptions } from "./protect-types";
 import { RtpDemuxer, RtpUtils } from "./protect-rtp";
+import { FetchError } from "node-fetch";
 import { FfmpegProcess } from "./protect-ffmpeg";
 import { ProtectCamera } from "./protect-camera";
 import { ProtectPlatform } from "./protect-platform";
@@ -74,20 +75,22 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   private pendingSessions: { [index: string]: SessionInfo };
   public readonly platform: ProtectPlatform;
   public readonly protectCamera: ProtectCamera;
+  private snapshotCache: { [index: string]: { image: Buffer, time: number } };
   private verboseFfmpegTimer!: NodeJS.Timeout | null;
   public readonly videoProcessor: string;
 
-  constructor(camera: ProtectCamera) {
-    this.api = camera.api;
-    this.config = camera.platform.config;
-    this.debug = camera.platform.debug.bind(camera.platform);
-    this.hap = camera.api.hap;
-    this.log = camera.platform.log;
-    this.name = camera.name.bind(camera);
+  constructor(protectCamera: ProtectCamera) {
+    this.api = protectCamera.api;
+    this.config = protectCamera.platform.config;
+    this.debug = protectCamera.platform.debug.bind(protectCamera.platform);
+    this.hap = protectCamera.api.hap;
+    this.log = protectCamera.platform.log;
+    this.name = protectCamera.name.bind(protectCamera);
     this.ongoingSessions = {};
-    this.protectCamera = camera;
+    this.protectCamera = protectCamera;
     this.pendingSessions = {};
-    this.platform = camera.platform;
+    this.platform = protectCamera.platform;
+    this.snapshotCache = {};
     this.videoProcessor = this.config.videoProcessor || ffmpegPath || "ffmpeg";
 
     // Setup for our camera controller.
@@ -110,24 +113,20 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
         video: {
           codec: {
+            // Through admittedly anecdotal testing on various G3 and G4 models, UniFi Protect seems to support
+            // only the H.264 Main profile, though it does support various H.264 levels, ranging from Level 3
+            // through Level 5.1 (G4 Pro at maximum resolution). However, HomeKit only supports Level 3.1, 3.2,
+            // and 4.0 currently.
             levels: [this.hap.H264Level.LEVEL3_1, this.hap.H264Level.LEVEL3_2, this.hap.H264Level.LEVEL4_0],
-            profiles: [this.hap.H264Profile.BASELINE, this.hap.H264Profile.MAIN, this.hap.H264Profile.HIGH]
+            profiles: [ this.hap.H264Profile.MAIN ]
           },
 
-          resolutions: [
-            // Width, height, framerate.
-            [1920, 1080, 30],
-            [1280, 960, 30],
-            [1280, 720, 30],
-            [1024, 768, 30],
-            [640, 480, 30],
-            [640, 360, 30],
-            [480, 360, 30],
-            [480, 270, 30],
-            [320, 240, 30],
-            [320, 240, 15],   // Apple Watch requires this configuration
-            [320, 180, 30]
-          ]
+          // Retrieve the list of supported resolutions from the camera and apply our best guesses for how to
+          // map specific resolutions to the available RTSP streams on a camera. Unfortunately, this creates
+          // challenges in doing on-the-fly RTSP changes in UniFi Protect. Once the list of supported
+          // resolutions is set here, there's no going back unless a user reboots. Homebridge doesn't have a way
+          // to dynamically adjust the list of supported resolutions at this time.
+          resolutions: protectCamera.rtspEntries.map(x => x.resolution)
         }
       }
     };
@@ -235,9 +234,21 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
     // If we aren't connected, we're done.
     if(cameraConfig.state !== "CONNECTED") {
-      const errorMessage = "Unable to start video stream - the camera is offline or unavailable.";
+      const errorMessage = "Unable to start video stream: the camera is offline or unavailable.";
 
       this.log.error("%s: %s", this.name(), errorMessage);
+      callback(new Error(this.name() + ": " + errorMessage));
+      return;
+    }
+
+    const rtspEntry = this.protectCamera.findRtsp(this.protectCamera.rtspEntries, request.video.width, request.video.height);
+
+    if(!rtspEntry) {
+      const errorMessage = "Unable to start video stream: no valid RTSP URL was found.";
+
+      this.log.error("%s: %s %sx%s, %s fps, %s kbps.", this.name(), errorMessage,
+        request.video.width, request.video.height, request.video.fps, request.video.max_bit_rate);
+
       callback(new Error(this.name() + ": " + errorMessage));
       return;
     }
@@ -266,10 +277,10 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
     // -hide_banner:        suppress printing the startup banner in FFmpeg.
     // -rtsp_transport tcp: tell the RTSP stream handler that we're looking for a TCP connection.
-    const ffmpegArgs = [ "-hide_banner", "-rtsp_transport", "tcp", "-i", this.protectCamera.cameraUrl ];
+    const ffmpegArgs = [ "-hide_banner", "-rtsp_transport", "tcp", "-i", rtspEntry.url ];
 
-    this.log.info("%s: HomeKit video stream request received: %sx%s, %s fps, %s kbps.",
-      this.name(), request.video.width, request.video.height, request.video.fps, request.video.max_bit_rate);
+    this.log.info("%s: HomeKit video stream request received: %sx%s@%sfps, %s kbps. Using the %s RTSP profile.",
+      this.name(), request.video.width, request.video.height, request.video.fps, request.video.max_bit_rate, rtspEntry.name);
 
     // Configure our video parameters:
     // -map 0:v           selects the first available video track from the stream. Protect actually maps audio
@@ -295,6 +306,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       "-f", "rawvideo",
       "-pix_fmt", "yuvj420p",
       "-r", request.video.fps.toString(),
+      // "-force_key_frames", "expr:gte(t,n_forced*2)",
       ...this.platform.config.ffmpegOptions.split(" "),
       "-b:v", request.video.max_bit_rate.toString() + "k",
       "-bufsize", (2 * request.video.max_bit_rate).toString() + "k",
@@ -499,6 +511,18 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     }
   }
 
+  // Retrieve a cached snapshot, if available.
+  private getCachedSnapshot(cameraMac: string): Buffer | null {
+
+    // If we have an image from the last few seconds, we can use it. Otherwise, we're done.
+    if(!this.snapshotCache[cameraMac] || ((Date.now() - this.snapshotCache[cameraMac].time) > (60 * 1000))) {
+      delete this.snapshotCache[cameraMac];
+      return null;
+    }
+
+    return this.snapshotCache[cameraMac].image;
+  }
+
   // Take a snapshot.
   public async getSnapshot(request?: SnapshotRequest): Promise<Buffer | null> {
 
@@ -507,7 +531,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
     // If we aren't connected, we're done.
     if(cameraConfig.state !== "CONNECTED") {
-      this.log.error("%s: Unable to retrieve snapshot - the camera is offline or unavailable.", this.name());
+      this.log.error("%s: Unable to retrieve snapshot: the camera is offline or unavailable.", this.name());
       return null;
     }
 
@@ -517,23 +541,59 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       params.append("height", request.height.toString());
     }
 
-    // Occasional snapshot failures will happen. The controller isn't always able to generate them if
-    // it's already generating one, or it's requested too quickly after the last one.
-
     // Request the image from the controller.
     const response = await this.protectCamera.nvr.nvrApi.fetch(this.protectCamera.snapshotUrl + "?" + params.toString(), { method: "GET" }, true, false);
 
+    // Occasional snapshot failures will happen. The controller isn't always able to generate them if
+    // it's already generating one, or it's requested too quickly after the last one.
     if(!response?.ok) {
-      this.log.error("%s: Unable to retrieve snapshot.", this.name());
+
+      // See if we have an image cached that we can use instead.
+      const cachedSnapshot = this.getCachedSnapshot(cameraConfig.mac);
+
+      if(cachedSnapshot) {
+        this.log.error("%s: Unable to retrieve snapshot. Using the last snapshot instead.", this.name());
+        return cachedSnapshot;
+      }
+
+      this.log.error("%s: Unable to retrieve snapshot.%s",
+        this.name(),
+        response ? " " + response.status.toString() + " - " + response.statusText + "." : "");
+
       return null;
     }
 
     try {
 
-      // Process and return the image.
-      return await response.buffer();
+      // Retrieve the image.
+      this.snapshotCache[cameraConfig.mac] = { image: await response.buffer(), time: Date.now() };
+      return this.snapshotCache[cameraConfig.mac].image;
 
     } catch(error) {
+
+      if(error instanceof FetchError) {
+        let cachedSnapshot;
+
+        switch(error.code) {
+          case "ERR_STREAM_PREMATURE_CLOSE":
+
+            cachedSnapshot = this.getCachedSnapshot(cameraConfig.mac);
+
+            if(cachedSnapshot) {
+              this.log.error("%s: Unable to retrieve snapshot. Using a cached snapshot instead.", this.name());
+              return cachedSnapshot;
+            }
+
+            this.log.error("%s: Unable to retrieve snapshot: the Protect controller closed the connection prematurely.", this.name());
+            return null;
+            break;
+
+          default:
+            this.log.error("%s: Unknown error: %s", this.name(), error.message);
+            return null;
+            break;
+        }
+      }
 
       this.log.error("%s: An error occurred while making a snapshot request: %s.", this.name(), error);
       return null;
@@ -547,20 +607,21 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
       // Stop any FFmpeg instances we have running.
       if(this.ongoingSessions[sessionId]) {
+
         for(const ffmpegProcess of this.ongoingSessions[sessionId].ffmpeg) {
           ffmpegProcess.stop();
         }
-      }
 
-      // Close the demuxer, if we have one.
-      this.ongoingSessions[sessionId]?.rtpDemuxer?.close();
+        // Close the demuxer, if we have one.
+        this.ongoingSessions[sessionId].rtpDemuxer?.close();
+
+        // Inform the user.
+        this.log.info("%s: Stopped video streaming session.", this.name());
+      }
 
       // Delete the entries.
       delete this.pendingSessions[sessionId];
       delete this.ongoingSessions[sessionId];
-
-      // Inform the user.
-      this.log.info("%s: Stopped video streaming session.", this.name());
 
     } catch(error) {
 
