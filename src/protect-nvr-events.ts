@@ -10,18 +10,20 @@ import {
 } from "homebridge";
 import {
   PROTECT_SWITCH_DOORBELL_TRIGGER,
-  PROTECT_SWITCH_MOTION_TRIGGER,
-  ProtectCamera
+  PROTECT_SWITCH_MOTION_TRIGGER
 } from "./protect-camera";
 import {
+  ProtectApiUpdates,
+  ProtectNvrUpdatePayloadCameraUpdate,
+  ProtectNvrUpdatePayloadEventAdd
+} from "./protect-api-updates";
+import {
   ProtectCameraConfig,
-  ProtectCameraConfigPayload,
   ProtectCameraLcdMessagePayload,
   ProtectNvrOptions,
   ProtectNvrSystemEvent
 } from "./protect-types";
 import { ProtectApi } from "./protect-api";
-import { ProtectApiUpdates } from "./protect-api-updates";
 import { ProtectDoorbell } from "./protect-doorbell";
 import { ProtectMqtt } from "./protect-mqtt";
 import { ProtectNvr } from "./protect-nvr";
@@ -29,7 +31,6 @@ import { ProtectPlatform } from "./protect-platform";
 
 export class ProtectNvrEvents {
   private api: API;
-  private readonly configuredCameras: { [index: string]: ProtectCamera | ProtectDoorbell };
   private debug: (message: string, ...parameters: unknown[]) => void;
   private hap: HAP;
   private lastMotion: { [index: string]: number };
@@ -45,8 +46,8 @@ export class ProtectNvrEvents {
   private unsupportedDevices: { [index: string]: boolean };
 
   constructor(nvr: ProtectNvr, nvrOptions: ProtectNvrOptions) {
+
     this.api = nvr.platform.api;
-    this.configuredCameras = {};
     this.debug = nvr.platform.debug.bind(nvr.platform);
     this.hap = nvr.platform.api.hap;
     this.lastMotion = {};
@@ -162,8 +163,8 @@ export class ProtectNvrEvents {
       }
 
       // Find the camera in our list of accessories so we can fire off the motion event.
-      const foundCamera = Object.keys(this.configuredCameras).find(x =>
-        (this.configuredCameras[x].accessory.context.camera as ProtectCameraConfig).host === controller.info.lastMotionCameraAddress);
+      const foundCamera = Object.keys(this.nvr.configuredCameras).find(x =>
+        (this.nvr.configuredCameras[x].accessory.context.camera as ProtectCameraConfig).host === controller.info.lastMotionCameraAddress);
 
       // Nothing here - we may have disabled this camera or it's associated NVR.
       if(!foundCamera) {
@@ -171,7 +172,7 @@ export class ProtectNvrEvents {
       }
 
       // Now grab the accessory associated with the Protect device.
-      const accessory = this.configuredCameras[foundCamera].accessory;
+      const accessory = this.nvr.configuredCameras[foundCamera].accessory;
 
       // If we don't have an accessory, it's probably because we've chosen to hide it. In that case,
       // just ignore and move on. Alternatively, it could be a new camera that we just don't know about yet,
@@ -212,7 +213,7 @@ export class ProtectNvrEvents {
         return;
       }
 
-      // Update actions that we care about (doorbell rings, motion detection) look like this:
+      // The update actions that we care about (doorbell rings, motion detection) look like this:
       //
       // action: "update"
       // id: "someCameraId"
@@ -220,53 +221,118 @@ export class ProtectNvrEvents {
       // newUpdateId: "ignorethis"
       //
       // The payloads are what differentiate them - one updates lastMotion and the other lastRing.
+      switch(updatePacket.action.modelKey) {
 
-      // Filter on what actions we're interested in only.
-      if((updatePacket.action.action !== "update") || (updatePacket.action.modelKey !== "camera")) {
-        return;
-      }
+        case "camera": {
 
-      // Grab the payload - it should be a subset of the camera configuration JSON.
-      const payload = updatePacket.payload as ProtectCameraConfigPayload;
+          // We listen for the following camera update actions:
+          //   doorbell LCD updates
+          //   doorbell rings
+          //   motion detection
 
-      // Now filter out payloads we aren't interested in. We only want motion detection and doorbell rings for now.
-      if(!payload.isMotionDetected && !payload.lastRing && !payload.lcdMessage) {
-        return;
-      }
+          // We're only interested in update actions.
+          if(updatePacket.action.action !== "update") {
+            return;
+          }
 
-      // Lookup the accessory associated with this camera.
-      const accessory = this.nvr.accessoryLookup(updatePacket.action.id);
+          // Grab the right payload type, camera update payloads.
+          const payload = updatePacket.payload as ProtectNvrUpdatePayloadCameraUpdate;
 
-      // We don't know about this camera - we're done.
-      if(!accessory) {
-        return;
-      }
+          // Now filter out payloads we aren't interested in. We only want motion detection and doorbell rings for now.
+          if(!payload.isMotionDetected && !payload.lastRing && !payload.lcdMessage) {
+            return;
+          }
 
-      // It's a motion event - process it accordingly.
-      if(payload.isMotionDetected) {
+          // Lookup the accessory associated with this camera.
+          const accessory = this.nvr.accessoryLookup(updatePacket.action.id);
 
-        // Call our motion handler and we're done.
-        if(payload.lastMotion) {
-          this.motionEventHandler(accessory, payload.lastMotion);
+          // We don't know about this camera - we're done.
+          if(!accessory) {
+            return;
+          }
+
+          // Lookup the ProtectCamera instance associated with this accessory.
+          const protectCamera = this.nvr.configuredCameras[accessory.UUID];
+
+          if(!protectCamera) {
+            return;
+          }
+
+          // It's a motion event - process it accordingly, but only if we're not configured for smart motion events.
+          if(payload.isMotionDetected) {
+
+            if(!protectCamera.isSmartMotionEnabled && payload.lastMotion) {
+              this.motionEventHandler(accessory, payload.lastMotion);
+            }
+
+            return;
+          }
+
+          // It's a ring event - process it accordingly.
+          if(payload.lastRing) {
+
+            this.doorbellEventHandler(accessory, payload.lastRing);
+            return;
+          }
+
+          // It's a doorbell LCD message event - process it accordingly.
+          if(payload.lcdMessage) {
+
+            this.lcdMessageEventHandler(accessory, payload.lcdMessage);
+            return;
+          }
+
+          break;
         }
 
-        return;
-      }
+        case "event": {
 
-      // It's a ring event - process it accordingly.
-      if(payload.lastRing) {
+          // We listen for the following event actions:
+          //   smart motion detection
 
-        // Call our doorbell handler and we're done.
-        this.doorbellEventHandler(accessory, payload.lastRing);
-        return;
-      }
+          // We're only interested in add events.
+          if(updatePacket.action.action !== "add") {
+            return;
+          }
 
-      // It's a doorbell LCD message event - process it accordingly.
-      if(payload.lcdMessage) {
+          // Grab the right payload type, for event add payloads.
+          const payload = updatePacket.payload as ProtectNvrUpdatePayloadEventAdd;
 
-        // Call our LCD message handler and we're done.
-        this.lcdMessageEventHandler(accessory, payload.lcdMessage);
-        return;
+          // We're only interested in smart motion detection events.
+          if(payload.type !== "smartDetectZone") {
+            return;
+          }
+
+          // Lookup the accessory associated with this camera.
+          const accessory = this.nvr.accessoryLookup(payload.camera);
+
+          // We don't know about this camera - we're done.
+          if(!accessory) {
+            return;
+          }
+
+          // Lookup the ProtectCamera instance associated with this accessory.
+          const protectCamera = this.nvr.configuredCameras[accessory.UUID];
+
+          if(!protectCamera) {
+            return;
+          }
+
+          // It's a smart motion detection event - process it accordingly, if we're configured to do so.
+          if(protectCamera.isSmartMotionEnabled && payload.smartDetectTypes.length) {
+
+            this.motionEventHandler(accessory, payload.start);
+            return;
+          }
+
+          break;
+        }
+
+        default:
+
+          // It's not a modelKey we're interested in. We're done.
+          return;
+          break;
       }
     });
 
@@ -277,6 +343,7 @@ export class ProtectNvrEvents {
 
   // Motion event processing from UniFi Protect and delivered to HomeKit.
   public motionEventHandler(accessory: PlatformAccessory, lastMotion: number): void {
+
     const camera = accessory.context.camera as ProtectCameraConfig;
 
     if(!accessory || !camera || !lastMotion) {
@@ -362,6 +429,7 @@ export class ProtectNvrEvents {
 
   // Doorbell event processing from UniFi Protect and delivered to HomeKit.
   public doorbellEventHandler(accessory: PlatformAccessory, lastRing: number | null): void {
+
     const camera = accessory.context.camera as ProtectCameraConfig;
 
     if(!accessory || !camera || !lastRing) {
@@ -439,12 +507,13 @@ export class ProtectNvrEvents {
 
   // LCD message event processing from UniFi Protect and delivered to HomeKit.
   private lcdMessageEventHandler(accessory: PlatformAccessory, lcdMessage: ProtectCameraLcdMessagePayload): void {
+
     const camera = accessory.context.camera as ProtectCameraConfig;
 
     if(!accessory || !camera) {
       return;
     }
 
-    (this.configuredCameras[accessory.UUID] as ProtectDoorbell).updateLcdSwitch(lcdMessage);
+    (this.nvr.configuredCameras[accessory.UUID] as ProtectDoorbell).updateLcdSwitch(lcdMessage);
   }
 }
