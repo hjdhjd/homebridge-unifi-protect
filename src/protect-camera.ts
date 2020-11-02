@@ -28,6 +28,7 @@ export interface RtspEntry {
 export class ProtectCamera extends ProtectAccessory {
   private isDoorbellConfigured!: boolean;
   public isRinging!: boolean;
+  public isSmartMotionEnabled!: boolean;
   private isVideoConfigured!: boolean;
   public rtspEntries!: RtspEntry[];
   public snapshotUrl!: string;
@@ -39,6 +40,7 @@ export class ProtectCamera extends ProtectAccessory {
 
     this.isDoorbellConfigured = false;
     this.isRinging = false;
+    this.isSmartMotionEnabled = false;
     this.isVideoConfigured = false;
 
     // Save the camera object before we wipeout the context.
@@ -57,6 +59,13 @@ export class ProtectCamera extends ProtectAccessory {
     this.accessory.context.camera = camera;
     this.accessory.context.nvr = this.nvr.nvrApi.bootstrap?.nvr.mac;
     this.accessory.context.detectMotion = detectMotion;
+
+    // If we're on UniFi OS, and the camera supports it, check to see if we have smart motion events enabled.
+    if(this.nvrApi.isUnifiOs && camera.featureFlags.hasSmartDetect && this.nvr?.optionEnabled(camera, "Motion.SmartDetect", false)) {
+
+      this.log.info("%s: Smart motion detection enabled.", this.name());
+      this.isSmartMotionEnabled = true;
+    }
 
     // Configure accessory information.
     this.configureInfo();
