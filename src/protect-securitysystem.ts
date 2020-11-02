@@ -205,7 +205,7 @@ export class ProtectSecuritySystem extends ProtectAccessory {
 
     // Handlers to get our current state, and initialize on startup.
     securityService
-      .setCharacteristic(SecuritySystemCurrentState, accessory.context.securityState as CharacteristicValue)
+      .updateCharacteristic(SecuritySystemCurrentState, accessory.context.securityState as CharacteristicValue)
       .getCharacteristic(SecuritySystemCurrentState)
       ?.on(CharacteristicEventTypes.GET, this.getSecurityState.bind(this));
 
@@ -217,7 +217,7 @@ export class ProtectSecuritySystem extends ProtectAccessory {
     // Set the initial state after we have setup our handlers above. This way, when we startup, we
     // automatically restore the scene we've been set to, if any.
     accessory.getService(hap.Service.SecuritySystem)
-      ?.setCharacteristic(SecuritySystemTargetState, targetSecurityState);
+      ?.updateCharacteristic(SecuritySystemTargetState, targetSecurityState);
 
     return true;
   }
