@@ -66,7 +66,7 @@ The topics and messages that `homebridge-unifi-protect` publishes are:
 |                       |
 | **motion**            | `true` when motion is detected. `false` when the motion event is reset.
 |                       |
-| **rtsp**              | `{"Name": "URL"}`. Represents a JSON containing all the valid RTSP URLs that can be used to stream from this camera. `Name` is the name assigned by UniFi Protect to the RTSP URL. `URL` represents the URL that can be used for streaming. The name `Default` represents the URL that `homebridge-unifi-protect` is using to stream video.
+| **rtsp**              | `{"Name": "URL"}`. Represents a JSON containing all the valid RTSP URLs that can be used to stream from this camera. `Name` is the name assigned by UniFi Protect to the RTSP URL. `URL` represents the URL that can be used for streaming.
 |                       |
 | **securitysystem**    | One of `Alarm`, `Away`, `Home`, `Night`, `Off`. This message is published every time the security state is set.
 |                       |

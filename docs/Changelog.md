@@ -2,44 +2,58 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 4.0.0 (2020-11-01)
+  * **IMPORTANT BREAKING CHANGE**: many of the [feature options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md) have had their names change (mostly minor changes) in order to create clear namespaces and provide more consistency throughout the plugin. As feature options have grown over time, I took a step back and wanted to rethink how to logically structure feature options and prepare for the future. Refer to the [feature options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md) documentation for the complete reference, and update your feature options before you restart Homebridge.
+  * New [feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md): `Audio`. This will allow you to enable or disable audio support for cameras.
+  * New [feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md): `Doorbell.Trigger`. This feature has a dual purpose:
+    * First, for Protect cameras that are not hardware doorbells, this will allow you to enable or disable HomeKit doorbell support on **any** Protect camera.
+    * Second, this will create a switch accessory in HomeKit that you can use to manage automations - you can use it to trigger a doorbell ring, and the switch will turn on or off when a genuine ring occurs on Protect hardware doorbells.
+  * **Breaking change**: The `ContactSensor` [feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md) for Protect doorbells has been deprecated and removed in favor of the new `Doorbell.Trigger` feature option, which provides this functionality and more.
+  * New [feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md): `Motion.SmartDetect`. This feature option takes advantage of new smart detection capabilities in Protect controller v1.15 and above for **for G4 series cameras only** (that's a Protect limitation, not a limitation of `homebridge-unifi-protect`). Smart detection is Protect's name for AI/ML-based object detection for motion events. Currently, Protect can detect people, but I expect more object types to be added in the future, and `homebridge-unifi-protect` will support them when they do. This feature option allows you to use Protect's smart object detection to decide whether to notify you of a motion event or not. What does this mean to you? If you only want to see a motion event when Protect detects an actual person rather than some leaves blowing across the camera, this is the feature you've been waiting for. **This feature is only available for UniFi OS-based Protect controllers - UCKgen2+ controllers aren't currently supported. I plan to add support for this feature on UCKgen2+ in the future.** Read the [feature options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md) documentation for more information.
+  * Enhancement: video stream selection has been redesigned and improved. We now match the resolution requested by HomeKit against the list of available RTSP streams from the Protect camera to provide a richer experience. This should result in improved compatibility across a broader range of resolutions across the Apple ecosystem (iOS, iPadOS, macOS, tvOS, watchOS). Oh...it also includes support for 4K resolutions which it seems that HomeKit is beginning to add support for (though not officially in the HomeKit spec yet).
+  * Enhancement: improve overall responsiveness by enforcing time limits on the Protect API. You **will** see more errors and alerts in the logs related to the controller API. They can largely be ignored. Protect controllers are occasionally very slow to respond, taking 5+ seconds to return an API call. We now aggressively terminate those calls in order to not slow down HomeKit / Homebridge responsiveness overall. **For the most part, these error messages can be safely ignored and `homebridge-unifi-protect` will handle them gracefully.**
+  * Enhancement: when `homebridge-unifi-protect` is unable to retrieve a snapshot from the controller, it will attempt to use the most recent snapshot from that camera, if that snapshot is less than 60 seconds old.
+  * Enhancement: improve startup times by better utilizing the Homebridge object cache.
+  * Enhancement: increase responsiveness of LCD messages using the realtime events API on UniFi OS-based controllers.
+
 ## 3.7.9 (2020-10-10)
- * Housekeeping updates and minor optimizations.
+  * Housekeeping updates and minor optimizations.
 
 ## 3.7.8 (2020-10-02)
- * Enhancement: streamlined handling when Protect devices become unavailable.
- * Fix: workaround a limitation in Homebridge where it doesn't notify us of a video stream disappearing. This will hopefully be addressed in a future Homebridge release.
+  * Enhancement: streamlined handling when Protect devices become unavailable.
+  * Fix: workaround a limitation in Homebridge where it doesn't notify us of a video stream disappearing. This will hopefully be addressed in a future Homebridge release.
 
 ## 3.7.7 (2020-09-27)
- * Fix: Redact MQTT password information in Homebridge logs.
+  * Fix: Redact MQTT password information in Homebridge logs.
 
 ## 3.7.6 (2020-09-22)
- * Housekeeping updates and minor optimizations.
+  * Housekeeping updates and minor optimizations.
 
 ## 3.7.5 (2020-09-18)
- * Housekeeping fixes.
+  * Housekeeping fixes.
 
 ## 3.7.4 (2020-09-16)
- * Housekeeping fixes.
+  * Housekeeping fixes.
 
 ## 3.7.3 (2020-09-16)
- * Fix: Really fix that pesky logging regression.
+  * Fix: Really fix that pesky logging regression.
 
 ## 3.7.2 (2020-09-16)
- * Fix: Really fix that pesky logging regression.
+  * Fix: Really fix that pesky logging regression.
 
 ## 3.7.1 (2020-09-16)
- * Fix: Small regression related to logging.
+  * Fix: Small regression related to logging.
 
 ## 3.7.0 (2020-09-16)
- * New feature: noise filters. Read the [documentation](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/AudioOptions.md) and the associated [feature options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md)
- * Enhancement: improved device detection support in anticipation of more types of UniFi Protect cameras in the future.
- * Enhancement: support for self-signed TLS certificates for those with MQTT brokers.
- * New behavior: motion switches for each camera are now disabled by default. To better understand why, please read [homebridge-unifi-protect best practices](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/BestPractices.md) for more information. Motion detection remains on by default, of course. Fear not, you can still get them back by default if you want - just set the [feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md) `Enable.MotionSwitch` either globally, or per-camera.
- * New behavior: motion and doorbell events are not logged by default. This goes along with the above to reduce unnecessary logging. If you're like to restore the previous behavior, just set the [feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md) `Enable.LogMotion`  and `Enable.LogDoorbell` either globally, or per-camera. You can read more about [homebridge-unifi-protect best practices](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/BestPractices.md) to understand why the defaults were changed.
- * Various housekeeping improvements.
+  * New feature: noise filters. Read the [documentation](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/AudioOptions.md) and the associated [feature options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md)
+  * Enhancement: improved device detection support in anticipation of more types of UniFi Protect cameras in the future.
+  * Enhancement: support for self-signed TLS certificates for those with MQTT brokers.
+  * New behavior: motion switches for each camera are now disabled by default. To better understand why, please read [homebridge-unifi-protect best practices](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/BestPractices.md) for more information. Motion detection remains on by default, of course. Fear not, you can still get them back by default if you want - just set the [feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md) `Enable.MotionSwitch` either globally, or per-camera.
+  * New behavior: motion and doorbell events are not logged by default. This goes along with the above to reduce unnecessary logging. If you're like to restore the previous behavior, just set the [feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md) `Enable.LogMotion`  and `Enable.LogDoorbell` either globally, or per-camera. You can read more about [homebridge-unifi-protect best practices](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/BestPractices.md) to understand why the defaults were changed.
+  * Various housekeeping improvements.
 
 ## 3.6.5 (2020-09-09)
- * Fix: minor update to cleanup aspects of logging.
+  * Fix: minor update to cleanup aspects of logging.
 
 ## 3.6.4 (2020-09-08)
   * New [feature options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md) `LogMotion` and `LogDoorbell` to control whether motion or doorbell events get logged. You can set this for the entire controller, or individual cameras, like all feature options.
