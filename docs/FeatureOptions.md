@@ -86,7 +86,7 @@ Please review the [audio options documentation](https://github.com/hjdhjd/homebr
 | <CODE>Enable.Audio.Filter.Noise.HighPass.<I>Number</I> | Set the high pass filter to attenuate (eliminate) frequencies below *number*. *Default: 200*
 | <CODE>Enable.Audio.Filter.Noise.LowPass.<I>Number</I> | Set the low pass filter to attenuate (eliminate) frequencies above *number*. *Default: 1000*
 |                                               |
-| `Enable.Audio.TwoWay`                          | Enable two-way audio support using the Home app for supported cameras and doorbells (G3 Micro and G4 Doorbell, currently). *(Default)*<BR>**Note that acoustic echo cancellation (AEC) is not currently available and you *will* hear an echo when using the Home app, however those standing at the doorbell (or camera) will hear things correctly.**</BR>
+| `Enable.Audio.TwoWay`                          | Enable two-way audio support using the Home app for supported cameras and doorbells. *(Default)*<BR>**Note that acoustic echo cancellation (AEC) is not currently available and you *will* hear an echo when using the Home app, however those standing at the doorbell (or camera) will hear things correctly.**</BR>
 | `Disable.Audio.TwoWay`                         | Disable two-way audio support.
 
 #### <A NAME="device"></A>Device Feature Options
