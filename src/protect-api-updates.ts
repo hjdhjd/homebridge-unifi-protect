@@ -3,6 +3,7 @@
  * protect-api-updates.ts: Our UniFi Protect realtime updates event API implementation.
  */
 import { Logging } from "homebridge";
+import { ProtectCameraLcdMessagePayload } from "./protect-types";
 import zlib from "zlib";
 
 /*
@@ -115,6 +116,28 @@ type ProtectNvrUpdateEventAction = {
   id: string,
   modelKey: string,
   newUpdateId: string
+}
+
+// A complete description of the UniFi Protect realtime update events API payload packet JSONs.
+// Payload JSON for modelKey: event action: add
+export type ProtectNvrUpdatePayloadEventAdd = {
+  camera: string,
+  id: string,
+  modelKey: string,
+  partition: null,
+  score: number,
+  smartDetectEvents: string[],
+  smartDetectTypes: string[],
+  start: number,
+  type: string
+}
+
+// Payload JSON for modelKey: camera action: update
+export type ProtectNvrUpdatePayloadCameraUpdate = {
+  isMotionDetected: boolean,
+  lastMotion: number,
+  lastRing: number,
+  lcdMessage: ProtectCameraLcdMessagePayload
 }
 
 export class ProtectApiUpdates {
