@@ -369,7 +369,8 @@ export class ProtectDoorbell extends ProtectCamera {
       lcdEntry.state = true;
       lcdEntry.service.updateCharacteristic(this.hap.Characteristic.On, true);
 
-      this.log.info("%s: Doorbell message set%s: %s.", this.name(), lcdEntry.duration ? " (" + (lcdEntry.duration / 1000).toString() + " seconds)" : "", lcdEntry.text);
+      this.log.info("%s: Doorbell message set%s: %s.", this.name(),
+        lcdMessage.resetAt !== null ? " (" + Math.round(((lcdMessage.resetAt ?? 0) - Date.now()) / 1000).toString() + " seconds)" : "", lcdMessage.text);
 
       // Publish to MQTT, if the user has configured it.
       this.nvr.mqtt?.publish(this.accessory, "message", JSON.stringify({ duration: lcdEntry.duration / 1000, message: lcdEntry.text }));
@@ -402,7 +403,7 @@ export class ProtectDoorbell extends ProtectCamera {
 
     // We take the duration and save it for MQTT and then translate the payload into what Protect is expecting from us.
     if("duration" in payload) {
-      payload.resetAt = (payload.duration ? Date.now() + payload.duration : null);
+      payload.resetAt = payload.duration ? Date.now() + payload.duration : null;
       delete payload.duration;
     }
 
