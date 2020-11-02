@@ -140,8 +140,17 @@ export interface ProtectCameraConfigInterface {
     hasPrivacyMask: boolean,
     hasRtc: boolean,
     hasSdCard: boolean,
+    hasSmartDetect: boolean,
     hasSpeaker: boolean,
-    hasWifi: boolean
+    hasWifi: boolean,
+    motionAlgorithms: string[],
+    privacyMaskCapability: {
+      maxMasks: number,
+      rectangleOnly: boolean
+    },
+    smartDetectTypes: string[],
+    videoModeMaxFps: number[],
+    videoModes: string[]
   },
   firmwareBuild: string,
   firmwareVersion: string,
@@ -235,6 +244,17 @@ export interface ProtectCameraConfigInterface {
     suppressIlluminationSurge: boolean,
     useNewMotionAlgorithm: boolean
   },
+  smartDetectLines: [],
+  smartDetectSettings: {
+    objectTypes: string[]
+  },
+  smartDetectZones: {
+    color: string,
+    name: string,
+    objectTypes: string[],
+    points: [number, number][],
+    sensitivity: number
+  }[],
   speakerSettings: {
     areSystemSoundsEnabled: boolean,
     isEnabled: boolean,
