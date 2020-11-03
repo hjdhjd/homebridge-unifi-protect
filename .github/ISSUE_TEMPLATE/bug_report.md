@@ -37,6 +37,8 @@ Remove any sensitive information.
 * **Homebridge Version:** <!-- homebridge -V -->
 * **Node Version:** <!-- node -v -->
 * **Homebridge-UniFi-Protect Plugin Version:**
+* **UniFi Protect Controller Version:**
+* **UniFi Protect Controller Type:** <!-- UCKgen2+, UDMP, UNVR -->
 * **Apple Device and iOS / macOS / iPadOS / tvOS Version:**<!-- Type of Apple device you're using and associated OS version -->
 * **Operating System and OS Version:** <!-- Raspbian / Ubuntu / Debian / Windows / macOS / Docker -->
 
