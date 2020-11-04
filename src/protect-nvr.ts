@@ -49,7 +49,7 @@ export class ProtectNvr {
   public nvrApi!: ProtectApi;
   public platform: ProtectPlatform;
   private pollingTimer!: NodeJS.Timeout;
-  private refreshInterval: number;
+  public refreshInterval: number;
   private unsupportedDevices: { [index: string]: boolean };
 
   constructor(platform: ProtectPlatform, nvrOptions: ProtectNvrOptions) {
@@ -87,7 +87,7 @@ export class ProtectNvr {
     this.nvrApi = new ProtectApi(platform, nvrOptions.address, nvrOptions.username, nvrOptions.password);
 
     // Initialize our event handlers.
-    this.events = new ProtectNvrEvents(this, nvrOptions);
+    this.events = new ProtectNvrEvents(this);
 
     // Initialize our liveviews.
     this.liveviews = new ProtectLiveviews(this);
@@ -108,7 +108,7 @@ export class ProtectNvr {
     for(const camera of this.nvrApi.Cameras ?? []) {
 
       // If we have no MAC address, name, or this camera isn't being managed by Protect, we skip.
-      if(!camera.mac || !camera.name || !camera.isManaged) {
+      if(!camera.mac || !camera.name || camera.isAdopting || !camera.isAdopted || !camera.isManaged) {
         continue;
       }
 

@@ -20,7 +20,6 @@ import {
 import {
   ProtectCameraConfig,
   ProtectCameraLcdMessagePayload,
-  ProtectNvrOptions,
   ProtectNvrSystemEvent
 } from "./protect-types";
 import { ProtectApi } from "./protect-api";
@@ -42,10 +41,9 @@ export class ProtectNvrEvents {
   private readonly eventTimers: { [index: string]: NodeJS.Timeout };
   private nvrApi: ProtectApi;
   private platform: ProtectPlatform;
-  private refreshInterval: number;
   private unsupportedDevices: { [index: string]: boolean };
 
-  constructor(nvr: ProtectNvr, nvrOptions: ProtectNvrOptions) {
+  constructor(nvr: ProtectNvr) {
 
     this.api = nvr.platform.api;
     this.debug = nvr.platform.debug.bind(nvr.platform);
@@ -59,7 +57,6 @@ export class ProtectNvrEvents {
     this.motionDuration = nvr.platform.config.motionDuration;
     this.eventTimers = {};
     this.platform = nvr.platform;
-    this.refreshInterval = nvrOptions.refreshInterval;
     this.unsupportedDevices = {};
   }
 
@@ -358,7 +355,7 @@ export class ProtectNvrEvents {
 
     // We only consider events that have happened within the last two refresh intervals. Otherwise, we assume
     // it's stale data and don't inform the user.
-    if((Date.now() - lastMotion) > (this.refreshInterval * 2 * 1000)) {
+    if((Date.now() - lastMotion) > (this.nvr.refreshInterval * 2 * 1000)) {
       this.debug("%s: Skipping motion event due to stale data.", this.nvrApi.getFullName(camera));
       return;
     }
@@ -444,7 +441,7 @@ export class ProtectNvrEvents {
 
     // We only consider events that have happened within the last two refresh intervals. Otherwise, we assume it's stale
     // data and don't inform the user.
-    if((Date.now() - lastRing) > (this.refreshInterval * 2 * 1000)) {
+    if((Date.now() - lastRing) > (this.nvr.refreshInterval * 2 * 1000)) {
       this.debug("%s: Skipping doorbell ring due to stale data.", this.nvrApi.getFullName(camera));
       return;
     }
