@@ -4,6 +4,7 @@ All notable changes to this project will be documented in this file. This projec
 
 ## 4.0.1 (2020-11-03)
   * Fix for a regression related to event detection on non-UniFi OS platforms.
+  * Fix for a race condition related to adding newly detected Protect devices - `homebridge-unifi-protect` will wait until they are finsihed being adopted by the Protect controller before adding the device to HomeKit.
 
 ## 4.0.0 (2020-11-01)
   * **IMPORTANT BREAKING CHANGE**: many of the [feature options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md) have had their names change (mostly minor changes) in order to create clear namespaces and provide more consistency throughout the plugin. As feature options have grown over time, I took a step back and wanted to rethink how to logically structure them and prepare for the future. Refer to the [feature options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md) documentation for the complete reference, and update your feature options before you restart Homebridge.
