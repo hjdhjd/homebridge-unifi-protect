@@ -477,17 +477,18 @@ export class ProtectCamera extends ProtectAccessory {
   // Configure a camera accessory for HomeKit.
   public async configureVideoStream(): Promise<boolean> {
     const bootstrap: ProtectNvrBootstrap | null = this.nvr.nvrApi.bootstrap;
+    let camera = this.accessory.context.camera as ProtectCameraConfig;
     const nvr: ProtectNvr = this.nvr;
     const nvrApi: ProtectApi = this.nvr.nvrApi;
     const rtspEntries: RtspEntry[] = [];
 
     // No channels exist on this camera or we don't have access to the bootstrap configuration.
-    if(!(this.accessory.context.camera as ProtectCameraConfig)?.channels || !bootstrap) {
+    if(!camera?.channels || !bootstrap) {
       return false;
     }
 
     // Enable RTSP on the camera if needed and get the list of RTSP streams we have ultimately configured.
-    const camera = await nvrApi.enableRtsp(this.accessory.context.camera as ProtectCameraConfig) ?? (this.accessory.context.camera as ProtectCameraConfig);
+    camera = await nvrApi.enableRtsp(camera) ?? camera;
 
     // Figure out which camera channels are RTSP-enabled, and user-enabled.
     let cameraChannels = camera.channels.filter(x => x.isRtspEnabled && nvr.optionEnabled(camera, "Video.Stream." + x.name));
