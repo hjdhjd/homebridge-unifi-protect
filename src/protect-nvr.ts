@@ -346,7 +346,7 @@ export class ProtectNvr {
   }
 
   // Utility function to let us know if a device or feature should be enabled or not.
-  public optionEnabled(device: ProtectCameraConfig | null, option = "", defaultReturnValue = true): boolean {
+  public optionEnabled(device: ProtectCameraConfig | null, option = "", defaultReturnValue = true, address = ""): boolean {
 
     // There are a couple of ways to enable and disable options. The rules of the road are:
     //
@@ -370,6 +370,40 @@ export class ProtectNvr {
     }
 
     let optionSetting;
+
+    // If we've specified an address parameter - we check for device and address-specific options before
+    // anything else.
+    if(address && option) {
+
+      // Test for device-specific and address-specific option settings, used together.
+      if(device?.mac) {
+
+        optionSetting = option + "." + device.mac.toUpperCase() + "." + address.toUpperCase();
+
+        // We've explicitly enabled this option for this device and address combination.
+        if(configOptions.indexOf("ENABLE." + optionSetting) !== -1) {
+          return true;
+        }
+
+        // We've explicitly disabled this option for this device and address combination.
+        if(configOptions.indexOf("DISABLE." + optionSetting) !== -1) {
+          return false;
+        }
+      }
+
+      // Test for address-specific option settings only.
+      optionSetting = option + "." + address.toUpperCase();
+
+      // We've explicitly enabled this option for this address.
+      if(configOptions.indexOf("ENABLE." + optionSetting) !== -1) {
+        return true;
+      }
+
+      // We've explicitly disabled this option for this address.
+      if(configOptions.indexOf("DISABLE." + optionSetting) !== -1) {
+        return false;
+      }
+    }
 
     // If we've specified a device, check for device-specific options first. Otherwise, we're dealing
     // with an NVR-specific or global option.

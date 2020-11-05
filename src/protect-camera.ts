@@ -21,6 +21,7 @@ export const PROTECT_SWITCH_MOTION_TRIGGER = "MotionSensorTrigger";
 
 export interface RtspEntry {
   name: string,
+  profile: string,
   resolution: [ number, number, number],
   url: string
 }
@@ -30,7 +31,8 @@ export class ProtectCamera extends ProtectAccessory {
   public isRinging!: boolean;
   public isSmartMotionEnabled!: boolean;
   private isVideoConfigured!: boolean;
-  public rtspEntries!: RtspEntry[];
+  private rtspEntries!: RtspEntry[];
+  private rtspQuality!: { [index: string]: string };
   public snapshotUrl!: string;
   public stream!: ProtectStreamingDelegate;
   public twoWayAudio!: boolean;
@@ -42,6 +44,7 @@ export class ProtectCamera extends ProtectAccessory {
     this.isRinging = false;
     this.isSmartMotionEnabled = false;
     this.isVideoConfigured = false;
+    this.rtspQuality = {};
 
     // Save the camera object before we wipeout the context.
     const camera = this.accessory.context.camera as ProtectCameraConfig;
@@ -430,11 +433,40 @@ export class ProtectCamera extends ProtectAccessory {
   }
 
   // Find an RTSP configuration for a given target resolution.
-  public findRtsp(rtspEntries: RtspEntry[], width: number, height: number): RtspEntry | null {
+  public findRtsp(width: number, height: number, camera: ProtectCameraConfig | null = null, address = "", rtspEntries = this.rtspEntries): RtspEntry | null {
 
     // No RTSP entries to choose from, we're done.
     if(!rtspEntries || !rtspEntries.length) {
       return null;
+    }
+
+    // First, we check to see if we've set an explicit preference for the target address.
+    if(camera && address) {
+
+      // If we don't have this address cached, look it up and cache it.
+      if(!this.rtspQuality[address]) {
+
+        // Check to see if there's an explicit preference set and cache the result.
+        if(this.nvr.optionEnabled(camera, "Video.Stream.Only.Low", false, address)) {
+          this.rtspQuality[address] = "LOW";
+        } else if(this.nvr.optionEnabled(camera, "Video.Stream.Only.Medium", false, address)) {
+          this.rtspQuality[address] = "MEDIUM";
+        } else if(this.nvr.optionEnabled(camera, "Video.Stream.Only.High", false, address)) {
+          this.rtspQuality[address] = "HIGH";
+        } else {
+          this.rtspQuality[address] = "None";
+        }
+      }
+
+      // If it's set to none, we default to our normal lookup logic.
+      if(this.rtspQuality[address] !== "None") {
+        return rtspEntries.find(x => x.profile.toUpperCase() === this.rtspQuality[address]) ?? null;
+      }
+    }
+
+    // Second, we check to see if we've set an explicit preference for stream quality.
+    if(this.rtspQuality.Default) {
+      return rtspEntries.find(x => x.profile.toUpperCase() === this.rtspQuality.Default) ?? null;
     }
 
     // See if we have a match for our desired resolution on the camera. We ignore FPS - HomeKit clients seem
@@ -476,6 +508,7 @@ export class ProtectCamera extends ProtectAccessory {
 
   // Configure a camera accessory for HomeKit.
   public async configureVideoStream(): Promise<boolean> {
+
     const bootstrap: ProtectNvrBootstrap | null = this.nvr.nvrApi.bootstrap;
     let camera = this.accessory.context.camera as ProtectCameraConfig;
     const nvr: ProtectNvr = this.nvr;
@@ -491,38 +524,17 @@ export class ProtectCamera extends ProtectAccessory {
     camera = await nvrApi.enableRtsp(camera) ?? camera;
 
     // Figure out which camera channels are RTSP-enabled, and user-enabled.
-    let cameraChannels = camera.channels.filter(x => x.isRtspEnabled && nvr.optionEnabled(camera, "Video.Stream." + x.name));
+    const cameraChannels = camera.channels.filter(x => x.isRtspEnabled && nvr.optionEnabled(camera, "Video.Stream." + x.name));
 
     // Set the camera and shapshot URLs.
     const cameraUrl = "rtsp://" + bootstrap.nvr.host + ":" + bootstrap.nvr.ports.rtsp.toString() + "/";
     this.snapshotUrl = nvrApi.camerasUrl() + "/" + camera.id + "/snapshot";
 
-    // Check to see if the user has requested a specific stream quality.
-    let forceQuality = "";
-
-    if(nvr.optionEnabled(camera, "Video.Stream.Only.Low", false)) {
-      forceQuality = "Low";
-    } else if(nvr.optionEnabled(camera, "Video.Stream.Only.Medium", false)) {
-      forceQuality = "Medium";
-    } else if(nvr.optionEnabled(camera, "Video.Stream.Only.High", false)) {
-      forceQuality = "High";
-    }
-
-    // Find the stream the user has explicitly requested. If we can't find the requested stream quality, we fail.
-    if(forceQuality) {
-      const foundChannel = cameraChannels.find(x => x.name === forceQuality);
-      cameraChannels = [];
-
-      if(foundChannel) {
-        cameraChannels = [ foundChannel ];
-      }
-    }
-
     // No RTSP streams are available that meet our criteria - we're done.
     if(!cameraChannels.length) {
-      this.log.info("%s: No RTSP streams have been configured for this camera. %s",
+      this.log.info("%s: No RTSP stream profiles have been configured for this camera. %s",
         this.name(),
-        "Enable at least one RTSP stream in the UniFi Protect webUI to resolve this issue or " +
+        "Enable at least one RTSP stream profile in the UniFi Protect webUI to resolve this issue or " +
         "assign the Administrator role to the user configured for this plugin to allow it to automatically configure itself."
       );
 
@@ -532,7 +544,7 @@ export class ProtectCamera extends ProtectAccessory {
     // Now that we have our RTSP streams, create a list of supported resolutions for HomeKit.
     for(const channel of cameraChannels) {
       rtspEntries.push({ name: channel.width.toString() + "x" + channel.height.toString() + "@" + channel.fps.toString() + "fps (" + channel.name + ")",
-        resolution: [ channel.width, channel.height, channel.fps ], url: cameraUrl + channel.rtspAlias });
+        profile: channel.name, resolution: [ channel.width, channel.height, channel.fps ], url: cameraUrl + channel.rtspAlias });
     }
 
     // Sort the list of resolutions, from high to low.
@@ -551,14 +563,14 @@ export class ProtectCamera extends ProtectAccessory {
       }
 
       // Find the closest RTSP match for this resolution.
-      const foundRtsp = this.findRtsp(rtspEntries, entry[0], entry[1]);
+      const foundRtsp = this.findRtsp(entry[0], entry[1], undefined, undefined, rtspEntries);
 
       if(!foundRtsp) {
         continue;
       }
 
       // Add the resolution to the list of supported resolutions.
-      rtspEntries.push({ name: foundRtsp.name, resolution: [ entry[0], entry[1], entry[2] ], url: foundRtsp.url });
+      rtspEntries.push({ name: foundRtsp.name, profile: foundRtsp.profile + "-HomeKit", resolution: [ entry[0], entry[1], entry[2] ], url: foundRtsp.url });
 
       // Since we added resolutions to the list, resort resolutions, from high to low.
       rtspEntries.sort(this.sortByResolutions.bind(this));
@@ -572,8 +584,23 @@ export class ProtectCamera extends ProtectAccessory {
       return true;
     }
 
-    // Configure the video stream and inform HomeKit about it, if it's our first time.
-    this.stream = new ProtectStreamingDelegate(this);
+    // Check to see if the user has requested a specific stream quality for this camera.
+    if(nvr.optionEnabled(camera, "Video.Stream.Only.Low", false)) {
+      this.rtspQuality.Default = "LOW";
+    } else if(nvr.optionEnabled(camera, "Video.Stream.Only.Medium", false)) {
+      this.rtspQuality.Default = "MEDIUM";
+    } else if(nvr.optionEnabled(camera, "Video.Stream.Only.High", false)) {
+      this.rtspQuality.Default = "HIGH";
+    }
+
+    // Inform the user if we've set a default.
+    if(this.rtspQuality.Default) {
+      this.log.info("%s: Configured to use only RTSP stream profile: %s.", this.name(),
+        this.rtspQuality.Default.charAt(0) + this.rtspQuality.Default.slice(1).toLowerCase());
+    }
+
+    // Configure the video stream with our resolutions and inform HomeKit about it.
+    this.stream = new ProtectStreamingDelegate(this, this.rtspEntries.map(x => x.resolution));
     this.accessory.configureController(this.stream.controller);
     this.isVideoConfigured = true;
 

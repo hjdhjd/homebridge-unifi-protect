@@ -43,7 +43,7 @@ import ffmpegPath from "ffmpeg-for-homebridge";
 require("events").EventEmitter.defaultMaxListeners = 100;
 
 type SessionInfo = {
-  address: string; // Address of the HAP controller.
+  address: string; // Address of the HomeKit client.
   addressVersion: string;
 
   videoPort: number;
@@ -79,7 +79,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   private verboseFfmpegTimer!: NodeJS.Timeout | null;
   public readonly videoProcessor: string;
 
-  constructor(protectCamera: ProtectCamera) {
+  constructor(protectCamera: ProtectCamera, resolutions: [number, number, number][]) {
     this.api = protectCamera.api;
     this.config = protectCamera.platform.config;
     this.debug = protectCamera.platform.debug.bind(protectCamera.platform);
@@ -126,7 +126,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
           // challenges in doing on-the-fly RTSP changes in UniFi Protect. Once the list of supported
           // resolutions is set here, there's no going back unless a user reboots. Homebridge doesn't have a way
           // to dynamically adjust the list of supported resolutions at this time.
-          resolutions: protectCamera.rtspEntries.map(x => x.resolution)
+          resolutions: resolutions
         }
       }
     };
@@ -246,10 +246,11 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       return;
     }
 
-    const rtspEntry = this.protectCamera.findRtsp(this.protectCamera.rtspEntries, request.video.width, request.video.height);
+    const rtspEntry = this.protectCamera.findRtsp(request.video.width, request.video.height, cameraConfig, sessionInfo.address);
 
     if(!rtspEntry) {
-      const errorMessage = "Unable to start video stream: no valid RTSP URL was found.";
+
+      const errorMessage = "Unable to start video stream: no valid RTSP stream profile was found.";
 
       this.log.error("%s: %s %sx%s, %s fps, %s kbps.", this.name(), errorMessage,
         request.video.width, request.video.height, request.video.fps, request.video.max_bit_rate);
@@ -284,8 +285,8 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     // -rtsp_transport tcp: tell the RTSP stream handler that we're looking for a TCP connection.
     const ffmpegArgs = [ "-hide_banner", "-rtsp_transport", "tcp", "-i", rtspEntry.url ];
 
-    this.log.info("%s: HomeKit video stream request received: %sx%s@%sfps, %s kbps. Using the %s RTSP profile.",
-      this.name(), request.video.width, request.video.height, request.video.fps, request.video.max_bit_rate, rtspEntry.name);
+    this.log.info("%s: HomeKit video stream request received from %s: %sx%s@%sfps, %s kbps. Using the %s RTSP stream profile.",
+      this.name(), sessionInfo.address , request.video.width, request.video.height, request.video.fps, request.video.max_bit_rate, rtspEntry.name);
 
     // Configure our video parameters:
     // -map 0:v           selects the first available video track from the stream. Protect actually maps audio
