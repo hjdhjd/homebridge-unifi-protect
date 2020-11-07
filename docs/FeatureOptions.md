@@ -22,10 +22,10 @@ Feature Options allow you to enable or disable certain features in this plugin. 
 
 The priority given to these options works in the following order, from highest to lowest priority where settings that are higher in priority can override lower ones:
 
-* Client-specific options that are enabled or disabled. **Note: these only apply for [audio](#audio) and [video](#video) feature options.**
-* Device options that are enabled or disabled.
-* Controller options that are enabled or disabled.
-* Global options that are enabled or disabled.
+  * Client-specific options that are enabled or disabled. **Note: these only apply for [audio](#audio) and [video](#video) feature options.**
+  * Device options that are enabled or disabled.
+  * Controller options that are enabled or disabled.
+  * Global options that are enabled or disabled.
 
 All feature options can be set at any scope level, or at multiple scope levels. If an option isn't applicable to a particular category of device, it is ignored. For example, if you have two doorbells in your environment, and want to enable the same feature options on both, you can enable the doorbell-related feature options globally rather than specifying them for each individual doorbell. If you want to override a global feature option you've set, you can override the global feature option for the individual doorbell in this example.
 
