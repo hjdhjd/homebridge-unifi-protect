@@ -22,18 +22,30 @@ Feature Options allow you to enable or disable certain features in this plugin. 
 
 The priority given to these options works in the following order, from highest to lowest priority where settings that are higher in priority can override lower ones:
 
+* Client-specific options that are enabled or disabled. **Note: these only apply for [audio](#audio) and [video](#video) feature options.**
 * Device options that are enabled or disabled.
 * Controller options that are enabled or disabled.
 * Global options that are enabled or disabled.
 
-All of the options below can be set at any scope level. If an option isn't applicable to a particular category of device, it is ignored. For example, if you have two doorbells in your environment, and want to enable the same feature options on both, you can enable the doorbell feature options globally instead of having to specify them individually. If you want to override a global feature option you've set, you can specify those overrides for the individual doorbell, in this example.
+All feature options can be set at any scope level, or at multiple scope levels. If an option isn't applicable to a particular category of device, it is ignored. For example, if you have two doorbells in your environment, and want to enable the same feature options on both, you can enable the doorbell-related feature options globally rather than specifying them for each individual doorbell. If you want to override a global feature option you've set, you can override the global feature option for the individual doorbell in this example.
 
-To specify the scope of an option, you append the option with `.MAC`, where `MAC` is the MAC address of either a UniFi Protect controller or a camera. If you don't append a MAC address to an option, it will be applied globally, unless a more specifically scoped option is specified elsewhere. The plugin will log all devices it encounters and knows about, including MAC addresses. You can use that to guide what features you would like to enable ot disable.
+#### Specifying Scope
+There are two types of scope specifiers that you can use with feature options - MAC addresses and streaming client IP addresses.
 
-The `options` setting is an array of strings used to customize Feature Options in your `config.json`. I would encourage most users, however, to use the [Homebridge webUI](https://github.com/oznu/homebridge-config-ui-x), to configure Feature Options as well as other options in this plugin. It contains additional validation checking of parameters to ensure the configuration is always valid.
+Scoping rules:
+
+  * If you don't use a scoping specifier, feature options will be applied globally for all devices and streaming clients.
+  * Feature option scoping specifiers can be stacked together, meaning you can use either type of scope or both, enabling you to create options that are specific to a certain Protect device, a certain streaming client, or both.
+    * To use a device-specific feature option, append the option with `.MAC`, where `MAC` is the MAC address of either a UniFi Protect controller or a camera.
+    * To use a streaming client-specific feature option, append the option with `.IPADDRESS` where `IPADDRESS` is the IP address of the HomeKit streaming client.
+    * To use both a device-specific and a streaming client-specific feature option, append the option with `.MAC.IPADDRESS`.
+
+`homebridge-unifi-protect` will log all devices it discovers on startup, including MAC addresses, which you can use to tailor the feature options you'd like to enable or disable on a per-device basis. Additionally, when a client requests a video stream, the IP address of that client will be logged, which you can also use to further tailor the streaming experience.
 
 ### Getting Started
-Before using these features, you should understand how Feature Options propagate to controllers and the devices attached to them. If you choose to disable a controller from being available to HomeKit, you will also disable all the cameras attached to that controller. If you've disabled a controller, and all it's devices with it, you can selectively enable a single device associated with that controller by explicitly setting an `Enable.` Feature Option. This provides you a lot of richness in how you enable or disable devices for HomeKit use.
+Before using these features, you should understand how Feature Options propagate to controllers and the devices attached to them. If you choose to disable a controller from being available to HomeKit, you will also disable all the cameras attached to that controller. If you've disabled a controller, you can selectively enable a single device associated with that controller by explicitly using the `Enable.` Feature Option with that device's MAC address. This provides you a lot of richness in how you enable or disable devices for HomeKit use.
+
+The `options` setting is an array of strings used to customize Feature Options in your `config.json`. I would encourage most users, however, to use the [Homebridge webUI](https://github.com/oznu/homebridge-config-ui-x), to configure Feature Options as well as other options in this plugin. It contains additional validation checking of parameters to ensure the configuration is always valid.
 
 #### Example Configuration
 An example `options` setting might look like this in your config.json:
@@ -73,7 +85,9 @@ In this example:
 Feature options provide a rich mechanism for tailoring your `homebridge-unifi-protect` experience. The reference below is divided into functional category groups.
 
 #### <A NAME="audio"></A>Audio Feature Options
-Please review the [audio options documentation](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/Doorbell.md) for additional information about the options below.
+Audio and video options can be applied on a per-streaming-client basis, if you choose. This means that you can optionally choose to set a certain stream quality or disable audio, for specific HomeKit streaming clients. For example, you may choose to always disable audio support when your Apple TV (with a static IP address) requests a camera stream.
+
+Please review the [audio options documentation](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/AudioOptions.md) for additional information about the options below.
 
 | Option                                        | Description
 |-----------------------------------------------|----------------------------------
@@ -149,6 +163,8 @@ Please review the [documentation for UniFi Protect liveview support](https://git
 | `Disable.SecuritySystem.Alarm`                | Remove the security alarm switch on the security system accessory. *(Default)*
 
 #### <A NAME="video"></A>Video Feature Options
+Audio and video options can be applied on a per-streaming-client basis, if you choose. This means that you can optionally choose to set a certain stream quality or disable audio, for specific HomeKit streaming clients. For example, you may choose to always disable audio support when your Apple TV (with a static IP address) requests a camera stream.
+
 Video feature options allow you to tailor which RTSP streams are utilized for HomeKit video streaming.
 
 | Option                                        | Description
