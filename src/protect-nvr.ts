@@ -359,15 +359,16 @@ export class ProtectNvr {
     //    camera that it's managing.
     const configOptions = this.platform?.configOptions;
 
-    // Make sure our option is upper case for easier checks.
-    if(option) {
-      option = option.toUpperCase();
-    }
-
     // Nothing configured - we assume the default return value.
     if(!configOptions) {
       return defaultReturnValue;
     }
+
+    // Upper case parameters for easier checks.
+    option = option ? option.toUpperCase() : "";
+    address = address ? address.toUpperCase() : "";
+
+    const deviceMac = device?.mac ? device.mac.toUpperCase() : "";
 
     let optionSetting;
 
@@ -376,9 +377,9 @@ export class ProtectNvr {
     if(address && option) {
 
       // Test for device-specific and address-specific option settings, used together.
-      if(device?.mac) {
+      if(deviceMac) {
 
-        optionSetting = option + "." + device.mac.toUpperCase() + "." + address.toUpperCase();
+        optionSetting = option + "." + deviceMac + "." + address;
 
         // We've explicitly enabled this option for this device and address combination.
         if(configOptions.indexOf("ENABLE." + optionSetting) !== -1) {
@@ -392,7 +393,7 @@ export class ProtectNvr {
       }
 
       // Test for address-specific option settings only.
-      optionSetting = option + "." + address.toUpperCase();
+      optionSetting = option + "." + address;
 
       // We've explicitly enabled this option for this address.
       if(configOptions.indexOf("ENABLE." + optionSetting) !== -1) {
@@ -407,11 +408,11 @@ export class ProtectNvr {
 
     // If we've specified a device, check for device-specific options first. Otherwise, we're dealing
     // with an NVR-specific or global option.
-    if(device?.mac) {
+    if(deviceMac) {
 
       // First we test for camera-level option settings.
       // No option specified means we're testing to see if this device should be shown in HomeKit.
-      optionSetting = option ? option + "." + device.mac.toUpperCase() : device.mac.toUpperCase();
+      optionSetting = option ? option + "." + deviceMac : deviceMac;
 
       // We've explicitly enabled this option for this device.
       if(configOptions.indexOf("ENABLE." + optionSetting) !== -1) {
@@ -431,7 +432,8 @@ export class ProtectNvr {
 
     // Now we test for NVR-level option settings.
     // No option specified means we're testing to see if this NVR (and it's attached devices) should be shown in HomeKit.
-    optionSetting = option ? option + "." + this.nvrApi.bootstrap.nvr.mac.toUpperCase() : this.nvrApi.bootstrap.nvr.mac.toUpperCase();
+    const nvrMac = this.nvrApi.bootstrap.nvr.mac.toUpperCase();
+    optionSetting = option ? option + "." + nvrMac : nvrMac;
 
     // We've explicitly enabled this option for this NVR and all the devices attached to it.
     if(configOptions.indexOf("ENABLE." + optionSetting) !== -1) {
@@ -464,28 +466,69 @@ export class ProtectNvr {
   }
 
   // Utility function to return a configuration parameter for a Protect device.
-  public optionGet(device: ProtectCameraConfig | null, option: string): string | undefined {
+  public optionGet(device: ProtectCameraConfig | null, option: string, address = ""): string | undefined {
 
     // Using the same rules as we do to test for whether an option is enabled, retrieve options with parameters and
     // return them. If we don't find anything, we return undefined.
     const configOptions = this.platform?.configOptions;
-    option = option.toUpperCase();
 
-    // Nothing configured - we assume the default return value.
-    if(!configOptions) {
+    // Nothing configured - we assume there's nothing.
+    if(!configOptions || !option) {
       return undefined;
     }
+
+    // Upper case parameters for easier checks.
+    address = address ? address.toUpperCase() : "";
+    option = option.toUpperCase();
+    const deviceMac = device?.mac.toUpperCase() ?? null;
 
     let foundOption;
     let optionSetting: string;
 
+    // If we've specified an address parameter - we check for device and address-specific options before
+    // anything else.
+    if(address) {
+
+      // Test for device-specific and address-specific option settings, used together.
+      if(deviceMac) {
+
+        // We've explicitly enabled this option for this device and address combination.
+        optionSetting = "ENABLE." + option + "." + deviceMac + "." + address + ".";
+
+        if((foundOption = configOptions.find(x => optionSetting === x.slice(0, optionSetting.length))) !== undefined) {
+          return foundOption.slice(optionSetting.length);
+        }
+
+        // We've explicitly disabled this option for this device and address combination.
+        optionSetting = "DISABLE." + option + "." + deviceMac + "." + address;
+
+        if(configOptions.indexOf(optionSetting) !== -1) {
+          return undefined;
+        }
+      }
+
+      // We've explicitly enabled this option for this address.
+      optionSetting = "ENABLE." + option + "." + address + ".";
+
+      if((foundOption = configOptions.find(x => optionSetting === x.slice(0, optionSetting.length))) !== undefined) {
+        return foundOption.slice(optionSetting.length);
+      }
+
+      // We've explicitly disabled this option for this address.
+      optionSetting = "DISABLE." + option + "." + address;
+
+      if(configOptions.indexOf(optionSetting) !== -1) {
+        return undefined;
+      }
+    }
+
     // If we've specified a device, check for device-specific options first. Otherwise, we're dealing
     // with an NVR-specific or global option.
-    if(device?.mac) {
+    if(deviceMac) {
 
       // First we test for camera-level option settings.
       // No option specified means we're testing to see if this device should be shown in HomeKit.
-      optionSetting = "ENABLE." + option + "." + device.mac.toUpperCase() + ".";
+      optionSetting = "ENABLE." + option + "." + deviceMac + ".";
 
       // We've explicitly enabled this option for this device.
       if((foundOption = configOptions.find(x => optionSetting === x.slice(0, optionSetting.length))) !== undefined) {
@@ -493,7 +536,9 @@ export class ProtectNvr {
       }
 
       // We've explicitly disabled this option for this device.
-      if(configOptions.indexOf("DISABLE." + optionSetting) !== -1) {
+      optionSetting = "DISABLE." + option + "." + deviceMac;
+
+      if(configOptions.indexOf(optionSetting) !== -1) {
         return undefined;
       }
     }
@@ -505,7 +550,8 @@ export class ProtectNvr {
 
     // Now we test for NVR-level option settings.
     // No option specified means we're testing to see if this NVR (and it's attached devices) should be shown in HomeKit.
-    optionSetting = "ENABLE." + option + "." + this.nvrApi.bootstrap.nvr.mac.toUpperCase() + ".";
+    const nvrMac = this.nvrApi.bootstrap.nvr.mac.toUpperCase();
+    optionSetting = "ENABLE." + option + "." + nvrMac + ".";
 
     // We've explicitly enabled this option for this NVR and all the devices attached to it.
     if((foundOption = configOptions.find(x => optionSetting === x.slice(0, optionSetting.length))) !== undefined) {
@@ -513,7 +559,9 @@ export class ProtectNvr {
     }
 
     // We've explicitly disabled this option for this NVR and all the devices attached to it.
-    if(configOptions.indexOf("DISABLE." + optionSetting) !== -1) {
+    optionSetting = "DISABLE." + option + "." + nvrMac;
+
+    if(configOptions.indexOf(optionSetting) !== -1) {
       return undefined;
     }
 
