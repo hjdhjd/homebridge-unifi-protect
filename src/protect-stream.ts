@@ -157,7 +157,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     const cameraConfig = this.protectCamera.accessory.context.camera as ProtectCameraConfig;
 
     // Check if audio support is enabled.
-    const isAudioEnabled = this.protectCamera.nvr.optionEnabled(cameraConfig, "Audio");
+    const isAudioEnabled = this.protectCamera.nvr.optionEnabled(cameraConfig, "Audio", true, request.targetAddress);
 
     // We need to check for AAC support because it's going to determine whether we support audio.
     const hasLibFdk = isAudioEnabled && (await FfmpegProcess.codecEnabled(this.videoProcessor, "libfdk_aac"));
@@ -356,12 +356,12 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       );
 
       // If we are audio filtering, address it here.
-      if(this.protectCamera.nvr.optionEnabled(cameraConfig, "Audio.Filter.Noise", false)) {
+      if(this.protectCamera.nvr.optionEnabled(cameraConfig, "Audio.Filter.Noise", false, sessionInfo.address)) {
         let highpass;
         let lowpass;
 
         // See what the user has set for the highpass filter for this camera.
-        highpass = parseInt(this.protectCamera.nvr.optionGet(cameraConfig, "Audio.Filter.Noise.HighPass") ?? "");
+        highpass = parseInt(this.protectCamera.nvr.optionGet(cameraConfig, "Audio.Filter.Noise.HighPass", sessionInfo.address) ?? "");
 
         // If we have an invalid setting, use the defaults.
         if((highpass !== highpass) || (highpass < 0)) {
@@ -369,7 +369,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
         }
 
         // See what the user has set for the highpass filter for this camera.
-        lowpass = parseInt(this.protectCamera.nvr.optionGet(cameraConfig, "Audio.Filter.Noise.LowPass") ?? "");
+        lowpass = parseInt(this.protectCamera.nvr.optionGet(cameraConfig, "Audio.Filter.Noise.LowPass", sessionInfo.address) ?? "");
 
         // If we have an invalid setting, use the defaults.
         if((lowpass !== lowpass) || (lowpass < 0)) {
