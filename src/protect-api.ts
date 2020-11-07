@@ -115,7 +115,7 @@ export class ProtectApi {
   }
 
   // Log into UniFi Protect.
-  private async loginProtect(): Promise<boolean> {
+  private async login(): Promise<boolean> {
     const now = Date.now();
 
     // Is it time to renew our credentials?
@@ -176,7 +176,7 @@ export class ProtectApi {
   // Get our UniFi Protect NVR configuration.
   private async bootstrapProtect(): Promise<boolean> {
     // Log us in if needed.
-    if(!(await this.loginProtect())) {
+    if(!(await this.login())) {
       return false;
     }
 
@@ -232,7 +232,7 @@ export class ProtectApi {
   private async launchUpdatesListener(): Promise<boolean> {
 
     // Log us in if needed.
-    if(!(await this.loginProtect())) {
+    if(!(await this.login())) {
       return false;
     }
 
@@ -407,7 +407,7 @@ export class ProtectApi {
   // Enable RTSP stream support on an attached Protect device.
   public async enableRtsp(device: ProtectCameraConfigInterface): Promise<ProtectCameraConfig | null> {
     // Log us in if needed.
-    if(!(await this.loginProtect())) {
+    if(!(await this.login())) {
       return null;
     }
 
@@ -471,7 +471,7 @@ export class ProtectApi {
     }
 
     // Log us in if needed.
-    if(!(await this.loginProtect())) {
+    if(!(await this.login())) {
       return null;
     }
 
