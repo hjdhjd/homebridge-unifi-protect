@@ -5,7 +5,7 @@ title: ''
 assignees: ''
 ---
 
-<!-- You must use the issue template below. Reports that don't conform to the format below may be closed without warning. The form is here for a reason. :) -->
+<!-- You must use the issue template below. BUG REPORTS THAT DO NOT CONFORM TO THE FORMAT BELOW WILL BE CLOSED AUTOMATICALLY WITHOUT WARNING. THE FORM IS HERE FOR A REASON. :) -->
 <!-- Please ensure you read the documentation before creating a support request, especially the Troubleshooting page. -->
 
 **Describe The Problem:**
