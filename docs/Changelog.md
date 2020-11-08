@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 4.1.2 (2020-11-08)
+  * Minor housekeeping and documentation updates.
+
 ## 4.1.1 (2020-11-08)
   * Fix: ensure that `homebridge-unifi-protect` honors RTSP streaming feature option scope for individual HomeKit clients.
 
