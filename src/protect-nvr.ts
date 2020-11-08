@@ -346,7 +346,7 @@ export class ProtectNvr {
   }
 
   // Utility function to let us know if a device or feature should be enabled or not.
-  public optionEnabled(device: ProtectCameraConfig | null, option = "", defaultReturnValue = true, address = ""): boolean {
+  public optionEnabled(device: ProtectCameraConfig | null, option = "", defaultReturnValue = true, address = "", addressOnly = false): boolean {
 
     // There are a couple of ways to enable and disable options. The rules of the road are:
     //
@@ -402,6 +402,11 @@ export class ProtectNvr {
 
       // We've explicitly disabled this option for this address.
       if(configOptions.indexOf("DISABLE." + optionSetting) !== -1) {
+        return false;
+      }
+
+      // We're only interested in address-specific options.
+      if(addressOnly) {
         return false;
       }
     }

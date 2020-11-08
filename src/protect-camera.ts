@@ -447,11 +447,11 @@ export class ProtectCamera extends ProtectAccessory {
       if(!this.rtspQuality[address]) {
 
         // Check to see if there's an explicit preference set and cache the result.
-        if(this.nvr.optionEnabled(camera, "Video.Stream.Only.Low", false, address)) {
+        if(this.nvr.optionEnabled(camera, "Video.Stream.Only.Low", false, address, true)) {
           this.rtspQuality[address] = "LOW";
-        } else if(this.nvr.optionEnabled(camera, "Video.Stream.Only.Medium", false, address)) {
+        } else if(this.nvr.optionEnabled(camera, "Video.Stream.Only.Medium", false, address, true)) {
           this.rtspQuality[address] = "MEDIUM";
-        } else if(this.nvr.optionEnabled(camera, "Video.Stream.Only.High", false, address)) {
+        } else if(this.nvr.optionEnabled(camera, "Video.Stream.Only.High", false, address, true)) {
           this.rtspQuality[address] = "HIGH";
         } else {
           this.rtspQuality[address] = "None";
