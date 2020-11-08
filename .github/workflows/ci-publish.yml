@@ -1,0 +1,75 @@
+# Continuous integration - validate builds when commits are made, and publish when releases are created.
+name: "Continuous Integration Build Validation"
+
+# Run the build on all push, pull request, and release creation events.
+on:
+  pull_request:
+  push:
+  release:
+    types: [ created ]
+
+jobs:
+
+  # Run a validation build on LTS versions of node.
+  build:
+
+    # Create the build matrix for all the environments we're validating against.
+    strategy:
+      matrix:
+        node-version: [ 12.x, 14.x ]
+        os: [ ubuntu-latest ]
+
+    # Specify the environments we're going to build in.
+    runs-on: ${{ matrix.os }}
+
+    # Execute the build activities.
+    steps:
+      - name: Checkout the repository.
+        uses: actions/checkout@v2
+
+      - name: Setup the node ${{ matrix.node-version }} environment.
+        uses: actions/setup-node@v2.1.2
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Build and install the package with a clean slate.
+        run: |
+          npm ci
+          npm run build --if-present
+        env:
+          CI: true
+
+  # Publish the release to the NPM registry.
+  npm-publish:
+
+    # Only run this if the build succeeds.
+    needs: build
+
+    # Publish only if the tag starts with "v" (aka v1.2.3).
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    # Specify the environment we're going to build in.
+    runs-on: ubuntu-latest
+
+    # Execute the build and publish activities.
+    steps:
+    - name: Checkout the repository.
+      uses: actions/checkout@v2
+
+    - name: Setup the node environment.
+      uses: actions/setup-node@v2.1.2
+      with:
+
+        # Use the most recent node LTS version.
+        node-version: 14
+
+        # Use the NPM registry.
+        registry-url: https://registry.npmjs.org/
+
+    - name: Install the package with a clean slate.
+      run: npm ci
+
+    - name: Publish the package to NPM.
+      run: npm publish
+      env:
+        NODE_AUTH_TOKEN: ${{ secrets.npm_token }}
