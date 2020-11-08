@@ -52,7 +52,7 @@
     "lint": "eslint src/**.ts",
     "postpublish": "npm run clean",
     "prepublishOnly": "npm run lint && npm run build",
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "exit 0",
     "watch": "npm run build && npm link && nodemon"
   },
   "files": [
