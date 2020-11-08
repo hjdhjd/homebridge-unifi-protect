@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 4.1.1 (2020-11-08)
+  * Fix: ensure that `homebridge-unifi-protect` honors RTSP streaming feature option scope for individual HomeKit clients.
+
 ## 4.1.0 (2020-11-07)
   * Enhancement: feature options can now be specified on a per-client basis for audio and video feature options. For example, you can now specify that a specific RTSP profile be used with a specific client IP address (e.g. Apple TV). This can be useful in situations where you really want to control exactly which RTSP profile is used for a particular HomeKit client. An example of this that is immediately useful to some people: if you use `Enable.Video.Stream.Only.Low` because of trouble streaming remotely (outside of your home), you can now override it when you are home with `Enable.Video.Stream.Only.X.IPADDRESS`, where X is Medium or High, and IPADDRESS represents the static IP address of your iPhone. In this example, when remote, video streaming will always use the Low RTSP profile, but when at home, video streaming will use X.
 
