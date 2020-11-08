@@ -11,7 +11,7 @@ on:
 jobs:
 
   # Run a validation build on LTS versions of node.
-  build:
+  validate-build:
 
     # Create the build matrix for all the environments we're validating against.
     strategy:
@@ -43,7 +43,7 @@ jobs:
   npm-publish:
 
     # Only run this if the build succeeds.
-    needs: build
+    needs: validate-build
 
     # Publish only if the tag starts with "v" (aka v1.2.3).
     if: startsWith(github.ref, 'refs/tags/v')
