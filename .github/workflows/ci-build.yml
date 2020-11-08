@@ -1,0 +1,33 @@
+# Continuous integration - test builds when commits are made.
+name: "Continuous Integration Build Validation"
+
+# Run the build on all push and pull request events.
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+
+    strategy:
+      matrix:
+        node-version: [ 12.x, 14.x ]
+        os: [ ubuntu-latest ]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout the repository.
+        uses: actions/checkout@v2
+
+      - name: Setup the node environment ${{ matrix.node-version }}
+        uses: actions/setup-node@v2.1.2
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Build and install the package with a clean slate.
+        run: |
+          npm ci
+          npm run build --if-present
+        env:
+          CI: true
