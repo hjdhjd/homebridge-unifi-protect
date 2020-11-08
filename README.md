@@ -136,4 +136,4 @@ For UniFi OS devices like UDM-Pro, UniFi NVR, you can use your Ubiquiti account 
 This is mostly of interest to the true developer nerds amongst us.
 
 [![Dependencies](https://img.shields.io/david/hjdhjd/homebridge-unifi-protect?color=%230559C9&label=%20&logo=dependabot&style=for-the-badge)](https://david-dm.org/hjdhjd/homebridge-unifi-protect)
-[![Build Status](https://img.shields.io/travis/hjdhjd/homebridge-unifi-protect?color=%230559C9&label=%20&logo=travis-ci&logoColor=%23FFFFFF&style=for-the-badge)](https://travis-ci.org/hjdhjd/homebridge-unifi-protect)
+[![Build Status](https://img.shields.io/github/workflow/status/hjdhjd/homebridge-unifi-protect/Continuous%20Integration%20Build%20Validation?color=%230559C9&label=%20&logo=github-actions&logoColor=%23FFFFFF&style=for-the-badge)](https://github.com/hjdhjd/homebridge-unifi-protect/actions?query=workflow%3A%22Continuous+Integration+Build+Validation%22)
