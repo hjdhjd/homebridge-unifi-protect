@@ -85,20 +85,20 @@ In this example:
 Feature options provide a rich mechanism for tailoring your `homebridge-unifi-protect` experience. The reference below is divided into functional category groups.
 
 #### <A NAME="audio"></A>Audio Feature Options
-Audio and video options can be applied on a per-streaming-client basis, if you choose. This means that you can optionally choose to set a certain stream quality or disable audio, for specific HomeKit streaming clients. For example, you may choose to always disable audio support when your Apple TV (with a static IP address) requests a camera stream.
+Some audio and video options can be applied on a per-streaming-client basis, if you choose. This means that you can optionally choose to set a certain stream quality or disable audio, for specific HomeKit streaming clients. For example, you may choose to always disable audio support when your Apple TV (with a static IP address) requests a camera stream.
 
 Please review the [audio options documentation](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/AudioOptions.md) for additional information about the options below.
 
 | Option                                        | Description
 |-----------------------------------------------|----------------------------------
-| `Enable.Audio`                                | Enable audio support. *(Default)*
-| `Disable.Audio`                               | Disable audio support.
+| `Enable.Audio`                                | Enable audio support. *(Default)* <BR>&nbsp;</BR><BR>*This option can be further customized on a per-streaming-client basis.*</BR>
+| `Disable.Audio`                               | Disable audio support. <BR>&nbsp;</BR><BR>*This option can be further customized on a per-streaming-client basis.*</BR>
 |                                               |
-| `Enable.Audio.Filter.Noise`                   | Enable the [audio noise filter](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/AudioOptions.md#noise-filter) to enhance voices over background noise.
-| `Disable.Audio.Filter.Noise`                  | Disable the [audio noise filter](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/AudioOptions.md#noise-filter). *(Default)*
+| `Enable.Audio.Filter.Noise`                   | Enable the [audio noise filter](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/AudioOptions.md#noise-filter) to enhance voices over background noise. <BR>&nbsp;</BR><BR>*This option can be further customized on a per-streaming-client basis.*</BR>
+| `Disable.Audio.Filter.Noise`                  | Disable the [audio noise filter](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/AudioOptions.md#noise-filter). *(Default)* <BR>&nbsp;</BR><BR>*This option can be further customized on a per-streaming-client basis.*</BR>
 |                                               |
-| <CODE>Enable.Audio.Filter.Noise.HighPass.<I>Number</I> | Set the high pass filter to attenuate (eliminate) frequencies below *number*. *Default: 200*
-| <CODE>Enable.Audio.Filter.Noise.LowPass.<I>Number</I> | Set the low pass filter to attenuate (eliminate) frequencies above *number*. *Default: 1000*
+| <CODE>Enable.Audio.Filter.Noise.HighPass.<I>Number</I> | Set the high pass filter to attenuate (eliminate) frequencies below *number*. *Default: 200* <BR>&nbsp;</BR><BR>*This option can be further customized on a per-streaming-client basis.*</BR>
+| <CODE>Enable.Audio.Filter.Noise.LowPass.<I>Number</I> | Set the low pass filter to attenuate (eliminate) frequencies above *number*. *Default: 1000* <BR>&nbsp;</BR><BR>*This option can be further customized on a per-streaming-client basis.*</BR>
 |                                               |
 | `Enable.Audio.TwoWay`                          | Enable two-way audio support using the Home app for supported cameras and doorbells. *(Default)*<BR>**Note that acoustic echo cancellation (AEC) is not currently available and you *will* hear an echo when using the Home app, however those standing at the doorbell (or camera) will hear things correctly.**</BR>
 | `Disable.Audio.TwoWay`                         | Disable two-way audio support.
@@ -163,7 +163,7 @@ Please review the [documentation for UniFi Protect liveview support](https://git
 | `Disable.SecuritySystem.Alarm`                | Remove the security alarm switch on the security system accessory. *(Default)*
 
 #### <A NAME="video"></A>Video Feature Options
-Audio and video options can be applied on a per-streaming-client basis, if you choose. This means that you can optionally choose to set a certain stream quality or disable audio, for specific HomeKit streaming clients. For example, you may choose to always disable audio support when your Apple TV (with a static IP address) requests a camera stream.
+Some audio and video options can be applied on a per-streaming-client basis, if you choose. This means that you can optionally choose to set a certain stream quality or disable audio, for specific HomeKit streaming clients. For example, you may choose to always disable audio support when your Apple TV (with a static IP address) requests a camera stream.
 
 Video feature options allow you to tailor which RTSP streams are utilized for HomeKit video streaming.
 
@@ -171,4 +171,4 @@ Video feature options allow you to tailor which RTSP streams are utilized for Ho
 |-----------------------------------------------|----------------------------------
 | <CODE>Enable.Video.Stream.<I>Quality</I></CODE>     | Make the stream of quality *Quality* available for use when streaming video in HomeKit. Valid quality settings are `Low`, `Medium`, `High`. *Default: All stream qualities are enabled*
 | <CODE>Disable.Video.Stream.<I>Quality</I></CODE>    | Make the stream of quality *Quality* unavailble for use when streaming video in HomeKit. Valid quality settings are `Low`, `Medium`, `High`.
-| <CODE>Enable.Video.Stream.Only.<I>Quality</I></CODE> | Only allow the stream of quality *Quality* to be used in HomeKit. Valid quality settings are `Low`, `Medium`, `High`. *Default: None*
+| <CODE>Enable.Video.Stream.Only.<I>Quality</I></CODE> | Only allow the stream of quality *Quality* to be used in HomeKit. Valid quality settings are `Low`, `Medium`, `High`. *Default: None* <BR>&nbsp;</BR><BR>*This option can be further customized on a per-streaming-client basis.*</BR>
