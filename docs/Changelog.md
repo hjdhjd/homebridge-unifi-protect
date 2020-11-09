@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 4.1.3 (2020-11-08)
+  * More minor housekeeping and documentation updates.
+
 ## 4.1.2 (2020-11-08)
   * Minor housekeeping and documentation updates.
 
