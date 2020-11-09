@@ -4,7 +4,6 @@
 [![homebridge-unifi-protect: Native HomeKit support for UniFi Protect](https://raw.githubusercontent.com/hjdhjd/homebridge-unifi-protect/master/homebridge-protect.svg)](https://github.com/hjdhjd/homebridge-unifi-protect)
 
 # Homebridge UniFi Protect
-
 [![Downloads](https://img.shields.io/npm/dt/homebridge-unifi-protect?color=%230559C9&logo=icloud&logoColor=%23FFFFFF&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect)
 [![Version](https://img.shields.io/npm/v/homebridge-unifi-protect?color=%230559C9&label=Latest%20Version&logo=ubiquiti&logoColor=%23FFFFFF&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect)
 [![UniFi Protect@Homebridge Discord](https://img.shields.io/discord/432663330281226270?color=0559C9&label=Discord&logo=discord&logoColor=%23FFFFFF&style=for-the-badge)](https://discord.gg/QXqfHEW)
@@ -16,13 +15,12 @@
 
 `homebridge-unifi-protect` is a [Homebridge](https://homebridge.io) plugin that provides HomeKit support to the [UniFi Protect](https://unifi-network.ui.com/video-security) device ecosystem. [UniFi Protect](https://unifi-network.ui.com/video-security) is [Ubiquiti's](https://www.ui.com) next-generation video security platform, with rich camera, doorbell, and NVR controller hardware options for you to choose from, as well as an app which you can use to view, configure and manage your video camera and doorbells.
 
-## <A NAME="why"></A>Why use this plugin for UniFi Protect support in HomeKit?
-
+## <A NAME="why"></A>Why Use This Plugin For UniFi Protect Support In HomeKit?
 This plugin attempts to bridge a gap in the UniFi Protect ecosystem by providing native HomeKit support on par with what you would expect from a first-party of native HomeKit solution. My north star is to create a plugin that *just works* with minimal required configuration by you to get up and running. The goal is to provide as close to a streamlined experience as you would expect from a first-party or native HomeKit solution. For the adventurous, there are more granular options available to enable you to further tailor your experience.
 
 What does *just works* mean in practice? It means that this plugin will discover all your supported UniFi Protect devices and make them available in HomeKit. It supports all known UniFi Protect controller configurations (UniFi CloudKey Gen2+, UniFi Dream Machine Pro, and UniFi Protect NVR).
 
-For the more technically inclined - this plugin has continued to pioneer the HomeKit user experience for UniFi Protect by being the ***first*** Homebridge plugin to successfully reverse engineer the UniFi Protect realtime events API that was introduced with UniFi OS. This means that rather than poll the Protect controller every few seconds to catch events, we're able to capture motion and doorbell ring events in realtime, providing an extremely responsive HomeKit experience, and reducing the performance impact to Protect controllers.
+For the more technically inclined - this plugin has continued to pioneer the HomeKit user experience for UniFi Protect by being the ***first*** Homebridge plugin (and first third-party app, to my knowledge) to successfully reverse engineer the UniFi Protect realtime events API that was introduced with UniFi OS. This means that rather than poll the Protect controller every few seconds to catch events, we're able to capture motion and doorbell ring events in realtime, providing an immediate and extremely responsive HomeKit experience, further reducing the potential performance impact to Protect controllers.
 
 ### Features
 - ***Easy* configuration - all you need is your UniFi Protect controller IP address, username, and password to get started.** The defaults work for the vast majority of users. When you want more, there are [advanced options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/AdvancedOptions.md) you can play with, if you choose.
@@ -49,14 +47,13 @@ For the more technically inclined - this plugin has continued to pioneer the Hom
 
 - **MQTT support.** [MQTT](https://mqtt.org) support is available for those that want to [make UniFi Protect accessible to an MQTT broker](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/MQTT.md).
 
-### What's not in this plugin right now
-
+### What's Not In This Plugin Yet
 Acoustic Echo Cancellation (AEC) support for two-way audio in UniFi Protect. We're most of the way there with two-way audio support, and hopefully AEC support can be reverse-engineered in the future.
 
 I hope to continue to work on this one to get AEC working for two-way audio. [You can also read more on about two-way audio support here](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/Doorbell.md#doorbell-twoway).
 
 ## Documentation
-* Getting going
+* Getting Started
   * [Installation](#installation): installing this plugin, including system requirements.
   * [Plugin Configuration](#plugin-configuration): how to quickly get up and running.
   * [Best Practices](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/BestPractices.md): best practices for getting the most of your HomeKit setup and UniFi Protect.
@@ -94,7 +91,7 @@ Audio on cameras is tricky in the HomeKit world to begin with, and when you thro
 
 * **Audio support will not work unless you have a version of ffmpeg that supports fdk-aac.** Unfortunately, most default installations of ffmpeg are not compiled with support for fdk-aac. You'll need to compile or acquire a version of ffmpeg that does. Doing so is beyond the scope of this documentation. There are plenty of guides to this - Google is your friend. This plugin uses [ffmpeg-for-homebridge](https://www.npmjs.com/package/ffmpeg-for-homebridge) which eases the pain somewhat by providing prebuilt static binaries of ffmpeg for certain platforms, and save you the trouble of having to compile a version of ffmpeg yourself.
 
-### Using another video processor
+### Using Other Video Processors
 `videoProcessor` is the video processor used to stream video. By default, this is [ffmpeg](https://ffmpeg.org), but can be your own custom version of ffmpeg or other video processor that accepts and understands ffmpeg command line arguments.
 
 ```
@@ -107,10 +104,10 @@ Audio on cameras is tricky in the HomeKit world to begin with, and when you thro
 }
 ```
 
-### Things to be aware of
+### Things To Be Aware Of
 - **Beginning with v3.6.0, this plugin requires Homebridge v1.1.3 on greater to work. For some, this may be a breaking change if you are running on older versions of Homebridge.**
 
-## Plugin configuration
+## Plugin Configuration
 If you choose to configure this plugin directly instead of using the [Homebridge Configuration web UI](https://github.com/oznu/homebridge-config-ui-x), you'll need to add the platform to your `config.json` in your home directory inside `.homebridge`.
 
 ```js
@@ -132,8 +129,10 @@ For most people, I recommend using [Homebridge Configuration web UI](https://git
 
 For UniFi OS devices like UDM-Pro, UniFi NVR, you can use your Ubiquiti account credentials, though 2FA is not currently supported. That said, **I strongly recommend creating a local user just for Homebridge instead of using this option.**
 
-## Plugin build dashboard
+## Plugin Development Dashboard
 This is mostly of interest to the true developer nerds amongst us.
 
-[![Dependencies](https://img.shields.io/david/hjdhjd/homebridge-unifi-protect?color=%230559C9&label=%20&logo=dependabot&style=for-the-badge)](https://david-dm.org/hjdhjd/homebridge-unifi-protect)
-[![Build Status](https://img.shields.io/github/workflow/status/hjdhjd/homebridge-unifi-protect/Continuous%20Integration%20Build%20Validation?color=%230559C9&label=%20&logo=github-actions&logoColor=%23FFFFFF&style=for-the-badge)](https://github.com/hjdhjd/homebridge-unifi-protect/actions?query=workflow%3A%22Continuous+Integration+Build+Validation%22)
+[![License](https://img.shields.io/npm/l/homebridge-unifi-protect?color=%230559C9&logo=open%20source%20initiative&logoColor=%23FFFFFF&style=for-the-badge)](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/LICENSE.md)
+[![Dependencies](https://img.shields.io/david/hjdhjd/homebridge-unifi-protect?color=%230559C9&logo=dependabot&style=for-the-badge)](https://david-dm.org/hjdhjd/homebridge-unifi-protect)
+[![Dev Dependencies](https://img.shields.io/david/dev/hjdhjd/homebridge-unifi-protect?color=%230559C9&logo=dependabot&style=for-the-badge)](https://david-dm.org/hjdhjd/homebridge-unifi-protect?type=dev)
+[![Build Status](https://img.shields.io/github/workflow/status/hjdhjd/homebridge-unifi-protect/Continuous%20Integration%20Build%20Validation?color=%230559C9&logo=github-actions&logoColor=%23FFFFFF&style=for-the-badge)](https://github.com/hjdhjd/homebridge-unifi-protect/actions?query=workflow%3A%22Continuous+Integration+Build+Validation%22)
