@@ -62,7 +62,7 @@ jobs:
       with:
 
         # Use the most recent node LTS version.
-        node-version: 14
+        node-version: 12
 
         # Use the NPM registry.
         registry-url: https://registry.npmjs.org/
