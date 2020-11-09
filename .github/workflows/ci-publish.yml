@@ -1,5 +1,5 @@
 # Continuous integration - validate builds when commits are made, and publish when releases are created.
-name: "Continuous Integration Build Validation"
+name: "Continuous Integration"
 
 # Run the build on all push, pull request, and release creation events.
 on:
