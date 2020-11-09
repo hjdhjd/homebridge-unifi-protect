@@ -1,4 +1,4 @@
-Internet Systems Consortium license
+Internet Systems Consortium License
 ===================================
 
 Copyright (c) `2017-2020`, `HJD https://github.com/hjdhjd`
