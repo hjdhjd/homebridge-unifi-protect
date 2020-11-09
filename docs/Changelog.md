@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 4.1.4 (2020-11-09)
+  * Reinstate compatibility with NodeJS 12.
+
 ## 4.1.3 (2020-11-08)
   * More minor housekeeping and documentation updates.
 
