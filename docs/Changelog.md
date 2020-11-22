@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 4.1.5 (2020-11-22)
+  * Fix for a regression of MQTT event triggers.
+  * Increase API timeout limit to give WiFi-based cameras a little more time to respond.
+  * Dependency and library updates.
+
 ## 4.1.4 (2020-11-09)
   * Reinstate compatibility with NodeJS 12.
 
