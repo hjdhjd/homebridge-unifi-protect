@@ -24,7 +24,6 @@ import {
 } from "./protect-types";
 import { ProtectApi } from "./protect-api";
 import { ProtectDoorbell } from "./protect-doorbell";
-import { ProtectMqtt } from "./protect-mqtt";
 import { ProtectNvr } from "./protect-nvr";
 import { ProtectPlatform } from "./protect-platform";
 
@@ -36,7 +35,6 @@ export class ProtectNvrEvents {
   private lastRing: { [index: string]: number };
   private log: Logging;
   private motionDuration: number;
-  private mqtt: ProtectMqtt | null;
   private nvr: ProtectNvr;
   private readonly eventTimers: { [index: string]: NodeJS.Timeout };
   private nvrApi: ProtectApi;
@@ -51,7 +49,6 @@ export class ProtectNvrEvents {
     this.lastMotion = {};
     this.lastRing = {};
     this.log = nvr.platform.log;
-    this.mqtt = nvr.mqtt;
     this.nvr = nvr;
     this.nvrApi = nvr.nvrApi;
     this.motionDuration = nvr.platform.config.motionDuration;
@@ -391,7 +388,7 @@ export class ProtectNvrEvents {
     }
 
     // Publish to MQTT, if the user has configured it.
-    this.mqtt?.publish(accessory, "motion", "true");
+    this.nvr.mqtt?.publish(accessory, "motion", "true");
 
     // Log the event, if configured to do so.
     if(this.nvr.optionEnabled(camera, "Log.Motion", false)) {
@@ -414,7 +411,7 @@ export class ProtectNvrEvents {
         }
 
         // Publish to MQTT, if the user has configured it.
-        this.mqtt?.publish(accessory, "motion", "false");
+        this.nvr.mqtt?.publish(accessory, "motion", "false");
 
         this.debug("%s: Resetting motion event.", this.nvrApi.getFullName(camera));
       }
@@ -495,7 +492,7 @@ export class ProtectNvrEvents {
     }
 
     // Publish to MQTT, if the user has configured it.
-    this.mqtt?.publish(accessory, "doorbell", "true");
+    this.nvr.mqtt?.publish(accessory, "doorbell", "true");
 
     if(this.nvr.optionEnabled(camera, "Log.Doorbell", false)) {
       this.log.info("%s: Doorbell ring detected.", this.nvrApi.getFullName(camera));
