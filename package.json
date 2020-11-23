@@ -74,8 +74,7 @@
     "get-port": "^5.1.1",
     "mqtt": "^4.2.5",
     "node-fetch": "^3.0.0-beta.9",
-    "ws": "^7.4.0",
-    "zlib": "^1.0.5"
+    "ws": "^7.4.0"
   },
   "devDependencies": {
     "@types/ip": "^1.1.0",
