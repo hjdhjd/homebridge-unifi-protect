@@ -67,7 +67,7 @@ A packet header is composed of 8 bytes in this order:
 |----------------|-----------------|---------|-----------------------------------------
 | 0              | Packet Type     | 8       | 1 - action frame, 2 - payload frame.
 | 1              | Payload Format  | 8       | 1 - JSON object, 2 - UTF8-encoded string, 3 - Node Buffer.
-| 2              | Deflated        | 8       | 0 - uncompressed, 1 - deflated / compressed ([zlib](https://www.npmjs.com/package/zlib)-based).
+| 2              | Deflated        | 8       | 0 - uncompressed, 1 - deflated / compressed ([zlib](https://nodejs.org/api/zlib.html)-based).
 | 3              | Unknown         | 8       | Always 0. Possibly reserved for future use by Ubiquiti?
 | 4-7            | Payload Size    | 32      | Size of payload in network-byte order (big endian).
 

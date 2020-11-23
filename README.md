@@ -133,6 +133,5 @@ For UniFi OS devices like UDM-Pro, UniFi NVR, you can use your Ubiquiti account 
 This is mostly of interest to the true developer nerds amongst us.
 
 [![License](https://img.shields.io/npm/l/homebridge-unifi-protect?color=%230559C9&logo=open%20source%20initiative&logoColor=%23FFFFFF&style=for-the-badge)](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/LICENSE.md)
-[![Dependencies](https://img.shields.io/david/hjdhjd/homebridge-unifi-protect?color=%230559C9&logo=dependabot&style=for-the-badge)](https://david-dm.org/hjdhjd/homebridge-unifi-protect)
-[![Dev Dependencies](https://img.shields.io/david/dev/hjdhjd/homebridge-unifi-protect?color=%230559C9&logo=dependabot&style=for-the-badge)](https://david-dm.org/hjdhjd/homebridge-unifi-protect?type=dev)
+[![Dependencies](https://img.shields.io/librariesio/release/npm/homebridge-unifi-protect?color=%230559C9&logo=dependabot&style=for-the-badge)](https://libraries.io/npm/homebridge-unifi-protect)
 [![Build Status](https://img.shields.io/github/workflow/status/hjdhjd/homebridge-unifi-protect/Continuous%20Integration?color=%230559C9&logo=github-actions&logoColor=%23FFFFFF&style=for-the-badge)](https://github.com/hjdhjd/homebridge-unifi-protect/actions?query=workflow%3A%22Continuous+Integration%22)
