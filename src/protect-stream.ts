@@ -446,7 +446,6 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       "a=crypto:1 AES_CM_128_HMAC_SHA1_80 inline:" + sessionInfo.audioSRTP.toString("base64")
     ].join("\n");
 
-
     // Configure the audio portion of the command line, if we have a version of FFmpeg supports libfdk_aac. Options we use are:
     //
     // -protocol_whitelist   set the list of allowed protocols for this ffmpeg session.
