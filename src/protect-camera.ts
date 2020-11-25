@@ -8,7 +8,7 @@ import {
   CharacteristicSetCallback,
   CharacteristicValue
 } from "homebridge";
-import { ProtectCameraConfig, ProtectNvrBootstrap } from "./protect-types";
+import { ProtectCameraChannelConfig, ProtectCameraConfig, ProtectNvrBootstrap } from "./protect-types";
 import { ProtectAccessory } from "./protect-accessory";
 import { ProtectApi } from "./protect-api";
 import { ProtectNvr } from "./protect-nvr";
@@ -20,8 +20,8 @@ export const PROTECT_SWITCH_MOTION_SENSOR = "MotionSensorSwitch";
 export const PROTECT_SWITCH_MOTION_TRIGGER = "MotionSensorTrigger";
 
 export interface RtspEntry {
+  channel: ProtectCameraChannelConfig,
   name: string,
-  profile: string,
   resolution: [ number, number, number],
   url: string
 }
@@ -460,13 +460,13 @@ export class ProtectCamera extends ProtectAccessory {
 
       // If it's set to none, we default to our normal lookup logic.
       if(this.rtspQuality[address] !== "None") {
-        return rtspEntries.find(x => x.profile.toUpperCase() === this.rtspQuality[address]) ?? null;
+        return rtspEntries.find(x => x.channel.name.toUpperCase() === this.rtspQuality[address]) ?? null;
       }
     }
 
     // Second, we check to see if we've set an explicit preference for stream quality.
     if(this.rtspQuality.Default) {
-      return rtspEntries.find(x => x.profile.toUpperCase() === this.rtspQuality.Default) ?? null;
+      return rtspEntries.find(x => x.channel.name.toUpperCase() === this.rtspQuality.Default) ?? null;
     }
 
     // See if we have a match for our desired resolution on the camera. We ignore FPS - HomeKit clients seem
@@ -543,8 +543,9 @@ export class ProtectCamera extends ProtectAccessory {
 
     // Now that we have our RTSP streams, create a list of supported resolutions for HomeKit.
     for(const channel of cameraChannels) {
-      rtspEntries.push({ name: channel.width.toString() + "x" + channel.height.toString() + "@" + channel.fps.toString() + "fps (" + channel.name + ")",
-        profile: channel.name, resolution: [ channel.width, channel.height, channel.fps ], url: cameraUrl + channel.rtspAlias });
+      rtspEntries.push({ channel: channel,
+        name: channel.width.toString() + "x" + channel.height.toString() + "@" + channel.fps.toString() + "fps (" + channel.name + ")",
+        resolution: [ channel.width, channel.height, channel.fps ], url: cameraUrl + channel.rtspAlias });
     }
 
     // Sort the list of resolutions, from high to low.
@@ -570,7 +571,7 @@ export class ProtectCamera extends ProtectAccessory {
       }
 
       // Add the resolution to the list of supported resolutions.
-      rtspEntries.push({ name: foundRtsp.name, profile: foundRtsp.profile + "-HomeKit", resolution: [ entry[0], entry[1], entry[2] ], url: foundRtsp.url });
+      rtspEntries.push({ channel: foundRtsp.channel, name: foundRtsp.name, resolution: [ entry[0], entry[1], entry[2] ], url: foundRtsp.url });
 
       // Since we added resolutions to the list, resort resolutions, from high to low.
       rtspEntries.sort(this.sortByResolutions.bind(this));
