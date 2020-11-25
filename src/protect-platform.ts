@@ -41,7 +41,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
     this.config = {
       controllers: config.controllers as ProtectNvrOptions[],
       debugAll: config.debug as boolean === true,
-      ffmpegOptions: config.ffmpegOptions as string ?? PROTECT_FFMPEG_OPTIONS,
+      ffmpegOptions: config.ffmpegOptions as string[] ?? PROTECT_FFMPEG_OPTIONS,
       motionDuration: config.motionDuration as number ?? PROTECT_MOTION_DURATION,
       options: config.options as string[],
       verboseFfmpeg: config.verboseFfmpeg === true,

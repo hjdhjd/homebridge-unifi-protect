@@ -457,7 +457,7 @@ export interface ProtectNvrSystemEventControllerInterface {
 export interface ProtectOptions {
   controllers: ProtectNvrOptions[],
   debugAll: boolean,
-  ffmpegOptions: string,
+  ffmpegOptions: string[],
   motionDuration: number,
   options: string[],
   verboseFfmpeg: boolean,
