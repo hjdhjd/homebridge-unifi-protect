@@ -30,7 +30,7 @@ export class RtpDemuxer {
   private inputPort: number;
   public readonly socket;
 
-  // Create an instance of RTPSplitter.
+  // Create an instance of RtpDemuxer.
   constructor(streamingDelegate: ProtectStreamingDelegate, ipFamily: ("ipv4" | "ipv6") , inputPort: number, rtcpPort: number, rtpPort: number) {
 
     this.debug = streamingDelegate.platform.debug.bind(streamingDelegate.platform);
@@ -39,9 +39,9 @@ export class RtpDemuxer {
     this.inputPort = inputPort;
     this.socket = createSocket(ipFamily === "ipv6" ? "udp6" : "udp4" );
 
-    // Catch errors when they happen on our splitter.
+    // Catch errors when they happen on our demuxer.
     this.socket.on("error", (error)  => {
-      this.log.error("%s: RTPSplitter Error: %s", this.delegate.protectCamera.name(), error);
+      this.log.error("%s: RtpDemuxer Error: %s", this.delegate.protectCamera.name(), error);
       this.socket.close();
     });
 
@@ -50,7 +50,9 @@ export class RtpDemuxer {
 
       // Send RTP packets to the RTP port.
       if(this.isRtpMessage(msg)) {
+
         this.socket.send(msg, rtpPort);
+
       } else {
 
         // Save this RTCP message for heartbeat purposes for the RTP port. This works because RTCP packets will be ignored
@@ -64,10 +66,11 @@ export class RtpDemuxer {
 
         // RTCP control packets should go to the RTCP port.
         this.socket.send(msg, rtcpPort);
+
       }
     });
 
-    this.debug("%s: Creating an RtpSplitter instance - inbound port: %s, RTCP port: %s, RTP port: %s.",
+    this.debug("%s: Creating an RtpDemuxer instance - inbound port: %s, RTCP port: %s, RTP port: %s.",
       this.delegate.protectCamera.name(), this.inputPort, rtcpPort, rtpPort);
 
     // Take the socket live.
@@ -84,16 +87,18 @@ export class RtpDemuxer {
     // in reading input, and we want to be comfortably within the margin for error to ensure the process
     // continues to run.
     this.heartbeatTimer = setTimeout(() => {
+
       this.debug("Sending ffmpeg a heartbeat.");
 
       this.socket.send(this.heartbeatMsg, port);
       this.heartbeat(port);
+
     }, PROTECT_TWOWAY_HEARTBEAT_INTERVAL * 1000);
   }
 
   // Close the socket and cleanup.
   public close(): void {
-    this.debug("%s: Closing the RtpSplitter instance on port %s.", this.delegate.protectCamera.name(), this.inputPort);
+    this.debug("%s: Closing the RtpDemuxer instance on port %s.", this.delegate.protectCamera.name(), this.inputPort);
 
     clearTimeout(this.heartbeatTimer);
     this.socket.close();
