@@ -30,7 +30,7 @@ Before going further, there are some quick checklist activities you should check
 * Are you running in a firewalled environment?
   * It's popular in some circles to have a separate network at home for your IoT devices . Unfortunately, this is also a common source of issues relating to video streaming, almost always related to firewall rules.
 
-### Logging In and Permissions
+### <A NAME="user"></A>Logging In and Permissions
 Getting `homebridge-unifi-protect` connected to UniFi Protect is the foundational step you need to complete to begin using this plugin. When users have issues logging in, the challenges tend to be in the following areas:
 
 * Have you specified the right IP address for UniFi Protect?
@@ -51,14 +51,14 @@ Getting `homebridge-unifi-protect` connected to UniFi Protect is the foundationa
       * Check to make sure the user you're using for `homebridge-unifi-protect` has at least the view-only role, but ideally you'd enable the administrator role for the user you are using with this plugin.
       * Without either of those privileges, you won't be able to see any cameras without enabling a role.
 
-### Network Issues
+### <A NAME="network"></A>Network Issues
 If you run homebridge in Docker, or a VM or VM-like environment, you might run into a network issue without realizing it due to situations with multiple network interface cards (NICs). By default, Homebridge listens for HomeKit requests on all the network interfaces it finds when it starts up. Historically, this has created a challenge for video-streaming plugins like `homebridge-unifi-protect` because the plugin doesn't have a way of knowing which interface the streaming request came from. So what this plugin, and pretty much all the other similar plugins do, is guess by looking for the default network interface on the system and assuming that's where video should be sent out of.
 
 The good news is that the leading camera plugin developers and the Homebridge developers have been collaborating on a solution for this, and as of Homebridge 1.1.3, Homebridge now takes over responsibility for determining which interface and IP address to use when streaming video. This is an ideal solution because Homebridge is really who knows where the request came from and is in the best position to determine which interface to use to stream from.
 
 If you're having issues with this plugin, or others, not using the correct network interface, I'd encourage you to upgrade to Homebridge 1.1.3 or greater and see if that resolves the issue.
 
-### Push Notification Issues
+### <A NAME="push"></A>Push Notification Issues
 The good news is that push notifications should just work by default. If they don't, and you've ruled out network issues as a cause, the next thing to look at is your system clock. Wait...what does your system clock have to do with notifications?
 
 UniFi Protect provides a lot of notifications, and sometimes those notifications are duplicates or old ones we aren't interested in that happened in the past. As a result, `homebridge-unifi-protect` only alerts you to notifications that UniFi Protect alerts it to that happened in the last few seconds.
@@ -74,7 +74,7 @@ Assuming you've setup all of the above, the most common issue people have:
   * `homebridge-unifi-protect` checks the timestamps on any events received from Protect to ensure it's reasonably recent. If the event is too far in the past, it will be ignored.
   * To fix this, ensure the clock is accurate and up-to-date on your Protect controller and on the device where Homebridge is running.
 
-### Video Streaming
+### <A NAME="video"></A>Video Streaming
 There are lots of things that can go wrong with video streaming, unfortunately. I want to start by providing a bit of background on how streaming actually works in HomeKit, homebridge and this plugin before getting into where things can break.
 
 #### Background
