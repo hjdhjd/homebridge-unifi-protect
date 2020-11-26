@@ -105,8 +105,8 @@ Please review the [audio options documentation](https://github.com/hjdhjd/homebr
 | `Enable.Audio.Filter.Noise`                   | Enable the [audio noise filter](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/AudioOptions.md#noise-filter) to enhance voices over background noise. <BR>*This option can be further customized on a per-streaming-client basis.*</BR>
 | `Disable.Audio.Filter.Noise`                  | Disable the [audio noise filter](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/AudioOptions.md#noise-filter). *(Default)* <BR>*This option can be further customized on a per-streaming-client basis.*</BR>
 |                                               |
-| <CODE>Enable.Audio.Filter.Noise.HighPass.<I>Number</I> | Set the high pass filter to attenuate (eliminate) frequencies below *number*. *Default: 200* <BR>*This option can be further customized on a per-streaming-client basis.*</BR>
-| <CODE>Enable.Audio.Filter.Noise.LowPass.<I>Number</I> | Set the low pass filter to attenuate (eliminate) frequencies above *number*. *Default: 1000* <BR>*This option can be further customized on a per-streaming-client basis.*</BR>
+| <CODE>Enable.Audio.Filter.Noise.HighPass.<I>Number</I> | Set the high pass filter to attenuate (eliminate) frequencies below *number*. *(Default: 200)* <BR>*This option can be further customized on a per-streaming-client basis.*</BR>
+| <CODE>Enable.Audio.Filter.Noise.LowPass.<I>Number</I> | Set the low pass filter to attenuate (eliminate) frequencies above *number*. *(Default: 1000)* <BR>*This option can be further customized on a per-streaming-client basis.*</BR>
 |                                               |
 | `Enable.Audio.TwoWay`                          | Enable two-way audio support using the Home app for supported cameras and doorbells. *(Default)*<BR>**Note that acoustic echo cancellation (AEC) is not currently available and you *will* hear an echo when using the Home app, however those standing at the doorbell (or camera) will hear things correctly.**</BR>
 | `Disable.Audio.TwoWay`                         | Disable two-way audio support.
@@ -175,8 +175,12 @@ Some audio and video options can be applied on a per-streaming-client basis, if 
 
 Video feature options allow you to tailor which RTSP streams are utilized for HomeKit video streaming.
 
-| Option                                        | Description
-|-----------------------------------------------|----------------------------------
-| <CODE>Enable.Video.Stream.<I>Quality</I></CODE>     | Make the stream of quality *Quality* available for use when streaming video in HomeKit. Valid quality settings are `Low`, `Medium`, `High`. *Default: All stream qualities are enabled*
-| <CODE>Disable.Video.Stream.<I>Quality</I></CODE>    | Make the stream of quality *Quality* unavailble for use when streaming video in HomeKit. Valid quality settings are `Low`, `Medium`, `High`.
-| <CODE>Enable.Video.Stream.Only.<I>Quality</I></CODE> | Only allow the stream of quality *Quality* to be used in HomeKit. Valid quality settings are `Low`, `Medium`, `High`. *Default: None* <BR>*This option can be further customized on a per-streaming-client basis.*</BR>
+| Option                                               | Description
+|------------------------------------------------------|----------------------------------
+| <CODE>Enable.Video.Stream.<I>Quality</I></CODE>      | Make the stream of quality *Quality* available for use when streaming video in HomeKit. Valid quality settings are `Low`, `Medium`, `High`. *(Default: All stream qualities are enabled)*
+| <CODE>Disable.Video.Stream.<I>Quality</I></CODE>     | Make the stream of quality *Quality* unavailble for use when streaming video in HomeKit. Valid quality settings are `Low`, `Medium`, `High`.
+|                                                      |
+| <CODE>Enable.Video.Stream.Only.<I>Quality</I></CODE> | Only allow the stream of quality *Quality* to be used in HomeKit. Valid quality settings are `Low`, `Medium`, `High`. *(Default: None)* <BR>**This option can be further customized on a per-streaming-client basis.**</BR>
+|                                                      |
+| `Enable.Video.Transcode`                             | Enable transcoding for this camera. <BR>**This option can be further customized on a per-streaming-client basis.**</BR><BR>**Note: this option will increase CPU consumption on the computer you run Homebridge on when streaming is active.**</BR>
+| `Disable.Video.Transcode`                            | Disable transcoding for this camera. *(Default)* <BR>**This option can be further customized on a per-streaming-client basis.**</BR><BR>**Note: by default, the plugin will attempt to stream video unmodified from the source. For most users this is blazingly fast and works very reliably. For the unlucky few, they may need to to use transcoding as a last resort to get streaming to work properly.**</BR>
