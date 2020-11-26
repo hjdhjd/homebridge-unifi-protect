@@ -133,14 +133,6 @@
         "description": "Location of ffmpeg or your preferred video processor. Default: builtin or in your local path."
       },
 
-      "ffmpegOptions": {
-        "type": "string",
-        "title": "Custom ffmpeg command line options.",
-        "required": false,
-        "placeholder": "e.g. -probesize 32 -analyzeduration 0 -fflags nobuffer",
-        "description": "Command line options to use for ffmpeg. Use with care - the defaults are correct for almost all users. Default: see project page."
-      },
-
       "motionDuration": {
         "type": "integer",
         "title": "Motion Event Duration (seconds)",
@@ -268,7 +260,6 @@
           "description": "These settings should be rarely used or needed by most people. Use these with caution.",
           "items": [
             "videoProcessor",
-            "ffmpegOptions",
             "motionDuration",
             "verboseFfmpeg"
           ]
