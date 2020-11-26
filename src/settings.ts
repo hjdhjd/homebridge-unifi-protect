@@ -28,7 +28,7 @@ export const PROTECT_FFMPEG_AUDIO_FILTER_HIGHPASS = 200;
 export const PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS = 1000;
 
 // Magic incantantion to further streamline FFmpeg for Protect.
-export const PROTECT_FFMPEG_OPTIONS = []; // "-probesize 32 -analyzeduration 0 -fflags nobuffer";
+export const PROTECT_FFMPEG_OPTIONS = [];
 
 // Duration, in minutes, to increase the level of logging for FFmpeg when we encounter errors.
 export const PROTECT_FFMPEG_VERBOSE_DURATION = 5;
