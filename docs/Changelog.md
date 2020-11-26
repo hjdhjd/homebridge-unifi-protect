@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 4.2.0 (2020-11-26)
+  * New feature: video transcoding. This [feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md#video) should **not** be needed for most people. For the unlucky few that struggle with getting native streaming to work, please refer to the [troubleshooting documentation](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/Troubleshooting.md#video) for how and when to use this feature, and it's implications.
+  * Dependency and library updates.
+
 ## 4.1.5 (2020-11-22)
   * Fix for a regression of MQTT event triggers.
   * Increase API timeout limit to give WiFi-based cameras a little more time to respond.
