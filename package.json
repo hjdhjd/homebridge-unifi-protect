@@ -69,7 +69,7 @@
   "dependencies": {
     "abort-controller": "^3.0.0",
     "domexception": "^2.0.1",
-    "execa": "^4.1.0",
+    "execa": "^5.0.0",
     "ffmpeg-for-homebridge": "0.0.9",
     "get-port": "^5.1.1",
     "mqtt": "^4.2.6",
