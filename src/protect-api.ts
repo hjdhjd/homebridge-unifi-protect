@@ -31,9 +31,7 @@ import util from "util";
  *
  * Here's how the UniFi Protect API works:
  *
- * 1. Login to the UniFi Protect NVR device (UCKgen2+, UDM-Pro, UNVR) and acquire security
- *    credentials for further calls to the API. The method for doing so varies between
- *    UniFi OS and non-UniFi OS devices.
+ * 1. Login to the UniFi Protect NVR device and acquire security credentials for further calls to the API.
  *
  * 2. Enumerate the list of UniFi Protect devices by calling the bootstrap URL. This
  *    contains almost everything you would want to know about this particular UniFi Protect NVR
@@ -54,7 +52,6 @@ export class ProtectApi {
   private headers!: Headers;
   private httpsAgent!: Agent;
   public isAdminUser!: boolean;
-  public isUnifiOs!: boolean;
   private log: Logging;
   private loggedIn!: boolean;
   private loginAge!: number;
@@ -86,28 +83,19 @@ export class ProtectApi {
     // UniFi OS has cross-site request forgery protection built into it's web management UI.
     // We use this fact to fingerprint it by connecting directly to the supplied NVR address
     // and see ifing there's a CSRF token waiting for us.
-    let response = await this.fetch("https://" + this.nvrAddress, { method: "GET" }, false);
+    const response = await this.fetch("https://" + this.nvrAddress, { method: "GET" }, false);
 
     if(response?.ok) {
       const csrfToken = response.headers.get("X-CSRF-Token");
 
-      // We found a token - we assume it's UniFi OS and we're all set.
+      // We found a token.
       if(csrfToken) {
         this.headers.set("X-CSRF-Token", csrfToken);
-        this.isUnifiOs = true;
 
         // UniFi OS has support for keepalive. Let's take advantage of that and reduce the workload on controllers.
         this.httpsAgent = new https.Agent({ keepAlive: true, maxFreeSockets: 5, maxSockets: 10, rejectUnauthorized: false, timeout: 60 * 1000 });
         return true;
       }
-    }
-
-    // If we don't have a token, the only option left for us is to look for a UniFi Cloud Key Gen2+ device.
-    response = await this.fetch("https://" + this.nvrAddress + ":7443/", { method: "GET" }, false);
-
-    // If we're able to connect, we're good.
-    if(response?.ok) {
-      return true;
     }
 
     // Couldn't deduce what type of NVR device we were connecting to.
@@ -149,21 +137,14 @@ export class ProtectApi {
     this.loggedIn = true;
     this.loginAge = now;
 
-    // We're a UniFi OS device. Configure headers accordingly.
+    // Configure headers.
     const csrfToken = response.headers.get("X-CSRF-Token");
     const cookie = response.headers.get("Set-Cookie");
 
     if(csrfToken && cookie && this.headers.has("X-CSRF-Token")) {
+
       this.headers.set("Cookie", cookie);
       this.headers.set("X-CSRF-Token", csrfToken);
-      return true;
-    }
-
-    // We're a UCK NVR device. Configure headers accordingly.
-    const authToken = response.headers.get("Authorization");
-
-    if(authToken) {
-      this.headers.set("Authorization", "Bearer " + authToken);
       return true;
     }
 
@@ -224,11 +205,11 @@ export class ProtectApi {
     // Check for admin user privileges or role changes.
     this.checkAdminUserStatus(firstRun);
 
-    // We're good. Now connect to the event listener API if we're a UniFi OS device, otherwise, we're done.
-    return this.isUnifiOs ? this.launchUpdatesListener() : true;
+    // We're good. Now connect to the event listener API.
+    return this.launchUpdatesListener();
   }
 
-  // Connect to the UniFi OS realtime update events API.
+  // Connect to the realtime update events API.
   private async launchUpdatesListener(): Promise<boolean> {
 
     // Log us in if needed.
@@ -534,42 +515,33 @@ export class ProtectApi {
 
   // Return the URL to directly access cameras, adjusting for Protect NVR variants.
   public camerasUrl(): string {
-    // Updating the channels on a UCK Gen2+ device is done through: https://protect-nvr-ip:7443/api/cameras/CAMERAID.
+
     // Boostrapping a UniFi OS device is done through: https://protect-nvr-ip/proxy/protect/api/cameras/CAMERAID.
-    return "https://" + this.nvrAddress + (this.isUnifiOs ? "/proxy/protect/api/cameras" : ":7443/api/cameras");
+    return "https://" + this.nvrAddress + "/proxy/protect/api/cameras";
   }
 
   // Return the right authentication URL, depending on which Protect NVR platform we are using.
   private authUrl(): string {
-    // Authenticating a UCK Gen2+ device is done through: https://protect-nvr-ip:7443/api/auth.
+
     // Authenticating a UniFi OS device is done through: https://protect-nvr-ip/api/auth/login.
-    return "https://" + this.nvrAddress + (this.isUnifiOs ? "/api/auth/login" : ":7443/api/auth");
+    return "https://" + this.nvrAddress + "/api/auth/login";
   }
 
   // Return the right bootstrap URL, depending on which Protect NVR platform we are using.
   private bootstrapUrl(): string {
-    // Boostrapping a UCK Gen2+ device is done through: https://protect-nvr-ip:7443/api/bootstrap.
+
     // Boostrapping a UniFi OS device is done through: https://protect-nvr-ip/proxy/protect/api/bootstrap.
-    return "https://" + this.nvrAddress + (this.isUnifiOs ? "/proxy/protect/api/bootstrap" : ":7443/api/bootstrap");
+    return "https://" + this.nvrAddress + "/proxy/protect/api/bootstrap";
   }
 
-  // Return the realtime system events API URL, if it's supported by this UniFi Protect device type.
+  // Return the realtime system events API URL.
   private systemUrl(): string {
-    // UCK Gen2+ devices don't support the websockets events API.
-    if(!this.isUnifiOs) {
-      return "";
-    }
 
     return "wss://" + this.nvrAddress + "/api/ws/system";
   }
 
-  // Return the realtime update events API URL, if it's supported by this UniFi Protect device type.
+  // Return the realtime update events API URL.
   private updatesUrl(): string {
-
-    // UCK Gen2+ devices don't support the websockets events API.
-    if(!this.isUnifiOs) {
-      return "";
-    }
 
     return "wss://" + this.nvrAddress + "/proxy/protect/ws/updates";
   }
@@ -591,7 +563,6 @@ export class ProtectApi {
   // Utility to clear out old login credentials or attempts.
   public clearLoginCredentials(): void {
     this.isAdminUser = false;
-    this.isUnifiOs = false;
     this.loggedIn = false;
     this.loginAge = 0;
     this.bootstrap = null;
@@ -606,8 +577,8 @@ export class ProtectApi {
     this.headers.set("Content-Type", "application/json");
 
     // We want the initial agent to be connection-agnostic, except for certificate validate since Protect uses self-signed certificates.
-    // and we want to disable TLS validation, at a minimum. If we're UniFI OS though, we want to take advantage of the fact that it
-    // supports keepalives to reduce workloads, but we deal with that elsewhere in acquireToken.
+    // and we want to disable TLS validation, at a minimum. We want to take advantage of the fact that it supports keepalives to reduce
+    // workloads, but we deal with that elsewhere in acquireToken.
     this.httpsAgent?.destroy();
     this.httpsAgent = new https.Agent({ rejectUnauthorized: false });
   }

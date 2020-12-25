@@ -45,14 +45,6 @@ export const PROTECT_MQTT_RECONNECT_INTERVAL = 60;
 // Default MQTT topic to use when publishing events. This is in the form of: unifi/protect/camera/event
 export const PROTECT_MQTT_TOPIC = "unifi/protect";
 
-// How often, in seconds, should we check Protect controllers for doorbell events. This setting is only used when a doorbell has been
-// detected and will override the default refresh intervals configured by the user.
-export const PROTECT_NVR_DOORBELL_REFRESH_INTERVAL = 2;
-
-// How often, in seconds, should we check UniFi Cloud Key Gen2+ Protect controllers for motion, other events, or new or removed devices.
-// This WILL impact motion and event detection resolution on UCK Gen2+ controllers.
-export const PROTECT_NVR_UCK_REFRESH_INTERVAL = 5;
-
 // How often, in seconds, should we check Protect controllers for new or removed devices.
 // This will NOT impact motion or doorbell event detection on UniFi OS devices.
 export const PROTECT_NVR_UNIFIOS_REFRESH_INTERVAL = 10;

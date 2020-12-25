@@ -12,8 +12,6 @@ import {
 import {
   PLATFORM_NAME,
   PLUGIN_NAME,
-  PROTECT_NVR_DOORBELL_REFRESH_INTERVAL,
-  PROTECT_NVR_UCK_REFRESH_INTERVAL,
   PROTECT_NVR_UNIFIOS_REFRESH_INTERVAL
 } from "./settings";
 import {
@@ -215,7 +213,7 @@ export class ProtectNvr {
     if(!this.refreshInterval || (!this.doorbellCount && (this.refreshInterval !== this.config.refreshInterval))) {
 
       if(!this.refreshInterval) {
-        this.refreshInterval = this.config.refreshInterval = this.nvrApi.isUnifiOs ? PROTECT_NVR_UNIFIOS_REFRESH_INTERVAL : PROTECT_NVR_UCK_REFRESH_INTERVAL;
+        this.refreshInterval = this.config.refreshInterval = PROTECT_NVR_UNIFIOS_REFRESH_INTERVAL;
       } else {
         this.refreshInterval = this.config.refreshInterval;
       }
@@ -228,13 +226,7 @@ export class ProtectNvr {
       refreshUpdated = true;
     }
 
-    // If we have doorbells on non-UniFi OS controllers, we need to poll more frequently.
-    if(!this.nvrApi.isUnifiOs && this.doorbellCount && (this.refreshInterval !== PROTECT_NVR_DOORBELL_REFRESH_INTERVAL)) {
-
-      this.refreshInterval = PROTECT_NVR_DOORBELL_REFRESH_INTERVAL;
-      this.log.info("%s: A doorbell has been detected. Setting the controller refresh interval to %s seconds.", this.nvrApi.getNvrName(), this.refreshInterval);
-
-    } else if(refreshUpdated || !this.isEnabled) {
+    if(refreshUpdated || !this.isEnabled) {
 
       // On startup or refresh interval change, we want to notify the user.
       this.log.info("%s: Controller refresh interval set to %s seconds.", this.nvrApi.getNvrName(), this.refreshInterval);

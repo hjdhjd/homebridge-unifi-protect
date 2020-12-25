@@ -63,8 +63,8 @@ export class ProtectCamera extends ProtectAccessory {
     this.accessory.context.nvr = this.nvr.nvrApi.bootstrap?.nvr.mac;
     this.accessory.context.detectMotion = detectMotion;
 
-    // If we're on UniFi OS, and the camera supports it, check to see if we have smart motion events enabled.
-    if(this.nvrApi.isUnifiOs && camera.featureFlags.hasSmartDetect && this.nvr?.optionEnabled(camera, "Motion.SmartDetect", false)) {
+    // If the camera supports it, check to see if we have smart motion events enabled.
+    if(camera.featureFlags.hasSmartDetect && this.nvr?.optionEnabled(camera, "Motion.SmartDetect", false)) {
 
       this.log.info("%s: Smart motion detection enabled.", this.name());
       this.isSmartMotionEnabled = true;

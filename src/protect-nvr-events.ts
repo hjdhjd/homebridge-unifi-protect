@@ -60,49 +60,9 @@ export class ProtectNvrEvents {
   // Check for event updates.
   public update(): boolean {
 
-    // For non-UniFi OS controllers, poll for doorbell and motion events.
-    this.checkProtectEvents();
-
-    // For UniFi OS controllers, configure the updates API listener, if needed. This needs to be called
+    // Configure the updates API listener, if needed. This needs to be called
     // regularly because the connection to the update events websocket can be shutdown and reopened.
     this.configureUpdatesListener();
-
-    return true;
-  }
-
-  // Check for doorbell and motion events for non-UniFi OS controllers.
-  private checkProtectEvents(): boolean {
-
-    // Ensure we're not a UniFi OS controller and that we're up and running.
-    if(this.nvrApi.isUnifiOs || !this.nvrApi.Cameras) {
-      return false;
-    }
-
-    // Iterate through the list of cameras, looking for the isMotionDetected event on each camera
-    // in order to determine where there is motion.
-    for(const camera of this.nvrApi.Cameras) {
-
-      // We only want cameras that are managed.
-      if(!camera.isManaged) {
-        continue;
-      }
-
-      // Find the accessory associated with this camera.
-      const uuid = this.hap.uuid.generate(camera.mac);
-      const accessory = this.platform.accessories.find(x => x.UUID === uuid);
-
-      // If we don't have an accessory, it's probably because we've chosen to hide it. In that case,
-      // just ignore and move on.
-      if(!accessory) {
-        continue;
-      }
-
-      // Handle motion events.
-      void this.motionEventHandler(accessory, camera.lastMotion);
-
-      // Handle doorbell events.
-      void this.doorbellEventHandler(accessory, camera.lastRing);
-    }
 
     return true;
   }
@@ -111,11 +71,6 @@ export class ProtectNvrEvents {
   // This is now deprecated in favor of the realtime updates event API, which provides for more event types
   // than the realtime system events API.
   private configureSystemEventListener(): boolean {
-
-    // The event listener API only works on UniFi OS devices.
-    if(!this.nvrApi.isUnifiOs) {
-      return false;
-    }
 
     // Only configure the event listener if it exists and it's not already configured.
     if(!this.nvrApi.eventListener || this.nvrApi.eventListenerConfigured) {
@@ -186,11 +141,6 @@ export class ProtectNvrEvents {
 
   // Configure the realtime update events API listener to trigger events on accessories, like motion.
   private configureUpdatesListener(): boolean {
-
-    // The event listener API only works on UniFi OS devices.
-    if(!this.nvrApi.isUnifiOs) {
-      return false;
-    }
 
     // Only configure the event listener if it exists and it's not already configured.
     if(!this.nvrApi.eventListener || this.nvrApi.eventListenerConfigured) {
