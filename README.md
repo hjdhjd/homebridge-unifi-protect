@@ -37,9 +37,7 @@ For the more technically inclined - this plugin has continued to pioneer the Hom
 
 - **The ability to [selectively hide and show](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md) specific Protect devices.** For those who only want to show particular devices in HomeKit, or particular controllers, a flexible and intuitive way to configure device availability at a granular level is available.
 
-- **Motion detection support using the native realtime notification API on UniFi OS.** On UniFI OS-based controllers, we use the **native realtime update notification API**, *without having to continuously poll the UniFI Protect controller.* This does a couple of things - first, it provides ***true*** realtime HomeKit rich notifications when motion is detected, including image snapshots. Second, this approach eliminates the requirement to continuously poll every few seconds that most non-native solutions to motion detection on UniFi Protect have used until now and reduces the load on UniFi Protect controllers substantially.
-
-- **Motion detection support for UniFi CloudKey Gen2+ controllers.** For those using UCK Gen2+ controllers, support for motion detection with rich notifications is also available, although only using poll-based notifications. Unfortunately, Ubiquiti hasn't yet implemented a realtime notification API for UCK Gen2+ controllers, but should Ubiquiti implement it in the future, this plugin will provide support for it.
+- **Motion detection support using the native realtime notification API.** We use the **native realtime update notification API**, *without having to continuously poll the UniFI Protect controller.* This does a couple of things - first, it provides ***true*** realtime HomeKit rich notifications when motion is detected, including image snapshots. Second, this approach eliminates the requirement to continuously poll every few seconds that most non-native solutions to motion detection on UniFi Protect have used until now and reduces the load on UniFi Protect controllers substantially.
 
 - **Motion sensor control from within HomeKit.** By default, all detected cameras have two additional services attached to them - a motion sensor service, and a motion switch service. The motion switch allows you to selectively activate and deactivate motion detection of your cameras. This is especially useful in automation scenarios where you wish to activate or deactivate motion detection selectively when you leave your home or arrive home, for example.
 
@@ -127,7 +125,7 @@ If you choose to configure this plugin directly instead of using the [Homebridge
 ```
 For most people, I recommend using [Homebridge Configuration web UI](https://github.com/oznu/homebridge-config-ui-x) to configure this plugin rather than doing so directly. It's easier to use for most users, especially newer users, and less prone to typos, leading to other problems.
 
-For UniFi OS devices like UDM-Pro, UniFi NVR, you can use your Ubiquiti account credentials, though 2FA is not currently supported. That said, **I strongly recommend creating a local user just for Homebridge instead of using this option.**
+You can use your Ubiquiti account credentials, though 2FA is not currently supported. That said, **I strongly recommend creating a local user just for Homebridge instead of using this option.**
 
 ## Plugin Development Dashboard
 This is mostly of interest to the true developer nerds amongst us.

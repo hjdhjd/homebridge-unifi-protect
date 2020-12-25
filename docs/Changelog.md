@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 4.3.0 (2020-11-26)
+  * Removed support for legacy UniFi Cloud Key Gen2+ firmwares. `homebridge-unifi-protect` now requires at least firmware version 2.0.24 or newer, which adds full UniFi OS support for UCK Gen2+ devices.
+
 ## 4.2.0 (2020-11-26)
   * New feature: video transcoding. This [feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md#video) should **not** be needed for most people. For the unlucky few that struggle with getting native streaming to work, please refer to the [troubleshooting documentation](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/Troubleshooting.md#video) for how and when to use this feature, and it's implications.
   * Dependency and library updates.
