@@ -104,9 +104,11 @@ Audio on cameras is tricky in the HomeKit world to begin with, and when you thro
 
 ### Things To Be Aware Of
 - **Make sure you are running on the latest production / stable firmwares for both your controller platform (UCKgen2+, UDM-Pro, UNVR, etc.) as well as the latest production / stable UniFi Protect controller firmware.**
-- **No beta versions of either controller or UniFi Protect firmware is supported by this plugin. You are on your own if you choose to install / run beta firmwares.**
-- **My philosophy is to aggressively adopt the capability and features (that make sense in a HomeKit context) in the latest production / stable Ubiquiti firmware releases and to deprecate old functionality that's been superceded by newer capabilities - either by HomeKit or Ubiquiti. Read the [Changelog](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/Changelog.md) carefully for the latest information on what's new.**
-- ***For extra clarity - before you install this plugin, make sure you are on the latest production / stable controller platform firmware and the latest production / stable UniFi Protect firmware.***
+- **No beta versions of iOS, iPadOS, macOS, tvOS, or watchOS are supported. You are on your own if you choose to install / run beta firmwares - don't expect support or sympathy if you run into issues.**
+- **No beta versions of device controller firmware (UCKgen2+, UDM-Pro, UNVR, etc.) are supported by this plugin. You are on your own if you choose to install / run beta firmwares - don't expect support or sympathy if you run into issues.**
+- **No beta versions of UniFi Protect firmware are supported by this plugin. You are on your own if you choose to install / run beta firmwares - don't expect support or sympathy if you run into issues.**
+- **My philosophy is to aggressively adopt the capability and features (that make sense in a HomeKit context) in the latest production / stable Ubiquiti firmware releases and to deprecate old functionality that's been superceded by newer, richer, or more performant capabilities - either by HomeKit or Ubiquiti. Read the [Changelog](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/Changelog.md) carefully for the latest information on what's new.**
+- ***For extra clarity and to reiterate the above - before you install this plugin, make sure you are on the latest production / stable controller platform firmware and the latest production / stable UniFi Protect firmware.***
 
 ## Plugin Configuration
 If you choose to configure this plugin directly instead of using the [Homebridge Configuration web UI](https://github.com/oznu/homebridge-config-ui-x), you'll need to add the platform to your `config.json` in your home directory inside `.homebridge`.
