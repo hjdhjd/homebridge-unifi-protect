@@ -55,16 +55,9 @@
     "lint": "eslint src/**.ts",
     "postpublish": "npm run clean",
     "prepublishOnly": "npm run lint && npm run build",
-    "test": "exit 0",
+    "test": "eslint src/**.ts",
     "watch": "npm run build && npm link && nodemon"
   },
-  "files": [
-    "docs/**.md",
-    "LICENSE.md",
-    "README.md",
-    "config.schema.json",
-    "dist"
-  ],
   "main": "dist/index.js",
   "dependencies": {
     "abort-controller": "^3.0.0",
@@ -74,16 +67,17 @@
     "get-port": "^5.1.1",
     "mqtt": "^4.2.6",
     "node-fetch": "^3.0.0-beta.9",
-    "ws": "^7.4.1"
+    "ws": "^7.4.2"
   },
   "devDependencies": {
     "@types/ip": "^1.1.0",
-    "@types/node": "^14.14.16",
+    "@types/node": "^14.14.19",
     "@types/ws": "^7.4.0",
-    "@typescript-eslint/eslint-plugin": "^4.11.0",
-    "@typescript-eslint/parser": "^4.11.0",
+    "@typescript-eslint/eslint-plugin": "^4.11.1",
+    "@typescript-eslint/parser": "^4.11.1",
     "eslint": "^7.16.0",
     "homebridge": "^1.1.7",
+    "nodemon": "^2.0.6",
     "rimraf": "^3.0.2",
     "typescript": "^4.1.3"
   }
