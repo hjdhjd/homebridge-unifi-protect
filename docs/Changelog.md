@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 4.3.2 (2021-01-01)
+  * More housekeeping.
+
 ## 4.3.1 (2021-01-01)
   * Dependency updates and housekeeping.
 
