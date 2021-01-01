@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 4.3.1 (2021-01-01)
+  * Dependency updates and housekeeping.
+
 ## 4.3.0 (2020-12-26)
   * Removed support for legacy UniFi Cloud Key Gen2+ firmware. `homebridge-unifi-protect` now requires at least firmware version 2.0.24 or newer, which adds full UniFi OS support for UCK Gen2+ devices. This may be a breaking change if you aren't on the latest stable firmware for UCK Gen2+.
 
