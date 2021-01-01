@@ -1,4 +1,4 @@
-/* Copyright(C) 2020, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2021, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * protect-types.ts: Type definitions for UniFi Protect.
  */

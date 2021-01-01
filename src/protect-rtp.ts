@@ -1,4 +1,4 @@
-/* Copyright(C) 2017-2020, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2017-2021, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * protect-rtp.ts: RTP-related utilities to slice and dice RTP streams.
  *

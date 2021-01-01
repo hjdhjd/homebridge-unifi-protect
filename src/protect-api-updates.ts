@@ -1,4 +1,4 @@
-/* Copyright(C) 2020, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2021, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * protect-api-updates.ts: Our UniFi Protect realtime updates event API implementation.
  */
