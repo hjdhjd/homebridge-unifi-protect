@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 4.3.5 (2021-01-02)
+  * Fix: deal gracefully with Protect edge cases where undefined / uninitialized values may be provided by the Protect controller for RTSP streams.
+
 ## 4.3.4 (2021-01-02)
   * Selectively enable additional logging when needed to troubleshoot startup issues.
 
