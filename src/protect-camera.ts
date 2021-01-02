@@ -543,6 +543,12 @@ export class ProtectCamera extends ProtectAccessory {
 
     // Now that we have our RTSP streams, create a list of supported resolutions for HomeKit.
     for(const channel of cameraChannels) {
+
+      // Sanity check in case Protect reports nonsensical resolutions.
+      if(!channel.name || (channel.width <= 0) || (channel.width > 65535) || (channel.height <= 0) || (channel.height > 65535)) {
+        continue;
+      }
+
       rtspEntries.push({ channel: channel,
         name: this.getResolution([channel.width, channel.height, channel.fps]) + " (" + channel.name + ")",
         resolution: [ channel.width, channel.height, channel.fps ], url: cameraUrl + channel.rtspAlias });
@@ -586,7 +592,7 @@ export class ProtectCamera extends ProtectAccessory {
     }
 
     // Inform users about our RTSP entry mapping, if we're debugging.
-    if(nvr.optionEnabled(camera, "Video.Debug.Startup", false)) {
+    if(nvr.optionEnabled(camera, "Debug.Video.Startup", false)) {
       for(const entry of this.rtspEntries) {
         this.log.info("%s: Mapping resolution: %s.", this.name(), this.getResolution(entry.resolution) + " => " + entry.name);
       }
