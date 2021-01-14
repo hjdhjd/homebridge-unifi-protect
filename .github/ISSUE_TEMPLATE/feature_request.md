@@ -6,6 +6,9 @@ labels: enhancement
 assignees: ''
 ---
 
+<!-- FEATURE REQUESTS THAT ARE NOT FILLED OUT COMPLETELY WILL BE CLOSED AUTOMATICALLY WITHOUT WARNING AND WILL NOT RECEIVE A RESPONSE. THE FORM IS HERE FOR A REASON. :). -->
+<!-- Please ensure you read the documentation before creating a feature request to ensure the functionality doesn't already exist. -->
+
 **Is your feature request related to a problem? Please describe:**
 <!-- A clear and concise description of what the problem is or what use case you would like to see supported. e.g. I'm always frustrated when [...] -->
 
