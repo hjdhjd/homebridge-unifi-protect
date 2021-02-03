@@ -34,7 +34,7 @@ I welcome any additions or corrections to the protocol for the benefit of the co
 
 #### Connecting
  * Login to the UniFi Protect controller and obtain the bootstrap JSON. The URL is: `https://protect-nvr-ip/proxy/protect/api/bootstrap`. You can look through [protect-api.ts](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/src/protect-api.ts) for a better understanding of the Protect login process and how to obtain the bootstrap JSON.
- * Open the websocket to the updates URL. The URL is: `wss://protect-nvr-ip/proxy/protect/ws/update?lastUpdateId?lastUpdateId=X`. You can grab lastUpdateId from the bootstrap JSON in the prior step. You can [see an example in protect-api.ts](https://github.com/hjdhjd/homebridge-unifi-protect/blob/1d0d28a8b020878ee8f478244bed7ec361b33779/src/protect-api.ts#L225).
+ * Open the websocket to the updates URL. The URL is: `wss://protect-nvr-ip/proxy/protect/ws/updates?lastUpdateId?lastUpdateId=X`. You can grab lastUpdateId from the bootstrap JSON in the prior step. You can [see an example in protect-api.ts](https://github.com/hjdhjd/homebridge-unifi-protect/blob/1d0d28a8b020878ee8f478244bed7ec361b33779/src/protect-api.ts#L225).
  * Then you're ready to listen to messages. You can see an [example of this in protect-nvr.ts](https://github.com/hjdhjd/homebridge-unifi-protect/blob/1d0d28a8b020878ee8f478244bed7ec361b33779/src/protect-nvr.ts#L408).
 
 Those are the basics and gets us up and running. Now, to explain how the updates API works...
