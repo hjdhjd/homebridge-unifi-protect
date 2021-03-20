@@ -8,11 +8,11 @@ import {
   CharacteristicSetCallback,
   CharacteristicValue
 } from "homebridge";
-import { ProtectCameraChannelConfig, ProtectCameraConfig, ProtectNvrBootstrap } from "./protect-types";
 import { ProtectAccessory } from "./protect-accessory";
 import { ProtectApi } from "./protect-api";
 import { ProtectNvr } from "./protect-nvr";
 import { ProtectStreamingDelegate } from "./protect-stream";
+import { ProtectCameraChannelConfig, ProtectCameraConfig, ProtectNvrBootstrap } from "./protect-types";
 
 // Manage our switch types.
 export const PROTECT_SWITCH_DOORBELL_TRIGGER = "DoorbellTrigger";
@@ -673,7 +673,12 @@ export class ProtectCamera extends ProtectAccessory {
         return;
       }
 
-      void this.stream?.getSnapshot();
+      this.stream?.getSnapshot().then(snapshot => {
+        if (snapshot) {
+          this.nvr.mqtt?.publish(this.accessory, "snapshot", snapshot.toString());
+          this.log.info("%s: Snapshot published via MQTT.", this.name());
+        }
+      });
       this.log.info("%s: Snapshot triggered via MQTT.", this.name());
     });
 
