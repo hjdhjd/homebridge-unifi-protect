@@ -677,6 +677,8 @@ export class ProtectCamera extends ProtectAccessory {
         if (snapshot) {
           this.nvr.mqtt?.publish(this.accessory, "snapshot", snapshot.toString());
           this.log.info("%s: Snapshot published via MQTT.", this.name());
+        } else {
+          this.log.info("%s: Snapshot not available.", this.name());
         }
       });
       this.log.info("%s: Snapshot triggered via MQTT.", this.name());
