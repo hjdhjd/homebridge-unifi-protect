@@ -8,7 +8,7 @@
 [![Downloads](https://img.shields.io/npm/dt/homebridge-unifi-protect?color=%230559C9&logo=icloud&logoColor=%23FFFFFF&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect)
 [![Version](https://img.shields.io/npm/v/homebridge-unifi-protect?color=%230559C9&label=Homebridge%20UniFi%20Protect&logo=ubiquiti&logoColor=%23FFFFFF&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect)
 [![UniFi Protect@Homebridge Discord](https://img.shields.io/discord/432663330281226270?color=0559C9&label=Discord&logo=discord&logoColor=%23FFFFFF&style=for-the-badge)](https://discord.gg/QXqfHEW)
-[![verified-by-homebridge](https://img.shields.io/badge/homebridge-verified-blueviolet?color=%2357277C&style=for-the-badge&logoColor=%23FFFFFF&logo=data:image/svg%2bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI5OTIuMDkiIGhlaWdodD0iMTAwMCIgdmlld0JveD0iMCAwIDk5Mi4wOSAxMDAwIj48ZGVmcz48c3R5bGU+LmF7ZmlsbDojZmZmO308L3N0eWxlPjwvZGVmcz48cGF0aCBjbGFzcz0iYSIgZD0iTTk1MC4xOSw1MDguMDZhNDEuOTEsNDEuOTEsMCwwLDEtNDItNDEuOWMwLS40OC4zLS45MS4zLTEuNDJMODI1Ljg2LDM4Mi4xYTc0LjI2LDc0LjI2LDAsMCwxLTIxLjUxLTUyVjEzOC4yMmExNi4xMywxNi4xMywwLDAsMC0xNi4wOS0xNkg3MzYuNGExNi4xLDE2LjEsMCwwLDAtMTYsMTZWMjc0Ljg4bC0yMjAuMDktMjEzYTE2LjA4LDE2LjA4LDAsMCwwLTIyLjY0LjE5TDYyLjM0LDQ3Ny4zNGExNiwxNiwwLDAsMCwwLDIyLjY1bDM5LjM5LDM5LjQ5YTE2LjE4LDE2LjE4LDAsMCwwLDIyLjY0LDBMNDQzLjUyLDIyNS4wOWE3My43Miw3My43MiwwLDAsMSwxMDMuNjIuNDVMODYwLDUzOC4zOGE3My42MSw3My42MSwwLDAsMSwwLDEwNGwtMzguNDYsMzguNDdhNzMuODcsNzMuODcsMCwwLDEtMTAzLjIyLjc1TDQ5OC43OSw0NjguMjhhMTYuMDUsMTYuMDUsMCwwLDAtMjIuNjUuMjJMMjY1LjMsNjgwLjI5YTE2LjEzLDE2LjEzLDAsMCwwLDAsMjIuNjZsMzguOTIsMzlhMTYuMDYsMTYuMDYsMCwwLDAsMjIuNjUsMGwxMTQtMTEyLjM5YTczLjc1LDczLjc1LDAsMCwxLDEwMy4yMiwwbDExMywxMTEsLjQyLjQyYTczLjU0LDczLjU0LDAsMCwxLDAsMTA0TDU0NS4wOCw5NTcuMzV2LjcxYTQxLjk1LDQxLjk1LDAsMSwxLTQyLTQxLjk0Yy41MywwLC45NS4zLDEuNDQuM0w2MTYuNDMsODA0LjIzYTE2LjA5LDE2LjA5LDAsMCwwLDQuNzEtMTEuMzMsMTUuODUsMTUuODUsMCwwLDAtNC43OS0xMS4zMmwtMTEzLTExMWExNi4xMywxNi4xMywwLDAsMC0yMi42NiwwTDM2Ny4xNiw3ODIuNzlhNzMuNjYsNzMuNjYsMCwwLDEtMTAzLjY3LS4yN2wtMzktMzlhNzMuNjYsNzMuNjYsMCwwLDEsMC0xMDMuODZMNDM1LjE3LDQyNy44OGE3My43OSw3My43OSwwLDAsMSwxMDMuMzctLjlMNzU4LjEsNjM5Ljc1YTE2LjEzLDE2LjEzLDAsMCwwLDIyLjY2LDBsMzguNDMtMzguNDNhMTYuMTMsMTYuMTMsMCwwLDAsMC0yMi42Nkw1MDYuNSwyNjUuOTNhMTYuMTEsMTYuMTEsMCwwLDAtMjIuNjYsMEwxNjQuNjksNTgwLjQ0QTczLjY5LDczLjY5LDAsMCwxLDYxLjEsNTgwTDIxLjU3LDU0MC42OWwtLjExLS4xMmE3My40Niw3My40NiwwLDAsMSwuMTEtMTAzLjg4TDQzNi44NSwyMS40MUE3My44OSw3My44OSwwLDAsMSw1NDAsMjAuNTZMNjYyLjYzLDEzOS4zMnYtMS4xYTczLjYxLDczLjYxLDAsMCwxLDczLjU0LTczLjVINzg4YTczLjYxLDczLjYxLDAsMCwxLDczLjUsNzMuNVYzMjkuODFhMTYsMTYsMCwwLDAsNC43MSwxMS4zMmw4My4wNyw4My4wNWguNzlhNDEuOTQsNDEuOTQsMCwwLDEsLjA4LDgzLjg4WiIvPjwvc3ZnPg==)](https://github.com/homebridge/homebridge/wiki/Verified-Plugins)
+[![verified-by-homebridge](https://img.shields.io/badge/homebridge-verified-blueviolet?color=%23491F59&style=for-the-badge&logoColor=%23FFFFFF&logo=homebridge)](https://github.com/homebridge/homebridge/wiki/Verified-Plugins)
 
 ## HomeKit support for the UniFi Protect ecosystem using [Homebridge](https://homebridge.io).
 </DIV>
@@ -56,8 +56,8 @@ An example `options` setting might look like this in your config.json:
     "platform": "UniFi Protect",
 
     "options": [
-      "Disable.Stream.High",
-      "Enable.Stream.High.AAAAAAAAAAAA"
+      "Disable.Video.Stream.High",
+      "Enable.Video.Stream.High.AAAAAAAAAAAA"
     ],
 
     "controllers": [
@@ -130,6 +130,9 @@ Please review the [documentation for UniFi Protect doorbell support](https://git
 | `Enable.Doorbell.Messages.FromDoorbell`       | Allow messages saved on the UniFi Protect doorbell to appear as switches in HomeKit. *(Default)*
 | `Disable.Doorbell.Messages.FromDoorbell`      | Prevent messages saved on the UniFi Protect doorbell from appearing as switches in HomeKit.
 |                                               |
+| `Enable.Doorbell.NvrEvents`                   | Enable the processing of doorbell ring events from the UniFi Protect controller. *(Default)*
+| `Disable.Doorbell.NvrEvents`                  | Disable the processing of doorbell ring events from the UniFi Protect controller. This is useful in scenarios where you want to ignore events generated from UniFi Protect and execute certain automation scenarios.
+|                                               |
 | `Enable.Doorbell.Trigger`                     | This feature option has a dual purpose: <UL> <LI>First, for Protect cameras that are not hardware doorbells, this will allow you to enable or disable HomeKit doorbell support on **any** Protect camera.</LI> <LI>Second, this will create a switch accessory in HomeKit that you can use to trigger ring events or create automations when ring events occur.</LI></UL>
 | `Disable.Doorbell.Trigger`                    | Remove the doorbell switch accessory.  *(Default)*
 
@@ -149,18 +152,32 @@ Motion feature options allow you to tailor various aspects of motion detection a
 
 | Option                                        | Description
 |-----------------------------------------------|----------------------------------
+| `Enable.Motion.NvrEvents`                     | Enable the processing of motion events from the UniFi Protect controller. *(Default)*
+| `Disable.Motion.NvrEvents`                    | Disable the processing of motion events from the UniFi Protect controller. This is useful in scenarios where you want to ignore events generated from UniFi Protect and execute certain automation scenarios.
+|                                               |
 | `Enable.Motion.Sensor`                        | Add a motion sensor accessory to HomeKit to enable motion detection. *(Default)*
 | `Disable.Motion.Sensor`                       | Remove the motion sensor and motion sensor switch accessories to disable motion detection capabilities
 |                                               |
-| `Enable.Motion.SmartDetect`                   | Enable smart motion detection on G4-series cameras. Some things to keep in mind: <UL> <LI>This feature requires UniFi Protect controller v1.15 or greater **and** a UniFi OS-based controller.</LI> <LI>Only G4-series cameras are supported - this is a UniFi Protect limitation, unfortunately.</LI> <LI>Smart motion detection uses the AI/ML capabilities on G4-series cameras to detect objects of interest. Currently, the only supported object type is person, although it seems likely that more will be added in the future.</LI> <LI>You can configure smart motion detection in the UniFi Protect controller webUI for more customization and control over the motion detection experience.</LI></UL>
+| `Enable.Motion.SmartDetect`                   | Enable smart motion detection on G4-series cameras. By default, any smart motion events configured will trigger the motion sensor. Some things to keep in mind: <UL> <LI>This feature requires UniFi Protect controller v1.15 or greater.</LI> <LI>Only G4-series cameras are supported - this is a UniFi Protect limitation, unfortunately.</LI> <LI>Smart motion detection uses the AI/ML capabilities on G4-series cameras to detect objects of interest. Currently, the supported object types are person and vehicle.</LI> <LI>You can configure smart motion detection in the UniFi Protect controller webUI for more customization and control over the motion detection experience.</LI></UL>
 | `Disable.Motion.SmartDetect`                  | Disable smart motion detection. *(Default)*
 |                                               |
+| `Enable.Motion.SmartDetect.NvrEvents`         | Enable the processing of smart motion events from the UniFi Protect controller. *(Default)*
+| `Disable.Motion.SmartDetect.NvrEvents`        | Disable the processing of smart motion events from the UniFi Protect controller. This is useful in scenarios where you want to ignore events generated from UniFi Protect and execute certain automation scenarios.
+|                                               |
+| `Enable.Motion.SmartDetect.ObjectSensors`     | This feature option will create contact sensors for each object type that UniFi Protect supports through smart motion detection. The contact sensors will be triggered when a particular object type is detected, in addition to triggering a motion detection event. This is useful in scenarios where you have multiple object types configured for smart motion detection and you want to create automations around specific smart motion event object types. <BR>For example, you may have a smart motion detection zone for person and another for vehicle, and you want an automation to turn on a light if a person is detected, but not if a vehicle is detected. Enabling this option will allow you to create an automation using the contact sensor for the person object type.</BR>
+| `Disable.Motion.SmartDetect.ObjectSensors`    | Disable smart motion detection contact sensors for each object type supported by UniFi Protect. *(Default)*
+|                                               |
+| `Enable.Motion.SmartDetect.Person`            | Trigger a motion event if smart motion detection identifies a person. This option requires smart motion detection to be enabled and assumes the appropriate smart detection zones have been configured in UniFi Protect. *(Default)*
+| `Disable.Motion.SmartDetect.Person`           | Disable triggering motion events when smart motion detection identifies a person.
+|                                               |
+| `Enable.Motion.SmartDetect.Vehicle`           | Trigger a motion event if smart motion detection identifies a vehicle. This option requires smart motion detection to be enabled and assumes the appropriate smart detection zones have been configured in UniFi Protect. *(Default)*
+| `Disable.Motion.SmartDetect.Vehicle`          | Disable triggering motion events when smart motion detection identifies a vehicle.
+|                                               |
 | `Enable.Motion.Switch`                        | Add a switch accessory to activate or deactivate motion detection in HomeKit.
-| `Disable.Motion.Switch`                       | Remove the switch accessory used to enable or disable motion detection. *(Default)* *Note: this will not disable motion detection, just remove the ability to selectively activate and deactivate it in HomeKit.*
+| `Disable.Motion.Switch`                       | Remove the switch accessory used to enable or disable motion detection. *(Default)* <BR> *Note: this will not disable motion detection, just remove the ability to selectively activate and deactivate it in HomeKit.*</BR>
 |                                               |
 | `Enable.Motion.Trigger`                       | Add a switch accessory to manually trigger a motion detection event in HomeKit. This is useful in certain automation scenarios where you want to trigger a rich notification based on some other event.
 | `Disable.Motion.Trigger`                      | Remove the switch accessory used to manually trigger a motion detection event. *(Default)*
-
 
 #### <A NAME="securitysystem"></A>Security System Feature Options
 Please review the [documentation for UniFi Protect liveview support](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/Liveviews.md) for additional information about the options below and the broader liveview and security system feature set available in `homebridge-unifi-protect`.
