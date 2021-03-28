@@ -74,6 +74,7 @@ export class ProtectApi {
 
   // Identify which NVR device type we're logging into and acquire a CSRF token if needed.
   private async acquireToken(): Promise<boolean> {
+
     // We only need to acquire a token if we aren't already logged in, or we don't already have a token,
     // or don't know which device type we're on.
     if(this.loggedIn || this.headers.has("X-CSRF-Token") || this.headers.has("Authorization")) {
