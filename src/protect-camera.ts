@@ -14,6 +14,9 @@ import { ProtectApi } from "./protect-api";
 import { ProtectNvr } from "./protect-nvr";
 import { ProtectStreamingDelegate } from "./protect-stream";
 
+// Manage our contact sensor types.
+export const PROTECT_CONTACT_MOTION_SMARTDETECT = "ContactMotionSmartDetect";
+
 // Manage our switch types.
 export const PROTECT_SWITCH_DOORBELL_TRIGGER = "DoorbellTrigger";
 export const PROTECT_SWITCH_MOTION_SENSOR = "MotionSensorSwitch";
@@ -29,10 +32,10 @@ export interface RtspEntry {
 export class ProtectCamera extends ProtectAccessory {
   private isDoorbellConfigured!: boolean;
   public isRinging!: boolean;
-  public isSmartMotionEnabled!: boolean;
   private isVideoConfigured!: boolean;
   private rtspEntries!: RtspEntry[];
   private rtspQuality!: { [index: string]: string };
+  public smartDetectTypes!: string[];
   public snapshotUrl!: string;
   public stream!: ProtectStreamingDelegate;
   public twoWayAudio!: boolean;
@@ -42,9 +45,9 @@ export class ProtectCamera extends ProtectAccessory {
 
     this.isDoorbellConfigured = false;
     this.isRinging = false;
-    this.isSmartMotionEnabled = false;
     this.isVideoConfigured = false;
     this.rtspQuality = {};
+    this.smartDetectTypes = [];
 
     // Save the camera object before we wipeout the context.
     const camera = this.accessory.context.camera as ProtectCameraConfig;
@@ -66,8 +69,18 @@ export class ProtectCamera extends ProtectAccessory {
     // If the camera supports it, check to see if we have smart motion events enabled.
     if(camera.featureFlags.hasSmartDetect && this.nvr?.optionEnabled(camera, "Motion.SmartDetect", false)) {
 
-      this.log.info("%s: Smart motion detection enabled.", this.name());
-      this.isSmartMotionEnabled = true;
+      // We deal with smart motion detection options here and save them on the ProtectCamera instance because
+      // we're trying to optimize and reduce the number of feature option lookups we do in realtime, when possible.
+      // Reading a stream of constant events and having to perform a string comparison through a list of options multiple
+      // times a second isn't an ideal use of CPU cycles, even if you have plenty of them to spare. Instead, we perform
+      // that lookup once, here, and set the appropriate option booleans for faster lookup and use later in event
+      // detection.
+
+      // Check for the smart motion detection object types that UniFi Protect supports.
+      this.smartDetectTypes = camera.featureFlags.smartDetectTypes.filter(x => this.nvr?.optionEnabled(camera, "Motion.SmartDetect." + x));
+
+      // Inform the user of what smart detection object types we're configured for.
+      this.log.info("%s: Smart motion detection enabled%s.", this.name(), this.smartDetectTypes.length ? ": " + this.smartDetectTypes.join(", ") : "");
     }
 
     // Configure accessory information.
@@ -81,6 +94,9 @@ export class ProtectCamera extends ProtectAccessory {
     this.configureMotionSwitch();
     this.configureMotionTrigger();
 
+    // Configure smart motion contact sensors.
+    this.configureMotionSmartSensor();
+
     // Configure two-way audio support and our video stream.
     this.configureTwoWayAudio();
     await this.configureVideoStream();
@@ -93,6 +109,7 @@ export class ProtectCamera extends ProtectAccessory {
 
   // Configure the camera device information for HomeKit.
   private configureInfo(): boolean {
+
     const accessory = this.accessory;
     const camera = accessory.context.camera as ProtectCameraConfig;
     const hap = this.hap;
@@ -127,6 +144,7 @@ export class ProtectCamera extends ProtectAccessory {
 
   // Configure the camera motion sensor for HomeKit.
   private configureMotionSensor(): boolean {
+
     const accessory = this.accessory;
     const hap = this.hap;
 
@@ -158,6 +176,67 @@ export class ProtectCamera extends ProtectAccessory {
     }
 
     accessory.addService(motionService);
+    return true;
+  }
+
+  // Configure discrete smart motion contact sensors for HomeKit.
+  private configureMotionSmartSensor(): boolean {
+
+    const camera = this.accessory.context.camera as ProtectCameraConfig;
+
+    // Check for object-centric contact sensors that are no longer enabled and remove them.
+    for(const objectService of this.accessory.services.filter(x => x.subtype?.startsWith(PROTECT_CONTACT_MOTION_SMARTDETECT + "."))) {
+
+      // If we have motion sensors as well as object contact sensors enabled, and we have this object type enabled on this camera, we're good here.
+      if(this.nvr?.optionEnabled(camera, "Motion.Sensor") &&
+        this.nvr?.optionEnabled(camera, "Motion.SmartDetect.ObjectSensors", false)) {
+        continue;
+      }
+
+      // We don't have this contact sensor enabled, remove it.
+      this.accessory.removeService(objectService);
+      this.log.info("%s: Disabling smart motion contact sensor: %s.", this.name(), objectService.subtype?.slice(objectService.subtype?.indexOf(".") + 1));
+    }
+
+    // Have we disabled motion sensors? If so, we're done.
+    if(!this.nvr?.optionEnabled(camera, "Motion.Sensor")) {
+      return false;
+    }
+
+    // Have we enabled discrete contact sensors for specific object types? If not, we're done here.
+    if(!this.nvr?.optionEnabled(camera, "Motion.SmartDetect.ObjectSensors", false)) {
+      return false;
+    }
+
+    // Add individual contact sensors for each object detection type, if needed.
+    for(const smartDetectType of camera.featureFlags.smartDetectTypes) {
+
+      // See if we already have this contact sensor configured.
+      let contactService = this.accessory.getServiceById(this.hap.Service.ContactSensor, PROTECT_CONTACT_MOTION_SMARTDETECT + "." + smartDetectType);
+
+      // If not, let's add it.
+      if(!contactService) {
+
+        contactService = new this.hap.Service.ContactSensor(this.accessory.displayName + " " + smartDetectType.charAt(0).toUpperCase() + smartDetectType.slice(1),
+          PROTECT_CONTACT_MOTION_SMARTDETECT + "." + smartDetectType);
+
+        // Something went wrong, we're done here.
+        if(!contactService) {
+          this.log.error("%s: Unable to add smart motion contact sensor for %s detection.", this.name(), smartDetectType);
+          return false;
+        }
+
+        // Finally, add it to the camera.
+        this.accessory.addService(contactService);
+      }
+
+      // Initialize the sensor.
+      contactService.updateCharacteristic(this.hap.Characteristic.ContactSensorState, false);
+    }
+
+    this.log.info("%s: Smart motion contact sensor%s enabled: %s.", this.name(),
+      camera.featureFlags.smartDetectTypes.length > 1 ? "s" : "", camera.featureFlags.smartDetectTypes.join(", "));
+
     return true;
   }
 
@@ -673,7 +752,7 @@ export class ProtectCamera extends ProtectAccessory {
         return;
       }
 
-      void this.stream?.getSnapshot();
+      void this.stream?.handleSnapshotRequest();
       this.log.info("%s: Snapshot triggered via MQTT.", this.name());
     });
 
@@ -723,6 +802,7 @@ export class ProtectCamera extends ProtectAccessory {
   protected isReservedName(name: string | undefined): boolean {
     return name === undefined ? false :
       [
+        PROTECT_CONTACT_MOTION_SMARTDETECT.toUpperCase(),
         PROTECT_SWITCH_DOORBELL_TRIGGER.toUpperCase(),
         PROTECT_SWITCH_MOTION_SENSOR.toUpperCase(),
         PROTECT_SWITCH_MOTION_TRIGGER.toUpperCase()
