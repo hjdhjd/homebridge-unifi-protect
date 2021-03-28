@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 4.4.0 (2021-03-28)
+  * Fix: adjust realtime event processing semantics to match the changes in behavior UniFi Protect introduced in v1.17 controller firmwares and beyond.
+  * Fix: correct a regression of MQTT-triggered snapshots. They should work correctly once more - sorry about that!
+  * New feature: significantly updated smart motion detection support:
+    * You can now configure which smart motion object types trigger a motion event (see the `Motion.SmartDetect.Person` and `Motion.SmartDetect.Vehicle` [feature options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md#motion)).
+    * Create automations based on object types that are detected by UniFi Protect through the new `Motion.SmartDetect.ObjectSensors` [feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md#motion). This option will create a set of contact sensors that will be triggered whenever UniFi Protect detects those object types which can be used in various automation scenarios.
+    * Updated MQTT support with all that smart motion goodness. We now publish smart motion events, including detected object types, for those that use MQTT to further their automation scenarios. See the [MQTT documentation](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/MQTT.md) for more details.
+  * New feature: ignore UniFi Protect events. Using the `Doorbell.NvrEvents`, `Motion.NvrEvents`, and `Motion.SmartDetect.NvrEvents` [feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md) you can selectively disable processing those events in HomeKit from UniFi Protect. Why might you want to do this? There are some use cases where users may want to ignore the event detection in Protect, due to false positives or other automation scenarios.
+
 ## 4.3.5 (2021-01-02)
   * Fix: deal gracefully with Protect edge cases where undefined / uninitialized values may be provided by the Protect controller for RTSP streams.
 
