@@ -135,17 +135,24 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   }
 
   // HomeKit image snapshot request handler.
-  public async handleSnapshotRequest(request: SnapshotRequest, callback: SnapshotRequestCallback): Promise<void> {
+  public async handleSnapshotRequest(request?: SnapshotRequest, callback?: SnapshotRequestCallback): Promise<void> {
 
     const snapshot = await this.getSnapshot(request);
 
+    // No snapshot was returned - we're done here.
     if(!snapshot) {
-      callback(new Error(this.name() + ": Unable to retrieve a snapshot"));
+
+      if(callback) {
+        callback(new Error(this.name() + ": Unable to retrieve a snapshot"));
+      }
+
       return;
     }
 
     // Return the image to HomeKit.
-    callback(undefined, snapshot);
+    if(callback) {
+      callback(undefined, snapshot);
+    }
 
     // Publish the snapshot as a data URL to MQTT, if configured.
     this.protectCamera.nvr.mqtt?.publish(this.protectCamera.accessory, "snapshot", "data:image/jpeg;base64," + snapshot.toString("base64"));
@@ -567,7 +574,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   }
 
   // Take a snapshot.
-  public async getSnapshot(request?: SnapshotRequest): Promise<Buffer | null> {
+  private async getSnapshot(request?: SnapshotRequest): Promise<Buffer | null> {
 
     const cameraConfig = this.protectCamera.accessory.context.camera as ProtectCameraConfig;
     const params = new URLSearchParams({ force: "true" });
