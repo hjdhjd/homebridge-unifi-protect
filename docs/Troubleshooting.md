@@ -82,7 +82,7 @@ There are lots of things that can go wrong with video streaming, unfortunately. 
 #### Background
 The good news is that the video streams coming from UniFi Protect tend to be pretty close to pristine. They require very little massaging or manipulation to make them accessible through HomeKit. This means that there's no reencoding of a video stream that needs to happen in order to make the stream usable in HomeKit. That means the plugin has very modest CPU horsepower requirements, and you should have a smooth user experience. There are a couple of Protect-specific quirks when it comes to streaming, but I'm going to skip that here because it's uninteresting for the intended purpose of this page.
 
-An essential aspect of HomeKit video streaming is understanding that **HomeKit devices what quality it wants to request, not the end user, nor the plugin**. What this means in practice is that you have no control over what HomeKit requests, and expects to receive, when it comes to video streaming size and quality.
+An essential aspect of HomeKit video streaming is understanding that **HomeKit decides what quality it wants to request, not the end user, nor the plugin**. What this means in practice is that you have no control over what HomeKit requests, and expects to receive, when it comes to video streaming size and quality.
 
 A second essential aspect to understand is that UniFi Protect allows you to have up to three different RTSP streams available per camera. Each stream represents a different quality level - *High*, *Medium*, and *Low*, and you may choose to stream any of them, at any time, so long as they are enabled (`homebridge-unifi-protect` autoconfigures all the available RTSP streams, if it has the permissions to do so in Protect).
 
