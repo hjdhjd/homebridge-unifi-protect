@@ -60,6 +60,14 @@ If you're having issues with this plugin, or others, not using the correct netwo
 
 If that still doesn't do the trick, take a closer look at [how to select advertised network interfaces in Homebridge](https://github.com/homebridge/homebridge/wiki/mDNS-Options#how-to-select-advertised-network-interfaces). **If your symptoms are something along the lines of "snapshots work, but video streaming doesn't", it's almost certainly a network interface issue.**
 
+Note: Setting advertised network interfaces doesn't always work as expected. The ffmpeg command will be unaware of this information, and will choose whatever outbound IP the environment gives it. One way of checking this, if you have a Mac with the home app, is to run `tcpdump` whilst you try to stream the camera. You should see entries such as
+
+```
+13:57:08.547540 IP 192.168.2.16.42572 > 192.168.0.55.55490: UDP, length 371
+13:57:08.547542 IP 192.168.2.16.59594 > 192.168.0.55.62642: UDP, length 120
+```
+The ports will correspond to those seen in the `ffmpeg` command if you turn on verbose logging. If you are seeing no entries, then the chances are you have firewall or routing issues. If you are seeing entries, but no video is moving, then this is likely that the Home App is not expecting the _source IP_ to be what it is. In the above case, even though the only "advertised" port was the "other" ethernet, it was not arriving via that route. Changing the advertisment to match fixed this and video started working.
+
 ### <A NAME="push"></A>Push Notification Issues
 The good news is that push notifications should just work by default. If they don't, and you've ruled out network issues as a cause, the next thing to look at is your system clock. Wait...what does your system clock have to do with notifications?
 
