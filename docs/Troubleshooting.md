@@ -60,6 +60,15 @@ If you're having issues with this plugin, or others, not using the correct netwo
 
 If that still doesn't do the trick, take a closer look at [how to select advertised network interfaces in Homebridge](https://github.com/homebridge/homebridge/wiki/mDNS-Options#how-to-select-advertised-network-interfaces). **If your symptoms are something along the lines of "snapshots work, but video streaming doesn't", it's almost certainly a network interface issue.**
 
+**Note: Setting advertised network interfaces doesn't always work as expected.** The ffmpeg command will be unaware of this information and will choose whatever outbound IP the environment gives it. One way of checking this, if you have a Mac with the Home app, is to run `tcpdump` while you try to stream the camera. You should see entries such as
+
+```
+13:57:08.547540 IP 192.168.2.16.42572 > 192.168.0.55.55490: UDP, length 371
+13:57:08.547542 IP 192.168.2.16.59594 > 192.168.0.55.62642: UDP, length 120
+```
+
+The ports will correspond to those seen in the `ffmpeg` command if you turn on verbose logging. If you are seeing no entries then chances are you have firewall or routing issues. If you are seeing entries, but no video is streaming, then this is likely that the Home App is not expecting the *source IP* to be what it is. In the above case, even though the only ***advertised*** port was the "other" ethernet, it was not arriving via that route. Changing the advertisment to match fixed this and video started working.
+
 ### <A NAME="push"></A>Push Notification Issues
 The good news is that push notifications should just work by default. If they don't, and you've ruled out network issues as a cause, the next thing to look at is your system clock. Wait...what does your system clock have to do with notifications?
 
@@ -82,7 +91,7 @@ There are lots of things that can go wrong with video streaming, unfortunately. 
 #### Background
 The good news is that the video streams coming from UniFi Protect tend to be pretty close to pristine. They require very little massaging or manipulation to make them accessible through HomeKit. This means that there's no reencoding of a video stream that needs to happen in order to make the stream usable in HomeKit. That means the plugin has very modest CPU horsepower requirements, and you should have a smooth user experience. There are a couple of Protect-specific quirks when it comes to streaming, but I'm going to skip that here because it's uninteresting for the intended purpose of this page.
 
-An essential aspect of HomeKit video streaming is understanding that **HomeKit devices what quality it wants to request, not the end user, nor the plugin**. What this means in practice is that you have no control over what HomeKit requests, and expects to receive, when it comes to video streaming size and quality.
+An essential aspect of HomeKit video streaming is understanding that **HomeKit decides what quality it wants to request, not the end user, nor the plugin**. What this means in practice is that you have no control over what HomeKit requests, and expects to receive, when it comes to video streaming size and quality.
 
 A second essential aspect to understand is that UniFi Protect allows you to have up to three different RTSP streams available per camera. Each stream represents a different quality level - *High*, *Medium*, and *Low*, and you may choose to stream any of them, at any time, so long as they are enabled (`homebridge-unifi-protect` autoconfigures all the available RTSP streams, if it has the permissions to do so in Protect).
 
