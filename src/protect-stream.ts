@@ -31,12 +31,13 @@ import {
   PROTECT_FFMPEG_VERBOSE_DURATION
 } from "./settings";
 import { ProtectCameraConfig, ProtectOptions } from "./protect-types";
-import { RtpDemuxer, RtpUtils } from "./protect-rtp";
 import { FetchError } from "node-fetch";
 import { FfmpegProcess } from "./protect-ffmpeg";
 import { ProtectCamera } from "./protect-camera";
 import { ProtectPlatform } from "./protect-platform";
+import { RtpDemuxer } from "./protect-rtp";
 import ffmpegPath from "ffmpeg-for-homebridge";
+import { reservePorts } from "@homebridge/camera-utils";
 
 // Increase the listener limits to support Protect installations with more than 10 cameras. 100 seems like a reasonable default.
 // eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-unsafe-member-access
@@ -170,9 +171,9 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     const hasLibFdk = isAudioEnabled && (await FfmpegProcess.codecEnabled(this.videoProcessor, "libfdk_aac"));
 
     // Setup our audio plumbing.
-    const audioIncomingRtcpPort = (await RtpUtils.reservePorts())[0];
-    const audioIncomingPort = (hasLibFdk && this.protectCamera.twoWayAudio) ? (await RtpUtils.reservePorts())[0] : -1;
-    const audioIncomingRtpPort = (hasLibFdk && this.protectCamera.twoWayAudio) ? (await RtpUtils.reservePorts(2))[0] : -1;
+    const audioIncomingRtcpPort = (await reservePorts({ count: 1 }))[0];
+    const audioIncomingPort = (hasLibFdk && this.protectCamera.twoWayAudio) ? (await reservePorts({ count: 1 }))[0] : -1;
+    const audioIncomingRtpPort = (hasLibFdk && this.protectCamera.twoWayAudio) ? (await reservePorts({ count: 2 }))[0] : -1;
     const audioSSRC = this.hap.CameraController.generateSynchronisationSource();
 
     if(!hasLibFdk) {
@@ -185,7 +186,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       new RtpDemuxer(this, request.addressVersion, audioIncomingPort, audioIncomingRtcpPort, audioIncomingRtpPort) : null;
 
     // Setup our video plumbing.
-    const videoReturnPort = (await RtpUtils.reservePorts())[0];
+    const videoReturnPort = (await reservePorts({ count: 1 }))[0];
     const videoSSRC = this.hap.CameraController.generateSynchronisationSource();
 
     const sessionInfo: SessionInfo = {

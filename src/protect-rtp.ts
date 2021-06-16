@@ -9,7 +9,6 @@ import { Logging } from "homebridge";
 import { PROTECT_TWOWAY_HEARTBEAT_INTERVAL } from "./settings";
 import { ProtectStreamingDelegate } from "./protect-stream";
 import { createSocket } from "dgram";
-import getPort from "get-port";
 
 /*
  * Here's the problem this class solves: FFmpeg doesn't support multiplexing RTP and RTCP data on a single UDP port (RFC 5761).
@@ -114,38 +113,5 @@ export class RtpDemuxer {
     const payloadType = this.getPayloadType(message);
 
     return (payloadType > 90) || (payloadType === 0);
-  }
-}
-
-// RTP-related utilities.
-export class RtpUtils {
-
-  // Reserve consecutive ports for use with FFmpeg. FFmpeg currently lacks the ability to specify both the RTP
-  // and RTCP ports. It always assumes, by convention, that when you specify an RTP port, the RTCP port is the
-  // RTP port + 1. In order to work around that challenge, we need to always ensure that when we reserve multiple
-  // ports for RTP (primarily for two-way audio) that we we are reserving consecutive ports only.
-  public static async reservePorts(count = 1): Promise<number[]> {
-
-    // Get the first port.
-    const port = await getPort();
-    const ports = [port];
-
-    // If we're requesting additional consecutive ports, keep searching until they're found.
-    for(let i = 1; i < count; i++) {
-      const targetConsecutivePort = port + i;
-
-      // We need to await here in order to determine whether we need to keep going.
-      // eslint-disable-next-line no-await-in-loop
-      const openPort = await getPort({ port: targetConsecutivePort });
-
-      // Unable to reserve the next consecutive port. Roll the dice again and hope for the best.
-      if(openPort !== targetConsecutivePort) {
-        return this.reservePorts(count);
-      }
-
-      ports.push(openPort);
-    }
-
-    return ports;
   }
 }
