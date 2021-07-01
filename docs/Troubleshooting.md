@@ -70,7 +70,11 @@ If that still doesn't do the trick, take a closer look at [how to select adverti
 The ports will correspond to those seen in the `ffmpeg` command if you turn on verbose logging. If you are seeing no entries then chances are you have firewall or routing issues. If you are seeing entries, but no video is streaming, then this is likely that the Home App is not expecting the *source IP* to be what it is. In the above case, even though the only ***advertised*** port was the "other" ethernet, it was not arriving via that route. Changing the advertisment to match fixed this and video started working.
 
 ### <A NAME="push"></A>Push Notification Issues
-The good news is that push notifications should just work by default. If they don't, and you've ruled out network issues as a cause, the next thing to look at is your system clock. Wait...what does your system clock have to do with notifications?
+The good news is that push notifications should just work by default. 
+
+There is a per device setting in the Home app that allows you to turn notifications on or off. Launch the Home app, tap or click on the home icon in the upper-left corner, select "Home Settings"", select "Cameras & Doorbells", select your camera, make sure the Notification settings are turned on.
+
+If notifications are turned on and still not working, and you've ruled out network issues as a cause, the next thing to look at is your system clock. Wait...what does your system clock have to do with notifications?
 
 UniFi Protect provides a lot of notifications, and sometimes those notifications are duplicates or old ones we aren't interested in that happened in the past. As a result, `homebridge-unifi-protect` only alerts you to notifications that UniFi Protect alerts it to that happened in the last few seconds.
 
