@@ -72,9 +72,11 @@ The ports will correspond to those seen in the `ffmpeg` command if you turn on v
 ### <A NAME="push"></A>Push Notification Issues
 The good news is that push notifications should just work by default. 
 
-There is a per device setting in the Home app that allows you to turn notifications on or off. Launch the Home app, tap or click on the home icon in the upper-left corner, select "Home Settings"", select "Cameras & Doorbells", select your camera, make sure the Notification settings are turned on.
+There is a per device setting in the Home app that allows you to turn notifications on or off. Launch the Home app, tap or click on the home icon in the upper-left corner, select "Home Settings", select "Cameras & Doorbells", select your camera, make sure the Notification settings are turned on.
 
-If notifications are turned on and still not working, and you've ruled out network issues as a cause, the next thing to look at is your system clock. Wait...what does your system clock have to do with notifications?
+If notifications are turned on and still not working, and you've ruled out network issues as a cause, try restarting your camera.
+
+After that, the next thing to look at is your system clock. Wait...what does your system clock have to do with notifications?
 
 UniFi Protect provides a lot of notifications, and sometimes those notifications are duplicates or old ones we aren't interested in that happened in the past. As a result, `homebridge-unifi-protect` only alerts you to notifications that UniFi Protect alerts it to that happened in the last few seconds.
 
