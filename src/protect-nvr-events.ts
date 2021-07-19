@@ -516,6 +516,6 @@ export class ProtectNvrEvents {
       return;
     }
 
-    (this.nvr.configuredCameras[accessory.UUID] as ProtectDoorbell).updateLcdSwitch(lcdMessage);
+    (this.nvr.configuredCameras[accessory.UUID] as ProtectDoorbell)?.updateLcdSwitch(lcdMessage);
   }
 }
