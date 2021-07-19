@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 4.4.2 (2021-07-19)
+  * Dependency updates.
+  
 ## 4.4.1 (2021-06-16)
   * Fix: for those that are running into occasional issues related to FFmpeg streaming and `port in use` errors, this update is for you.
   * Dependency updates.
