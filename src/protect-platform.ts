@@ -11,7 +11,7 @@ import {
   PlatformConfig
 } from "homebridge";
 import { PROTECT_FFMPEG_OPTIONS, PROTECT_MOTION_DURATION, PROTECT_MQTT_TOPIC } from "./settings";
-import { ProtectNvrOptions, ProtectOptions } from "./protect-types";
+import { ProtectNvrOptions, ProtectOptions } from "unifi-protect";
 import { ProtectNvr } from "./protect-nvr";
 import util from "util";
 

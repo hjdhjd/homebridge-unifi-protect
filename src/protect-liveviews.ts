@@ -16,7 +16,7 @@ import {
 import {
   ProtectCameraConfig,
   ProtectNvrLiveviewConfig
-} from "./protect-types";
+} from "unifi-protect";
 import { ProtectBase } from "./protect-accessory";
 import { ProtectNvr } from "./protect-nvr";
 import { ProtectSecuritySystem } from "./protect-securitysystem";

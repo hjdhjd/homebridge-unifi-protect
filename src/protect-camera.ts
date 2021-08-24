@@ -8,9 +8,9 @@ import {
   CharacteristicSetCallback,
   CharacteristicValue
 } from "homebridge";
-import { ProtectCameraChannelConfig, ProtectCameraConfig, ProtectNvrBootstrap } from "./protect-types";
+import { ProtectCameraChannelConfig, ProtectCameraConfig, ProtectNvrBootstrap } from "unifi-protect";
 import { ProtectAccessory } from "./protect-accessory";
-import { ProtectApi } from "./protect-api";
+import { ProtectApi } from "unifi-protect";
 import { ProtectNvr } from "./protect-nvr";
 import { ProtectStreamingDelegate } from "./protect-stream";
 

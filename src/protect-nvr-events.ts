@@ -18,13 +18,13 @@ import {
   ProtectApiUpdates,
   ProtectNvrUpdatePayloadCameraUpdate,
   ProtectNvrUpdatePayloadEventAdd
-} from "./protect-api-updates";
+} from "unifi-protect";
 import {
   ProtectCameraConfig,
   ProtectCameraLcdMessagePayload,
   ProtectNvrSystemEvent
-} from "./protect-types";
-import { ProtectApi } from "./protect-api";
+} from "unifi-protect";
+import { ProtectApi } from "unifi-protect";
 import { ProtectDoorbell } from "./protect-doorbell";
 import { ProtectNvr } from "./protect-nvr";
 import { ProtectPlatform } from "./protect-platform";

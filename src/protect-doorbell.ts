@@ -9,7 +9,7 @@ import {
   CharacteristicValue,
   Service
 } from "homebridge";
-import { ProtectCameraConfig, ProtectCameraLcdMessagePayload } from "./protect-types";
+import { ProtectCameraConfig, ProtectCameraLcdMessagePayload } from "unifi-protect";
 import { ProtectCamera } from "./protect-camera";
 
 // A doorbell message entry.

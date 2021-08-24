@@ -64,6 +64,7 @@
   },
   "main": "dist/index.js",
   "dependencies": {
+    "unifi-protect": "file:/Volumes/Dev/scrypted/plugins/unifi-protect/src/unifi-protect/",
     "@homebridge/camera-utils": "^2.0.3",
     "abort-controller": "^3.0.0",
     "domexception": "^2.0.1",

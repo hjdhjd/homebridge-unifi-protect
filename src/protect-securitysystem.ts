@@ -8,7 +8,7 @@ import {
   CharacteristicSetCallback,
   CharacteristicValue
 } from "homebridge";
-import { ProtectCameraConfig, ProtectNvrConfig } from "./protect-types";
+import { ProtectCameraConfig, ProtectNvrConfig } from "unifi-protect";
 import { PROTECT_SWITCH_MOTION_SENSOR } from "./protect-camera";
 import { ProtectAccessory } from "./protect-accessory";
 

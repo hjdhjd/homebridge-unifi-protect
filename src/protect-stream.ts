@@ -30,7 +30,7 @@ import {
   PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS,
   PROTECT_FFMPEG_VERBOSE_DURATION
 } from "./settings";
-import { ProtectCameraConfig, ProtectOptions } from "./protect-types";
+import { ProtectCameraConfig, ProtectOptions } from "unifi-protect";
 import { FetchError } from "node-fetch";
 import { FfmpegProcess } from "./protect-ffmpeg";
 import { ProtectCamera } from "./protect-camera";

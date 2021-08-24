@@ -8,8 +8,8 @@ import {
   Logging,
   PlatformAccessory
 } from "homebridge";
-import { ProtectApi } from "./protect-api";
-import { ProtectCameraConfig } from "./protect-types";
+import { ProtectApi } from "unifi-protect";
+import { ProtectCameraConfig } from "unifi-protect";
 import { ProtectNvr } from "./protect-nvr";
 import { ProtectPlatform } from "./protect-platform";
 

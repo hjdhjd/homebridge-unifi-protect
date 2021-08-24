@@ -17,8 +17,8 @@ import {
 import {
   ProtectCameraConfig,
   ProtectNvrOptions
-} from "./protect-types";
-import { ProtectApi } from "./protect-api";
+} from "unifi-protect";
+import { ProtectApi } from "unifi-protect";
 import { ProtectCamera } from "./protect-camera";
 import { ProtectDoorbell } from "./protect-doorbell";
 import { ProtectLiveviews } from "./protect-liveviews";
@@ -82,7 +82,7 @@ export class ProtectNvr {
     }
 
     // Initialize our connection to the UniFi Protect API.
-    this.nvrApi = new ProtectApi(platform, nvrOptions.address, nvrOptions.username, nvrOptions.password);
+    this.nvrApi = new ProtectApi(platform.debug.bind(platform), platform.log, nvrOptions.address, nvrOptions.username, nvrOptions.password);
 
     // Initialize our event handlers.
     this.events = new ProtectNvrEvents(this);
