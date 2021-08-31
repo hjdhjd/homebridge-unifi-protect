@@ -10,7 +10,7 @@ import {
   Service
 } from "homebridge";
 import { ProtectCameraConfig, ProtectCameraLcdMessagePayload } from "./protect-types";
-import { ProtectCamera } from "./protect-camera";
+import { ProtectCamera, PROTECT_CONTACT_MOTION_SMARTDETECT } from "./protect-camera";
 
 // A doorbell message entry.
 interface MessageInterface {
@@ -69,15 +69,19 @@ export class ProtectDoorbell extends ProtectCamera {
     return this.configureDoorbellLcdSwitch();
   }
 
-  // Deprecated - remove contact sensor service, if it was previously configured.
+  // Deprecated - remove contact sensor service for doorbell button, if it was
+  // previously configured.
   private configureContactSensor(): boolean {
 
-    // Find the contact sensor service, if it exists.
-    const contactService = this.accessory.getService(this.hap.Service.ContactSensor);
+    const legacyContactServices = this.accessory.services.filter(
+      service =>
+        service.UUID === this.hap.Service.ContactSensor.UUID &&
+        (service.subtype == null ||
+          !service.subtype.startsWith(PROTECT_CONTACT_MOTION_SMARTDETECT + '.'))
+    );
 
-    // Contact sensors are now deprecated. Remove them if found.
-    if(contactService) {
-      this.accessory.removeService(contactService);
+    for (const service of legacyContactServices) {
+      this.accessory.removeService(service);
     }
 
     return false;
