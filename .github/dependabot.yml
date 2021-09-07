@@ -17,20 +17,20 @@ updates:
     # Allow up to ten pull requests to be generated at any one time.
     open-pull-requests-limit: 10
 
-  # Enable version updates for npm.
-  - package-ecosystem: "npm"
-
-    # Look for "package.json" and "package-lock.json" files in the "root" directory.
-    directory: "/"
-
-    # Check the npm registry for updates every weekday.
-    schedule:
-      interval: "daily"
-
-    # Allow up to ten pull requests to be generated at any one time.
-    open-pull-requests-limit: 10
-
-    # Ignore certain dependency updates.
-    ignore:
-      # Ignore node-fetch updates for now due to the breaking change in module management.
-      - dependency-name: "node-fetch"
+#  # Enable version updates for npm.
+#  - package-ecosystem: "npm"
+#
+#    # Look for "package.json" and "package-lock.json" files in the "root" directory.
+#    directory: "/"
+#
+#    # Check the npm registry for updates every weekday.
+#    schedule:
+#      interval: "daily"
+#
+#    # Allow up to ten pull requests to be generated at any one time.
+#    open-pull-requests-limit: 10
+#
+#    # Ignore certain dependency updates.
+#    ignore:
+#      # Ignore node-fetch updates for now due to the breaking change in module management.
+#      - dependency-name: "node-fetch"
