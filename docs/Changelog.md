@@ -2,13 +2,17 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 4.4.3 (2021-09-07)
+  * Remove deprecated code that was causing a minor issue when using smart detection with object-specific accessory granularity.
+  * Housekeeping.
+
 ## 4.4.2 (2021-07-19)
   * Dependency updates.
-  
+
 ## 4.4.1 (2021-06-16)
   * Fix: for those that are running into occasional issues related to FFmpeg streaming and `port in use` errors, this update is for you.
   * Dependency updates.
-  
+
 ## 4.4.0 (2021-03-28)
   * Fix: adjust realtime event processing semantics to match the changes in behavior UniFi Protect introduced in v1.17 controller firmwares and beyond.
   * Fix: correct a regression of MQTT-triggered snapshots. They should work correctly once more - sorry about that!
