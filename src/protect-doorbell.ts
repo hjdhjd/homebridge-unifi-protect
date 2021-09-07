@@ -62,25 +62,8 @@ export class ProtectDoorbell extends ProtectCamera {
     this.configureVideoDoorbell();
     this.nvr.doorbellCount++;
 
-    // Configure the contact sensor, if we have one.
-    this.configureContactSensor();
-
     // Now, make the doorbell LCD message functionality available.
     return this.configureDoorbellLcdSwitch();
-  }
-
-  // Deprecated - remove contact sensor service, if it was previously configured.
-  private configureContactSensor(): boolean {
-
-    // Find the contact sensor service, if it exists.
-    const contactService = this.accessory.getService(this.hap.Service.ContactSensor);
-
-    // Contact sensors are now deprecated. Remove them if found.
-    if(contactService) {
-      this.accessory.removeService(contactService);
-    }
-
-    return false;
   }
 
   // Configure our access to the Doorbell LCD screen.
