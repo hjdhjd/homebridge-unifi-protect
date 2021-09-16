@@ -130,7 +130,7 @@ For those of the command-line persuasion, you can see what an example `config.js
 ```
 
 | doorbellMessages    | Description
-|-----------------------|----------------------------------
+|---------------------|----------------------------------
 | `message`           | The message text to display on the doorbell.
 | `duration`          | The duration, in seconds, that you want to display the message for on the doorbell. If not specified, it defaults to the UniFi Protect default, 60 seconds. If set to 0, the message will display indefinitely.
 
