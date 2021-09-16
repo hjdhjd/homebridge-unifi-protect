@@ -36,7 +36,7 @@ If you're reading this, chances are you own, or would like to own, a UniFi Prote
 
   * Unfortunately, AEC is not a solved problem in the open source community quite yet, though there are great commercial options. There are a couple of glimmers of hope: Protect cameras appear to actually support AEC, though there doesn't appear to be a straightforward way to access this capability at the moment. The second is that, things *do* work quite well, aside from the unfortunate challenge around AEC for the person using the Home app.
 
-  * Two-way audio is enabled by default. You can disable it, through the `Enable.Audio.TwoWay` [feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md).
+  * Two-way audio is enabled by default. You can disable it, through the `Audio.TwoWay` [feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md).
 
   * Finally, since someone will inevitably ask: Ring and Nest-Cam (terrific plugins by terrific developers) - don't have this problem because Ring and Nest send all audio back to Ring and Nest's servers where audio is processed and dealt with, including AEC.
 
@@ -48,7 +48,7 @@ This plugin supports HomeKit's native video doorbell and doorbell ring functiona
 
 Enter automation support for doorbell ring events in this plugin. If you choose to enable support for doorbell ring automation, you can create HomeKit automations based on doorbell ring events. Here's how it works:
 
-  * Enable the `Enable.Doorbell.Trigger` feature option in the plugin configuration. See the [Feature Options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md#doorbell) documentation for more information on feature options.
+  * Enable the `Doorbell.Trigger` feature option in the plugin configuration. See the [Feature Options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md#doorbell) documentation for more information on feature options.
 
   * This will create a contact sensor service on the doorbell. Whenever the doorbell rings, the contact sensor will be triggered and set to the *open* state for two seconds, before resetting to the *closed* state again.
 
@@ -109,7 +109,7 @@ For those of the command-line persuasion, you can see what an example `config.js
   "platform": "UniFi Protect",
 
   "options": [
-    "Disabled.Messages.FromDoorbell"
+    "Disable.Doorbell.Messages.FromDoorbell"
   ],
 
   "controllers": [
