@@ -102,6 +102,8 @@ Audio on cameras is tricky in the HomeKit world to begin with, and when you thro
 }
 ```
 
+To use hardware accelerated transcoding, enable feature option `Enable.Video.Transcode` and set an FFmpeg encoder for the `ffmpegEncoder` configuration. E.g.: use `h264_omx` for Raspberry Pi 4 hardware acceleration.
+
 ### Things To Be Aware Of
 - **Make sure you are running on the latest production / stable firmwares for both your controller platform (UCKgen2+, UDM-Pro, UNVR, etc.) as well as the latest production / stable UniFi Protect controller firmware.**
 - **No beta versions of iOS, iPadOS, macOS, tvOS, or watchOS are supported. You are on your own if you choose to install / run beta firmwares - don't expect support or sympathy if you run into issues.**

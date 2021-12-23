@@ -148,6 +148,13 @@
         "title": "Verbose FFmpeg Logging",
         "required": false,
         "description": "Enable additional logging for FFmpeg. This will create a lot of logging when video streams are running. Default: false."
+      },
+
+      "ffmpegEncoder": {
+        "type": "string",
+        "title": "FFmpeg Encoder for transcoding",
+        "required": false,
+        "description": "FFmpeg Encoder to use for transcoding when optional video transcoding is enabled. Use h264_omx for Raspberry Pi4 hardware acceleration. Default: libx264."
       }
     }
   },
@@ -261,7 +268,8 @@
           "items": [
             "videoProcessor",
             "motionDuration",
-            "verboseFfmpeg"
+            "verboseFfmpeg",
+            "ffmpegEncoder"
           ]
         }
       ]

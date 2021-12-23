@@ -66,6 +66,7 @@ This step is not required. The defaults should work well for almost everyone, bu
 | doorbellMessages       | Configure [doorbell messages](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/Doorbell.md) for your UniFi Protect controller. | [] | No |
 | videoProcessor         | Specify path of ffmpeg or avconv.                       | "ffmpeg"                                                                              | No       |
 | ffmpegOptions          | Additional parameters to pass ffmpeg to render video.   |                                                                                       | No       |
+| ffmpegEncoder          | Specify FFmpeg encoder for use with transcoding. | libx264 | No       |
 | motionDuration         | Duration of motion events. Setting this too low will potentially cause a lot of notification spam. | 10                                         | No       |
 | refreshInterval        | Interval, in seconds, to check UniFi Protect for new or removed devices. | 10                                                                   | No       |
 | options                | Configure plugin [feature options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md).   | []               | No       |

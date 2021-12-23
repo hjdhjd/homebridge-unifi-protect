@@ -461,7 +461,8 @@ export interface ProtectOptions {
   motionDuration: number,
   options: string[],
   verboseFfmpeg: boolean,
-  videoProcessor: string
+  videoProcessor: string,
+  ffmpegEncoder: string,
 }
 
 // NVR configuration options.

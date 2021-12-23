@@ -311,10 +311,10 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
       // Configure our video parameters for transcoding:
       //
-      // -vcodec libx264    copy the stream withour reencoding it.
+      // -vcodec libx264    copy the stream without reencoding it.
       // -pix_fmt yuvj420p  use the yuvj420p pixel format, which is what Protect uses.
       // -profile:v high    use the H.264 high profile when encoding, which provides for better stream quality and size efficiency.
-      // -preset veryfast   use the veryfast encoding preset in libx264, which provides a good balance of encoding speed and quality.
+      // -preset veryfast   use the veryfast encoding preset, which provides a good balance of encoding speed and quality.
       // -bf 0              disable B-frames when encoding to increase compatibility against occasionally finicky HomeKit clients.
       // -b:v bitrate       the average bitrate to use for this stream. This is specified by HomeKit.
       // -bufsize size      this is the decoder buffer size, which drives the variability / quality of the output bitrate.
@@ -322,8 +322,9 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       //                    create a constant bitrate.
       // -filter:v fps=fps= use the fps filter to get to the frame rate requested by HomeKit. This has better performance characteristics
       //                    for Protect rather than using "-r".
+      ffmpegArgs.push("-vcodec", this.platform.config.ffmpegEncoder ?? "libx264");
+
       ffmpegArgs.push(
-        "-vcodec", "libx264",
         "-pix_fmt", "yuvj420p",
         "-profile:v", "high",
         "-preset", "veryfast",
