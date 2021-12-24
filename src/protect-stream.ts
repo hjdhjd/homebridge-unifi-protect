@@ -387,7 +387,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       // -filter:v fps=fps= use the fps filter to get to the frame rate requested by HomeKit. This has better performance characteristics
       //                    for Protect rather than using "-r".
       ffmpegArgs.push(
-        "-vcodec", sessionInfo.videoEncoder, // Remove condition to defaultVideoEncoder when platform detection is always enabled
+        "-vcodec", sessionInfo.videoEncoder,
         "-pix_fmt", "yuvj420p",
         "-profile:v", "high",
         "-preset", "veryfast",
