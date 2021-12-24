@@ -53,4 +53,5 @@ export const PROTECT_NVR_UNIFIOS_REFRESH_INTERVAL = 10;
 // FFmpeg's input timeout interval.
 export const PROTECT_TWOWAY_HEARTBEAT_INTERVAL = 3.5;
 
+// The default encoder for transcoding video streams. Can be overridden with a platform specific configuration to enable hardware encoding.
 export const PROTECT_DEFAULT_VIDEO_ENCODER: string = "libx264";
