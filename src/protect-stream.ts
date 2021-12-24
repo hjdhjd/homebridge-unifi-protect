@@ -39,9 +39,8 @@ import { ProtectPlatform } from "./protect-platform";
 import { RtpDemuxer } from "./protect-rtp";
 import ffmpegPath from "ffmpeg-for-homebridge";
 import { reservePorts } from "@homebridge/camera-utils";
-import { osInfo, system } from 'systeminformation';
 
-import { PlatformEncoderConfigurations } from './protect-platformsettings';
+import { ProtectPlatformSettings } from './protect-platformsettings';
 
 // Increase the listener limits to support Protect installations with more than 10 cameras. 100 seems like a reasonable default.
 // eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-unsafe-member-access
@@ -86,6 +85,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   private verboseFfmpegTimer!: NodeJS.Timeout | null;
   public readonly videoProcessor: string;
   private systemVideoEncoder: string = "";
+  private platformSettings: ProtectPlatformSettings;
 
   constructor(protectCamera: ProtectCamera, resolutions: [number, number, number][]) {
     this.api = protectCamera.api;
@@ -138,6 +138,8 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
         }
       }
     };
+    
+    this.platformSettings = new ProtectPlatformSettings(this.log, this.videoProcessor);
 
     this.controller = new this.hap.CameraController(options);
   }
@@ -202,7 +204,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     // Use hardware acceleration for transcoding?
     const useHardwareAcceleration = this.protectCamera.nvr.optionEnabled(cameraConfig, "Video.TranscodeWithHwAcceleration", false, request.targetAddress)
     if (useHardwareAcceleration && shouldTranscode && !this.systemVideoEncoder) {
-      this.systemVideoEncoder = await this.configurePlatformEncoder();
+      this.systemVideoEncoder = await this.platformSettings.configurePlatformEncoder();
     }
 
     const sessionInfo: SessionInfo = {
@@ -255,32 +257,6 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     this.pendingSessions[request.sessionID] = sessionInfo;
     callback(undefined, response);
   }
-
-  private async configurePlatformEncoder(): Promise<string> {
-    try {
-      const sysInformation = await system();
-      const osInformation = await osInfo();
-
-      const preferredPlatformEncoder = PlatformEncoderConfigurations.find(platform => 
-        platform.isMatch(sysInformation, osInformation))?.videoEncoder;
-      
-      if (!preferredPlatformEncoder) {
-        this.log.error("%s: Hardware acceleration is enabled but no platform support is defined for this system. Using default encoder '%s'.", this.name(), PROTECT_DEFAULT_VIDEO_ENCODER);
-        return PROTECT_DEFAULT_VIDEO_ENCODER;
-      }
-
-      if (await FfmpegProcess.codecEnabled(this.videoProcessor, preferredPlatformEncoder)) {
-        this.log.info("%s: Using FFmpeg encoder '%s' for this platform.", this.name(), preferredPlatformEncoder);
-        return preferredPlatformEncoder;
-      }
-
-      this.log.error("%s: Unable to find FFmpeg support for platform codec '%s'. Using default codec '%s'.", this.name(), preferredPlatformEncoder, PROTECT_DEFAULT_VIDEO_ENCODER);
-    } catch (_) {
-      this.log.error("%s: Unable to detect platform. Using default encoder '%s'.", this.name(), PROTECT_DEFAULT_VIDEO_ENCODER);
-    }
-
-    return PROTECT_DEFAULT_VIDEO_ENCODER;
-}
 
   // Launch the Protect video (and audio) stream.
   private startStream(request: StartStreamRequest, callback: StreamRequestCallback): void {
