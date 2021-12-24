@@ -44,29 +44,26 @@ import { osInfo, system, Systeminformation } from 'systeminformation';
 // eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-unsafe-member-access
 require("events").EventEmitter.defaultMaxListeners = 100;
 
-type PlatformMatchDelegate = (systemInformation: Systeminformation.SystemData, osInformation: Systeminformation.OsData, matchArgument: string) => boolean;
+type PlatformMatchDelegate = (systemInformation: Systeminformation.SystemData, osInformation: Systeminformation.OsData) => boolean;
 
 type PlatformEncoderConfiguration = {
-  matchArgument: string; // The argument to be used to identify the platform
   matchFunction: PlatformMatchDelegate; // The delegate that attempt to identify the platform
   videoEncoder: string; // The encoder to use
 }
 
 const platformEncoderConfigurations: PlatformEncoderConfiguration[] = [
   {
-    matchArgument: 'Raspberry Pi 3',
-    matchFunction: (systemInformation, osInformation, matchArgument) =>
+    matchFunction: (systemInformation, osInformation) =>
       !systemInformation.virtual && 
       osInformation.arch == "arm" && // Only 32bit environments are supported with HW acceleration at this time
-      systemInformation.model.startsWith(matchArgument),
+      systemInformation.model.startsWith("Raspberry Pi 3"),
     videoEncoder: "h264_omx"
   },
   {
-    matchArgument: 'Raspberry Pi 4',
-    matchFunction: (systemInformation, osInformation, matchArgument) =>
+    matchFunction: (systemInformation, osInformation) =>
       !systemInformation.virtual && 
       osInformation.arch == "arm" && // Only 32bit environments are supported with HW acceleration at this time
-      systemInformation.model.startsWith(matchArgument),
+      systemInformation.model.startsWith("Raspberry Pi 4"),
     videoEncoder: "h264_omx"
   }
 ]
@@ -288,7 +285,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       const osInformation = await osInfo();
 
       const preferredPlatformEncoder = platformEncoderConfigurations.find(platform => 
-        platform.matchFunction(sysInformation, osInformation, platform.matchArgument))?.videoEncoder;
+        platform.matchFunction(sysInformation, osInformation))?.videoEncoder;
       
       if (!preferredPlatformEncoder) {
         this.log.error("%s: Hardware acceleration is enabled but no platform support is defined for this system. Using default encoder '%s'.", this.name(), defaultVideoEncoder);
