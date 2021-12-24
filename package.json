@@ -71,6 +71,7 @@
     "ffmpeg-for-homebridge": "^0.0.9",
     "mqtt": "^4.2.8",
     "node-fetch": "3.0.0-beta.9",
+    "systeminformation": "^5.9.17",
     "ws": "^8.2.1"
   },
   "devDependencies": {

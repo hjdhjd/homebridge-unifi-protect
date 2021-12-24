@@ -38,10 +38,38 @@ import { ProtectPlatform } from "./protect-platform";
 import { RtpDemuxer } from "./protect-rtp";
 import ffmpegPath from "ffmpeg-for-homebridge";
 import { reservePorts } from "@homebridge/camera-utils";
+import { osInfo, system, Systeminformation } from 'systeminformation';
 
 // Increase the listener limits to support Protect installations with more than 10 cameras. 100 seems like a reasonable default.
 // eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-unsafe-member-access
 require("events").EventEmitter.defaultMaxListeners = 100;
+
+type PlatformMatchDelegate = (systemInformation: Systeminformation.SystemData, osInformation: Systeminformation.OsData, matchArgument: string) => boolean;
+
+type PlatformEncoderConfiguration = {
+  matchArgument: string; // The argument to be used to identify the platform
+  matchFunction: PlatformMatchDelegate; // The delegate that attempt to identify the platform
+  videoEncoder: string; // The encoder to use
+}
+
+const platformEncoderConfigurations: PlatformEncoderConfiguration[] = [
+  {
+    matchArgument: 'Raspberry Pi 3',
+    matchFunction: (systemInformation, osInformation, matchArgument) =>
+      !systemInformation.virtual && 
+      osInformation.arch == "arm" && // Only 32bit environments are supported with HW acceleration at this time
+      systemInformation.model.startsWith(matchArgument),
+    videoEncoder: "h264_omx"
+  },
+  {
+    matchArgument: 'Raspberry Pi 4',
+    matchFunction: (systemInformation, osInformation, matchArgument) =>
+      !systemInformation.virtual && 
+      osInformation.arch == "arm" && // Only 32bit environments are supported with HW acceleration at this time
+      systemInformation.model.startsWith(matchArgument),
+    videoEncoder: "h264_omx"
+  }
+]
 
 type SessionInfo = {
   address: string; // Address of the HomeKit client.
@@ -52,6 +80,8 @@ type SessionInfo = {
   videoCryptoSuite: SRTPCryptoSuites; // This should be saved if multiple suites are supported.
   videoSRTP: Buffer; // Key and salt concatenated.
   videoSSRC: number; // RTP synchronisation source.
+  videoTranscode: boolean; // Whether video should be transcoded
+  videoEncoder: string; // Encoder to use for video transcoding
 
   hasLibFdk: boolean; // Does the user have a version of FFmpeg that supports AAC?
   audioPort: number;
@@ -62,6 +92,8 @@ type SessionInfo = {
   audioSRTP: Buffer;
   audioSSRC: number;
 };
+
+const defaultVideoEncoder: string = "libx264";
 
 // Camera streaming delegate implementation for Protect.
 export class ProtectStreamingDelegate implements CameraStreamingDelegate {
@@ -79,6 +111,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   private snapshotCache: { [index: string]: { image: Buffer, time: number } };
   private verboseFfmpegTimer!: NodeJS.Timeout | null;
   public readonly videoProcessor: string;
+  private systemVideoEncoder: string = "";
 
   constructor(protectCamera: ProtectCamera, resolutions: [number, number, number][]) {
     this.api = protectCamera.api;
@@ -189,6 +222,15 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     const videoReturnPort = (await reservePorts({ count: 1 }))[0];
     const videoSSRC = this.hap.CameraController.generateSynchronisationSource();
 
+    // Are we transcoding?
+    const shouldTranscode = this.protectCamera.nvr.optionEnabled(cameraConfig, "Video.Transcode", false, request.targetAddress);
+
+    // Use hardware acceleration for transcoding?
+    const useHardwareAcceleration = this.protectCamera.nvr.optionEnabled(cameraConfig, "Video.TranscodeUseHwAcceleration", false, request.targetAddress)
+    if (useHardwareAcceleration && shouldTranscode && !this.systemVideoEncoder) {
+      this.systemVideoEncoder = await this.configurePlatformEncoder();
+    }
+
     const sessionInfo: SessionInfo = {
       address: request.targetAddress,
       addressVersion: request.addressVersion,
@@ -207,7 +249,9 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       videoPort: request.video.port,
       videoReturnPort: videoReturnPort,
       videoSRTP: Buffer.concat([request.video.srtp_key, request.video.srtp_salt]),
-      videoSSRC: videoSSRC
+      videoSSRC: videoSSRC,
+      videoTranscode: shouldTranscode,
+      videoEncoder: useHardwareAcceleration ? this.systemVideoEncoder : defaultVideoEncoder
     };
 
     // Prepare the response stream. Here's where we figure out if we're doing two-way audio or not. For two-way audio,
@@ -238,6 +282,32 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     callback(undefined, response);
   }
 
+  private async configurePlatformEncoder(): Promise<string> {
+    try {
+      const sysInformation = await system();
+      const osInformation = await osInfo();
+
+      const preferredPlatformEncoder = platformEncoderConfigurations.find(platform => 
+        platform.matchFunction(sysInformation, osInformation, platform.matchArgument))?.videoEncoder;
+      
+      if (!preferredPlatformEncoder) {
+        this.log.error("%s: Hardware acceleration is enabled but no platform support is defined for this system. Using default encoder '%s'.", this.name(), defaultVideoEncoder);
+        return defaultVideoEncoder;
+      }
+
+      if (await FfmpegProcess.codecEnabled(this.videoProcessor, preferredPlatformEncoder)) {
+        this.log.info("%s: Using FFmpeg encoder '%s' for this platform.", this.name(), preferredPlatformEncoder);
+        return preferredPlatformEncoder;
+      }
+
+      this.log.error("%s: Unable to find FFmpeg support for platform codec '%s'. Using default codec '%s'.", this.name(), preferredPlatformEncoder, defaultVideoEncoder);
+    } catch (_) {
+      this.log.error("%s: Unable to detect platform. Using default encoder '%s'.", this.name(), defaultVideoEncoder);
+    }
+
+    return defaultVideoEncoder;
+}
+
   // Launch the Protect video (and audio) stream.
   private startStream(request: StartStreamRequest, callback: StreamRequestCallback): void {
 
@@ -267,9 +337,6 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       callback(new Error(this.name() + ": " + errorMessage));
       return;
     }
-
-    // Are we transcoding?
-    const isTranscoding = this.protectCamera.nvr.optionEnabled(cameraConfig, "Video.Transcode", false, sessionInfo.address);
 
     // Set our packet size to be 564. Why? MPEG transport stream (TS) packets are 188 bytes in size each.
     // These packets transmit the video data that you ultimately see on your screen and are transmitted using
@@ -304,10 +371,10 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     // Inform the user.
     this.log.info("%s: Streaming request from %s: %sx%s@%sfps, %s kbps. %s RTSP stream profile: %s, %s kbps.",
       this.name(), sessionInfo.address, request.video.width, request.video.height, request.video.fps, request.video.max_bit_rate,
-      isTranscoding ? "Transcoding" : "Using", rtspEntry.name, rtspEntry.channel.bitrate / 1000);
+      sessionInfo.videoTranscode ? "Transcoding" : "Using", rtspEntry.name, rtspEntry.channel.bitrate / 1000);
 
     // Check to see if we're transcoding. If we are, set the right FFmpeg encoder options. If not, copy the video stream.
-    if(isTranscoding) {
+    if(sessionInfo.videoTranscode) {
 
       // Configure our video parameters for transcoding:
       //
@@ -323,7 +390,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       // -filter:v fps=fps= use the fps filter to get to the frame rate requested by HomeKit. This has better performance characteristics
       //                    for Protect rather than using "-r".
       ffmpegArgs.push(
-        "-vcodec", "libx264",
+        "-vcodec", sessionInfo.videoEncoder, // Remove condition to defaultVideoEncoder when platform detection is always enabled
         "-pix_fmt", "yuvj420p",
         "-profile:v", "high",
         "-preset", "veryfast",
