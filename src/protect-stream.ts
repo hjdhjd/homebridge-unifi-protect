@@ -68,6 +68,8 @@ const platformEncoderConfigurations: PlatformEncoderConfiguration[] = [
   }
 ]
 
+const defaultVideoEncoder: string = "libx264";
+
 type SessionInfo = {
   address: string; // Address of the HomeKit client.
   addressVersion: string;
@@ -89,8 +91,6 @@ type SessionInfo = {
   audioSRTP: Buffer;
   audioSSRC: number;
 };
-
-const defaultVideoEncoder: string = "libx264";
 
 // Camera streaming delegate implementation for Protect.
 export class ProtectStreamingDelegate implements CameraStreamingDelegate {
