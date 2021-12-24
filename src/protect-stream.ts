@@ -28,7 +28,8 @@ import {
 import {
   PROTECT_FFMPEG_AUDIO_FILTER_HIGHPASS,
   PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS,
-  PROTECT_FFMPEG_VERBOSE_DURATION
+  PROTECT_FFMPEG_VERBOSE_DURATION,
+  PROTECT_DEFAULT_VIDEO_ENCODER
 } from "./settings";
 import { ProtectCameraConfig, ProtectOptions } from "./protect-types";
 import { FetchError } from "node-fetch";
@@ -38,37 +39,13 @@ import { ProtectPlatform } from "./protect-platform";
 import { RtpDemuxer } from "./protect-rtp";
 import ffmpegPath from "ffmpeg-for-homebridge";
 import { reservePorts } from "@homebridge/camera-utils";
-import { osInfo, system, Systeminformation } from 'systeminformation';
+import { osInfo, system } from 'systeminformation';
+
+import { PlatformEncoderConfigurations } from './protect-platformsettings';
 
 // Increase the listener limits to support Protect installations with more than 10 cameras. 100 seems like a reasonable default.
 // eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-unsafe-member-access
 require("events").EventEmitter.defaultMaxListeners = 100;
-
-type PlatformMatchDelegate = (systemInformation: Systeminformation.SystemData, osInformation: Systeminformation.OsData) => boolean;
-
-type PlatformEncoderConfiguration = {
-  matchFunction: PlatformMatchDelegate; // The delegate that attempt to identify the platform
-  videoEncoder: string; // The encoder to use
-}
-
-const platformEncoderConfigurations: PlatformEncoderConfiguration[] = [
-  {
-    matchFunction: (systemInformation, osInformation) =>
-      !systemInformation.virtual && 
-      osInformation.arch == "arm" && // Only 32bit environments are supported with HW acceleration at this time
-      systemInformation.model.startsWith("Raspberry Pi 3"),
-    videoEncoder: "h264_omx"
-  },
-  {
-    matchFunction: (systemInformation, osInformation) =>
-      !systemInformation.virtual && 
-      osInformation.arch == "arm" && // Only 32bit environments are supported with HW acceleration at this time
-      systemInformation.model.startsWith("Raspberry Pi 4"),
-    videoEncoder: "h264_omx"
-  }
-]
-
-const defaultVideoEncoder: string = "libx264";
 
 type SessionInfo = {
   address: string; // Address of the HomeKit client.
@@ -248,7 +225,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       videoSRTP: Buffer.concat([request.video.srtp_key, request.video.srtp_salt]),
       videoSSRC: videoSSRC,
       videoTranscode: shouldTranscode,
-      videoEncoder: useHardwareAcceleration ? this.systemVideoEncoder : defaultVideoEncoder
+      videoEncoder: useHardwareAcceleration ? this.systemVideoEncoder : PROTECT_DEFAULT_VIDEO_ENCODER
     };
 
     // Prepare the response stream. Here's where we figure out if we're doing two-way audio or not. For two-way audio,
@@ -284,12 +261,12 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       const sysInformation = await system();
       const osInformation = await osInfo();
 
-      const preferredPlatformEncoder = platformEncoderConfigurations.find(platform => 
-        platform.matchFunction(sysInformation, osInformation))?.videoEncoder;
+      const preferredPlatformEncoder = PlatformEncoderConfigurations.find(platform => 
+        platform.isMatch(sysInformation, osInformation))?.videoEncoder;
       
       if (!preferredPlatformEncoder) {
-        this.log.error("%s: Hardware acceleration is enabled but no platform support is defined for this system. Using default encoder '%s'.", this.name(), defaultVideoEncoder);
-        return defaultVideoEncoder;
+        this.log.error("%s: Hardware acceleration is enabled but no platform support is defined for this system. Using default encoder '%s'.", this.name(), PROTECT_DEFAULT_VIDEO_ENCODER);
+        return PROTECT_DEFAULT_VIDEO_ENCODER;
       }
 
       if (await FfmpegProcess.codecEnabled(this.videoProcessor, preferredPlatformEncoder)) {
@@ -297,12 +274,12 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
         return preferredPlatformEncoder;
       }
 
-      this.log.error("%s: Unable to find FFmpeg support for platform codec '%s'. Using default codec '%s'.", this.name(), preferredPlatformEncoder, defaultVideoEncoder);
+      this.log.error("%s: Unable to find FFmpeg support for platform codec '%s'. Using default codec '%s'.", this.name(), preferredPlatformEncoder, PROTECT_DEFAULT_VIDEO_ENCODER);
     } catch (_) {
-      this.log.error("%s: Unable to detect platform. Using default encoder '%s'.", this.name(), defaultVideoEncoder);
+      this.log.error("%s: Unable to detect platform. Using default encoder '%s'.", this.name(), PROTECT_DEFAULT_VIDEO_ENCODER);
     }
 
-    return defaultVideoEncoder;
+    return PROTECT_DEFAULT_VIDEO_ENCODER;
 }
 
   // Launch the Protect video (and audio) stream.
