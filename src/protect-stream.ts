@@ -29,7 +29,7 @@ import {
   PROTECT_FFMPEG_AUDIO_FILTER_HIGHPASS,
   PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS,
   PROTECT_FFMPEG_VERBOSE_DURATION,
-  PROTECT_DEFAULT_VIDEO_ENCODER
+  PROTECT_FFMPEG_VIDEO_DEFAULT_ENCODER
 } from "./settings";
 import { ProtectCameraConfig, ProtectOptions } from "./protect-types";
 import { FetchError } from "node-fetch";
@@ -227,7 +227,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       videoSRTP: Buffer.concat([request.video.srtp_key, request.video.srtp_salt]),
       videoSSRC: videoSSRC,
       videoTranscode: shouldTranscode,
-      videoEncoder: useHardwareAcceleration ? this.systemVideoEncoder : PROTECT_DEFAULT_VIDEO_ENCODER
+      videoEncoder: useHardwareAcceleration ? this.systemVideoEncoder : PROTECT_FFMPEG_VIDEO_DEFAULT_ENCODER
     };
 
     // Prepare the response stream. Here's where we figure out if we're doing two-way audio or not. For two-way audio,

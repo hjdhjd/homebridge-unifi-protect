@@ -5,7 +5,7 @@
  */
 import { Logging } from "homebridge";
 import { FfmpegProcess } from "./protect-ffmpeg";
-import { PROTECT_DEFAULT_VIDEO_ENCODER } from "./settings";
+import { PROTECT_FFMPEG_VIDEO_DEFAULT_ENCODER } from "./settings";
 import { osInfo, system, Systeminformation } from 'systeminformation';
 
 type PlatformMatchDelegate = (systemInformation: Systeminformation.SystemData, osInformation: Systeminformation.OsData) => boolean;
@@ -50,8 +50,8 @@ export class ProtectPlatformSettings {
         platform.isMatch(sysInformation, osInformation))?.videoEncoder;
       
       if (!preferredPlatformEncoder) {
-        this.log.error("Hardware acceleration is enabled but no platform support is defined for this system. Using default encoder '%s'.", PROTECT_DEFAULT_VIDEO_ENCODER);
-        return PROTECT_DEFAULT_VIDEO_ENCODER;
+        this.log.error("Hardware acceleration is enabled but no platform support is defined for this system. Using default encoder '%s'.", PROTECT_FFMPEG_VIDEO_DEFAULT_ENCODER);
+        return PROTECT_FFMPEG_VIDEO_DEFAULT_ENCODER;
       }
 
       if (await FfmpegProcess.codecEnabled(this.videoProcessor, preferredPlatformEncoder)) {
@@ -59,11 +59,11 @@ export class ProtectPlatformSettings {
         return preferredPlatformEncoder;
       }
 
-      this.log.error("Unable to find FFmpeg support for platform codec '%s'. Using default codec '%s'.", preferredPlatformEncoder, PROTECT_DEFAULT_VIDEO_ENCODER);
+      this.log.error("Unable to find FFmpeg support for platform codec '%s'. Using default codec '%s'.", preferredPlatformEncoder, PROTECT_FFMPEG_VIDEO_DEFAULT_ENCODER);
     } catch (_) {
-      this.log.error("Unable to detect platform. Using default encoder '%s'.", PROTECT_DEFAULT_VIDEO_ENCODER);
+      this.log.error("Unable to detect platform. Using default encoder '%s'.", PROTECT_FFMPEG_VIDEO_DEFAULT_ENCODER);
     }
 
-    return PROTECT_DEFAULT_VIDEO_ENCODER;
+    return PROTECT_FFMPEG_VIDEO_DEFAULT_ENCODER;
   }
 }

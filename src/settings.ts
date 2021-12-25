@@ -33,6 +33,9 @@ export const PROTECT_FFMPEG_OPTIONS = [];
 // Duration, in minutes, to increase the level of logging for FFmpeg when we encounter errors.
 export const PROTECT_FFMPEG_VERBOSE_DURATION = 5;
 
+// The default encoder for transcoding video streams. Can be overridden with a platform specific configuration to enable hardware encoding.
+export const PROTECT_FFMPEG_VIDEO_DEFAULT_ENCODER: string = "libx264";
+
 // How often, in seconds, should we refresh our Protect login credentials.
 export const PROTECT_LOGIN_REFRESH_INTERVAL = 1800;
 
@@ -52,6 +55,3 @@ export const PROTECT_NVR_UNIFIOS_REFRESH_INTERVAL = 10;
 // How often, in seconds, should we heartbeat FFmpeg in two-way audio sessions. This should be less than 5 seconds, which is
 // FFmpeg's input timeout interval.
 export const PROTECT_TWOWAY_HEARTBEAT_INTERVAL = 3.5;
-
-// The default encoder for transcoding video streams. Can be overridden with a platform specific configuration to enable hardware encoding.
-export const PROTECT_DEFAULT_VIDEO_ENCODER: string = "libx264";
