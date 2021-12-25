@@ -36,11 +36,10 @@ import { FetchError } from "node-fetch";
 import { FfmpegProcess } from "./protect-ffmpeg";
 import { ProtectCamera } from "./protect-camera";
 import { ProtectPlatform } from "./protect-platform";
+import { ProtectPlatformSettings } from "./protect-platformsettings";
 import { RtpDemuxer } from "./protect-rtp";
 import ffmpegPath from "ffmpeg-for-homebridge";
 import { reservePorts } from "@homebridge/camera-utils";
-
-import { ProtectPlatformSettings } from './protect-platformsettings';
 
 // Increase the listener limits to support Protect installations with more than 10 cameras. 100 seems like a reasonable default.
 // eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-unsafe-member-access
@@ -84,7 +83,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   private snapshotCache: { [index: string]: { image: Buffer, time: number } };
   private verboseFfmpegTimer!: NodeJS.Timeout | null;
   public readonly videoProcessor: string;
-  private systemVideoEncoder: string = "";
+  private systemVideoEncoder: string;
   private platformSettings: ProtectPlatformSettings;
 
   constructor(protectCamera: ProtectCamera, resolutions: [number, number, number][]) {
@@ -100,6 +99,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     this.platform = protectCamera.platform;
     this.snapshotCache = {};
     this.videoProcessor = this.config.videoProcessor || ffmpegPath || "ffmpeg";
+    this.systemVideoEncoder = "";
 
     // Setup for our camera controller.
     const options: CameraControllerOptions = {
@@ -202,7 +202,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     const shouldTranscode = this.protectCamera.nvr.optionEnabled(cameraConfig, "Video.Transcode", false, request.targetAddress);
 
     // Use hardware acceleration for transcoding?
-    const useHardwareAcceleration = this.protectCamera.nvr.optionEnabled(cameraConfig, "Video.TranscodeWithHwAcceleration", false, request.targetAddress)
+    const useHardwareAcceleration = this.protectCamera.nvr.optionEnabled(cameraConfig, "Video.TranscodeWithHwAcceleration", false, request.targetAddress);
     if (useHardwareAcceleration && shouldTranscode && !this.systemVideoEncoder) {
       this.systemVideoEncoder = await this.platformSettings.configurePlatformEncoder();
     }
@@ -222,12 +222,12 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       rtpDemuxer: rtpDemuxer,
 
       videoCryptoSuite: request.video.srtpCryptoSuite,
+      videoEncoder: useHardwareAcceleration ? this.systemVideoEncoder : PROTECT_FFMPEG_VIDEO_DEFAULT_ENCODER,
       videoPort: request.video.port,
       videoReturnPort: videoReturnPort,
       videoSRTP: Buffer.concat([request.video.srtp_key, request.video.srtp_salt]),
       videoSSRC: videoSSRC,
-      videoTranscode: shouldTranscode,
-      videoEncoder: useHardwareAcceleration ? this.systemVideoEncoder : PROTECT_FFMPEG_VIDEO_DEFAULT_ENCODER
+      videoTranscode: shouldTranscode
     };
 
     // Prepare the response stream. Here's where we figure out if we're doing two-way audio or not. For two-way audio,

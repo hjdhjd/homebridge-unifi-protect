@@ -34,7 +34,7 @@ export const PROTECT_FFMPEG_OPTIONS = [];
 export const PROTECT_FFMPEG_VERBOSE_DURATION = 5;
 
 // The default encoder for transcoding video streams. Can be overridden with a platform specific configuration to enable hardware encoding.
-export const PROTECT_FFMPEG_VIDEO_DEFAULT_ENCODER: string = "libx264";
+export const PROTECT_FFMPEG_VIDEO_DEFAULT_ENCODER = "libx264";
 
 // How often, in seconds, should we refresh our Protect login credentials.
 export const PROTECT_LOGIN_REFRESH_INTERVAL = 1800;

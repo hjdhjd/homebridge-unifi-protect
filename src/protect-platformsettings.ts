@@ -3,10 +3,10 @@
  * protect-platformsettings.ts: Platform configuration for transcoding settings
  *
  */
-import { Logging } from "homebridge";
+import { Systeminformation, osInfo, system } from "systeminformation";
 import { FfmpegProcess } from "./protect-ffmpeg";
+import { Logging } from "homebridge";
 import { PROTECT_FFMPEG_VIDEO_DEFAULT_ENCODER } from "./settings";
-import { osInfo, system, Systeminformation } from 'systeminformation';
 
 type PlatformMatchDelegate = (systemInformation: Systeminformation.SystemData, osInformation: Systeminformation.OsData) => boolean;
 
@@ -17,20 +17,20 @@ type PlatformEncoderConfiguration = {
 
 const PlatformEncoderConfigurations: PlatformEncoderConfiguration[] = [
   {
-    isMatch: (systemInformation, osInformation) =>
+    isMatch: (systemInformation, osInformation): boolean =>
       !systemInformation.virtual && 
-      osInformation.arch == "arm" && // Only 32bit environments are supported with HW acceleration at this time
+      osInformation.arch === "arm" && // Only 32bit environments are supported with HW acceleration at this time
       systemInformation.model.startsWith("Raspberry Pi 3"),
     videoEncoder: "h264_omx"
   },
   {
-    isMatch: (systemInformation, osInformation) =>
+    isMatch: (systemInformation, osInformation): boolean =>
       !systemInformation.virtual && 
-      osInformation.arch == "arm" && // Only 32bit environments are supported with HW acceleration at this time
+      osInformation.arch === "arm" && // Only 32bit environments are supported with HW acceleration at this time
       systemInformation.model.startsWith("Raspberry Pi 4"),
     videoEncoder: "h264_omx"
   }
-]
+];
 
 export class ProtectPlatformSettings {
   private readonly log: Logging;
@@ -50,7 +50,8 @@ export class ProtectPlatformSettings {
         platform.isMatch(sysInformation, osInformation))?.videoEncoder;
       
       if (!preferredPlatformEncoder) {
-        this.log.error("Hardware acceleration is enabled but no platform support is defined for this system. Using default encoder '%s'.", PROTECT_FFMPEG_VIDEO_DEFAULT_ENCODER);
+        this.log.error("Hardware acceleration is enabled but no platform support is defined for this system. Using default encoder '%s'.",
+          PROTECT_FFMPEG_VIDEO_DEFAULT_ENCODER);
         return PROTECT_FFMPEG_VIDEO_DEFAULT_ENCODER;
       }
 
