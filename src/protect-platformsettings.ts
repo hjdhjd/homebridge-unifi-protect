@@ -1,4 +1,4 @@
-/* Copyright(C) 2021, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2021, Andres Petralli (https://github.com/andresp). All rights reserved.
  *
  * protect-platformsettings.ts: Platform configuration for transcoding settings
  *
