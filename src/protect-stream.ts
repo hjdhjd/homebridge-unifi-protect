@@ -617,7 +617,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     try {
 
       // Retrieve the image.
-      this.snapshotCache[cameraConfig.mac] = { image: await response.buffer(), time: Date.now() };
+      this.snapshotCache[cameraConfig.mac] = { image: Buffer.from(await response.arrayBuffer()), time: Date.now() };
       return this.snapshotCache[cameraConfig.mac].image;
 
     } catch(error) {
