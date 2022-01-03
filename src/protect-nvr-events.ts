@@ -1,4 +1,4 @@
-/* Copyright(C) 2017-2021, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2017-2022, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * protect-nvr-events.ts: NVR device class for UniFi Protect.
  */
@@ -15,16 +15,14 @@ import {
   PROTECT_SWITCH_MOTION_TRIGGER
 } from "./protect-camera";
 import {
+  ProtectApi,
   ProtectApiUpdates,
-  ProtectNvrUpdatePayloadCameraUpdate,
-  ProtectNvrUpdatePayloadEventAdd
-} from "./protect-api-updates";
-import {
   ProtectCameraConfig,
   ProtectCameraLcdMessagePayload,
-  ProtectNvrSystemEvent
-} from "./protect-types";
-import { ProtectApi } from "./protect-api";
+  ProtectNvrSystemEvent,
+  ProtectNvrUpdatePayloadCameraUpdate,
+  ProtectNvrUpdatePayloadEventAdd
+} from "unifi-protect";
 import { ProtectDoorbell } from "./protect-doorbell";
 import { ProtectNvr } from "./protect-nvr";
 import { ProtectPlatform } from "./protect-platform";

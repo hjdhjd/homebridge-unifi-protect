@@ -1,4 +1,4 @@
-/* Copyright(C) 2017-2021, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2017-2022, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * protect-nvr.ts: NVR device class for UniFi Protect.
  */
@@ -14,16 +14,13 @@ import {
   PLUGIN_NAME,
   PROTECT_NVR_UNIFIOS_REFRESH_INTERVAL
 } from "./settings";
-import {
-  ProtectCameraConfig,
-  ProtectNvrOptions
-} from "./protect-types";
-import { ProtectApi } from "./protect-api";
+import { ProtectApi, ProtectCameraConfig } from "unifi-protect";
 import { ProtectCamera } from "./protect-camera";
 import { ProtectDoorbell } from "./protect-doorbell";
 import { ProtectLiveviews } from "./protect-liveviews";
 import { ProtectMqtt } from "./protect-mqtt";
 import { ProtectNvrEvents } from "./protect-nvr-events";
+import { ProtectNvrOptions } from "./protect-options";
 import { ProtectPlatform } from "./protect-platform";
 
 export class ProtectNvr {
@@ -82,7 +79,7 @@ export class ProtectNvr {
     }
 
     // Initialize our connection to the UniFi Protect API.
-    this.nvrApi = new ProtectApi(platform, nvrOptions.address, nvrOptions.username, nvrOptions.password);
+    this.nvrApi = new ProtectApi(nvrOptions.address, nvrOptions.username, nvrOptions.password, this.log);
 
     // Initialize our event handlers.
     this.events = new ProtectNvrEvents(this);

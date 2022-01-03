@@ -1,4 +1,4 @@
-/* Copyright(C) 2019-2021, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2019-2022, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * protect-securitysystem.ts: Security system accessory for UniFi Protect.
  */
@@ -8,7 +8,7 @@ import {
   CharacteristicSetCallback,
   CharacteristicValue
 } from "homebridge";
-import { ProtectCameraConfig, ProtectNvrConfig } from "./protect-types";
+import { ProtectCameraConfig, ProtectNvrConfig } from "unifi-protect";
 import { PROTECT_SWITCH_MOTION_SENSOR } from "./protect-camera";
 import { ProtectAccessory } from "./protect-accessory";
 

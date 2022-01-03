@@ -1,4 +1,4 @@
-/* Copyright(C) 2019-2021, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2019-2022, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * protect-doorbell.ts: Doorbell device class for UniFi Protect.
  */
@@ -9,7 +9,7 @@ import {
   CharacteristicValue,
   Service
 } from "homebridge";
-import { ProtectCameraConfig, ProtectCameraLcdMessagePayload } from "./protect-types";
+import { ProtectCameraConfig, ProtectCameraLcdMessagePayload } from "unifi-protect";
 import { ProtectCamera } from "./protect-camera";
 
 // A doorbell message entry.
@@ -249,7 +249,7 @@ export class ProtectDoorbell extends ProtectCamera {
 
     // Grab any messages that the user has configured.
     if(this.nvr.config.doorbellMessages) {
-      for(const configEntry of this.nvr?.config?.doorbellMessages) {
+      for(const configEntry of this.nvr.config.doorbellMessages) {
         let duration = this.defaultDuration;
 
         // If we've set a duration, let's honor it. If it's less than zero, use the default duration.

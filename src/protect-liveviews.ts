@@ -1,4 +1,4 @@
-/* Copyright(C) 2017-2021, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2017-2022, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * protect-liveviews.ts: Liveviews class for UniFi Protect.
  */
@@ -16,7 +16,7 @@ import {
 import {
   ProtectCameraConfig,
   ProtectNvrLiveviewConfig
-} from "./protect-types";
+} from "unifi-protect";
 import { ProtectBase } from "./protect-accessory";
 import { ProtectNvr } from "./protect-nvr";
 import { ProtectSecuritySystem } from "./protect-securitysystem";

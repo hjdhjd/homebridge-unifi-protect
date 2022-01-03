@@ -1,13 +1,13 @@
-/* Copyright(C) 2017-2021, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2017-2022, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * protect-mqtt.ts: MQTT connectivity class for UniFi Protect.
  */
 import { Logging, PlatformAccessory } from "homebridge";
-import { ProtectCameraConfig, ProtectNvrOptions } from "./protect-types";
+import { ProtectApi, ProtectCameraConfig } from "unifi-protect";
 import mqtt, { MqttClient } from "mqtt";
 import { PROTECT_MQTT_RECONNECT_INTERVAL } from "./settings";
-import { ProtectApi } from "./protect-api";
 import { ProtectNvr } from "./protect-nvr";
+import { ProtectNvrOptions } from "./protect-options";
 
 export class ProtectMqtt {
   private config: ProtectNvrOptions;

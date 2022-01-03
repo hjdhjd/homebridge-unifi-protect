@@ -1,4 +1,4 @@
-/* Copyright(C) 2017-2021, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2017-2022, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * protect-accessory.ts: Base class for all UniFi Protect accessories.
  */
@@ -8,8 +8,8 @@ import {
   Logging,
   PlatformAccessory
 } from "homebridge";
-import { ProtectApi } from "./protect-api";
-import { ProtectCameraConfig } from "./protect-types";
+import { ProtectApi } from "unifi-protect";
+import { ProtectCameraConfig } from "unifi-protect";
 import { ProtectNvr } from "./protect-nvr";
 import { ProtectPlatform } from "./protect-platform";
 
@@ -29,6 +29,7 @@ export abstract class ProtectBase {
 
   // The constructor initializes key variables and calls configureDevice().
   constructor(nvr: ProtectNvr) {
+
     this.api = nvr.platform.api;
     this.debug = nvr.platform.debug.bind(this);
     this.hap = this.api.hap;

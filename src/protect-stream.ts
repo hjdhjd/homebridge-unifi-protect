@@ -1,4 +1,4 @@
-/* Copyright(C) 2017-2021, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2017-2022, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * protect-stream.ts: Homebridge camera streaming delegate implementation for Protect.
  *
@@ -25,25 +25,25 @@ import {
   StreamRequestTypes,
   StreamingRequest
 } from "homebridge";
+import { FetchError, ProtectCameraConfig } from "unifi-protect";
 import {
   PROTECT_FFMPEG_AUDIO_FILTER_HIGHPASS,
   PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS,
   PROTECT_FFMPEG_VERBOSE_DURATION,
   PROTECT_FFMPEG_VIDEO_DEFAULT_ENCODER
 } from "./settings";
-import { ProtectCameraConfig, ProtectOptions } from "./protect-types";
-import { FetchError } from "node-fetch";
 import { FfmpegProcess } from "./protect-ffmpeg";
 import { ProtectCamera } from "./protect-camera";
+import { ProtectOptions } from "./protect-options";
 import { ProtectPlatform } from "./protect-platform";
 import { ProtectPlatformSettings } from "./protect-platformsettings";
 import { RtpDemuxer } from "./protect-rtp";
 import ffmpegPath from "ffmpeg-for-homebridge";
 import { reservePorts } from "@homebridge/camera-utils";
 
-// Increase the listener limits to support Protect installations with more than 10 cameras. 100 seems like a reasonable default.
+// Increase the listener limits to support Protect installations with more than 10 cameras. 200 seems like a reasonable default.
 // eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-unsafe-member-access
-require("events").EventEmitter.defaultMaxListeners = 100;
+require("events").EventEmitter.defaultMaxListeners = 200;
 
 type SessionInfo = {
   address: string; // Address of the HomeKit client.
