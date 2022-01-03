@@ -202,8 +202,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     const shouldTranscode = this.protectCamera.nvr.optionEnabled(cameraConfig, "Video.Transcode", false, request.targetAddress);
 
     // Use hardware acceleration for transcoding?
-    const useHardwareAcceleration = this.protectCamera.nvr.optionEnabled(cameraConfig, "Video.TranscodeWithHwAcceleration", false, request.targetAddress);
-    if (useHardwareAcceleration && shouldTranscode && !this.systemVideoEncoder) {
+    if (shouldTranscode && !this.systemVideoEncoder) {
       this.systemVideoEncoder = await this.platformSettings.configurePlatformEncoder();
     }
 
@@ -222,7 +221,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       rtpDemuxer: rtpDemuxer,
 
       videoCryptoSuite: request.video.srtpCryptoSuite,
-      videoEncoder: useHardwareAcceleration ? this.systemVideoEncoder : PROTECT_FFMPEG_VIDEO_DEFAULT_ENCODER,
+      videoEncoder: this.systemVideoEncoder,
       videoPort: request.video.port,
       videoReturnPort: videoReturnPort,
       videoSRTP: Buffer.concat([request.video.srtp_key, request.video.srtp_salt]),
