@@ -29,8 +29,7 @@ import { FetchError, ProtectCameraConfig } from "unifi-protect";
 import {
   PROTECT_FFMPEG_AUDIO_FILTER_HIGHPASS,
   PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS,
-  PROTECT_FFMPEG_VERBOSE_DURATION,
-  PROTECT_FFMPEG_VIDEO_DEFAULT_ENCODER
+  PROTECT_FFMPEG_VERBOSE_DURATION
 } from "./settings";
 import { FfmpegProcess } from "./protect-ffmpeg";
 import { ProtectCamera } from "./protect-camera";
