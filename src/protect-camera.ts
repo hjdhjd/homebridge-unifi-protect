@@ -1,4 +1,4 @@
-/* Copyright(C) 2019-2021, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2019-2022, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * protect-camera.ts: Camera device class for UniFi Protect.
  */
@@ -8,9 +8,8 @@ import {
   CharacteristicSetCallback,
   CharacteristicValue
 } from "homebridge";
-import { ProtectCameraChannelConfig, ProtectCameraConfig, ProtectNvrBootstrap } from "./protect-types";
+import { ProtectApi, ProtectCameraChannelConfig, ProtectCameraConfig, ProtectNvrBootstrap } from "unifi-protect";
 import { ProtectAccessory } from "./protect-accessory";
-import { ProtectApi } from "./protect-api";
 import { ProtectNvr } from "./protect-nvr";
 import { ProtectStreamingDelegate } from "./protect-stream";
 

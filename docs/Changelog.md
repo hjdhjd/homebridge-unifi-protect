@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 4.4.4 (2022-01-02)
+  * Separate the core UniFi Protect API into a separate library so it can be used in other projects.
+  * Lock `mqtt` upstream package version due to a bug introduced in a newer version until it gets sorted out.
+  * Dependency updates.
+
 ## 4.4.3 (2021-09-07)
   * Remove deprecated code that was causing a minor issue when using smart detection with object-specific accessory granularity.
   * Housekeeping.

@@ -1,4 +1,4 @@
-/* Copyright(C) 2017-2021, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2017-2022, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * protect-platform.ts: homebridge-unifi-protect platform class.
  */
@@ -11,7 +11,7 @@ import {
   PlatformConfig
 } from "homebridge";
 import { PROTECT_FFMPEG_OPTIONS, PROTECT_MOTION_DURATION, PROTECT_MQTT_TOPIC } from "./settings";
-import { ProtectNvrOptions, ProtectOptions } from "./protect-types";
+import { ProtectNvrOptions, ProtectOptions } from "./protect-options";
 import { ProtectNvr } from "./protect-nvr";
 import util from "util";
 
