@@ -12,6 +12,7 @@ export interface ProtectOptions {
   options: string[],
   ringDuration: number,
   verboseFfmpeg: boolean,
+  videoEncoder: string,
   videoProcessor: string
 }
 

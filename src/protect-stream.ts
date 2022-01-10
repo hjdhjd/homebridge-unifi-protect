@@ -36,6 +36,7 @@ import { ProtectCamera } from "./protect-camera";
 import { ProtectOptions } from "./protect-options";
 import { ProtectPlatform } from "./protect-platform";
 import { RtpDemuxer } from "./protect-rtp";
+import { URL } from "url";
 import WebSocket from "ws";
 import ffmpegPath from "ffmpeg-for-homebridge";
 import { reservePorts } from "@homebridge/camera-utils";
@@ -80,6 +81,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   public readonly protectCamera: ProtectCamera;
   private snapshotCache: { [index: string]: { image: Buffer, time: number } };
   private verboseFfmpegTimer!: NodeJS.Timeout | null;
+  private videoEncoder!: string;
   public readonly videoProcessor: string;
 
   constructor(protectCamera: ProtectCamera, resolutions: [number, number, number][]) {
@@ -95,6 +97,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     this.pendingSessions = {};
     this.platform = protectCamera.platform;
     this.snapshotCache = {};
+    this.videoEncoder = this.config.videoEncoder || "libx264";
     this.videoProcessor = this.config.videoProcessor || ffmpegPath || "ffmpeg";
 
     // Setup for our camera controller.
@@ -205,8 +208,32 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
       } else {
 
-        const tb = await response.json() as Record<string, string>;
-        talkBack = tb?.url;
+        try {
+
+          const tb = await response.json() as Record<string, string>;
+
+          // Adjust the URL for our address.
+          const tbUrl = new URL(tb.url);
+          tbUrl.hostname = this.protectCamera.nvr.nvrAddress;
+
+          talkBack = tbUrl.toString();
+
+        } catch(error) {
+
+          if(error instanceof FetchError) {
+
+            switch(error.code) {
+
+              default:
+
+                this.log.error("%s: Unknown error while preparing the return audio channel: %s", this.name(), error.message);
+                break;
+            }
+          }
+
+          this.log.error("%s: An error occurred while preparing the return audio channel: %s.", this.name(), error);
+          talkBack = null;
+        }
       }
     }
 
@@ -349,7 +376,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       // -filter:v fps=fps= use the fps filter to get to the frame rate requested by HomeKit. This has better performance characteristics
       //                    for Protect rather than using "-r".
       ffmpegArgs.push(
-        "-vcodec", "libx264",
+        "-vcodec", this.videoEncoder,
         "-pix_fmt", "yuvj420p",
         "-profile:v", "high",
         "-preset", "veryfast",
@@ -555,39 +582,39 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       ffmpegReturnAudioCmd.push("-loglevel", "level+debug");
     }
 
-    // Create the talkback websocket.
-    let ws: WebSocket | null = null;
-
     try {
+
+      // Create the talkback websocket.
+      let ws: WebSocket | null = null;
 
       if(sessionInfo.talkBack) {
         ws = new WebSocket(sessionInfo.talkBack, { rejectUnauthorized: false });
       }
 
+      // Fire up FFmpeg.
+      const ffmpegReturnAudio = new FfmpegProcess(this, request.sessionID, ffmpegReturnAudioCmd);
+
+      // Make sure we close the talkback websocket when we're done.
+      ffmpegReturnAudio.getStdout()?.on("close", () => {
+        ws?.close();
+      });
+
+      // Setup housekeeping for the twoway FFmpeg session.
+      this.ongoingSessions[request.sessionID].ffmpeg.push(ffmpegReturnAudio);
+
+      // Feed the SDP session description to FFmpeg on stdin.
+      ffmpegReturnAudio.getStdin()?.write(sdpReturnAudio);
+      ffmpegReturnAudio.getStdin()?.end();
+
+      // Send the audio.
+      ffmpegReturnAudio.getStdout()?.on("data", (data: Buffer) => {
+        ws?.send(data);
+      });
+
     } catch(error) {
 
       this.log.error("%s: Unable to connect to the return audio channel: %s", this.name(), error);
     }
-
-    // Fire up FFmpeg.
-    const ffmpegReturnAudio = new FfmpegProcess(this, request.sessionID, ffmpegReturnAudioCmd);
-
-    // Make sure we close the talkback websocket when we're done.
-    ffmpegReturnAudio.getStdout()?.on("close", () => {
-      ws?.close();
-    });
-
-    // Setup housekeeping for the twoway FFmpeg session.
-    this.ongoingSessions[request.sessionID].ffmpeg.push(ffmpegReturnAudio);
-
-    // Feed the SDP session description to FFmpeg on stdin.
-    ffmpegReturnAudio.getStdin()?.write(sdpReturnAudio);
-    ffmpegReturnAudio.getStdin()?.end();
-
-    // Send the audio.
-    ffmpegReturnAudio.getStdout()?.on("data", (data: Buffer) => {
-      ws?.send(data);
-    });
   }
 
   // Process incoming stream requests.

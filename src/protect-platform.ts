@@ -30,6 +30,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
   public verboseFfmpeg: boolean;
 
   constructor(log: Logging, config: PlatformConfig, api: API) {
+
     this.accessories = [];
     this.api = api;
     this.configOptions = [];
@@ -51,6 +52,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
       options: config.options as string[],
       ringDuration: config.ringDuration as number ?? PROTECT_RING_DURATION,
       verboseFfmpeg: config.verboseFfmpeg === true,
+      videoEncoder: config.videoEncoder as string,
       videoProcessor: config.videoProcessor as string
     };
 
