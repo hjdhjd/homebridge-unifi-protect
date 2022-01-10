@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 5.0.0 (2022-01-09)
+  * Fix: gracefully error out when no version of ffmpeg is available.
+  * Fix: increase the duration a doorbell trigger is on. In certain setups, doorbell triggers don't stay on for a long enough time to trigger HomeKit automations or update the Home app.
+  * New feature: full UniFi Protect floodlight support. Floodlights will appear as a dimmer in HomeKit, allowing you to turn them on, off, and set various lighting levels. Floodlights include motion sensors that are also accessible in HomeKit.
+  * New feature: full UniFi Protect sensor support. This includes ambient light sensors, contact sensors, motion sensors, and temperature sensors...and more!
+  * New feature: full UniFi Protect ViewPort support. You can configure which liveview is used for ViewPort directly in HomeKit.
+  * New feature: UniFi Protect controller system information sensor support. Currently, we support the controller CPU temperature as a HomeKit sensor. More perhaps in the future. This feature is disabled by default. Enable the feature option `NVR.SystemInfo` to use it. See the documentation for details.
+  * New feature: MQTT support for UniFi Protect floodlights.
+  * New feature: MQTT support for UniFi Protect sensors.
+  * New feature: MQTT support for UniFi Protect controller system information.
+  * Enhancement: streaming will now use the IP address / hostname provided to the plugin during configuration, rather than the one provided back by the Protect NVR. This is useful in certain networking scenarios.
+  * Enhancement: refine streaming autoconfiguration given recent Protect firmware updates. What's it mean for you? Even snappier startup times for streaming.
+  * Enhancement: I've further reverse-engineered two-way audio (on supported devices such as Doorbells) to connect through the Protect controller rather than the camera directly. We still don't have AEC (acoustic echo cancellation), but it's significant progress.
+  * Enhancement: for MQTT doorbell ring events, `homebridge-unifi-protect` will now send both `true` and `false` messages when a doorbell ring event occurs.
+
 ## 4.4.4 (2022-01-02)
   * Separate the core UniFi Protect API into a separate library so it can be used in other projects.
   * Lock `mqtt` upstream package version due to a bug introduced in a newer version until it gets sorted out.
