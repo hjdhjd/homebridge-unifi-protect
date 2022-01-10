@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 5.0.2 (2022-01-10)
+  * Fix: really fix a networking edge case this time.
+
 ## 5.0.1 (2022-01-10)
   * Fix: adjust some edge cases relating to two-way audio.
   * Enhancement: allow for users to specify a different video encoder to use with FFmpeg when transcoding. **This is an entirely unsupported feature - issues opened for problems this may create for you are your own**. This might be useful in certain scenarios (e.g. Raspberry Pi) where you want to use hardware-accelerated transcoding. Personally, I'm deeply skeptical of the utility of this feature, but curious enough to add it in. This might happen to you too someday when you are old like me. Find the option in Homebridge UI, under advanced settings.
