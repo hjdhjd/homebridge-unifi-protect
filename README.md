@@ -20,16 +20,18 @@ This plugin attempts to bridge a gap in the UniFi Protect ecosystem by providing
 
 What does *just works* mean in practice? It means that this plugin will discover all your supported UniFi Protect devices and make them available in HomeKit. It supports all known UniFi Protect controller configurations (UniFi CloudKey Gen2+, UniFi Dream Machine Pro, and UniFi Protect NVR).
 
-For the more technically inclined - this plugin has continued to pioneer the HomeKit user experience for UniFi Protect by being the ***first*** Homebridge plugin (and first third-party app, to my knowledge) to successfully reverse engineer the UniFi Protect realtime events API that was introduced with UniFi OS. This means that rather than poll the Protect controller every few seconds to catch events, we're able to capture motion and doorbell ring events in realtime, providing an immediate and extremely responsive HomeKit experience, further reducing the potential performance impact to Protect controllers.
+For the more technically inclined - this plugin has continued to pioneer the HomeKit user experience for UniFi Protect by being the ***first*** Homebridge plugin (and first third-party app, to my knowledge) to successfully reverse engineer the UniFi Protect realtime events API that was introduced with UniFi OS. This means that rather than poll the Protect controller every few seconds to catch events, we're able to capture motion and doorbell ring events in realtime, providing an immediate and extremely responsive HomeKit experience, further reducing the potential performance impact to Protect controllers. Since reverse engineering the realtime events API, most of the major open source smart automation projects have benefitted and also incorporated that work.
 
 ### Features
 - ***Easy* configuration - all you need is your UniFi Protect controller IP address, username, and password to get started.** The defaults work for the vast majority of users. When you want more, there are [advanced options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/AdvancedOptions.md) you can play with, if you choose.
 
-- **Blazing fast video streaming.** Video streaming from HomeKit will start within in 1-2 seconds for G3-series cameras and 3-4 seconds for G4-series cameras, in most cases. I've spent the time to optimize the video streaming experience to ensure it feels very responsive, and *just works*.
+- **Full HomeKit upport for the UniFi Protect ecosystem.** All generally available UniFi Protect devices are supported, including cameras, doorbells, lights, sensors, and ViewPorts.
 
-- **[Full UniFi Protect G4 Doorbell support.](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/Doorbell.md).** This plugin provides complete support for [UniFi Protect G4 Doorbells](https://store.ui.com/collections/unifi-protect/products/uvc-g4-doorbell). We support all the features of the doorbell including - doorbell rings, two-way audio, and the use of the onboard LCD screen for messages. Two-way audio has caveats you should be aware of.
+- **Blazing fast video streaming.** Video streaming from HomeKit will start within in 1-2 seconds for cameras, in most cases. I've spent the time to optimize the video streaming experience to ensure it feels very responsive, and *just works*.
 
-- **[Two-way audio support](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/Doorbell.md#doorbell-twoway) for all UniFi Protect cameras that support it**. Some Protect devices that support two-way audio capabilities include [UniFi Protect G4 Doorbells](https://store.ui.com/collections/unifi-protect/products/uvc-g4-doorbell), the [UniFi Protect G3 Micro](https://store.ui.com/collections/unifi-protect/products/unifi-video-g3-micro), and more. If the Protect device supports two-way audio, that functionality is available to you in HomeKit.
+- **[Full UniFi Protect Doorbell support.](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/Doorbell.md).** This plugin provides complete support for [UniFi Protect Doorbells](https://store.ui.com/collections/unifi-protect/products/uvc-g4-doorbell). We support all the features of the doorbell including - doorbell rings, two-way audio, and the use of the onboard LCD screen for messages. Two-way audio has caveats you should be aware of.
+
+- **[Two-way audio support](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/Doorbell.md#doorbell-twoway) for all UniFi Protect cameras that support it**. Some Protect devices that support two-way audio capabilities include [UniFi Protect Doorbells](https://store.ui.com/collections/unifi-protect/products/uvc-g4-doorbell), the [UniFi Protect Instant Cameras](https://store.ui.com/collections/unifi-protect/products/unifi-video-g3-micro), and more. If the Protect device supports two-way audio, that functionality is available to you in HomeKit.
 
 - **Support for multiple controllers.** This plugin can support multiple UniFi Protect controllers. If you have more than one controller, it's easy to add them to this plugin, and integrate them seamlessly into HomeKit.
 
@@ -72,13 +74,7 @@ If you are new to Homebridge, please first read the [Homebridge](https://homebri
 
 If you have installed the [Homebridge Config UI](https://github.com/oznu/homebridge-config-ui-x), you can intall this plugin by going to the `Plugins` tab and searching for `homebridge-unifi-protect` and installing it.
 
-If you prefer to install `homebridge-unifi-protect` from the command line, you can do so by executing:
-
-```sh
-sudo npm install --unsafe-perm -g homebridge-unifi-protect
-```
-
-You will need a working **ffmpeg** installation for `homebridge-unifi-protect` to work correctly. To make installation more convenient, this plugin uses [ffmpeg-for-homebridge](https://www.npmjs.com/package/ffmpeg-for-homebridge) which provides prebuilt versions of ffmpeg for some of the more popular platforms. [Click here](https://github.com/homebridge/ffmpeg-for-homebridge#supported-platforms) for a list of platforms supported by `ffmpeg-for-homebridge`. If you don't find your platform listed, you'll need to install a working version of ffmpeg for yourself, if you want video streaming to work. **Setting up and configuring ffmpeg is beyond the scope of this documentation.**
+**Important:** you will need a working **ffmpeg** installation for `homebridge-unifi-protect` to work correctly. To make installation more convenient, this plugin uses [ffmpeg-for-homebridge](https://www.npmjs.com/package/ffmpeg-for-homebridge) which provides prebuilt versions of ffmpeg for some of the more popular platforms. [Click here](https://github.com/homebridge/ffmpeg-for-homebridge#supported-platforms) for a list of platforms supported by `ffmpeg-for-homebridge`. If you don't find your platform listed, you'll need to install a working version of ffmpeg for yourself, if you want video streaming to work. **Setting up and configuring ffmpeg is beyond the scope of this documentation.**
 
 ### Audio
 Audio on cameras is tricky in the HomeKit world to begin with, and when you throw in some of the specifics of how UniFi Protect works, it gets even more interesting. Some things to keep in mind if you want to use audio with UniFi Protect:
