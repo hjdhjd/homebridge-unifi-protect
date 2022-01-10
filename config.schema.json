@@ -125,14 +125,6 @@
         }
       },
 
-      "videoProcessor": {
-        "type": "string",
-        "title": "Video Processor",
-        "required": false,
-        "placeholder": "e.g. ffmpeg",
-        "description": "Location of ffmpeg or your preferred video processor. Default: builtin or in your local path."
-      },
-
       "motionDuration": {
         "type": "integer",
         "title": "Motion Event Duration (seconds)",
@@ -158,7 +150,24 @@
         "title": "Verbose FFmpeg Logging",
         "required": false,
         "description": "Enable additional logging for FFmpeg. This will create a lot of logging when video streams are running. Default: false."
+      },
+
+      "videoProcessor": {
+        "type": "string",
+        "title": "Video Processor",
+        "required": false,
+        "placeholder": "e.g. ffmpeg",
+        "description": "Location of ffmpeg or your preferred video processor. Default: builtin or in your local path."
+      },
+
+      "videoEncoder": {
+        "type": "string",
+        "title": "Video Encoder",
+        "required": false,
+        "placeholder": "e.g. h264_omx",
+        "description": "FFmpeg video encoder to use for transcoding. Useful for hardware-accelerated video encoding such as on a Raspberry Pi. Default: libx264."
       }
+
     }
   },
 
@@ -270,9 +279,10 @@
           "description": "These settings should be rarely used or needed by most people. Use these with caution.",
           "items": [
             "videoProcessor",
+            "videoEncoder",
+            "verboseFfmpeg",
             "motionDuration",
-            "ringDuration",
-            "verboseFfmpeg"
+            "ringDuration"
           ]
         }
       ]
