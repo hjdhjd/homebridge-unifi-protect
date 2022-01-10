@@ -134,7 +134,7 @@ For those of the command-line persuasion, you can see what an example `config.js
 | `message`           | The message text to display on the doorbell.
 | `duration`          | The duration, in seconds, that you want to display the message for on the doorbell. If not specified, it defaults to the UniFi Protect default, 60 seconds. If set to 0, the message will display indefinitely.
 
-There are also two Fature Options that you can use to either disable the messages feature entirely, or, to tell `homebridge-unifi-protect` to only display the messages you've configured within Homebridge in HomeKit:
+There are also two feature options that you can use to either disable the messages feature entirely, or, to tell `homebridge-unifi-protect` to only display the messages you've configured within Homebridge in HomeKit:
 
 | Feature Options        | Description
 |-----------------------|----------------------------------
