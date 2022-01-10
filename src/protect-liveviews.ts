@@ -22,6 +22,7 @@ import { ProtectNvr } from "./protect-nvr";
 import { ProtectSecuritySystem } from "./protect-securitysystem";
 
 export class ProtectLiveviews extends ProtectBase {
+
   private isMqttConfigured: boolean;
   private liveviews: ProtectNvrLiveviewConfig[] | undefined;
   private liveviewSwitches: PlatformAccessory[];
@@ -87,9 +88,11 @@ export class ProtectLiveviews extends ProtectBase {
 
     // Create the security system accessory if it doesn't already exist.
     if(!this.securityAccessory) {
+
       // See if we already have this accessory defined.
       if((this.securityAccessory = this.platform.accessories.find((x: PlatformAccessory) => x.UUID === uuid)) === undefined) {
-        // We will use the NVR MAC address + ".Security" to create our UUID. That should provide guaranteed uniqueness we need.
+
+        // We will use the NVR MAC address + ".Security" to create our UUID. That should provide the guaranteed uniqueness we need.
         this.securityAccessory = new this.api.platformAccessory(this.nvrApi.bootstrap.nvr.name, uuid);
 
         // Register this accessory with homebridge and add it to the platform accessory array so we can track it.
@@ -98,6 +101,7 @@ export class ProtectLiveviews extends ProtectBase {
       }
 
       if(!this.securityAccessory) {
+
         this.log.error("%s: Unable to create the security system accessory.", this.name());
         return;
       }
@@ -107,6 +111,7 @@ export class ProtectLiveviews extends ProtectBase {
 
     // We have the security system accessory, now let's configure it.
     if(!this.securitySystem) {
+
       this.securitySystem = new ProtectSecuritySystem(this.nvr, this.securityAccessory);
 
       if(!this.securitySystem) {
@@ -342,7 +347,7 @@ export class ProtectLiveviews extends ProtectBase {
 
       // Check to see if this is one of the cameras we want to toggle motion detection for and the state is changing.
       if(targetCameraIds.some(thisCameraId =>
-        thisCameraId === (targetAccessory.context.camera as ProtectCameraConfig).id) && (targetAccessory.context.detectMotion !== value)) {
+        thisCameraId === (targetAccessory.context.device as ProtectCameraConfig).id) && (targetAccessory.context.detectMotion !== value)) {
 
         targetAccessory.context.detectMotion = value;
 

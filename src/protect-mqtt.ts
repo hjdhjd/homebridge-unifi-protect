@@ -20,6 +20,7 @@ export class ProtectMqtt {
   private subscriptions: { [index: string]: (cbBuffer: Buffer) => void };
 
   constructor(nvr: ProtectNvr) {
+
     this.config = nvr.config;
     this.debug = nvr.platform.debug.bind(nvr.platform);
     this.isConnected = false;
@@ -126,42 +127,28 @@ export class ProtectMqtt {
   // Publish an MQTT event to a broker.
   public publish(accessory: PlatformAccessory | string, topic: string, message: string): void {
 
-    // No accessory, we're done.
-    if(!accessory) {
+    const expandedTopic = this.expandTopic(accessory, topic);
+
+    // No valid topic returned, we're done.
+    if(!expandedTopic) {
       return;
     }
 
-    // Check if we were passed the MAC as an input. Otherwise, assume it's the controller's MAC initially.
-    let mac = typeof accessory === "string" ? accessory : (accessory.context.nvr as string);
-
-    // Check to see if it's really a camera...if it is, use it's MAC address.
-    if((typeof accessory !== "string") && ("camera" in accessory.context)) {
-      mac = (accessory.context.camera as ProtectCameraConfig).mac;
-    }
-
-    this.debug("%s: MQTT publish: %s Message: %s.", this.nvrApi.getNvrName(), this.config.mqttTopic + "/" + mac + "/" + topic, message);
+    this.debug("%s: MQTT publish: %s Message: %s.", this.nvrApi.getNvrName(), expandedTopic, message);
 
     // By default, we publish as: unifi/protect/mac/event/name
-    this.mqtt?.publish(this.config.mqttTopic + "/" + mac + "/" + topic, message);
+    this.mqtt?.publish(expandedTopic, message);
   }
 
   // Subscribe to an MQTT topic.
   public subscribe(accessory: PlatformAccessory | string, topic: string, callback: (cbBuffer: Buffer) => void): void {
 
-    // No accessory, we're done.
-    if(!accessory) {
+    const expandedTopic = this.expandTopic(accessory, topic);
+
+    // No valid topic returned, we're done.
+    if(!expandedTopic) {
       return;
     }
-
-    // Check if we were passed the MAC as an input. Otherwise, assume it's the controller's MAC initially.
-    let mac = typeof accessory === "string" ? accessory : (accessory.context.nvr as string);
-
-    // Check to see if it's really a camera...if it is, use it's MAC address.
-    if((typeof accessory !== "string") && ("camera" in accessory.context)) {
-      mac = (accessory.context.camera as ProtectCameraConfig).mac;
-    }
-
-    const expandedTopic = this.config.mqttTopic + "/" + mac + "/" + topic;
 
     this.debug("%s: MQTT subscribe: %s.", this.nvrApi.getNvrName(), expandedTopic);
 
@@ -171,5 +158,57 @@ export class ProtectMqtt {
     // Tell MQTT we're subscribing to this event.
     // By default, we subscribe as: unifi/protect/mac/event/name.
     this.mqtt?.subscribe(expandedTopic);
+  }
+
+  // Subscribe to a specific MQTT topic and publish a value on a get request.
+  public subscribeGet(accessory: PlatformAccessory, name: string, topic: string, type: string, getValue: () => string): void {
+
+    // Return the current status of a given sensor.
+    this.nvr.mqtt?.subscribe(accessory, topic + "/get", (message: Buffer) => {
+
+      const value = message.toString().toLowerCase();
+
+      // When we get the right message, we return the system information JSON.
+      if(value !== "true") {
+        return;
+      }
+
+      this.nvr.mqtt?.publish(accessory, topic, getValue());
+      this.log.info("%s: %s information published via MQTT.", name, type);
+    });
+  }
+
+  // Unsubscribe to an MQTT topic.
+  public unsubscribe(accessory: PlatformAccessory | string, topic: string): void {
+
+    const expandedTopic = this.expandTopic(accessory, topic);
+
+    // No valid topic returned, we're done.
+    if(!expandedTopic) {
+      return;
+    }
+
+    delete this.subscriptions[expandedTopic];
+  }
+
+  // Expand a topic to a unique, fully formed one.
+  private expandTopic(accessory: PlatformAccessory | string, topic: string) : string | null {
+
+    // No accessory, we're done.
+    if(!accessory) {
+      return null;
+    }
+
+    // Check if we were passed the MAC as an input. Otherwise, assume it's the controller's MAC initially.
+    let mac = (typeof accessory === "string") ? accessory : (accessory.context.nvr as string);
+
+    // Check to see if it's really a Protect device...if it is, use it's MAC address.
+    if((typeof accessory !== "string") && ("device" in accessory.context)) {
+      mac = (accessory.context.device as ProtectCameraConfig).mac;
+    }
+
+    const expandedTopic = this.config.mqttTopic + "/" + mac + "/" + topic;
+
+    return expandedTopic;
   }
 }

@@ -26,6 +26,7 @@ interface MessageSwitchInterface extends MessageInterface {
 }
 
 export class ProtectDoorbell extends ProtectCamera {
+
   private defaultDuration!: number;
   private isMessagesEnabled!: boolean;
   private isMessagesFromControllerEnabled!: boolean;
@@ -41,17 +42,17 @@ export class ProtectDoorbell extends ProtectCamera {
     this.messageSwitches = [];
 
     // We only want to deal with cameras with chimes.
-    if(!(this.accessory.context.camera as ProtectCameraConfig)?.featureFlags.hasChime) {
+    if(!(this.accessory.context.device as ProtectCameraConfig)?.featureFlags.hasChime) {
       return false;
     }
 
     // The user has disabled the doorbell message functionality.
-    if(!this.nvr.optionEnabled(this.accessory.context.camera as ProtectCameraConfig, "Doorbell.Messages")) {
+    if(!this.nvr.optionEnabled(this.accessory.context.device as ProtectCameraConfig, "Doorbell.Messages")) {
       this.isMessagesEnabled = false;
     }
 
     // The user has disabled the doorbell message functionality.
-    if(!this.nvr.optionEnabled(this.accessory.context.camera as ProtectCameraConfig, "Doorbell.Messages.FromDoorbell")) {
+    if(!this.nvr.optionEnabled(this.accessory.context.device as ProtectCameraConfig, "Doorbell.Messages.FromDoorbell")) {
       this.isMessagesFromControllerEnabled = false;
     }
 
@@ -69,7 +70,7 @@ export class ProtectDoorbell extends ProtectCamera {
   // Configure our access to the Doorbell LCD screen.
   public configureDoorbellLcdSwitch(): boolean {
 
-    const camera = this.accessory?.context.camera as ProtectCameraConfig;
+    const camera = this.accessory?.context.device as ProtectCameraConfig;
 
     // Make sure we're configuring a camera device with an LCD screen (aka a doorbell).
     if((camera?.modelKey !== "camera") || !camera?.featureFlags.hasLcdScreen) {
@@ -145,6 +146,7 @@ export class ProtectDoorbell extends ProtectCamera {
 
     // Get the current message on the doorbell.
     this.nvr.mqtt?.subscribe(this.accessory, "message/get", (message: Buffer) => {
+
       const value = message.toString();
 
       // When we get the right message, we return the current message set on the doorbell.
@@ -152,11 +154,11 @@ export class ProtectDoorbell extends ProtectCamera {
         return;
       }
 
-      const camera = this.accessory.context.camera as ProtectCameraConfig;
+      const device = this.accessory.context.device as ProtectCameraConfig;
 
-      const doorbellMessage = camera.lcdMessage?.text ?? "";
-      const doorbellDuration = (("resetAt" in camera.lcdMessage) && camera.lcdMessage.resetAt !== null) ?
-        Math.round((camera.lcdMessage.resetAt - Date.now()) / 1000) : 0;
+      const doorbellMessage = device.lcdMessage?.text ?? "";
+      const doorbellDuration = (("resetAt" in device.lcdMessage) && device.lcdMessage.resetAt !== null) ?
+        Math.round((device.lcdMessage.resetAt - Date.now()) / 1000) : 0;
 
       // Publish the current message.
       this.nvr.mqtt?.publish(this.accessory, "message", JSON.stringify({ duration: doorbellDuration, message: doorbellMessage }));
@@ -171,6 +173,7 @@ export class ProtectDoorbell extends ProtectCamera {
     // If duration is 0, we assume it's not expiring.
     // If the message is blank, we assume we're resetting the doorbell message.
     this.nvr.mqtt?.subscribe(this.accessory, "message/set", (message: Buffer) => {
+
       interface mqttMessageJSON {
         message: string,
         duration: number
@@ -181,10 +184,12 @@ export class ProtectDoorbell extends ProtectCamera {
 
       // Catch any errors in parsing what we get over MQTT.
       try {
+
         incomingPayload = JSON.parse(message.toString()) as mqttMessageJSON;
 
         // Sanity check what comes in from MQTT to make sure it's what we want.
         if(!(incomingPayload instanceof Object)) {
+
           throw new Error("The JSON object is not in the expected format");
         }
 
@@ -396,15 +401,15 @@ export class ProtectDoorbell extends ProtectCamera {
     }
 
     // Push the update to the doorbell.
-    const newCamera = await this.nvr.nvrApi.updateCamera(this.accessory.context.camera as ProtectCameraConfig, { lcdMessage: payload });
+    const newDevice = await this.nvr.nvrApi.updateCamera(this.accessory.context.device as ProtectCameraConfig, { lcdMessage: payload });
 
-    if(!newCamera) {
+    if(!newDevice) {
       this.log.error("%s: Unable to set doorbell message. Please ensure this username has the Administrator role in UniFi Protect.", this.name());
       return false;
     }
 
-    // Set the context to our updated camera configuration.
-    this.accessory.context.camera = newCamera;
+    // Set the context to our updated device configuration.
+    this.accessory.context.device = newDevice;
     return true;
   }
 }

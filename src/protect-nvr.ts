@@ -14,19 +14,33 @@ import {
   PLUGIN_NAME,
   PROTECT_NVR_UNIFIOS_REFRESH_INTERVAL
 } from "./settings";
-import { ProtectApi, ProtectCameraConfig } from "unifi-protect";
+import {
+  ProtectApi,
+  ProtectCameraConfig,
+  ProtectLightConfig,
+  ProtectSensorConfig,
+  ProtectViewerConfig
+} from "unifi-protect";
 import { ProtectCamera } from "./protect-camera";
 import { ProtectDoorbell } from "./protect-doorbell";
+import { ProtectLight } from "./protect-light";
 import { ProtectLiveviews } from "./protect-liveviews";
 import { ProtectMqtt } from "./protect-mqtt";
 import { ProtectNvrEvents } from "./protect-nvr-events";
 import { ProtectNvrOptions } from "./protect-options";
+import { ProtectNvrSystemInfo } from "./protect-nvr-systeminfo";
 import { ProtectPlatform } from "./protect-platform";
+import { ProtectSensor } from "./protect-sensor";
+import { ProtectViewer } from "./protect-viewer";
+
+// Some type aliases to signify what we support.
+type ProtectDeviceConfigTypes = ProtectCameraConfig | ProtectLightConfig | ProtectSensorConfig | ProtectViewerConfig;
+type ProtectDevices = ProtectCamera | ProtectDoorbell | ProtectLight | ProtectSensor | ProtectViewer;
 
 export class ProtectNvr {
   private api: API;
   public config: ProtectNvrOptions;
-  public readonly configuredCameras: { [index: string]: ProtectCamera | ProtectDoorbell };
+  public readonly configuredDevices: { [index: string]: ProtectDevices };
   private debug: (message: string, ...parameters: unknown[]) => void;
   public doorbellCount: number;
   public events!: ProtectNvrEvents;
@@ -36,12 +50,12 @@ export class ProtectNvr {
   private lastRing: { [index: string]: number };
   private liveviews: ProtectLiveviews | null;
   private log: Logging;
-  private motionDuration: number;
   public mqtt: ProtectMqtt | null;
   private readonly eventTimers: { [index: string]: NodeJS.Timeout };
   private name: string;
-  private nvrAddress: string;
+  public nvrAddress: string;
   public nvrApi!: ProtectApi;
+  public systemInfo!: ProtectNvrSystemInfo | null;
   public platform: ProtectPlatform;
   private pollingTimer!: NodeJS.Timeout;
   public refreshInterval: number;
@@ -50,7 +64,7 @@ export class ProtectNvr {
   constructor(platform: ProtectPlatform, nvrOptions: ProtectNvrOptions) {
     this.api = platform.api;
     this.config = nvrOptions;
-    this.configuredCameras = {};
+    this.configuredDevices = {};
     this.debug = platform.debug.bind(platform);
     this.doorbellCount = 0;
     this.isEnabled = false;
@@ -61,11 +75,11 @@ export class ProtectNvr {
     this.log = platform.log;
     this.mqtt = null;
     this.name = nvrOptions.name;
-    this.motionDuration = platform.config.motionDuration;
     this.eventTimers = {};
     this.nvrAddress = nvrOptions.address;
     this.platform = platform;
     this.refreshInterval = nvrOptions.refreshInterval;
+    this.systemInfo = null;
     this.unsupportedDevices = {};
 
     // Assign a name, if we don't have one.
@@ -87,96 +101,210 @@ export class ProtectNvr {
     // Initialize our liveviews.
     this.liveviews = new ProtectLiveviews(this);
 
+    // Initialize our NVR system information.
+    this.systemInfo = new ProtectNvrSystemInfo(this);
+
     // Cleanup any stray ffmpeg sessions on shutdown.
     this.api.on(APIEvent.SHUTDOWN, () => {
-      for(const protectCamera of Object.values(this.configuredCameras)) {
-        this.debug("%s: Shutting down all video stream processes.", protectCamera.name());
-        protectCamera.stream?.shutdown();
+
+      for(const protectCamera of Object.values(this.configuredDevices)) {
+        if(protectCamera instanceof ProtectCamera) {
+          this.debug("%s: Shutting down all video stream processes.", protectCamera.name());
+          protectCamera.stream?.shutdown();
+        }
       }
     });
   }
 
-  // Discover new UniFi Protect devices.
-  private discoverAndSyncAccessories(): boolean {
+  // Configure a UniFi Protect device in HomeKit.
+  private configureDevice(accessory: PlatformAccessory, device: ProtectDeviceConfigTypes): boolean {
+
+    if(!accessory || !device) {
+      return false;
+    }
+
+    switch(device.modelKey) {
+
+      case "camera":
+
+        // We have a UniFi Protect camera or doorbell.
+        if((device as ProtectCameraConfig).featureFlags.hasChime) {
+          this.configuredDevices[accessory.UUID] = new ProtectDoorbell(this, accessory);
+        } else {
+          this.configuredDevices[accessory.UUID] = new ProtectCamera(this, accessory);
+        }
+
+        return true;
+
+        break;
+
+      case "light":
+
+        // We have a UniFi Protect light.
+        this.configuredDevices[accessory.UUID] = new ProtectLight(this, accessory);
+
+        return true;
+
+        break;
+
+      case "sensor":
+
+        // We have a UniFi Protect sensor.
+        this.configuredDevices[accessory.UUID] = new ProtectSensor(this, accessory);
+
+        return true;
+
+        break;
+
+      case "viewer":
+
+        // We have a UniFi Protect viewer.
+        this.configuredDevices[accessory.UUID] = new ProtectViewer(this, accessory);
+
+        return true;
+
+        break;
+
+      default:
+
+        this.log.error("%s: Unknown device class `%s` detected for ``%s``", this.nvrApi.getNvrName(), device.modelKey, device.name);
+
+        return false;
+    }
+  }
+
+  // Discover UniFi Protect devices that may have been added to the NVR since we last checked.
+  private discoverDevices(devices: ProtectDeviceConfigTypes[]): boolean {
 
     // Iterate through the list of cameras that Protect has returned and sync them with what we show HomeKit.
-    for(const camera of this.nvrApi.Cameras ?? []) {
+    for(const device of devices ?? []) {
 
       // If we have no MAC address, name, or this camera isn't being managed by Protect, we skip.
-      if(!camera.mac || !camera.name || camera.isAdopting || !camera.isAdopted || !camera.isManaged) {
+      if(!device.mac || !device.name || device.isAdopting || !device.isAdopted) {
         continue;
       }
 
-      // We are only interested in cameras. Perhaps more types in the future.
-      if(camera.modelKey !== "camera") {
+      // We only support certain devices.
+      switch(device.modelKey) {
+        case "camera":
+        case "light":
+        case "sensor":
+        case "viewer":
+          break;
 
-        // If we've already informed the user about this one, we're done.
-        if(this.unsupportedDevices[camera.mac]) {
+        default:
+
+          // If we've already informed the user about this one, we're done.
+          if(this.unsupportedDevices[device.mac]) {
+            continue;
+          }
+
+          // Notify the user we see this device, but we aren't adding it to HomeKit.
+          this.unsupportedDevices[device.mac] = true;
+
+          this.log.info("%s: UniFi Protect device type '%s' is not currently supported, ignoring: %s.",
+            this.nvrApi.getNvrName(), device.modelKey, this.nvrApi.getDeviceName(device));
+
           continue;
-        }
 
-        // Notify the user we see this camera, but we aren't adding it to HomeKit.
-        this.unsupportedDevices[camera.mac] = true;
-
-        this.log.info("%s: UniFi Protect camera type '%s' is not currently supported, ignoring: %s.",
-          this.nvrApi.getNvrName(), camera.modelKey, this.nvrApi.getDeviceName(camera));
-
-        continue;
       }
 
       // Exclude or include certain devices based on configuration parameters.
-      if(!this.optionEnabled(camera)) {
+      if(!this.optionEnabled(device)) {
         continue;
       }
 
-      // Generate this camera's unique identifier.
-      const uuid = this.hap.uuid.generate(camera.mac);
+      // Generate this device's unique identifier.
+      const uuid = this.hap.uuid.generate(device.mac);
 
       let accessory: PlatformAccessory | undefined;
 
       // See if we already know about this accessory or if it's truly new. If it is new, add it to HomeKit.
       if((accessory = this.platform.accessories.find(x => x.UUID === uuid)) === undefined) {
-        accessory = new this.api.platformAccessory(camera.name, uuid);
 
-        this.log.info("%s: Adding %s to HomeKit.", this.nvrApi.getFullName(camera), camera.modelKey);
+        accessory = new this.api.platformAccessory(device.name, uuid);
+
+        this.log.info("%s: Adding %s to HomeKit.", this.nvrApi.getFullName(device), device.modelKey);
 
         // Register this accessory with homebridge and add it to the accessory array so we can track it.
         this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
         this.platform.accessories.push(accessory);
       }
 
-      // Link the accessory to it's camera object and it's hosting NVR.
-      accessory.context.camera = camera;
+      // Link the accessory to it's device object and it's hosting NVR.
+      accessory.context.device = device;
       accessory.context.nvr = this.nvrApi.bootstrap?.nvr.mac;
 
-      // Setup the Protect camera if it hasn't been configured yet.
-      if(!this.configuredCameras[accessory.UUID]) {
+      // Setup the Protect device if it hasn't been configured yet.
+      if(!this.configuredDevices[accessory.UUID]) {
 
-        // Eventually switch on multiple types of UniFi Protect devices. For now, it's cameras only...
-        if(camera.featureFlags.hasChime) {
-          this.configuredCameras[accessory.UUID] = new ProtectDoorbell(this, accessory);
-        } else {
-          this.configuredCameras[accessory.UUID] = new ProtectCamera(this, accessory);
-        }
+        this.configureDevice(accessory, device);
 
       } else {
 
-        // Finally, check if we have changes to the exposed RTSP streams on our cameras.
-        void this.configuredCameras[accessory.UUID].configureVideoStream();
+        // Device-specific periodic reconfiguration. We need to do this to reflect state changes in
+        // the Protect NVR (e.g. device settings changes) that we want to catch. Many of the realtime
+        // changes are sent through the realtime update API, but a few things aren't, so we deal with that
+        // here.
+        switch(device.modelKey) {
 
-        // Check for changes to the doorbell LCD as well.
-        if(camera.featureFlags.hasLcdScreen) {
-          void (this.configuredCameras[accessory.UUID] as ProtectDoorbell).configureDoorbellLcdSwitch();
+          case "camera":
+
+            // Check if we have changes to the exposed RTSP streams on our cameras.
+            void (this.configuredDevices[accessory.UUID] as ProtectCamera).configureVideoStream();
+
+            // Check for changes to the doorbell LCD as well.
+            if((device as ProtectCameraConfig).featureFlags.hasLcdScreen) {
+              void (this.configuredDevices[accessory.UUID] as ProtectDoorbell).configureDoorbellLcdSwitch();
+            }
+
+            break;
+
+          case "viewer":
+
+            // Sync the viewer state with HomeKit.
+            void (this.configuredDevices[accessory.UUID] as ProtectViewer).updateDevice();
+
+            break;
+
+          default:
+
+            break;
         }
-
       }
     }
 
-    // Remove Protect cameras that are no longer found on this Protect NVR, but we still have in HomeKit.
+    return true;
+
+  }
+
+  // Discover and sync UniFi Protect devices between HomeKit and the Protect NVR.
+  private discoverAndSyncAccessories(): boolean {
+
+    if(this.nvrApi.cameras && !this.discoverDevices(this.nvrApi.cameras)) {
+      this.log.error("%s: Error discovering camera devices.", this.nvrApi.getNvrName());
+    }
+
+    if(this.nvrApi.lights && !this.discoverDevices(this.nvrApi.lights)) {
+      this.log.error("%s: Error discovering light devices.", this.nvrApi.getNvrName());
+    }
+
+    if(this.nvrApi.sensors && !this.discoverDevices(this.nvrApi.sensors)) {
+      this.log.error("%s: Error discovering sensor devices.", this.nvrApi.getNvrName());
+    }
+
+    if(this.nvrApi.viewers && !this.discoverDevices(this.nvrApi.viewers)) {
+      this.log.error("%s: Error discovering viewer devices.", this.nvrApi.getNvrName());
+    }
+
+    // Remove Protect devices that are no longer found on this Protect NVR, but we still have in HomeKit.
     this.cleanupDevices();
 
     // Configure our liveview-based accessories.
     this.liveviews?.configureLiveviews();
+
+    // Configure our NVR system information-related accessories.
+    this.systemInfo?.configureAccessory();
 
     return true;
   }
@@ -237,7 +365,7 @@ export class ProtectNvr {
       this.mqtt = new ProtectMqtt(this);
     }
 
-    // Poll for events (in non-UniFi OS controllers) and check for any updates to the events API connection.
+    // Check for any updates to the events API connection.
     this.events.update();
 
     // Sync status and check for any new or removed accessories.
@@ -273,6 +401,7 @@ export class ProtectNvr {
 
   // Cleanup removed Protect devices from HomeKit.
   private cleanupDevices(): void {
+
     const nvr = this.nvrApi.bootstrap?.nvr;
 
     // If we don't have a valid bootstrap configuration, we're done here.
@@ -281,12 +410,18 @@ export class ProtectNvr {
     }
 
     for(const oldAccessory of this.platform.accessories) {
-      const oldCamera = oldAccessory.context.camera as ProtectCameraConfig;
+
+      const oldDevice = oldAccessory.context.device as ProtectCameraConfig;
       const oldNvr = oldAccessory.context.nvr as string;
 
       // Since we're accessing the shared accessories list for the entire platform, we need to ensure we
       // are only touching our cameras and not another NVR's.
       if(oldNvr !== nvr.mac) {
+        continue;
+      }
+
+      // The NVR system information accessory is handled elsewhere.
+      if(("systemInfo" in oldAccessory.context)) {
         continue;
       }
 
@@ -296,11 +431,54 @@ export class ProtectNvr {
       }
 
       // We found this accessory and it's for this NVR. Figure out if we really want to see it in HomeKit.
-      // Keep it if it still exists on the NVR and the user has not chosen to hide it.
-      if(oldCamera &&
-        this.nvrApi.Cameras?.some((x: ProtectCameraConfig) => x.mac === oldCamera.mac) &&
-        this.optionEnabled(oldCamera)) {
-        continue;
+      if(oldDevice) {
+
+        // Check to see if the device still exists on the NVR and the user has not chosen to hide it.
+        switch(oldDevice.modelKey) {
+          case "camera":
+
+            if(this.nvrApi.cameras?.some((x: ProtectCameraConfig) => x.mac === oldDevice.mac) &&
+              this.optionEnabled(oldDevice)) {
+
+              continue;
+            }
+
+            break;
+
+          case "light":
+
+            if(this.nvrApi.lights?.some((x: ProtectLightConfig) => x.mac === oldDevice.mac) &&
+              this.optionEnabled(oldDevice)) {
+
+              continue;
+            }
+
+            break;
+
+          case "sensor":
+
+            if(this.nvrApi.sensors?.some((x: ProtectSensorConfig) => x.mac === oldDevice.mac) &&
+              this.optionEnabled(oldDevice)) {
+
+              continue;
+            }
+
+            break;
+
+          case "viewer":
+
+            if(this.nvrApi.viewers?.some((x: ProtectViewerConfig) => x.mac === oldDevice.mac) &&
+              this.optionEnabled(oldDevice)) {
+
+              continue;
+            }
+
+            break;
+
+          default:
+            break;
+        }
+
       }
 
       // Decrement our doorbell count.
@@ -310,32 +488,32 @@ export class ProtectNvr {
 
       // Remove this device.
       this.log.info("%s %s: Removing %s from HomeKit.", this.nvrApi.getNvrName(),
-        oldCamera ? this.nvrApi.getDeviceName(oldCamera) : oldAccessory.displayName,
-        oldCamera ? oldCamera.modelKey : "device");
+        oldDevice ? this.nvrApi.getDeviceName(oldDevice) : oldAccessory.displayName,
+        oldDevice ? oldDevice.modelKey : "device");
 
       // Unregister the accessory and delete it's remnants from HomeKit and the plugin.
       this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [oldAccessory]);
 
-      delete this.configuredCameras[oldAccessory.UUID];
+      delete this.configuredDevices[oldAccessory.UUID];
       this.platform.accessories.splice(this.platform.accessories.indexOf(oldAccessory), 1);
     }
   }
 
-  // Lookup a camera by it's identifier and return the associated accessory, if any.
-  public accessoryLookup(cameraId: string | undefined | null): PlatformAccessory | undefined {
+  // Lookup a device by it's identifier and return the associated accessory, if any.
+  public accessoryLookup(deviceId: string | undefined | null): PlatformAccessory | undefined {
 
-    if(!cameraId) {
+    if(!deviceId) {
       return undefined;
     }
 
-    // Find the camera in our list of accessories.
-    const foundCamera = Object.keys(this.configuredCameras).find(x => (this.configuredCameras[x].accessory.context.camera as ProtectCameraConfig).id === cameraId);
+    // Find the device in our list of accessories.
+    const foundDevice = Object.keys(this.configuredDevices).find(x => (this.configuredDevices[x].accessory.context.device as ProtectCameraConfig).id === deviceId);
 
-    return foundCamera ? this.configuredCameras[foundCamera].accessory : undefined;
+    return foundDevice ? this.configuredDevices[foundDevice].accessory : undefined;
   }
 
   // Utility function to let us know if a device or feature should be enabled or not.
-  public optionEnabled(device: ProtectCameraConfig | null, option = "", defaultReturnValue = true, address = "", addressOnly = false): boolean {
+  public optionEnabled(device: ProtectDeviceConfigTypes | null, option = "", defaultReturnValue = true, address = "", addressOnly = false): boolean {
 
     // There are a couple of ways to enable and disable options. The rules of the road are:
     //
@@ -460,7 +638,7 @@ export class ProtectNvr {
   }
 
   // Utility function to return a configuration parameter for a Protect device.
-  public optionGet(device: ProtectCameraConfig | null, option: string, address = ""): string | undefined {
+  public optionGet(device: ProtectDeviceConfigTypes | null, option: string, address = ""): string | undefined {
 
     // Using the same rules as we do to test for whether an option is enabled, retrieve options with parameters and
     // return them. If we don't find anything, we return undefined.

@@ -36,12 +36,13 @@ import { ProtectCamera } from "./protect-camera";
 import { ProtectOptions } from "./protect-options";
 import { ProtectPlatform } from "./protect-platform";
 import { RtpDemuxer } from "./protect-rtp";
+import WebSocket from "ws";
 import ffmpegPath from "ffmpeg-for-homebridge";
 import { reservePorts } from "@homebridge/camera-utils";
 
-// Increase the listener limits to support Protect installations with more than 10 cameras. 200 seems like a reasonable default.
+// Increase the listener limits to support Protect installations with more than 10 cameras. 100 seems like a reasonable default.
 // eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-unsafe-member-access
-require("events").EventEmitter.defaultMaxListeners = 200;
+require("events").EventEmitter.defaultMaxListeners = 100;
 
 type SessionInfo = {
   address: string; // Address of the HomeKit client.
@@ -58,6 +59,7 @@ type SessionInfo = {
   audioIncomingRtcpPort: number;
   audioIncomingRtpPort: number; // Port to receive audio from the HomeKit microphone.
   rtpDemuxer: RtpDemuxer | null; // RTP demuxer needed for two-way audio.
+  talkBack: string | null; // Talkback websocket needed for two-way audio.
   audioCryptoSuite: SRTPCryptoSuites;
   audioSRTP: Buffer;
   audioSSRC: number;
@@ -81,6 +83,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   public readonly videoProcessor: string;
 
   constructor(protectCamera: ProtectCamera, resolutions: [number, number, number][]) {
+
     this.api = protectCamera.api;
     this.config = protectCamera.platform.config;
     this.debug = protectCamera.platform.debug.bind(protectCamera.platform);
@@ -162,13 +165,13 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   // Prepare to launch the video stream.
   public async prepareStream(request: PrepareStreamRequest, callback: PrepareStreamCallback): Promise<void> {
 
-    const cameraConfig = this.protectCamera.accessory.context.camera as ProtectCameraConfig;
+    const cameraConfig = this.protectCamera.accessory.context.device as ProtectCameraConfig;
 
     // Check if audio support is enabled.
     const isAudioEnabled = this.protectCamera.nvr.optionEnabled(cameraConfig, "Audio", true, request.targetAddress);
 
     // We need to check for AAC support because it's going to determine whether we support audio.
-    const hasLibFdk = isAudioEnabled && (await FfmpegProcess.codecEnabled(this.videoProcessor, "libfdk_aac"));
+    const hasLibFdk = isAudioEnabled && (await FfmpegProcess.codecEnabled(this.videoProcessor, "libfdk_aac", this.log));
 
     // Setup our audio plumbing.
     const audioIncomingRtcpPort = (await reservePorts({ count: 1 }))[0];
@@ -181,9 +184,31 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
         isAudioEnabled ? " A version of FFmpeg that is compiled with fdk_aac support is required to support audio." : "");
     }
 
-    // Setup the RTP demuxer for two-way audio scenarios.
-    const rtpDemuxer = (hasLibFdk && this.protectCamera.twoWayAudio) ?
-      new RtpDemuxer(this, request.addressVersion, audioIncomingPort, audioIncomingRtcpPort, audioIncomingRtpPort) : null;
+    let rtpDemuxer = null;
+    let talkBack = null;
+
+    if(hasLibFdk && this.protectCamera.twoWayAudio) {
+
+      // Setup the RTP demuxer for two-way audio scenarios.
+      rtpDemuxer = new RtpDemuxer(this, request.addressVersion, audioIncomingPort, audioIncomingRtcpPort, audioIncomingRtpPort);
+
+      // Request the talkback websocket from the controller.
+      const params = new URLSearchParams({ camera: cameraConfig.id });
+
+      const response = await this.protectCamera.nvr.nvrApi.fetch(this.protectCamera.nvr.nvrApi.wsUrl() + "/talkback?" + params.toString());
+
+      // Something went wrong and we don't have a talkback websocket.
+      if(!response?.ok) {
+
+        this.log.error("%s: Unable to configure the return audio channel.%s",
+          this.name(), response ? " " + response.status.toString() + " - " + response.statusText + "." : "");
+
+      } else {
+
+        const tb = await response.json() as Record<string, string>;
+        talkBack = tb?.url;
+      }
+    }
 
     // Setup our video plumbing.
     const videoReturnPort = (await reservePorts({ count: 1 }))[0];
@@ -202,6 +227,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
       hasLibFdk: hasLibFdk,
       rtpDemuxer: rtpDemuxer,
+      talkBack: talkBack,
 
       videoCryptoSuite: request.video.srtpCryptoSuite,
       videoPort: request.video.port,
@@ -241,7 +267,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   // Launch the Protect video (and audio) stream.
   private startStream(request: StartStreamRequest, callback: StreamRequestCallback): void {
 
-    const cameraConfig = this.protectCamera.accessory.context.camera as ProtectCameraConfig;
+    const cameraConfig = this.protectCamera.accessory.context.device as ProtectCameraConfig;
     const sessionInfo = this.pendingSessions[request.sessionID];
     const sdpIpVersion = sessionInfo.addressVersion === "ipv6" ? "IP6 ": "IP4";
 
@@ -517,7 +543,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       "-ar", cameraConfig.talkbackSettings.samplingRate.toString(),
       "-b:a", "64k",
       "-f", "adts",
-      "udp://" + cameraConfig.host + ":" + cameraConfig.talkbackSettings.bindPort.toString()
+      "-"
     ];
 
     // Additional logging, but only if we're debugging.
@@ -529,14 +555,39 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       ffmpegReturnAudioCmd.push("-loglevel", "level+debug");
     }
 
+    // Create the talkback websocket.
+    let ws: WebSocket | null = null;
+
+    try {
+
+      if(sessionInfo.talkBack) {
+        ws = new WebSocket(sessionInfo.talkBack, { rejectUnauthorized: false });
+      }
+
+    } catch(error) {
+
+      this.log.error("%s: Unable to connect to the return audio channel: %s", this.name(), error);
+    }
+
+    // Fire up FFmpeg.
     const ffmpegReturnAudio = new FfmpegProcess(this, request.sessionID, ffmpegReturnAudioCmd);
 
-    // Housekeeping for the twoway FFmpeg session.
+    // Make sure we close the talkback websocket when we're done.
+    ffmpegReturnAudio.getStdout()?.on("close", () => {
+      ws?.close();
+    });
+
+    // Setup housekeeping for the twoway FFmpeg session.
     this.ongoingSessions[request.sessionID].ffmpeg.push(ffmpegReturnAudio);
 
     // Feed the SDP session description to FFmpeg on stdin.
     ffmpegReturnAudio.getStdin()?.write(sdpReturnAudio);
     ffmpegReturnAudio.getStdin()?.end();
+
+    // Send the audio.
+    ffmpegReturnAudio.getStdout()?.on("data", (data: Buffer) => {
+      ws?.send(data);
+    });
   }
 
   // Process incoming stream requests.
@@ -577,7 +628,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   // Take a snapshot.
   private async getSnapshot(request?: SnapshotRequest): Promise<Buffer | null> {
 
-    const cameraConfig = this.protectCamera.accessory.context.camera as ProtectCameraConfig;
+    const cameraConfig = this.protectCamera.accessory.context.device as ProtectCameraConfig;
     const params = new URLSearchParams({ force: "true" });
 
     // If we aren't connected, we're done.

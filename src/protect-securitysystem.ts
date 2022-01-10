@@ -8,9 +8,8 @@ import {
   CharacteristicSetCallback,
   CharacteristicValue
 } from "homebridge";
+import { PROTECT_SWITCH_MOTION_SENSOR, ProtectAccessory } from "./protect-accessory";
 import { ProtectCameraConfig, ProtectNvrConfig } from "unifi-protect";
-import { PROTECT_SWITCH_MOTION_SENSOR } from "./protect-camera";
-import { ProtectAccessory } from "./protect-accessory";
 
 export class ProtectSecuritySystem extends ProtectAccessory {
   private isAlarmTriggered!: boolean;
@@ -20,7 +19,7 @@ export class ProtectSecuritySystem extends ProtectAccessory {
     const accessory = this.accessory;
     let securityState: CharacteristicValue = this.hap.Characteristic.SecuritySystemCurrentState.STAY_ARM;
 
-    // Save the motion sensor switch state before we wipeout the context.
+    // Save the security system state before we wipeout the context.
     if(accessory.context.securityState !== undefined) {
       securityState = accessory.context.securityState as CharacteristicValue;
     }
@@ -46,7 +45,8 @@ export class ProtectSecuritySystem extends ProtectAccessory {
   }
 
   // Configure the security system device information for HomeKit.
-  private configureInfo(): boolean {
+  protected configureInfo(): boolean {
+
     const accessory = this.accessory;
     const hap = this.hap;
     let nvrInfo!: ProtectNvrConfig;
@@ -161,6 +161,7 @@ export class ProtectSecuritySystem extends ProtectAccessory {
 
   // Configure the security system for HomeKit.
   private configureSecuritySystem(): boolean {
+
     const accessory = this.accessory;
     const hap = this.hap;
 
@@ -308,6 +309,7 @@ export class ProtectSecuritySystem extends ProtectAccessory {
 
   // Get the current security system state.
   private getSecurityState(callback: CharacteristicGetCallback): void {
+
     callback(null, this.isAlarmTriggered ?
       this.hap.Characteristic.SecuritySystemCurrentState.ALARM_TRIGGERED :
       this.accessory.context.securityState as CharacteristicValue);
@@ -315,6 +317,7 @@ export class ProtectSecuritySystem extends ProtectAccessory {
 
   // Change the security system state, and enable or disable motion detection accordingly.
   private setSecurityState(value: CharacteristicValue, callback?: CharacteristicSetCallback): void {
+
     const accessory = this.accessory;
     const hap = this.hap;
     const liveviews = this.nvr.nvrApi.bootstrap?.liveviews;
@@ -401,7 +404,7 @@ export class ProtectSecuritySystem extends ProtectAccessory {
       // check to see if this is one of the cameras we want to turn on motion detection for.
       if(((newState !== SecuritySystemCurrentState.DISARMED) ||
         ((newState === SecuritySystemCurrentState.DISARMED) && targetCameraIds.length)) &&
-        targetCameraIds.some(thisCameraId => thisCameraId === (targetAccessory.context.camera as ProtectCameraConfig).id)) {
+        targetCameraIds.some(thisCameraId => thisCameraId === (targetAccessory.context.device as ProtectCameraConfig).id)) {
         targetState = true;
       }
 

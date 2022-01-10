@@ -10,6 +10,7 @@ export interface ProtectOptions {
   ffmpegOptions: string[],
   motionDuration: number,
   options: string[],
+  ringDuration: number,
   verboseFfmpeg: boolean,
   videoProcessor: string
 }

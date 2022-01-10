@@ -33,6 +33,9 @@ export const PROTECT_FFMPEG_OPTIONS = [];
 // Duration, in minutes, to increase the level of logging for FFmpeg when we encounter errors.
 export const PROTECT_FFMPEG_VERBOSE_DURATION = 5;
 
+// HomeKit wants an I-frame interval of 4 seconds.
+export const PROTECT_HOMEKIT_IDR_INTERVAL = 4;
+
 // How often, in seconds, should we refresh our Protect login credentials.
 export const PROTECT_LOGIN_REFRESH_INTERVAL = 1800;
 
@@ -48,6 +51,9 @@ export const PROTECT_MQTT_TOPIC = "unifi/protect";
 // How often, in seconds, should we check Protect controllers for new or removed devices.
 // This will NOT impact motion or doorbell event detection on UniFi OS devices.
 export const PROTECT_NVR_UNIFIOS_REFRESH_INTERVAL = 10;
+
+// Default duration, in seconds, of ring events.
+export const PROTECT_RING_DURATION = 4;
 
 // How often, in seconds, should we heartbeat FFmpeg in two-way audio sessions. This should be less than 5 seconds, which is
 // FFmpeg's input timeout interval.

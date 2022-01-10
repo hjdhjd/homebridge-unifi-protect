@@ -8,18 +8,17 @@ import {
   CharacteristicSetCallback,
   CharacteristicValue
 } from "homebridge";
+import {
+  PROTECT_CONTACT_MOTION_SMARTDETECT,
+  PROTECT_SWITCH_DOORBELL_TRIGGER,
+  PROTECT_SWITCH_MOTION_SENSOR,
+  PROTECT_SWITCH_MOTION_TRIGGER,
+  ProtectAccessory
+} from "./protect-accessory";
 import { ProtectApi, ProtectCameraChannelConfig, ProtectCameraConfig, ProtectNvrBootstrap } from "unifi-protect";
-import { ProtectAccessory } from "./protect-accessory";
+import { PROTECT_HOMEKIT_IDR_INTERVAL } from "./settings";
 import { ProtectNvr } from "./protect-nvr";
 import { ProtectStreamingDelegate } from "./protect-stream";
-
-// Manage our contact sensor types.
-export const PROTECT_CONTACT_MOTION_SMARTDETECT = "ContactMotionSmartDetect";
-
-// Manage our switch types.
-export const PROTECT_SWITCH_DOORBELL_TRIGGER = "DoorbellTrigger";
-export const PROTECT_SWITCH_MOTION_SENSOR = "MotionSensorSwitch";
-export const PROTECT_SWITCH_MOTION_TRIGGER = "MotionSensorTrigger";
 
 export interface RtspEntry {
   channel: ProtectCameraChannelConfig,
@@ -48,8 +47,8 @@ export class ProtectCamera extends ProtectAccessory {
     this.rtspQuality = {};
     this.smartDetectTypes = [];
 
-    // Save the camera object before we wipeout the context.
-    const camera = this.accessory.context.camera as ProtectCameraConfig;
+    // Save the device object before we wipeout the context.
+    const device = this.accessory.context.device as ProtectCameraConfig;
 
     // Default motion detection support to on.
     let detectMotion = true;
@@ -61,12 +60,12 @@ export class ProtectCamera extends ProtectAccessory {
 
     // Clean out the context object in case it's been polluted somehow.
     this.accessory.context = {};
-    this.accessory.context.camera = camera;
+    this.accessory.context.device = device;
     this.accessory.context.nvr = this.nvr.nvrApi.bootstrap?.nvr.mac;
     this.accessory.context.detectMotion = detectMotion;
 
     // If the camera supports it, check to see if we have smart motion events enabled.
-    if(camera.featureFlags.hasSmartDetect && this.nvr?.optionEnabled(camera, "Motion.SmartDetect", false)) {
+    if(device.featureFlags.hasSmartDetect && this.nvr?.optionEnabled(device, "Motion.SmartDetect", false)) {
 
       // We deal with smart motion detection options here and save them on the ProtectCamera instance because
       // we're trying to optimize and reduce the number of feature option lookups we do in realtime, when possible.
@@ -76,7 +75,7 @@ export class ProtectCamera extends ProtectAccessory {
       // detection.
 
       // Check for the smart motion detection object types that UniFi Protect supports.
-      this.smartDetectTypes = camera.featureFlags.smartDetectTypes.filter(x => this.nvr?.optionEnabled(camera, "Motion.SmartDetect." + x));
+      this.smartDetectTypes = device.featureFlags.smartDetectTypes.filter(x => this.nvr?.optionEnabled(device, "Motion.SmartDetect." + x));
 
       // Inform the user of what smart detection object types we're configured for.
       this.log.info("%s: Smart motion detection enabled%s.", this.name(), this.smartDetectTypes.length ? ": " + this.smartDetectTypes.join(", ") : "");
@@ -106,89 +105,17 @@ export class ProtectCamera extends ProtectAccessory {
     return true;
   }
 
-  // Configure the camera device information for HomeKit.
-  private configureInfo(): boolean {
-
-    const accessory = this.accessory;
-    const camera = accessory.context.camera as ProtectCameraConfig;
-    const hap = this.hap;
-
-    // Update the manufacturer information for this camera.
-    accessory
-      .getService(hap.Service.AccessoryInformation)
-      ?.updateCharacteristic(hap.Characteristic.Manufacturer, "Ubiquiti Networks");
-
-    // Update the model information for this camera.
-    accessory
-      .getService(hap.Service.AccessoryInformation)
-      ?.updateCharacteristic(hap.Characteristic.Model, camera.type);
-
-    // Update the serial number for this camera.
-    accessory
-      .getService(hap.Service.AccessoryInformation)
-      ?.updateCharacteristic(hap.Characteristic.SerialNumber, camera.mac);
-
-    // Update the hardware revision for this camera.
-    accessory
-      .getService(hap.Service.AccessoryInformation)
-      ?.updateCharacteristic(hap.Characteristic.HardwareRevision, camera.hardwareRevision);
-
-    // Update the firmware revision for this camera.
-    accessory
-      .getService(hap.Service.AccessoryInformation)
-      ?.updateCharacteristic(hap.Characteristic.FirmwareRevision, camera.firmwareVersion);
-
-    return true;
-  }
-
-  // Configure the camera motion sensor for HomeKit.
-  private configureMotionSensor(): boolean {
-
-    const accessory = this.accessory;
-    const hap = this.hap;
-
-    // Find the motion sensor service, if it exists.
-    let motionService = accessory.getService(hap.Service.MotionSensor);
-
-    // Have we disabled motion sensors?
-    if(!this.nvr?.optionEnabled(accessory.context.camera as ProtectCameraConfig, "Motion.Sensor")) {
-
-      if(motionService) {
-        accessory.removeService(motionService);
-      }
-
-      this.log.info("%s: Disabling motion sensor.", this.name());
-      return false;
-    }
-
-    // The motion sensor has already been configured.
-    if(motionService) {
-      return true;
-    }
-
-    // We don't have it, add the motion sensor to the camera.
-    motionService = new hap.Service.MotionSensor(accessory.displayName);
-
-    if(!motionService) {
-      this.log.error("%s: Unable to add motion sensor.", this.name());
-      return false;
-    }
-
-    accessory.addService(motionService);
-    return true;
-  }
-
   // Configure discrete smart motion contact sensors for HomeKit.
   private configureMotionSmartSensor(): boolean {
 
-    const camera = this.accessory.context.camera as ProtectCameraConfig;
+    const device = this.accessory.context.device as ProtectCameraConfig;
 
     // Check for object-centric contact sensors that are no longer enabled and remove them.
     for(const objectService of this.accessory.services.filter(x => x.subtype?.startsWith(PROTECT_CONTACT_MOTION_SMARTDETECT + "."))) {
 
       // If we have motion sensors as well as object contact sensors enabled, and we have this object type enabled on this camera, we're good here.
-      if(this.nvr?.optionEnabled(camera, "Motion.Sensor") &&
-        this.nvr?.optionEnabled(camera, "Motion.SmartDetect.ObjectSensors", false)) {
+      if(this.nvr?.optionEnabled(device, "Motion.Sensor") &&
+        this.nvr?.optionEnabled(device, "Motion.SmartDetect.ObjectSensors", false)) {
         continue;
       }
 
@@ -198,17 +125,17 @@ export class ProtectCamera extends ProtectAccessory {
     }
 
     // Have we disabled motion sensors? If so, we're done.
-    if(!this.nvr?.optionEnabled(camera, "Motion.Sensor")) {
+    if(!this.nvr?.optionEnabled(device, "Motion.Sensor")) {
       return false;
     }
 
     // Have we enabled discrete contact sensors for specific object types? If not, we're done here.
-    if(!this.nvr?.optionEnabled(camera, "Motion.SmartDetect.ObjectSensors", false)) {
+    if(!this.nvr?.optionEnabled(device, "Motion.SmartDetect.ObjectSensors", false)) {
       return false;
     }
 
     // Add individual contact sensors for each object detection type, if needed.
-    for(const smartDetectType of camera.featureFlags.smartDetectTypes) {
+    for(const smartDetectType of device.featureFlags.smartDetectTypes) {
 
       // See if we already have this contact sensor configured.
       let contactService = this.accessory.getServiceById(this.hap.Service.ContactSensor, PROTECT_CONTACT_MOTION_SMARTDETECT + "." + smartDetectType);
@@ -234,61 +161,7 @@ export class ProtectCamera extends ProtectAccessory {
     }
 
     this.log.info("%s: Smart motion contact sensor%s enabled: %s.", this.name(),
-      camera.featureFlags.smartDetectTypes.length > 1 ? "s" : "", camera.featureFlags.smartDetectTypes.join(", "));
-
-    return true;
-  }
-
-  // Configure a switch to easily activate or deactivate motion sensor detection for HomeKit.
-  private configureMotionSwitch(): boolean {
-
-    // Find the switch service, if it exists.
-    let switchService = this.accessory.getServiceById(this.hap.Service.Switch, PROTECT_SWITCH_MOTION_SENSOR);
-
-    // Have we disabled motion sensors or the motion switch? Motion switches are disabled by default.
-    if(!this.nvr?.optionEnabled(this.accessory.context.camera as ProtectCameraConfig, "Motion.Sensor") ||
-      !this.nvr?.optionEnabled(this.accessory.context.camera as ProtectCameraConfig, "Motion.Switch", false)) {
-
-      if(switchService) {
-        this.accessory.removeService(switchService);
-      }
-
-      // If we disable the switch, make sure we fully reset it's state.
-      this.accessory.context.detectMotion = true;
-      return false;
-    }
-
-    this.log.info("%s: Enabling motion sensor switch.", this.name());
-
-    // Add the switch to the camera, if needed.
-    if(!switchService) {
-      switchService = new this.hap.Service.Switch(this.accessory.displayName + " Motion Events", PROTECT_SWITCH_MOTION_SENSOR);
-
-      if(!switchService) {
-        this.log.error("%s: Unable to add motion sensor switch.", this.name());
-        return false;
-      }
-
-      this.accessory.addService(switchService);
-    }
-
-    // Activate or deactivate motion detection.
-    switchService
-      .getCharacteristic(this.hap.Characteristic.On)
-      ?.on(CharacteristicEventTypes.GET, (callback: CharacteristicGetCallback) => {
-        callback(null, this.accessory.context.detectMotion === true);
-      })
-      .on(CharacteristicEventTypes.SET, (value: CharacteristicValue, callback: CharacteristicSetCallback) => {
-        if(this.accessory.context.detectMotion !== value) {
-          this.log.info("%s: Motion detection %s.", this.name(), (value === true) ? "enabled" : "disabled");
-        }
-
-        this.accessory.context.detectMotion = value === true;
-        callback(null);
-      });
-
-    // Initialize the switch.
-    switchService.updateCharacteristic(this.hap.Characteristic.On, this.accessory.context.detectMotion as boolean);
+      device.featureFlags.smartDetectTypes.length > 1 ? "s" : "", device.featureFlags.smartDetectTypes.join(", "));
 
     return true;
   }
@@ -300,8 +173,8 @@ export class ProtectCamera extends ProtectAccessory {
     let triggerService = this.accessory.getServiceById(this.hap.Service.Switch, PROTECT_SWITCH_MOTION_TRIGGER);
 
     // Motion triggers are disabled by default and primarily exist for automation purposes.
-    if(!this.nvr?.optionEnabled(this.accessory.context.camera as ProtectCameraConfig, "Motion.Sensor") ||
-      !this.nvr?.optionEnabled(this.accessory.context.camera as ProtectCameraConfig, "Motion.Trigger", false)) {
+    if(!this.nvr?.optionEnabled(this.accessory.context.device as ProtectCameraConfig, "Motion.Sensor") ||
+      !this.nvr?.optionEnabled(this.accessory.context.device as ProtectCameraConfig, "Motion.Trigger", false)) {
 
       if(triggerService) {
         this.accessory.removeService(triggerService);
@@ -372,7 +245,7 @@ export class ProtectCamera extends ProtectAccessory {
   // Configure a switch to manually trigger a doorbell ring event for HomeKit.
   private configureDoorbellTrigger(): boolean {
 
-    const camera = (this.accessory.context.camera as ProtectCameraConfig);
+    const camera = (this.accessory.context.device as ProtectCameraConfig);
 
     // Find the switch service, if it exists.
     let triggerService = this.accessory.getServiceById(this.hap.Service.Switch, PROTECT_SWITCH_DOORBELL_TRIGGER);
@@ -381,7 +254,7 @@ export class ProtectCamera extends ProtectAccessory {
     let doorbellService = this.accessory.getService(this.hap.Service.Doorbell);
 
     // Doorbell switches are disabled by default and primarily exist for automation purposes.
-    if(!this.nvr?.optionEnabled(this.accessory.context.camera as ProtectCameraConfig, "Doorbell.Trigger", false)) {
+    if(!this.nvr?.optionEnabled(this.accessory.context.device as ProtectCameraConfig, "Doorbell.Trigger", false)) {
 
       if(triggerService) {
         this.accessory.removeService(triggerService);
@@ -501,13 +374,13 @@ export class ProtectCamera extends ProtectAccessory {
   private configureTwoWayAudio(): boolean {
 
     // Identify twoway-capable devices.
-    if(!(this.accessory.context.camera as ProtectCameraConfig).hasSpeaker) {
+    if(!(this.accessory.context.device as ProtectCameraConfig).hasSpeaker) {
       return this.twoWayAudio = false;
     }
 
     // Enabled by default unless disabled by the user.
-    return this.twoWayAudio = this.nvr?.optionEnabled(this.accessory.context.camera as ProtectCameraConfig, "Audio") &&
-      this.nvr?.optionEnabled(this.accessory.context.camera as ProtectCameraConfig, "Audio.TwoWay");
+    return this.twoWayAudio = this.nvr?.optionEnabled(this.accessory.context.device as ProtectCameraConfig, "Audio") &&
+      this.nvr?.optionEnabled(this.accessory.context.device as ProtectCameraConfig, "Audio.TwoWay");
   }
 
   // Find an RTSP configuration for a given target resolution.
@@ -588,25 +461,40 @@ export class ProtectCamera extends ProtectAccessory {
   public async configureVideoStream(): Promise<boolean> {
 
     const bootstrap: ProtectNvrBootstrap | null = this.nvr.nvrApi.bootstrap;
-    let camera = this.accessory.context.camera as ProtectCameraConfig;
+    let device = this.accessory.context.device as ProtectCameraConfig;
     const nvr: ProtectNvr = this.nvr;
     const nvrApi: ProtectApi = this.nvr.nvrApi;
     const rtspEntries: RtspEntry[] = [];
 
     // No channels exist on this camera or we don't have access to the bootstrap configuration.
-    if(!camera?.channels || !bootstrap) {
+    if(!device?.channels || !bootstrap) {
       return false;
     }
 
     // Enable RTSP on the camera if needed and get the list of RTSP streams we have ultimately configured.
-    camera = await nvrApi.enableRtsp(camera) ?? camera;
+    device = await nvrApi.enableRtsp(device) ?? device;
 
     // Figure out which camera channels are RTSP-enabled, and user-enabled.
-    const cameraChannels = camera.channels.filter(x => x.isRtspEnabled && nvr.optionEnabled(camera, "Video.Stream." + x.name));
+    const cameraChannels = device.channels.filter(x => x.isRtspEnabled && nvr.optionEnabled(device, "Video.Stream." + x.name));
+
+    // Make sure we've got a HomeKit compatible IDR frame interval. If not, let's take care of that.
+    let idrChannels = cameraChannels.filter(x => x.idrInterval !== PROTECT_HOMEKIT_IDR_INTERVAL);
+
+    if(idrChannels.length) {
+
+      // Edit the channel map.
+      idrChannels = idrChannels.map(x => {
+        x.idrInterval = PROTECT_HOMEKIT_IDR_INTERVAL;
+        return x;
+      });
+
+      device = await nvrApi.updateCamera(device, { channels: idrChannels }) ?? device;
+      this.accessory.context.device = device;
+    }
 
     // Set the camera and shapshot URLs.
-    const cameraUrl = "rtsp://" + bootstrap.nvr.host + ":" + bootstrap.nvr.ports.rtsp.toString() + "/";
-    this.snapshotUrl = nvrApi.camerasUrl() + "/" + camera.id + "/snapshot";
+    const cameraUrl = "rtsp://" + nvr.nvrAddress + ":" + bootstrap.nvr.ports.rtsp.toString() + "/";
+    this.snapshotUrl = nvrApi.camerasUrl() + "/" + device.id + "/snapshot";
 
     // No RTSP streams are available that meet our criteria - we're done.
     if(!cameraChannels.length) {
@@ -670,18 +558,18 @@ export class ProtectCamera extends ProtectAccessory {
     }
 
     // Inform users about our RTSP entry mapping, if we're debugging.
-    if(nvr.optionEnabled(camera, "Debug.Video.Startup", false)) {
+    if(nvr.optionEnabled(device, "Debug.Video.Startup", false)) {
       for(const entry of this.rtspEntries) {
         this.log.info("%s: Mapping resolution: %s.", this.name(), this.getResolution(entry.resolution) + " => " + entry.name);
       }
     }
 
     // Check to see if the user has requested a specific stream quality for this camera.
-    if(nvr.optionEnabled(camera, "Video.Stream.Only.Low", false)) {
+    if(nvr.optionEnabled(device, "Video.Stream.Only.Low", false)) {
       this.rtspQuality.Default = "LOW";
-    } else if(nvr.optionEnabled(camera, "Video.Stream.Only.Medium", false)) {
+    } else if(nvr.optionEnabled(device, "Video.Stream.Only.Medium", false)) {
       this.rtspQuality.Default = "MEDIUM";
-    } else if(nvr.optionEnabled(camera, "Video.Stream.Only.High", false)) {
+    } else if(nvr.optionEnabled(device, "Video.Stream.Only.High", false)) {
       this.rtspQuality.Default = "HIGH";
     }
 
@@ -701,22 +589,9 @@ export class ProtectCamera extends ProtectAccessory {
 
   // Configure MQTT capabilities of this camera.
   protected configureMqtt(): boolean {
+
     const bootstrap: ProtectNvrBootstrap | null = this.nvr.nvrApi.bootstrap;
-    const camera = (this.accessory.context.camera as ProtectCameraConfig);
-
-    // Trigger a motion event in MQTT, if requested to do so.
-    this.nvr.mqtt?.subscribe(this.accessory, "motion/trigger", (message: Buffer) => {
-      const value = message.toString();
-
-      // When we get the right message, we trigger the motion event.
-      if(value?.toLowerCase() !== "true") {
-        return;
-      }
-
-      // Trigger the motion event.
-      this.nvr.events.motionEventHandler(this.accessory, Date.now());
-      this.log.info("%s: Motion event triggered via MQTT.", this.name());
-    });
+    const device = (this.accessory.context.device as ProtectCameraConfig);
 
     // Return the RTSP URLs when requested.
     this.nvr.mqtt?.subscribe(this.accessory, "rtsp/get", (message: Buffer) => {
@@ -730,7 +605,7 @@ export class ProtectCamera extends ProtectAccessory {
       const urlInfo: { [index: string]: string } = {};
 
       // Grab all the available RTSP channels.
-      for(const channel of camera.channels) {
+      for(const channel of device.channels) {
         if(!bootstrap || !channel.isRtspEnabled) {
           continue;
         }
@@ -795,16 +670,5 @@ export class ProtectCamera extends ProtectAccessory {
   private getResolution(resolution: [number, number, number]): string {
 
     return resolution[0].toString() + "x" + resolution[1].toString() + "@" + resolution[2].toString() + "fps";
-  }
-
-  // Utility function for reserved identifiers for switches.
-  protected isReservedName(name: string | undefined): boolean {
-    return name === undefined ? false :
-      [
-        PROTECT_CONTACT_MOTION_SMARTDETECT.toUpperCase(),
-        PROTECT_SWITCH_DOORBELL_TRIGGER.toUpperCase(),
-        PROTECT_SWITCH_MOTION_SENSOR.toUpperCase(),
-        PROTECT_SWITCH_MOTION_TRIGGER.toUpperCase()
-      ].includes(name.toUpperCase());
   }
 }

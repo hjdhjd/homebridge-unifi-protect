@@ -89,6 +89,7 @@ Feature options provide a rich mechanism for tailoring your `homebridge-unifi-pr
   * [Doorbell](#doorbell): enable, disable, or customize doorbell features and related automation options.
   * [Logging](#logging): enable or disable logging of motion and doorbell ring events.
   * [Motion](#motion): enable, disable, or customize motion detection and related automation options.
+  * [Nvr](#nvr): enable or disable NVR-specific feature options.
   * [Security System](#securitysystem): enable, disable, or customize the optional security system accessory.
   * [Video](#video): further customize RTSP stream quality defaults.
 
@@ -178,6 +179,14 @@ Motion feature options allow you to tailor various aspects of motion detection a
 |                                               |
 | `Enable.Motion.Trigger`                       | Add a switch accessory to manually trigger a motion detection event in HomeKit. This is useful in certain automation scenarios where you want to trigger a rich notification based on some other event.
 | `Disable.Motion.Trigger`                      | Remove the switch accessory used to manually trigger a motion detection event. *(Default)*
+
+#### <A NAME="nvr"></A>NVR Feature Options
+These feature options allow you to display or hide your Protect NVR as a HomeKit device.
+
+| Option                                        | Description
+|-----------------------------------------------|----------------------------------
+| `Enable.Nvr.SystemInfo`                       | Display the NVR system information sensors (currently only the temperature) from HomeKit.
+| `Disable.Nvr.SystemInfo`                      | Hide the NVR system information sensors (currently only the temperature) from HomeKit. *(Default)*
 
 #### <A NAME="securitysystem"></A>Security System Feature Options
 Please review the [documentation for UniFi Protect liveview support](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/Liveviews.md) for additional information about the options below and the broader liveview and security system feature set available in `homebridge-unifi-protect`.

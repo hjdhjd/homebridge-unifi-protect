@@ -10,7 +10,12 @@ import {
   PlatformAccessory,
   PlatformConfig
 } from "homebridge";
-import { PROTECT_FFMPEG_OPTIONS, PROTECT_MOTION_DURATION, PROTECT_MQTT_TOPIC } from "./settings";
+import {
+  PROTECT_FFMPEG_OPTIONS,
+  PROTECT_MOTION_DURATION,
+  PROTECT_MQTT_TOPIC,
+  PROTECT_RING_DURATION
+} from "./settings";
 import { ProtectNvrOptions, ProtectOptions } from "./protect-options";
 import { ProtectNvr } from "./protect-nvr";
 import util from "util";
@@ -44,6 +49,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
       ffmpegOptions: config.ffmpegOptions as string[] ?? PROTECT_FFMPEG_OPTIONS,
       motionDuration: config.motionDuration as number ?? PROTECT_MOTION_DURATION,
       options: config.options as string[],
+      ringDuration: config.ringDuration as number ?? PROTECT_RING_DURATION,
       verboseFfmpeg: config.verboseFfmpeg === true,
       videoProcessor: config.videoProcessor as string
     };
@@ -73,6 +79,11 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
     // Motion detection duration. Make sure it's never less than 2 seconds so we can actually alert the user.
     if(this.config.motionDuration < 2 ) {
       this.config.motionDuration = 2;
+    }
+
+    // Ring trigger duration. Make sure it's never less than 4 seconds so we can ensure automations work.
+    if(this.config.motionDuration < 4 ) {
+      this.config.motionDuration = 4;
     }
 
     // Loop through each configured NVR and instantiate it.
@@ -113,10 +124,10 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
   // for device discovery.
   public configureAccessory(accessory: PlatformAccessory): void {
 
-    // Delete the UniFi Protect camera pointer on startup. This will be set by device discovery.
+    // Delete the UniFi Protect device pointer on startup. This will be set by device discovery.
     // Notably, we do NOT clear out the NVR pointer, because we need to maintain the mapping between
     // camera and NVR.
-    delete accessory.context.camera;
+    delete accessory.context.device;
 
     // Add this to the accessory array so we can track it.
     this.accessories.push(accessory);
