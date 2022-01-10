@@ -143,6 +143,16 @@
         "description": "Duration of a single motion event. Setting this too low will potentially cause a lot of excess notifications. Default: 10."
       },
 
+      "ringDuration": {
+        "type": "integer",
+        "title": "Ring Event Duration (seconds)",
+        "required": false,
+        "minimum": 4,
+        "maximum": 10,
+        "placeholder": "e.g. 4",
+        "description": "Duration of a single ring event. Default: 4."
+      },
+
       "verboseFfmpeg": {
         "type": "boolean",
         "title": "Verbose FFmpeg Logging",
@@ -261,6 +271,7 @@
           "items": [
             "videoProcessor",
             "motionDuration",
+            "ringDuration",
             "verboseFfmpeg"
           ]
         }
