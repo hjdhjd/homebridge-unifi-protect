@@ -218,10 +218,35 @@ export class FfmpegProcess {
   }
 
   // Validate whether or not we have a specific codec available to us in FFmpeg.
-  public static async codecEnabled(videoProcessor: string, codec: string): Promise<boolean> {
+  public static async codecEnabled(videoProcessor: string, codec: string, log: Logging): Promise<boolean> {
 
-    const output = await execa(videoProcessor, ["-codecs"]);
-    return output.stdout.includes(codec);
+    try {
 
+      const output = await execa(videoProcessor, ["-codecs"]);
+      return output.stdout.includes(codec);
+
+    } catch(error) {
+
+      // You might think this should be ExecaError, but ExecaError is a type, not a class, and instanceof
+      // only operates on classes.
+      if(!(error instanceof Error)) {
+        log.error("Unknown error received while attempting to start FFmpeg: %s.", error);
+        return false;
+      }
+
+      /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access */
+      if((error as any).code === "ENOENT") {
+
+        log.error("Unable to find FFmpeg at: '%s'. Please make sure that you have a working version of FFmpeg installed.", (error as any).path);
+
+      } else {
+
+        log.error("Error running FFmpeg: %s", (error as any).originalMessage);
+      }
+      /* eslint-enable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access */
+
+    }
+
+    return false;
   }
 }
