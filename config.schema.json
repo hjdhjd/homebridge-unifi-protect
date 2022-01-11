@@ -112,6 +112,14 @@
         }
       },
 
+      "name": {
+        "type": "string",
+        "title": "Plugin Name",
+        "required": true,
+        "placeholder": "UniFi Protect",
+        "description": "Name to use for Homebridge logging purposes. Default: UniFi Protect."
+      },
+
       "options": {
         "type": "array",
         "title": "Feature Options",
@@ -152,20 +160,20 @@
         "description": "Enable additional logging for FFmpeg. This will create a lot of logging when video streams are running. Default: false."
       },
 
-      "videoProcessor": {
-        "type": "string",
-        "title": "Video Processor",
-        "required": false,
-        "placeholder": "e.g. ffmpeg",
-        "description": "Location of ffmpeg or your preferred video processor. Default: builtin or in your local path."
-      },
-
       "videoEncoder": {
         "type": "string",
         "title": "Video Encoder",
         "required": false,
         "placeholder": "e.g. h264_omx",
         "description": "FFmpeg video encoder to use for transcoding. Useful for hardware-accelerated video encoding such as on a Raspberry Pi. Default: libx264."
+      },
+
+      "videoProcessor": {
+        "type": "string",
+        "title": "Video Processor",
+        "required": false,
+        "placeholder": "e.g. ffmpeg",
+        "description": "Location of ffmpeg or your preferred video processor. Default: builtin or in your local path."
       }
 
     }
@@ -278,6 +286,7 @@
         {
           "description": "These settings should be rarely used or needed by most people. Use these with caution.",
           "items": [
+            "name",
             "videoProcessor",
             "videoEncoder",
             "verboseFfmpeg",
