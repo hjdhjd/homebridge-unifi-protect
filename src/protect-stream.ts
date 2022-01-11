@@ -598,7 +598,10 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
         // Catch any errors and inform the user, if needed.
         ws?.on("error", (error) => {
 
-          this.log.error("%s: Error in communicating with the return audio channel: %s", this.name(), error);
+          // Ignore timeout errors, but notify the user about anything else.
+          if((error as NodeJS.ErrnoException).code !== "ETIMEDOUT") {
+            this.log.error("%s: Error in communicating with the return audio channel: %s", this.name(), error);
+          }
 
           ws?.terminate();
         });
