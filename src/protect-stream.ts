@@ -73,6 +73,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   public controller: CameraController;
   private debug: (message: string, ...parameters: unknown[]) => void;
   private readonly hap: HAP;
+  private isTalkbackLive: boolean;
   public readonly log: Logging;
   public readonly name: () => string;
   private ongoingSessions: { [index: string]: { ffmpeg: FfmpegProcess[], rtpDemuxer: RtpDemuxer | null } };
@@ -97,6 +98,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     this.pendingSessions = {};
     this.platform = protectCamera.platform;
     this.snapshotCache = {};
+    this.isTalkbackLive = false;
     this.videoEncoder = this.config.videoEncoder || "libx264";
     this.videoProcessor = this.config.videoProcessor || ffmpegPath || "ffmpeg";
 
@@ -584,11 +586,31 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
     try {
 
-      // Create the talkback websocket.
+      // Now it's time to talkback.
       let ws: WebSocket | null = null;
 
       if(sessionInfo.talkBack) {
+
+        // Open the talkback connection.
         ws = new WebSocket(sessionInfo.talkBack, { rejectUnauthorized: false });
+        this.isTalkbackLive = true;
+
+        // Catch any errors and inform the user, if needed.
+        ws?.on("error", (error) => {
+
+          this.log.error("%s: Error in communicating with the return audio channel: %s", this.name(), error);
+
+          ws?.terminate();
+        });
+
+        // Catch any stray open events after we've closed.
+        ws?.on("open", () => {
+
+          // If we've somehow opened after we've wrapped up talkback, terminate the connection.
+          if(!this.isTalkbackLive) {
+            ws?.terminate();
+          }
+        });
       }
 
       // Fire up FFmpeg.
@@ -597,6 +619,10 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       // Make sure we terminate the talkback websocket when we're done.
       ffmpegReturnAudio.getStdout()?.on("close", () => {
 
+        // Make sure we catch any stray connections that may be too slow to open.
+        this.isTalkbackLive = false;
+
+        // Close the websocket.
         if((ws?.readyState === WebSocket.CLOSING) || (ws?.readyState === WebSocket.OPEN)) {
 
           ws?.terminate();
