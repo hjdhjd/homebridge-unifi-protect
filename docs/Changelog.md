@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 5.0.4 (2022-01-10)
+  * Fix: Further improve networking robustness for edge cases.
+
 ## 5.0.3 (2022-01-10)
   * Housekeeping and minor logging UX improvement.
 
