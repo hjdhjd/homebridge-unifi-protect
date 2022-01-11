@@ -596,7 +596,11 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
       // Make sure we terminate the talkback websocket when we're done.
       ffmpegReturnAudio.getStdout()?.on("close", () => {
-        ws?.terminate();
+
+        if((ws?.readyState === WebSocket.CLOSING) || (ws?.readyState === WebSocket.OPEN)) {
+
+          ws?.terminate();
+        }
       });
 
       // Setup housekeeping for the twoway FFmpeg session.
