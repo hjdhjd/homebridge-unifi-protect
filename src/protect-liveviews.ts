@@ -340,8 +340,9 @@ export class ProtectLiveviews extends ProtectBase {
 
     // Iterate through the list of accessories and set the Protect scene.
     for(const targetAccessory of this.platform.accessories) {
+
       // We only want accessories associated with this Protect controller.
-      if(!targetAccessory.context?.camera || targetAccessory.context.nvr !== this.nvrApi.bootstrap.nvr.mac) {
+      if(!targetAccessory.context?.device || targetAccessory.context.nvr !== this.nvrApi.bootstrap.nvr.mac) {
         continue;
       }
 

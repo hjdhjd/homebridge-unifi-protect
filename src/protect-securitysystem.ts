@@ -393,6 +393,7 @@ export class ProtectSecuritySystem extends ProtectAccessory {
 
     // Iterate through the list of accessories and set the Protect scene.
     for(const targetAccessory of this.platform.accessories) {
+
       // We only want accessories associated with this Protect controller.
       if(!targetAccessory.context?.camera || targetAccessory.context.nvr !== nvrApi.bootstrap.nvr.mac) {
         continue;
