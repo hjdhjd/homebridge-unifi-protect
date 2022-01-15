@@ -7,6 +7,7 @@ assignees: ''
 
 <!-- BUG REPORTS THAT ARE NOT FILLED OUT COMPLETELY WILL BE CLOSED AUTOMATICALLY WITHOUT WARNING AND WILL NOT RECEIVE A RESPONSE. THE FORM IS HERE FOR A REASON. :). -->
 <!-- Please ensure you read the documentation before creating a support request, especially the Troubleshooting page. -->
+<!-- BUG REPORTS ABOUT BETA VERSIONS OF UNIFI / UBIQUITI FIRMWARE OR EARLY-ACCESS/BETA HARDWARE WILL BE CLOSED WITHOUT A RESPONSE. ALL BETA RELEASES FROM UBIQUITI ARE UNSUPPORTED -->
 
 **Describe The Problem:**
 <!-- A clear and concise description of what the issue is. -->
