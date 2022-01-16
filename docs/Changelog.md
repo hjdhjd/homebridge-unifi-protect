@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 5.0.6 (2022-01-16)
+  * Fix: Doorbell trigger reliability improvements.
+  * Housekeeping and dependency updates.
+
 ## 5.0.5 (2022-01-15)
   * Fix: Corrected liveview behavior to ensure they are correctly set and unset. Regression introduced in v5.
   * Housekeeping and dependency updates.
