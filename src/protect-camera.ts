@@ -3,12 +3,6 @@
  * protect-camera.ts: Camera device class for UniFi Protect.
  */
 import {
-  CharacteristicEventTypes,
-  CharacteristicGetCallback,
-  CharacteristicSetCallback,
-  CharacteristicValue
-} from "homebridge";
-import {
   PROTECT_CONTACT_MOTION_SMARTDETECT,
   PROTECT_SWITCH_DOORBELL_TRIGGER,
   PROTECT_SWITCH_MOTION_SENSOR,
@@ -16,6 +10,7 @@ import {
   ProtectAccessory
 } from "./protect-accessory";
 import { ProtectApi, ProtectCameraChannelConfig, ProtectCameraConfig, ProtectNvrBootstrap } from "unifi-protect";
+import { CharacteristicValue } from "homebridge";
 import { PROTECT_HOMEKIT_IDR_INTERVAL } from "./settings";
 import { ProtectNvr } from "./protect-nvr";
 import { ProtectStreamingDelegate } from "./protect-stream";
@@ -201,10 +196,11 @@ export class ProtectCamera extends ProtectAccessory {
     // Activate or deactivate motion detection.
     triggerService
       .getCharacteristic(this.hap.Characteristic.On)
-      ?.on(CharacteristicEventTypes.GET, (callback: CharacteristicGetCallback) => {
-        callback(null, motionService?.getCharacteristic(this.hap.Characteristic.MotionDetected).value);
+      ?.onGet(() => {
+
+        return motionService?.getCharacteristic(this.hap.Characteristic.MotionDetected).value === true;
       })
-      .on(CharacteristicEventTypes.SET, (value: CharacteristicValue, callback: CharacteristicSetCallback) => {
+      .onSet((value: CharacteristicValue) => {
 
         if(value) {
 
@@ -230,8 +226,6 @@ export class ProtectCamera extends ProtectAccessory {
             }, 50);
           }
         }
-
-        callback(null);
       });
 
     // Initialize the switch.
@@ -300,10 +294,11 @@ export class ProtectCamera extends ProtectAccessory {
     // Trigger the doorbell.
     triggerService
       .getCharacteristic(this.hap.Characteristic.On)
-      ?.on(CharacteristicEventTypes.GET, (callback: CharacteristicGetCallback) => {
-        callback(null, this.isRinging);
+      ?.onGet(() => {
+
+        return this.isRinging;
       })
-      .on(CharacteristicEventTypes.SET, (value: CharacteristicValue, callback: CharacteristicSetCallback) => {
+      .onSet((value: CharacteristicValue) => {
 
         if(value) {
 
@@ -321,8 +316,6 @@ export class ProtectCamera extends ProtectAccessory {
             }, 50);
           }
         }
-
-        callback(null);
       });
 
     // Initialize the switch.
@@ -356,14 +349,6 @@ export class ProtectCamera extends ProtectAccessory {
 
       this.accessory.addService(doorbellService);
     }
-
-    doorbellService
-      .getCharacteristic(this.hap.Characteristic.ProgrammableSwitchEvent)
-      .on(CharacteristicEventTypes.GET, (callback: CharacteristicGetCallback) => {
-
-        // Provide the status of this doorbell. This must always return null, per the HomeKit spec.
-        callback(null, null);
-      });
 
     doorbellService.setPrimaryService(true);
     this.isDoorbellConfigured = true;

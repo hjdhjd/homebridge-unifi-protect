@@ -3,9 +3,6 @@
  * protect-doorbell.ts: Doorbell device class for UniFi Protect.
  */
 import {
-  CharacteristicEventTypes,
-  CharacteristicGetCallback,
-  CharacteristicSetCallback,
   CharacteristicValue,
   Service
 } from "homebridge";
@@ -125,8 +122,8 @@ export class ProtectDoorbell extends ProtectCamera {
       // Configure the message switch.
       switchService
         .getCharacteristic(this.hap.Characteristic.On)
-        ?.on(CharacteristicEventTypes.GET, this.getSwitchState.bind(this, this.messageSwitches[this.messageSwitches.length - 1]))
-        .on(CharacteristicEventTypes.SET, this.setSwitchState.bind(this, this.messageSwitches[this.messageSwitches.length - 1]));
+        ?.onGet(this.getSwitchState.bind(this, this.messageSwitches[this.messageSwitches.length - 1]))
+        .onSet(this.setSwitchState.bind(this, this.messageSwitches[this.messageSwitches.length - 1]));
     }
 
     // Update the message switch state in HomeKit.
@@ -366,12 +363,12 @@ export class ProtectDoorbell extends ProtectCamera {
   }
 
   // Get the current state of this message switch.
-  private getSwitchState(messageSwitch: MessageSwitchInterface, callback: CharacteristicGetCallback): void {
-    callback(null, messageSwitch.state);
+  private getSwitchState(messageSwitch: MessageSwitchInterface): CharacteristicValue {
+    return messageSwitch.state;
   }
 
   // Toggle the message on the doorbell.
-  private setSwitchState(messageSwitch: MessageSwitchInterface, value: CharacteristicValue, callback: CharacteristicSetCallback): void {
+  private async setSwitchState(messageSwitch: MessageSwitchInterface, value: CharacteristicValue): Promise<void> {
 
     // Tell the doorbell to display our message.
     if(messageSwitch.state !== value) {
@@ -380,10 +377,8 @@ export class ProtectDoorbell extends ProtectCamera {
         { resetAt: 0 };
 
       // Set the message and sync our states.
-      void this.setMessage(payload);
+      await this.setMessage(payload);
     }
-
-    callback(null);
   }
 
   // Set the message on the doorbell.

@@ -2,14 +2,9 @@
  *
  * protect-securitysystem.ts: Security system accessory for UniFi Protect.
  */
-import {
-  CharacteristicEventTypes,
-  CharacteristicGetCallback,
-  CharacteristicSetCallback,
-  CharacteristicValue
-} from "homebridge";
 import { PROTECT_SWITCH_MOTION_SENSOR, ProtectAccessory } from "./protect-accessory";
 import { ProtectCameraConfig, ProtectNvrConfig } from "unifi-protect";
+import { CharacteristicValue } from "homebridge";
 
 export class ProtectSecuritySystem extends ProtectAccessory {
   private isAlarmTriggered!: boolean;
@@ -208,12 +203,12 @@ export class ProtectSecuritySystem extends ProtectAccessory {
     securityService
       .updateCharacteristic(SecuritySystemCurrentState, accessory.context.securityState as CharacteristicValue)
       .getCharacteristic(SecuritySystemCurrentState)
-      ?.on(CharacteristicEventTypes.GET, this.getSecurityState.bind(this));
+      ?.onGet(this.getSecurityState.bind(this));
 
     // Handlers for triggering a change in the security system state.
     accessory.getService(hap.Service.SecuritySystem)
       ?.getCharacteristic(SecuritySystemTargetState)
-      .on(CharacteristicEventTypes.SET, this.setSecurityState.bind(this));
+      .onSet(this.setSecurityState.bind(this));
 
     // Set the initial state after we have setup our handlers above. This way, when we startup, we
     // automatically restore the scene we've been set to, if any.
@@ -260,13 +255,14 @@ export class ProtectSecuritySystem extends ProtectAccessory {
     // Activate or deactivate the security alarm.
     switchService
       .getCharacteristic(this.hap.Characteristic.On)
-      ?.on(CharacteristicEventTypes.GET, (callback: CharacteristicGetCallback) => {
-        callback(null, this.isAlarmTriggered === true);
+      ?.onGet(() => {
+
+        return this.isAlarmTriggered === true;
       })
-      .on(CharacteristicEventTypes.SET, (value: CharacteristicValue, callback: CharacteristicSetCallback) => {
+      .onSet((value: CharacteristicValue) => {
+
         this.setSecurityAlarm(value === true);
         this.log.info("%s: Security system alarm %s.", this.name(), (value === true) ? "triggered" : "reset");
-        callback(null);
       });
 
     // Initialize the value.
@@ -308,15 +304,15 @@ export class ProtectSecuritySystem extends ProtectAccessory {
   }
 
   // Get the current security system state.
-  private getSecurityState(callback: CharacteristicGetCallback): void {
+  private getSecurityState(): CharacteristicValue {
 
-    callback(null, this.isAlarmTriggered ?
+    return this.isAlarmTriggered ?
       this.hap.Characteristic.SecuritySystemCurrentState.ALARM_TRIGGERED :
-      this.accessory.context.securityState as CharacteristicValue);
+      this.accessory.context.securityState as CharacteristicValue;
   }
 
   // Change the security system state, and enable or disable motion detection accordingly.
-  private setSecurityState(value: CharacteristicValue, callback?: CharacteristicSetCallback): void {
+  private setSecurityState(value: CharacteristicValue): void {
 
     const accessory = this.accessory;
     const hap = this.hap;
@@ -329,10 +325,6 @@ export class ProtectSecuritySystem extends ProtectAccessory {
 
     // If we don't have any liveviews or the bootstrap configuration, there's nothing for us to do.
     if(!liveviews || !nvrApi.bootstrap) {
-
-      if(callback) {
-        callback(null);
-      }
 
       return;
     }
@@ -382,10 +374,6 @@ export class ProtectSecuritySystem extends ProtectAccessory {
       accessory.context.securityState = newState;
       accessory.getService(hap.Service.SecuritySystem)?.updateCharacteristic(SecuritySystemCurrentState, newState);
 
-      if(callback) {
-        callback(null);
-      }
-
       return;
     }
 
@@ -395,7 +383,7 @@ export class ProtectSecuritySystem extends ProtectAccessory {
     for(const targetAccessory of this.platform.accessories) {
 
       // We only want accessories associated with this Protect controller.
-      if(!targetAccessory.context?.camera || targetAccessory.context.nvr !== nvrApi.bootstrap.nvr.mac) {
+      if(!targetAccessory.context?.device || targetAccessory.context.nvr !== nvrApi.bootstrap.nvr.mac) {
         continue;
       }
 
@@ -438,10 +426,6 @@ export class ProtectSecuritySystem extends ProtectAccessory {
 
     // Publish to MQTT, if configured.
     this.publishSecurityState();
-
-    if(callback) {
-      callback(null);
-    }
   }
 
   // Set the security alarm.

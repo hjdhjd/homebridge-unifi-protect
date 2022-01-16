@@ -3,9 +3,6 @@
  * protect-liveviews.ts: Liveviews class for UniFi Protect.
  */
 import {
-  CharacteristicEventTypes,
-  CharacteristicGetCallback,
-  CharacteristicSetCallback,
   CharacteristicValue,
   PlatformAccessory
 } from "homebridge";
@@ -134,6 +131,7 @@ export class ProtectLiveviews extends ProtectBase {
 
     // Iterate through the list of switches and see if we still have matching liveviews.
     for(const liveviewSwitch of this.liveviewSwitches) {
+
       // We found a switch matching this liveview. Move along...
       if(this.liveviews.some((x: ProtectNvrLiveviewConfig) => x.name.toUpperCase() === ("Protect-" + (liveviewSwitch.context?.liveview as string)).toUpperCase())) {
         continue;
@@ -215,8 +213,8 @@ export class ProtectLiveviews extends ProtectBase {
       // Activate or deactivate motion detection.
       switchService
         .getCharacteristic(this.hap.Characteristic.On)
-        ?.on(CharacteristicEventTypes.GET, this.getSwitchState.bind(this, newAccessory))
-        .on(CharacteristicEventTypes.SET, this.setSwitchState.bind(this, newAccessory));
+        ?.onGet(this.getSwitchState.bind(this, newAccessory))
+        .onSet(this.setSwitchState.bind(this, newAccessory));
 
       // Initialize the switch.
       switchService.updateCharacteristic(this.hap.Characteristic.On, newAccessory.context.switchState as boolean);
@@ -303,19 +301,15 @@ export class ProtectLiveviews extends ProtectBase {
   }
 
   // Get the current liveview switch state.
-  private getSwitchState(accessory: PlatformAccessory, callback: CharacteristicGetCallback): void {
-    callback(null, accessory.context.switchState as boolean);
+  private getSwitchState(accessory: PlatformAccessory): CharacteristicValue {
+    return accessory.context.switchState === true;
   }
 
   // Toggle the liveview switch state.
-  private setSwitchState(liveviewSwitch: PlatformAccessory, value: CharacteristicValue, callback?: CharacteristicSetCallback): void {
+  private setSwitchState(liveviewSwitch: PlatformAccessory, value: CharacteristicValue): void {
 
     // We don't have any liveviews or we're already at this state - we're done.
     if(!this.nvrApi.bootstrap || !this.liveviews || (liveviewSwitch.context.switchState === value)) {
-
-      if(callback) {
-        callback(null);
-      }
 
       return;
     }
@@ -330,10 +324,6 @@ export class ProtectLiveviews extends ProtectBase {
 
     // Nothing configured for this view. We're done.
     if(!targetCameraIds.length) {
-
-      if(callback) {
-        callback(null);
-      }
 
       return;
     }
@@ -365,10 +355,6 @@ export class ProtectLiveviews extends ProtectBase {
     }
 
     liveviewSwitch.context.switchState = value === true;
-
-    if(callback) {
-      callback(null);
-    }
 
     // Publish to MQTT, if configured.
     this.nvr.mqtt?.publish(this.nvrApi.bootstrap?.nvr.mac ?? "", "liveviews",
