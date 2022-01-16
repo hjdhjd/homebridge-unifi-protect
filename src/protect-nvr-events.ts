@@ -592,6 +592,7 @@ export class ProtectNvrEvents {
 
     // Have we seen this event before? If so...move along. It's unlikely we hit this in a doorbell scenario, but just in case.
     if(this.lastRing[device.mac] >= lastRing) {
+
       this.debug("%s: Skipping duplicate doorbell ring.", this.nvrApi.getFullName(device));
       return;
     }
@@ -614,8 +615,12 @@ export class ProtectNvrEvents {
       return;
     }
 
-    // Trigger the doorbell.
-    doorbellService.updateCharacteristic(this.hap.Characteristic.ProgrammableSwitchEvent, this.hap.Characteristic.ProgrammableSwitchEvent.SINGLE_PRESS);
+    // Trigger the doorbell. We delay this slightly to workaround what appears to be a race
+    // condition bug in HomeKit. Inelegant, but effective.
+    setTimeout(() => {
+      doorbellService.getCharacteristic(this.hap.Characteristic.ProgrammableSwitchEvent)
+        ?.sendEventNotification(this.hap.Characteristic.ProgrammableSwitchEvent.SINGLE_PRESS);
+    }, 500);
 
     // Check to see if we have a doorbell trigger switch configured. If we do, update it.
     const triggerService = accessory.getServiceById(this.hap.Service.Switch, PROTECT_SWITCH_DOORBELL_TRIGGER);
@@ -637,6 +642,7 @@ export class ProtectNvrEvents {
         protectCamera.isRinging = true;
       }
 
+      // Update the trigger switch state.
       triggerService.updateCharacteristic(this.hap.Characteristic.On, true);
 
       // Reset our doorbell trigger after ringDuration.
