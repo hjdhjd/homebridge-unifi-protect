@@ -53,7 +53,7 @@ export const PROTECT_MQTT_TOPIC = "unifi/protect";
 export const PROTECT_NVR_UNIFIOS_REFRESH_INTERVAL = 10;
 
 // Default duration, in seconds, of ring events.
-export const PROTECT_RING_DURATION = 4;
+export const PROTECT_RING_DURATION = 3;
 
 // How often, in seconds, should we heartbeat FFmpeg in two-way audio sessions. This should be less than 5 seconds, which is
 // FFmpeg's input timeout interval.

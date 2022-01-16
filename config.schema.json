@@ -147,10 +147,10 @@
         "type": "integer",
         "title": "Ring Event Duration (seconds)",
         "required": false,
-        "minimum": 4,
+        "minimum": 3,
         "maximum": 10,
-        "placeholder": "e.g. 4",
-        "description": "Duration of a single ring event. Default: 4."
+        "placeholder": "e.g. 3",
+        "description": "Duration of a single ring event. Default: 3."
       },
 
       "verboseFfmpeg": {

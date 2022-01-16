@@ -83,9 +83,9 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
       this.config.motionDuration = 2;
     }
 
-    // Ring trigger duration. Make sure it's never less than 4 seconds so we can ensure automations work.
-    if(this.config.motionDuration < 4 ) {
-      this.config.motionDuration = 4;
+    // Ring trigger duration. Make sure it's never less than 3 seconds so we can ensure automations work.
+    if(this.config.ringDuration < 3 ) {
+      this.config.ringDuration = 3;
     }
 
     // Loop through each configured NVR and instantiate it.
