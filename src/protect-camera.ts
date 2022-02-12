@@ -649,7 +649,7 @@ export class ProtectCamera extends ProtectAccessory {
     // HomeKit Secure Video support requires an enabled motion sensor. If one isn't enabled, we're done.
     if(!this.nvr?.optionEnabled(device, "Motion.Sensor")) {
 
-      this.log.info("%s: Disabling HomeKit Secure Video support. You must enable motion sensor support in order to use HomeKit Secure Video.");
+      this.log.info("%s: Disabling HomeKit Secure Video support. You must enable motion sensor support in order to use HomeKit Secure Video.", this.name());
       return false;
     }
 
