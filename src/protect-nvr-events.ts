@@ -23,7 +23,6 @@ import {
   ProtectNvrConfig,
   ProtectNvrSystemEvent,
   ProtectNvrSystemInfoConfig,
-  ProtectNvrUpdatePayloadCameraUpdate,
   ProtectNvrUpdatePayloadEventAdd,
   ProtectSensorConfig
 } from "unifi-protect";
@@ -49,6 +48,7 @@ export class ProtectNvrEvents {
   private platform: ProtectPlatform;
   private ringDuration: number;
   private unsupportedDevices: { [index: string]: boolean };
+  private updatesListener: ((event: Buffer) => void) | null;
 
   constructor(nvr: ProtectNvr) {
 
@@ -65,6 +65,7 @@ export class ProtectNvrEvents {
     this.platform = nvr.platform;
     this.ringDuration = nvr.platform.config.ringDuration;
     this.unsupportedDevices = {};
+    this.updatesListener = null;
   }
 
   // Check for event updates.
@@ -83,24 +84,27 @@ export class ProtectNvrEvents {
   private configureSystemEventListener(): boolean {
 
     // Only configure the event listener if it exists and it's not already configured.
-    if(!this.nvrApi.eventListener || this.nvrApi.eventListenerConfigured) {
+    if(!this.nvrApi.eventsWs || this.updatesListener) {
+
       return true;
     }
 
     // Listen for any messages coming in from our listener.
-    this.nvrApi.eventListener.on("message", (event: string) => {
+    this.nvrApi.eventsWs.on("message", this.updatesListener = (event: Buffer): void => {
 
       let nvrEvent;
 
       try {
 
-        nvrEvent = JSON.parse(event) as ProtectNvrSystemEvent;
+        nvrEvent = JSON.parse(event.toString()) as ProtectNvrSystemEvent;
 
       } catch(error) {
 
         if(error instanceof SyntaxError) {
+
           this.log.error("%s: Unable to process message from the realtime system events API: \"%s\". Error: %s.", this.nvrApi.getNvrName(), event, error.message);
         } else {
+
           this.log.error("%s: Unknown error has occurred: %s.", this.nvrApi.getNvrName(), error);
         }
 
@@ -111,6 +115,7 @@ export class ProtectNvrEvents {
 
       // We're interested in device state change events.
       if(nvrEvent?.type !== "DEVICE_STATE_CHANGED") {
+
         return;
       }
 
@@ -118,6 +123,7 @@ export class ProtectNvrEvents {
       const controller = nvrEvent.apps?.controllers?.find(x => x.name === "protect");
 
       if(!controller) {
+
         return;
       }
 
@@ -127,6 +133,7 @@ export class ProtectNvrEvents {
 
       // Nothing here - we may have disabled this device or it's associated NVR.
       if(!foundDevice) {
+
         return;
       }
 
@@ -137,6 +144,7 @@ export class ProtectNvrEvents {
       // just ignore and move on. Alternatively, it could be a new device that we just don't know about yet,
       // In either case, we keep ignore it.
       if(!accessory) {
+
         return;
       }
 
@@ -144,8 +152,16 @@ export class ProtectNvrEvents {
       this.motionEventHandler(accessory, controller.info.lastMotion * 1000);
     });
 
-    // Mark the listener as configured.
-    this.nvrApi.eventListenerConfigured = true;
+    // Cleanup after ourselves.
+    this.nvrApi.eventsWs.once("close", () => {
+
+      if(this.updatesListener) {
+
+        this.nvrApi.eventsWs?.removeListener("message", this.updatesListener);
+        this.updatesListener = null;
+      }
+    });
+
     return true;
   }
 
@@ -153,12 +169,13 @@ export class ProtectNvrEvents {
   private configureUpdatesListener(): boolean {
 
     // Only configure the event listener if it exists and it's not already configured.
-    if(!this.nvrApi.eventListener || this.nvrApi.eventListenerConfigured) {
+    if(!this.nvrApi.eventsWs || this.updatesListener) {
+
       return true;
     }
 
     // Listen for any messages coming in from our listener.
-    this.nvrApi.eventListener.on("message", (event: Buffer) => {
+    this.nvrApi.eventsWs.on("message", this.updatesListener = (event: Buffer): void => {
 
       const updatePacket = ProtectApiUpdates.decodeUpdatePacket(this.log, event);
 
@@ -190,10 +207,11 @@ export class ProtectNvrEvents {
           }
 
           // Grab the right payload type, camera update payloads.
-          const payload = updatePacket.payload as ProtectNvrUpdatePayloadCameraUpdate;
+          const payload = updatePacket.payload as ProtectCameraConfig;
 
           // Now filter out payloads we aren't interested in. We only want motion detection and doorbell rings for now.
-          if(!payload.isMotionDetected && !payload.lastRing && !payload.lcdMessage) {
+          if(!payload.isMotionDetected && !payload.lastRing && !payload.lcdMessage &&
+            !payload.ledSettings) {
             return;
           }
 
@@ -205,6 +223,9 @@ export class ProtectNvrEvents {
             return;
           }
 
+          // Update the device JSON on the accessory.
+          accessory.context.device = Object.assign(accessory.context.device, payload) as ProtectCameraConfig;
+
           // Grab the device context.
           const device = accessory.context.device as ProtectCameraConfig;
 
@@ -215,10 +236,14 @@ export class ProtectNvrEvents {
             return;
           }
 
-          // It's a motion event - process it accordingly, but only if we're not configured for smart motion events - we handle those elsewhere.
+          // It's a motion event - process it accordingly.
           if(payload.isMotionDetected) {
 
-            if(!protectCamera.smartDetectTypes.length && payload.lastMotion && this.nvr.optionEnabled(device, "Motion.NvrEvents", true)) {
+            // We only want to process the motion event if we have the right payload, and either HKSV is enabled, or
+            // HKSV is disabled and we have smart motion events disabled since We handle those elsewhere.
+            if(payload.lastMotion &&
+              (protectCamera.stream.hksv?.isRecording || (!protectCamera.stream.hksv?.isRecording && !protectCamera.smartDetectTypes.length)) &&
+              this.nvr.optionEnabled(device, "Motion.NvrEvents", true)) {
 
               this.motionEventHandler(accessory, payload.lastMotion);
             }
@@ -234,6 +259,12 @@ export class ProtectNvrEvents {
           if(payload.lcdMessage) {
 
             this.lcdMessageEventHandler(accessory, payload.lcdMessage);
+          }
+
+          // Process the status light update.
+          if(payload.ledSettings && ("isEnabled" in payload.ledSettings)) {
+
+            this.cameraDetailsHandler(accessory, protectCamera);
           }
 
           break;
@@ -294,6 +325,7 @@ export class ProtectNvrEvents {
 
           // We're only interested in update actions.
           if(updatePacket.action.action !== "update") {
+
             return;
           }
 
@@ -302,6 +334,7 @@ export class ProtectNvrEvents {
 
           // Now filter out payloads we aren't interested in. We only want light state, brightness, and motion detection.
           if(!payload.isPirMotionDetected && !payload.isLightOn && !payload.lightDeviceSettings) {
+
             return;
           }
 
@@ -310,6 +343,7 @@ export class ProtectNvrEvents {
 
           // We don't know about this device - we're done.
           if(!accessory) {
+
             return;
           }
 
@@ -320,11 +354,13 @@ export class ProtectNvrEvents {
           const protectLight = this.nvr.configuredDevices[accessory.UUID] as ProtectLight;
 
           if(!protectLight) {
+
             return;
           }
 
           // It's a motion event - process it accordingly.
           if(payload.isPirMotionDetected && payload.lastMotion && this.nvr.optionEnabled(device, "Motion.NvrEvents", true)) {
+
             this.motionEventHandler(accessory, payload.lastMotion);
           }
 
@@ -402,6 +438,9 @@ export class ProtectNvrEvents {
             return;
           }
 
+          // Update the device JSON on the accessory.
+          accessory.context.device = Object.assign(accessory.context.device, payload) as ProtectSensorConfig;
+
           // Grab the device context.
           const device = accessory.context.device as ProtectSensorConfig;
 
@@ -414,14 +453,9 @@ export class ProtectNvrEvents {
 
           // It's a motion event - process it accordingly.
           if(payload.isMotionDetected && payload.motionDetectedAt && this.nvr.optionEnabled(device, "Motion.NvrEvents", true)) {
+
             this.motionEventHandler(accessory, payload.motionDetectedAt);
           }
-
-          // Update the device JSON on the accessory.
-          accessory.context.device = {
-            ...device,
-            ...payload
-          };
 
           // Process it.
           this.sensorHandler(accessory, protectSensor);
@@ -438,9 +472,24 @@ export class ProtectNvrEvents {
       }
     });
 
-    // Mark the listener as configured.
-    this.nvrApi.eventListenerConfigured = true;
+    // Cleanup after ourselves.
+    this.nvrApi.eventsWs.once("close", () => {
+
+      if(this.updatesListener) {
+
+        this.nvrApi.eventsWs?.removeListener("message", this.updatesListener);
+        this.updatesListener = null;
+      }
+    });
+
     return true;
+  }
+
+  // Camera details event processing from UniFi Protect for state-specific information.
+  private cameraDetailsHandler(accessory: PlatformAccessory, protectCamera: ProtectCamera): void {
+
+    // Update the camera details in HomeKit.
+    protectCamera.updateDevice();
   }
 
   // Motion event processing from UniFi Protect.
@@ -472,6 +521,7 @@ export class ProtectNvrEvents {
 
     // If we already have a motion event inflight, allow it to complete so we don't spam users.
     if(this.eventTimers[device.mac]) {
+
       return;
     }
 
@@ -479,6 +529,7 @@ export class ProtectNvrEvents {
     const motionService = accessory.getService(this.hap.Service.MotionSensor);
 
     if(motionService) {
+
       this.motionEventDelivery(accessory, motionService, detectedObjects);
     }
   }
@@ -500,8 +551,13 @@ export class ProtectNvrEvents {
       return;
     }
 
-    // Trigger the motion event If it's not a smart motion event or if it's a smart motion event that we are interested in.
-    if(!detectedObjects.length || (detectedObjects.length && detectedObjects.filter(x => protectCamera.smartDetectTypes.includes(x)).length)) {
+    // Trigger the motion event if:
+    //  - It's not a smart motion event, or
+    //  - It's an HKSV event, or
+    //  - If HKSV is disabled and it's a smart motion event that we are interested in. Otherwise, we'll end up triggering multiple motion
+    //    events with HKSV enabled and smart motion detection enabled.
+    if(!detectedObjects.length || protectCamera.stream.hksv?.isRecording ||
+      (!protectCamera.stream.hksv?.isRecording && detectedObjects.length && detectedObjects.filter(x => protectCamera.smartDetectTypes.includes(x)).length)) {
 
       // Trigger the motion event in HomeKit.
       motionService.updateCharacteristic(this.hap.Characteristic.MotionDetected, true);
@@ -528,6 +584,7 @@ export class ProtectNvrEvents {
       const contactService = accessory.getServiceById(this.hap.Service.ContactSensor, PROTECT_CONTACT_MOTION_SMARTDETECT + "." + detectedObject);
 
       if(contactService) {
+
         contactService.updateCharacteristic(this.hap.Characteristic.ContactSensorState, true);
       }
 
@@ -536,49 +593,63 @@ export class ProtectNvrEvents {
     }
 
     // Reset our motion event after motionDuration.
-    this.eventTimers[device.mac] = setTimeout(() => {
+    if(!this.eventTimers[device.mac]) {
 
-      // Reset the motion sensor, if it's been triggered.
-      if(!detectedObjects.length || (detectedObjects.length && detectedObjects.filter(x => protectCamera.smartDetectTypes.includes(x)).length)) {
+      this.eventTimers[device.mac] = setTimeout(() => {
 
-        const thisMotionService = accessory.getService(this.hap.Service.MotionSensor);
+        // Reset the motion sensor, if it's been triggered.
+        if(!detectedObjects.length ||
+          (!protectCamera.stream.hksv?.isRecording && detectedObjects.length && detectedObjects.filter(x => protectCamera.smartDetectTypes.includes(x)).length)) {
 
-        if(thisMotionService) {
+          const thisMotionService = accessory.getService(this.hap.Service.MotionSensor);
 
-          thisMotionService.updateCharacteristic(this.hap.Characteristic.MotionDetected, false);
+          if(thisMotionService) {
 
-          // Check to see if we have a motion trigger switch configured. If we do, update it.
-          const thisTriggerService = accessory.getServiceById(this.hap.Service.Switch, PROTECT_SWITCH_MOTION_TRIGGER);
+            thisMotionService.updateCharacteristic(this.hap.Characteristic.MotionDetected, false);
 
-          if(thisTriggerService) {
-            thisTriggerService.updateCharacteristic(this.hap.Characteristic.On, false);
+            // Check to see if we have a motion trigger switch configured. If we do, update it.
+            const thisTriggerService = accessory.getServiceById(this.hap.Service.Switch, PROTECT_SWITCH_MOTION_TRIGGER);
+
+            if(thisTriggerService) {
+              thisTriggerService.updateCharacteristic(this.hap.Characteristic.On, false);
+            }
+
+            this.debug("%s: Resetting motion event.", this.nvrApi.getFullName(device));
           }
 
-          this.debug("%s: Resetting motion event.", this.nvrApi.getFullName(device));
+          // Publish to MQTT, if the user has configured it.
+          this.nvr.mqtt?.publish(accessory, "motion", "false");
         }
 
-        // Publish to MQTT, if the user has configured it.
-        this.nvr.mqtt?.publish(accessory, "motion", "false");
-      }
+        // Delete the timer from our motion event tracker.
+        delete this.eventTimers[device.mac];
+      }, this.motionDuration * 1000);
+    }
 
-      // Reset smart motion contact sensors, if configured.
-      for(const detectedObject of detectedObjects) {
+    // Reset our smart motion contact sensors after motionDuration.
+    if(!this.eventTimers[device.mac + ".Motion.SmartDetect.ObjectSensors"]) {
 
-        const contactService = accessory.getServiceById(this.hap.Service.ContactSensor, PROTECT_CONTACT_MOTION_SMARTDETECT + "." + detectedObject);
+      this.eventTimers[device.mac + ".Motion.SmartDetect.ObjectSensors"] = setTimeout(() => {
 
-        if(contactService) {
-          contactService.updateCharacteristic(this.hap.Characteristic.ContactSensorState, false);
+        // Reset smart motion contact sensors, if configured.
+        for(const detectedObject of detectedObjects) {
+
+          const contactService = accessory.getServiceById(this.hap.Service.ContactSensor, PROTECT_CONTACT_MOTION_SMARTDETECT + "." + detectedObject);
+
+          if(contactService) {
+            contactService.updateCharacteristic(this.hap.Characteristic.ContactSensorState, false);
+          }
+
+          // Publish the smart motion event to MQTT, if the user has configured it.
+          this.nvr.mqtt?.publish(accessory, "motion/smart/" + detectedObject, "false");
+
+          this.debug("%s: Resetting smart object motion event.", this.nvrApi.getFullName(device));
         }
 
-        // Publish the smart motion event to MQTT, if the user has configured it.
-        this.nvr.mqtt?.publish(accessory, "motion/smart/" + detectedObject, "false");
-
-        this.debug("%s: Resetting smart object motion event.", this.nvrApi.getFullName(device));
-      }
-
-      // Delete the timer from our motion event tracker.
-      delete this.eventTimers[device.mac];
-    }, this.motionDuration * 1000);
+        // Delete the timer from our motion event tracker.
+        delete this.eventTimers[device.mac + ".Motion.SmartDetect.ObjectSensors"];
+      }, this.motionDuration * 1000);
+    }
   }
 
   // Doorbell event processing from UniFi Protect and delivered to HomeKit.

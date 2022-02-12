@@ -106,8 +106,8 @@ Please review the [audio options documentation](https://github.com/hjdhjd/homebr
 | `Enable.Audio.Filter.Noise`                   | Enable the [audio noise filter](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/AudioOptions.md#noise-filter) to enhance voices over background noise. <BR>*This option can be further customized on a per-streaming-client basis.*</BR>
 | `Disable.Audio.Filter.Noise`                  | Disable the [audio noise filter](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/AudioOptions.md#noise-filter). *(Default)* <BR>*This option can be further customized on a per-streaming-client basis.*</BR>
 |                                               |
-| <CODE>Enable.Audio.Filter.Noise.HighPass.<I>Number</I> | Set the high pass filter to attenuate (eliminate) frequencies below *number*. *(Default: 200)* <BR>*This option can be further customized on a per-streaming-client basis.*</BR>
-| <CODE>Enable.Audio.Filter.Noise.LowPass.<I>Number</I> | Set the low pass filter to attenuate (eliminate) frequencies above *number*. *(Default: 1000)* <BR>*This option can be further customized on a per-streaming-client basis.*</BR>
+| <CODE>Enable.Audio.Filter.Noise.HighPass.<I>Number</I></CODE> | Set the high pass filter to attenuate (eliminate) frequencies below *number*. *(Default: 200)* <BR>*This option can be further customized on a per-streaming-client basis.*</BR>
+| <CODE>Enable.Audio.Filter.Noise.LowPass.<I>Number</I></CODE> | Set the low pass filter to attenuate (eliminate) frequencies above *number*. *(Default: 1000)* <BR>*This option can be further customized on a per-streaming-client basis.*</BR>
 |                                               |
 | `Enable.Audio.TwoWay`                          | Enable two-way audio support using the Home app for supported cameras and doorbells. *(Default)*<BR>**Note that acoustic echo cancellation (AEC) is not currently available and you *will* hear an echo when using the Home app, however those standing at the doorbell (or camera) will hear things correctly.**</BR>
 | `Disable.Audio.TwoWay`                         | Disable two-way audio support.
@@ -203,6 +203,9 @@ Video feature options allow you to tailor which RTSP streams are utilized for Ho
 
 | Option                                               | Description
 |------------------------------------------------------|----------------------------------
+| `Enable.Video.HKSV`                                  | Enable HomeKit Secure Video support. *(Default: Enabled)*
+| `Disable.Video.HKSV`                                 | Disable HomeKit Secure Video support.
+| <CODE>Enable.Video.HKSV.Recording.MaxDuration.<I>Number</I></CODE> | Set the maximum duration permitted, in seconds, for a HomeKit Secure Video recording event. *(Default: Unlimited)*
 | <CODE>Enable.Video.Stream.<I>Quality</I></CODE>      | Make the stream of quality *Quality* available for use when streaming video in HomeKit. Valid quality settings are `Low`, `Medium`, `High`. *(Default: All stream qualities are enabled)*
 | <CODE>Disable.Video.Stream.<I>Quality</I></CODE>     | Make the stream of quality *Quality* unavailble for use when streaming video in HomeKit. Valid quality settings are `Low`, `Medium`, `High`.
 |                                                      |

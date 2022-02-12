@@ -38,6 +38,7 @@ type ProtectDeviceConfigTypes = ProtectCameraConfig | ProtectLightConfig | Prote
 type ProtectDevices = ProtectCamera | ProtectDoorbell | ProtectLight | ProtectSensor | ProtectViewer;
 
 export class ProtectNvr {
+
   private api: API;
   public config: ProtectNvrOptions;
   public readonly configuredDevices: { [index: string]: ProtectDevices };
@@ -62,6 +63,7 @@ export class ProtectNvr {
   private unsupportedDevices: { [index: string]: boolean };
 
   constructor(platform: ProtectPlatform, nvrOptions: ProtectNvrOptions) {
+
     this.api = platform.api;
     this.config = nvrOptions;
     this.configuredDevices = {};
@@ -108,9 +110,11 @@ export class ProtectNvr {
     this.api.on(APIEvent.SHUTDOWN, () => {
 
       for(const protectCamera of Object.values(this.configuredDevices)) {
+
         if(protectCamera instanceof ProtectCamera) {
+
           this.debug("%s: Shutting down all video stream processes.", protectCamera.name());
-          protectCamera.stream?.shutdown();
+          void protectCamera.stream?.shutdown();
         }
       }
     });
@@ -750,7 +754,7 @@ export class ProtectNvr {
   }
 
   // Emulate a sleep function.
-  private sleep(ms: number): Promise<NodeJS.Timeout> {
+  public sleep(ms: number): Promise<NodeJS.Timeout> {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 }

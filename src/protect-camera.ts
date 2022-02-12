@@ -16,6 +16,7 @@ import { ProtectNvr } from "./protect-nvr";
 import { ProtectStreamingDelegate } from "./protect-stream";
 
 export interface RtspEntry {
+
   channel: ProtectCameraChannelConfig,
   name: string,
   resolution: [ number, number, number],
@@ -23,7 +24,9 @@ export interface RtspEntry {
 }
 
 export class ProtectCamera extends ProtectAccessory {
+
   private isDoorbellConfigured!: boolean;
+  public isHksv!: boolean;
   public isRinging!: boolean;
   private isVideoConfigured!: boolean;
   private rtspEntries!: RtspEntry[];
@@ -37,6 +40,7 @@ export class ProtectCamera extends ProtectAccessory {
   protected async configureDevice(): Promise<boolean> {
 
     this.isDoorbellConfigured = false;
+    this.isHksv = false;
     this.isRinging = false;
     this.isVideoConfigured = false;
     this.rtspQuality = {};
@@ -90,9 +94,17 @@ export class ProtectCamera extends ProtectAccessory {
     // Configure smart motion contact sensors.
     this.configureMotionSmartSensor();
 
-    // Configure two-way audio support and our video stream.
+    // Configure two-way audio support.
     this.configureTwoWayAudio();
+
+    // Configure HomeKit Secure Video.
+    this.configureHksv();
+
+    // Configure our video stream.
     await this.configureVideoStream();
+
+    // Configure our camera details.
+    this.configureCameraDetails();
 
     // Configure the doorbell trigger.
     this.configureDoorbellTrigger();
@@ -368,6 +380,49 @@ export class ProtectCamera extends ProtectAccessory {
       this.nvr?.optionEnabled(this.accessory.context.device as ProtectCameraConfig, "Audio.TwoWay");
   }
 
+  // Configure additional camera-specific characteristics for HomeKit.
+  private configureCameraDetails(): boolean {
+
+    // Find the service, if it exists.
+    const service = this.accessory.getService(this.hap.Service.CameraOperatingMode);
+
+    // Grab our device context.
+    const device = this.accessory.context.device as ProtectCameraConfig;
+
+    // Turn the status light on or off.
+    if(device.featureFlags.hasLedStatus) {
+
+      service?.getCharacteristic(this.hap.Characteristic.CameraOperatingModeIndicator)
+        ?.onGet(() => {
+
+          return (this.accessory.context.device as ProtectCameraConfig).ledSettings?.isEnabled === true;
+        })
+        .onSet(async (value: CharacteristicValue) => {
+
+          const ledState = value === true;
+
+          // Update the status light in Protect.
+          const newDevice = await this.nvr.nvrApi.updateCamera(this.accessory.context.device as ProtectCameraConfig, { ledSettings: { isEnabled: ledState } });
+
+          if(!newDevice) {
+
+            this.log.error("%s: Unable to turn the status light %s. Please ensure this username has the Administrator role in UniFi Protect.",
+              this.name(), ledState ? "on" : "off");
+            return;
+          }
+
+          // Set the context to our updated device configuration.
+          this.accessory.context.device = newDevice;
+        });
+
+
+      // Initialize the status light state.
+      service?.updateCharacteristic(this.hap.Characteristic.CameraOperatingModeIndicator, device.ledSettings.isEnabled === true);
+    }
+
+    return true;
+  }
+
   // Find an RTSP configuration for a given target resolution.
   public findRtsp(width: number, height: number, camera: ProtectCameraConfig | null = null, address = "", rtspEntries = this.rtspEntries): RtspEntry | null {
 
@@ -384,18 +439,23 @@ export class ProtectCamera extends ProtectAccessory {
 
         // Check to see if there's an explicit preference set and cache the result.
         if(this.nvr.optionEnabled(camera, "Video.Stream.Only.Low", false, address, true)) {
+
           this.rtspQuality[address] = "LOW";
         } else if(this.nvr.optionEnabled(camera, "Video.Stream.Only.Medium", false, address, true)) {
+
           this.rtspQuality[address] = "MEDIUM";
         } else if(this.nvr.optionEnabled(camera, "Video.Stream.Only.High", false, address, true)) {
+
           this.rtspQuality[address] = "HIGH";
         } else {
+
           this.rtspQuality[address] = "None";
         }
       }
 
       // If it's set to none, we default to our normal lookup logic.
       if(this.rtspQuality[address] !== "None") {
+
         return rtspEntries.find(x => x.channel.name.toUpperCase() === this.rtspQuality[address]) ?? null;
       }
     }
@@ -478,7 +538,7 @@ export class ProtectCamera extends ProtectAccessory {
     }
 
     // Set the camera and shapshot URLs.
-    const cameraUrl = "rtsp://" + nvr.nvrAddress + ":" + bootstrap.nvr.ports.rtsp.toString() + "/";
+    const cameraUrl = "rtsps://" + nvr.nvrAddress + ":" + bootstrap.nvr.ports.rtsps.toString() + "/";
     this.snapshotUrl = nvrApi.camerasUrl() + "/" + device.id + "/snapshot";
 
     // No RTSP streams are available that meet our criteria - we're done.
@@ -502,7 +562,7 @@ export class ProtectCamera extends ProtectAccessory {
 
       rtspEntries.push({ channel: channel,
         name: this.getResolution([channel.width, channel.height, channel.fps]) + " (" + channel.name + ")",
-        resolution: [ channel.width, channel.height, channel.fps ], url: cameraUrl + channel.rtspAlias });
+        resolution: [ channel.width, channel.height, channel.fps ], url: cameraUrl + channel.rtspAlias + "?enableSrtp" });
     }
 
     // Sort the list of resolutions, from high to low.
@@ -564,10 +624,46 @@ export class ProtectCamera extends ProtectAccessory {
         this.rtspQuality.Default.charAt(0) + this.rtspQuality.Default.slice(1).toLowerCase());
     }
 
-    // Configure the video stream with our resolutions and inform HomeKit about it.
+    // Configure the video stream with our resolutions.
     this.stream = new ProtectStreamingDelegate(this, this.rtspEntries.map(x => x.resolution));
+
+    // Fire up the controller and inform HomeKit about it.
     this.accessory.configureController(this.stream.controller);
     this.isVideoConfigured = true;
+
+    return true;
+  }
+
+  // Configure HomeKit Secure Video support.
+  private configureHksv(): boolean {
+
+    const device = this.accessory.context.device as ProtectCameraConfig;
+
+    // If we've explicitly disabled HomeKit Secure Video support, we're done.
+    if(!this.nvr?.optionEnabled(this.accessory.context.device as ProtectCameraConfig, "Video.HKSV", true)) {
+
+      this.log.info("%s: HomeKit Secure Video support disabled.", this.name());
+      return false;
+    }
+
+    // HomeKit Secure Video support requires an enabled motion sensor. If one isn't enabled, we're done.
+    if(!this.nvr?.optionEnabled(device, "Motion.Sensor")) {
+
+      this.log.info("%s: Disabling HomeKit Secure Video support. You must enable motion sensor support in order to use HomeKit Secure Video.");
+      return false;
+    }
+
+    this.isHksv = true;
+    this.log.info("%s: HomeKit Secure Video support enabled.", this.name());
+
+    // If we have smart motion events enabled, let's warn the user that things will not work quite the way they expect.
+    if(device.featureFlags.hasSmartDetect && this.nvr?.optionEnabled(device, "Motion.SmartDetect", false)) {
+
+      this.log.info("%s: WARNING: Smart motion detection and HomeKit Secure Video provide overlapping functionality. " +
+        "Only HomeKit Secure Video, when event recording is enabled in the Home app, will be used to trigger motion event notifications for this camera." +
+        (this.nvr?.optionEnabled(device, "Motion.SmartDetect.ObjectSensors", false) ?
+          " Smart motion contact sensors will continue to function using telemetry from UniFi Protect." : ""), this.name());
+    }
 
     return true;
   }
@@ -595,7 +691,7 @@ export class ProtectCamera extends ProtectAccessory {
           continue;
         }
 
-        urlInfo[channel.name] = "rtsp://" + bootstrap.nvr.host + ":" + bootstrap.nvr.ports.rtsp.toString() + "/" + channel.rtspAlias;
+        urlInfo[channel.name] = "rtsps://" + bootstrap.nvr.host + ":" + bootstrap.nvr.ports.rtsp.toString() + "/" + channel.rtspAlias + "?enableSrtp";
       }
 
       this.nvr.mqtt?.publish(this.accessory, "rtsp", JSON.stringify(urlInfo));
@@ -614,6 +710,63 @@ export class ProtectCamera extends ProtectAccessory {
       void this.stream?.handleSnapshotRequest();
       this.log.info("%s: Snapshot triggered via MQTT.", this.name());
     });
+
+    return true;
+  }
+
+  // Refresh camera-specific characteristics.
+  public updateDevice(): boolean {
+
+    // Grab our device context.
+    const device = this.accessory.context.device as ProtectCameraConfig;
+
+    // Find the service, if it exists.
+    const service = this.accessory.getService(this.hap.Service.CameraOperatingMode);
+
+    // Check to see if this device has a status light.
+    if(device.featureFlags.hasLedStatus) {
+
+      service?.updateCharacteristic(this.hap.Characteristic.CameraOperatingModeIndicator, device.ledSettings.isEnabled === true);
+    }
+
+    return true;
+  }
+
+  // Set the bitrate for a specific camera channel.
+  public async setBitrate(channelId: number, value: number): Promise<boolean> {
+
+    // Grab the device JSON.
+    const device = this.accessory.context.device as ProtectCameraConfig;
+
+    // Find the right channel.
+    const channel = device.channels.find(x => x.id === channelId);
+
+    // No channel, we're done.
+    if(!channel) {
+
+      return false;
+    }
+
+    // If our correct bitrate is already set, we're done.
+    if(channel.bitrate === value) {
+
+      return true;
+    }
+
+    // Make sure the requested bitrate fits within the constraints of what this channel can do.
+    channel.bitrate = Math.min(channel.maxBitrate, Math.max(channel.minBitrate, value));
+
+    // Tell Protect about it.
+    const newDevice = await this.nvr.nvrApi.updateCamera(device, { channels: device.channels });
+
+    if(!newDevice) {
+
+      this.log.error("%s: Unable to set the streaming bitrate to %s.", this.name(), value);
+      return false;
+    }
+
+    // Save our updated device context.
+    this.accessory.context.device = newDevice;
 
     return true;
   }
