@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 5.1.0
+  * New feature: Full HomeKit Secure Video support. No extra plugins and capabilities needed...in another open source community first, we use the Protect livestream API to directly access and maintain a HomeKit buffer. You don't need to explicitly enable it in a feature option...it just works...and is enabled by default. Of course there are a couple of [feature options you can configure](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md#video) as well, if you want. You can read more about it [here](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/HomeKitSecureVideo.md).
+  * New feature: Now that Ubiquiti has stabilized their RTSPS support, it is replaces RTSP when needed.
+
 ## 5.0.6 (2022-01-16)
   * Fix: Doorbell trigger reliability improvements.
   * Housekeeping and dependency updates.
