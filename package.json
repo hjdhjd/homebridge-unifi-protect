@@ -68,7 +68,7 @@
     "execa": "=5.1.1",
     "ffmpeg-for-homebridge": "^0.0.9",
     "mqtt": "4.3.5",
-    "unifi-protect": "^3.0.0",
+    "unifi-protect": "^3.0.1",
     "ws": "^8.5.0"
   },
   "devDependencies": {
