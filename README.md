@@ -27,7 +27,7 @@ For the more technically inclined - this plugin has continued to pioneer the Hom
 
 - **Full HomeKit support for the UniFi Protect ecosystem.** All generally available UniFi Protect devices are supported, including cameras, doorbells, lights, sensors, and ViewPorts.
 
-- **Complete HomeKit Secure Video support for all UniFi Protect cameras.** Complete HomeKit Secure Video support, without the need for additional plugins or software beyond FFmpeg. Another community first. We weren't the first to do HKSV, but we are the first to do it seamlessly without the need for additional tools to get a complete solution.
+- **[Complete HomeKit Secure Video support for all UniFi Protect cameras.](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/HomeKitSecureVideo.md)** Complete HomeKit Secure Video support, without the need for additional plugins or software beyond FFmpeg. Another community first. We weren't the first to do HKSV, but we are the first to do it seamlessly without the need for additional tools to get a complete solution.
  
 - **Blazing fast video streaming.** Video streaming from HomeKit will start within in 1-2 seconds for cameras, in most cases. I've spent the time to optimize the video streaming experience to ensure it feels very responsive, and *just works*.
 
