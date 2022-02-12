@@ -25,8 +25,10 @@ For the more technically inclined - this plugin has continued to pioneer the Hom
 ### Features
 - ***Easy* configuration - all you need is your UniFi Protect controller IP address, username, and password to get started.** The defaults work for the vast majority of users. When you want more, there are [advanced options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/AdvancedOptions.md) you can play with, if you choose.
 
-- **Full HomeKit upport for the UniFi Protect ecosystem.** All generally available UniFi Protect devices are supported, including cameras, doorbells, lights, sensors, and ViewPorts.
+- **Full HomeKit support for the UniFi Protect ecosystem.** All generally available UniFi Protect devices are supported, including cameras, doorbells, lights, sensors, and ViewPorts.
 
+- **Complete HomeKit Secure Video support for all UniFi Protect cameras.** Complete HomeKit Secure Video support, without the need for additional plugins or software beyond FFmpeg. Another community first. We weren't the first to do HKSV, but we are the first to do it seamlessly without the need for additional tools to get a complete solution.
+ 
 - **Blazing fast video streaming.** Video streaming from HomeKit will start within in 1-2 seconds for cameras, in most cases. I've spent the time to optimize the video streaming experience to ensure it feels very responsive, and *just works*.
 
 - **[Full UniFi Protect Doorbell support.](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/Doorbell.md).** This plugin provides complete support for [UniFi Protect Doorbells](https://store.ui.com/collections/unifi-protect/products/uvc-g4-doorbell). We support all the features of the doorbell including - doorbell rings, two-way audio, and the use of the onboard LCD screen for messages. Two-way audio has caveats you should be aware of.
@@ -63,6 +65,7 @@ I hope to continue to work on this one to get AEC working for two-way audio. [Yo
   * [Feature Options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md): granular options to allow you to set the camera quality individually, show or hide specific cameras, controllers, and more.
   * [Audio Options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/AudioOptions.md): options to further tailor how audio is handled from Protect, such as background noise reduction.
   * [Doorbells](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/Doorbell.md): how UniFi Protect doorbell support works in this plugin, and how to use all the available features including doorbell messages.
+  * [HomeKit Secure Video](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/HomekitSecureVideo.md): how HomeKit Secure Video support works in this plugin with UniFi Protect.
   * [Liveview Scenes](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/Liveviews.md): use the UniFi Protect liveviews feature (available in the UniFi Protect controller webUI) to create motion-detection scenes.
   * [MQTT](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/MQTT.md): how to configure MQTT support.
   * [Advanced Configuration](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/AdvancedOptions.md): complete list of configuration options available in this plugin.
