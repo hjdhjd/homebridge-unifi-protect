@@ -27,7 +27,7 @@ HomeKit Secure Video has been a feature in HomeKit since the launch of iOS 13. I
 
 So how does this work in practice?
 
-  * Once you enable HomeKit Secure Video for your cameras in the Home app, you con configure the types of events you're interested in recording and being informed about.
+  * Once you enable HomeKit Secure Video for your cameras in the Home app, you can configure the types of events you're interested in recording and being informed about.
   * On a technical level, HKSV asks `homebridge-unifi-protect` to maintain a buffer - a few seconds of video (in practice, HomeKit always requests four seconds of history). Think of this buffer like a timeshifting DVR that's constantly updating. When a motion event occurs, we send the buffer to HomeKit, and continue to do so as long as HomeKit requests it.
   * It's important to note: **HomeKit decides how long each event will be, by default**. In practice, I've seen events as long 5 or 10 minutes in high-traffic areas. HomeKit continues to record an event for as long as it thinks there's some motion of interest to the user.
   * In practice, if you a camera in a very high traffic area, say a kitchen or a family room, you're going to get very long motion events captured in HomeKit. It's not a bug, it's the way HomeKit Secure Video is designed. :smile: You can modify this behavior with the [`Video.HKSV.Recording.MaxDuration` feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md#video), which allows you to set an upward limit on how long each HKSV event recording can be.
