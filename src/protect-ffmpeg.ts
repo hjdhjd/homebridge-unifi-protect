@@ -33,7 +33,7 @@ export class FfmpegProcess {
   protected readonly name: () => string;
   protected readonly nvr: ProtectNvr;
   protected process: ExecaChildProcess | null;
-  private protectCamera: ProtectCamera;
+  protected protectCamera: ProtectCamera;
 
   // Create a new FFmpeg process instance.
   constructor(protectCamera: ProtectCamera, commandLineArgs?: string[], callback?: StreamRequestCallback) {
@@ -416,7 +416,7 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
       "-f", "mp4",
       "-i", "pipe:0",
       "-map", "0:v",
-      "-vcodec", "libx264",
+      "-vcodec", this.protectCamera.stream.videoEncoder || "libx264",
       "-pix_fmt", "yuvj420p",
       "-profile:v", requestedProfile,
       "-level:v", requestedLevel,

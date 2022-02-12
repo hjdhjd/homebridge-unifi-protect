@@ -86,7 +86,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   private rtspEntry: RtspEntry | null;
   private snapshotCache: { [index: string]: { image: Buffer, time: number } };
   private verboseFfmpegTimer!: NodeJS.Timeout | null;
-  private videoEncoder!: string;
+  public readonly videoEncoder!: string;
   public readonly videoProcessor: string;
 
   constructor(protectCamera: ProtectCamera, resolutions: [number, number, number][]) {
