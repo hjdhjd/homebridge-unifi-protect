@@ -67,7 +67,7 @@ If you're struggling to get HKSV working in HBUP, try the following:
 
 The above recommendation should help you get up and running in most lower-powered environments.
 
-Even if things run well for you, I would **strongly encourage** you to ensure you're getting the best performance out of HKSV and HBUP in general, definitely [run HBUP in a child bridge within Homebridge](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/BestPractices.md#homebridge). You can ignore this recommendation if the **only** thing you are running in Homebridge is `homebridge-unifi-protect` as it will be redundant.
+Even if things run well in your environment, I would **strongly encourage** you to ensure you're getting the best performance you can out of HKSV and HBUP more broadly by [running HBUP in a child bridge within Homebridge](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/BestPractices.md#homebridge). You can ignore this recommendation if the **only** thing you are running in Homebridge is `homebridge-unifi-protect` as it will be redundant.
 
 #### Things To Be Aware Of
   * You must have the administrator role enabled for the UniFi Protect username you choose to use with `homebridge-unifi-protect`. Without it, HKSV won't work correctly or at all in most cases.
