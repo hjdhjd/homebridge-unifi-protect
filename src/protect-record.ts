@@ -163,6 +163,24 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   public async *handleRecordingStreamRequest(streamId: number): AsyncGenerator<RecordingPacket> {
 
+    // If we've explicitly disabled HKSV recording, we're done right now.
+    if(!this.accessory.context.hksvRecording) {
+
+      const streamHeader = await this.timeshift.getStreamHeader();
+
+      if(streamHeader) {
+
+        yield { data: streamHeader, isLast: true };
+        return;
+      }
+
+      // We should never get to this point, but in case we do, this is a failsafe to ensure that no video
+      // recording can ever take place if we've disabled it through the HKSV recording switch accessory.
+      // It will generate a warning in Homebridge that can be ignored, but it will ensure nothing can be recorded.
+      yield { data: Buffer.alloc(0), isLast: true };
+      return;
+    }
+
     // Start transmitting our timeshift buffer and process it through FFmpeg.
     if(!this.startTransmitting() || !this.ffmpegStream) {
 
@@ -321,8 +339,11 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     }
 
     // Inform the user.
-    this.log.info("%s: HomeKit Secure Video has recorded a %s second motion event.",
-      this.name(), Math.round((this.recordedSegments * this.timeshift.segmentLength) / 1000));
+    if(this.accessory.context.hksvRecording) {
+
+      this.log.info("%s: HomeKit Secure Video has recorded a %s second motion event.",
+        this.name(), Math.round((this.recordedSegments * this.timeshift.segmentLength) / 1000));
+    }
 
     // If we have a reason for stopping defined, and it's noteworthy, inform the user.
     let reasonDescription;
@@ -345,7 +366,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
         break;
     }
 
-    if(reason !== HDSProtocolSpecificErrorReason.NORMAL) {
+    if((reason !== undefined) && (reason !== HDSProtocolSpecificErrorReason.NORMAL)) {
 
       this.log.error("%s: HomeKit Secure Video event recording ended abnormally: %s", this.name(), reasonDescription);
     }

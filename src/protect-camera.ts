@@ -5,6 +5,7 @@
 import {
   PROTECT_CONTACT_MOTION_SMARTDETECT,
   PROTECT_SWITCH_DOORBELL_TRIGGER,
+  PROTECT_SWITCH_HKSV_RECORDING,
   PROTECT_SWITCH_MOTION_SENSOR,
   PROTECT_SWITCH_MOTION_TRIGGER,
   ProtectAccessory
@@ -49,7 +50,7 @@ export class ProtectCamera extends ProtectAccessory {
     // Save the device object before we wipeout the context.
     const device = this.accessory.context.device as ProtectCameraConfig;
 
-    // Default motion detection support to on.
+    // Default to enabling camera motion detection.
     let detectMotion = true;
 
     // Save the motion sensor switch state before we wipeout the context.
@@ -57,11 +58,20 @@ export class ProtectCamera extends ProtectAccessory {
       detectMotion = this.accessory.context.detectMotion as boolean;
     }
 
+    // Default to enabling HKSV recording.
+    let hksvRecording = true;
+
+    // Save the HKSV recording switch state before we wipeout the context.
+    if(this.accessory.context.hksvRecording !== undefined) {
+      hksvRecording = this.accessory.context.hksvRecording as boolean;
+    }
+
     // Clean out the context object in case it's been polluted somehow.
     this.accessory.context = {};
     this.accessory.context.device = device;
     this.accessory.context.nvr = this.nvr.nvrApi.bootstrap?.nvr.mac;
     this.accessory.context.detectMotion = detectMotion;
+    this.accessory.context.hksvRecording = hksvRecording;
 
     // If the camera supports it, check to see if we have smart motion events enabled.
     if(device.featureFlags.hasSmartDetect && this.nvr?.optionEnabled(device, "Motion.SmartDetect", false)) {
@@ -99,6 +109,7 @@ export class ProtectCamera extends ProtectAccessory {
 
     // Configure HomeKit Secure Video.
     this.configureHksv();
+    this.configureHksvSwitch();
 
     // Configure our video stream.
     await this.configureVideoStream();
@@ -664,6 +675,66 @@ export class ProtectCamera extends ProtectAccessory {
         (this.nvr?.optionEnabled(device, "Motion.SmartDetect.ObjectSensors", false) ?
           " Smart motion contact sensors will continue to function using telemetry from UniFi Protect." : ""), this.name());
     }
+
+    return true;
+  }
+
+  // Configure a switch to manually enable or disable HKSV recording for a camera.
+  private configureHksvSwitch(): boolean {
+
+    // Find the switch service, if it exists.
+    let switchService = this.accessory.getServiceById(this.hap.Service.Switch, PROTECT_SWITCH_HKSV_RECORDING);
+
+    // If we don't have HKSV or the HKSV recording switch, disable the switch and we're done.
+    if(!this.nvr?.optionEnabled(this.accessory.context.device as ProtectCameraConfig, "Video.HKSV") ||
+      !this.nvr?.optionEnabled(this.accessory.context.device as ProtectCameraConfig, "Video.HKSV.Recording.Switch", false)) {
+
+      if(switchService) {
+
+        this.accessory.removeService(switchService);
+      }
+
+      // We want to default this back to recording whenever we disable the recording switch.
+      this.accessory.context.hksvRecording;
+
+      return false;
+    }
+
+    // Add the switch to the camera, if needed.
+    if(!switchService) {
+
+      switchService = new this.hap.Service.Switch(this.accessory.displayName + " Recording", PROTECT_SWITCH_HKSV_RECORDING);
+
+      if(!switchService) {
+
+        this.log.error("%s: Unable to add the HomeKit Secure Video recording switch.", this.name());
+        return false;
+      }
+
+      this.accessory.addService(switchService);
+    }
+
+    // Activate or deactivate HKSV recording.
+    switchService
+      .getCharacteristic(this.hap.Characteristic.On)
+      ?.onGet(() => {
+
+        return this.accessory.context.hksvRecording as boolean;
+      })
+      .onSet((value: CharacteristicValue) => {
+
+        if(this.accessory.context.hksvRecording !== value) {
+
+          this.log.info("%s: HomeKit Secure Video event recording has been %s.", this.name(), value === true ? "enabled" : "disabled");
+        }
+
+        this.accessory.context.hksvRecording = value === true;
+      });
+
+    // Initialize the switch.
+    switchService.updateCharacteristic(this.hap.Characteristic.On, this.accessory.context.hksvRecording as boolean);
+
+    this.log.info("%s: Enabling HomeKit Secure Video recording switch.", this.name());
 
     return true;
   }

@@ -7,6 +7,7 @@ import { ProtectCameraConfig, ProtectLivestream } from "unifi-protect";
 import { EventEmitter } from "events";
 import { PROTECT_HKSV_SEGMENT_RESOLUTION } from "./settings";
 import { ProtectCamera } from "./protect-camera";
+import { ProtectNvr } from "./protect-nvr";
 
 // UniFi Protect livestream timeshift buffer.
 export class ProtectTimeshiftBuffer extends EventEmitter {
@@ -17,6 +18,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
   private livestream: ProtectLivestream;
   private readonly log: Logging;
   private readonly name: () => string;
+  private readonly nvr: ProtectNvr;
   private protectCamera: ProtectCamera;
   private _segmentLength: number;
   private _isTransmitting: boolean;
@@ -32,6 +34,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
     this.livestream = new ProtectLivestream(protectCamera.nvr.nvrApi, protectCamera.platform.log);
     this.log = protectCamera.platform.log;
     this.name = protectCamera.name.bind(protectCamera);
+    this.nvr = protectCamera.nvr;
     this.protectCamera = protectCamera;
 
     // We use 100ms in segment resolution for our timeshift buffer to ensure we provide an optimal
@@ -161,6 +164,33 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
 
     // Signal our livestream listener that it's time to start transmitting our queued segments and timeshift.
     this._isTransmitting = true;
+  }
+
+  // Return the fMP4 stream header for an HKSV session.
+  public async getStreamHeader(): Promise<Buffer | null> {
+
+    // Keep looping until we see both, but don't loop for more than two seconds, as a failsafe.
+    for(let i = 0; i < 20; i++) {
+
+      // We have what we're looking for. We're done.
+      if(this.livestream.ftyp && this.livestream.moov) {
+
+        break;
+      }
+
+      // Let's try again shortly.
+      // eslint-disable-next-line no-await-in-loop
+      await this.nvr.sleep(100);
+    }
+
+    // We still don't have the boxes that make up the stream header. Time to give up.
+    if(!this.livestream.ftyp || !this.livestream.moov) {
+
+      return null;
+    }
+
+    // Return the header.
+    return Buffer.concat([ this.livestream.ftyp, this.livestream.moov ]);
   }
 
   // Check if a segment is the FTYP box.

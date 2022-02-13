@@ -21,6 +21,7 @@ export const PROTECT_CONTACT_SENSOR_ALARM_SOUND = "ContactAlarmSound";
 
 // Manage our switch types.
 export const PROTECT_SWITCH_DOORBELL_TRIGGER = "DoorbellTrigger";
+export const PROTECT_SWITCH_HKSV_RECORDING = "HKSVRecordingSwitch";
 export const PROTECT_SWITCH_MOTION_SENSOR = "MotionSensorSwitch";
 export const PROTECT_SWITCH_MOTION_TRIGGER = "MotionSensorTrigger";
 
@@ -255,6 +256,7 @@ export abstract class ProtectAccessory extends ProtectBase {
       [
         PROTECT_CONTACT_MOTION_SMARTDETECT.toUpperCase(),
         PROTECT_SWITCH_DOORBELL_TRIGGER.toUpperCase(),
+        PROTECT_SWITCH_HKSV_RECORDING.toUpperCase(),
         PROTECT_SWITCH_MOTION_SENSOR.toUpperCase(),
         PROTECT_SWITCH_MOTION_TRIGGER.toUpperCase(),
         PROTECT_CONTACT_SENSOR.toUpperCase(),
