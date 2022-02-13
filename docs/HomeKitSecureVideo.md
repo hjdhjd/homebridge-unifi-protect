@@ -59,13 +59,15 @@ All of the above is based on observed behavior and conversations with other peop
 For the best experience with HBUP and HKSV, you should run Homebridge and HBUP on decent hardware and not your several-year-old RPi or other aging CPU platform. There may be ways to run HBUP and HKSV on those platforms, but they are all going to begin to compromise the user experience in various ways. Stay tuned for more on that.
 
 #### Performance Considerations
-HKSV in `homebridge-unifi-protect` works very well by default, if you have a decently performant and modern machine that you're running it on. The price you pay for having HKSV comes primarily in the area of CPU. HBUP *will need to transcode** any video it sends to a Home hub for analysis. The good and bad news is that it only happens when motion is detected, which triggers an analysis cycle by the Home hub. If you have a lot of cameras and a lot of motion events, expect this to happen often and the requisite consumption of CPU.
+HKSV in `homebridge-unifi-protect` works very well by default if you have a decently performant and modern machine that you're running Homebridge on. The price you pay for having HKSV comes primarily in the area of CPU. HBUP *will need to transcode** any video it sends to a Home hub for analysis. The good and bad news is that it only happens when motion is detected, which triggers an analysis cycle by the Home hub. If you have a lot of cameras and a lot of motion events, expect this to happen often and the requisite consumption of CPU.
 
 If you're struggling to get HKSV working in HBUP, try the following:
 
   * Try forcing HBUP to only use the lowest quality video stream as a starting point. You do this by using the [`Video.Stream.Only.Low` feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md#video), as described in the [troubleshooting documentation](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/Troubleshooting.md#use-the-low-stream).
 
 The above recommendation should help you get up and running in most lower-powered environments.
+
+To ensure you're getting the best performance out of HKSV and HBUP in general, definitely [run HBUP in a child bridge within Homebridge](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/BestPractices.md#homebridge).
 
 #### Things To Be Aware Of
   * You must have the administrator role enabled for the UniFi Protect username you choose to use with `homebridge-unifi-protect`. Without it, HKSV won't work correctly or at all in most cases.
