@@ -117,8 +117,8 @@ These feature options allow you to control which Protect devices or controllers 
 
 | Option                                        | Description
 |-----------------------------------------------|----------------------------------
-| <CODE>Enable.<I>MAC</I></CODE>                | Show the camera or controller identified by MAC address `MAC` from HomeKit.
-| <CODE>Disable.<I>MAC</I></CODE>               | Hide the camera or controller identified by MAC address `MAC` from HomeKit.
+| <CODE>Enable.<I>MAC</I></CODE>                | Show the UniFi Protect device (e.g. camera, sensor, etc.) or controller identified by MAC address `MAC` from HomeKit.
+| <CODE>Disable.<I>MAC</I></CODE>               | Hide the UniFi Protect device (e.g. camera, sensor, etc.) or controller identified by MAC address `MAC` from HomeKit.
 
 #### <A NAME="doorbell"></A>Doorbell Feature Options
 Please review the [documentation for UniFi Protect doorbell support](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/Doorbell.md) for additional information about the options below and the broader doorbell feature set available in `homebridge-unifi-protect`.
