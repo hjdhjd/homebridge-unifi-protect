@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 5.3.0
+  * New feature: enable or disable dynamic bitrate support for video. The [`Video.Dynamic.Bitrates` feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md#video) defaults to disabled. Enabling it will have consequences for the Protect controller you should be aware of. Read the documentation for more information.
+
 ## 5.2.0
   * New feature: enable or disable HKSV recording without having to enable or disable it within the Home app. This is useful in automation scenarios where you don't actually want to turn off HKSV, but you do want to control when it chooses to record - a feature Apple should really implement. New feature option [`Video.HKSV.Recording.Switch`](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md#video).
   * Housekeeping.
