@@ -49,7 +49,7 @@ HKSV, in practice, works quite well for most things. Apple created a pretty robu
   * To protect the performance and integrity of those Apple home-based devices it uses for processing video, there are specific requirements for video.
 
   * HKSV takes a very specific video stream and analyzes it. It typically requests the preceding four seconds of video before a motion event, followed by whatever video the camera continues to see. Think of it as a timeshifted DVR - it wants to watch the past four seconds and then continue watching until it asks to stop.
-  * That stream is analyzed based on what HKSV is looking for (people, animals, etc.), and continues to capture video until HKSV feels it's got nothing *interesting* left in the video. So, someone walking past the camera, for instance, may trigger a recording of 20-30 seconds, but a group of people moving around in front of the camera may generate a much longer recorded clip.
+  * That stream is analyzed based on what HKSV is looking for (people, animals, etc.) and continues to capture video until HKSV feels it's got nothing *interesting* left in the video. So, someone walking past the camera, for instance, may trigger a recording of 20-30 seconds, but a group of people moving around in front of the camera may generate a much longer recorded clip.
   * That recorded video event is then sent to iCloud and the alert notifications are sent to your iPhone, etc. based on whatever your notification settings.
 
 The Home hub devices are doing object recognition, in essence. Given their realtime performance requirements and the need to scale, Apple has imposed very specific and rigid requirements on the incoming video stream in order to get things working with a good Apple-y user experience. That allows your Apple TV to be able to analyze a motion video event while displaying that shiny 4K HDR video on your fancy television without stuttering. Why do I use that example? Because I made my Apple TV stutter constantly while developing and testing HKSV support for `homebridge-unifi-protect`. The reason we need to transcode video at the moment, unfortunately, is because Home hubs are so very particular about what they receive when it comes to those video clips - anything above a bitrate of 2000kbps and you quickly degrade Home hub performance. Anything that's not exactly the amount of timeshifted buffer (four seconds!) it's looking for, and suddenly timestamps are wrong within the Home app UI when you review a recorded event.
@@ -58,12 +58,21 @@ All of the above is based on observed behavior and conversations with other peop
 
 For the best experience with HBUP and HKSV, you should run Homebridge and HBUP on decent hardware and not your several-year-old RPi or other aging CPU platform. There may be ways to run HBUP and HKSV on those platforms, but they are all going to begin to compromise the user experience in various ways. Stay tuned for more on that.
 
+#### Performance Considerations
+HKSV in `homebridge-unifi-protect` works very well by default, if you have a decently performant and modern machine that you're running it on. The price you pay for having HKSV comes primarily in the area of CPU. HBUP *will need to transcode** any video it sends to a Home hub for analysis. The good and bad news is that it only happens when motion is detected, which triggers an analysis cycle by the Home hub. If you have a lot of cameras and a lot of motion events, expect this to happen often and the requisite consumption of CPU.
+
+If you're struggling to get HKSV working in HBUP, try the following:
+
+  * Try forcing HBUP to only use the lowest quality video stream as a starting point. You do this by using the [`Video.Stream.Only.Low` feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md#video), as described in the [troubleshooting documentation](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/Troubleshooting.md#use-the-low-stream).
+
+The above recommendation should help you get up and running in most lower-powered environments.
+
 #### Things To Be Aware Of
   * You must have the administrator role enabled for the UniFi Protect username you choose to use with `homebridge-unifi-protect`. Without it, HKSV won't work correctly or at all in most cases.
   * HomeKit hubs are quite particular about the exact format of the video it receives. We use FFmpeg to transcode the video to the exact format HomeKit is requesting. In practice, even in large camera environments, this shouldn't result in a degradation in performance. We try to match the input stream to FFmpeg as closely as we can to what HomeKit is looking for, minimizing most of the computing overhead associated with transcoding.
   * Occasional errors will occur - HomeKit hubs can be finicky at times. It's not typically something to be concerned about, and please don't open issues for infrequent errors that will be logged. As both HKSV and `homebridge-unifi-protect` continue to evolve, these will become more and more rare instances.
 
-### Some Fun Facts
+#### Some Fun Facts
   * I've had HKSV events run as long as 10+ minutes and they work quite well.
   * The video quality that HKSV requests can be quite a bit less than the video quality of the native UniFi Protect camera capabilities, particularly for 4K-capable cameras.
   * HKSV can almost be thought of as HomeKit camera implementation 2.0. With it comes the ability to more directly access even more capabilities of your UniFi Protect cameras, such as the camera status light which you can now modify from within the Home app.
