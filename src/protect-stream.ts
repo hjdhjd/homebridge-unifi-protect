@@ -84,6 +84,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   public readonly platform: ProtectPlatform;
   public readonly protectCamera: ProtectCamera;
   private rtspEntry: RtspEntry | null;
+  private savedBitrate: number;
   private snapshotCache: { [index: string]: { image: Buffer, time: number } };
   private verboseFfmpegTimer!: NodeJS.Timeout | null;
   public readonly videoEncoder!: string;
@@ -103,6 +104,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     this.pendingSessions = {};
     this.platform = protectCamera.platform;
     this.rtspEntry = null;
+    this.savedBitrate = 0;
     this.snapshotCache = {};
     this.videoEncoder = this.config.videoEncoder || "libx264";
     this.videoProcessor = this.config.videoProcessor || ffmpegPath || "ffmpeg";
@@ -364,6 +366,17 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
       callback(new Error(this.name() + ": " + errorMessage));
       return;
+    }
+
+    // Save our current bitrate before we modify it, but only if we're the first stream to catch concurrent streaming clients.
+    if(!this.savedBitrate) {
+
+      this.savedBitrate = this.protectCamera.getBitrate(this.rtspEntry.channel.id);
+
+      if(this.savedBitrate < 0) {
+
+        this.savedBitrate = 0;
+      }
     }
 
     // Set the desired bitrate in Protect. We don't need to for this to return, because Protect
@@ -869,9 +882,22 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       delete this.ongoingSessions[sessionId];
 
       // If we've completed all streaming sessions, restore any changed settings, such as bitrate, for HomeKit Secure Video.
-      if(this.hksv?.isRecording && !this.ongoingSessions.length) {
+      if(!this.ongoingSessions.length) {
 
-        await this.hksv.updateRecordingActive(this.hksv.isRecording);
+        if(this.hksv?.isRecording) {
+
+          // Restore HKSV settings.
+          await this.hksv.updateRecordingActive(this.hksv.isRecording);
+        } else if(this.savedBitrate) {
+
+          // Restore our original bitrate.
+          if(this.rtspEntry) {
+
+            await this.protectCamera.setBitrate(this.rtspEntry.channel.id, this.savedBitrate);
+          }
+
+          this.savedBitrate = 0;
+        }
       }
 
     } catch(error) {
@@ -910,6 +936,6 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     this.log.info("FFmpeg exited unexpectedly." +
       " Increasing logging output of FFmpeg for the next %s minutes to provide additional detail for future attempts to stream video.", PROTECT_FFMPEG_VERBOSE_DURATION);
 
-    this.platform.verboseFfmpeg = true;
+//    this.platform.verboseFfmpeg = true;
   }
 }

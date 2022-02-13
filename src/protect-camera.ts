@@ -73,6 +73,12 @@ export class ProtectCamera extends ProtectAccessory {
     this.accessory.context.detectMotion = detectMotion;
     this.accessory.context.hksvRecording = hksvRecording;
 
+    // Inform the user if we have disabled dynamic bitrates.
+    if(this.nvr?.optionEnabled(this.accessory.context.device as ProtectCameraConfig, "Video.Dynamic.Bitrates")) {
+
+      this.log.info("%s: Dynamic adjustment of bitrates using the UniFi Protect controller enabled.", this.name());
+    }
+
     // If the camera supports it, check to see if we have smart motion events enabled.
     if(device.featureFlags.hasSmartDetect && this.nvr?.optionEnabled(device, "Motion.SmartDetect", false)) {
 
@@ -803,8 +809,25 @@ export class ProtectCamera extends ProtectAccessory {
     return true;
   }
 
+  public getBitrate(channelId: number): number {
+
+    // Grab the device JSON.
+    const device = this.accessory.context.device as ProtectCameraConfig;
+
+    // Find the right channel.
+    const channel = device.channels.find(x => x.id === channelId);
+
+    return channel?.bitrate ?? -1;
+  }
+
   // Set the bitrate for a specific camera channel.
   public async setBitrate(channelId: number, value: number): Promise<boolean> {
+
+    // If we've disabled the ability to set bitrates dynamically, silently fail.
+    if(!this.nvr?.optionEnabled(this.accessory.context.device as ProtectCameraConfig, "Video.Dynamic.Bitrates", false)) {
+
+      return true;
+    }
 
     // Grab the device JSON.
     const device = this.accessory.context.device as ProtectCameraConfig;

@@ -203,7 +203,9 @@ Video feature options allow you to tailor which RTSP streams are utilized for Ho
 
 | Option                                               | Description
 |------------------------------------------------------|----------------------------------
-| `Enable.Video.HKSV`                                  | Enable HomeKit Secure Video support. *(Default: Enabled)*
+| `Enable.Video.Dynamic.Bitrates`                      | Enable dynamic bitrate support in video streams. HBUP will adjust the bitrate of UniFi Protect video streams according to HomeKit requests to do so. This can have undesirable consequences, including lower quality video being recorded to your Protect controller since HomeKit typically requests significantly lower bitrates than what Protect is capable of producing, resulting in lower video quality saved to the Protect controller. Enabling this feature will optimize the HomeKit experience at the expense of the Protect experience. If you would like to enable dynamic bitrate support but not compromise on the quality of your Protect NVR recordings, disable the high video stream in HBUP by using the `Disable.Video.Stream.Quality.High` feature option in addition to enabling this one.
+| `Disable.Video.Dynamic.Bitrates`                     | Disable dynamic bitrate support in video streams.  *(Default)*
+| `Enable.Video.HKSV`                                  | Enable HomeKit Secure Video support. *(Default)*
 | `Disable.Video.HKSV`                                 | Disable HomeKit Secure Video support.
 | `Enable.Video.HKSV.Recording.Switch`                 | Add a switch accessory to enable or disable HKSV event recording. HKSV will still detect motion and try to record events, but will not be sent any video. This is useful in certain scenarios where you don't want to disable HKSV in the Home app, but want some level of control over when it records events. An example might be enabling recording when you are away from home, but not when you are home.
 | `Disable.Video.HKSV.Recording.Switch`                | Remove the switch accessory used to enable or disable HKSV event recording. *(Default)*
