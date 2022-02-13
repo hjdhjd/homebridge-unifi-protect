@@ -5,6 +5,7 @@
 import { Logging, PlatformAccessory } from "homebridge";
 import { ProtectCameraConfig, ProtectLivestream } from "unifi-protect";
 import { EventEmitter } from "events";
+import { PROTECT_HKSV_SEGMENT_RESOLUTION } from "./settings";
 import { ProtectCamera } from "./protect-camera";
 
 // UniFi Protect livestream timeshift buffer.
@@ -35,10 +36,10 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
 
     // We use 100ms in segment resolution for our timeshift buffer to ensure we provide an optimal
     // timeshifting experience. It's a very small amount of additional overhead for most modern CPUs,
-    // but the result is a much better HKSV event recording. We also allow for a larger segment resolution,
-    // to give devices at the lower end of the performance curve some added cushion, albeit at the expense of
-    // a suboptimal user experience when reviewing HKSV recorded events.
-    this._segmentLength = this.protectCamera.platform.config.hksvSegmentResolution;
+    // but the result is a much better HKSV event recording. We may eventually allow for a larger segment
+    // resolution in order to give devices at the lower end of the performance curve some added cushion,
+    // albeit at the expense of a suboptimal user experience when reviewing HKSV recorded events.
+    this._segmentLength = PROTECT_HKSV_SEGMENT_RESOLUTION;
 
     this._isTransmitting = false;
     this.configureTimeshiftBuffer();

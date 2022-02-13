@@ -8,7 +8,6 @@ export interface ProtectOptions {
   controllers: ProtectNvrOptions[],
   debugAll: boolean,
   ffmpegOptions: string[],
-  hksvSegmentResolution: number,
   motionDuration: number,
   options: string[],
   ringDuration: number,
