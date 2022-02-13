@@ -5,7 +5,6 @@
 import { Logging, PlatformAccessory } from "homebridge";
 import { ProtectCameraConfig, ProtectLivestream } from "unifi-protect";
 import { EventEmitter } from "events";
-import { PROTECT_HKSV_LIVESTREAM_SEGMENT } from "./settings";
 import { ProtectCamera } from "./protect-camera";
 
 // UniFi Protect livestream timeshift buffer.
@@ -17,6 +16,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
   private livestream: ProtectLivestream;
   private readonly log: Logging;
   private readonly name: () => string;
+  private protectCamera: ProtectCamera;
   private _segmentLength: number;
   private _isTransmitting: boolean;
 
@@ -31,13 +31,16 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
     this.livestream = new ProtectLivestream(protectCamera.nvr.nvrApi, protectCamera.platform.log);
     this.log = protectCamera.platform.log;
     this.name = protectCamera.name.bind(protectCamera);
+    this.protectCamera = protectCamera;
 
     // We use 100ms in segment resolution for our timeshift buffer to ensure we provide an optimal
-    // timeshifting experience. It's a very small amount of additional overhead, but the result is
-    // a much better HKSV event recording.
-    this._segmentLength = 100;
-    this._isTransmitting = false;
+    // timeshifting experience. It's a very small amount of additional overhead for most modern CPUs,
+    // but the result is a much better HKSV event recording. We also allow for a larger segment resolution,
+    // to give devices at the lower end of the performance curve some added cushion, albeit at the expense of
+    // a suboptimal user experience when reviewing HKSV recorded events.
+    this._segmentLength = this.protectCamera.platform.config.hksvSegmentResolution;
 
+    this._isTransmitting = false;
     this.configureTimeshiftBuffer();
   }
 
@@ -99,11 +102,24 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
   // Start the livestream and begin creating our timeshift buffer.
   public async start(channelId: number): Promise<boolean> {
 
+    // Ensure we have sane values configured for the segment resolution.
+    if(this.protectCamera.stream.hksv?.recordingConfiguration?.mediaContainerConfiguration.fragmentLength) {
+
+      if((this.segmentLength < 100) ||
+        (this.segmentLength > (this.protectCamera.stream.hksv?.recordingConfiguration?.mediaContainerConfiguration.fragmentLength / 2))) {
+
+        this._segmentLength = this.protectCamera.stream.hksv?.recordingConfiguration?.mediaContainerConfiguration.fragmentLength / 2;
+
+        this.log.error("%s: An invalid HomeKit Secure Video segment length was configured. " +
+          "Choosing a safe value instead, though one that provides a less than ideal event clip viewing experience: %s.", this.name(), this.segmentLength);
+      }
+    }
+
     // Clear out the timeshift buffer, if it's been previously filled, and then fire up the timeshift buffer.
     this.buffer = [];
 
     // Start the livestream and start buffering.
-    if(!(await this.livestream.start((this.accessory.context.device as ProtectCameraConfig).id, channelId, PROTECT_HKSV_LIVESTREAM_SEGMENT))) {
+    if(!(await this.livestream.start((this.accessory.context.device as ProtectCameraConfig).id, channelId, this.segmentLength))) {
 
       return false;
     }

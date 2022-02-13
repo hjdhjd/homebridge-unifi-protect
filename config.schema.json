@@ -113,6 +113,7 @@
       },
 
       "name": {
+
         "type": "string",
         "title": "Plugin Name",
         "required": true,
@@ -121,6 +122,7 @@
       },
 
       "options": {
+
         "type": "array",
         "title": "Feature Options",
 
@@ -133,7 +135,19 @@
         }
       },
 
+      "hksvSegmentResolution": {
+
+        "type": "integer",
+        "title": "HomeKit Secure Video Segment Resolution (milliseconds)",
+        "required": false,
+        "minimum": 100,
+        "maximum": 4000,
+        "placeholder": "e.g. 100",
+        "description": "HomeKit Secure Video segment event resolution. If you change this to anything other than the default, you will definitely degrade the user experience when reviewing recorded events at the expense of reducing some of the hardware requirements for running HKSV. Default: 100."
+      },
+
       "motionDuration": {
+
         "type": "integer",
         "title": "Motion Event Duration (seconds)",
         "required": false,
@@ -144,6 +158,7 @@
       },
 
       "ringDuration": {
+
         "type": "integer",
         "title": "Ring Event Duration (seconds)",
         "required": false,
@@ -154,6 +169,7 @@
       },
 
       "verboseFfmpeg": {
+
         "type": "boolean",
         "title": "Verbose FFmpeg Logging",
         "required": false,
@@ -161,6 +177,7 @@
       },
 
       "videoEncoder": {
+
         "type": "string",
         "title": "Video Encoder",
         "required": false,
@@ -169,6 +186,7 @@
       },
 
       "videoProcessor": {
+
         "type": "string",
         "title": "Video Processor",
         "required": false,
@@ -287,6 +305,7 @@
           "description": "These settings should be rarely used or needed by most people. Use these with caution.",
           "items": [
             "name",
+            "hksvSegmentResolution",
             "videoProcessor",
             "videoEncoder",
             "verboseFfmpeg",

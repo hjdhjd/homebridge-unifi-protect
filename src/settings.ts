@@ -60,7 +60,7 @@ export const PROTECT_RING_DURATION = 3;
 export const PROTECT_TWOWAY_HEARTBEAT_INTERVAL = 3.5;
 
 // HomeKit Secure Video segment resolution, in milliseconds. This defines the resolution of our buffer.
-export const PROTECT_HKSV_LIVESTREAM_SEGMENT = 100;
+export const PROTECT_HKSV_SEGMENT_RESOLUTION = 100;
 
 // HomeKit Secure Video segment length, in milliseconds. HomeKit only supports this value currently.
 export const PROTECT_HKSV_SEGMENT_LENGTH = 4000;

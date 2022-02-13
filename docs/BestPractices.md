@@ -24,6 +24,9 @@ I firmly believe that good software is opinionated. It should have a strong sens
 
 These best practices will evolve over time, but I wanted to provide some thoughts on some of the design choices I've made, and how you can enhance and tailor your own experience.
 
+#### Homebridge
+If you want to optimize performance and responsiveness of this plugin, you should run `homebridge-unifi-protect` as a child bridge within Homebridge. [Read more about child bridges and how to enable it in Homebridge here](https://github.com/homebridge/homebridge/wiki/Child-Bridges).
+
 #### User Accounts
 If you want to make your `homebridge-unifi-protect` life easy and allow the plugin to configure UniFi Protect automagically for you:
 

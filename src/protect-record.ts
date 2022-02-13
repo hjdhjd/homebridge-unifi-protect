@@ -356,4 +356,10 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
 
     return this._isRecording;
   }
+
+  // Return our current HomeKit Secure Video recording configuration.
+  public get recordingConfiguration(): CameraRecordingConfiguration | null {
+
+    return this.recordingConfig ?? null;
+  }
 }

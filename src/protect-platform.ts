@@ -12,6 +12,7 @@ import {
 } from "homebridge";
 import {
   PROTECT_FFMPEG_OPTIONS,
+  PROTECT_HKSV_SEGMENT_RESOLUTION,
   PROTECT_MOTION_DURATION,
   PROTECT_MQTT_TOPIC,
   PROTECT_RING_DURATION
@@ -40,6 +41,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
 
     // We can't start without being configured.
     if(!config) {
+
       return;
     }
 
@@ -48,6 +50,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
       controllers: config.controllers as ProtectNvrOptions[],
       debugAll: config.debug as boolean === true,
       ffmpegOptions: config.ffmpegOptions as string[] ?? PROTECT_FFMPEG_OPTIONS,
+      hksvSegmentResolution: config.hksvSegmentResolution as number ?? PROTECT_HKSV_SEGMENT_RESOLUTION,
       motionDuration: config.motionDuration as number ?? PROTECT_MOTION_DURATION,
       options: config.options as string[],
       ringDuration: config.ringDuration as number ?? PROTECT_RING_DURATION,
