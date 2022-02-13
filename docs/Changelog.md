@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 5.2.0
+  * New feature: enable or disable HKSV recording without having to enable or disable it within the Home app. This is useful in automation scenarios where you don't actually want to turn off HKSV, but you do want to control when it chooses to record - a feature Apple should really implement. New feature option [`Video.HKSV.Recording.Switch`](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md#video).
+  * Housekeeping.
+
 ## 5.1.2
   * Fix: honor a user-selected video encoder for HKSV.
 
