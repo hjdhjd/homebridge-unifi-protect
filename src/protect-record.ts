@@ -10,13 +10,14 @@ import {
   API,
   CameraRecordingConfiguration,
   CameraRecordingDelegate,
+  HAP,
   HDSProtocolSpecificErrorReason,
   Logging,
   PlatformAccessory,
   RecordingPacket
 } from "homebridge";
 import { ProtectCamera, RtspEntry } from "./protect-camera";
-import { FfmpegRecordingProcess } from "./protect-ffmpeg";
+import { FfmpegRecordingProcess } from "./protect-ffmpeg-record";
 import { ProtectCameraConfig } from "unifi-protect";
 import { ProtectNvr } from "./protect-nvr";
 import { ProtectTimeshiftBuffer } from "./protect-timeshift";
@@ -27,7 +28,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
   private _isRecording: boolean;
   private readonly accessory: PlatformAccessory;
   private readonly api: API;
-  private timeshift: ProtectTimeshiftBuffer;
+  private readonly hap: HAP;
   private debug: (message: string, ...parameters: unknown[]) => void;
   private ffmpegStream: FfmpegRecordingProcess | null;
   private isInitialized: boolean;
@@ -38,14 +39,15 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
   private readonly protectCamera: ProtectCamera;
   private recordingConfig: CameraRecordingConfiguration | undefined;
   private rtspEntry: RtspEntry | null;
-  private recordedSegments: number;
+  private transmittedSegments: number;
+  private readonly timeshift: ProtectTimeshiftBuffer;
   private transmitListener: ((segment: Buffer) => void) | null;
 
   constructor(protectCamera: ProtectCamera) {
 
     this.accessory = protectCamera.accessory;
     this.api = protectCamera.api;
-    this.timeshift = new ProtectTimeshiftBuffer(protectCamera);
+    this.hap = protectCamera.api.hap;
     this.debug = protectCamera.platform.debug.bind(protectCamera.platform);
     this.ffmpegStream = null;
     this.isInitialized = false;
@@ -55,8 +57,9 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     this.nvr = protectCamera.nvr;
     this.protectCamera = protectCamera;
     this.maxRecordingDuration = parseInt(this.nvr.optionGet(this.accessory.context.device as ProtectCameraConfig, "Video.HKSV.Recording.MaxDuration") ?? "0");
-    this.recordedSegments = 0;
+    this.transmittedSegments = 0;
     this.rtspEntry = null;
+    this.timeshift = new ProtectTimeshiftBuffer(protectCamera);
     this.transmitListener = null;
   }
 
@@ -74,7 +77,14 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
         this.log.info("%s: Disabling HomeKit Secure Video event recording.", this.name());
       }
 
+      // Disable recording.
       this._isRecording = active;
+
+      // Turn off any potential inflight motion detection. Strictly speaking, this shouldn't be needed since any inflight
+      // motion sensor events will clear themselves. That said, we play it safe just the same.
+      this.accessory.getService(this.hap.Service.MotionSensor)?.updateCharacteristic(this.hap.Characteristic.MotionDetected, false);
+
+      // We're done.
       return;
     }
 
@@ -163,38 +173,31 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   public async *handleRecordingStreamRequest(streamId: number): AsyncGenerator<RecordingPacket> {
 
-    // If we've explicitly disabled HKSV recording, we're done right now.
-    if(!this.accessory.context.hksvRecording) {
+    // If we've explicitly disabled HKSV recording, we're done right now. Otherwise, start transmitting our timeshift
+    // buffer and process it through FFmpeg.
+    if(!this.accessory.context.hksvRecording || !this.startTransmitting() || !this.ffmpegStream) {
 
-      const streamHeader = await this.timeshift.getStreamHeader();
-
-      if(streamHeader) {
-
-        yield { data: streamHeader, isLast: true };
-        return;
-      }
-
-      // We should never get to this point, but in case we do, this is a failsafe to ensure that no video
-      // recording can ever take place if we've disabled it through the HKSV recording switch accessory.
-      // It will generate a warning in Homebridge that can be ignored, but it will ensure nothing can be recorded.
-      yield { data: Buffer.alloc(0), isLast: true };
-      return;
-    }
-
-    // Start transmitting our timeshift buffer and process it through FFmpeg.
-    if(!this.startTransmitting() || !this.ffmpegStream) {
-
-      // Something went wrong, so we gracefully tell HomeKit we have no packets to transmit and return.
+      // Stop transmitting, if needed. If HKSV recording has been disabled explicitly, it should never start in the first place.
       this.stopTransmitting();
-      yield { data: Buffer.alloc(0), isLast: true };
+
+      // Something's gone wrong, or we've disabled HKSV recording. In either event, we send an fMP4 stream header
+      // back to HKSV and exit as cleanly as we can. If we can't get the stream header, we still send an empty segment
+      // to HKSV - this will still generate a warning in Homebridge that can be ignored.
+      const streamHeader = (await this.timeshift.getStreamHeader()) ?? Buffer.alloc(0);
+
+      yield { data: streamHeader, isLast: true };
       return;
     }
 
-    for await (const segment of this.ffmpegStream.generator()) {
+    let isLastSegment = false;
+    let segmentCount = 0;
 
-      let isLastSegment = false;
+    // Process our FFmpeg-generated segments and send them back to HKSV.
+    for await (const segment of this.ffmpegStream.segmentGenerator()) {
 
-      // If we've stopped transmitting - make sure we don't send anything else.
+      isLastSegment = false;
+
+      // If we've stopped transmitting, we're done.
       if(!this.timeshift.isTransmitting) {
 
         return;
@@ -207,21 +210,49 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
       }
 
       // If we've exceeded a user-configured maximum recording duration, let HomeKit know we're stopping.
-      if(this.maxRecordingDuration && ((this.recordedSegments * this.timeshift.segmentLength) / 1000) > this.maxRecordingDuration) {
+      if(this.maxRecordingDuration && ((this.transmittedSegments * this.timeshift.segmentLength) / 1000) > this.maxRecordingDuration) {
 
         isLastSegment = true;
       }
 
+      // Send HKSV the segment.
       yield {
 
         data: segment,
         isLast: isLastSegment
       };
 
+      // Keep track of how many segments we've sent to HKSV.
+      segmentCount++;
+
+      // If we've sent the last segment, we're done.
       if(isLastSegment) {
 
         return;
       }
+    }
+
+    // If we're done transmitting, we're done returning segments to HKSV.
+    if(!this.timeshift.isTransmitting) {
+
+      return;
+    }
+
+    // Something's gone wrong and we've sent HKSV no segments. Let's send an fMP4 stream header back to HKSV and exit
+    // as cleanly as we can. If we can't get the stream header, we send an empty segment to HKSV - this will still
+    //generate a warning in Homebridge that can be ignored.
+    if(!segmentCount) {
+
+      const streamHeader = (await this.timeshift.getStreamHeader()) ?? Buffer.alloc(0);
+      yield { data: streamHeader, isLast: true };
+      return;
+    }
+
+    // Something likely happened to FFmpeg and we didn't send out a final segment. Tell HKSV we're really done.
+    if(!isLastSegment) {
+
+      yield { data: Buffer.alloc(0), isLast: true };
+      return;
     }
   }
 
@@ -269,7 +300,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     // buffer what's being broadcast until you're ready to watch it. This is the same idea.
 
     // Keep track of how many fMP4 segments we are feeding FFmpeg.
-    this.recordedSegments = 0;
+    this.transmittedSegments = 0;
 
 
     // Check to see if the user has audio enabled or disabled for recordings.
@@ -291,23 +322,32 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     // but there's a lot going on here.
     this.transmitListener = (segment: Buffer): void => {
 
-      this.ffmpegStream?.stdin?.write(segment);
-
       // We don't want the fMP4 ftyp or moov boxes accounted for in our recording statistics so
       // let's filter them out.
       if(!seenFtyp && this.timeshift.isFtyp(segment)) {
 
         seenFtyp = true;
+        this.ffmpegStream?.stdin?.write(segment);
         return;
       }
 
       if(!seenMoov && this.timeshift.isMoov(segment)) {
 
         seenMoov = true;
+        this.ffmpegStream?.stdin?.write(segment);
         return;
       }
 
-      this.recordedSegments++;
+      // We don't want to send the ftyp or moov boxes more than once - FFmpeg will get confused if you do, plus
+      // it's wrong and you should only send the fMP4 stream header information once.
+      if(this.timeshift.isFtyp(segment) || this.timeshift.isMoov(segment)) {
+
+        return;
+      }
+
+      // Send the segment to FFmpeg for processing and update our statistics.
+      this.ffmpegStream?.stdin?.write(segment);
+      this.transmittedSegments++;
     };
 
     this.timeshift.on("segment", this.transmitListener);
@@ -341,8 +381,11 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     // Inform the user.
     if(this.accessory.context.hksvRecording) {
 
+      // Calculate approximately how many seconds we've recorded.
+      const recordedSeconds = (this.transmittedSegments * this.timeshift.segmentLength) / 1000;
+
       this.log.info("%s: HomeKit Secure Video has recorded a %s second motion event.",
-        this.name(), Math.round((this.recordedSegments * this.timeshift.segmentLength) / 1000));
+        this.name(), recordedSeconds < 1 ? recordedSeconds : Math.round(recordedSeconds));
     }
 
     // If we have a reason for stopping defined, and it's noteworthy, inform the user.
