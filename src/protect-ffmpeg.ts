@@ -250,14 +250,14 @@ export class FfmpegProcess {
     this.process?.stdin.destroy();
     this.process?.stdout.destroy();
 
-    // Send the kill shot.
-    this.process?.kill();
-
-    // Shoot it again, just to be sure it's really dead.
+    // In case we need to kill it again, just to be sure it's really dead.
     this.ffmpegTimeout = setTimeout(() => {
 
       this.process?.kill("SIGKILL");
     }, 5000);
+
+    // Send the kill shot.
+    this.process?.kill();
   }
 
   // Return the standard input for this process.
