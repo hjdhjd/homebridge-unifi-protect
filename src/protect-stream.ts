@@ -34,7 +34,7 @@ import {
   PROTECT_HKSV_SEGMENT_LENGTH
 } from "./settings";
 import { ProtectCamera, RtspEntry } from "./protect-camera";
-import { FfmpegStreamingProcess } from "./protect-ffmpeg";
+import { FfmpegStreamingProcess } from "./protect-ffmpeg-stream";
 import { ProtectOptions } from "./protect-options";
 import { ProtectPlatform } from "./protect-platform";
 import { ProtectRecordingDelegate } from "./protect-record";
@@ -693,21 +693,6 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       // Fire up FFmpeg.
       const ffmpegReturnAudio = new FfmpegStreamingProcess(this, request.sessionID, ffmpegReturnAudioCmd);
 
-      // Make sure we terminate the talkback websocket when we're done.
-      ffmpegReturnAudio.stdout?.once("close", () => {
-
-        // Make sure we catch any stray connections that may be too slow to open.
-        isTalkbackLive = false;
-
-        // Close the websocket.
-        if((ws?.readyState === WebSocket.CLOSING) || (ws?.readyState === WebSocket.OPEN)) {
-
-          ws?.terminate();
-        }
-
-        ffmpegReturnAudio.stdout?.removeListener("data", dataListener);
-      });
-
       // Setup housekeeping for the twoway FFmpeg session.
       this.ongoingSessions[request.sessionID].ffmpeg.push(ffmpegReturnAudio);
 
@@ -729,6 +714,20 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
         });
       });
 
+      // Make sure we terminate the talkback websocket when we're done.
+      ffmpegReturnAudio.ffmpegProcess?.once("exit", () => {
+
+        // Make sure we catch any stray connections that may be too slow to open.
+        isTalkbackLive = false;
+
+        // Close the websocket.
+        if((ws?.readyState === WebSocket.CLOSING) || (ws?.readyState === WebSocket.OPEN)) {
+
+          ws?.terminate();
+        }
+
+        ffmpegReturnAudio.stdout?.removeListener("data", dataListener);
+      });
     } catch(error) {
 
       this.log.error("%s: Unable to connect to the return audio channel: %s", this.name(), error);
@@ -936,6 +935,6 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     this.log.info("FFmpeg exited unexpectedly." +
       " Increasing logging output of FFmpeg for the next %s minutes to provide additional detail for future attempts to stream video.", PROTECT_FFMPEG_VERBOSE_DURATION);
 
-//    this.platform.verboseFfmpeg = true;
+    this.platform.verboseFfmpeg = true;
   }
 }
