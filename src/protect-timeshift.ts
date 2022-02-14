@@ -12,14 +12,14 @@ import { ProtectNvr } from "./protect-nvr";
 // UniFi Protect livestream timeshift buffer.
 export class ProtectTimeshiftBuffer extends EventEmitter {
 
-  private accessory: PlatformAccessory;
+  private readonly accessory: PlatformAccessory;
   private buffer: Buffer[];
   private bufferSize: number;
-  private livestream: ProtectLivestream;
+  private readonly livestream: ProtectLivestream;
   private readonly log: Logging;
   private readonly name: () => string;
   private readonly nvr: ProtectNvr;
-  private protectCamera: ProtectCamera;
+  private readonly protectCamera: ProtectCamera;
   private _segmentLength: number;
   private _isTransmitting: boolean;
 
