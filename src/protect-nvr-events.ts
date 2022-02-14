@@ -574,7 +574,8 @@ export class ProtectNvrEvents {
 
       // Log the event, if configured to do so.
       if(this.nvr.optionEnabled(device, "Log.Motion", false)) {
-        this.log.info("%s: Motion detected%s.", this.nvrApi.getFullName(device), detectedObjects.length ? ": " + detectedObjects.join(", ") : "");
+        this.log.info("%s: Motion detected%s.",
+          this.nvrApi.getFullName(device), (!protectCamera.stream.hksv?.isRecording && detectedObjects.length) ? ": " + detectedObjects.join(", ") : "");
       }
     }
 
