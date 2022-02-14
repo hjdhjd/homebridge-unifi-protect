@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 5.3.2
+  * Housekeeping updates.
+
 ## 5.3.1
   * Improvement: Performance-related updates that further refine the streaming and HKSV experiences.
   * Fix: Ensure motion sensors are always reset when Homebridge starts, and that motion events are processed correctly when certain HKSV-adjacent edge cases take place.
