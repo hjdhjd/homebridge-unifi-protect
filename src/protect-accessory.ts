@@ -132,18 +132,16 @@ export abstract class ProtectAccessory extends ProtectBase {
   // Configure the Protect motion sensor for HomeKit.
   protected configureMotionSensor(isEnabled = true): boolean {
 
-    const accessory = this.accessory;
-    const hap = this.hap;
-
     // Find the motion sensor service, if it exists.
-    let motionService = accessory.getService(hap.Service.MotionSensor);
+    let motionService = this.accessory.getService(this.hap.Service.MotionSensor);
 
     // Have we disabled motion sensors?
-    if(!isEnabled || !this.nvr?.optionEnabled(accessory.context.device as ProtectCameraConfig, "Motion.Sensor")) {
+    if(!isEnabled || !this.nvr?.optionEnabled(this.accessory.context.device as ProtectCameraConfig, "Motion.Sensor")) {
 
       if(motionService) {
-        accessory.removeService(motionService);
-        this.nvr.mqtt?.unsubscribe(accessory, "motion/trigger");
+
+        this.accessory.removeService(motionService);
+        this.nvr.mqtt?.unsubscribe(this.accessory, "motion/trigger");
         this.log.info("%s: Disabling motion sensor.", this.name());
       }
 
@@ -152,19 +150,24 @@ export abstract class ProtectAccessory extends ProtectBase {
 
     // The motion sensor has already been configured.
     if(motionService) {
+
+      // Initialize the state of the motion sensor.
+      motionService.updateCharacteristic(this.hap.Characteristic.MotionDetected, false);
+
       this.configureMqttMotionTrigger();
       return true;
     }
 
     // We don't have it, add the motion sensor to the camera.
-    motionService = new hap.Service.MotionSensor(accessory.displayName);
+    motionService = new this.hap.Service.MotionSensor(this.accessory.displayName);
 
     if(!motionService) {
+
       this.log.error("%s: Unable to add motion sensor.", this.name());
       return false;
     }
 
-    accessory.addService(motionService);
+    this.accessory.addService(motionService);
     this.configureMqttMotionTrigger();
 
     this.log.info("%s: Enabling motion sensor.", this.name());
