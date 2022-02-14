@@ -239,8 +239,8 @@ export class ProtectNvrEvents {
           // It's a motion event - process it accordingly.
           if(payload.isMotionDetected) {
 
-            // We only want to process the motion event if we have the right payload, and either HKSV is enabled, or
-            // HKSV is disabled and we have smart motion events disabled since We handle those elsewhere.
+            // We only want to process the motion event if we have the right payload, and either HKSV recording is enabled, or
+            // HKSV recording is disabled and we have smart motion events disabled since We handle those elsewhere.
             if(payload.lastMotion &&
               (protectCamera.stream.hksv?.isRecording || (!protectCamera.stream.hksv?.isRecording && !protectCamera.smartDetectTypes.length)) &&
               this.nvr.optionEnabled(device, "Motion.NvrEvents", true)) {
@@ -592,34 +592,29 @@ export class ProtectNvrEvents {
       this.nvr.mqtt?.publish(accessory, "motion/smart/" + detectedObject, "true");
     }
 
-    // Reset our motion event after motionDuration.
+    // Reset our motion event after motionDuration if we don't already have a reset timer inflight.
     if(!this.eventTimers[device.mac]) {
 
       this.eventTimers[device.mac] = setTimeout(() => {
 
-        // Reset the motion sensor, if it's been triggered.
-        if(!detectedObjects.length ||
-          (!protectCamera.stream.hksv?.isRecording && detectedObjects.length && detectedObjects.filter(x => protectCamera.smartDetectTypes.includes(x)).length)) {
+        const thisMotionService = accessory.getService(this.hap.Service.MotionSensor);
 
-          const thisMotionService = accessory.getService(this.hap.Service.MotionSensor);
+        if(thisMotionService) {
 
-          if(thisMotionService) {
+          thisMotionService.updateCharacteristic(this.hap.Characteristic.MotionDetected, false);
 
-            thisMotionService.updateCharacteristic(this.hap.Characteristic.MotionDetected, false);
+          // Check to see if we have a motion trigger switch configured. If we do, update it.
+          const thisTriggerService = accessory.getServiceById(this.hap.Service.Switch, PROTECT_SWITCH_MOTION_TRIGGER);
 
-            // Check to see if we have a motion trigger switch configured. If we do, update it.
-            const thisTriggerService = accessory.getServiceById(this.hap.Service.Switch, PROTECT_SWITCH_MOTION_TRIGGER);
-
-            if(thisTriggerService) {
-              thisTriggerService.updateCharacteristic(this.hap.Characteristic.On, false);
-            }
-
-            this.debug("%s: Resetting motion event.", this.nvrApi.getFullName(device));
+          if(thisTriggerService) {
+            thisTriggerService.updateCharacteristic(this.hap.Characteristic.On, false);
           }
 
-          // Publish to MQTT, if the user has configured it.
-          this.nvr.mqtt?.publish(accessory, "motion", "false");
+          this.debug("%s: Resetting motion event.", this.nvrApi.getFullName(device));
         }
+
+        // Publish to MQTT, if the user has configured it.
+        this.nvr.mqtt?.publish(accessory, "motion", "false");
 
         // Delete the timer from our motion event tracker.
         delete this.eventTimers[device.mac];
