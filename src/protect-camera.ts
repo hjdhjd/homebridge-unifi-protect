@@ -74,7 +74,7 @@ export class ProtectCamera extends ProtectAccessory {
     this.accessory.context.hksvRecording = hksvRecording;
 
     // Inform the user if we have enabled dynamic bitrates.
-    if(this.nvr?.optionEnabled(this.accessory.context.device as ProtectCameraConfig, "Video.Dynamic.Bitrates")) {
+    if(this.nvr?.optionEnabled(this.accessory.context.device as ProtectCameraConfig, "Video.Dynamic.Bitrates", false)) {
 
       this.log.info("%s: Dynamic adjustment of bitrates using the UniFi Protect controller enabled.", this.name());
     }
@@ -113,9 +113,9 @@ export class ProtectCamera extends ProtectAccessory {
     // Configure two-way audio support.
     this.configureTwoWayAudio();
 
-    // Configure HomeKit Secure Video.
+    // Configure HomeKit Secure Video suport.
     this.configureHksv();
-    this.configureHksvSwitch();
+    this.configureHksvRecordingSwitch();
 
     // Configure our video stream.
     await this.configureVideoStream();
@@ -686,7 +686,7 @@ export class ProtectCamera extends ProtectAccessory {
   }
 
   // Configure a switch to manually enable or disable HKSV recording for a camera.
-  private configureHksvSwitch(): boolean {
+  private configureHksvRecordingSwitch(): boolean {
 
     // Find the switch service, if it exists.
     let switchService = this.accessory.getServiceById(this.hap.Service.Switch, PROTECT_SWITCH_HKSV_RECORDING);
