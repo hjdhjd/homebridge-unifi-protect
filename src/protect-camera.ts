@@ -73,7 +73,7 @@ export class ProtectCamera extends ProtectAccessory {
     this.accessory.context.detectMotion = detectMotion;
     this.accessory.context.hksvRecording = hksvRecording;
 
-    // Inform the user if we have disabled dynamic bitrates.
+    // Inform the user if we have enabled dynamic bitrates.
     if(this.nvr?.optionEnabled(this.accessory.context.device as ProtectCameraConfig, "Video.Dynamic.Bitrates")) {
 
       this.log.info("%s: Dynamic adjustment of bitrates using the UniFi Protect controller enabled.", this.name());
@@ -709,7 +709,7 @@ export class ProtectCamera extends ProtectAccessory {
     // Add the switch to the camera, if needed.
     if(!switchService) {
 
-      switchService = new this.hap.Service.Switch(this.accessory.displayName + " Recording", PROTECT_SWITCH_HKSV_RECORDING);
+      switchService = new this.hap.Service.Switch(this.accessory.displayName + " HKSV Recording", PROTECT_SWITCH_HKSV_RECORDING);
 
       if(!switchService) {
 
