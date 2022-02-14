@@ -224,7 +224,10 @@ export class FfmpegProcess {
       } else {
 
         // Something else has occurred. Inform the user, and stop everything.
-        this.log.error(logPrefix + " unexpectedly with exit code %s and signal %s.", exitCode, signal);
+        this.log.error(logPrefix + "unexpectedly with %s%s%s.",
+          (exitCode !== null) ? "an exit code of " + exitCode.toString() : "",
+          ((exitCode !== null) && signal) ? " and " : "",
+          signal ? "a signal received of " + signal : "");
 
         // Execute our error handler, if one is provided.
         if(errorHandler) {
