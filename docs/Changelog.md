@@ -2,18 +2,24 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 5.3.1
+  * Improvement: Performance-related updates that further refine the streaming and HKSV experiences.
+  * Fix: Ensure motion sensors are always reset when Homebridge starts, and that motion events are processed correctly when certain HKSV-adjacent edge cases take place.
+  * Fix: Cosmetic issue - we incorrectly logged that dynamic bitrates were enabled when they weren't.
+  * Housekeeping updates.
+
 ## 5.3.0
   * New feature: enable or disable dynamic bitrate support for video. The [`Video.Dynamic.Bitrates` feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md#video) defaults to disabled. Enabling it will have consequences for the Protect controller you should be aware of. Read the documentation for more information.
 
 ## 5.2.0
-  * New feature: enable or disable HKSV recording without having to enable or disable it within the Home app. This is useful in automation scenarios where you don't actually want to turn off HKSV, but you do want to control when it chooses to record - a feature Apple should really implement. New feature option [`Video.HKSV.Recording.Switch`](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md#video).
-  * Housekeeping.
+  * New feature: enable or disable HKSV recording without having to enable or disable it within the Home app. This is useful in automation scenarios where you don't actually want to turn off HKSV, but you do want to control when it chooses to record beyond the simple home/away options that Apple gives you. The new feature option is [`Video.HKSV.Recording.Switch`](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md#video).
+  * Housekeeping updates.
 
 ## 5.1.2
   * Fix: honor a user-selected video encoder for HKSV.
 
 ## 5.1.1
-  * Housekeeping update.
+  * Housekeeping updates.
 
 ## 5.1.0
   * New feature: Full HomeKit Secure Video support. No extra plugins and capabilities needed...in another open source community first, we use the Protect livestream API to directly access and maintain a HomeKit buffer. You don't need to explicitly enable it in a feature option...it just works...and is enabled by default. Of course there are a couple of [feature options you can configure](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md#video) as well, if you want. You can read more about it [here](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/HomeKitSecureVideo.md).
