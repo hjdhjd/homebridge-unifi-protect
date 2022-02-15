@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 5.3.3
+  * Fix: Cameras with microphones such as the G4 Doorbell and G3/G4 Instants weren't able to stream for more than a few seconds. Fixed.
+
 ## 5.3.2
   * Housekeeping updates.
 
