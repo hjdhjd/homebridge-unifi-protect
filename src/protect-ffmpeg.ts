@@ -231,7 +231,7 @@ export class FfmpegProcess {
           ((exitCode !== null) && signal) ? " and " : "",
           signal ? "a signal received of " + signal : "");
 
-        this.log.error("%s: FFmpeg command line that errored out was: %s %s", this.name(), this.protectCamera.stream.videoProcessor, this.commandLineArgs.join(" "));
+        this.log.debug("%s: FFmpeg command line that errored out was: %s %s", this.name(), this.protectCamera.stream.videoProcessor, this.commandLineArgs.join(" "));
 
         // Execute our error handler, if one is provided.
         if(errorHandler) {
