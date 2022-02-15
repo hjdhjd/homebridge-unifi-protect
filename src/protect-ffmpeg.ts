@@ -53,7 +53,7 @@ export class FfmpegProcess {
     this.protectCamera = protectCamera;
 
     // Toggle FFmpeg logging, if configured.
-    this.isVerbose = protectCamera.platform.verboseFfmpeg;
+    this.isVerbose = protectCamera.platform.verboseFfmpeg || protectCamera.stream.verboseFfmpeg;
 
     // If we've specified a command line or a callback, let's save them.
     if(commandLineArgs) {
@@ -129,8 +129,10 @@ export class FfmpegProcess {
       }
     }
 
-    // Prepare the command line we want to execute.
+    // Execute the command line based on what we've prepared.
     this.process = spawn(this.protectCamera.stream.videoProcessor, this.commandLineArgs);
+
+    // Configure any post-spawn listeners and other plumbing.
     this.configureProcess(errorHandler);
   }
 
@@ -228,6 +230,8 @@ export class FfmpegProcess {
           (exitCode !== null) ? "an exit code of " + exitCode.toString() : "",
           ((exitCode !== null) && signal) ? " and " : "",
           signal ? "a signal received of " + signal : "");
+
+        this.log.error("%s: FFmpeg command line that errored out was: %s %s", this.name(), this.protectCamera.stream.videoProcessor, this.commandLineArgs.join(" "));
 
         // Execute our error handler, if one is provided.
         if(errorHandler) {

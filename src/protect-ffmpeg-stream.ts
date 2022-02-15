@@ -32,7 +32,7 @@ export class FfmpegStreamingProcess extends FfmpegProcess {
       this.createSocket(returnPort);
     }
 
-    void this.start(commandLineArgs, callback, async (errorMessage: string) => {
+    this.start(commandLineArgs, callback, async (errorMessage: string) => {
 
       // Stop the stream.
       await this.delegate.stopStream(this.sessionId);

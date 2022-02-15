@@ -98,7 +98,7 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
     }
 
     // Start the FFmpeg session.
-    void this.start();
+    this.start();
   }
 
   // Prepare and start our FFmpeg process.
