@@ -86,7 +86,8 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   private rtspEntry: RtspEntry | null;
   private savedBitrate: number;
   private snapshotCache: { [index: string]: { image: Buffer, time: number } };
-  private verboseFfmpegTimer!: NodeJS.Timeout | null;
+  public verboseFfmpeg: boolean;
+  private verboseFfmpegTimer: NodeJS.Timeout | null;
   public readonly videoEncoder!: string;
   public readonly videoProcessor: string;
 
@@ -106,6 +107,8 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     this.rtspEntry = null;
     this.savedBitrate = 0;
     this.snapshotCache = {};
+    this.verboseFfmpeg = false;
+    this.verboseFfmpegTimer = null;
     this.videoEncoder = this.config.videoEncoder || "libx264";
     this.videoProcessor = this.config.videoProcessor || ffmpegPath || "ffmpeg";
 
@@ -555,7 +558,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     }
 
     // Additional logging, but only if we're debugging.
-    if(this.platform.verboseFfmpeg) {
+    if(this.platform.verboseFfmpeg || this.verboseFfmpeg) {
 
       ffmpegArgs.push("-loglevel", "level+verbose");
     }
@@ -639,7 +642,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     ];
 
     // Additional logging, but only if we're debugging.
-    if(this.platform.verboseFfmpeg) {
+    if(this.platform.verboseFfmpeg || this.verboseFfmpeg) {
       ffmpegReturnAudioCmd.push("-loglevel", "level+verbose");
     }
 
@@ -697,8 +700,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       this.ongoingSessions[request.sessionID].ffmpeg.push(ffmpegReturnAudio);
 
       // Feed the SDP session description to FFmpeg on stdin.
-      ffmpegReturnAudio.stdin?.write(sdpReturnAudio);
-      ffmpegReturnAudio.stdin?.end();
+      ffmpegReturnAudio.stdin?.end(sdpReturnAudio + "\n");
 
       // Send the audio.
       ffmpegReturnAudio.stdout?.on("data", dataListener = (data: Buffer): void => {
@@ -925,16 +927,18 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
     // Set a timer to revert back to normal behavior.
     this.verboseFfmpegTimer = setTimeout(() => {
-      this.platform.verboseFfmpeg = false;
-      this.log.info("Returning FFmpeg logging output to normal levels.");
+
+      this.verboseFfmpeg = false;
+      this.log.info("%s: Returning FFmpeg logging output to normal levels.", this.name());
 
       // Clear out the old timer.
       this.verboseFfmpegTimer = null;
     }, PROTECT_FFMPEG_VERBOSE_DURATION * 60 * 1000);
 
-    this.log.info("FFmpeg exited unexpectedly." +
-      " Increasing logging output of FFmpeg for the next %s minutes to provide additional detail for future attempts to stream video.", PROTECT_FFMPEG_VERBOSE_DURATION);
+    this.log.info(
+      "%s: FFmpeg exited unexpectedly. Increasing logging output of FFmpeg for the next %s minutes to provide additional detail for future attempts to stream video.",
+      this.name(), PROTECT_FFMPEG_VERBOSE_DURATION);
 
-    this.platform.verboseFfmpeg = true;
+    this.verboseFfmpeg = true;
   }
 }
