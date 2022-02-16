@@ -699,8 +699,14 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       // Setup housekeeping for the twoway FFmpeg session.
       this.ongoingSessions[request.sessionID].ffmpeg.push(ffmpegReturnAudio);
 
-      // Feed the SDP session description to FFmpeg on stdin.
-      ffmpegReturnAudio.stdin?.end(sdpReturnAudio + "\n");
+      // We want to delay sending the SDP session description briefly to allow FFmpeg to fully come up. This is
+      // an unfortunate, but necessary, workaround for low-power systems that struggle to keep up with context
+      // switching. Yes, this is an imperfect solution for an imperfect tool and the author isn't in love with it either.
+      setTimeout(() => {
+
+        // Feed the SDP session description to FFmpeg on stdin.
+        ffmpegReturnAudio.stdin?.end(sdpReturnAudio + "\n");
+      }, 100);
 
       // Send the audio.
       ffmpegReturnAudio.stdout?.on("data", dataListener = (data: Buffer): void => {
