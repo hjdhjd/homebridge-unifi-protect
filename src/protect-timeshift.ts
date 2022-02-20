@@ -15,6 +15,8 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
   private readonly accessory: PlatformAccessory;
   private buffer: Buffer[];
   private bufferSize: number;
+  private channelId: number;
+  private isStarted: boolean;
   private readonly livestream: ProtectLivestream;
   private readonly log: Logging;
   private readonly name: () => string;
@@ -31,17 +33,16 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
     this.accessory = protectCamera.accessory;
     this.buffer = [];
     this.bufferSize = 1;
+    this.channelId = 0;
+    this.isStarted = false;
     this.livestream = new ProtectLivestream(protectCamera.nvr.nvrApi, protectCamera.platform.log);
     this.log = protectCamera.platform.log;
     this.name = protectCamera.name.bind(protectCamera);
     this.nvr = protectCamera.nvr;
     this.protectCamera = protectCamera;
 
-    // We use 100ms in segment resolution for our timeshift buffer to ensure we provide an optimal
-    // timeshifting experience. It's a very small amount of additional overhead for most modern CPUs,
-    // but the result is a much better HKSV event recording. We may eventually allow for a larger segment
-    // resolution in order to give devices at the lower end of the performance curve some added cushion,
-    // albeit at the expense of a suboptimal user experience when reviewing HKSV recorded events.
+    // We use a small value for segment resolution in our timeshift buffer to ensure we provide an optimal timeshifting experience.
+    // It's a very small amount of additional overhead for most modern CPUs, but the result is a much better HKSV event recording.
     this._segmentLength = PROTECT_HKSV_SEGMENT_RESOLUTION;
 
     this._isTransmitting = false;
@@ -51,28 +52,30 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
   // Configure the timeshift buffer.
   private configureTimeshiftBuffer(): void {
 
-    let seenFtyp = false;
-    let seenMoov = false;
+    let seenInitSegment = false;
+
+    // If the livestream API has closed, stop what we're doing.
+    this.livestream.on("close", () => {
+
+      this.log.error("%s: The Protect livestream API has closed unexpectedly and will retry again shortly. " +
+        "This is usually due to a controller or camera restart and can be safely ignored.", this.name());
+
+      this.stop();
+    });
 
     // First, we need to listen for any segments sent by the UniFi Protect livestream in order
     // to create our timeshift buffer.
     this.livestream.on("message", (segment: Buffer) => {
 
-      // Crucially, we don't want to keep any FTYP or MOOV atoms in our timeshift buffer. The
-      // reason for this is that these atoms are special in the MP4 world and must be transmitted
-      // at the beginning of any new MP4 stream. So what do we do? The livestream saves these atoms
-      // for us, so all we need to do is ensure we don't include them in our timeshift buffer. There
-      // should only ever be a single FTYP or MOOV atom, so once we've seen one, we don't need to
-      // worry about it again.
-      if(!seenFtyp && this.livestream.ftyp?.equals(segment)) {
+      // Crucially, we don't want to keep any initialization segment (which is always composed of
+      // FTYP and MOOV boxes) in our timeshift buffer. The reason for this is that these boxes are
+      // special in the fMP4 world and must be transmitted at the beginning of any new fMP4 stream.
+      // So what do we do? The livestream saves the initialization segment for us, so all we need to
+      // do is ensure we don't include them in our timeshift buffer. There should only ever be a single
+      // initialization segment, so once we've seen one, we don't need to worry about it again.
+      if(!seenInitSegment && this.livestream.initSegment?.equals(segment)) {
 
-        seenFtyp = true;
-        return;
-      }
-
-      if(!seenMoov && this.livestream.moov?.equals(segment)) {
-
-        seenMoov = true;
+        seenInitSegment = true;
         return;
       }
 
@@ -106,16 +109,14 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
   // Start the livestream and begin creating our timeshift buffer.
   public async start(channelId: number): Promise<boolean> {
 
-    // Ensure we have sane values configured for the segment resolution.
+    // Ensure we have sane values configured for the segment resolution. We check this here instead of
+    // in the constructor because we may not have an HKSV recording configuration available to us immediately upon startup.
     if(this.protectCamera.stream.hksv?.recordingConfiguration?.mediaContainerConfiguration.fragmentLength) {
 
-      if((this.segmentLength < 100) ||
+      if((this.segmentLength < 100) || (this.segmentLength > 1500) ||
         (this.segmentLength > (this.protectCamera.stream.hksv?.recordingConfiguration?.mediaContainerConfiguration.fragmentLength / 2))) {
 
-        this._segmentLength = this.protectCamera.stream.hksv?.recordingConfiguration?.mediaContainerConfiguration.fragmentLength / 2;
-
-        this.log.error("%s: An invalid HomeKit Secure Video segment length was configured. " +
-          "Choosing a safe value instead, though one that provides a less than ideal event clip viewing experience: %s.", this.name(), this.segmentLength);
+        this._segmentLength = PROTECT_HKSV_SEGMENT_RESOLUTION;
       }
     }
 
@@ -128,6 +129,8 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
       return false;
     }
 
+    this.channelId = channelId;
+    this.isStarted = true;
     return true;
   }
 
@@ -136,12 +139,13 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
 
     this.livestream.stop();
     this.buffer = [];
+    this.isStarted = false;
 
     return true;
   }
 
   // Start or stop transmitting our timeshift buffer.
-  public transmitStream(transmitState: boolean): void {
+  public async transmitStream(transmitState: boolean): Promise<void> {
 
     // If we're done transmitting, flag it, and allow our buffer to resume maintaining itself.
     if(!transmitState) {
@@ -150,53 +154,34 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
       return;
     }
 
-    // Add the FTYP and MOOV atoms to the beginning of the timeshift buffer, if we have them.
-    // If we don't, FFmpeg will still be able to generate a valid fMP4 stream, albeit a slightly
-    // less elegantly.
-    if(this.livestream.ftyp && this.livestream.moov) {
+    // If we haven't started the livestream, or it was closed for some reason, let's start it now.
+    if(!this.isStarted && !(await this.start(this.channelId))) {
 
-      this.buffer.unshift(this.livestream.ftyp, this.livestream.moov);
+      this.log.error("%s: Unable to access the Protect livestream API. " +
+        "This is usually due to the Protect controller or camera restarting. Will retry again on the next detected motion event.", this.name());
+      return;
+    }
+
+    // Add the initialization segment to the beginning of the timeshift buffer, if we have it.
+    // If we don't, FFmpeg will still be able to generate a valid fMP4 stream, albeit a slightly less elegantly.
+    const initSegment = await this.livestream.getInitSegment();
+
+    if(initSegment) {
+
+      this.buffer.unshift(initSegment);
     } else {
 
-      this.log.debug("%s: Warning: no MP4 stream headers found. This error can be largely ignored - FFmpeg will compensate.",
-        this.name());
+      this.log.error("%s: Unable to get the fMP4 stream header.", this.name());
     }
 
     // Signal our livestream listener that it's time to start transmitting our queued segments and timeshift.
     this._isTransmitting = true;
   }
 
-  // Return the fMP4 stream header for an HKSV session.
-  public async getStreamHeader(): Promise<Buffer | null> {
+  // Check if this is the fMP4 initialization segment.
+  public isInitSegment(segment: Buffer): boolean {
 
-    // Keep looping until we see both, but don't loop for more than two seconds, as a failsafe.
-    for(let i = 0; i < 20; i++) {
-
-      // We have what we're looking for. We're done.
-      if(this.livestream.ftyp && this.livestream.moov) {
-
-        break;
-      }
-
-      // Let's try again shortly.
-      // eslint-disable-next-line no-await-in-loop
-      await this.nvr.sleep(100);
-    }
-
-    // We still don't have the boxes that make up the stream header. Time to give up.
-    if(!this.livestream.ftyp || !this.livestream.moov) {
-
-      return null;
-    }
-
-    // Return the header.
-    return Buffer.concat([ this.livestream.ftyp, this.livestream.moov ]);
-  }
-
-  // Check if a segment is the FTYP box.
-  public isFtyp(segment: Buffer): boolean {
-
-    if(this.livestream.ftyp?.equals(segment)) {
+    if(this.livestream.initSegment?.equals(segment)) {
 
       return true;
     }
@@ -204,15 +189,9 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
     return false;
   }
 
-  // Check if a segment is the MOOV box.
-  public isMoov(segment: Buffer): boolean {
+  public getInitSegment(): Promise<Buffer> {
 
-    if(this.livestream.moov?.equals(segment)) {
-
-      return true;
-    }
-
-    return false;
+    return this.livestream.getInitSegment();
   }
 
   // Return whether we are transmitting our timeshift buffer or not.

@@ -30,9 +30,6 @@ export const PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS = 1000;
 // Magic incantantion to further streamline FFmpeg for Protect.
 export const PROTECT_FFMPEG_OPTIONS = [];
 
-// Duration, in minutes, to increase the level of logging for FFmpeg when we encounter errors.
-export const PROTECT_FFMPEG_VERBOSE_DURATION = 5;
-
 // HomeKit prefers a video streaming I-frame interval of 4 seconds.
 export const PROTECT_HOMEKIT_IDR_INTERVAL = 4;
 
@@ -59,8 +56,9 @@ export const PROTECT_RING_DURATION = 3;
 // FFmpeg's input timeout interval.
 export const PROTECT_TWOWAY_HEARTBEAT_INTERVAL = 3.5;
 
-// HomeKit Secure Video segment resolution, in milliseconds. This defines the resolution of our buffer.
-export const PROTECT_HKSV_SEGMENT_RESOLUTION = 100;
+// HomeKit Secure Video segment resolution, in milliseconds. This defines the resolution of our buffer. It should never be
+// less than 100ms or greater than 1500ms.
+export const PROTECT_HKSV_SEGMENT_RESOLUTION = 200;
 
 // HomeKit Secure Video segment length, in milliseconds. HomeKit only supports this value currently.
 export const PROTECT_HKSV_SEGMENT_LENGTH = 4000;

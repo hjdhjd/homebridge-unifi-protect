@@ -4,8 +4,9 @@
  *
  */
 import { CameraRecordingConfiguration, H264Level, H264Profile } from "homebridge";
+import { ProtectCamera, RtspEntry } from "./protect-camera";
 import { FfmpegProcess } from "./protect-ffmpeg";
-import { ProtectCamera } from "./protect-camera";
+import { ProtectCameraConfig } from "unifi-protect";
 
 // FFmpeg HomeKit Streaming Video recording process management.
 export class FfmpegRecordingProcess extends FfmpegProcess {
@@ -13,10 +14,10 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
   private recordingBuffer: { data: Buffer, header: Buffer, length: number, type: string }[];
 
   // Create a new FFmpeg process instance.
-  constructor(device: ProtectCamera, recordingConfig: CameraRecordingConfiguration, isAudioActive: boolean) {
+  constructor(protectCamera: ProtectCamera, recordingConfig: CameraRecordingConfiguration, rtspEntry: RtspEntry, isAudioActive: boolean) {
 
     // Initialize our parent.
-    super(device);
+    super(protectCamera);
 
     // Initialize our recording buffer.
     this.recordingBuffer = [];
@@ -28,32 +29,81 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
     const requestedLevel = (recordingConfig.videoCodec.parameters.level === H264Level.LEVEL4_0) ? "4.0"
       : (recordingConfig.videoCodec.parameters.level === H264Level.LEVEL3_2) ? "3.2" : "3.1";
 
-    // Configure our video parameters for transcoding:
-    //
     // -hide_banner:                                         Suppress printing the startup banner in FFmpeg.
-    // -f mp4                                                Tell ffmpeg that it should expect an MP4-encoded input stream.
-    // -i pipe:0                                             Use standard input to get video data.
-    // -map 0:v                                              Selects the first available video track from the stream. Protect actually maps audio
-    //                                                       and video tracks in opposite locations from where FFmpeg typically expects them. This
-    //                                                       setting is a more general solution than naming the track locations directly in case
-    //                                                       Protect changes this in the future.
-    // -vcodec libx264                                       Copy the stream withour reencoding it.
-    // -pix_fmt yuvj420p                                     Use the yuvj420p pixel format, which is what Protect uses.
-    // -profile:v high                                       Use the H.264 high profile when encoding, which provides for better stream quality and size efficiency.
-    // -preset veryfast                                      Use the veryfast encoding preset in libx264, which provides a good balance of encoding speed and quality.
-    // -b:v bitrate                                          The average bitrate to use for this stream. This is specified by HomeKit Secure Video.
-    // -bufsize size                                         This is the decoder buffer size, which drives the variability / quality of the output bitrate.
-    // -maxrate bitrate                                      The maximum bitrate tolerance, used with -bufsize. We set this to effectively create a constant bitrate.
-    // -force_key_frames expr:gte(t, n_forced * 4)           Force a specific keyframe interval in the fMP4 stream we are generating.
-    // -fflags +genpts                                       Generate a presentation timestamp (PTS) if there's a valid decoding timestamp (DTS) and PTS is missing.
-    // -reset_timestamps 1                                   Reset timestamps at the beginning of each segment to make the generated segments easier to consume.
-    // -movflags frag_keyframe+empty_moov+default_base_moof  Start a new fragment at each keyframe, send the MOOV box at the beginning of the stream, and avoid
-    //                                                       writing absolute byte positions for the segments we send.
     this.commandLineArgs = [
 
-      "-hide_banner",
-      "-f", "mp4",
-      "-i", "pipe:0",
+      "-hide_banner"
+    ];
+
+    if(this.nvr?.optionEnabled(protectCamera.accessory.context.device as ProtectCameraConfig, "Video.HKSV.TimeshiftBuffer")) {
+
+      // Configure our video parameters for our input:
+      //
+      // -fflags flags                 Set format flags to discard any corrupt packets rather than exit, reduce the latency due to buffering,
+      //                               and ensure that packets are written out immediately.
+      // -r fps                           Set the input frame rate for the video stream.
+      // -f mp4                                                Tell ffmpeg that it should expect an MP4-encoded input stream.
+      // -i pipe:0                                             Use standard input to get video data.
+      this.commandLineArgs.push(
+
+        "-fflags", "+discardcorrupt+nobuffer+flush_packets",
+        "-r", rtspEntry.channel.fps.toString(),
+        "-f", "mp4",
+        "-i", "pipe:0"
+      );
+
+    } else {
+
+      // We're not using the timeshift buffer, so let's use the RTSP stream as the input to HKSV.
+      //
+      // -hide_banner                     Suppress printing the startup banner in FFmpeg.
+      // -probesize 1536                  How many bytes should be analyzed for stream information. We default to to analyze time should be spent analyzing
+      //                                  the input stream, in microseconds. We default to 1536.
+      // -max_delay 500000                Set an upper limit on how much time FFmpeg can take in demuxing packets.
+      // -fflags +flush_packets+nobuffer  Set format flags to ensure that packets are written out immediately and that latency due to buffering is reduced.
+      // -flush_packets 1                 Flush the underlying I/O stream after each packet to further reduce latency.
+      // -r fps                           Set the input frame rate for the video stream.
+      // -rtsp_transport tcp              Tell the RTSP stream handler that we're looking for a TCP connection.
+      // -i this.rtspEntry.url            RTSPS URL to get our input stream from.
+      this.commandLineArgs.push(
+
+        "-probesize", "2048",
+        "-max_delay", "500000",
+        "-fflags", "+flush_packets+nobuffer",
+        "-flush_packets", "1",
+        "-r", rtspEntry.channel.fps.toString(),
+        "-rtsp_transport", "tcp",
+        "-i", rtspEntry.url
+      );
+
+    }
+
+    // -map 0:v                      Selects the first available video track from the stream. Protect actually maps audio
+    //                               and video tracks in opposite locations from where FFmpeg typically expects them. This
+    //                               setting is a more general solution than naming the track locations directly in case
+    //                               Protect changes this in the future.
+    //                               Yes, we included these above as well: they need to be included for every I/O stream to
+    //                               maximize effectiveness it seems.
+    // -vcodec libx264               Copy the stream withour reencoding it.
+    // -pix_fmt yuvj420p             Use the yuvj420p pixel format, which is what Protect uses.
+    // -profile:v level              Use the H.264 profile HKSV is requesting when encoding.
+    // -level:v level                Use the H.264 profile level HKSV is requesting when encoding.
+    // -preset veryfast              Use the veryfast encoding preset in libx264, which provides a good balance of encoding
+    //                               speed and quality.
+    // -b:v bitrate                  The average bitrate to use for this stream as requested by HKSV.
+    // -bufsize size                 This is the decoder buffer size, which drives the variability / quality of the output bitrate.
+    // -maxrate bitrate              The maximum bitrate tolerance, used with -bufsize. We set this to max_bit_rate to effectively
+    //                               create a constant bitrate.
+    // -force_key_frames condition   Inject an I-frame at the interval that HKSV requests. This is calculated using a conditional expression.
+    // -avioflags direct             Reduce buffering.
+    // -fflags flags                 Set format flags to generate a presentation timestamp if it's missing, discard any corrupt packets rather
+    //                               than exit, reduce the latency due to buffering, and ensure that packets are written out immediately.
+    // -flush_packets 1              Flush the underlying I/O stream after each packet to further reduce latency.
+    // -reset_timestamps             Reset timestamps at the beginning of each segment.
+    // -movflags flags               In the generated fMP4 stream: start a new fragment at each keyframe, write a blank MOOV box, and
+    //                               avoid writing absolute offsets
+    this.commandLineArgs.push(
+
       "-map", "0:v",
       "-vcodec", this.protectCamera.stream.videoEncoder || "libx264",
       "-pix_fmt", "yuvj420p",
@@ -64,10 +114,12 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
       "-bufsize", (2 * recordingConfig.videoCodec.parameters.bitRate).toString() + "k",
       "-maxrate", recordingConfig.videoCodec.parameters.bitRate.toString() + "k",
       "-force_key_frames", "expr:gte(t, n_forced * " + (recordingConfig.videoCodec.parameters.iFrameInterval / 1000).toString() + ")",
-      "-fflags", "+genpts",
+      "-avioflags", "direct",
+      "-fflags", "+genpts+discardcorrupt+nobuffer+flush_packets",
+      "-flush_packets", "1",
       "-reset_timestamps", "1",
       "-movflags", "frag_keyframe+empty_moov+default_base_moof"
-    ];
+    );
 
     if(isAudioActive) {
 
@@ -92,7 +144,7 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
     this.commandLineArgs.push("-f", "mp4", "pipe:1");
 
     // Additional logging, but only if we're debugging.
-    if(device.platform.verboseFfmpeg) {
+    if(protectCamera.platform.verboseFfmpeg) {
 
       this.commandLineArgs.unshift("-loglevel", "level+verbose");
     }
