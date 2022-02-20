@@ -157,30 +157,33 @@ export abstract class ProtectAccessory extends ProtectBase {
       return false;
     }
 
-    // The motion sensor has already been configured.
-    if(motionService) {
-
-      // Initialize the state of the motion sensor.
-      motionService.updateCharacteristic(this.hap.Characteristic.MotionDetected, false);
-      motionService.updateCharacteristic(this.hap.Characteristic.StatusActive, device.state === "CONNECTED");
-
-      this.configureMqttMotionTrigger();
-      return true;
-    }
-
-    // We don't have it, add the motion sensor to the camera.
-    motionService = new this.hap.Service.MotionSensor(this.accessory.displayName);
-
+    // We don't have a motion sensor, let's add it to the camera.
     if(!motionService) {
 
-      this.log.error("%s: Unable to add motion sensor.", this.name());
-      return false;
+      // We don't have it, add the motion sensor to the camera.
+      motionService = new this.hap.Service.MotionSensor(this.accessory.displayName);
+
+      if(!motionService) {
+
+        this.log.error("%s: Unable to add motion sensor.", this.name());
+        return false;
+      }
+
+      this.accessory.addService(motionService);
+
+      this.log.info("%s: Enabling motion sensor.", this.name());
     }
 
-    this.accessory.addService(motionService);
-    this.configureMqttMotionTrigger();
+    // Initialize the state of the motion sensor.
+    motionService.updateCharacteristic(this.hap.Characteristic.MotionDetected, false);
+    motionService.updateCharacteristic(this.hap.Characteristic.StatusActive, device.state === "CONNECTED");
 
-    this.log.info("%s: Enabling motion sensor.", this.name());
+    motionService.getCharacteristic(this.hap.Characteristic.StatusActive).onGet(() => {
+
+      return (this.accessory.context.device as ProtectCameraConfig).state === "CONNECTED";
+    });
+
+    this.configureMqttMotionTrigger();
 
     return true;
   }
