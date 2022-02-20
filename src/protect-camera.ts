@@ -2,14 +2,7 @@
  *
  * protect-camera.ts: Camera device class for UniFi Protect.
  */
-import {
-  PROTECT_CONTACT_MOTION_SMARTDETECT,
-  PROTECT_SWITCH_DOORBELL_TRIGGER,
-  PROTECT_SWITCH_HKSV_RECORDING,
-  PROTECT_SWITCH_MOTION_SENSOR,
-  PROTECT_SWITCH_MOTION_TRIGGER,
-  ProtectAccessory
-} from "./protect-accessory";
+import { ProtectAccessory, ProtectReservedNames } from "./protect-accessory";
 import { ProtectApi, ProtectCameraChannelConfig, ProtectCameraConfig, ProtectNvrBootstrap } from "unifi-protect";
 import { CharacteristicValue } from "homebridge";
 import { PROTECT_HOMEKIT_IDR_INTERVAL } from "./settings";
@@ -58,6 +51,14 @@ export class ProtectCamera extends ProtectAccessory {
       detectMotion = this.accessory.context.detectMotion as boolean;
     }
 
+    // Default to disabling the dynamic bitrate setting.
+    let dynamicBitrate = false;
+
+    // Save the dynamic bitrate switch state before we wipeout the context.
+    if(this.accessory.context.dynamicBitrate !== undefined) {
+      dynamicBitrate = this.accessory.context.dynamicBitrate as boolean;
+    }
+
     // Default to enabling HKSV recording.
     let hksvRecording = true;
 
@@ -71,12 +72,13 @@ export class ProtectCamera extends ProtectAccessory {
     this.accessory.context.device = device;
     this.accessory.context.nvr = this.nvr.nvrApi.bootstrap?.nvr.mac;
     this.accessory.context.detectMotion = detectMotion;
+    this.accessory.context.dynamicBitrate = dynamicBitrate;
     this.accessory.context.hksvRecording = hksvRecording;
 
-    // Inform the user if we have enabled dynamic bitrates.
-    if(this.nvr?.optionEnabled(this.accessory.context.device as ProtectCameraConfig, "Video.Dynamic.Bitrates", false)) {
+    // Inform the user if we have enabled the dynamic bitrate setting.
+    if(this.nvr?.optionEnabled(this.accessory.context.device as ProtectCameraConfig, "Video.DynamicBitrate", false)) {
 
-      this.log.info("%s: Dynamic adjustment of bitrates using the UniFi Protect controller enabled.", this.name());
+      this.log.info("%s: Dynamic streaming bitrate adjustment on the UniFi Protect controller enabled.", this.name());
     }
 
     // If the camera supports it, check to see if we have smart motion events enabled.
@@ -123,6 +125,12 @@ export class ProtectCamera extends ProtectAccessory {
     // Configure our camera details.
     this.configureCameraDetails();
 
+    // Configure our bitrate switch.
+    this.configureDynamicBitrateSwitch();
+
+    // Configure our NVR recording switches.
+    this.configureNvrRecordingSwitch();
+
     // Configure the doorbell trigger.
     this.configureDoorbellTrigger();
 
@@ -135,7 +143,7 @@ export class ProtectCamera extends ProtectAccessory {
     const device = this.accessory.context.device as ProtectCameraConfig;
 
     // Check for object-centric contact sensors that are no longer enabled and remove them.
-    for(const objectService of this.accessory.services.filter(x => x.subtype?.startsWith(PROTECT_CONTACT_MOTION_SMARTDETECT + "."))) {
+    for(const objectService of this.accessory.services.filter(x => x.subtype?.startsWith(ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + "."))) {
 
       // If we have motion sensors as well as object contact sensors enabled, and we have this object type enabled on this camera, we're good here.
       if(this.nvr?.optionEnabled(device, "Motion.Sensor") &&
@@ -162,13 +170,13 @@ export class ProtectCamera extends ProtectAccessory {
     for(const smartDetectType of device.featureFlags.smartDetectTypes) {
 
       // See if we already have this contact sensor configured.
-      let contactService = this.accessory.getServiceById(this.hap.Service.ContactSensor, PROTECT_CONTACT_MOTION_SMARTDETECT + "." + smartDetectType);
+      let contactService = this.accessory.getServiceById(this.hap.Service.ContactSensor, ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + "." + smartDetectType);
 
       // If not, let's add it.
       if(!contactService) {
 
         contactService = new this.hap.Service.ContactSensor(this.accessory.displayName + " " + smartDetectType.charAt(0).toUpperCase() + smartDetectType.slice(1),
-          PROTECT_CONTACT_MOTION_SMARTDETECT + "." + smartDetectType);
+          ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + "." + smartDetectType);
 
         // Something went wrong, we're done here.
         if(!contactService) {
@@ -194,7 +202,7 @@ export class ProtectCamera extends ProtectAccessory {
   private configureMotionTrigger(): boolean {
 
     // Find the switch service, if it exists.
-    let triggerService = this.accessory.getServiceById(this.hap.Service.Switch, PROTECT_SWITCH_MOTION_TRIGGER);
+    let triggerService = this.accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_MOTION_TRIGGER);
 
     // Motion triggers are disabled by default and primarily exist for automation purposes.
     if(!this.nvr?.optionEnabled(this.accessory.context.device as ProtectCameraConfig, "Motion.Sensor") ||
@@ -209,7 +217,7 @@ export class ProtectCamera extends ProtectAccessory {
 
     // Add the switch to the camera, if needed.
     if(!triggerService) {
-      triggerService = new this.hap.Service.Switch(this.accessory.displayName + " Motion Trigger", PROTECT_SWITCH_MOTION_TRIGGER);
+      triggerService = new this.hap.Service.Switch(this.accessory.displayName + " Motion Trigger", ProtectReservedNames.SWITCH_MOTION_TRIGGER);
 
       if(!triggerService) {
         this.log.error("%s: Unable to add motion sensor trigger.", this.name());
@@ -220,7 +228,7 @@ export class ProtectCamera extends ProtectAccessory {
     }
 
     const motionService = this.accessory.getService(this.hap.Service.MotionSensor);
-    const switchService = this.accessory.getServiceById(this.hap.Service.Switch, PROTECT_SWITCH_MOTION_SENSOR);
+    const switchService = this.accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_MOTION_SENSOR);
 
     // Activate or deactivate motion detection.
     triggerService
@@ -271,7 +279,7 @@ export class ProtectCamera extends ProtectAccessory {
     const camera = (this.accessory.context.device as ProtectCameraConfig);
 
     // Find the switch service, if it exists.
-    let triggerService = this.accessory.getServiceById(this.hap.Service.Switch, PROTECT_SWITCH_DOORBELL_TRIGGER);
+    let triggerService = this.accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_DOORBELL_TRIGGER);
 
     // See if we have a doorbell service configured.
     let doorbellService = this.accessory.getService(this.hap.Service.Doorbell);
@@ -310,7 +318,7 @@ export class ProtectCamera extends ProtectAccessory {
 
     // Add the switch to the camera, if needed.
     if(!triggerService) {
-      triggerService = new this.hap.Service.Switch(this.accessory.displayName + " Doorbell Trigger", PROTECT_SWITCH_DOORBELL_TRIGGER);
+      triggerService = new this.hap.Service.Switch(this.accessory.displayName + " Doorbell Trigger", ProtectReservedNames.SWITCH_DOORBELL_TRIGGER);
 
       if(!triggerService) {
         this.log.error("%s: Unable to add the doorbell trigger.", this.name());
@@ -440,85 +448,6 @@ export class ProtectCamera extends ProtectAccessory {
     return true;
   }
 
-  // Find an RTSP configuration for a given target resolution.
-  public findRtsp(width: number, height: number, camera: ProtectCameraConfig | null = null, address = "", rtspEntries = this.rtspEntries): RtspEntry | null {
-
-    // No RTSP entries to choose from, we're done.
-    if(!rtspEntries || !rtspEntries.length) {
-      return null;
-    }
-
-    // First, we check to see if we've set an explicit preference for the target address.
-    if(camera && address) {
-
-      // If we don't have this address cached, look it up and cache it.
-      if(!this.rtspQuality[address]) {
-
-        // Check to see if there's an explicit preference set and cache the result.
-        if(this.nvr.optionEnabled(camera, "Video.Stream.Only.Low", false, address, true)) {
-
-          this.rtspQuality[address] = "LOW";
-        } else if(this.nvr.optionEnabled(camera, "Video.Stream.Only.Medium", false, address, true)) {
-
-          this.rtspQuality[address] = "MEDIUM";
-        } else if(this.nvr.optionEnabled(camera, "Video.Stream.Only.High", false, address, true)) {
-
-          this.rtspQuality[address] = "HIGH";
-        } else {
-
-          this.rtspQuality[address] = "None";
-        }
-      }
-
-      // If it's set to none, we default to our normal lookup logic.
-      if(this.rtspQuality[address] !== "None") {
-
-        return rtspEntries.find(x => x.channel.name.toUpperCase() === this.rtspQuality[address]) ?? null;
-      }
-    }
-
-    // Second, we check to see if we've set an explicit preference for stream quality.
-    if(this.rtspQuality.Default) {
-      return rtspEntries.find(x => x.channel.name.toUpperCase() === this.rtspQuality.Default) ?? null;
-    }
-
-    // See if we have a match for our desired resolution on the camera. We ignore FPS - HomeKit clients seem
-    // to be able to handle it just fine.
-    const exactRtsp = rtspEntries.find(x => (x.resolution[0] === width) && (x.resolution[1] === height));
-
-    if(exactRtsp) {
-      return exactRtsp;
-    }
-
-    // No match found, let's see what we have that's closest. We try to be a bit smart about how we select our
-    // stream - if it's an HD quality stream request (720p+), we want to try to return something that's HD quality
-    // before looking for something lower resolution.
-    if((width >= 1280) && (height >= 720)) {
-
-      for(const entry of rtspEntries) {
-
-        // Make sure we're looking at an HD resolution.
-        if(entry.resolution[0] < 1280) {
-          continue;
-        }
-
-        // Return the first one we find.
-        return entry;
-      }
-    }
-
-    // If we didn't request an HD resolution, or we couldn't find anything HD to use, we try to find whatever we
-    // can find that's close.
-    for(const entry of rtspEntries) {
-      if(width >= entry.resolution[0]) {
-        return entry;
-      }
-    }
-
-    // We couldn't find a close match, return the lowest resolution we found.
-    return rtspEntries[rtspEntries.length - 1];
-  }
-
   // Configure a camera accessory for HomeKit.
   public async configureVideoStream(): Promise<boolean> {
 
@@ -626,19 +555,34 @@ export class ProtectCamera extends ProtectAccessory {
       }
     }
 
-    // Check to see if the user has requested a specific stream quality for this camera.
-    if(nvr.optionEnabled(device, "Video.Stream.Only.Low", false)) {
-      this.rtspQuality.Default = "LOW";
-    } else if(nvr.optionEnabled(device, "Video.Stream.Only.Medium", false)) {
-      this.rtspQuality.Default = "MEDIUM";
-    } else if(nvr.optionEnabled(device, "Video.Stream.Only.High", false)) {
-      this.rtspQuality.Default = "HIGH";
+    // Check for explicit RTSP profile preferences.
+    for(const rtspProfile of [ "LOW", "MEDIUM", "HIGH" ]) {
+
+      // Check to see if the user has requested a specific streaming profile for this camera.
+      if(nvr.optionEnabled(device, "Video.Stream.Only." + rtspProfile, false)) {
+
+        this.rtspQuality.StreamingDefault = rtspProfile;
+      }
+
+      // Check to see if the user has requested a specific recording profile for this camera.
+      if(nvr.optionEnabled(device, "Video.HKSV.Recording.Only." + rtspProfile, false)) {
+
+        this.rtspQuality.RecordingDefault = rtspProfile;
+      }
     }
 
-    // Inform the user if we've set a default.
-    if(this.rtspQuality.Default) {
-      this.log.info("%s: Configured to use only RTSP stream profile: %s.", this.name(),
-        this.rtspQuality.Default.charAt(0) + this.rtspQuality.Default.slice(1).toLowerCase());
+    // Inform the user if we've set a streaming default.
+    if(this.rtspQuality.StreamingDefault) {
+
+      this.log.info("%s: Video streaming configured to use only: %s.", this.name(),
+        this.rtspQuality.StreamingDefault.charAt(0) + this.rtspQuality.StreamingDefault.slice(1).toLowerCase());
+    }
+
+    // Inform the user if we've set a recording default.
+    if(this.rtspQuality.RecordingDefault) {
+
+      this.log.info("%s: HomeKit Secure Video event recording configured to use only: %s.", this.name(),
+        this.rtspQuality.RecordingDefault.charAt(0) + this.rtspQuality.RecordingDefault.slice(1).toLowerCase());
     }
 
     // Configure the video stream with our resolutions.
@@ -689,9 +633,9 @@ export class ProtectCamera extends ProtectAccessory {
   private configureHksvRecordingSwitch(): boolean {
 
     // Find the switch service, if it exists.
-    let switchService = this.accessory.getServiceById(this.hap.Service.Switch, PROTECT_SWITCH_HKSV_RECORDING);
+    let switchService = this.accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_HKSV_RECORDING);
 
-    // If we don't have HKSV or the HKSV recording switch, disable the switch and we're done.
+    // If we don't have HKSV or the HKSV recording switch enabled, disable it and we're done.
     if(!this.nvr?.optionEnabled(this.accessory.context.device as ProtectCameraConfig, "Video.HKSV") ||
       !this.nvr?.optionEnabled(this.accessory.context.device as ProtectCameraConfig, "Video.HKSV.Recording.Switch", false)) {
 
@@ -701,7 +645,7 @@ export class ProtectCamera extends ProtectAccessory {
       }
 
       // We want to default this back to recording whenever we disable the recording switch.
-      this.accessory.context.hksvRecording;
+      this.accessory.context.hksvRecording = true;
 
       return false;
     }
@@ -709,7 +653,7 @@ export class ProtectCamera extends ProtectAccessory {
     // Add the switch to the camera, if needed.
     if(!switchService) {
 
-      switchService = new this.hap.Service.Switch(this.accessory.displayName + " HKSV Recording", PROTECT_SWITCH_HKSV_RECORDING);
+      switchService = new this.hap.Service.Switch(this.accessory.displayName + " HKSV Recording", ProtectReservedNames.SWITCH_HKSV_RECORDING);
 
       if(!switchService) {
 
@@ -741,6 +685,208 @@ export class ProtectCamera extends ProtectAccessory {
     switchService.updateCharacteristic(this.hap.Characteristic.On, this.accessory.context.hksvRecording as boolean);
 
     this.log.info("%s: Enabling HomeKit Secure Video recording switch.", this.name());
+
+    return true;
+  }
+
+  // Configure a switch to manually enable or disable dynamic bitrate capabilities for a camera.
+  private configureDynamicBitrateSwitch(): boolean {
+
+    // Find the switch service, if it exists.
+    let switchService = this.accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_DYNAMIC_BITRATE);
+
+    // If we don't want a dynamic bitrate switch, disable it and we're done.
+    if(!this.nvr?.optionEnabled(this.accessory.context.device as ProtectCameraConfig, "Video.DynamicBitrate.Switch", false)) {
+
+      if(switchService) {
+
+        this.accessory.removeService(switchService);
+      }
+
+      // We want to default this back to off by default whenever we disable the dynamic bitrate switch.
+      this.accessory.context.dynamicBitrate = false;
+
+      return false;
+    }
+
+    // Add the switch to the camera, if needed.
+    if(!switchService) {
+
+      switchService = new this.hap.Service.Switch(this.accessory.displayName + " Dynamic Bitrate", ProtectReservedNames.SWITCH_DYNAMIC_BITRATE);
+
+      if(!switchService) {
+
+        this.log.error("%s: Unable to add the dynamic bitrate switch.", this.name());
+        return false;
+      }
+
+      this.accessory.addService(switchService);
+    }
+
+    // Activate or deactivate dynamic bitrate for this device.
+    switchService
+      .getCharacteristic(this.hap.Characteristic.On)
+      ?.onGet(() => {
+
+        return this.accessory.context.dynamicBitrate as boolean;
+      })
+      .onSet(async (value: CharacteristicValue) => {
+
+        if(this.accessory.context.dynamicBitrate === value) {
+
+          return;
+        }
+
+        // We're enabling dynamic bitrate for this device.
+        if(value) {
+
+          this.accessory.context.dynamicBitrate = true;
+          this.log.info("%s: Dynamic streaming bitrate adjustment on the UniFi Protect controller enabled.", this.name());
+          return;
+        }
+
+        // We're disabling dynamic bitrate for this device.
+        const device = (this.accessory.context.device as ProtectCameraConfig);
+        const updatedChannels = device.channels;
+
+        // Update the channels JSON.
+        for(const channel of updatedChannels) {
+
+          channel.bitrate = channel.maxBitrate;
+        }
+
+        // Send the channels JSON to Protect.
+        const newDevice = await this.nvrApi.updateCamera(device, { channels: updatedChannels });
+
+        // We failed.
+        if(!newDevice) {
+
+          this.log.error("%s: Unable to set the streaming bitrate to %s.", this.name(), value);
+        } else {
+
+          this.accessory.context.device = newDevice;
+        }
+
+        this.accessory.context.dynamicBitrate = false;
+        this.log.info("%s: Dynamic streaming bitrate adjustment on the UniFi Protect controller disabled.", this.name());
+      });
+
+    // Initialize the switch.
+    switchService.updateCharacteristic(this.hap.Characteristic.On, this.accessory.context.dynamicBitrate as boolean);
+
+    this.log.info("%s: Enabling the dynamic streaming bitrate adjustment switch.", this.name());
+
+    return true;
+  }
+
+  // Configure a series of switches to manually enable or disable recording on the UniFi Protect controller for a camera.
+  private configureNvrRecordingSwitch(): boolean {
+
+    const switchesEnabled = [];
+
+    // The Protect controller supports three modes for recording on a camera: always, detections, and never. We create switches for each of the modes.
+    for(const ufpRecordingSwitchType of
+      [  ProtectReservedNames.SWITCH_UFP_RECORDING_ALWAYS, ProtectReservedNames.SWITCH_UFP_RECORDING_DETECTIONS, ProtectReservedNames.SWITCH_UFP_RECORDING_NEVER ]) {
+
+      const ufpRecordingSetting = ufpRecordingSwitchType.slice(ufpRecordingSwitchType.lastIndexOf(".") + 1);
+
+      // Find the switch service, if it exists.
+      let switchService = this.accessory.getServiceById(this.hap.Service.Switch, ufpRecordingSwitchType);
+
+      // If we don't have the feature option enabled, disable the switch and we're done.
+      if(!this.nvr?.optionEnabled(this.accessory.context.device as ProtectCameraConfig, "Nvr.Recording.Switch", false)) {
+
+        if(switchService) {
+
+          this.accessory.removeService(switchService);
+        }
+
+        continue;
+      }
+
+      // Add the switch to the camera, if needed.
+      if(!switchService) {
+
+        switchService = new this.hap.Service.Switch(
+          this.accessory.displayName + " UFP Recording " + ufpRecordingSetting.charAt(0).toUpperCase() + ufpRecordingSetting.slice(1),
+          ufpRecordingSwitchType);
+
+        if(!switchService) {
+
+          this.log.error("%s: Unable to add the UniFi Protect recording switches.", this.name());
+          continue;
+        }
+
+        this.accessory.addService(switchService);
+      }
+
+      // Activate or deactivate the appropriate recording mode on the Protect controller.
+      switchService
+        .getCharacteristic(this.hap.Characteristic.On)
+        ?.onGet(() => {
+
+          return (this.accessory.context.device as ProtectCameraConfig).recordingSettings.mode === ufpRecordingSetting;
+        })
+        .onSet(async (value: CharacteristicValue) => {
+
+          // We only want to do something if we're being activated. Turning off the switch would really be an undefined state given that
+          // there are three different settings one can choose from. Instead, we do nothing and leave it to the user to choose what state
+          // they really want to set.
+          if(!value) {
+
+            setTimeout(() => {
+
+              this.updateDevice();
+            }, 50);
+
+            return;
+          }
+
+          // Set our recording mode.
+          const device = this.accessory.context.device as ProtectCameraConfig;
+          device.recordingSettings.mode = ufpRecordingSetting;
+
+          // Tell Protect about it.
+          const newDevice = await this.nvr.nvrApi.updateCamera(device, { recordingSettings: device.recordingSettings });
+
+          if(!newDevice) {
+
+            this.log.error("%s: Unable to set the UniFi Protect recording mode to %s.", this.name(), ufpRecordingSetting);
+            return false;
+          }
+
+          // Save our updated device context.
+          this.accessory.context.device = newDevice;
+
+          // Update all the other recording switches.
+          for(const otherUfpSwitch of
+            [ ProtectReservedNames.SWITCH_UFP_RECORDING_ALWAYS, ProtectReservedNames.SWITCH_UFP_RECORDING_DETECTIONS, ProtectReservedNames.SWITCH_UFP_RECORDING_NEVER ]) {
+
+            // Don't update ourselves a second time.
+            if(ufpRecordingSwitchType === otherUfpSwitch) {
+
+              continue;
+            }
+
+            // Update the other recording switches.
+            this.accessory.getServiceById(this.hap.Service.Switch, otherUfpSwitch)?.updateCharacteristic(this.hap.Characteristic.On, false);
+          }
+
+          // Inform the user, and we're done.
+          this.log.info("%s: UniFi Protect recording mode set to %s.", this.name(), ufpRecordingSetting);
+        });
+
+      // Initialize the recording switch state.
+      switchService.updateCharacteristic(this.hap.Characteristic.On,
+        (this.accessory.context.device as ProtectCameraConfig).recordingSettings.mode === ufpRecordingSetting);
+
+      switchesEnabled.push(ufpRecordingSetting);
+    }
+
+    if(switchesEnabled.length) {
+
+      this.log.info("%s: Enabling UniFi Protect recording switches: %s.", this.name(), switchesEnabled.join(", "));
+    }
 
     return true;
   }
@@ -797,6 +943,9 @@ export class ProtectCamera extends ProtectAccessory {
     // Grab our device context.
     const device = this.accessory.context.device as ProtectCameraConfig;
 
+    // Update the camera state.
+    this.accessory.getService(this.hap.Service.MotionSensor)?.updateCharacteristic(this.hap.Characteristic.StatusActive, device.state === "CONNECTED");
+
     // Find the service, if it exists.
     const service = this.accessory.getService(this.hap.Service.CameraOperatingMode);
 
@@ -806,9 +955,25 @@ export class ProtectCamera extends ProtectAccessory {
       service?.updateCharacteristic(this.hap.Characteristic.CameraOperatingModeIndicator, device.ledSettings.isEnabled === true);
     }
 
+    // Check for updates to the recording state, if we have the switches configured.
+    if(this.nvr?.optionEnabled(device, "Nvr.Recording.Switch", false)) {
+
+      // Update all the switch states.
+      for(const ufpRecordingSwitchType of
+        [  ProtectReservedNames.SWITCH_UFP_RECORDING_ALWAYS, ProtectReservedNames.SWITCH_UFP_RECORDING_DETECTIONS, ProtectReservedNames.SWITCH_UFP_RECORDING_NEVER ]) {
+
+        const ufpRecordingSetting = ufpRecordingSwitchType.slice(ufpRecordingSwitchType.lastIndexOf(".") + 1);
+
+        // Update state based on the recording mode.
+        this.accessory.getServiceById(this.hap.Service.Switch, ufpRecordingSwitchType)?.
+          updateCharacteristic(this.hap.Characteristic.On, ufpRecordingSetting === device.recordingSettings.mode);
+      }
+    }
+
     return true;
   }
 
+  // Get the current bitrate for a specific camera channel.
   public getBitrate(channelId: number): number {
 
     // Grab the device JSON.
@@ -823,8 +988,14 @@ export class ProtectCamera extends ProtectAccessory {
   // Set the bitrate for a specific camera channel.
   public async setBitrate(channelId: number, value: number): Promise<boolean> {
 
-    // If we've disabled the ability to set bitrates dynamically, silently fail.
-    if(!this.nvr?.optionEnabled(this.accessory.context.device as ProtectCameraConfig, "Video.Dynamic.Bitrates", false)) {
+    // If we've disabled the ability to set the bitrate dynamically, silently fail. We prioritize switches over the global
+    // setting here, in case the user enabled both, using the principle that the most specific setting always wins. If the
+    // user has both the global setting and the switch enabled, the switch setting will take precedence.
+    if((!this.accessory.context.dynamicBitrate &&
+      !this.nvr?.optionEnabled(this.accessory.context.device as ProtectCameraConfig, "Video.DynamicBitrate", false)) ||
+      (!this.accessory.context.dynamicBitrate &&
+      this.nvr?.optionEnabled(this.accessory.context.device as ProtectCameraConfig, "Video.DynamicBitrate", false) &&
+      this.nvr?.optionEnabled(this.accessory.context.device as ProtectCameraConfig, "Video.DynamicBitrate.Switch", false))) {
 
       return true;
     }
@@ -863,6 +1034,99 @@ export class ProtectCamera extends ProtectAccessory {
     this.accessory.context.device = newDevice;
 
     return true;
+  }
+
+  // Find an RTSP configuration for a given target resolution.
+  private findRtspEntry(width: number, height: number, camera: ProtectCameraConfig | null, address: string,
+    rtspEntries: RtspEntry[], defaultStream = this.rtspQuality.StreamingDefault): RtspEntry | null {
+
+    // No RTSP entries to choose from, we're done.
+    if(!rtspEntries || !rtspEntries.length) {
+      return null;
+    }
+
+    // First, we check to see if we've set an explicit preference for the target address.
+    if(camera && address) {
+
+      // If we don't have this address cached, look it up and cache it.
+      if(!this.rtspQuality[address]) {
+
+        // Check to see if there's an explicit preference set and cache the result.
+        if(this.nvr.optionEnabled(camera, "Video.Stream.Only.Low", false, address, true)) {
+
+          this.rtspQuality[address] = "LOW";
+        } else if(this.nvr.optionEnabled(camera, "Video.Stream.Only.Medium", false, address, true)) {
+
+          this.rtspQuality[address] = "MEDIUM";
+        } else if(this.nvr.optionEnabled(camera, "Video.Stream.Only.High", false, address, true)) {
+
+          this.rtspQuality[address] = "HIGH";
+        } else {
+
+          this.rtspQuality[address] = "None";
+        }
+      }
+
+      // If it's set to none, we default to our normal lookup logic.
+      if(this.rtspQuality[address] !== "None") {
+
+        return rtspEntries.find(x => x.channel.name.toUpperCase() === this.rtspQuality[address]) ?? null;
+      }
+    }
+
+    // Second, we check to see if we've set an explicit preference for stream quality.
+    if(defaultStream) {
+
+      return rtspEntries.find(x => x.channel.name.toUpperCase() === defaultStream) ?? null;
+    }
+
+    // See if we have a match for our desired resolution on the camera. We ignore FPS - HomeKit clients seem
+    // to be able to handle it just fine.
+    const exactRtsp = rtspEntries.find(x => (x.resolution[0] === width) && (x.resolution[1] === height));
+
+    if(exactRtsp) {
+      return exactRtsp;
+    }
+
+    // No match found, let's see what we have that's closest. We try to be a bit smart about how we select our
+    // stream - if it's an HD quality stream request (720p+), we want to try to return something that's HD quality
+    // before looking for something lower resolution.
+    if((width >= 1280) && (height >= 720)) {
+
+      for(const entry of rtspEntries) {
+
+        // Make sure we're looking at an HD resolution.
+        if(entry.resolution[0] < 1280) {
+          continue;
+        }
+
+        // Return the first one we find.
+        return entry;
+      }
+    }
+
+    // If we didn't request an HD resolution, or we couldn't find anything HD to use, we try to find whatever we
+    // can find that's close.
+    for(const entry of rtspEntries) {
+      if(width >= entry.resolution[0]) {
+        return entry;
+      }
+    }
+
+    // We couldn't find a close match, return the lowest resolution we found.
+    return rtspEntries[rtspEntries.length - 1];
+  }
+
+  // Find a streaming RTSP configuration for a given target resolution.
+  public findRtsp(width: number, height: number, camera: ProtectCameraConfig | null = null, address = "", rtspEntries = this.rtspEntries): RtspEntry | null {
+
+    return this.findRtspEntry(width, height, camera, address, rtspEntries);
+  }
+
+  // Find a recording RTSP configuration for a given target resolution.
+  public findRecordingRtsp(width: number, height: number, camera: ProtectCameraConfig | null = null, rtspEntries = this.rtspEntries): RtspEntry | null {
+
+    return this.findRtspEntry(width, height, camera, "", rtspEntries, this.rtspQuality.RecordingDefault);
   }
 
   // Utility function for sorting by resolution.
