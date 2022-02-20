@@ -171,7 +171,7 @@
         "title": "Video Encoder",
         "required": false,
         "placeholder": "e.g. h264_omx",
-        "description": "FFmpeg video encoder to use for transcoding. Useful for hardware-accelerated video encoding such as on a Raspberry Pi. Default: libx264."
+        "description": "FFmpeg video encoder to use for transcoding. Useful for hardware-accelerated video encoding such as on a Raspberry Pi. This option is provided with no support. Many hardware video encoders are notorious for producing bad video quality, errors and other artifacts. Default: libx264."
       },
 
       "videoProcessor": {
