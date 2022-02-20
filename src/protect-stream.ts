@@ -408,8 +408,8 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     const audiomtu = 188 * 1;
 
     // -hide_banner                     Suppress printing the startup banner in FFmpeg.
-    // -probesize 1536                  How many bytes should be analyzed for stream information. We default to to analyze time should be spent analyzing
-    //                                  the input stream, in microseconds. We default to 1536.
+    // -probesize 2048                  How many bytes should be analyzed for stream information. We default to to analyze time should be spent analyzing
+    //                                  the input stream, in microseconds.
     // -max_delay 500000                Set an upper limit on how much time FFmpeg can take in demuxing packets.
     // -fflags +flush_packets+nobuffer  Set format flags to ensure that packets are written out immediately and that latency due to buffering is reduced.
     // -flush_packets 1                 Flush the underlying I/O stream after each packet to further reduce latency.
