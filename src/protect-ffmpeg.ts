@@ -24,6 +24,7 @@ export class FfmpegProcess {
   protected callback: StreamRequestCallback | null;
   protected commandLineArgs: string[];
   protected readonly debug: (message: string, ...parameters: unknown[]) => void;
+  private stderrLog: string[];
   public isEnded: boolean;
   private isLogging: boolean;
   private isPrepared: boolean;
@@ -42,6 +43,7 @@ export class FfmpegProcess {
     this.callback = null;
     this.commandLineArgs = [];
     this.debug = protectCamera.platform.debug.bind(protectCamera.platform);
+    this.stderrLog = [];
     this.isLogging = false;
     this.isPrepared = false;
     this.isEnded = false;
@@ -183,20 +185,23 @@ export class FfmpegProcess {
         }
       }
 
-      // Debugging and additional logging, if requested.
-      if(this.isLogging || this.isVerbose || this.protectCamera.platform.config.debugAll) {
+      // Debugging and additional logging collection.
+      for(const line of data.toString().split(/\n/)) {
 
-        data.toString().split(/\n/).forEach((line: string) => {
+        // Don't output not-printable characters to ensure the log output is readable.
+        const cleanLine = line.replace(/[\p{Cc}\p{Cn}\p{Cs}]+/gu, "");
 
-          // Don't output not-printable characters to ensure the log output is readable.
-          const cleanLine = line.replace(/[\p{Cc}\p{Cn}\p{Cs}]+/gu, "");
+        // Don't print the FFmpeg progress bar to give clearer insights into what's going on.
+        if(cleanLine.length && (cleanLine.indexOf("frame=") === -1)) {
 
-          // Don't print the progress bar.
-          if(cleanLine.length && (cleanLine.indexOf("frame=") === -1)) {
+          this.stderrLog.push(cleanLine + "\n");
+
+          // Show it to the user if it's been requested.
+          if(this.isLogging || this.isVerbose || this.protectCamera.platform.config.debugAll) {
 
             this.log.info("%s: %s", this.name(), cleanLine);
           }
-        });
+        }
       }
     });
 
@@ -231,7 +236,8 @@ export class FfmpegProcess {
           ((exitCode !== null) && signal) ? " and " : "",
           signal ? "a signal received of " + signal : "");
 
-        this.log.debug("%s: FFmpeg command line that errored out was: %s %s", this.name(), this.protectCamera.stream.videoProcessor, this.commandLineArgs.join(" "));
+        this.log.error("%s: FFmpeg command line that errored out was: %s %s", this.name(), this.protectCamera.stream.videoProcessor, this.commandLineArgs.join(" "));
+        this.stderrLog.map(x => this.log.error(x));
 
         // Execute our error handler, if one is provided.
         if(errorHandler) {
@@ -244,11 +250,18 @@ export class FfmpegProcess {
       this.process?.stdin?.removeListener("error", errorListener);
       this.process?.stderr?.removeListener("data", dataListener);
       this.process = null;
+      this.stderrLog = [];
     });
   }
 
   // Cleanup after we're done.
   public stop(): void {
+
+    // Check to make sure we aren't using stdin for data before telling FFmpeg we're done.
+    if(!this.commandLineArgs.includes("pipe:0")) {
+
+      this.process?.stdin.end("q");
+    }
 
     // Close our input and output.
     this.process?.stdin.destroy();
@@ -274,6 +287,12 @@ export class FfmpegProcess {
   public get stdout(): Readable | null {
 
     return this.process?.stdout ?? null;
+  }
+
+  // Return the standard error for this process.
+  public get stderr(): Readable | null {
+
+    return this.process?.stderr ?? null;
   }
 
   // Validate whether or not we have a specific codec available to us in FFmpeg.

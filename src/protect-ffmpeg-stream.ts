@@ -37,9 +37,6 @@ export class FfmpegStreamingProcess extends FfmpegProcess {
       // Stop the stream.
       await this.delegate.stopStream(this.sessionId);
 
-      // Temporarily increase logging verbosity.
-      this.delegate.setVerboseFfmpeg();
-
       // Let homebridge know what happened and stop the stream if we've already started.
       if(!this.isStarted && this.callback) {
 
