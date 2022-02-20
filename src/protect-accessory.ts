@@ -14,16 +14,23 @@ import { ProtectApi } from "unifi-protect";
 import { ProtectNvr } from "./protect-nvr";
 import { ProtectPlatform } from "./protect-platform";
 
-// Manage our contact sensor types.
-export const PROTECT_CONTACT_MOTION_SMARTDETECT = "ContactMotionSmartDetect";
-export const PROTECT_CONTACT_SENSOR = "ContactSensor";
-export const PROTECT_CONTACT_SENSOR_ALARM_SOUND = "ContactAlarmSound";
+export enum ProtectReservedNames {
 
-// Manage our switch types.
-export const PROTECT_SWITCH_DOORBELL_TRIGGER = "DoorbellTrigger";
-export const PROTECT_SWITCH_HKSV_RECORDING = "HKSVRecordingSwitch";
-export const PROTECT_SWITCH_MOTION_SENSOR = "MotionSensorSwitch";
-export const PROTECT_SWITCH_MOTION_TRIGGER = "MotionSensorTrigger";
+  // Manage our contact sensor types.
+  CONTACT_MOTION_SMARTDETECT = "ContactMotionSmartDetect",
+  CONTACT_SENSOR = "ContactSensor",
+  CONTACT_SENSOR_ALARM_SOUND = "ContactAlarmSound",
+
+  // Manage our switch types.
+  SWITCH_DOORBELL_TRIGGER = "DoorbellTrigger",
+  SWITCH_DYNAMIC_BITRATE = "DynamicBitrate",
+  SWITCH_HKSV_RECORDING = "HKSVRecordingSwitch",
+  SWITCH_MOTION_SENSOR = "MotionSensorSwitch",
+  SWITCH_MOTION_TRIGGER = "MotionSensorTrigger",
+  SWITCH_UFP_RECORDING_ALWAYS = "UFPRecordingSwitch.always",
+  SWITCH_UFP_RECORDING_DETECTIONS = "UFPRecordingSwitch.detections",
+  SWITCH_UFP_RECORDING_NEVER = "UFPRecordingSwitch.never"
+}
 
 // List the optional methods of our subclasses that we want to expose commonly.
 export interface ProtectAccessory {
@@ -132,11 +139,13 @@ export abstract class ProtectAccessory extends ProtectBase {
   // Configure the Protect motion sensor for HomeKit.
   protected configureMotionSensor(isEnabled = true): boolean {
 
+    const device = this.accessory.context.device as ProtectCameraConfig;
+
     // Find the motion sensor service, if it exists.
     let motionService = this.accessory.getService(this.hap.Service.MotionSensor);
 
     // Have we disabled motion sensors?
-    if(!isEnabled || !this.nvr?.optionEnabled(this.accessory.context.device as ProtectCameraConfig, "Motion.Sensor")) {
+    if(!isEnabled || !this.nvr?.optionEnabled(device, "Motion.Sensor")) {
 
       if(motionService) {
 
@@ -153,6 +162,7 @@ export abstract class ProtectAccessory extends ProtectBase {
 
       // Initialize the state of the motion sensor.
       motionService.updateCharacteristic(this.hap.Characteristic.MotionDetected, false);
+      motionService.updateCharacteristic(this.hap.Characteristic.StatusActive, device.state === "CONNECTED");
 
       this.configureMqttMotionTrigger();
       return true;
@@ -179,7 +189,7 @@ export abstract class ProtectAccessory extends ProtectBase {
   protected configureMotionSwitch(): boolean {
 
     // Find the switch service, if it exists.
-    let switchService = this.accessory.getServiceById(this.hap.Service.Switch, PROTECT_SWITCH_MOTION_SENSOR);
+    let switchService = this.accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_MOTION_SENSOR);
 
     // Have we disabled motion sensors or the motion switch? Motion switches are disabled by default.
     if(!this.nvr?.optionEnabled(this.accessory.context.device as ProtectCameraConfig, "Motion.Sensor") ||
@@ -198,7 +208,7 @@ export abstract class ProtectAccessory extends ProtectBase {
 
     // Add the switch to the camera, if needed.
     if(!switchService) {
-      switchService = new this.hap.Service.Switch(this.accessory.displayName + " Motion Events", PROTECT_SWITCH_MOTION_SENSOR);
+      switchService = new this.hap.Service.Switch(this.accessory.displayName + " Motion Events", ProtectReservedNames.SWITCH_MOTION_SENSOR);
 
       if(!switchService) {
         this.log.error("%s: Unable to add motion sensor switch.", this.name());
@@ -255,16 +265,7 @@ export abstract class ProtectAccessory extends ProtectBase {
   // Utility function for reserved identifiers for switches.
   public isReservedName(name: string | undefined): boolean {
 
-    return name === undefined ? false :
-      [
-        PROTECT_CONTACT_MOTION_SMARTDETECT.toUpperCase(),
-        PROTECT_SWITCH_DOORBELL_TRIGGER.toUpperCase(),
-        PROTECT_SWITCH_HKSV_RECORDING.toUpperCase(),
-        PROTECT_SWITCH_MOTION_SENSOR.toUpperCase(),
-        PROTECT_SWITCH_MOTION_TRIGGER.toUpperCase(),
-        PROTECT_CONTACT_SENSOR.toUpperCase(),
-        PROTECT_CONTACT_SENSOR_ALARM_SOUND.toUpperCase()
-      ].includes(name.toUpperCase());
+    return name === undefined ? false : Object.values(ProtectReservedNames).map(x => x.toUpperCase()).includes(name.toUpperCase());
   }
 
   // Utility function to return the fully enumerated name of this camera.
