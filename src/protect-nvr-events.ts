@@ -10,11 +10,6 @@ import {
   Service
 } from "homebridge";
 import {
-  PROTECT_CONTACT_MOTION_SMARTDETECT,
-  PROTECT_SWITCH_DOORBELL_TRIGGER,
-  PROTECT_SWITCH_MOTION_TRIGGER
-} from "./protect-accessory";
-import {
   ProtectApi,
   ProtectApiUpdates,
   ProtectCameraConfig,
@@ -31,6 +26,7 @@ import { ProtectDoorbell } from "./protect-doorbell";
 import { ProtectLight } from "./protect-light";
 import { ProtectNvr } from "./protect-nvr";
 import { ProtectPlatform } from "./protect-platform";
+import { ProtectReservedNames } from "./protect-accessory";
 import { ProtectSensor } from "./protect-sensor";
 
 export class ProtectNvrEvents {
@@ -42,6 +38,7 @@ export class ProtectNvrEvents {
   private lastRing: { [index: string]: number };
   private log: Logging;
   private motionDuration: number;
+  private readonly name: () => string;
   private nvr: ProtectNvr;
   private readonly eventTimers: { [index: string]: NodeJS.Timeout };
   private nvrApi: ProtectApi;
@@ -59,6 +56,12 @@ export class ProtectNvrEvents {
     this.lastMotion = {};
     this.lastRing = {};
     this.log = nvr.platform.log;
+
+    this.name = (): string => {
+
+      return nvr.nvrApi.getNvrName();
+    };
+
     this.nvr = nvr;
     this.nvrApi = nvr.nvrApi;
     this.motionDuration = nvr.platform.config.motionDuration;
@@ -73,9 +76,7 @@ export class ProtectNvrEvents {
 
     // Configure the updates API listener, if needed. This needs to be called
     // regularly because the connection to the update events websocket can be shutdown and reopened.
-    this.configureUpdatesListener();
-
-    return true;
+    return this.configureUpdatesListener();
   }
 
   // Configure the realtime system event API listener to trigger events on accessories, like motion.
@@ -211,7 +212,7 @@ export class ProtectNvrEvents {
 
           // Now filter out payloads we aren't interested in. We only want motion detection and doorbell rings for now.
           if(!payload.isMotionDetected && !payload.lastRing && !payload.lcdMessage &&
-            !payload.ledSettings) {
+            !payload.ledSettings && !payload.recordingSettings && !payload.state) {
             return;
           }
 
@@ -261,8 +262,11 @@ export class ProtectNvrEvents {
             this.lcdMessageEventHandler(accessory, payload.lcdMessage);
           }
 
-          // Process the status light update.
-          if(payload.ledSettings && ("isEnabled" in payload.ledSettings)) {
+          // Process camera details updates:
+          //   - camera status light.
+          //   - camera recording settings.
+          if((payload.ledSettings && ("isEnabled" in payload.ledSettings)) ||
+            (payload.recordingSettings && ("mode" in payload.recordingSettings)) || payload.recordingSettings) {
 
             this.cameraDetailsHandler(accessory, protectCamera);
           }
@@ -479,6 +483,7 @@ export class ProtectNvrEvents {
 
         this.nvrApi.eventsWs?.removeListener("message", this.updatesListener);
         this.updatesListener = null;
+        this.log.error("%s: UniFi Protect realtime events API has been closed. This is usually due to a controller restart or disconnect.", this.name());
       }
     });
 
@@ -563,7 +568,7 @@ export class ProtectNvrEvents {
       motionService.updateCharacteristic(this.hap.Characteristic.MotionDetected, true);
 
       // Check to see if we have a motion trigger switch configured. If we do, update it.
-      const triggerService = accessory.getServiceById(this.hap.Service.Switch, PROTECT_SWITCH_MOTION_TRIGGER);
+      const triggerService = accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_MOTION_TRIGGER);
 
       if(triggerService) {
         triggerService.updateCharacteristic(this.hap.Characteristic.On, true);
@@ -583,7 +588,7 @@ export class ProtectNvrEvents {
     // Trigger smart motion contact sensors, if configured.
     for(const detectedObject of detectedObjects) {
 
-      const contactService = accessory.getServiceById(this.hap.Service.ContactSensor, PROTECT_CONTACT_MOTION_SMARTDETECT + "." + detectedObject);
+      const contactService = accessory.getServiceById(this.hap.Service.ContactSensor, ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + "." + detectedObject);
 
       if(contactService) {
 
@@ -606,7 +611,7 @@ export class ProtectNvrEvents {
           thisMotionService.updateCharacteristic(this.hap.Characteristic.MotionDetected, false);
 
           // Check to see if we have a motion trigger switch configured. If we do, update it.
-          const thisTriggerService = accessory.getServiceById(this.hap.Service.Switch, PROTECT_SWITCH_MOTION_TRIGGER);
+          const thisTriggerService = accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_MOTION_TRIGGER);
 
           if(thisTriggerService) {
             thisTriggerService.updateCharacteristic(this.hap.Characteristic.On, false);
@@ -631,7 +636,7 @@ export class ProtectNvrEvents {
         // Reset smart motion contact sensors, if configured.
         for(const detectedObject of detectedObjects) {
 
-          const contactService = accessory.getServiceById(this.hap.Service.ContactSensor, PROTECT_CONTACT_MOTION_SMARTDETECT + "." + detectedObject);
+          const contactService = accessory.getServiceById(this.hap.Service.ContactSensor, ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + "." + detectedObject);
 
           if(contactService) {
             contactService.updateCharacteristic(this.hap.Characteristic.ContactSensorState, false);
@@ -691,7 +696,7 @@ export class ProtectNvrEvents {
     }, 500);
 
     // Check to see if we have a doorbell trigger switch configured. If we do, update it.
-    const triggerService = accessory.getServiceById(this.hap.Service.Switch, PROTECT_SWITCH_DOORBELL_TRIGGER);
+    const triggerService = accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_DOORBELL_TRIGGER);
 
     if(triggerService) {
 
