@@ -2,7 +2,7 @@
  *
  * protect-securitysystem.ts: Security system accessory for UniFi Protect.
  */
-import { PROTECT_SWITCH_MOTION_SENSOR, ProtectAccessory } from "./protect-accessory";
+import { ProtectAccessory, ProtectReservedNames } from "./protect-accessory";
 import { ProtectCameraConfig, ProtectNvrConfig } from "unifi-protect";
 import { CharacteristicValue } from "homebridge";
 
@@ -402,7 +402,7 @@ export class ProtectSecuritySystem extends ProtectAccessory {
         targetAccessory.context.detectMotion = targetState;
 
         // Update the switch service, if present.
-        const motionSwitch = targetAccessory.getServiceById(hap.Service.Switch, PROTECT_SWITCH_MOTION_SENSOR);
+        const motionSwitch = targetAccessory.getServiceById(hap.Service.Switch, ProtectReservedNames.SWITCH_MOTION_SENSOR);
 
         if(motionSwitch) {
           motionSwitch.updateCharacteristic(hap.Characteristic.On, targetAccessory.context.detectMotion as boolean);
