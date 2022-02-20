@@ -347,7 +347,6 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
           seenInitSegment = true;
           this.ffmpegStream?.stdin?.write(segment);
 
-          // this.log.error("%s: MOOV RECEIVED: %s", this.name(), segment.toString("hex"));
           return;
         }
 
