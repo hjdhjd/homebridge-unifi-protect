@@ -2,7 +2,7 @@
  *
  * protect-sensor.ts: Sensor device class for UniFi Protect.
  */
-import { PROTECT_CONTACT_SENSOR, PROTECT_CONTACT_SENSOR_ALARM_SOUND, ProtectAccessory } from "./protect-accessory";
+import { ProtectAccessory, ProtectReservedNames } from "./protect-accessory";
 import { ProtectSensorConfig } from "unifi-protect";
 import { Service } from "homebridge";
 
@@ -100,7 +100,7 @@ export class ProtectSensor extends ProtectAccessory {
     const device = this.accessory.context.device as ProtectSensorConfig;
 
     // Find the service, if it exists.
-    let contactService = this.accessory.getServiceById(this.hap.Service.ContactSensor, PROTECT_CONTACT_SENSOR_ALARM_SOUND);
+    let contactService = this.accessory.getServiceById(this.hap.Service.ContactSensor, ProtectReservedNames.CONTACT_SENSOR_ALARM_SOUND);
 
     // Have we disabled the alarm sound sensor?
     if(!device?.alarmSettings?.isEnabled) {
@@ -117,7 +117,7 @@ export class ProtectSensor extends ProtectAccessory {
     // Add the service to the accessory, if needed.
     if(!contactService) {
 
-      contactService = new this.hap.Service.ContactSensor(this.accessory.displayName + " Alarm Sound", PROTECT_CONTACT_SENSOR_ALARM_SOUND);
+      contactService = new this.hap.Service.ContactSensor(this.accessory.displayName + " Alarm Sound", ProtectReservedNames.CONTACT_SENSOR_ALARM_SOUND);
 
       if(!contactService) {
 
@@ -203,7 +203,7 @@ export class ProtectSensor extends ProtectAccessory {
     const device = this.accessory.context.device as ProtectSensorConfig;
 
     // Find the service, if it exists.
-    let contactService = this.accessory.getServiceById(this.hap.Service.ContactSensor, PROTECT_CONTACT_SENSOR);
+    let contactService = this.accessory.getServiceById(this.hap.Service.ContactSensor, ProtectReservedNames.CONTACT_SENSOR);
 
     // Have we disabled the sensor?
     if(!device?.mountType || (device.mountType === "none")) {
@@ -220,7 +220,7 @@ export class ProtectSensor extends ProtectAccessory {
     // Add the service to the accessory, if needed.
     if(!contactService) {
 
-      contactService = new this.hap.Service.ContactSensor(this.accessory.displayName, PROTECT_CONTACT_SENSOR);
+      contactService = new this.hap.Service.ContactSensor(this.accessory.displayName, ProtectReservedNames.CONTACT_SENSOR);
 
       if(!contactService) {
 
