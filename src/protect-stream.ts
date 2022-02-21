@@ -411,8 +411,6 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     // -probesize 2048                  How many bytes should be analyzed for stream information. We default to to analyze time should be spent analyzing
     //                                  the input stream, in microseconds.
     // -max_delay 500000                Set an upper limit on how much time FFmpeg can take in demuxing packets.
-    // -fflags +flush_packets+nobuffer  Set format flags to ensure that packets are written out immediately and that latency due to buffering is reduced.
-    // -flush_packets 1                 Flush the underlying I/O stream after each packet to further reduce latency.
     // -r fps                           Set the input frame rate for the video stream.
     // -rtsp_transport tcp              Tell the RTSP stream handler that we're looking for a TCP connection.
     // -i this.rtspEntry.url            RTSPS URL to get our input stream from.
@@ -421,21 +419,15 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     //                                  setting is a more general solution than naming the track locations directly in case
     //                                  Protect changes this in the future.
     //                                  Yes, we included these above as well: they need to be included for every I/O stream to maximize effectiveness it seems.
-    // -fflags +flush_packets+nobuffer  Set format flags to ensure that packets are written out immediately and that latency due to buffering is reduced.
-    // -flush_packets 1                 Flush the underlying I/O stream after each packet to further reduce latency.
     const ffmpegArgs = [
 
       "-hide_banner",
       "-probesize", "2048",
       "-max_delay", "500000",
-      "-fflags", "+flush_packets+nobuffer",
-      "-flush_packets", "1",
       "-r", this.rtspEntry.channel.fps.toString(),
       "-rtsp_transport", "tcp",
       "-i", this.rtspEntry.url,
-      "-map", "0:v",
-      "-fflags", "+flush_packets+nobuffer",
-      "-flush_packets", "1"
+      "-map", "0:v"
     ];
 
     // Inform the user.
@@ -491,8 +483,6 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
     // Configure our video parameters for SRTP streaming:
     //
-    // -fflags +flush_packets+nobuffer  Set format flags to ensure that packets are written out immediately and that latency due to buffering is reduced.
-    // -flush_packets 1                 Flush the underlying I/O stream after each packet to further reduce latency.
     // -payload_type num                Payload type for the RTP stream. This is negotiated by HomeKit and is usually 99 for H.264 video.
     // -ssrc                            Synchronization source stream identifier. Random number negotiated by HomeKit to identify this stream.
     // -f rtp                           Specify that we're using the RTP protocol.
@@ -500,8 +490,6 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     // -srtp_out_params params          Specify the output encoding parameters. This is negotiated by HomeKit.
     ffmpegArgs.push(
 
-      "-fflags", "+flush_packets+nobuffer",
-      "-flush_packets", "1",
       "-payload_type", request.video.pt.toString(),
       "-ssrc", sessionInfo.videoSSRC.toString(),
       "-f", "rtp",
@@ -520,8 +508,6 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     // -acodec libfdk_aac               Encode to AAC.
     // -profile:a aac_eld               Specify enhanced, low-delay AAC for HomeKit.
     // -flags +global_header            Sets the global header in the bitstream.
-    // -fflags +flush_packets+nobuffer  Set format flags to ensure that packets are written out immediately and that latency due to buffering is reduced.
-    // -flush_packets 1                 Flush the underlying I/O stream after each packet to further reduce latency.
     // -f null                          Null filter to pass the audio unchanged without running through a muxing operation.
     // -ar samplerate                   Sample rate to use for this audio. This is specified by HomeKit.
     // -b:a bitrate                     Bitrate to use for this audio. This is specified by HomeKit.
@@ -536,8 +522,6 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
         "-acodec", "libfdk_aac",
         "-profile:a", "aac_eld",
         "-flags", "+global_header",
-        "-fflags", "+flush_packets+nobuffer",
-        "-flush_packets", "1",
         "-f", "null",
         "-ar", request.audio.sample_rate.toString() + "k",
         "-b:a", request.audio.max_bit_rate.toString() + "k",
@@ -572,8 +556,6 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
       // Add the required RTP settings and encryption for the stream:
       //
-      // -fflags +flush_packets+nobuffer  Set format flags to ensure that packets are written out immediately and that latency due to buffering is reduced.
-      // -flush_packets 1                 Flush the underlying I/O stream after each packet to further reduce latency.
       // -payload_type num                Payload type for the RTP stream. This is negotiated by HomeKit and is usually 110 for AAC-ELD audio.
       // -ssrc                            synchronization source stream identifier. Random number negotiated by HomeKit to identify this stream.
       // -f rtp                           Specify that we're using the RTP protocol.
@@ -581,8 +563,6 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       // -srtp_out_params params          Specify the output encoding parameters. This is negotiated by HomeKit.
       ffmpegArgs.push(
 
-        "-fflags", "+flush_packets+nobuffer",
-        "-flush_packets", "1",
         "-payload_type", request.audio.pt.toString(),
         "-ssrc", sessionInfo.audioSSRC.toString(),
         "-f", "rtp",
@@ -650,14 +630,13 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
     // Configure the audio portion of the command line, if we have a version of FFmpeg supports libfdk_aac. Options we use are:
     //
+    // -hide_banner           Suppress printing the startup banner in FFmpeg.
     // -protocol_whitelist    Set the list of allowed protocols for this FFmpeg session.
     // -f sdp                 Specify that our input will be an SDP file.
     // -acodec libfdk_aac     Decode AAC input.
     // -i pipe:0              Read input from standard input.
     // -map 0:a               Selects the first available audio track from the stream.
     // -acodec aac            Encode to AAC. This is set by Protect.
-    // -fflags +flush_packets+nobuffer  Set format flags to ensure that packets are written out immediately and that latency due to buffering is reduced.
-    // -flush_packets 1                 Flush the underlying I/O stream after each packet to further reduce latency.
     // -flags +global_header  Sets the global header in the bitstream.
     // -ar samplerate         Sample rate to use for this audio. This is specified by Protect.
     // -b:a bitrate           Bitrate to use for this audio. This is specified by Protect.
@@ -666,17 +645,16 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     // pipe:1                 Output the ADTS stream to standard output.
     const ffmpegReturnAudioCmd = [
 
+      "-hide_banner",
       "-protocol_whitelist", "pipe,udp,rtp,file,crypto",
       "-f", "sdp",
       "-acodec", "libfdk_aac",
-      "-ac", cameraConfig.talkbackSettings.channels.toString(),
       "-i", "pipe:0",
       "-acodec", cameraConfig.talkbackSettings.typeFmt,
-      "-fflags", "flush_packets",
-      "-flush_packets", "1",
       "-flags", "+global_header",
+      "-ac", cameraConfig.talkbackSettings.channels.toString(),
       "-ar", cameraConfig.talkbackSettings.samplingRate.toString(),
-      "-b:a", "64k",
+      "-b:a", cameraConfig.talkbackSettings.bitsPerSample.toString() + "k",
       "-f", "adts",
       "pipe:1"
     ];
@@ -741,16 +719,12 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       // Setup housekeeping for the twoway FFmpeg session.
       this.ongoingSessions[request.sessionID].ffmpeg.push(ffmpegReturnAudio);
 
-      // This is an unfortunate, but necessary, workaround for low-power systems that struggle to keep up at times. Writing the
-      // SDP header through stdin creates a small race condition - namely that we need to wait for FFmpeg to be completely
-      // ready to take input via stdin before we give it the SDP description through stdin. It's possible to launch the FFmpeg
-      // process and complete this write sequence before stdin is actually up and running on FFmpeg. Waiting for a small amount
-      // of time to write to stdin, allows us to try to wait more effectively FFmpeg to be ready before sending the SDP description.
+      // Allow for a small delay before starting our two-way audio session.
       setTimeout(() => {
 
         // Feed the SDP session description to FFmpeg on stdin.
-        ffmpegReturnAudio.stdin?.end(sdpReturnAudio + "\n");
-      }, 100);
+        ffmpegReturnAudio.stdin?.end(sdpReturnAudio);
+      }, 500);
 
       // Send the audio.
       ffmpegReturnAudio.stdout?.on("data", dataListener = (data: Buffer): void => {
