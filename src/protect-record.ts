@@ -474,7 +474,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
       }
 
       // Inform the user if they've enabled logging. We log HKSV events by default, for now.
-      if(this.nvr.optionEnabled(device, "Log.Motion.HKSV") ||
+      if(this.nvr.optionEnabled(device, "Log.HKSV") ||
         this.nvr.optionEnabled(device, "Log.Motion", false)) {
 
         this.log.info("%s: HomeKit Secure Video has recorded %s %s %s motion event.", this.name(),
