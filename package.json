@@ -1,6 +1,6 @@
 {
   "name": "homebridge-unifi-protect",
-  "version": "5.4.1",
+  "version": "5.4.2",
   "displayName": "Homebridge UniFi Protect",
   "description": "Homebridge UniFi Protect plugin providing complete HomeKit integration for the UniFi Protect ecosystem with full support for most features including autoconfiguration, motion detection, multiple controllers, and realtime updates.",
   "author": {
