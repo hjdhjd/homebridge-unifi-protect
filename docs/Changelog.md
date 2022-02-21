@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 5.4.3 (2022-02-20)
+  * Housekeeping minor bugfixes.
+
+  * Notes from v5.4.0 for reference:
+    * New feature: You can disable the timeshift buffer for HKSV. This will have some small negative implications to the HKSV user experience - specifically that you won't have a few seconds of video before the actual motion event that triggers it. However, this allows for a much easier experience for users on low-powered systems such as Raspberry Pi, etc. The new feature option is [`Video.HKSV.TimeshiftBuffer`](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md#video).
+
+    * New feature: Added the ability to select which stream quality should be used for HKSV independent of what is used for viewing a live stream. For example, this feature allows you to use a high-quality video stream for live viewing, and a different one for HKSV. This is useful on lower end devices running Homebridge where you want to use the lowest streaming quality for CPU reasons, but still have a great live viewing experience.  **This is a breaking change for some users who have been using the `Video.Stream.Only` to force HKSV to use a lower stream quality. You will need to use the new feature option instead.** The new feature option is [`Video.HKSV.Recording.Only.`*Quality*](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md#video).
+
+    * New feature: You now have the ability to selectively enable or disable dynamic bitrates for video streams using the [`Video.DynamicBitrate.Switch` feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md#video). This is useful in automation scenarios such as choosing to enable dynamic bitrates when you are not home in order to optimize the HomeKit video streaming experience, and disabling it when you are home, to ensure you always have the best video quality.
+
+    * New feature: You can choose whether or not to enable recording on the UniFi Protect NVR, and in what recording mode. Use the [`Nvr.Recording.Switch` feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md#nvr) to enable the capability. It will add three new switches, allowing you to choose which NVR recording mode you want to use. **Note: this feature is unrelated to HomeKit Secure Video and is for controlling the recording capabilities of the UniFi Protect NVR**.
+
+    * **Note: The [`Video.Dynamic.Bitrates` feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md#video) has been renamed to [`Video.DynamicBitrate`](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md#video). Adjust your feature option settings accordingly.**
+
+    * Improvement: Camera streaming startup times should be noticably improved thanks to some additional tuning.
+    * Housekeeping.
+
 ## 5.4.2 (2022-02-20)
   * Github housekeeping and minor bugfixes.
 
