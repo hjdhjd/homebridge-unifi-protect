@@ -27,6 +27,7 @@ import {
 } from "homebridge";
 import { FetchError, ProtectCameraConfig } from "unifi-protect";
 import {
+  PROTECT_FFMPEG_AUDIO_FILTER_FFTNR,
   PROTECT_FFMPEG_AUDIO_FILTER_HIGHPASS,
   PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS,
   PROTECT_HKSV_BUFFER_LENGTH,
@@ -41,7 +42,6 @@ import { RtpDemuxer } from "./protect-rtp";
 import WebSocket from "ws";
 import events from "events";
 import ffmpegPath from "ffmpeg-for-homebridge";
-import net from "net";
 import { reservePorts } from "@homebridge/camera-utils";
 
 // Increase the listener limits to support Protect installations with more than 10 cameras. 100 seems like a reasonable default.
@@ -534,26 +534,52 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       // If we are audio filtering, address it here.
       if(this.protectCamera.nvr.optionEnabled(cameraConfig, "Audio.Filter.Noise", false, sessionInfo.address)) {
 
-        let highpass;
-        let lowpass;
+        const afOptions = [];
 
-        // See what the user has set for the highpass filter for this camera.
-        highpass = parseInt(this.protectCamera.nvr.optionGet(cameraConfig, "Audio.Filter.Noise.HighPass", sessionInfo.address) ?? "");
-
-        // If we have an invalid setting, use the defaults.
-        if((highpass !== highpass) || (highpass < 0)) {
-          highpass = PROTECT_FFMPEG_AUDIO_FILTER_HIGHPASS;
-        }
-
-        // See what the user has set for the highpass filter for this camera.
-        lowpass = parseInt(this.protectCamera.nvr.optionGet(cameraConfig, "Audio.Filter.Noise.LowPass", sessionInfo.address) ?? "");
+        // See what the user has set for the afftdn filter for this camera.
+        let fftNr = parseFloat(this.protectCamera.nvr.optionGet(cameraConfig, "Audio.Filter.Noise.FftNr", sessionInfo.address) ?? "");
 
         // If we have an invalid setting, use the defaults.
-        if((lowpass !== lowpass) || (lowpass < 0)) {
-          lowpass = PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS;
+        if((fftNr !== fftNr) || (fftNr < 0) || (fftNr > 97)) {
+
+          fftNr = (fftNr > 97) ? 97 : PROTECT_FFMPEG_AUDIO_FILTER_FFTNR;
         }
 
-        ffmpegArgs.push("-af", "highpass=f=" + highpass.toString() + ",lowpass=f=" + lowpass.toString());
+        // nt=w  Focus on eliminating white noise.
+        // om=o  Output the filtered audio.
+        // tn=1  Enable noise tracking.
+        // tr=1  Enable residual tracking.
+        // nr=X  Noise reduction value in decibels.
+        afOptions.push("afftdn=nt=w:om=o:tn=1:tr=1:nr=" + fftNr.toString());
+
+        let highpass: number | string | null = this.protectCamera.nvr.optionGet(cameraConfig, "Audio.Filter.Noise.HighPass", sessionInfo.address) ?? null;
+        let lowpass: number | string | null = this.protectCamera.nvr.optionGet(cameraConfig, "Audio.Filter.Noise.LowPass", sessionInfo.address) ?? null;
+
+        // Only set the highpass and lowpass filters if the user has explicitly enabled them.
+        if(highpass || lowpass) {
+
+          // See what the user has set for the highpass filter for this camera.
+          highpass = parseInt(highpass ?? "");
+
+          // If we have an invalid setting, use the defaults.
+          if((highpass !== highpass) || (highpass < 0)) {
+            highpass = PROTECT_FFMPEG_AUDIO_FILTER_HIGHPASS;
+          }
+
+          // See what the user has set for the highpass filter for this camera.
+          lowpass = parseInt(lowpass ?? "");
+
+          // If we have an invalid setting, use the defaults.
+          if((lowpass !== lowpass) || (lowpass < 0)) {
+
+            lowpass = PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS;
+          }
+
+          afOptions.push("highpass=f=" + highpass.toString(), "lowpass=f=" + lowpass.toString());
+        }
+
+        // Return the assembled audio filter option.
+        ffmpegArgs.push("-af", afOptions.join(","));
       }
 
       // Add the required RTP settings and encryption for the stream:
@@ -630,21 +656,6 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       "a=crypto:1 AES_CM_128_HMAC_SHA1_80 inline:" + sessionInfo.audioSRTP.toString("base64")
     ].join("\n");
 
-    // Create a TCP server to deliver our SDP payload. It's inelegant, but effective at working around certain
-    // challenges in FFmpeg when it comes to feeding input that might usually be passed through stdin.
-    const sdpPayloadServer = net.createServer(socket => {
-
-      // Write out the SDP header and we're done.
-      socket.end(Buffer.from(sdpReturnAudio));
-    });
-
-    // Listen for a single connection on a randomly generated port.
-    sdpPayloadServer.listen(0, "127.0.0.1");
-
-    // Wait for the listening event so we can find out what port we've been assigned. We use
-    // that port information to tell FFmpeg where to find the SDP payload we want to deliver.
-    await events.once(sdpPayloadServer, "listening");
-
     // Configure the audio portion of the command line, if we have a version of FFmpeg supports libfdk_aac. Options we use are:
     //
     // -hide_banner           Suppress printing the startup banner in FFmpeg.
@@ -663,14 +674,15 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     const ffmpegReturnAudioCmd = [
 
       "-hide_banner",
-      "-protocol_whitelist", "crypto,file,rtp,tcp,udp",
+      "-protocol_whitelist", "crypto,file,pipe,rtp,udp",
       "-f", "sdp",
       "-acodec", "libfdk_aac",
-      "-i", "tcp://127.0.0.1:" + (sdpPayloadServer.address() as net.AddressInfo).port.toString(),
+      "-i", "pipe:0",
       "-flags", "+global_header",
       "-b:a", cameraConfig.talkbackSettings.bitsPerSample.toString() + "k",
       "-ac", cameraConfig.talkbackSettings.channels.toString(),
       "-ar", cameraConfig.talkbackSettings.samplingRate.toString(),
+      "-loglevel", "level+verbose",
       "-f", "adts",
       "pipe:1"
     ];
@@ -729,11 +741,28 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
         });
       }
 
-      // Fire up FFmpeg.
+      // Wait for the first RTP packet to be received before trying to launch FFmpeg.
+      if(sessionInfo.rtpDemuxer) {
+
+        await events.once(sessionInfo.rtpDemuxer, "rtp");
+
+        // If we've already closed the RTP demuxer, we're done here,
+        if(!sessionInfo.rtpDemuxer.isRunning) {
+
+          // Clean up our talkback websocket.
+          ws?.terminate();
+          return;
+        }
+      }
+
+      // Fire up FFmpeg and start processing the incoming audio.
       const ffmpegReturnAudio = new FfmpegStreamingProcess(this, request.sessionID, ffmpegReturnAudioCmd);
 
       // Setup housekeeping for the twoway FFmpeg session.
       this.ongoingSessions[request.sessionID].ffmpeg.push(ffmpegReturnAudio);
+
+      // Feed the SDP session description to FFmpeg on stdin.
+      ffmpegReturnAudio.stdin?.end(sdpReturnAudio + "\n");
 
       // Send the audio.
       ffmpegReturnAudio.stdout?.on("data", dataListener = (data: Buffer): void => {
@@ -823,6 +852,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
     // If we aren't connected, we're done.
     if(cameraConfig.state !== "CONNECTED") {
+
       this.log.error("%s: Unable to retrieve a snapshot: the camera is offline or unavailable.", this.name());
       return null;
     }
@@ -844,6 +874,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       const cachedSnapshot = this.getCachedSnapshot(cameraConfig.mac);
 
       if(cachedSnapshot) {
+
         this.log.error("%s: Unable to retrieve a snapshot. Using the most recent cached snapshot instead.", this.name());
         return cachedSnapshot;
       }
@@ -872,6 +903,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
             cachedSnapshot = this.getCachedSnapshot(cameraConfig.mac);
 
             if(cachedSnapshot) {
+
               this.log.error("%s: Unable to retrieve a snapshot. Using a cached snapshot instead.", this.name());
               return cachedSnapshot;
             }
@@ -881,6 +913,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
             break;
 
           default:
+
             this.log.error("%s: Unknown error: %s", this.name(), error.message);
             return null;
             break;

@@ -21,6 +21,9 @@ export const PROTECT_API_TIMEOUT = 3.5;
 // UniFi OS expects to hear from us every 15 seconds.
 export const PROTECT_EVENTS_HEARTBEAT_INTERVAL = 10;
 
+// FFmpeg afftdn audio filter defaults - this setting uses FFTs to reduce noise in an audio signal by the number of decibels below.
+export const PROTECT_FFMPEG_AUDIO_FILTER_FFTNR = 90;
+
 // FFmpeg highpass audio filter defaults - this setting attenuates (eliminates) frequencies below the value.
 export const PROTECT_FFMPEG_AUDIO_FILTER_HIGHPASS = 200;
 
@@ -54,7 +57,7 @@ export const PROTECT_RING_DURATION = 3;
 
 // How often, in seconds, should we heartbeat FFmpeg in two-way audio sessions. This should be less than 5 seconds, which is
 // FFmpeg's input timeout interval.
-export const PROTECT_TWOWAY_HEARTBEAT_INTERVAL = 2;
+export const PROTECT_TWOWAY_HEARTBEAT_INTERVAL = 3;
 
 // HomeKit Secure Video segment resolution, in milliseconds. This defines the resolution of our buffer. It should never be
 // less than 100ms or greater than 1500ms.
