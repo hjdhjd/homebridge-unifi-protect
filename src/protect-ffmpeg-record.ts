@@ -7,6 +7,7 @@ import { CameraRecordingConfiguration, H264Level, H264Profile } from "homebridge
 import { ProtectCamera, RtspEntry } from "./protect-camera";
 import { FfmpegProcess } from "./protect-ffmpeg";
 import { ProtectCameraConfig } from "unifi-protect";
+import events from "events";
 
 // FFmpeg HomeKit Streaming Video recording process management.
 export class FfmpegRecordingProcess extends FfmpegProcess {
@@ -39,14 +40,13 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
 
       // Configure our video parameters for our input:
       //
-      // -fflags flags                 Set format flags to discard any corrupt packets rather than exit, reduce the latency due to buffering,
-      //                               and ensure that packets are written out immediately.
-      // -r fps                           Set the input frame rate for the video stream.
-      // -f mp4                                                Tell ffmpeg that it should expect an MP4-encoded input stream.
-      // -i pipe:0                                             Use standard input to get video data.
+      // -fflags flags  Set the format flags to discard any corrupt packets rather than exit, and ensure that packets are written out immediately.
+      // -r fps         Set the input frame rate for the video stream.
+      // -f mp4         Tell ffmpeg that it should expect an MP4-encoded input stream.
+      // -i pipe:0      Use standard input to get video data.
       this.commandLineArgs.push(
 
-        "-fflags", "+discardcorrupt+nobuffer+flush_packets",
+        "-fflags", "+discardcorrupt",
         "-r", rtspEntry.channel.fps.toString(),
         "-f", "mp4",
         "-i", "pipe:0"
@@ -60,8 +60,6 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
       // -probesize 1536                  How many bytes should be analyzed for stream information. We default to to analyze time should be spent analyzing
       //                                  the input stream, in microseconds. We default to 1536.
       // -max_delay 500000                Set an upper limit on how much time FFmpeg can take in demuxing packets.
-      // -fflags +flush_packets+nobuffer  Set format flags to ensure that packets are written out immediately and that latency due to buffering is reduced.
-      // -flush_packets 1                 Flush the underlying I/O stream after each packet to further reduce latency.
       // -r fps                           Set the input frame rate for the video stream.
       // -rtsp_transport tcp              Tell the RTSP stream handler that we're looking for a TCP connection.
       // -i this.rtspEntry.url            RTSPS URL to get our input stream from.
@@ -69,8 +67,6 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
 
         "-probesize", "2048",
         "-max_delay", "500000",
-        "-fflags", "+flush_packets+nobuffer",
-        "-flush_packets", "1",
         "-r", rtspEntry.channel.fps.toString(),
         "-rtsp_transport", "tcp",
         "-i", rtspEntry.url
@@ -257,15 +253,11 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
         return;
       }
 
-      // If we haven't seen any output from FFmpeg yet, sleep for a very short period of time to wait for it.
-      // You might think there should be a longer sleep interval here, given the typical HKSV-requested segment
-      // size, but since we have a several-second buffer that gets fed to FFmpeg on startup, FFmpeg is likely to
-      // generate output very quickly after startup.
+      // If we haven't seen any output from FFmpeg yet, wait for it to do so before we start processing segments.
       if(!this.isStarted) {
 
         // eslint-disable-next-line no-await-in-loop
-        await this.nvr.sleep(100);
-        continue;
+        await events.once(this, "ffmpegStarted");
       }
 
       // Grab the next fMP4 box from our buffer.
