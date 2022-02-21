@@ -54,7 +54,7 @@ export const PROTECT_RING_DURATION = 3;
 
 // How often, in seconds, should we heartbeat FFmpeg in two-way audio sessions. This should be less than 5 seconds, which is
 // FFmpeg's input timeout interval.
-export const PROTECT_TWOWAY_HEARTBEAT_INTERVAL = 3.5;
+export const PROTECT_TWOWAY_HEARTBEAT_INTERVAL = 2;
 
 // HomeKit Secure Video segment resolution, in milliseconds. This defines the resolution of our buffer. It should never be
 // less than 100ms or greater than 1500ms.
