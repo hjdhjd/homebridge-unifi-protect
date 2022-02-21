@@ -259,8 +259,8 @@ export class FfmpegProcess extends EventEmitter {
     });
   }
 
-  // Cleanup after we're done.
-  public stop(): void {
+  // Stop the FFmpeg process and complete any cleanup activities.
+  protected stopProcess(): void {
 
     // Check to make sure we aren't using stdin for data before telling FFmpeg we're done.
     if(!this.commandLineArgs.includes("pipe:0")) {
@@ -280,6 +280,12 @@ export class FfmpegProcess extends EventEmitter {
 
     // Send the kill shot.
     this.process?.kill();
+  }
+
+  // Cleanup after we're done.
+  public stop(): void {
+
+    this.stopProcess();
   }
 
   // Return the standard input for this process.
