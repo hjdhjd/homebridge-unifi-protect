@@ -95,10 +95,7 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
     // -maxrate bitrate              The maximum bitrate tolerance, used with -bufsize. We set this to max_bit_rate to effectively
     //                               create a constant bitrate.
     // -force_key_frames condition   Inject an I-frame at the interval that HKSV requests. This is calculated using a conditional expression.
-    // -avioflags direct             Reduce buffering.
-    // -fflags flags                 Set format flags to generate a presentation timestamp if it's missing, discard any corrupt packets rather
-    //                               than exit, reduce the latency due to buffering, and ensure that packets are written out immediately.
-    // -flush_packets 1              Flush the underlying I/O stream after each packet to further reduce latency.
+    // -fflags flags                 Set format flags to generate a presentation timestamp if it's missing and discard any corrupt packets rather than exit.
     // -reset_timestamps             Reset timestamps at the beginning of each segment.
     // -movflags flags               In the generated fMP4 stream: start a new fragment at each keyframe, write a blank MOOV box, and
     //                               avoid writing absolute offsets
@@ -114,9 +111,7 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
       "-bufsize", (2 * recordingConfig.videoCodec.parameters.bitRate).toString() + "k",
       "-maxrate", recordingConfig.videoCodec.parameters.bitRate.toString() + "k",
       "-force_key_frames", "expr:gte(t, n_forced * " + (recordingConfig.videoCodec.parameters.iFrameInterval / 1000).toString() + ")",
-      "-avioflags", "direct",
-      "-fflags", "+genpts+discardcorrupt+nobuffer+flush_packets",
-      "-flush_packets", "1",
+      "-fflags", "+genpts+discardcorrupt",
       "-reset_timestamps", "1",
       "-movflags", "frag_keyframe+empty_moov+default_base_moof"
     );
