@@ -1,7 +1,7 @@
 <SPAN ALIGN="CENTER" STYLE="text-align:center">
 <DIV ALIGN="CENTER" STYLE="text-align:center">
 
-[![homebridge-unifi-protect: Native HomeKit support for UniFi Protect](https://raw.githubusercontent.com/hjdhjd/homebridge-unifi-protect/master/homebridge-protect.svg)](https://github.com/hjdhjd/homebridge-unifi-protect)
+[![homebridge-unifi-protect: Native HomeKit support for UniFi Protect](https://raw.githubusercontent.com/hjdhjd/homebridge-unifi-protect/main/homebridge-protect.svg)](https://github.com/hjdhjd/homebridge-unifi-protect)
 
 # Homebridge UniFi Protect
 
@@ -36,7 +36,7 @@ If you're reading this, chances are you own, or would like to own, a UniFi Prote
 
   * Unfortunately, AEC is not a solved problem in the open source community quite yet, though there are great commercial options. There are a couple of glimmers of hope: Protect cameras appear to actually support AEC, though there doesn't appear to be a straightforward way to access this capability at the moment. The second is that, things *do* work quite well, aside from the unfortunate challenge around AEC for the person using the Home app.
 
-  * Two-way audio is enabled by default. You can disable it, through the `Audio.TwoWay` [feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md).
+  * Two-way audio is enabled by default. You can disable it, through the `Audio.TwoWay` [feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md).
 
   * Finally, since someone will inevitably ask: Ring and Nest-Cam (terrific plugins by terrific developers) - don't have this problem because Ring and Nest send all audio back to Ring and Nest's servers where audio is processed and dealt with, including AEC.
 
@@ -48,7 +48,7 @@ This plugin supports HomeKit's native video doorbell and doorbell ring functiona
 
 Enter automation support for doorbell ring events in this plugin. If you choose to enable support for doorbell ring automation, you can create HomeKit automations based on doorbell ring events. Here's how it works:
 
-  * Enable the `Doorbell.Trigger` feature option in the plugin configuration. See the [Feature Options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md#doorbell) documentation for more information on feature options.
+  * Enable the `Doorbell.Trigger` feature option in the plugin configuration. See the [Feature Options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md#doorbell) documentation for more information on feature options.
 
   * This will create a contact sensor service on the doorbell. Whenever the doorbell rings, the contact sensor will be triggered and set to the *open* state for two seconds, before resetting to the *closed* state again.
 
@@ -144,15 +144,15 @@ There are also two feature options that you can use to either disable the messag
 | `Enable.Doorbell.Messages.FromDoorbell`                | Allow messages saved on the UniFi Protect doorbell to appear as switches in HomeKit. *(Default)*
 | `Disable.Doorbell.Messages.FromDoorbell`               | Prevent messages saved on the UniFi Protect doorbell from appearing as switches in HomeKit.
 
-To learn more about feature options and how to use them, see the [Feature Options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md) page.
+To learn more about feature options and how to use them, see the [Feature Options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md) page.
 
 #### MQTT Support
-[MQTT support](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/MQTT.md) is available for doorbells. In addition to all the MQTT functionality that is supported for all UniFi Protect cameras, there are two doorbell-specific MQTT actions that are supported:
+[MQTT support](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/MQTT.md) is available for doorbells. In addition to all the MQTT functionality that is supported for all UniFi Protect cameras, there are two doorbell-specific MQTT actions that are supported:
 
   * When the doorbell is rung, a message will be published to MQTT.
   * You can set Doorbell messages through MQTT. This provides a more rich experience by allowing you to set any arbitrary message on a dynamic basis.
 
-To learn more about the MQTT support provided by this plugin, see the [MQTT](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/MQTT.md) page.
+To learn more about the MQTT support provided by this plugin, see the [MQTT](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/MQTT.md) page.
 
 ### Some Fun Facts
   * There is a 30 character limit to what can be displayed on the LCD.

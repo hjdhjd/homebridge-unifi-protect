@@ -1,7 +1,7 @@
 <SPAN ALIGN="CENTER" STYLE="text-align:center">
 <DIV ALIGN="CENTER" STYLE="text-align:center">
 
-[![homebridge-unifi-protect: Native HomeKit support for UniFi Protect](https://raw.githubusercontent.com/hjdhjd/homebridge-unifi-protect/master/homebridge-protect.svg)](https://github.com/hjdhjd/homebridge-unifi-protect)
+[![homebridge-unifi-protect: Native HomeKit support for UniFi Protect](https://raw.githubusercontent.com/hjdhjd/homebridge-unifi-protect/main/homebridge-protect.svg)](https://github.com/hjdhjd/homebridge-unifi-protect)
 
 # Homebridge UniFi Protect
 
@@ -96,15 +96,15 @@ Feature options provide a rich mechanism for tailoring your `homebridge-unifi-pr
 #### <A NAME="audio"></A>Audio Feature Options
 Some audio and video options can be applied on a per-streaming-client basis, if you choose. This means that you can optionally choose to set a certain stream quality or disable audio, for specific HomeKit streaming clients. For example, you may choose to always disable audio support when your Apple TV (with a static IP address) requests a camera stream.
 
-Please review the [audio options documentation](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/AudioOptions.md) for additional information about the options below.
+Please review the [audio options documentation](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/AudioOptions.md) for additional information about the options below.
 
 | Option                                        | Description
 |-----------------------------------------------|----------------------------------
 | `Enable.Audio`                                | Enable audio support. *(Default)* <BR>*This option can be further customized on a per-streaming-client basis.*</BR>
 | `Disable.Audio`                               | Disable audio support. <BR>*This option can be further customized on a per-streaming-client basis.*</BR>
 |                                               |
-| `Enable.Audio.Filter.Noise`                   | Enable the [audio noise filter](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/AudioOptions.md#noise-filter) to enhance voices over background noise. <BR>*This option can be further customized on a per-streaming-client basis.*</BR>
-| `Disable.Audio.Filter.Noise`                  | Disable the [audio noise filter](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/AudioOptions.md#noise-filter). *(Default)* <BR>*This option can be further customized on a per-streaming-client basis.*</BR>
+| `Enable.Audio.Filter.Noise`                   | Enable the [audio noise filter](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/AudioOptions.md#noise-filter) to enhance voices over background noise. <BR>*This option can be further customized on a per-streaming-client basis.*</BR>
+| `Disable.Audio.Filter.Noise`                  | Disable the [audio noise filter](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/AudioOptions.md#noise-filter). *(Default)* <BR>*This option can be further customized on a per-streaming-client basis.*</BR>
 |                                               |
 | <CODE>Enable.Audio.Filter.Noise.HighPass.<I>Number</I></CODE> | Set the high pass filter to attenuate (eliminate) frequencies below *number*. *(Default: 200)* <BR>*This option can be further customized on a per-streaming-client basis.*</BR>
 | <CODE>Enable.Audio.Filter.Noise.LowPass.<I>Number</I></CODE> | Set the low pass filter to attenuate (eliminate) frequencies above *number*. *(Default: 1000)* <BR>*This option can be further customized on a per-streaming-client basis.*</BR>
@@ -121,7 +121,7 @@ These feature options allow you to control which Protect devices or controllers 
 | <CODE>Disable.<I>MAC</I></CODE>               | Hide the UniFi Protect device (e.g. camera, sensor, etc.) or controller identified by MAC address `MAC` from HomeKit.
 
 #### <A NAME="doorbell"></A>Doorbell Feature Options
-Please review the [documentation for UniFi Protect doorbell support](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/Doorbell.md) for additional information about the options below and the broader doorbell feature set available in `homebridge-unifi-protect`.
+Please review the [documentation for UniFi Protect doorbell support](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Doorbell.md) for additional information about the options below and the broader doorbell feature set available in `homebridge-unifi-protect`.
 
 | Option                                        | Description
 |-----------------------------------------------|----------------------------------
@@ -191,11 +191,11 @@ These feature options allow you to display or hide your Protect NVR as a HomeKit
 | `Disable.Nvr.SystemInfo`                      | Hide the NVR system information sensors (currently only the temperature) from HomeKit. *(Default)*
 
 #### <A NAME="securitysystem"></A>Security System Feature Options
-Please review the [documentation for UniFi Protect liveview support](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/Liveviews.md) for additional information about the options below and the broader liveview and security system feature set available in `homebridge-unifi-protect`.
+Please review the [documentation for UniFi Protect liveview support](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Liveviews.md) for additional information about the options below and the broader liveview and security system feature set available in `homebridge-unifi-protect`.
 
 | Option                                        | Description
 |-----------------------------------------------|----------------------------------
-| `Enable.SecuritySystem.Alarm`                 | Enable a switch that can trigger the security alarm on the security system accessory. This requires configuring [liveview scenes](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/Liveviews.md#security-system) in order to enable to security system accessory.
+| `Enable.SecuritySystem.Alarm`                 | Enable a switch that can trigger the security alarm on the security system accessory. This requires configuring [liveview scenes](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Liveviews.md#security-system) in order to enable to security system accessory.
 | `Disable.SecuritySystem.Alarm`                | Remove the security alarm switch on the security system accessory. *(Default)*
 
 #### <A NAME="video"></A>Video Feature Options

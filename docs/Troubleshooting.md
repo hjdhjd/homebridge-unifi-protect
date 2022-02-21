@@ -1,7 +1,7 @@
 <SPAN ALIGN="CENTER" STYLE="text-align:center">
 <DIV ALIGN="CENTER" STYLE="text-align:center">
 
-[![homebridge-unifi-protect: Native HomeKit support for UniFi Protect](https://raw.githubusercontent.com/hjdhjd/homebridge-unifi-protect/master/homebridge-protect.svg)](https://github.com/hjdhjd/homebridge-unifi-protect)
+[![homebridge-unifi-protect: Native HomeKit support for UniFi Protect](https://raw.githubusercontent.com/hjdhjd/homebridge-unifi-protect/main/homebridge-protect.svg)](https://github.com/hjdhjd/homebridge-unifi-protect)
 
 # Homebridge UniFi Protect
 
@@ -103,7 +103,7 @@ Streaming request from 1.2.3.4: 1920x1080@30fps, 802 kbps. Using RTSP stream pro
 
 What the above means is that a HomeKit client, in this case an Apple TV, is requesting a stream of quality 1920x1080@30fps. In response, `homebridge-unifi-protect` looks at the available RTSP streams on the camera, a G4 Pro, and selected the `High` RTSP profile to stream back. As you can see, the stream that the Apple TV is receiving back is significantly higher quality (4K) than what's being requested (1080p), and should look terrific on the Apple TV.
 
-You can read about autoconfiguration of RTSP streams in `homebridge-unifi-protect` in the [autoconfiguration documentation](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/Autoconfiguration.md).
+You can read about autoconfiguration of RTSP streams in `homebridge-unifi-protect` in the [autoconfiguration documentation](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Autoconfiguration.md).
 
 #### Video Streaming Issues
 This brings us to where the problems people encounter can come from. When that stream comes from Protect to `homebridge-unifi-protect`, it's processed by `FFmpeg` before being sent on it's way to your iPhone. I've taken a lot of time to tune the parameters used within FFmpeg for Protect to get things working just right. Despite that, it's not always perfect.
@@ -118,7 +118,7 @@ Almost all of the streaming issues that aren't one of the simpler ones described
  * Packet size is too high or low to account for the stream that's coming from Protect, the processing time required, and the latency of the network connection.
 
 ##### Use The Low Stream
-While the defaults work for most users, most of the time, sometimes the specifics of your own environment will make things off *just enough* that streaming doesn't work. The first, and easiest, step in addressing it is simple: **force `homebridge-unifi-protect` to use a lower stream quality**. You can do that by enabling the `Video.Stream.Only` [feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md#video):
+While the defaults work for most users, most of the time, sometimes the specifics of your own environment will make things off *just enough* that streaming doesn't work. The first, and easiest, step in addressing it is simple: **force `homebridge-unifi-protect` to use a lower stream quality**. You can do that by enabling the `Video.Stream.Only` [feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md#video):
 
 ```
 Enable.Video.Stream.Only.Low
@@ -142,7 +142,7 @@ Transcoding has two significant implications:
   * It will consume more CPU on the device where you run Homebridge. If your device is underpowered, it may struggle when it comes to higher quality streams.
   * The quality of the final stream will likely not be as high as it would be if you were able to get the native RTSP streams working above.
 
-To enable transcoding, you'll need to enable the `Video.Transcode` [feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md#video):
+To enable transcoding, you'll need to enable the `Video.Transcode` [feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md#video):
 
 ```
 Enable.Video.Transcode
@@ -151,4 +151,4 @@ Enable.Video.Transcode
 If that doesn't work, you can further pair transcoding with forcing a lower stream quality by also enabling the `Video.Stream.Only` feature option. I would recommend starting with `Enable.Video.Stream.Only.Low` and working your way up when it comes to quality to see what works best in your environment.
 
 ##### Final Thoughts
-I would look at forcing the stream quality to low, or transcoding, as last resorts. It may well be that you need to use them when you're away from home and streaming remotely if `homebridge-unifi-protect` isn't doing the right thing by default. When you are home, however, you should be able to use different RTSP streaming profiles, if you choose to do so. See [feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md) and look through the section on scope, in particular the section on how to use IP address-specific feature options.
+I would look at forcing the stream quality to low, or transcoding, as last resorts. It may well be that you need to use them when you're away from home and streaming remotely if `homebridge-unifi-protect` isn't doing the right thing by default. When you are home, however, you should be able to use different RTSP streaming profiles, if you choose to do so. See [feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md) and look through the section on scope, in particular the section on how to use IP address-specific feature options.

@@ -1,7 +1,7 @@
 <SPAN ALIGN="CENTER" STYLE="text-align:center">
 <DIV ALIGN="CENTER" STYLE="text-align:center">
 
-[![homebridge-unifi-protect: Native HomeKit support for UniFi Protect](https://raw.githubusercontent.com/hjdhjd/homebridge-unifi-protect/master/homebridge-protect.svg)](https://github.com/hjdhjd/homebridge-unifi-protect)
+[![homebridge-unifi-protect: Native HomeKit support for UniFi Protect](https://raw.githubusercontent.com/hjdhjd/homebridge-unifi-protect/main/homebridge-protect.svg)](https://github.com/hjdhjd/homebridge-unifi-protect)
 
 # Homebridge UniFi Protect
 
@@ -59,7 +59,7 @@ Creating plugin-specific liveviews are as simple as ensuring they are named:
 
 Once configured, you can set the security system state in the Home app. When you select a setting - *Away* for example - it will lookup all the cameras associated with that liveview and activate motion detection for those cameras, and **it will disable motion detection on all other cameras**. Put another way - when using this feature, and you enable a specific security system state, only those cameras will have motion detection active. All other cameras will have motion detection set to off.
 
-The security system accessory in HomeKit has an additional state - *alarm triggered*. In HomeKit, this state isn't really a true state in the way `Home` or `Away` might be. Instead, think of it as an alert to let you know that there's something you should look at. Once the alarm state is cleared, that alert disappears within HomeKit and the Home app. In all cases, the existing liveview scene that's set is the one that remains. Setting a new state for the security system - say going from `Home` to `Away` will clear the alarm alert. For those that want to access this alarm functionality, you can choose to enable the `SecuritySystem.Alarm` [feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md#securitysystem). Why might you want to? In a word - automation. If you have a specific camera or set of cameras you want to be uniquely alerted for, you might choose to turn on the security alarm through automation when motion is detected or a specific set of conditions occur. The security alarm switch is an additional service that will be enabled on the security system accessory. You can toggle it on or off to activate or deactivate the alarm as desired, or simply change security system states (e.g. from Home to Away) to clear the alarm state.
+The security system accessory in HomeKit has an additional state - *alarm triggered*. In HomeKit, this state isn't really a true state in the way `Home` or `Away` might be. Instead, think of it as an alert to let you know that there's something you should look at. Once the alarm state is cleared, that alert disappears within HomeKit and the Home app. In all cases, the existing liveview scene that's set is the one that remains. Setting a new state for the security system - say going from `Home` to `Away` will clear the alarm alert. For those that want to access this alarm functionality, you can choose to enable the `SecuritySystem.Alarm` [feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md#securitysystem). Why might you want to? In a word - automation. If you have a specific camera or set of cameras you want to be uniquely alerted for, you might choose to turn on the security alarm through automation when motion is detected or a specific set of conditions occur. The security alarm switch is an additional service that will be enabled on the security system accessory. You can toggle it on or off to activate or deactivate the alarm as desired, or simply change security system states (e.g. from Home to Away) to clear the alarm state.
 
 ### <A NAME="switch"></A>Configuring the Liveview Switch Feature
 
@@ -70,7 +70,7 @@ For example, if you configure a liveview named `Protect-Outside`, you'll see a s
 There's a crucial difference between liveview switches and the liveview security system accessory: ***liveview switches only impact the cameras you've configured in that liveview***. The security system accessory will disable motion detection on all cameras not explicitly configured in a given liveview scene (with the exception of the *Off* scene, which is special - [see above](#security-system)).
 
 ### MQTT Support
-[MQTT support](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/MQTT.md) is available for liveviews. You can set liveviews, as well as security system states, using MQTT. The following MQTT actions are supported:
+[MQTT support](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/MQTT.md) is available for liveviews. You can set liveviews, as well as security system states, using MQTT. The following MQTT actions are supported:
 
   * When the security system state is changed, a message will be published to MQTT.
   * You can set the security system state using MQTT.
@@ -78,7 +78,7 @@ There's a crucial difference between liveview switches and the liveview security
   * You can get the state of all liveview scenes using MQTT.
   * You can set a liveview scene using MQTT.
 
-To learn more about the MQTT support provided by this plugin, see the [MQTT](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/MQTT.md) page.
+To learn more about the MQTT support provided by this plugin, see the [MQTT](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/MQTT.md) page.
 
 ### Some Fun Facts
   * You don't need to configure all the liveviews. If you have at least one, the security system accessory will appear. For security system states with no corresponding liveviews, nothing will happen.

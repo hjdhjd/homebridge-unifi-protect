@@ -1,7 +1,7 @@
 <SPAN ALIGN="CENTER" STYLE="text-align:center">
 <DIV ALIGN="CENTER" STYLE="text-align:center">
 
-[![homebridge-unifi-protect: Native HomeKit support for UniFi Protect](https://raw.githubusercontent.com/hjdhjd/homebridge-unifi-protect/master/homebridge-protect.svg)](https://github.com/hjdhjd/homebridge-unifi-protect)
+[![homebridge-unifi-protect: Native HomeKit support for UniFi Protect](https://raw.githubusercontent.com/hjdhjd/homebridge-unifi-protect/main/homebridge-protect.svg)](https://github.com/hjdhjd/homebridge-unifi-protect)
 
 # Homebridge UniFi Protect
 
@@ -23,7 +23,7 @@ Reverse engineering the realtime updates API is a bit more difficult than the sy
 
 The Protect realtime updates API, however, is a binary protocol published over the `updates` websocket, and until now has been undocumented. I spent time analyzing what's happening in the Protect browser webUI as well as observing the controller and various Protect versions themselves to reverse engineer what's going on. Pouring through obfuscated code is like solving a puzzle with all the pieces in front of you - you know it's all there, you're just not always sure how it fits together.
 
-For the impatient, you can take a look at the code for how to decode and read the binary protocol here in [protect-updates-api.ts](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/src/protect-updates-api.ts). Aside from Homebridge-specific logging support, the code is independent and portable to other platforms. You'll probably want to grab type and interface information from [protect-types.ts](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/src/protect-types.ts) as well.
+For the impatient, you can take a look at the code for how to decode and read the binary protocol here in [protect-updates-api.ts](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/src/protect-updates-api.ts). Aside from Homebridge-specific logging support, the code is independent and portable to other platforms. You'll probably want to grab type and interface information from [protect-types.ts](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/src/protect-types.ts) as well.
 
 I welcome any additions or corrections to the protocol for the benefit of the community. I hope this helps others launch their own exploration and create new and interesting Protect-enabled capabilities.
 
@@ -33,7 +33,7 @@ This list represents all known apps that are using the realtime updates API for 
  * [homebridge-unifi-protect](https://github.com/hjdhjd/homebridge-unifi-protect): Seamless integration of UniFi Protect into HomeKit with support for cameras, doorbells, and more.
 
 #### Connecting
- * Login to the UniFi Protect controller and obtain the bootstrap JSON. The URL is: `https://protect-nvr-ip/proxy/protect/api/bootstrap`. You can look through [protect-api.ts](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/src/protect-api.ts) for a better understanding of the Protect login process and how to obtain the bootstrap JSON.
+ * Login to the UniFi Protect controller and obtain the bootstrap JSON. The URL is: `https://protect-nvr-ip/proxy/protect/api/bootstrap`. You can look through [protect-api.ts](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/src/protect-api.ts) for a better understanding of the Protect login process and how to obtain the bootstrap JSON.
  * Open the websocket to the updates URL. The URL is: `wss://protect-nvr-ip/proxy/protect/ws/updates?lastUpdateId?lastUpdateId=X`. You can grab lastUpdateId from the bootstrap JSON in the prior step. You can [see an example in protect-api.ts](https://github.com/hjdhjd/homebridge-unifi-protect/blob/1d0d28a8b020878ee8f478244bed7ec361b33779/src/protect-api.ts#L225).
  * Then you're ready to listen to messages. You can see an [example of this in protect-nvr.ts](https://github.com/hjdhjd/homebridge-unifi-protect/blob/1d0d28a8b020878ee8f478244bed7ec361b33779/src/protect-nvr.ts#L408).
 

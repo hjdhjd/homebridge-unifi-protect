@@ -1,7 +1,7 @@
 <SPAN ALIGN="CENTER" STYLE="text-align:center">
 <DIV ALIGN="CENTER" STYLE="text-align:center">
 
-[![homebridge-unifi-protect: Native HomeKit support for UniFi Protect](https://raw.githubusercontent.com/hjdhjd/homebridge-unifi-protect/master/homebridge-protect.svg)](https://github.com/hjdhjd/homebridge-unifi-protect)
+[![homebridge-unifi-protect: Native HomeKit support for UniFi Protect](https://raw.githubusercontent.com/hjdhjd/homebridge-unifi-protect/main/homebridge-protect.svg)](https://github.com/hjdhjd/homebridge-unifi-protect)
 
 # Homebridge UniFi Protect
 
@@ -17,10 +17,10 @@
 `homebridge-unifi-protect` is a [Homebridge](https://homebridge.io) plugin that provides HomeKit support to the [UniFi Protect](https://unifi-network.ui.com/video-security) device ecosystem. [UniFi Protect](https://unifi-network.ui.com/video-security) is [Ubiquiti's](https://www.ui.com) next-generation video security platform, with rich camera, doorbell, and NVR controller hardware options for you to choose from, as well as an app which you can use to view, configure and manage your video camera and doorbells.
 
 ### Audio Options
-Audio options allow you to tune certain aspects of the audio that comes out of UniFi Protect cameras. They are configured as [Feature Options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md), which means you have the same flexibility in being able to apply specific audio options to only certain cameras, or globally across all your Protect cameras in HomeKit.
+Audio options allow you to tune certain aspects of the audio that comes out of UniFi Protect cameras. They are configured as [Feature Options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md), which means you have the same flexibility in being able to apply specific audio options to only certain cameras, or globally across all your Protect cameras in HomeKit.
 
 #### Noise Filter
-The noise filter [feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md#audio) applies a filter to the audio that comes from a Protect camera. Specifically, it tries to enhance human voices and filter out other background noise.
+The noise filter [feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md#audio) applies a filter to the audio that comes from a Protect camera. Specifically, it tries to enhance human voices and filter out other background noise.
 
 First, and foremost - **this filter is not magic. Don't expect magical results.** It can help, and when tuned for your environment, can help quite a bit. So how does this all work?
 
@@ -43,7 +43,7 @@ The `highpass` audio filter attenuates (eliminates) frequencies below a given fr
 
 When you enable the `Audio.Filter.Noise` feature option in `homebridge-unifi-protect`, the default `highpass` value will be `200 Hz`. That means that sounds below `200 Hz` will be filtered out. This may work very well in your environment, or it may need further adjustment. Experiment and see what works best for you.
 
-To adjust this setting, first enable the [noise filter](#noise-filter) [feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md#audio). To customize the `highpass` audio filter, you can use the `Audio.Filter.Noise.HighPass` feature option. For example:
+To adjust this setting, first enable the [noise filter](#noise-filter) [feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md#audio). To customize the `highpass` audio filter, you can use the `Audio.Filter.Noise.HighPass` feature option. For example:
 
 ```
 Enable.Audio.Filter.Noise.HighPass.400
@@ -55,7 +55,7 @@ The `lowpass` audio filter attenuates (eliminates) frequencies above a given fre
 
 When you enable the `Audio.Filter.Noise` feature option in `homebridge-unifi-protect`, the default `lowpass` value will be `1000 Hz`. That means that sounds above `1000 Hz` will be filtered out. This may work very well in your environment, or it may need further adjustment. Experiment and see what works best for you.
 
-To adjust this setting, first enable the [noise filter](#noise-filter) [feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md#audio). To customize the `lowpass` audio filter, you can use the `Audio.Filter.Noise.LowPass` feature option. For example:
+To adjust this setting, first enable the [noise filter](#noise-filter) [feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md#audio). To customize the `lowpass` audio filter, you can use the `Audio.Filter.Noise.LowPass` feature option. For example:
 
 ```
 Enable.NoiseFilter.LowPass.AABBCCDDEEFF.2000

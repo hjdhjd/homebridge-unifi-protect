@@ -1,7 +1,7 @@
 <SPAN ALIGN="CENTER" STYLE="text-align:center">
 <DIV ALIGN="CENTER" STYLE="text-align:center">
 
-[![homebridge-unifi-protect: Native HomeKit support for UniFi Protect](https://raw.githubusercontent.com/hjdhjd/homebridge-unifi-protect/master/homebridge-protect.svg)](https://github.com/hjdhjd/homebridge-unifi-protect)
+[![homebridge-unifi-protect: Native HomeKit support for UniFi Protect](https://raw.githubusercontent.com/hjdhjd/homebridge-unifi-protect/main/homebridge-protect.svg)](https://github.com/hjdhjd/homebridge-unifi-protect)
 
 # Homebridge UniFi Protect
 
@@ -32,10 +32,10 @@ HomeKit Secure Video has been a feature in HomeKit since the launch of iOS 13. I
   * **Important note: You must configure HomeKit Secure Video in the Home app before it will start recording any events of any kind. Instructions for doing so are well beyond the scope of this documentation. Please look it up in the infinite guides online or ask a friend.**
   * On a technical level, HKSV asks `homebridge-unifi-protect` to maintain a buffer - a few seconds of video (in practice, HomeKit always requests four seconds of history). Think of this buffer like a timeshifting DVR that's constantly updating. When a motion event occurs, we send the buffer to HomeKit, and continue to do so as long as HomeKit requests it.
   * It's important to note: **HomeKit decides how long each event will be, by default**. In practice, I've seen events as long 5 or 10 minutes in high-traffic areas. HomeKit continues to record an event for as long as it thinks there's some motion of interest to the user.
-  * In practice, if you place a camera in a very high traffic area, say a kitchen or a family room, and enable HKSV, you're likely going to get very long motion events captured in HomeKit. It's not a bug, it's the way HomeKit Secure Video is designed. :smile: You can modify this behavior with the [`Video.HKSV.Recording.MaxDuration` feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md#video), which allows you to set an upward limit on how long each HKSV event recording can be.
+  * In practice, if you place a camera in a very high traffic area, say a kitchen or a family room, and enable HKSV, you're likely going to get very long motion events captured in HomeKit. It's not a bug, it's the way HomeKit Secure Video is designed. :smile: You can modify this behavior with the [`Video.HKSV.Recording.MaxDuration` feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md#video), which allows you to set an upward limit on how long each HKSV event recording can be.
 
 #### Interactions With UniFi Protect Smart Motion Detection
-UniFi Protect has it's own smart motion detection capabilities that [can be used](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md#motion) with `homebridge-unifi-protect`. When you have smart motion detection enabled and you have HomeKit Secure Video is enabled **and** configured in the Home app to record events, `homebridge-unifi-protect` is faced with a dilemma: when do I notify a user of a motion detection event?
+UniFi Protect has it's own smart motion detection capabilities that [can be used](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md#motion) with `homebridge-unifi-protect`. When you have smart motion detection enabled and you have HomeKit Secure Video is enabled **and** configured in the Home app to record events, `homebridge-unifi-protect` is faced with a dilemma: when do I notify a user of a motion detection event?
 
 When HKSV is both enabled and configured, `homebridge-unifi-protect` will not use the smart motion detection capabilities of UniFi Protect to alert you to a motion event and instead use HKSV to do so. Why? If the user has made an active decision to enable HKSV, we need to let HomeKit determine when to notify the user of an event of interest, and only HKSV. Otherwise, you run the risk of being spammed with motion event notifications, or missing motion events altogether.
 
@@ -64,15 +64,15 @@ HKSV in `homebridge-unifi-protect` works very well by default if you have a dece
 
 If you're struggling to get HKSV working in HBUP, try the following, in this order and see if it helps:
 
-  * Try disabling the timeshift buffer. This will have a small implication to HKSV event viewing - specifically, the few seconds of video before a motion event will not be available to send to HKSV for analysis, but with the benefit of significantly lower system requirements to run `homebridge-unifi-protect`. Read more about the [`Video.HKSV.TimeshiftBuffer` feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md#video)  feature option and you can disable the timeshift buffer with `Disable.Video.HKSV.TimeshiftBuffer`.
+  * Try disabling the timeshift buffer. This will have a small implication to HKSV event viewing - specifically, the few seconds of video before a motion event will not be available to send to HKSV for analysis, but with the benefit of significantly lower system requirements to run `homebridge-unifi-protect`. Read more about the [`Video.HKSV.TimeshiftBuffer` feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md#video)  feature option and you can disable the timeshift buffer with `Disable.Video.HKSV.TimeshiftBuffer`.
 
-  * Try forcing HBUP to only use the lowest quality video stream as a starting point. You do this by using the [`Video.HKSV.Recording.Only.Low` feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/FeatureOptions.md#video).
+  * Try forcing HBUP to only use the lowest quality video stream as a starting point. You do this by using the [`Video.HKSV.Recording.Only.Low` feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md#video).
 
   * Optionally, in addition to forcing the use of a lower-quality video stream, you can also try adjusting the video encoder used for transcoding HKSV. If you're running on a **Raspberry Pi** or similar low-power, but **Linux-based** platforms, you can try enabling hardware-based encoding. You can do that by setting the `Video Encoder` to `h264_omx` or `h264_v4l2m2m` under the *Advanced Settings* section of the HBUP configuration webUI. **Note: hardware encoders can and will sometimes produce lower-quality or incorrect video, but it should be more than acceptable for most people. If you want to do HKSV right, get beefier hardware. 😊 I would advise you not to use hardware encoding in general, and I won't provide any support for issues relating to hardware encoding.**
 
 The above recommendations should help you get up and running in most lower-powered environments.
 
-Even if things run well in your environment, I would **strongly encourage** you to ensure you're getting the best performance you can out of HKSV and HBUP more broadly by [running HBUP in a child bridge within Homebridge](https://github.com/hjdhjd/homebridge-unifi-protect/blob/master/docs/BestPractices.md#homebridge). You can ignore this recommendation if the **only** thing you are running in Homebridge is `homebridge-unifi-protect` as it will be redundant.
+Even if things run well in your environment, I would **strongly encourage** you to ensure you're getting the best performance you can out of HKSV and HBUP more broadly by [running HBUP in a child bridge within Homebridge](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/BestPractices.md#homebridge). You can ignore this recommendation if the **only** thing you are running in Homebridge is `homebridge-unifi-protect` as it will be redundant.
 
 #### Things To Be Aware Of
   * You must have the administrator role enabled for the UniFi Protect username you choose to use with `homebridge-unifi-protect`. Without it, HKSV won't work correctly or at all in most cases.
