@@ -8,6 +8,7 @@
 import { ChildProcessWithoutNullStreams, execFile, spawn } from "child_process";
 import { Logging, StreamRequestCallback } from "homebridge";
 import { Readable, Writable } from "stream";
+import { EventEmitter } from "events";
 import { ProtectCamera } from "./protect-camera";
 import { ProtectNvr } from "./protect-nvr";
 import util from "util";
@@ -19,7 +20,7 @@ export interface PortInterface {
 }
 
 // Base class for all FFmpeg process management.
-export class FfmpegProcess {
+export class FfmpegProcess extends EventEmitter {
 
   protected callback: StreamRequestCallback | null;
   protected commandLineArgs: string[];
@@ -39,6 +40,9 @@ export class FfmpegProcess {
 
   // Create a new FFmpeg process instance.
   constructor(protectCamera: ProtectCamera, commandLineArgs?: string[], callback?: StreamRequestCallback) {
+
+    // Initialize our parent.
+    super();
 
     this.callback = null;
     this.commandLineArgs = [];
@@ -176,6 +180,7 @@ export class FfmpegProcess {
         this.isStarted = true;
         this.isEnded = false;
         this.debug("%s: Received the first frame.", this.name());
+        this.emit("ffmpegStarted");
 
         // Always remember to execute the callback once we're setup to let homebridge know we're streaming.
         if(this.callback) {
