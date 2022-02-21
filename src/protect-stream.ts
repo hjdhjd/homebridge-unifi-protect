@@ -39,7 +39,9 @@ import { ProtectPlatform } from "./protect-platform";
 import { ProtectRecordingDelegate } from "./protect-record";
 import { RtpDemuxer } from "./protect-rtp";
 import WebSocket from "ws";
+import events from "events";
 import ffmpegPath from "ffmpeg-for-homebridge";
+import net from "net";
 import { reservePorts } from "@homebridge/camera-utils";
 
 // Increase the listener limits to support Protect installations with more than 10 cameras. 100 seems like a reasonable default.
@@ -628,6 +630,21 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       "a=crypto:1 AES_CM_128_HMAC_SHA1_80 inline:" + sessionInfo.audioSRTP.toString("base64")
     ].join("\n");
 
+    // Create a TCP server to deliver our SDP payload. It's inelegant, but effective at working around certain
+    // challenges in FFmpeg when it comes to feeding input that might usually be passed through stdin.
+    const sdpPayloadServer = net.createServer(socket => {
+
+      // Write out the SDP header and we're done.
+      socket.end(Buffer.from(sdpReturnAudio));
+    });
+
+    // Listen for a single connection on a randomly generated port.
+    sdpPayloadServer.listen(0, "127.0.0.1");
+
+    // Wait for the listening event so we can find out what port we've been assigned. We use
+    // that port information to tell FFmpeg where to find the SDP payload we want to deliver.
+    await events.once(sdpPayloadServer, "listening");
+
     // Configure the audio portion of the command line, if we have a version of FFmpeg supports libfdk_aac. Options we use are:
     //
     // -hide_banner           Suppress printing the startup banner in FFmpeg.
@@ -646,15 +663,14 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     const ffmpegReturnAudioCmd = [
 
       "-hide_banner",
-      "-protocol_whitelist", "pipe,udp,rtp,file,crypto",
+      "-protocol_whitelist", "crypto,file,rtp,tcp,udp",
       "-f", "sdp",
       "-acodec", "libfdk_aac",
-      "-i", "pipe:0",
-      "-acodec", cameraConfig.talkbackSettings.typeFmt,
+      "-i", "tcp://127.0.0.1:" + (sdpPayloadServer.address() as net.AddressInfo).port.toString(),
       "-flags", "+global_header",
+      "-b:a", cameraConfig.talkbackSettings.bitsPerSample.toString() + "k",
       "-ac", cameraConfig.talkbackSettings.channels.toString(),
       "-ar", cameraConfig.talkbackSettings.samplingRate.toString(),
-      "-b:a", cameraConfig.talkbackSettings.bitsPerSample.toString() + "k",
       "-f", "adts",
       "pipe:1"
     ];
@@ -718,13 +734,6 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
       // Setup housekeeping for the twoway FFmpeg session.
       this.ongoingSessions[request.sessionID].ffmpeg.push(ffmpegReturnAudio);
-
-      // Allow for a small delay before starting our two-way audio session.
-      setTimeout(() => {
-
-        // Feed the SDP session description to FFmpeg on stdin.
-        ffmpegReturnAudio.stdin?.end(sdpReturnAudio + "\n");
-      }, 500);
 
       // Send the audio.
       ffmpegReturnAudio.stdout?.on("data", dataListener = (data: Buffer): void => {
