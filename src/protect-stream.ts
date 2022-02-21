@@ -723,7 +723,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       setTimeout(() => {
 
         // Feed the SDP session description to FFmpeg on stdin.
-        ffmpegReturnAudio.stdin?.end(sdpReturnAudio);
+        ffmpegReturnAudio.stdin?.end(sdpReturnAudio + "\n");
       }, 500);
 
       // Send the audio.
