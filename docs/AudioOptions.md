@@ -26,10 +26,18 @@ First, and foremost - **this filter is not magic. Don't expect magical results.*
 
 Human voices transmit sound between the frequencies of [300 Hz and 3400 Hz](https://en.wikipedia.org/wiki/Voice_frequency). In practice, the range is even smaller, but I'll leave that to audio engineers and your own curiosity searching online. Protect cameras have reasonably sensitive microphones. They tend to pickup a lot of the environmental noise, in addition to the stuff you might be really interested in. What if you could filter out the other noise and emphasize human voices?
 
-`homebridge-unifi-protect` uses the FFmpeg [highpass](https://ffmpeg.org/ffmpeg-filters.html#highpass) and [lowpass](https://ffmpeg.org/ffmpeg-filters.html#lowpass) audio filters. There are other noise-reduction filters available in FFmpeg, however they either require special compilation options, or have substantial complexity in their setup that in practice, doesn't work better than the tried-and-true highpass and lowpass FFmpeg audio filters.
+`homebridge-unifi-protect` uses the FFmpeg [afftdn](https://ffmpeg.org/ffmpeg-filters.html#afftdn), [highpass](https://ffmpeg.org/ffmpeg-filters.html#highpass) and [lowpass](https://ffmpeg.org/ffmpeg-filters.html#lowpass) audio filters. There are other noise-reduction filters available in FFmpeg, however they either require special compilation options, or have substantial complexity in their setup that in practice, doesn't work much better than this tritried-and-true  combination of the modern FFT-based noise reduction optionally coupled with the highpass and lowpass FFmpeg audio filters.
 
 ##### <A NAME="noise-filter"></A>Enabling the Noise Filter
-Enabling the feature option `Audio.Filter.Noise` will enable the noise filter with the following default settings:
+Enabling the feature option `Audio.Filter.Noise` will enable the noise filter with the following default setting:
+
+| Audio Noise Filter     | Setting
+|------------------------|----------------------------------
+| Afftdn                 | 90 decibels of noise reduction
+
+Afftdn is a modern noise audio filter that uses fast Fourier transforms (FFTs) to achieve very good background noise reduction results. If you'd like to further adjust the default noise reduction settings, you can do so using the [`Audio.Filter.Noise.FftNr` feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md#audio) feature option, where you can tailor the number of decibels of background noise reduction you'd like. The default in `homebridge-unifi-protect` is 90 decibels. Valid values are from 0.01 to 97. You can read more about the [afftdn audio filter](https://ffmpeg.org/ffmpeg-filters.html#afftdn) in the FFmpeg documentation.
+
+If you'd like to enable even more background noise reduction, you can also add the `highpass` and `lowpass` filters. These also provide good additional noise reduction and are additive to the `afftdn` audio filter. The default settings for these audio filters are:
 
 | Audio Noise Filter     | Setting
 |------------------------|----------------------------------

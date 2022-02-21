@@ -106,6 +106,7 @@ Please review the [audio options documentation](https://github.com/hjdhjd/homebr
 | `Enable.Audio.Filter.Noise`                   | Enable the [audio noise filter](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/AudioOptions.md#noise-filter) to enhance voices over background noise. <BR>*This option can be further customized on a per-streaming-client basis.*</BR>
 | `Disable.Audio.Filter.Noise`                  | Disable the [audio noise filter](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/AudioOptions.md#noise-filter). *(Default)* <BR>*This option can be further customized on a per-streaming-client basis.*</BR>
 |                                               |
+| <CODE>Enable.Audio.Filter.Noise.FftNr.<I>Number</I></CODE> | Set the noise reduction amount, in decibels, to attenuate (eliminate). This targets white noise only and utilized the FFmpeg `afftdn` filter behind the scenes. Valid values are: 0.01 to 97. *(Default: 90)* <BR>*This option can be further customized on a per-streaming-client basis.*</BR>
 | <CODE>Enable.Audio.Filter.Noise.HighPass.<I>Number</I></CODE> | Set the high pass filter to attenuate (eliminate) frequencies below *number*. *(Default: 200)* <BR>*This option can be further customized on a per-streaming-client basis.*</BR>
 | <CODE>Enable.Audio.Filter.Noise.LowPass.<I>Number</I></CODE> | Set the low pass filter to attenuate (eliminate) frequencies above *number*. *(Default: 1000)* <BR>*This option can be further customized on a per-streaming-client basis.*</BR>
 |                                               |
@@ -144,6 +145,9 @@ Logging feature options control which events get logged in Homebridge.
 |-----------------------------------------------|----------------------------------
 | `Enable.Log.Doorbell`                         | Enable the logging of doorbell ring events in Homebridge. *(Default)*
 | `Disable.Log.Doorbell`                        | Disable the logging of doorbell ring events in Homebridge.
+|                                               |
+| `Enable.Log.HKSV`                             | Enable the logging of HomeKit Secure Video recording events in Homebridge. *(Default)*
+| `Disable.Log.HKSV`                            | Disable the logging of HomeKit Secure Video recording events in Homebridge.
 |                                               |
 | `Enable.Log.Motion`                           | Enable the logging of motion events in Homebridge.
 | `Disable.Log.Motion`                          | Disable the logging of motion events in Homebridge. *(Default)*
