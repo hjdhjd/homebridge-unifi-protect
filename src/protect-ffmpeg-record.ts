@@ -57,7 +57,7 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
       // We're not using the timeshift buffer, so let's use the RTSP stream as the input to HKSV.
       //
       // -hide_banner                     Suppress printing the startup banner in FFmpeg.
-      // -probesize 1536                  How many bytes should be analyzed for stream information. We default to to analyze time should be spent analyzing
+      // -probesize 4096                  How many bytes should be analyzed for stream information. We default to to analyze time should be spent analyzing
       //                                  the input stream, in microseconds. We default to 1536.
       // -max_delay 500000                Set an upper limit on how much time FFmpeg can take in demuxing packets.
       // -r fps                           Set the input frame rate for the video stream.
@@ -65,7 +65,7 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
       // -i this.rtspEntry.url            RTSPS URL to get our input stream from.
       this.commandLineArgs.push(
 
-        "-probesize", "2048",
+        "-probesize", "4096",
         "-max_delay", "500000",
         "-r", rtspEntry.channel.fps.toString(),
         "-rtsp_transport", "tcp",
@@ -80,6 +80,9 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
     //                               Protect changes this in the future.
     //                               Yes, we included these above as well: they need to be included for every I/O stream to
     //                               maximize effectiveness it seems.
+    // -max_muxing_queue_size  9999  Workaround for a bug in pre-20221 versions of FFmpeg. This will ensure that FFmpeg maintains a
+    //                               a large enough queue to wait for an output packet to be available. Inputs aren't the issue in our
+    //                               situation.
     // -vcodec libx264               Copy the stream withour reencoding it.
     // -pix_fmt yuvj420p             Use the yuvj420p pixel format, which is what Protect uses.
     // -profile:v level              Use the H.264 profile HKSV is requesting when encoding.
@@ -98,6 +101,7 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
     this.commandLineArgs.push(
 
       "-map", "0:v",
+      "-max_muxing_queue_size", "9999",
       "-vcodec", this.protectCamera.stream.videoEncoder || "libx264",
       "-pix_fmt", "yuvj420p",
       "-profile:v", requestedProfile,
@@ -178,8 +182,8 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
 
         let data;
 
-        // The MP4 container format is well-documented format that is based around the concept of boxes. A box (or atom as they
-        // used to be called), is at the center of the MP4 format. It's composed of an 8-byte header, followed by the data payload
+        // The MP4 container format is well-documented and designed around the concept of boxes. A box (or atom as they
+        // used to be called), is at the center of an MP4 container. It's composed of an 8-byte header, followed by the data payload
         // it carries.
 
         // No existing header, let's start a new box.
@@ -213,6 +217,7 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
 
         // Add it to our queue to be eventually pushed out through our generator function.
         this.recordingBuffer.push({ data: data, header: header, length: dataLength, type: type });
+        this.emit("mp4box");
 
         // Prepare to start a new box for the next buffer that we will be processing.
         data = Buffer.alloc(0);
@@ -239,6 +244,18 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
     });
   }
 
+  // Stop our FFmpeg process and cleanup after ourselves.
+  protected stopProcess(): void {
+
+    // Call our parent to get started.
+    super.stopProcess();
+
+    // Ensure that we clear out of our segment generator by guaranteeing an exit path.
+    this.isEnded = true;
+    this.emit("ffmpegStarted");
+    this.emit("mp4box");
+  }
+
   // Generate complete segments from an FFmpeg output stream that HomeKit Secure Video can process.
   public async *segmentGenerator(): AsyncGenerator<Buffer> {
 
@@ -253,24 +270,19 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
         return;
       }
 
-      // If we haven't seen any output from FFmpeg yet, wait for it to do so before we start processing segments.
-      if(!this.isStarted) {
+      // If the buffer is empty, wait for our FFmpeg process to produce more boxes.
+      if(!this.recordingBuffer.length) {
 
         // eslint-disable-next-line no-await-in-loop
-        await events.once(this, "ffmpegStarted");
+        await events.once(this, "mp4box");
       }
 
       // Grab the next fMP4 box from our buffer.
       const box = this.recordingBuffer.shift();
 
-      // If the buffer is empty, sleep for a second. We sleep a longer interval here because the buffer is likely
-      // to populate no more than once a second, and in reality, more likely longer than that in most cases. Smaller
-      // boxes (e.g. MOOF) will be buffered faster than larger ones like MDAT that carry the bulk of the audio / video
-      // data.
+      // No fMP4 box, let's keep trying.
       if(!box) {
 
-        // eslint-disable-next-line no-await-in-loop
-        await this.nvr.sleep(1000);
         continue;
       }
 
