@@ -5,6 +5,7 @@
  * This module is heavily inspired by the homebridge and homebridge-camera-ffmpeg source code and
  * borrows heavily from both. Thank you for your contributions to the HomeKit world.
  */
+import { EventEmitter } from "events";
 import { Logging } from "homebridge";
 import { PROTECT_TWOWAY_HEARTBEAT_INTERVAL } from "./settings";
 import { ProtectStreamingDelegate } from "./protect-stream";
@@ -20,11 +21,13 @@ import { createSocket } from "dgram";
  * in answering the questions needed to bring all this together. A special thank you to @Sunoo for the many hours of
  * discussion and brainstorming on this and other topics.
  */
-export class RtpDemuxer {
+export class RtpDemuxer extends EventEmitter {
+
   private debug: (message: string, ...parameters: unknown[]) => void;
   private delegate: ProtectStreamingDelegate;
   private heartbeatTimer!: NodeJS.Timeout;
   private heartbeatMsg!: Buffer;
+  private _isRunning: boolean;
   private log: Logging;
   private inputPort: number;
   public readonly socket;
@@ -32,6 +35,9 @@ export class RtpDemuxer {
   // Create an instance of RtpDemuxer.
   constructor(streamingDelegate: ProtectStreamingDelegate, ipFamily: ("ipv4" | "ipv6") , inputPort: number, rtcpPort: number, rtpPort: number) {
 
+    super();
+
+    this._isRunning = false;
     this.debug = streamingDelegate.platform.debug.bind(streamingDelegate.platform);
     this.delegate = streamingDelegate;
     this.log = streamingDelegate.log;
@@ -50,6 +56,7 @@ export class RtpDemuxer {
       // Send RTP packets to the RTP port.
       if(this.isRtpMessage(msg)) {
 
+        this.emit("rtp");
         this.socket.send(msg, rtpPort);
 
       } else {
@@ -65,7 +72,6 @@ export class RtpDemuxer {
 
         // RTCP control packets should go to the RTCP port.
         this.socket.send(msg, rtcpPort);
-
       }
     });
 
@@ -74,6 +80,7 @@ export class RtpDemuxer {
 
     // Take the socket live.
     this.socket.bind(this.inputPort);
+    this._isRunning = true;
   }
 
   // Send a regular heartbeat to FFmpeg to ensure the pipe remains open and the process alive.
@@ -97,10 +104,13 @@ export class RtpDemuxer {
 
   // Close the socket and cleanup.
   public close(): void {
+
     this.debug("%s: Closing the RtpDemuxer instance on port %s.", this.delegate.protectCamera.name(), this.inputPort);
 
     clearTimeout(this.heartbeatTimer);
     this.socket.close();
+    this._isRunning = false;
+    this.emit("rtp");
   }
 
   // Retrieve the payload information from a packet to discern what the packet payload is.
@@ -113,5 +123,11 @@ export class RtpDemuxer {
     const payloadType = this.getPayloadType(message);
 
     return (payloadType > 90) || (payloadType === 0);
+  }
+
+  // Inform people whether we are up and running or not.
+  public get isRunning(): boolean {
+
+    return this._isRunning;
   }
 }
