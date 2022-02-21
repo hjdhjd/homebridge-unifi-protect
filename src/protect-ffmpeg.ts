@@ -192,7 +192,7 @@ export class FfmpegProcess {
         const cleanLine = line.replace(/[\p{Cc}\p{Cn}\p{Cs}]+/gu, "");
 
         // Don't print the FFmpeg progress bar to give clearer insights into what's going on.
-        if(cleanLine.length && (cleanLine.indexOf("frame=") === -1)) {
+        if(cleanLine.length && ((cleanLine.indexOf("frame=") === -1) || (cleanLine.indexOf("size=") === -1))) {
 
           this.stderrLog.push(cleanLine + "\n");
 
