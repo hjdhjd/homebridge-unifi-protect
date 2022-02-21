@@ -113,7 +113,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     }
 
     // If the user has disabled timeshifting, don't start the timeshift buffer.
-    if(this.nvr?.optionEnabled(this.accessory.context.device as ProtectCameraConfig, "Video.HKSV.TimeshiftBuffer")) {
+    if(this.nvr.optionEnabled(this.accessory.context.device as ProtectCameraConfig, "Video.HKSV.TimeshiftBuffer")) {
 
       if(!this.recordingConfig || !this.rtspEntry) {
 
@@ -146,7 +146,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
 
       this.log.info("%s: HomeKit Secure Video event recording enabled: %s, %s kbps with %s",
         this.name(), this.rtspEntry?.name, this.recordingConfig?.videoCodec.parameters.bitRate,
-        this.nvr?.optionEnabled(this.accessory.context.device as ProtectCameraConfig, "Video.HKSV.TimeshiftBuffer") ?
+        this.nvr.optionEnabled(this.accessory.context.device as ProtectCameraConfig, "Video.HKSV.TimeshiftBuffer") ?
           "a " + (this.timeshift.length / 1000).toString() + " second timeshift buffer." :
           "no timeshift buffer. Warning: this may provide a suboptimal HKSV experience."
       );
@@ -331,7 +331,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     this.isTransmitting = true;
 
     // Let the timeshift buffer know it's time to transmit and continue timeshifting.
-    if(this.nvr?.optionEnabled(this.accessory.context.device as ProtectCameraConfig, "Video.HKSV.TimeshiftBuffer")) {
+    if(this.nvr.optionEnabled(this.accessory.context.device as ProtectCameraConfig, "Video.HKSV.TimeshiftBuffer")) {
 
       this.timeshiftedSegments = 0;
       await this.timeshift.transmitStream(true);
@@ -374,8 +374,10 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
   // Stop transmitting the HomeKit hub our timeshifted fMP4 stream.
   private stopTransmitting(reason?: HDSProtocolSpecificErrorReason): void {
 
+    const device = this.accessory.context.device as ProtectCameraConfig;
+
     // We're done transmitting, so we can go back to maintaining our timeshift buffer for HomeKit.
-    if(this.nvr?.optionEnabled(this.accessory.context.device as ProtectCameraConfig, "Video.HKSV.TimeshiftBuffer")) {
+    if(this.nvr.optionEnabled(device, "Video.HKSV.TimeshiftBuffer")) {
 
       void this.timeshift.transmitStream(false);
     }
@@ -471,8 +473,13 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
           break;
       }
 
-      this.log.info("%s: HomeKit Secure Video has recorded %s %s %s motion event.", this.name(),
-        this.timeshiftedSegments ? "a" : "an approximately", recordedTime, timeUnit);
+      // Inform the user if they've enabled logging. We log HKSV events by default, for now.
+      if(this.nvr.optionEnabled(device, "Log.Motion.HKSV") ||
+        this.nvr.optionEnabled(device, "Log.Motion", false)) {
+
+        this.log.info("%s: HomeKit Secure Video has recorded %s %s %s motion event.", this.name(),
+          this.timeshiftedSegments ? "a" : "an approximately", recordedTime, timeUnit);
+      }
     }
 
     // If we have a reason for stopping defined, and it's noteworthy, inform the user.
