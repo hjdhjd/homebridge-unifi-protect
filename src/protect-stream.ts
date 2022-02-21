@@ -35,6 +35,7 @@ import {
 } from "./settings";
 import { ProtectCamera, RtspEntry } from "./protect-camera";
 import { FfmpegStreamingProcess } from "./protect-ffmpeg-stream";
+import { ProtectNvr } from "./protect-nvr";
 import { ProtectOptions } from "./protect-options";
 import { ProtectPlatform } from "./protect-platform";
 import { ProtectRecordingDelegate } from "./protect-record";
@@ -80,6 +81,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   public hksv: ProtectRecordingDelegate | null;
   public readonly log: Logging;
   public readonly name: () => string;
+  private readonly nvr: ProtectNvr;
   private ongoingSessions: { [index: string]: { ffmpeg: FfmpegStreamingProcess[], rtpDemuxer: RtpDemuxer | null } };
   private pendingSessions: { [index: string]: SessionInfo };
   public readonly platform: ProtectPlatform;
@@ -100,6 +102,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     this.hksv = null;
     this.log = protectCamera.platform.log;
     this.name = protectCamera.name.bind(protectCamera);
+    this.nvr = protectCamera.nvr;
     this.ongoingSessions = {};
     this.protectCamera = protectCamera;
     this.pendingSessions = {};
@@ -241,7 +244,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     }
 
     // Publish the snapshot as a data URL to MQTT, if configured.
-    this.protectCamera.nvr.mqtt?.publish(this.protectCamera.accessory, "snapshot", "data:image/jpeg;base64," + snapshot.toString("base64"));
+    this.nvr.mqtt?.publish(this.protectCamera.accessory, "snapshot", "data:image/jpeg;base64," + snapshot.toString("base64"));
   }
 
   // Prepare to launch the video stream.
@@ -250,7 +253,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     const cameraConfig = this.protectCamera.accessory.context.device as ProtectCameraConfig;
 
     // Check if audio support is enabled.
-    const isAudioEnabled = this.protectCamera.nvr.optionEnabled(cameraConfig, "Audio", true, request.targetAddress);
+    const isAudioEnabled = this.nvr.optionEnabled(cameraConfig, "Audio", true, request.targetAddress);
 
     // We need to check for AAC support because it's going to determine whether we support audio.
     const hasLibFdk = isAudioEnabled && (await FfmpegStreamingProcess.codecEnabled(this.videoProcessor, "libfdk_aac", this.log));
@@ -276,7 +279,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
       // Request the talkback websocket from the controller.
       const params = new URLSearchParams({ camera: cameraConfig.id });
-      talkBack = await this.protectCamera.nvr.nvrApi.getWsEndpoint(this.protectCamera.nvr.nvrApi.wsUrl() + "/talkback?" + params.toString());
+      talkBack = await this.nvr.nvrApi.getWsEndpoint(this.nvr.nvrApi.wsUrl() + "/talkback?" + params.toString());
 
       // Something went wrong and we don't have a talkback websocket.
       if(!talkBack) {
@@ -385,7 +388,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     await this.protectCamera.setBitrate(this.rtspEntry.channel.id, request.video.max_bit_rate * 1000);
 
     // Are we transcoding?
-    const isTranscoding = this.protectCamera.nvr.optionEnabled(cameraConfig, "Video.Transcode", false, sessionInfo.address);
+    const isTranscoding = this.nvr.optionEnabled(cameraConfig, "Video.Transcode", false, sessionInfo.address);
 
     // Set our packet size to be 564. Why? MPEG transport stream (TS) packets are 188 bytes in size each.
     // These packets transmit the video data that you ultimately see on your screen and are transmitted using
@@ -532,17 +535,17 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       );
 
       // If we are audio filtering, address it here.
-      if(this.protectCamera.nvr.optionEnabled(cameraConfig, "Audio.Filter.Noise", false, sessionInfo.address)) {
+      if(this.nvr.optionEnabled(cameraConfig, "Audio.Filter.Noise", false, sessionInfo.address)) {
 
         const afOptions = [];
 
         // See what the user has set for the afftdn filter for this camera.
-        let fftNr = parseFloat(this.protectCamera.nvr.optionGet(cameraConfig, "Audio.Filter.Noise.FftNr", sessionInfo.address) ?? "");
+        let fftNr = parseFloat(this.nvr.optionGet(cameraConfig, "Audio.Filter.Noise.FftNr", sessionInfo.address) ?? "");
 
         // If we have an invalid setting, use the defaults.
-        if((fftNr !== fftNr) || (fftNr < 0) || (fftNr > 97)) {
+        if((fftNr !== fftNr) || (fftNr < 0.01) || (fftNr > 97)) {
 
-          fftNr = (fftNr > 97) ? 97 : PROTECT_FFMPEG_AUDIO_FILTER_FFTNR;
+          fftNr = (fftNr > 97) ? 97 : ((fftNr < 0.01) ? 0.01 : PROTECT_FFMPEG_AUDIO_FILTER_FFTNR);
         }
 
         // nt=w  Focus on eliminating white noise.
@@ -552,11 +555,14 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
         // nr=X  Noise reduction value in decibels.
         afOptions.push("afftdn=nt=w:om=o:tn=1:tr=1:nr=" + fftNr.toString());
 
-        let highpass: number | string | null = this.protectCamera.nvr.optionGet(cameraConfig, "Audio.Filter.Noise.HighPass", sessionInfo.address) ?? null;
-        let lowpass: number | string | null = this.protectCamera.nvr.optionGet(cameraConfig, "Audio.Filter.Noise.LowPass", sessionInfo.address) ?? null;
+        let highpass: number | string | undefined = this.nvr.optionGet(cameraConfig, "Audio.Filter.Noise.HighPass", sessionInfo.address) ??
+          (this.nvr.optionEnabled(cameraConfig, "Audio.Filter.Noise.HighPass", false) ? PROTECT_FFMPEG_AUDIO_FILTER_HIGHPASS.toString() : undefined);
+
+        let lowpass: number | string | undefined = this.nvr.optionGet(cameraConfig, "Audio.Filter.Noise.LowPass", sessionInfo.address) ??
+          (this.nvr.optionEnabled(cameraConfig, "Audio.Filter.Noise.LowPass", false) ? PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS.toString() : undefined);
 
         // Only set the highpass and lowpass filters if the user has explicitly enabled them.
-        if(highpass || lowpass) {
+        if((highpass !== undefined) || (lowpass !== undefined)) {
 
           // See what the user has set for the highpass filter for this camera.
           highpass = parseInt(highpass ?? "");
@@ -864,7 +870,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     }
 
     // Request the image from the controller.
-    const response = await this.protectCamera.nvr.nvrApi.fetch(this.protectCamera.snapshotUrl + "?" + params.toString(), { method: "GET" }, true, false);
+    const response = await this.nvr.nvrApi.fetch(this.protectCamera.snapshotUrl + "?" + params.toString(), { method: "GET" }, true, false);
 
     // Occasional snapshot failures will happen. The controller isn't always able to generate them if
     // it's already generating one, or it's requested too quickly after the last one.
