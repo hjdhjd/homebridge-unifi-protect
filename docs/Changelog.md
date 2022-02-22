@@ -9,7 +9,6 @@ All notable changes to this project will be documented in this file. This projec
 
   * **[Please review the changelog for v5.4.0 for important information on the new features and changes in 5.4.x](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Changelog.md#540-2022-02-19)**.
 
-
 ## 5.4.5 (2022-02-21)
   * Housekeeping and minor bugfixes.
 
