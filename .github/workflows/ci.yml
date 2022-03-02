@@ -29,7 +29,7 @@ jobs:
     # Execute the build activities.
     steps:
       - name: Checkout the repository.
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       - name: Setup the node ${{ matrix.node-version }} environment.
         uses: actions/setup-node@v2
@@ -55,7 +55,7 @@ jobs:
     # Execute the build and publish activities.
     steps:
     - name: Checkout the repository.
-      uses: actions/checkout@v2
+      uses: actions/checkout@v3
 
     - name: Setup the node environment.
       uses: actions/setup-node@v2
