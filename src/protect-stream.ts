@@ -506,7 +506,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
     // Configure the audio portion of the command line, if we have a version of FFmpeg supports libfdk_aac. Options we use are:
     //
-    // -map 0:a                         Selects the first available audio track from the stream. Protect actually maps audio
+    // -map 0:a:0                       Selects the first available audio track from the stream. Protect actually maps audio
     //                                  and video tracks in opposite locations from where FFmpeg typically expects them. This
     //                                  setting is a more general solution than naming the track locations directly in case
     //                                  Protect changes this in the future.
@@ -523,7 +523,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       // Configure our audio parameters.
       ffmpegArgs.push(
 
-        "-map", "0:a",
+        "-map", "0:a:0",
         "-acodec", "libfdk_aac",
         "-profile:a", "aac_eld",
         "-flags", "+global_header",
