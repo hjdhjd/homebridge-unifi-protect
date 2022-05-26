@@ -57,7 +57,7 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
       // We're not using the timeshift buffer, so let's use the RTSP stream as the input to HKSV.
       //
       // -hide_banner                     Suppress printing the startup banner in FFmpeg.
-      // -probesize 4096                  How many bytes should be analyzed for stream information. We default to to analyze time should be spent analyzing
+      // -probesize 16384                 How many bytes should be analyzed for stream information. We default to to analyze time should be spent analyzing
       //                                  the input stream, in microseconds. We default to 1536.
       // -max_delay 500000                Set an upper limit on how much time FFmpeg can take in demuxing packets.
       // -r fps                           Set the input frame rate for the video stream.
@@ -65,7 +65,7 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
       // -i this.rtspEntry.url            RTSPS URL to get our input stream from.
       this.commandLineArgs.push(
 
-        "-probesize", "4096",
+        "-probesize", "16384",
         "-max_delay", "500000",
         "-r", rtspEntry.channel.fps.toString(),
         "-rtsp_transport", "tcp",
@@ -74,7 +74,7 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
 
     }
 
-    // -map 0:v                      Selects the first available video track from the stream. Protect actually maps audio
+    // -map 0:v:0                    Selects the first available video track from the stream. Protect actually maps audio
     //                               and video tracks in opposite locations from where FFmpeg typically expects them. This
     //                               setting is a more general solution than naming the track locations directly in case
     //                               Protect changes this in the future.
@@ -100,7 +100,7 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
     //                               avoid writing absolute offsets
     this.commandLineArgs.push(
 
-      "-map", "0:v",
+      "-map", "0:v:0",
       "-max_muxing_queue_size", "9999",
       "-vcodec", this.protectCamera.stream.videoEncoder || "libx264",
       "-pix_fmt", "yuvj420p",
@@ -120,14 +120,14 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
 
       // Configure the audio portion of the command line. Options we use are:
       //
-      // -map 0:a      Selects the first available audio track from the stream. Protect actually maps audio
+      // -map 0:a:0      Selects the first available audio track from the stream. Protect actually maps audio
       //               and video tracks in opposite locations from where FFmpeg typically expects them. This
       //               setting is a more general solution than naming the track locations directly in case
       //               Protect changes this in the future.
       // -acodec copy  Copy the stream withour reencoding it.
       this.commandLineArgs.push(
 
-        "-map", "0:a",
+        "-map", "0:a:0",
         "-acodec", "copy"
       );
     }

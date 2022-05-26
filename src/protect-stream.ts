@@ -419,7 +419,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     // -r fps                           Set the input frame rate for the video stream.
     // -rtsp_transport tcp              Tell the RTSP stream handler that we're looking for a TCP connection.
     // -i this.rtspEntry.url            RTSPS URL to get our input stream from.
-    // -map 0:v                         selects the first available video track from the stream. Protect actually maps audio
+    // -map 0:v:0                       selects the first available video track from the stream. Protect actually maps audio
     //                                  and video tracks in opposite locations from where FFmpeg typically expects them. This
     //                                  setting is a more general solution than naming the track locations directly in case
     //                                  Protect changes this in the future.
@@ -427,12 +427,12 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     const ffmpegArgs = [
 
       "-hide_banner",
-      "-probesize", "2048",
+      "-probesize", "16384",
       "-max_delay", "500000",
       "-r", this.rtspEntry.channel.fps.toString(),
       "-rtsp_transport", "tcp",
       "-i", this.rtspEntry.url,
-      "-map", "0:v"
+      "-map", "0:v:0"
     ];
 
     // Inform the user.
@@ -506,7 +506,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
     // Configure the audio portion of the command line, if we have a version of FFmpeg supports libfdk_aac. Options we use are:
     //
-    // -map 0:a                         Selects the first available audio track from the stream. Protect actually maps audio
+    // -map 0:a:0                       Selects the first available audio track from the stream. Protect actually maps audio
     //                                  and video tracks in opposite locations from where FFmpeg typically expects them. This
     //                                  setting is a more general solution than naming the track locations directly in case
     //                                  Protect changes this in the future.
@@ -523,7 +523,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       // Configure our audio parameters.
       ffmpegArgs.push(
 
-        "-map", "0:a",
+        "-map", "0:a:0",
         "-acodec", "libfdk_aac",
         "-profile:a", "aac_eld",
         "-flags", "+global_header",
@@ -669,7 +669,6 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     // -f sdp                 Specify that our input will be an SDP file.
     // -acodec libfdk_aac     Decode AAC input.
     // -i pipe:0              Read input from standard input.
-    // -map 0:a               Selects the first available audio track from the stream.
     // -acodec aac            Encode to AAC. This is set by Protect.
     // -flags +global_header  Sets the global header in the bitstream.
     // -ar samplerate         Sample rate to use for this audio. This is specified by Protect.
