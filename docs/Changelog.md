@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 5.5.2 (2022-05-26)
+  * Revert `ffmpeg-for-homebridge` to a known working version until the upstream installation issues can be figured out.
+
 ## 5.5.1 (2022-05-26)
   * Support for UniFi Protect 2.0. This is a minor update to provide support for Protect 2.0 - a more significant update will be coming soon but I wanted to prioritize ensuring things work for folks as they update to the latest GA/production release of Protect.
   * Housekeeping and minor bugfixes.
