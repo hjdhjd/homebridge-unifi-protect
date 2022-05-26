@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 5.5.1 (2022-05-26)
+  * Support for UniFi Protect 2.0. This is a minor update to provide support for Protect 2.0 - a more significant update will be coming soon but I wanted to prioritize ensuring things work for folks as they update to the latest GA/production release of Protect.
+  * Housekeeping and minor bugfixes.
+
 ## 5.5.0 (2022-02-21)
   * New feature: For those that enable it, background noise reduction has been enhanced to use FFmpeg's `afftdn` noise filter, a modern background noise reducer. The classic `highpass` and `lowpass` filters are still there, of course. You can read all about the [`Audio.Filter.Noise.FftNr` feature options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md#audio) and in the [audio options documentation](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/AudioOptions.md). With this release, the defaults when using `Audio.Filter.Noise` will use `afftnr` instead of highpass and lowpass filters, by default.
   * New feature: Logging for HKSV-related recording events can now be controlled. Read about the new [`Log.HKSV` feature options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md#logging)
