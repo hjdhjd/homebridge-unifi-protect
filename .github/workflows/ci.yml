@@ -20,7 +20,7 @@ jobs:
     # Create the build matrix for all the environments we're validating against.
     strategy:
       matrix:
-        node-version: [ 12.x, 14.x, 16.x ]
+        node-version: [ 14.x, 16.x, 18.x ]
         os: [ ubuntu-latest ]
 
     # Specify the environments we're going to build in.
@@ -62,7 +62,7 @@ jobs:
       with:
 
         # Use the oldest node LTS version that we support.
-        node-version: '12.x'
+        node-version: '14.x'
 
         # Use the NPM registry.
         registry-url: 'https://registry.npmjs.org/'
