@@ -65,7 +65,7 @@
   "main": "dist/index.js",
   "dependencies": {
     "@homebridge/camera-utils": "^2.1.0",
-    "ffmpeg-for-homebridge": "^0.1.0",
+    "ffmpeg-for-homebridge": "=0.0.10",
     "mqtt": "4.3.7",
     "node-rtp": "^0.1.1",
     "unifi-protect": "^3.0.4",
