@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 5.5.3 (2022-06-06)
+  * Update dependencies to use the latest `ffmpeg-for-homebridge` once more.
+
 ## 5.5.2 (2022-05-26)
   * Revert `ffmpeg-for-homebridge` to a known working version until the upstream installation issues can be figured out.
 
