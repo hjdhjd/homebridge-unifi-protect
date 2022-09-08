@@ -36,7 +36,7 @@ Scoping rules:
 
   * If you don't use a scoping specifier, feature options will be applied globally for all devices and streaming clients.
   * Feature option scoping specifiers can be stacked together, meaning you can use either type of scope or both, enabling you to create options that are specific to a certain Protect device, a certain streaming client, or both.
-    * To use a device-specific feature option, append the option with `.MAC`, where `MAC` is the MAC address of either a UniFi Protect controller or a camera.
+    * To use a device-specific feature option, append the option with `.MAC`, where `MAC` is the MAC address of either a UniFi Protect controller or a camera, entered as 12 characters, without any seperators.
     * To use a streaming client-specific feature option, append the option with `.IPADDRESS` where `IPADDRESS` is the IP address of the HomeKit streaming client.
     * To use both a device-specific and a streaming client-specific feature option, append the option with `.MAC.IPADDRESS`.
 
@@ -57,7 +57,7 @@ An example `options` setting might look like this in your config.json:
 
     "options": [
       "Disable.Video.Stream.High",
-      "Enable.Video.Stream.High.AAAAAAAAAAAA"
+      "Enable.Video.Stream.High.D00FA25132B7"
     ],
 
     "controllers": [
@@ -74,7 +74,7 @@ In this example:
 
 | Device MAC Address    | Description
 |-----------------------|------------------
-| AAAAAAAAAAAA          | A UVC G3 Flex that is managed by a UniFi Protect controller.
+| D00FA25132B7          | A UVC G3 Flex that is managed by a UniFi Protect controller.
 
 * The first line `Disable.Stream.High` disables the high quality stream on all UniFi Protect devices that appear in HomeKit.
 * The second line, overrides the first and enables the high quality stream on the G3 Flex because specifying device-specific options always overrides global settings.
