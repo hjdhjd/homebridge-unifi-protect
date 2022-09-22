@@ -33,6 +33,10 @@ If you want to make your `homebridge-unifi-protect` life easy and allow the plug
   * Create a local user account just for Homebridge.
   * Give that account the `administrator` role.
 
+You can create a local user by opening up your Unifi OS console, and clicking the 'users' icon on the right:
+
+![The Unifi OS user management screen](/docs/images/unifi_os_add_local_user.png)
+
 But wait, you're thinking, am I just giving a random plugin the ability to do crazy things on my system?! Nope. The administrator role in UniFi Protect allows that user to be able to change individual camera settings, create liveviews, and do a handful of other relatively benign things. You're not giving the user the keys to your kingdom, but you are allowing that user to directly configure the UniFi Protect controller to more optimally work with `homebridge-unifi-protect`. If you don't feel comfortable doing so, that's your perrogative. The plugin will log warnings when things aren't configured as optimally as it would prefer to.
 
 #### Motion Sensors, Motion Switches and Push Notifications
