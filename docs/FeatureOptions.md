@@ -85,6 +85,7 @@ In this example:
 Feature options provide a rich mechanism for tailoring your `homebridge-unifi-protect` experience. The reference below is divided into functional category groups:
 
   * [Audio](#audio): enable, disable, or enable audio filters.
+  * [Camera](#camera): enable or disable specific camera features.
   * [Device](#device): enable or disable specific cameras or Protect controllers.
   * [Doorbell](#doorbell): enable, disable, or customize doorbell features and related automation options.
   * [Logging](#logging): enable or disable logging of motion and doorbell ring events.
@@ -112,6 +113,15 @@ Please review the [audio options documentation](https://github.com/hjdhjd/homebr
 |                                               |
 | `Enable.Audio.TwoWay`                          | Enable two-way audio support using the Home app for supported cameras and doorbells. *(Default)*<BR>**Note that acoustic echo cancellation (AEC) is not currently available and you *will* hear an echo when using the Home app, however those standing at the doorbell (or camera) will hear things correctly.**</BR>
 | `Disable.Audio.TwoWay`                         | Disable two-way audio support.
+
+#### <A NAME="camera"></A>Camera Feature Options
+
+These feature options allow you to configure whether the status light is controlled from Homekit or Unifi Protect (For more info see [Camera Properties Exposed In HomeKit Secure video](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/HomeKitSecureVideo.md#camera-properties-exposed-in-homekit-secure-video)).
+
+| Option                                        | Description
+|-----------------------------------------------|----------------------------------
+| <CODE>Enable.Camera.StatusLight</CODE>        | Show the camera status light toggle in Homekit *(Default)*.
+| <CODE>Disable.Camera.StatusLight</CODE>       | Hide the camera status light toggle in Homekit. Control it from Unifi Protect instead.
 
 #### <A NAME="device"></A>Device Feature Options
 These feature options allow you to control which Protect devices or controllers are enabled or disabled within HomeKit.
