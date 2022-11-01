@@ -414,8 +414,8 @@ export class ProtectCamera extends ProtectAccessory {
     // Grab our device context.
     const device = this.accessory.context.device as ProtectCameraConfig;
 
-    // Turn the status light on or off.
-    if(device.featureFlags.hasLedStatus) {
+    // Turn the status light on or off unless the feature is unavailable or the user has disabled it.
+    if(device.featureFlags.hasLedStatus && this.nvr?.optionEnabled(device, "Camera.StatusLight", true)) {
 
       service?.getCharacteristic(this.hap.Characteristic.CameraOperatingModeIndicator)
         ?.onGet(() => {
@@ -443,6 +443,11 @@ export class ProtectCamera extends ProtectAccessory {
 
       // Initialize the status light state.
       service?.updateCharacteristic(this.hap.Characteristic.CameraOperatingModeIndicator, device.ledSettings.isEnabled === true);
+    } else {
+      const cameraOperatingModeCharacteristic = service?.getCharacteristic(this.hap.Characteristic.CameraOperatingModeIndicator);
+
+      // Remove the characteristic if it was previously added.
+      cameraOperatingModeCharacteristic && service?.removeCharacteristic(cameraOperatingModeCharacteristic);
     }
 
     return true;
@@ -949,9 +954,8 @@ export class ProtectCamera extends ProtectAccessory {
     // Find the service, if it exists.
     const service = this.accessory.getService(this.hap.Service.CameraOperatingMode);
 
-    // Check to see if this device has a status light.
-    if(device.featureFlags.hasLedStatus) {
-
+    // Check to see if this device has a status light and whether it's not disabled by the user.
+    if(device.featureFlags.hasLedStatus && this.nvr?.optionEnabled(device, "Camera.StatusLight", true)) {
       service?.updateCharacteristic(this.hap.Characteristic.CameraOperatingModeIndicator, device.ledSettings.isEnabled === true);
     }
 
