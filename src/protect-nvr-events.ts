@@ -527,6 +527,7 @@ export class ProtectNvrEvents {
     // If we already have a motion event inflight, allow it to complete so we don't spam users.
     if(this.eventTimers[device.mac]) {
 
+      this.debug("%s: Skipping motion event due to another motion event already being inflight for this device.", this.nvrApi.getFullName(device));
       return;
     }
 
