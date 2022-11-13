@@ -525,8 +525,16 @@ export class ProtectNvrEvents {
     this.lastMotion[device.mac] = lastMotion;
 
     // If we already have a motion event inflight, allow it to complete so we don't spam users.
-    if(this.eventTimers[device.mac]) {
+    if(this.eventTimers[device.mac] && !detectedObjects.length) {
 
+      this.debug("%s: Skipping motion event due to another event already being inflight for this device.", this.nvrApi.getFullName(device));
+      return;
+    }
+
+    // If we already have a smart detection event inflight, allow it to complete so we don't spam users.
+    if(this.eventTimers[device.mac + ".Motion.SmartDetect.ObjectSensors"] && detectedObjects.length) {
+
+      this.debug("%s: Skipping smart detection event due to another event already being inflight for this device.", this.nvrApi.getFullName(device));
       return;
     }
 
