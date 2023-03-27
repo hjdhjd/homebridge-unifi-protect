@@ -1,13 +1,13 @@
-/* Copyright(C) 2017-2022, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2017-2023, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * protect-ffmpeg-stream.ts: Provide FFmpeg process control to support HomeKit livestreaming.
  *
  */
-import { FfmpegProcess, PortInterface } from "./protect-ffmpeg";
+import { FfmpegProcess, PortInterface } from "./protect-ffmpeg.js";
 import { ChildProcessWithoutNullStreams } from "child_process";
-import { ProtectStreamingDelegate } from "./protect-stream";
+import { ProtectStreamingDelegate } from "./protect-stream.js";
 import { StreamRequestCallback } from "homebridge";
-import { createSocket } from "dgram";
+import { createSocket } from "node:dgram";
 
 // FFmpeg streaming process management.
 export class FfmpegStreamingProcess extends FfmpegProcess {
@@ -32,6 +32,7 @@ export class FfmpegStreamingProcess extends FfmpegProcess {
       this.createSocket(returnPort);
     }
 
+    // Start it up, with appropriate error handling.
     this.start(commandLineArgs, callback, async (errorMessage: string) => {
 
       // Stop the stream.
@@ -73,7 +74,7 @@ export class FfmpegStreamingProcess extends FfmpegProcess {
     // Handle potential network errors.
     socket.on("error", errorListener = (error: Error): void => {
 
-      this.log.error("%s: Socket error: %s.", this.name(), error.name);
+      this.log.error("Socket error: %s.", error.name);
       void this.delegate.stopStream(this.sessionId);
     });
 
@@ -89,7 +90,7 @@ export class FfmpegStreamingProcess extends FfmpegProcess {
       // Set our new canary.
       this.streamTimeout = setTimeout(() => {
 
-        this.debug("%s: video stream appears to be inactive for 5 seconds. Stopping stream.", this.name());
+        this.log.debug("Video stream appears to be inactive for 5 seconds. Stopping stream.", this.protectCamera.name);
 
         this.delegate.controller.forceStopStreamingSession(this.sessionId);
         void this.delegate.stopStream(this.sessionId);
@@ -97,7 +98,7 @@ export class FfmpegStreamingProcess extends FfmpegProcess {
     });
 
     // Bind to the port we're opening.
-    socket.bind(portInfo.port);
+    socket.bind(portInfo.port, (portInfo.addressVersion === "ipv6") ? "::1" : "127.0.0.1");
   }
 
   // Return the actual FFmpeg process.
@@ -106,4 +107,21 @@ export class FfmpegStreamingProcess extends FfmpegProcess {
     return this.process;
   }
 
+  // Log errors.
+  protected logFfmpegError(exitCode: number, signal: NodeJS.Signals): void {
+
+    // Known streaming-related errors due to the performance and latency tweaks we've made to the FFmpeg command line.
+    const ffmpegKnownStreamingError = new RegExp("not enough frames to estimate rate; consider increasing probesize");
+
+    // See if we know about this error.
+    if(this.stderrLog.some(x => ffmpegKnownStreamingError.test(x))) {
+
+      // Let the streaming delegate know to adjust it's parameters for the next run and inform the user.
+      this.delegate.adjustProbeSize();
+      return;
+    }
+
+    // Otherwise, revert to our default logging in our parent.
+    super.logFfmpegError(exitCode, signal);
+  }
 }

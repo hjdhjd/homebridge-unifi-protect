@@ -1,28 +1,43 @@
-/* Copyright(C) 2019-2022, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2019-2023, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * protect-securitysystem.ts: Security system accessory for UniFi Protect.
  */
-import { ProtectAccessory, ProtectReservedNames } from "./protect-accessory";
-import { ProtectCameraConfig, ProtectNvrConfig } from "unifi-protect";
-import { CharacteristicValue } from "homebridge";
+import { CharacteristicValue, PlatformAccessory } from "homebridge";
+import { ProtectBase } from "./protect-device.js";
+import { ProtectNvr } from "./protect-nvr.js";
+import { ProtectReservedNames } from "./protect-types.js";
 
-export class ProtectSecuritySystem extends ProtectAccessory {
-  private isAlarmTriggered!: boolean;
+export class ProtectSecuritySystem extends ProtectBase {
+
+  public accessory: PlatformAccessory;
+  private isAlarmTriggered: boolean;
+
+  // Create an instance.
+  constructor(nvr: ProtectNvr, accessory: PlatformAccessory) {
+
+    super(nvr);
+
+    this.accessory = accessory;
+    this.isAlarmTriggered = false;
+
+    this.configureDevice();
+  }
 
   // Configure a security system accessory for HomeKit.
-  protected configureDevice(): Promise<boolean> {
-    const accessory = this.accessory;
+  private configureDevice(): boolean {
+
     let securityState: CharacteristicValue = this.hap.Characteristic.SecuritySystemCurrentState.STAY_ARM;
 
     // Save the security system state before we wipeout the context.
-    if(accessory.context.securityState !== undefined) {
-      securityState = accessory.context.securityState as CharacteristicValue;
+    if(this.accessory.context.securityState !== undefined) {
+
+      securityState = this.accessory.context.securityState as CharacteristicValue;
     }
 
     // Clean out the context object in case it's been polluted somehow.
-    accessory.context = {};
-    accessory.context.nvr = this.nvr.nvrApi.bootstrap?.nvr.mac;
-    accessory.context.securityState = securityState;
+    this.accessory.context = {};
+    this.accessory.context.nvr = this.nvr.ufp.mac;
+    this.accessory.context.securityState = securityState;
 
     // Configure accessory information.
     this.configureInfo();
@@ -36,42 +51,23 @@ export class ProtectSecuritySystem extends ProtectAccessory {
     // Configure the security alarm.
     this.configureSecurityAlarm();
 
-    return Promise.resolve(true);
+    return true;
   }
 
   // Configure the security system device information for HomeKit.
-  protected configureInfo(): boolean {
-
-    const accessory = this.accessory;
-    const hap = this.hap;
-    let nvrInfo!: ProtectNvrConfig;
-
-    if(this.nvr && this.nvr.nvrApi && this.nvr.nvrApi.bootstrap && this.nvr.nvrApi.bootstrap.nvr) {
-      nvrInfo = this.nvr.nvrApi.bootstrap.nvr;
-    }
+  private configureInfo(): boolean {
 
     // Update the manufacturer information for this security system.
-    accessory
-      .getService(hap.Service.AccessoryInformation)
-      ?.updateCharacteristic(hap.Characteristic.Manufacturer, "github.com/hjdhjd");
+    this.accessory.getService(this.hap.Service.AccessoryInformation)?.updateCharacteristic(this.hap.Characteristic.Manufacturer, "github.com/hjdhjd");
 
     // Update the model information for this security system.
-    accessory
-      .getService(hap.Service.AccessoryInformation)
-      ?.updateCharacteristic(hap.Characteristic.Model, "UniFi Protect Liveview Security System");
+    this.accessory.getService(this.hap.Service.AccessoryInformation)?.updateCharacteristic(this.hap.Characteristic.Model, "UniFi Protect Liveview Security System");
 
+    // Update the serial number for this security system - we base this off of the NVR.
+    this.accessory.getService(this.hap.Service.AccessoryInformation)?.updateCharacteristic(this.hap.Characteristic.SerialNumber, this.nvr.ufp.mac + ".Security");
 
-    if(nvrInfo) {
-      // Update the serial number for this security system - we base this off of the NVR.
-      accessory
-        .getService(hap.Service.AccessoryInformation)
-        ?.updateCharacteristic(hap.Characteristic.SerialNumber, nvrInfo.mac + ".Security");
-
-      // Update the hardware revision for this security system - we base this off of the NVR.
-      accessory
-        .getService(hap.Service.AccessoryInformation)
-        ?.updateCharacteristic(hap.Characteristic.HardwareRevision, nvrInfo.hardwareRevision);
-    }
+    // Update the hardware revision for this security system - we base this off of the NVR.
+    this.accessory.getService(this.hap.Service.AccessoryInformation)?.updateCharacteristic(this.hap.Characteristic.HardwareRevision, this.nvr.ufp.hardwareRevision);
 
     return true;
   }
@@ -91,7 +87,7 @@ export class ProtectSecuritySystem extends ProtectAccessory {
 
       // Publish the current status of the security system.
       this.publishSecurityState();
-      this.log.info("%s: Security system status published via MQTT.", this.name());
+      this.log.info("Security system status published via MQTT.");
     });
 
     // Set the security system state.
@@ -134,21 +130,21 @@ export class ProtectSecuritySystem extends ProtectAccessory {
 
         default:
           // The user sent a bad value. Ignore it and we're done.
-          this.log.error("%s: Unable to process MQTT security system setting: %s.", this.name(), message.toString());
+          this.log.error("Unable to process MQTT security system setting: %s.", message.toString());
           return;
       }
 
       // The security alarm gets handled differently than the other state settings.
       if(targetState === SecuritySystemCurrentState.ALARM_TRIGGERED) {
         this.setSecurityAlarm(alarmState);
-        this.log.info("%s: Security alarm %s via MQTT.", this.name(), alarmState ? "triggered" : "reset");
+        this.log.info("Security alarm %s via MQTT.", alarmState ? "triggered" : "reset");
         return;
       }
 
       // Set the security state, and we're done.
       this.accessory.getService(this.hap.Service.SecuritySystem)?.updateCharacteristic(SecuritySystemTargetState, targetState);
       this.setSecurityState(targetState);
-      this.log.info("%s: Security system state set via MQTT: %s.", this.name(), value.charAt(0).toUpperCase() + value.slice(1));
+      this.log.info("Security system state set via MQTT: %s.", value.charAt(0).toUpperCase() + value.slice(1));
     });
 
     return true;
@@ -157,22 +153,21 @@ export class ProtectSecuritySystem extends ProtectAccessory {
   // Configure the security system for HomeKit.
   private configureSecuritySystem(): boolean {
 
-    const accessory = this.accessory;
-    const hap = this.hap;
-
     // Find any existing security system service.
-    let securityService = accessory.getService(hap.Service.SecuritySystem);
+    let securityService = this.accessory.getService(this.hap.Service.SecuritySystem);
 
     // Add the security system service, if needed.
     if(!securityService) {
-      securityService = new hap.Service.SecuritySystem(accessory.displayName);
+
+      securityService = new this.hap.Service.SecuritySystem(this.accessory.displayName);
 
       if(!securityService) {
-        this.log.error("%s: Unable to add security system.", this.name());
+
+        this.log.error("Unable to add security system.");
         return false;
       }
 
-      accessory.addService(securityService);
+      this.accessory.addService(securityService);
     }
 
     const SecuritySystemCurrentState = this.hap.Characteristic.SecuritySystemCurrentState;
@@ -180,40 +175,40 @@ export class ProtectSecuritySystem extends ProtectAccessory {
 
     let targetSecurityState: CharacteristicValue;
 
-    switch(accessory.context.securityState) {
+    switch(this.accessory.context.securityState) {
+
       case SecuritySystemCurrentState.STAY_ARM:
+
         targetSecurityState = SecuritySystemTargetState.STAY_ARM;
         break;
 
       case SecuritySystemCurrentState.AWAY_ARM:
+
         targetSecurityState = SecuritySystemTargetState.AWAY_ARM;
         break;
 
       case SecuritySystemCurrentState.NIGHT_ARM:
+
         targetSecurityState = SecuritySystemTargetState.NIGHT_ARM;
         break;
 
       case SecuritySystemCurrentState.DISARMED:
       default:
+
         targetSecurityState = SecuritySystemTargetState.DISARM;
         break;
     }
 
     // Handlers to get our current state, and initialize on startup.
-    securityService
-      .updateCharacteristic(SecuritySystemCurrentState, accessory.context.securityState as CharacteristicValue)
-      .getCharacteristic(SecuritySystemCurrentState)
-      ?.onGet(this.getSecurityState.bind(this));
+    securityService.updateCharacteristic(SecuritySystemCurrentState, this.accessory.context.securityState as CharacteristicValue)
+      .getCharacteristic(SecuritySystemCurrentState)?.onGet(this.getSecurityState.bind(this));
 
     // Handlers for triggering a change in the security system state.
-    accessory.getService(hap.Service.SecuritySystem)
-      ?.getCharacteristic(SecuritySystemTargetState)
-      .onSet(this.setSecurityState.bind(this));
+    this.accessory.getService(this.hap.Service.SecuritySystem)?.getCharacteristic(SecuritySystemTargetState).onSet(this.setSecurityState.bind(this));
 
     // Set the initial state after we have setup our handlers above. This way, when we startup, we
     // automatically restore the scene we've been set to, if any.
-    accessory.getService(hap.Service.SecuritySystem)
-      ?.updateCharacteristic(SecuritySystemTargetState, targetSecurityState);
+    this.accessory.getService(this.hap.Service.SecuritySystem)?.updateCharacteristic(SecuritySystemTargetState, targetSecurityState);
 
     return true;
   }
@@ -230,6 +225,7 @@ export class ProtectSecuritySystem extends ProtectAccessory {
     if(!this.nvr?.optionEnabled(null, "SecuritySystem.Alarm", false)) {
 
       if(switchService) {
+
         this.accessory.removeService(switchService);
       }
 
@@ -239,10 +235,12 @@ export class ProtectSecuritySystem extends ProtectAccessory {
 
     // Add the security alarm switch to the security system.
     if(!switchService) {
+
       switchService = new this.hap.Service.Switch(this.accessory.displayName + " Security Alarm");
 
       if(!switchService) {
-        this.log.error("%s: Unable to add security system alarm.", this.name());
+
+        this.log.error("Unable to add security system alarm.");
         return false;
       }
 
@@ -250,11 +248,10 @@ export class ProtectSecuritySystem extends ProtectAccessory {
     }
 
     // Notify the user that we're enabled.
-    this.log.info("%s: Enabling the security alarm switch on the security system accessory.", this.name());
+    this.log.info("Enabling the security alarm switch on the security system accessory.");
 
     // Activate or deactivate the security alarm.
-    switchService
-      .getCharacteristic(this.hap.Characteristic.On)
+    switchService.getCharacteristic(this.hap.Characteristic.On)
       ?.onGet(() => {
 
         return this.isAlarmTriggered === true;
@@ -262,11 +259,51 @@ export class ProtectSecuritySystem extends ProtectAccessory {
       .onSet((value: CharacteristicValue) => {
 
         this.setSecurityAlarm(value === true);
-        this.log.info("%s: Security system alarm %s.", this.name(), (value === true) ? "triggered" : "reset");
+        this.log.info("Security system alarm %s.", (value === true) ? "triggered" : "reset");
       });
 
     // Initialize the value.
     switchService.updateCharacteristic(this.hap.Characteristic.On, this.isAlarmTriggered);
+
+    return true;
+  }
+
+  // Update security system accessory settings.
+  public updateDevice(): boolean {
+
+    // We always have a disarmed state available to us.
+    const availableSecurityStates = [ this.hap.Characteristic.SecuritySystemTargetState.DISARM ];
+
+    // No liveviews configured - we're done.
+    if(!this.nvr.ufpApi.bootstrap?.liveviews) {
+
+      return false;
+    }
+
+    for(const securityState of [
+      [ "Protect-Away".toLowerCase(), this.hap.Characteristic.SecuritySystemTargetState.AWAY_ARM ],
+      [ "Protect-Home".toLowerCase(), this.hap.Characteristic.SecuritySystemTargetState.STAY_ARM ],
+      [ "Protect-Night".toLowerCase(), this.hap.Characteristic.SecuritySystemTargetState.NIGHT_ARM ]
+    ]) {
+
+      // If we don't have this liveview configured, don't add it to the property list for the security system accessory.
+      if(!this.nvr.ufpApi.bootstrap.liveviews.some(x => x.name.toLowerCase() === securityState[0])) {
+
+        continue;
+      }
+
+      availableSecurityStates.push(securityState[1] as number);
+    }
+
+    // No available security states besides disarmed - something probably went wrong, so we're done.
+    if(availableSecurityStates.length < 2) {
+
+      return false;
+    }
+
+    // Only show the available values we've configured.
+    this.accessory.getService(this.hap.Service.SecuritySystem)?.
+      getCharacteristic(this.hap.Characteristic.SecuritySystemTargetState).setProps( { validValues: availableSecurityStates });
 
     return true;
   }
@@ -278,24 +315,30 @@ export class ProtectSecuritySystem extends ProtectAccessory {
     let state;
 
     switch(this.accessory.context.securityState) {
+
       case SecuritySystemCurrentState.STAY_ARM:
+
         state = "Home";
         break;
 
       case SecuritySystemCurrentState.AWAY_ARM:
+
         state = "Away";
         break;
 
       case SecuritySystemCurrentState.NIGHT_ARM:
+
         state = "Night";
         break;
 
       case SecuritySystemCurrentState.ALARM_TRIGGERED:
+
         state = "Alarm";
         break;
 
       case SecuritySystemCurrentState.DISARMED:
       default:
+
         state = "Off";
         break;
     }
@@ -306,25 +349,20 @@ export class ProtectSecuritySystem extends ProtectAccessory {
   // Get the current security system state.
   private getSecurityState(): CharacteristicValue {
 
-    return this.isAlarmTriggered ?
-      this.hap.Characteristic.SecuritySystemCurrentState.ALARM_TRIGGERED :
-      this.accessory.context.securityState as CharacteristicValue;
+    return this.isAlarmTriggered ? this.hap.Characteristic.SecuritySystemCurrentState.ALARM_TRIGGERED : (this.accessory.context.securityState as CharacteristicValue);
   }
 
   // Change the security system state, and enable or disable motion detection accordingly.
   private setSecurityState(value: CharacteristicValue): void {
 
-    const accessory = this.accessory;
-    const hap = this.hap;
-    const liveviews = this.nvr.nvrApi.bootstrap?.liveviews;
+    const liveviews = this.nvr.ufpApi.bootstrap?.liveviews;
     let newState: CharacteristicValue;
-    const nvrApi = this.nvr.nvrApi;
-    const SecuritySystemCurrentState = hap.Characteristic.SecuritySystemCurrentState;
-    const SecuritySystemTargetState = hap.Characteristic.SecuritySystemTargetState;
+    const SecuritySystemCurrentState = this.hap.Characteristic.SecuritySystemCurrentState;
+    const SecuritySystemTargetState = this.hap.Characteristic.SecuritySystemTargetState;
     let viewScene = "";
 
-    // If we don't have any liveviews or the bootstrap configuration, there's nothing for us to do.
-    if(!liveviews || !nvrApi.bootstrap) {
+    // If we don't have any liveviews, there's nothing for us to do.
+    if(!liveviews) {
 
       return;
     }
@@ -333,57 +371,63 @@ export class ProtectSecuritySystem extends ProtectAccessory {
     // Those states are home, away, and night. We use this as a convenient way to easily enable or disable motion detection
     // on a Protect controller and effectively give us scene-type functionality in a nice way.
     switch(value) {
+
       case SecuritySystemTargetState.STAY_ARM:
+
         newState = SecuritySystemCurrentState.STAY_ARM;
-        viewScene = "Protect-Home";
+        viewScene = "Protect-Home".toLowerCase();
         break;
 
       case SecuritySystemTargetState.AWAY_ARM:
+
         newState = SecuritySystemCurrentState.AWAY_ARM;
-        viewScene = "Protect-Away";
+        viewScene = "Protect-Away".toLowerCase();
         break;
 
       case SecuritySystemTargetState.NIGHT_ARM:
+
         newState = SecuritySystemCurrentState.NIGHT_ARM;
-        viewScene = "Protect-Night";
+        viewScene = "Protect-Night".toLowerCase();
         break;
 
       case SecuritySystemTargetState.DISARM:
+
         newState = SecuritySystemCurrentState.DISARMED;
-        viewScene = "Protect-Off";
+        viewScene = "Protect-Off".toLowerCase();
         break;
 
       default:
+
         newState = SecuritySystemCurrentState.DISARMED;
         break;
     }
 
-    // Get the complete list of cameras in the liveview we're interested in.
-    // This cryptic line grabs the list of liveviews that have the name we're interested in
-    // (turns out, you can define multiple liveviews in Protect with the same name...who knew!),
-    // and then create a single list containing all of the cameras found.
-    const targetCameraIds = liveviews.filter(view => view.name === viewScene)
-      .map(view => view.slots.map(slots => slots.cameras))
-      .flat(2);
+    // Get the complete list of cameras in the liveview we're interested in. This cryptic line grabs the list
+    // of liveviews that have the name we're interested in (turns out, you can define multiple liveviews in Protect
+    // with the same name...who knew!), and then create a single list containing all of the cameras found.
+    const targetCameraIds = liveviews.filter(view => view.name.toLowerCase() === viewScene).map(view => view.slots.map(slots => slots.cameras)).flat(2);
 
     // We don't have a liveview for this state and we aren't disarming - update state for the user and we're done.
     if(newState !== SecuritySystemCurrentState.DISARMED && !targetCameraIds.length) {
-      this.log.info("%s: No liveview configured for this security system state. Create a liveview named %s in the Protect webUI to use this feature.",
-        this.name(), viewScene);
 
-      accessory.context.securityState = newState;
-      accessory.getService(hap.Service.SecuritySystem)?.updateCharacteristic(SecuritySystemCurrentState, newState);
+      this.log.info("No liveview configured for this security system state. Create a liveview named %s in the Protect webUI to use this feature.", viewScene);
+
+      this.accessory.context.securityState = newState;
+      this.accessory.getService(this.hap.Service.SecuritySystem)?.updateCharacteristic(SecuritySystemCurrentState, newState);
 
       return;
     }
 
-    this.log.info("%s: Setting the liveview scene: %s.", this.name(), viewScene);
+    this.log.info("Setting the liveview scene: %s.", viewScene);
 
     // Iterate through the list of accessories and set the Protect scene.
     for(const targetAccessory of this.platform.accessories) {
 
+      const targetUfp = this.nvr.configuredDevices[targetAccessory.UUID]?.ufp;
+
       // We only want accessories associated with this Protect controller.
-      if(!targetAccessory.context?.device || targetAccessory.context.nvr !== nvrApi.bootstrap.nvr.mac) {
+      if(!targetUfp || (targetAccessory.context.nvr !== this.nvr.ufp.mac)) {
+
         continue;
       }
 
@@ -392,36 +436,39 @@ export class ProtectSecuritySystem extends ProtectAccessory {
       // If we're disarming, then all Protect cameras will disable motion detection in HomeKit. Otherwise,
       // check to see if this is one of the cameras we want to turn on motion detection for.
       if(((newState !== SecuritySystemCurrentState.DISARMED) ||
-        ((newState === SecuritySystemCurrentState.DISARMED) && targetCameraIds.length)) &&
-        targetCameraIds.some(thisCameraId => thisCameraId === (targetAccessory.context.device as ProtectCameraConfig).id)) {
+        ((newState === SecuritySystemCurrentState.DISARMED) && targetCameraIds.length)) && targetCameraIds.some(thisCameraId => thisCameraId === targetUfp?.id)) {
+
         targetState = true;
       }
 
       // Only take action to change motion detection state if needed.
       if(targetAccessory.context.detectMotion !== targetState) {
+
         targetAccessory.context.detectMotion = targetState;
 
         // Update the switch service, if present.
-        const motionSwitch = targetAccessory.getServiceById(hap.Service.Switch, ProtectReservedNames.SWITCH_MOTION_SENSOR);
+        const motionSwitch = targetAccessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_MOTION_SENSOR);
 
         if(motionSwitch) {
-          motionSwitch.updateCharacteristic(hap.Characteristic.On, targetAccessory.context.detectMotion as boolean);
+
+          motionSwitch.updateCharacteristic(this.hap.Characteristic.On, targetAccessory.context.detectMotion as boolean);
         }
 
-        this.log.info("%s: %s -> %s: Motion detection %s.", this.name(), viewScene, targetAccessory.displayName,
+        this.log.info("%s -> %s: Motion detection %s.", viewScene, targetAccessory.displayName,
           targetAccessory.context.detectMotion === true ? "enabled" : "disabled");
       }
     }
 
     // Inform the user of our new state.
-    accessory.context.securityState = newState;
-    accessory.getService(hap.Service.SecuritySystem)?.updateCharacteristic(SecuritySystemCurrentState, newState);
+    this.accessory.context.securityState = newState;
+    this.accessory.getService(this.hap.Service.SecuritySystem)?.updateCharacteristic(SecuritySystemCurrentState, newState);
 
     // Reset our alarm state and update our alarm switch.
     this.isAlarmTriggered = false;
 
-    if(accessory.getService(hap.Service.Switch)?.getCharacteristic(hap.Characteristic.On).value !== this.isAlarmTriggered) {
-      accessory.getService(hap.Service.Switch)?.updateCharacteristic(hap.Characteristic.On, this.isAlarmTriggered);
+    if(this.accessory.getService(this.hap.Service.Switch)?.getCharacteristic(this.hap.Characteristic.On).value !== this.isAlarmTriggered) {
+
+      this.accessory.getService(this.hap.Service.Switch)?.updateCharacteristic(this.hap.Characteristic.On, this.isAlarmTriggered);
     }
 
     // Publish to MQTT, if configured.
@@ -433,6 +480,7 @@ export class ProtectSecuritySystem extends ProtectAccessory {
 
     // Nothing to do.
     if(this.isAlarmTriggered === value) {
+
       return;
     }
 

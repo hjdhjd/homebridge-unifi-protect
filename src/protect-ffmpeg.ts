@@ -1,17 +1,17 @@
-/* Copyright(C) 2017-2022, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2017-2023, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * protect-ffmpeg.ts: Base class to provide FFmpeg process control and capability introspection.
  *
- * This module is heavily inspired by the homebridge and homebridge-camera-ffmpeg source code and
- * borrows heavily from both. Thank you for your contributions to the HomeKit world.
+ * This module is heavily inspired by the homebridge and homebridge-camera-ffmpeg source code. Thank you for your contributions to the HomeKit world.
  */
-import { ChildProcessWithoutNullStreams, execFile, spawn } from "child_process";
-import { Logging, StreamRequestCallback } from "homebridge";
-import { Readable, Writable } from "stream";
-import { EventEmitter } from "events";
-import { ProtectCamera } from "./protect-camera";
-import { ProtectNvr } from "./protect-nvr";
-import util from "util";
+import { ChildProcessWithoutNullStreams, execFile, spawn } from "node:child_process";
+import { ProtectCamera, ProtectPackageCamera } from "./protect-camera.js";
+import { Readable, Writable } from "node:stream";
+import { EventEmitter } from "node:events";
+import { ProtectLogging } from "./protect-types.js";
+import { ProtectNvr } from "./protect-nvr.js";
+import { StreamRequestCallback } from "homebridge";
+import util from "node:util";
 
 // Port and IP version information.
 export interface PortInterface {
@@ -24,39 +24,37 @@ export class FfmpegProcess extends EventEmitter {
 
   protected callback: StreamRequestCallback | null;
   protected commandLineArgs: string[];
-  protected readonly debug: (message: string, ...parameters: unknown[]) => void;
-  private stderrLog: string[];
+  public hasError: boolean;
   public isEnded: boolean;
   private isLogging: boolean;
   private isPrepared: boolean;
   public isStarted: boolean;
   protected isVerbose: boolean;
   private ffmpegTimeout?: NodeJS.Timeout;
-  protected readonly log: Logging;
-  protected readonly name: () => string;
+  protected readonly log: ProtectLogging;
   protected readonly nvr: ProtectNvr;
   protected process: ChildProcessWithoutNullStreams | null;
-  protected protectCamera: ProtectCamera;
+  protected protectCamera: ProtectCamera | ProtectPackageCamera;
+  protected stderrLog: string[];
 
   // Create a new FFmpeg process instance.
-  constructor(protectCamera: ProtectCamera, commandLineArgs?: string[], callback?: StreamRequestCallback) {
+  constructor(protectCamera: ProtectCamera | ProtectPackageCamera, commandLineArgs?: string[], callback?: StreamRequestCallback) {
 
     // Initialize our parent.
     super();
 
     this.callback = null;
     this.commandLineArgs = [];
-    this.debug = protectCamera.platform.debug.bind(protectCamera.platform);
-    this.stderrLog = [];
+    this.hasError = false;
     this.isLogging = false;
     this.isPrepared = false;
     this.isEnded = false;
     this.isStarted = false;
-    this.log = protectCamera.platform.log;
-    this.name = protectCamera.name.bind(protectCamera);
+    this.log = protectCamera.log;
     this.nvr = protectCamera.nvr;
     this.process = null;
     this.protectCamera = protectCamera;
+    this.stderrLog = [];
 
     // Toggle FFmpeg logging, if configured.
     this.isVerbose = protectCamera.platform.verboseFfmpeg || protectCamera.stream.verboseFfmpeg;
@@ -85,7 +83,7 @@ export class FfmpegProcess extends EventEmitter {
     // No command line arguments - we're done.
     if(!this.commandLineArgs) {
 
-      this.log.error("%s: No FFmpeg command line specified.", this.name());
+      this.log.error("No FFmpeg command line specified.");
       return;
     }
 
@@ -111,10 +109,10 @@ export class FfmpegProcess extends EventEmitter {
     // Inform the user, if we've been asked to do so.
     if(this.isLogging || this.isVerbose || this.protectCamera.platform.config.debugAll) {
 
-      this.log.info("%s: ffmpeg command: %s %s", this.name(), this.protectCamera.stream.videoProcessor, this.commandLineArgs.join(" "));
+      this.log.info("FFmpeg command: %s %s", this.protectCamera.stream.videoProcessor, this.commandLineArgs.join(" "));
     } else {
 
-      this.debug("%s: ffmpeg command: %s %s", this.name(), this.protectCamera.stream.videoProcessor, this.commandLineArgs.join(" "));
+      this.log.debug("FFmpeg command: %s %s", this.protectCamera.stream.videoProcessor, this.commandLineArgs.join(" "));
     }
 
     this.isPrepared = true;
@@ -130,7 +128,7 @@ export class FfmpegProcess extends EventEmitter {
 
       if(!this.isPrepared) {
 
-        this.log.error("%s: Error preparing to run FFmpeg.", this.name());
+        this.log.error("Error preparing to run FFmpeg.");
         return;
       }
     }
@@ -151,7 +149,7 @@ export class FfmpegProcess extends EventEmitter {
     // Handle errors emitted during process creation, such as an invalid command line.
     this.process?.once("error", (error: Error) => {
 
-      this.log.error("%s: FFmpeg failed to start: %s", this.name(), error.message);
+      this.log.error("FFmpeg failed to start: %s.", error.message);
 
       // Execute our error handler, if one is provided.
       if(errorHandler) {
@@ -164,7 +162,8 @@ export class FfmpegProcess extends EventEmitter {
     this.process?.stdin?.on("error", errorListener = (error: Error): void => {
 
       if(!error.message.includes("EPIPE")) {
-        this.log.error("%s: FFmpeg error: %s.", this.name(), error.message);
+
+        this.log.error("FFmpeg error: %s.", error.message);
       }
 
     });
@@ -179,7 +178,7 @@ export class FfmpegProcess extends EventEmitter {
 
         this.isStarted = true;
         this.isEnded = false;
-        this.debug("%s: Received the first frame.", this.name());
+        this.log.debug("Received the first frame.");
         this.emit("ffmpegStarted");
 
         // Always remember to execute the callback once we're setup to let homebridge know we're streaming.
@@ -204,7 +203,7 @@ export class FfmpegProcess extends EventEmitter {
           // Show it to the user if it's been requested.
           if(this.isLogging || this.isVerbose || this.protectCamera.platform.config.debugAll) {
 
-            this.log.info("%s: %s", this.name(), cleanLine);
+            this.log.info(cleanLine);
           }
         }
       }
@@ -223,31 +222,28 @@ export class FfmpegProcess extends EventEmitter {
       this.isEnded = true;
 
       // Some utilities to streamline things.
-      const logPrefix = this.name() + ": FFmpeg process ended ";
+      const logPrefix = "FFmpeg process ended ";
 
       // FFmpeg ended normally and our canary didn't need to enforce FFmpeg's extinction.
       if(this.ffmpegTimeout && exitCode === 0) {
 
-        this.debug(logPrefix + "(Normal).");
+        this.log.debug(logPrefix + "(Normal).");
       } else if(((exitCode === null) || (exitCode === 255)) && this.process?.killed) {
 
         // FFmpeg has ended. Let's figure out if it's because we killed it or whether it died of natural causes.
-        this.debug(logPrefix + (signal === "SIGKILL" ? "(Killed)." : "(Expected)."));
+        this.log.debug(logPrefix + (signal === "SIGKILL" ? "(Killed)." : "(Expected)."));
       } else {
 
-        // Something else has occurred. Inform the user, and stop everything.
-        this.log.error(logPrefix + "unexpectedly with %s%s%s.",
-          (exitCode !== null) ? "an exit code of " + exitCode.toString() : "",
-          ((exitCode !== null) && signal) ? " and " : "",
-          signal ? "a signal received of " + signal : "");
+        // Flag that we've run into an FFmpeg error.
+        this.hasError = true;
 
-        this.log.error("%s: FFmpeg command line that errored out was: %s %s", this.name(), this.protectCamera.stream.videoProcessor, this.commandLineArgs.join(" "));
-        this.stderrLog.map(x => this.log.error(x));
+        // Inform the user.
+        this.logFfmpegError(exitCode, signal);
 
         // Execute our error handler, if one is provided.
         if(errorHandler) {
 
-          void errorHandler(util.format(logPrefix + " unexpectedly with exit code %s and signal %s.", exitCode, signal));
+          void errorHandler(util.format(this.protectCamera.name + ": " + logPrefix + " unexpectedly with exit code %s and signal %s.", exitCode, signal));
         }
       }
 
@@ -288,6 +284,17 @@ export class FfmpegProcess extends EventEmitter {
     this.stopProcess();
   }
 
+  // Inform the user if an FFmpeg error occurs.
+  protected logFfmpegError(exitCode: number, signal: NodeJS.Signals): void {
+
+    // Something else has occurred. Inform the user, and stop everything.
+    this.log.error("FFmpeg process ended unexpectedly with %s%s%s.", (exitCode !== null) ? "an exit code of " + exitCode.toString() : "",
+      ((exitCode !== null) && signal) ? " and " : "", signal ? "a signal received of " + signal : "");
+
+    this.log.error("FFmpeg command line that errored out was: %s %s", this.protectCamera.stream.videoProcessor, this.commandLineArgs.join(" "));
+    this.stderrLog.map(x => this.log.error(x));
+  }
+
   // Return the standard input for this process.
   public get stdin(): Writable | null {
 
@@ -307,7 +314,7 @@ export class FfmpegProcess extends EventEmitter {
   }
 
   // Validate whether or not we have a specific codec available to us in FFmpeg.
-  public static async codecEnabled(videoProcessor: string, codec: string, log: Logging): Promise<boolean> {
+  public static async codecEnabled(videoProcessor: string, codec: string, log: ProtectLogging): Promise<boolean> {
 
     try {
 

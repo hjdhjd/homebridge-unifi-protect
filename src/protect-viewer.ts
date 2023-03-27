@@ -1,23 +1,34 @@
-/* Copyright(C) 2019-2022, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2019-2023, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * protect-viewer.ts: Viewer device class for UniFi Protect.
  */
-import { CharacteristicValue, Service } from "homebridge";
-import { ProtectAccessory } from "./protect-accessory";
+import { CharacteristicValue, PlatformAccessory, Service } from "homebridge";
+import { ProtectDevice } from "./protect-device.js";
+import { ProtectNvr } from "./protect-nvr.js";
 import { ProtectViewerConfig } from "unifi-protect";
 
-export class ProtectViewer extends ProtectAccessory {
+export class ProtectViewer extends ProtectDevice {
+
+  public ufp: ProtectViewerConfig;
+
+  // Create an instance.
+  constructor(nvr: ProtectNvr, device: ProtectViewerConfig, accessory: PlatformAccessory) {
+
+    super(nvr, accessory);
+
+    this.ufp = device;
+
+    this.configureHints();
+    this.configureDevice();
+  }
 
   // Initialize and configure the viewer accessory for HomeKit.
-  protected async configureDevice(): Promise<boolean> {
-
-    // Save the device object before we wipeout the context.
-    const device = this.accessory.context.device as ProtectViewerConfig;
+  private configureDevice(): boolean {
 
     // Clean out the context object in case it's been polluted somehow.
     this.accessory.context = {};
-    this.accessory.context.device = device;
-    this.accessory.context.nvr = this.nvr.nvrApi.bootstrap?.nvr.mac;
+    this.accessory.context.mac = this.ufp.mac;
+    this.accessory.context.nvr = this.nvr.ufp.mac;
 
     // Configure accessory information.
     this.configureInfo();
@@ -30,12 +41,14 @@ export class ProtectViewer extends ProtectAccessory {
 
     // Inform the user what we're enabling on startup.
     if(enabledLiveviews.length) {
-      this.log.info("%s: Configured liveview%s: %s.", this.name(), enabledLiveviews.length > 1 ? "s" : "", enabledLiveviews.join(", "));
+
+      this.log.info("Configured liveview%s: %s.", enabledLiveviews.length > 1 ? "s" : "", enabledLiveviews.join(", "));
     }  else {
-      this.log.info("%s: No liveviews configured.", this.name());
+
+      this.log.info("No liveviews configured.");
     }
 
-    return Promise.resolve(true);
+    return true;
   }
 
   // Update accessory services and characteristics.
@@ -45,7 +58,7 @@ export class ProtectViewer extends ProtectAccessory {
     const currentLiveviewSwitches = this.accessory.services.filter(x => (x.UUID === this.hap.Service.Switch.UUID) && x.subtype);
 
     // Grab the current list of liveview identifiers from Protect.
-    const nvrLiveviewIds = this.nvrApi?.bootstrap?.liveviews?.map(x => x.id);
+    const nvrLiveviewIds = this.ufpApi.bootstrap?.liveviews?.map(x => x.id);
 
     // Identify what's been removed on the NVR and remove it from the accessory as well.
     currentLiveviewSwitches.filter(x => !nvrLiveviewIds?.includes(x.subtype ?? "")).map(x => this.accessory.removeService(x));
@@ -68,11 +81,13 @@ export class ProtectViewer extends ProtectAccessory {
 
       // We only want to look at switches.
       if(switchService.UUID !== this.hap.Service.Switch.UUID) {
+
         continue;
       }
 
       // We only want switches with subtypes.
       if(!switchService.subtype) {
+
         continue;
       }
 
@@ -92,15 +107,17 @@ export class ProtectViewer extends ProtectAccessory {
       // Turn the liveview switch on or off.
       switchService.getCharacteristic(this.hap.Characteristic.On)
         ?.onGet(() => {
+
           return this.getLiveviewSwitchState(switchService);
         })
         .onSet((value: CharacteristicValue) => {
+
           return this.setLiveviewSwitchState(switchService, value);
         });
     }
 
     // Set the state to reflect Protect.
-    switchService.updateCharacteristic(this.hap.Characteristic.On, switchService.subtype === (this.accessory.context.device as ProtectViewerConfig).liveview);
+    switchService.updateCharacteristic(this.hap.Characteristic.On, switchService.subtype === this.ufp.liveview);
 
     return true;
   }
@@ -108,8 +125,7 @@ export class ProtectViewer extends ProtectAccessory {
   // Return the current state of the liveview switch.
   private getLiveviewSwitchState(switchService: Service): CharacteristicValue {
 
-    return ((this.accessory.context.device as ProtectViewerConfig).liveview !== null) &&
-      ((this.accessory.context.device as ProtectViewerConfig).liveview === switchService.subtype);
+    return (this.ufp.liveview !== null) && (this.ufp.liveview === switchService.subtype);
   }
 
   // Set the current state of the liveview switch.
@@ -122,11 +138,11 @@ export class ProtectViewer extends ProtectAccessory {
 
       if(viewState) {
 
-        this.log.error("%s: Unable to set the liveview to: %s.", this.name(), switchService.displayName);
+        this.log.error("Unable to set the liveview to: %s.", switchService.displayName);
 
       } else {
 
-        this.log.error("%s: Unable to clear the liveview.", this.name());
+        this.log.error("Unable to clear the liveview.");
 
       }
 
@@ -134,7 +150,7 @@ export class ProtectViewer extends ProtectAccessory {
     }
 
     // Set the context to our updated device configuration.
-    this.accessory.context.device = newDevice;
+    this.ufp = newDevice;
 
     // Update all the other liveview switches.
     this.updateLiveviewSwitchState();
@@ -148,18 +164,19 @@ export class ProtectViewer extends ProtectAccessory {
 
       // Empty or invalid liveview identifier.
       if(!liveviewId) {
+
         continue;
       }
 
       // Retrieve the name assigned to this liveview.
-      const liveviewName = this.nvrApi?.bootstrap?.liveviews?.find(x => x.id === liveviewId)?.name;
+      const liveviewName = this.ufpApi.bootstrap?.liveviews?.find(x => x.id === liveviewId)?.name;
 
       // Grab the switch service associated with this liveview.
       const switchService = new this.hap.Service.Switch(liveviewName, liveviewId);
 
       if(!switchService) {
 
-        this.log.error("%s: Unable to add liveview switch for %s.", this.name(), liveviewName);
+        this.log.error("Unable to add liveview switch for %s.", liveviewName);
         continue;
       }
 
@@ -174,10 +191,10 @@ export class ProtectViewer extends ProtectAccessory {
   private async setViewer(newLiveview: string | null): Promise<ProtectViewerConfig> {
 
     // Set the liveview.
-    const newDevice = (await this.nvr.nvrApi.updateViewer(this.accessory.context.device as ProtectViewerConfig, { liveview: newLiveview })) as ProtectViewerConfig;
+    const newDevice = (await this.nvr.ufpApi.updateDevice(this.ufp, { liveview: newLiveview })) as ProtectViewerConfig;
 
     // Find the liveview name for MQTT.
-    const liveview =  this.nvrApi?.bootstrap?.liveviews?.find(x => x.id === newLiveview);
+    const liveview =  this.ufpApi.bootstrap?.liveviews?.find(x => x.id === newLiveview);
 
     // Publish an MQTT event.
     if(liveview) {
@@ -196,10 +213,10 @@ export class ProtectViewer extends ProtectAccessory {
 
       const value = message.toString().toLowerCase();
 
-      const liveview = this.nvrApi?.bootstrap?.liveviews?.find(x => x.name.toLowerCase() === value);
+      const liveview = this.ufpApi.bootstrap?.liveviews?.find(x => x.name.toLowerCase() === value);
 
       if(!liveview) {
-        this.log.error("%s: Unable to locate a liveview named %s.", this.name(), message.toString());
+        this.log.error("Unable to locate a liveview named %s.", message.toString());
         return;
       }
 
@@ -209,21 +226,21 @@ export class ProtectViewer extends ProtectAccessory {
 
         if(newDevice) {
 
-          this.accessory.context.device = newDevice;
-          this.log.info("%s: Liveview set via MQTT to %s.", this.name(), liveview.name);
+          this.ufp = newDevice;
+          this.log.info("Liveview set via MQTT to %s.", liveview.name);
 
         } else {
 
-          this.log.error("%s: Unable to set liveview via MQTT to %s.", this.name(), message.toString());
+          this.log.error("Unable to set liveview via MQTT to %s.", message.toString());
         }
 
       })();
     });
 
     // Trigger a motion event in MQTT, if requested to do so.
-    this.nvr.mqtt?.subscribeGet(this.accessory, this.name(), "liveview", "Liveview", () => {
+    this.nvr.mqtt?.subscribeGet(this.accessory, this.name, "liveview", "Liveview", () => {
 
-      const liveview =  this.nvrApi?.bootstrap?.liveviews?.find(x => x.id === (this.accessory.context.device as ProtectViewerConfig).liveview);
+      const liveview =  this.ufpApi.bootstrap?.liveviews?.find(x => x.id === this.ufp.liveview);
 
       return liveview?.name ?? "None";
     });

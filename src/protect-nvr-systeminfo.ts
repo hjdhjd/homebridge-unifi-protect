@@ -1,23 +1,18 @@
-/* Copyright(C) 2019-2022, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2019-2023, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * protect-nvr-systeminfo.ts: NVR System Information device class for UniFi Protect.
  */
-import {
-  PLATFORM_NAME,
-  PLUGIN_NAME
-} from "./settings";
-import {
-  PlatformAccessory
-} from "homebridge";
-import { ProtectBase } from "./protect-accessory";
-import { ProtectNvr } from "./protect-nvr";
-import { ProtectNvrSystemInfoConfig } from "unifi-protect";
+import { PLATFORM_NAME, PLUGIN_NAME } from "./settings.js";
+import { PlatformAccessory } from "homebridge";
+import { ProtectBase } from "./protect-device.js";
+import { ProtectEventPacket } from "unifi-protect";
+import { ProtectNvr } from "./protect-nvr.js";
 
 export class ProtectNvrSystemInfo extends ProtectBase {
 
+  private eventListener: ((packet: ProtectEventPacket) => void) | null;
   private isConfigured: boolean;
   private accessory: PlatformAccessory | null | undefined;
-  private systemInfo: ProtectNvrSystemInfoConfig | null | undefined;
 
   // Configure our NVR sensor capability.
   constructor(nvr: ProtectNvr) {
@@ -26,32 +21,32 @@ export class ProtectNvrSystemInfo extends ProtectBase {
     super(nvr);
 
     // Initialize the class.
+    this.eventListener = null;
     this.isConfigured = false;
-    this.systemInfo = null;
     this.accessory = null;
 
     this.configureAccessory();
+    this.configureMqtt();
+
+    this.nvr.events.on("updateEvent." + this.nvr.ufp.id, this.eventListener = this.eventHandler.bind(this));
   }
 
   // Configure the NVR system information accessory.
-  public configureAccessory(): void {
-
-    // If we don't have the bootstrap configuration, we're done here.
-    if(!this.nvrApi.bootstrap) {
-      return;
-    }
+  private configureAccessory(): void {
 
     // We've already configured our system information, we're done.
     if(this.isConfigured) {
+
       return;
     }
 
-    const uuid = this.hap.uuid.generate(this.nvrApi.bootstrap.nvr.mac + ".NVRSystemInfo");
+    const uuid = this.hap.uuid.generate(this.nvr.ufp.mac + ".NVRSystemInfo");
 
     // See if we already have this accessory defined.
     if(!this.accessory) {
 
       if((this.accessory = this.platform.accessories.find((x: PlatformAccessory) => x.UUID === uuid)) === undefined) {
+
         this.accessory = null;
       }
     }
@@ -61,7 +56,7 @@ export class ProtectNvrSystemInfo extends ProtectBase {
 
       if(this.accessory) {
 
-        this.log.info("%s: Removing UniFi Protect controller system information sensors.", this.name());
+        this.log.info("Removing UniFi Protect controller system information sensors.");
 
         // Unregister the accessory and delete it's remnants from HomeKit and the plugin.
         this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [this.accessory]);
@@ -69,7 +64,6 @@ export class ProtectNvrSystemInfo extends ProtectBase {
       }
 
       this.accessory = null;
-      this.systemInfo = null;
       this.isConfigured = true;
       return;
     }
@@ -78,10 +72,10 @@ export class ProtectNvrSystemInfo extends ProtectBase {
     if(!this.accessory) {
 
       // We will use the NVR MAC address + ".NVRSystemInfo" to create our UUID. That should provide the guaranteed uniqueness we need.
-      this.accessory = new this.api.platformAccessory(this.nvrApi.bootstrap.nvr.name, uuid);
+      this.accessory = new this.api.platformAccessory(this.nvr.ufp.name, uuid);
 
       if(!this.accessory) {
-        this.log.error("%s: Unable to create the system information accessory.", this.name());
+        this.log.error("Unable to create the system information accessory.");
         this.isConfigured = true;
         return;
       }
@@ -94,17 +88,14 @@ export class ProtectNvrSystemInfo extends ProtectBase {
     // We have the system information accessory, now let's configure it.
     // Clean out the context object in case it's been polluted somehow.
     this.accessory.context = {};
-    this.accessory.context.nvr = this.nvr.nvrApi.bootstrap?.nvr.mac;
+    this.accessory.context.nvr = this.nvr.ufp.mac;
     this.accessory.context.systemInfo = true;
 
     // Verify the NVR has been bootstrapped, and finish our configuration.
-    if(this.nvr.nvrApi.bootstrap) {
-
-      // Initialize our system information.
-      this.systemInfo = this.nvr.nvrApi.bootstrap.nvr.systemInfo;
+    if(this.nvr.ufp.systemInfo) {
 
       // Configure accessory information.
-      this.setInfo(this.accessory, this.nvr.nvrApi.bootstrap.nvr);
+      this.setInfo(this.accessory, this.nvr.ufp);
     }
 
     // Configure accessory services.
@@ -112,23 +103,39 @@ export class ProtectNvrSystemInfo extends ProtectBase {
 
     // Inform the user what we're enabling on startup.
     if(enabledSensors.length) {
-      this.log.info("%s: Enabled system information sensor%s: %s.", this.name(), enabledSensors.length > 1 ? "s" : "", enabledSensors.join(", "));
+      this.log.info("Enabled system information sensor%s: %s.", enabledSensors.length > 1 ? "s" : "", enabledSensors.join(", "));
     }  else {
-      this.log.info("%s: No system information sensors enabled.", this.name());
+      this.log.info("No system information sensors enabled.");
     }
 
-    this.configureMqtt();
     this.isConfigured = true;
   }
 
+  // Configure the events we're interested in from the Protect controller.
+  private eventHandler(packet: ProtectEventPacket): void {
+
+    // Filter out payloads we aren't interested in. We only want NVR system information updates.
+    if("systemInfo" in (packet.payload as JSON)) {
+
+      // Process it.
+      this.updateDevice(false);
+    }
+  }
+
+  // Cleanup our listeners.
+  private cleanupEvents(): void {
+
+    if(this.eventListener) {
+
+      this.nvr.events.removeListener("updateEvent." + this.nvr.ufp.id, this.eventListener);
+      this.eventListener = null;
+    }
+  }
+
   // Update accessory services and characteristics.
-  public updateDevice(configureHandler = false, updatedInfo?: ProtectNvrSystemInfoConfig): string[] {
+  private updateDevice(configureHandler = false): string[] {
 
     const enabledSensors: string[] = [];
-
-    if(updatedInfo !== undefined) {
-      this.systemInfo = updatedInfo;
-    }
 
     // Configure the temperature sensor.
     if(this.configureTemperatureSensor(configureHandler)) {
@@ -147,6 +154,7 @@ export class ProtectNvrSystemInfo extends ProtectBase {
 
     // Ensure we have an accessory before we do anything else.
     if(!this.accessory) {
+
       return false;
     }
 
@@ -159,7 +167,7 @@ export class ProtectNvrSystemInfo extends ProtectBase {
       if(temperatureService) {
 
         this.accessory.removeService(temperatureService);
-        this.log.info("%s: Disabling CPU temperature sensor.", this.name());
+        this.log.info("Disabling CPU temperature sensor.");
       }
 
       return false;
@@ -172,7 +180,7 @@ export class ProtectNvrSystemInfo extends ProtectBase {
 
       if(!temperatureService) {
 
-        this.log.error("%s: Unable to add CPU temperature sensor.", this.name());
+        this.log.error("Unable to add CPU temperature sensor.");
         return false;
       }
 
@@ -198,7 +206,7 @@ export class ProtectNvrSystemInfo extends ProtectBase {
   // Retrieve the CPU temperature of the Protect NVR for HomeKit.
   private getCpuTemp(): number {
 
-    let cpuTemp = this.systemInfo?.cpu.temperature;
+    let cpuTemp = this.nvr.ufp.systemInfo.cpu.temperature;
 
     // No data available from the Protect NVR, so we default to a starting point.
     if(cpuTemp === undefined) {
@@ -206,7 +214,7 @@ export class ProtectNvrSystemInfo extends ProtectBase {
     }
 
     // HomeKit wants temperature values in Celsius, so we need to convert accordingly, if needed.
-    if(this.nvrApi.bootstrap?.nvr?.temperatureUnit === "F") {
+    if(this.nvr.ufp.temperatureUnit === "F") {
       cpuTemp = (cpuTemp - 32) * (5 / 9);
     }
 
@@ -216,12 +224,8 @@ export class ProtectNvrSystemInfo extends ProtectBase {
   // Configure MQTT capabilities for the security system.
   private configureMqtt(): void {
 
-    if(!this.nvrApi.bootstrap?.nvr.mac) {
-      return;
-    }
-
     // Return the current status of all sensors.
-    this.nvr.mqtt?.subscribe(this.nvrApi.bootstrap?.nvr.mac, "systeminfo/get", (message: Buffer) => {
+    this.nvr.mqtt?.subscribe(this.nvr.ufp.mac, "systeminfo/get", (message: Buffer) => {
 
       const value = message.toString().toLowerCase();
 
@@ -230,8 +234,8 @@ export class ProtectNvrSystemInfo extends ProtectBase {
         return;
       }
 
-      this.nvr.mqtt?.publish(this.nvrApi.bootstrap?.nvr.mac ?? "", "systeminfo", JSON.stringify(this.systemInfo));
-      this.log.info("%s: System information published via MQTT.", this.name());
+      this.nvr.mqtt?.publish(this.nvr.ufp.mac ?? "", "systeminfo", JSON.stringify(this.nvr.ufp.systemInfo));
+      this.log.info("System information published via MQTT.");
     });
   }
 }

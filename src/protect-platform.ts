@@ -1,24 +1,13 @@
-/* Copyright(C) 2017-2022, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2017-2023, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * protect-platform.ts: homebridge-unifi-protect platform class.
  */
-import {
-  API,
-  APIEvent,
-  DynamicPlatformPlugin,
-  Logging,
-  PlatformAccessory,
-  PlatformConfig
-} from "homebridge";
-import {
-  PROTECT_FFMPEG_OPTIONS,
-  PROTECT_MOTION_DURATION,
-  PROTECT_MQTT_TOPIC,
-  PROTECT_RING_DURATION
-} from "./settings";
-import { ProtectNvrOptions, ProtectOptions } from "./protect-options";
-import { ProtectNvr } from "./protect-nvr";
-import util from "util";
+import { API, APIEvent, DynamicPlatformPlugin, Logging, PlatformAccessory, PlatformConfig } from "homebridge";
+import { PROTECT_FFMPEG_OPTIONS, PROTECT_MOTION_DURATION, PROTECT_MQTT_TOPIC, PROTECT_RING_DURATION } from "./settings.js";
+import { ProtectNvrOptions, ProtectOptions } from "./protect-options.js";
+import { ProtectNvr } from "./protect-nvr.js";
+import { RtpPortAllocator } from "./protect-rtp.js";
+import util from "node:util";
 
 export class ProtectPlatform implements DynamicPlatformPlugin {
   public accessories: PlatformAccessory[];
@@ -27,6 +16,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
   public readonly configOptions: string[];
   private readonly controllers: ProtectNvr[];
   public readonly log: Logging;
+  public readonly rtpPorts: RtpPortAllocator;
   public verboseFfmpeg: boolean;
 
   constructor(log: Logging, config: PlatformConfig, api: API) {
@@ -35,6 +25,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
     this.api = api;
     this.configOptions = [];
     this.controllers = [];
+    this.rtpPorts = new RtpPortAllocator();
     this.verboseFfmpeg = false;
     this.log = log;
 
@@ -46,6 +37,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
 
     // Plugin options into our config variables.
     this.config = {
+
       controllers: config.controllers as ProtectNvrOptions[],
       debugAll: config.debug as boolean === true,
       ffmpegOptions: config.ffmpegOptions as string[] ?? PROTECT_FFMPEG_OPTIONS,
@@ -104,11 +96,6 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
         continue;
       }
 
-      // Controller device list refresh interval. Make sure it's never less than 2 seconds so we don't overwhelm the Protect controller.
-      if(controllerConfig.refreshInterval < 2) {
-        controllerConfig.refreshInterval = 2;
-      }
-
       // MQTT topic to use.
       if(!controllerConfig.mqttTopic) {
         controllerConfig.mqttTopic = PROTECT_MQTT_TOPIC;
@@ -119,7 +106,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
 
     // Avoid a prospective race condition by waiting to configure our controllers until Homebridge is done
     // loading all the cached accessories it knows about, and calling configureAccessory() on each.
-    api.on(APIEvent.DID_FINISH_LAUNCHING, this.pollControllers.bind(this));
+    api.on(APIEvent.DID_FINISH_LAUNCHING, this.launchControllers.bind(this));
   }
 
   // This gets called when homebridge restores cached accessories at startup. We
@@ -127,20 +114,17 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
   // for device discovery.
   public configureAccessory(accessory: PlatformAccessory): void {
 
-    // Delete the UniFi Protect device pointer on startup. This will be set by device discovery.
-    // Notably, we do NOT clear out the NVR pointer, because we need to maintain the mapping between
-    // camera and NVR.
-    delete accessory.context.device;
-
     // Add this to the accessory array so we can track it.
     this.accessories.push(accessory);
   }
 
-  // Launch our configured controllers. Once we do, they will sustain themselves.
-  private pollControllers(): void {
+  // Launch our configured controllers once all accessories have been loaded. Once we do, they will sustain themselves.
+  private launchControllers(): void {
 
     for(const controller of this.controllers) {
-      void controller.poll();
+
+      // Login to the Protect controller.
+      void controller.ufpApi.login(controller.nvrOptions.address, controller.nvrOptions.username, controller.nvrOptions.password);
     }
   }
 

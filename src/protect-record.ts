@@ -1,4 +1,4 @@
-/* Copyright(C) 2017-2022, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2017-2023, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * protect-record.ts: Homebridge camera recording delegate implementation for UniFi Protect to support HomeKit Secure Video.
  *
@@ -6,21 +6,13 @@
  * for being sounding boards as I worked through several ideas and iterations of this work. Their camaraderie and support was
  * deeply appreciated.
  */
-import {
-  API,
-  CameraRecordingConfiguration,
-  CameraRecordingDelegate,
-  HAP,
-  HDSProtocolSpecificErrorReason,
-  Logging,
-  PlatformAccessory,
-  RecordingPacket
-} from "homebridge";
-import { ProtectCamera, RtspEntry } from "./protect-camera";
-import { FfmpegRecordingProcess } from "./protect-ffmpeg-record";
-import { ProtectCameraConfig } from "unifi-protect";
-import { ProtectNvr } from "./protect-nvr";
-import { ProtectTimeshiftBuffer } from "./protect-timeshift";
+import { API, CameraRecordingConfiguration, CameraRecordingDelegate, HAP, HDSProtocolSpecificErrorReason,
+  PlatformAccessory, RecordingPacket } from "homebridge";
+import { ProtectCamera, RtspEntry } from "./protect-camera.js";
+import { FfmpegRecordingProcess } from "./protect-ffmpeg-record.js";
+import { ProtectLogging } from "./protect-types.js";
+import { ProtectNvr } from "./protect-nvr.js";
+import { ProtectTimeshiftBuffer } from "./protect-timeshift.js";
 
 // Camera recording delegate implementation for Protect.
 export class ProtectRecordingDelegate implements CameraRecordingDelegate {
@@ -29,13 +21,11 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
   private readonly accessory: PlatformAccessory;
   private readonly api: API;
   private readonly hap: HAP;
-  private debug: (message: string, ...parameters: unknown[]) => void;
   private ffmpegStream: FfmpegRecordingProcess | null;
   private isInitialized: boolean;
   private isTransmitting: boolean;
-  private readonly log: Logging;
+  private readonly log: ProtectLogging;
   private readonly maxRecordingDuration: number;
-  private readonly name: () => string;
   private nvr: ProtectNvr;
   private readonly protectCamera: ProtectCamera;
   private recordingConfig: CameraRecordingConfiguration | undefined;
@@ -52,15 +42,13 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     this.accessory = protectCamera.accessory;
     this.api = protectCamera.api;
     this.hap = protectCamera.api.hap;
-    this.debug = protectCamera.platform.debug.bind(protectCamera.platform);
     this.ffmpegStream = null;
     this.isInitialized = false;
     this.isTransmitting = false;
-    this.log = protectCamera.platform.log;
-    this.name = protectCamera.name.bind(protectCamera);
+    this.log = protectCamera.log;
     this.nvr = protectCamera.nvr;
     this.protectCamera = protectCamera;
-    this.maxRecordingDuration = parseInt(this.nvr.optionGet(this.accessory.context.device as ProtectCameraConfig, "Video.HKSV.Recording.MaxDuration") ?? "0");
+    this.maxRecordingDuration = parseInt(this.nvr.optionGet(this.protectCamera.ufp, "Video.HKSV.Recording.MaxDuration") ?? "0");
     this.timeshiftedSegments = 0;
     this.transmittedSegments = 0;
     this.rtspEntry = null;
@@ -79,7 +67,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
       // Inform the user of the state change, if needed.
       if(this.isRecording !== active) {
 
-        this.log.info("%s: Disabling HomeKit Secure Video event recording.", this.name());
+        this.log.info("Disabling HomeKit Secure Video event recording.");
       }
 
       // Disable recording.
@@ -93,82 +81,42 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
       return;
     }
 
-    // We have no recording configuration available yet. Set our desired state and we're done.
-    // Once we have a recording configuration, we'll get called again and be able to begin timeshifting.
-    if(!this.recordingConfig) {
+    // We're recording - update our recording state internally. We set this regardless of whether or not we succeed at starting the
+    // timeshift buffer in order to maintain our state consistent with HKSV.
+    this._isRecording = active;
 
-      this._isRecording = active;
+    // Begin maintaining a timeshift buffer, if configured to do so.
+    if(!(await this.configureTimeshifting())) {
+
       return;
-    }
-
-    // Figure out which camera channel we should use for the livestream based on the requested resolution.
-    this.rtspEntry = this.protectCamera.findRecordingRtsp(this.recordingConfig.videoCodec.resolution[0], this.recordingConfig.videoCodec.resolution[1],
-      this.accessory.context.device as ProtectCameraConfig);
-
-    if(!this.rtspEntry) {
-
-      this._isRecording = false;
-      this.log.error("%s: Unable to start the HomeKit Secure Video timeshift buffer: no valid RTSP stream profile was found.", this.name());
-      return;
-    }
-
-    // If the user has disabled timeshifting, don't start the timeshift buffer.
-    if(this.nvr.optionEnabled(this.accessory.context.device as ProtectCameraConfig, "Video.HKSV.TimeshiftBuffer")) {
-
-      if(!this.recordingConfig || !this.rtspEntry) {
-
-        return;
-      }
-
-      // Set the bitrate to what HomeKit is looking for. This is particularly useful when we occasionally have
-      // to livestream to a user, where bitrates can be different and even get reconfigured in realtime. By
-      // contrast, HomeKit Secure Video has a consistent bitrate it accepts, and we want to try to match it as
-      // closely as posible.
-      if(!(await this.protectCamera.setBitrate(this.rtspEntry.channel.id, this.recordingConfig.videoCodec.parameters.bitRate * 1000))) {
-
-        this.log.error("%s: Unable to set the bitrate to %skbps for HomeKit Secure Video event recording.",
-          this.name(), this.recordingConfig.videoCodec.parameters.bitRate);
-        return;
-      }
-
-      // Fire up the timeshift buffer.
-      if(!(await this.timeshift.start(this.rtspEntry.channel.id))) {
-
-        this.log.error("%s: Unable to start the timeshift buffer for HomeKit Secure Video.", this.name());
-        return;
-      }
     }
 
     // Inform the user of the state change, if needed.
-    if((this._isRecording !== active) || !this.isInitialized) {
+    if(!this.isInitialized) {
 
       this.isInitialized = true;
 
-      this.log.info("%s: HomeKit Secure Video event recording enabled: %s, %s kbps with %s",
-        this.name(), this.rtspEntry?.name, this.recordingConfig?.videoCodec.parameters.bitRate,
-        this.nvr.optionEnabled(this.accessory.context.device as ProtectCameraConfig, "Video.HKSV.TimeshiftBuffer") ?
+      this.log.info("HomeKit Secure Video event recording enabled: %s, %s kbps with %s",
+        this.rtspEntry?.name, this.recordingConfig?.videoCodec.parameters.bitRate,
+        this.protectCamera.hints.timeshift ?
           "a " + (this.timeshift.length / 1000).toString() + " second timeshift buffer." :
-          "no timeshift buffer. Warning: this may provide a suboptimal HKSV experience."
+          "no timeshift buffer. This will provide a suboptimal HKSV experience."
       );
 
       // Inform the user if there's a maximum event recording duration set.
       if(this.maxRecordingDuration) {
 
-        this.log.info("%s: HomeKit Secure Video recordings will be no longer than ~%s seconds.",
-          this.name(), this.maxRecordingDuration);
+        this.log.info("HomeKit Secure Video recordings will be no longer than ~%s seconds.", this.maxRecordingDuration);
       }
     }
-
-    // Update our recording state internally.
-    this._isRecording = active;
   }
 
   // Process updated recording configuration settings from HomeKit Secure Video.
   public updateRecordingConfiguration(configuration: CameraRecordingConfiguration | undefined): void {
 
-    // If we're set to an undefined state, it's because HomeKit can't figure out a valid configuration to use.
-    // This is typically due to a factory reset of the camera or a similar edge case. We choose to handle it
-    // by stopping our timeshift buffer.
+    // If we're set to an undefined state, it's because HomeKit can't figure out a valid configuration to use. This is
+    // typically due to a factory reset of the camera or a similar edge case. We choose to handle it by stopping our
+    // timeshift buffer.
     if(!configuration) {
 
       this.recordingConfig = configuration;
@@ -193,19 +141,25 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     let isLastSegment = false;
     this.transmittedSegments = 0;
 
-    // If we've explicitly disabled HKSV recording, we're done right now. Otherwise, start transmitting our timeshift
-    // buffer and process it through FFmpeg.
-    if(!this.accessory.context.hksvRecording || !(await this.startTransmitting()) || !this.ffmpegStream) {
+    // If we are recording HKSV events and we haven't fully initialized our timeshift buffer (e.g. offline cameras preventing us
+    // from doing so), then do so now.
+    if(this.accessory.context.hksvRecording && this.isRecording && !this.isInitialized) {
+
+      await this.updateRecordingActive(this.isRecording);
+    }
+
+    // If we've explicitly disabled HKSV recording, or we have issues setting up our timeshift buffer, we're done right now. Otherwise,
+    // start transmitting our timeshift buffer and process it through FFmpeg.
+    if(!this.accessory.context.hksvRecording || !this.isInitialized || !(await this.startTransmitting()) || !this.ffmpegStream) {
 
       // Stop transmitting, if needed. If HKSV recording has been disabled explicitly, it should never start in the first place.
-      this.stopTransmitting();
+      await this.stopTransmitting();
 
       // Something's gone wrong, or we've disabled HKSV recording. In either event, we send an fMP4 stream header
       // back to HKSV and exit as cleanly as we can. If we can't get the stream header, we still send an empty segment
       // to HKSV - this will still generate a warning in Homebridge that can be ignored.
-      const streamHeader = (await this.timeshift.getInitSegment()) ?? Buffer.alloc(0);
+      yield { data: (await this.timeshift.getInitSegment()) ?? Buffer.alloc(0), isLast: true };
 
-      yield { data: streamHeader, isLast: true };
       return;
     }
 
@@ -215,7 +169,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
       // If we've not transmitting, we're done.
       if(!this.isTransmitting) {
 
-        return;
+        break;
       }
 
       // No segment doesn't mean we're done necessarily, but it does mean we need to wait for FFmpeg to catch up.
@@ -232,64 +186,95 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
         isLastSegment = true;
       }
 
-      // Send HKSV the segment.
-      yield {
-
-        data: segment,
-        isLast: isLastSegment
-      };
-
-      // Keep track of how many segments we've sent to HKSV.
+      // Keep track of how many segments we're sending to HKSV.
       this.transmittedSegments++;
 
-      // If we've sent the last segment, we're done.
+      // Send HKSV the fMP4 segment.
+      yield { data: segment, isLast: isLastSegment };
+
+      // If we're at the last segment, we're done.
       if(isLastSegment) {
 
-        return;
+        break;
       }
-    }
-
-    // If we're done transmitting, we're done here.
-    if(!this.isTransmitting) {
-
-      return;
-    }
-
-    // Something's gone wrong and we've sent HKSV no segments. Let's send an fMP4 stream header back to HKSV and exit
-    // as cleanly as we can. If we can't get the stream header, we send an empty segment to HKSV - this will still
-    // generate a warning in HAP-NodeJS that can be ignored.
-    if(!this.transmittedSegments) {
-
-      this.debug("%s: HKSV event recording ending without sending any segments. Transmitting a final packet to ensure we end properly.", this.name());
-
-      yield { data: (await this.timeshift.getInitSegment()) ?? Buffer.alloc(0), isLast: true };
-      return;
-    }
-
-    // Something likely happened to FFmpeg and we didn't send out a final segment. Tell HKSV we're really done.
-    if(!isLastSegment) {
-
-      this.log.error("%s: HKSV event recording ending abruptly, likely due to an FFmpeg failure. " +
-        "Transmitting a final packet to ensure we end properly. " +
-        "Note: Homebridge / HAP-NodeJS may generate an HDS error as a result. This can be safely ignored.", this.name());
-
-      yield { data: Buffer.alloc(0), isLast: true };
-      return;
     }
   }
 
   // Receive an acknowledgement from HomeKit that it's seen an end-of-stream packet from us.
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  public acknowledgeStream(streamId: number): void {
+  public async acknowledgeStream(streamId: number): Promise<void> {
 
     // Since HomeKit knows our transmission is ending, it's safe to do so now.
-    this.stopTransmitting();
+    await this.stopTransmitting();
   }
 
   // Process HomeKit requests to end the transmission of the recording stream.
-  public closeRecordingStream(streamId: number, reason: HDSProtocolSpecificErrorReason | undefined): void {
+  public async closeRecordingStream(streamId: number, reason: HDSProtocolSpecificErrorReason | undefined): Promise<void> {
 
-    this.stopTransmitting(reason);
+    await this.stopTransmitting(reason);
+  }
+
+  // Maintain a timeshift buffer and which Protect streams to use for HKSV.
+  private async configureTimeshifting(): Promise<boolean> {
+
+    // We have no recording configuration available yet. Even though HKSV recording is technically active, we can't do anything without
+    // a valid HKSV recording configuration, which HomeKit hasn't sent us yet.
+    if(!this.recordingConfig) {
+
+      return false;
+    }
+
+    const timeshiftError = "Unable to configure HomeKit Secure Video event recording support";
+
+    // If the camera isn't connected, don't attempt to do anything with the timeshift buffer or HKSV quite yet.
+    if(this.protectCamera.ufp.state !== "CONNECTED") {
+
+      this.log.error("%s: the camera is not currently connected to the Protect controller." +
+        " HomeKit Secure Video event recording will resume once the camera reconnects to the Protect controller.", timeshiftError);
+      return false;
+    }
+
+    const oldRtspEntry = this.rtspEntry;
+
+    // Figure out which camera channel we should use for the based on the HKSV-requested resolution.
+    this.rtspEntry = this.protectCamera.findRecordingRtsp(this.recordingConfig.videoCodec.resolution[0], this.recordingConfig.videoCodec.resolution[1],
+      this.protectCamera.ufp);
+
+    if(!this.rtspEntry) {
+
+      this.log.error("%s: no valid RTSP stream profile was found for this camera.", timeshiftError);
+      return false;
+    }
+
+    // If we haven't enabled the timeshift buffer or HKSV hasn't asked us to record, we're done with everything we need to configure.
+    if(!this.protectCamera.hints.timeshift || !this.isRecording) {
+
+      return true;
+    }
+
+    // Set the bitrate to what HomeKit is looking for. This is particularly useful when we occasionally have to livestream to a user, where bitrates
+    // can be different and even get reconfigured in realtime. By contrast, HomeKit Secure Video has a consistent bitrate it accepts, and we want to
+    // try to match it as closely as posible, assuming dynamic bitrates are enabled.
+    if(!(await this.protectCamera.setBitrate(this.rtspEntry.channel.id, this.recordingConfig.videoCodec.parameters.bitRate * 1000))) {
+
+      this.log.error("%s: unable to set the bitrate to %skbps.", timeshiftError, this.recordingConfig.videoCodec.parameters.bitRate);
+      return false;
+    }
+
+    // If we haven't changed the camera channel we're using, and we've already started timeshifting, we're done.
+    if(this.timeshift.isStarted && (this.rtspEntry.channel.id === oldRtspEntry?.channel.id)) {
+
+      return true;
+    }
+
+    // Fire up the timeshift buffer.
+    if(!(await this.timeshift.start(this.rtspEntry.channel.id))) {
+
+      this.log.error("%s.", timeshiftError);
+      return false;
+    }
+
+    return true;
   }
 
   // Start transmitting to the HomeKit hub our timeshifted fMP4 stream.
@@ -298,7 +283,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     // If there's a prior instance of FFmpeg, clean up after ourselves.
     if(this.ffmpegStream) {
 
-      this.ffmpegStream.stop();
+      this.ffmpegStream.stop(false);
       this.ffmpegStream = null;
     }
 
@@ -315,9 +300,9 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
       return false;
     }
 
-    // We want to keep feeding HomeKit until it tells us it's finished, or we decide we don't want to send anymore
-    // fMP4 packets. We treat this the same was a DVR works where you can pause live television, but it continues to
-    // buffer what's being broadcast until you're ready to watch it. This is the same idea.
+    // We want to keep feeding HomeKit until it tells us it's finished, or we decide we don't want to send anymore fMP4 packets. We
+    // treat this in a similar way to how a DVR works where you can pause live television, but it continues to buffer what's being
+    // broadcast until you're ready to watch it. This is the same idea.
 
     // Keep track of how many fMP4 segments we are feeding FFmpeg.
     this.transmittedSegments = 0;
@@ -331,10 +316,26 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     this.isTransmitting = true;
 
     // Let the timeshift buffer know it's time to transmit and continue timeshifting.
-    if(this.nvr.optionEnabled(this.accessory.context.device as ProtectCameraConfig, "Video.HKSV.TimeshiftBuffer")) {
+    if(this.protectCamera.hints.timeshift) {
 
       this.timeshiftedSegments = 0;
-      await this.timeshift.transmitStream(true);
+
+      // Check to make sure something didn't go wrong when we start transmitting the stream.
+      if(!(await this.timeshift.startTransmitting())) {
+
+        // Stop our FFmpeg process and our timeshift buffer.
+        this.ffmpegStream.stop();
+        this.timeshift.stop();
+
+        // Ensure we cleanup.
+        this.ffmpegStream = null;
+        this.isTransmitting = false;
+
+        // Restart our timeshift buffer.
+        await this.restartTimeshifting();
+
+        return false;
+      }
 
       let seenInitSegment = false;
 
@@ -366,26 +367,27 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     }
 
     // Inform the user.
-    this.log.debug("%s: Beginning a HomeKit Secure Video recording event.", this.name());
+    this.log.debug("Beginning a HomeKit Secure Video recording event.");
 
     return true;
   }
 
   // Stop transmitting the HomeKit hub our timeshifted fMP4 stream.
-  private stopTransmitting(reason?: HDSProtocolSpecificErrorReason): void {
-
-    const device = this.accessory.context.device as ProtectCameraConfig;
+  private async stopTransmitting(reason?: HDSProtocolSpecificErrorReason): Promise<void> {
 
     // We're done transmitting, so we can go back to maintaining our timeshift buffer for HomeKit.
-    if(this.nvr.optionEnabled(device, "Video.HKSV.TimeshiftBuffer")) {
+    if(this.protectCamera.hints.timeshift) {
 
-      void this.timeshift.transmitStream(false);
+      this.timeshift.stopTransmitting();
     }
+
+    let ffmpegError = false;
 
     // Kill any FFmpeg sessions.
     if(this.ffmpegStream) {
 
-      this.ffmpegStream.stop();
+      this.ffmpegStream.stop(((reason !== undefined) && (reason !== HDSProtocolSpecificErrorReason.NORMAL)) ? false : undefined);
+      ffmpegError = this.ffmpegStream.hasError;
       this.ffmpegStream = null;
     }
 
@@ -414,8 +416,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
 
       let recordedTime = "";
 
-      // Create a nicely formatted string for end users. Yes, the author recognizes this isn't
-      // essential, but it does bring a smile to their face.
+      // Create a nicely formatted string for end users. Yes, the author recognizes this isn't essential, but it does bring a smile to their face.
       if(recordedSeconds < 1) {
 
         recordedTime = recordedSeconds.toString();
@@ -430,7 +431,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
         const seconds = Math.floor((recordedSeconds % 3600) % 60);
 
         // Build the string.
-        if(hours > 10) {
+        if(hours > 9) {
 
           recordedTime = hours.toString() + ":";
         } else if(hours > 0) {
@@ -438,7 +439,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
           recordedTime = "0" + hours.toString() + ":";
         }
 
-        if(minutes > 10) {
+        if(minutes > 9) {
 
           recordedTime += minutes.toString() + ":";
         } else if(minutes > 0) {
@@ -474,39 +475,54 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
       }
 
       // Inform the user if they've enabled logging. We log HKSV events by default, for now.
-      if(this.nvr.optionEnabled(device, "Log.HKSV") ||
-        this.nvr.optionEnabled(device, "Log.Motion", false)) {
+      if(this.protectCamera.hints.logHksv || this.protectCamera.hints.logMotion) {
 
-        this.log.info("%s: HomeKit Secure Video has recorded %s %s %s motion event.", this.name(),
-          this.timeshiftedSegments ? "a" : "an approximately", recordedTime, timeUnit);
+        this.log.info("HomeKit Secure Video has recorded %s %s %s motion event.", this.timeshiftedSegments ? "a" : "an approximately", recordedTime, timeUnit);
       }
     }
 
-    // If we have a reason for stopping defined, and it's noteworthy, inform the user.
+    // Let's figure out the reason why we're stopping, if we have one, and it's noteworthy.
     let reasonDescription;
 
     switch(reason) {
 
       case HDSProtocolSpecificErrorReason.CANCELLED:
+
         reasonDescription = "HomeKit canceled the request.";
         break;
 
       case HDSProtocolSpecificErrorReason.UNEXPECTED_FAILURE:
+
         reasonDescription = "An unexpected protocol failure has occured.";
         break;
 
       case HDSProtocolSpecificErrorReason.TIMEOUT:
+
         reasonDescription = "The request timed out.";
         break;
 
       default:
+
         break;
     }
 
+    // Inform the user when things stopped unexpectedly, and reset the timeshift buffer for good measure.
     if((reason !== undefined) && (reason !== HDSProtocolSpecificErrorReason.NORMAL)) {
 
-      this.log.error("%s: HomeKit Secure Video event recording ended abnormally: %s", this.name(), reasonDescription);
+      this.log.error("HomeKit Secure Video event recording ended early: %s", reasonDescription);
+
+      if(this.protectCamera.hints.timeshift && ffmpegError) {
+
+        await this.restartTimeshifting();
+      }
     }
+  }
+
+  // Restart timeshifting for a camera.
+  public async restartTimeshifting(): Promise<void> {
+
+    this.timeshift.stop();
+    await this.configureTimeshifting();
   }
 
   // Return our HomeKit Secure Video recording state. This effectively tells us if HKSV has been configured and is on.

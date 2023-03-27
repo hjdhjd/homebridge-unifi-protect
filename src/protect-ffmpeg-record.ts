@@ -1,17 +1,18 @@
-/* Copyright(C) 2017-2022, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2017-2023, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * protect-ffmpeg-record.ts: Provide FFmpeg process control to support HomeKit Secure Video.
  *
  */
-import { CameraRecordingConfiguration, H264Level, H264Profile } from "homebridge";
-import { ProtectCamera, RtspEntry } from "./protect-camera";
-import { FfmpegProcess } from "./protect-ffmpeg";
-import { ProtectCameraConfig } from "unifi-protect";
-import events from "events";
+import { ProtectCamera, RtspEntry } from "./protect-camera.js";
+import { CameraRecordingConfiguration } from "homebridge";
+import { FfmpegProcess } from "./protect-ffmpeg.js";
+import events from "node:events";
+import { platform } from "node:process";
 
 // FFmpeg HomeKit Streaming Video recording process management.
 export class FfmpegRecordingProcess extends FfmpegProcess {
 
+  private isLoggingErrors: boolean;
   private recordingBuffer: { data: Buffer, header: Buffer, length: number, type: string }[];
 
   // Create a new FFmpeg process instance.
@@ -20,23 +21,28 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
     // Initialize our parent.
     super(protectCamera);
 
+    // We want to log errors when they occur.
+    this.isLoggingErrors = true;
+
     // Initialize our recording buffer.
     this.recordingBuffer = [];
 
     // Determine which H.264 profile HomeKit is expecting from us.
-    const requestedProfile = (recordingConfig.videoCodec.parameters.profile === H264Profile.HIGH) ? "high"
-      : (recordingConfig.videoCodec.parameters.profile === H264Profile.MAIN) ? "main" : "baseline";
+    const requestedProfile = protectCamera.stream.getH264Profile(recordingConfig.videoCodec.parameters.profile);
 
-    const requestedLevel = (recordingConfig.videoCodec.parameters.level === H264Level.LEVEL4_0) ? "4.0"
-      : (recordingConfig.videoCodec.parameters.level === H264Level.LEVEL3_2) ? "3.2" : "3.1";
+    // Determine which H.264 level HomeKit is expecting form us. We override this for macOS when we've enabled hardware accelerated transcoding because
+    // the hardware encoder won't transcode to anything below level 5.1 on higher bitrate streams like the G4 Pro.
+    const requestedLevel = (protectCamera.hasHwAccel && (platform === "darwin")) ? "5.1" :
+      protectCamera.stream.getH264Level(recordingConfig.videoCodec.parameters.level);
 
-    // -hide_banner:                                         Suppress printing the startup banner in FFmpeg.
+    // -hide_banner  Suppress printing the startup banner in FFmpeg.
     this.commandLineArgs = [
 
       "-hide_banner"
     ];
 
-    if(this.nvr?.optionEnabled(protectCamera.accessory.context.device as ProtectCameraConfig, "Video.HKSV.TimeshiftBuffer")) {
+    // If we're timeshifting, read from the timeshift buffer.
+    if(protectCamera.hints.timeshift) {
 
       // Configure our video parameters for our input:
       //
@@ -57,15 +63,15 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
       // We're not using the timeshift buffer, so let's use the RTSP stream as the input to HKSV.
       //
       // -hide_banner                     Suppress printing the startup banner in FFmpeg.
-      // -probesize 16384                 How many bytes should be analyzed for stream information. We default to to analyze time should be spent analyzing
-      //                                  the input stream, in microseconds. We default to 1536.
+      // -probesize 8192                  How many bytes should be analyzed for stream information. We default to to analyze time should be spent analyzing
+      //                                  the input stream.
       // -max_delay 500000                Set an upper limit on how much time FFmpeg can take in demuxing packets.
       // -r fps                           Set the input frame rate for the video stream.
       // -rtsp_transport tcp              Tell the RTSP stream handler that we're looking for a TCP connection.
       // -i this.rtspEntry.url            RTSPS URL to get our input stream from.
       this.commandLineArgs.push(
 
-        "-probesize", "16384",
+        "-probesize", "8192",
         "-max_delay", "500000",
         "-r", rtspEntry.channel.fps.toString(),
         "-rtsp_transport", "tcp",
@@ -83,12 +89,8 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
     // -max_muxing_queue_size  9999  Workaround for a bug in pre-20221 versions of FFmpeg. This will ensure that FFmpeg maintains a
     //                               a large enough queue to wait for an output packet to be available. Inputs aren't the issue in our
     //                               situation.
-    // -vcodec libx264               Copy the stream withour reencoding it.
-    // -pix_fmt yuvj420p             Use the yuvj420p pixel format, which is what Protect uses.
     // -profile:v level              Use the H.264 profile HKSV is requesting when encoding.
     // -level:v level                Use the H.264 profile level HKSV is requesting when encoding.
-    // -preset veryfast              Use the veryfast encoding preset in libx264, which provides a good balance of encoding
-    //                               speed and quality.
     // -b:v bitrate                  The average bitrate to use for this stream as requested by HKSV.
     // -bufsize size                 This is the decoder buffer size, which drives the variability / quality of the output bitrate.
     // -maxrate bitrate              The maximum bitrate tolerance, used with -bufsize. We set this to max_bit_rate to effectively
@@ -102,11 +104,9 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
 
       "-map", "0:v:0",
       "-max_muxing_queue_size", "9999",
-      "-vcodec", this.protectCamera.stream.videoEncoder || "libx264",
-      "-pix_fmt", "yuvj420p",
+      ...this.protectCamera.stream.videoEncoderOptions,
       "-profile:v", requestedProfile,
       "-level:v", requestedLevel,
-      "-preset", "veryfast",
       "-b:v", recordingConfig.videoCodec.parameters.bitRate.toString() + "k",
       "-bufsize", (2 * recordingConfig.videoCodec.parameters.bitRate).toString() + "k",
       "-maxrate", recordingConfig.videoCodec.parameters.bitRate.toString() + "k",
@@ -120,11 +120,11 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
 
       // Configure the audio portion of the command line. Options we use are:
       //
-      // -map 0:a:0      Selects the first available audio track from the stream. Protect actually maps audio
+      // -map 0:a:0    Selects the first available audio track from the stream. Protect actually maps audio
       //               and video tracks in opposite locations from where FFmpeg typically expects them. This
       //               setting is a more general solution than naming the track locations directly in case
       //               Protect changes this in the future.
-      // -acodec copy  Copy the stream withour reencoding it.
+      // -acodec copy  Copy the stream without reencoding it.
       this.commandLineArgs.push(
 
         "-map", "0:a:0",
@@ -209,7 +209,7 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
         }
 
         // If we don't have enough data in this buffer, save what we have for the next buffer we see and append it there.
-        if(data.length < (dataLength - offset)) {
+        if(data.length < dataLength) {
 
           bufferRemaining = data;
           break;
@@ -254,6 +254,39 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
     this.isEnded = true;
     this.emit("ffmpegStarted");
     this.emit("mp4box");
+  }
+
+  // Stop an FFmpeg process and cleanup.
+  public stop(logErrors = this.isLoggingErrors): void {
+
+    const savedLogErrors = this.isLoggingErrors;
+
+    // Flag whether we should log abnormal exits (e.g. being killed) or not.
+    this.isLoggingErrors = logErrors;
+
+    // Call our parent to finish the job.
+    super.stop();
+
+    // Restore our previous logging state.
+    this.isLoggingErrors = savedLogErrors;
+  }
+
+  // Log errors.
+  protected logFfmpegError(exitCode: number, signal: NodeJS.Signals): void {
+
+    // Known HKSV-related errors due to occasional inconsistencies in the Protect livestream API.
+    const ffmpegKnownHksvError = new RegExp("(Invalid data found when processing input)|(Could not write header for output file #0)");
+
+    // See if we know about this error.
+    if(this.stderrLog.some(x => ffmpegKnownHksvError.test(x))) {
+
+      this.log.error("FFmpeg ended unexpectedly due to issues with the media stream provided by the UniFi Protect livestream API. " +
+        "This error can be safely ignored - they will occur occasionally.");
+      return;
+    }
+
+    // Otherwise, revert to our default logging in our parent.
+    super.logFfmpegError(exitCode, signal);
   }
 
   // Generate complete segments from an FFmpeg output stream that HomeKit Secure Video can process.

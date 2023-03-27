@@ -1,33 +1,32 @@
-/* Copyright(C) 2017-2022, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2017-2023, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * protect-mqtt.ts: MQTT connectivity class for UniFi Protect.
  */
-import { Logging, PlatformAccessory } from "homebridge";
-import { ProtectApi, ProtectCameraConfig } from "unifi-protect";
 import mqtt, { MqttClient } from "mqtt";
-import { PROTECT_MQTT_RECONNECT_INTERVAL } from "./settings";
-import { ProtectNvr } from "./protect-nvr";
-import { ProtectNvrOptions } from "./protect-options";
+import { PROTECT_MQTT_RECONNECT_INTERVAL } from "./settings.js";
+import { PlatformAccessory } from "homebridge";
+import { ProtectApi } from "unifi-protect";
+import { ProtectLogging } from "./protect-types.js";
+import { ProtectNvr } from "./protect-nvr.js";
+import { ProtectNvrOptions } from "./protect-options.js";
 
 export class ProtectMqtt {
   private config: ProtectNvrOptions;
-  private debug: (message: string, ...parameters: unknown[]) => void;
   private isConnected: boolean;
-  private log: Logging;
+  private log: ProtectLogging;
   private mqtt: MqttClient | null;
   private nvr: ProtectNvr;
-  private nvrApi: ProtectApi;
+  private ufpApi: ProtectApi;
   private subscriptions: { [index: string]: (cbBuffer: Buffer) => void };
 
   constructor(nvr: ProtectNvr) {
 
     this.config = nvr.config;
-    this.debug = nvr.platform.debug.bind(nvr.platform);
     this.isConnected = false;
-    this.log = nvr.platform.log;
+    this.log = nvr.log;
     this.mqtt = null;
     this.nvr = nvr;
-    this.nvrApi = nvr.nvrApi;
+    this.ufpApi = nvr.ufpApi;
     this.subscriptions = {};
 
     if(!this.config.mqttUrl) {
@@ -51,11 +50,11 @@ export class ProtectMqtt {
 
         switch(error.message) {
           case "Missing protocol":
-            this.log.error("%s MQTT Broker: Invalid URL provided: %s.", this.nvrApi.getNvrName(), this.config.mqttUrl);
+            this.log.error("MQTT Broker: Invalid URL provided: %s.", this.config.mqttUrl);
             break;
 
           default:
-            this.log.error("%s MQTT Broker: Error: %s.", this.nvrApi.getNvrName(), error.message);
+            this.log.error("MQTT Broker: Error: %s.", error.message);
             break;
         }
 
@@ -75,15 +74,16 @@ export class ProtectMqtt {
       // Magic incantation to redact passwords.
       const redact = /^(?<pre>.*:\/{0,2}.*:)(?<pass>.*)(?<post>@.*)/;
 
-      this.log.info("%s: Connected to MQTT broker: %s (topic: %s).",
-        this.nvrApi.getNvrName(), this.config.mqttUrl.replace(redact, "$<pre>REDACTED$<post>"), this.config.mqttTopic);
+      this.log.info("Connected to MQTT broker: %s (topic: %s).", this.config.mqttUrl.replace(redact, "$<pre>REDACTED$<post>"), this.config.mqttTopic);
     });
 
     // Notify the user when we've disconnected.
     this.mqtt.on("close", () => {
+
       if(this.isConnected) {
+
         this.isConnected = false;
-        this.log.info("%s: Disconnected from MQTT broker: %s.", this.nvrApi.getNvrName(), this.config.mqttUrl);
+        this.log.info("Disconnected from MQTT broker: %s.", this.config.mqttUrl);
       }
     });
 
@@ -98,26 +98,24 @@ export class ProtectMqtt {
     // Notify the user when there's a connectivity error.
     this.mqtt.on("error", (error: NodeJS.ErrnoException) => {
       switch(error.code) {
+
         case "ECONNREFUSED":
-          this.log.error("%s MQTT Broker: Connection refused (url: %s). Will retry again in %s minute%s.",
-            this.nvrApi.getNvrName(), this.config.mqttUrl,
+          this.log.error("MQTT Broker: Connection refused (url: %s). Will retry again in %s minute%s.", this.config.mqttUrl,
             PROTECT_MQTT_RECONNECT_INTERVAL / 60, PROTECT_MQTT_RECONNECT_INTERVAL / 60 > 1 ? "s": "");
           break;
 
         case "ECONNRESET":
-          this.log.error("%s MQTT Broker: Connection reset (url: %s). Will retry again in %s minute%s.",
-            this.nvrApi.getNvrName(), this.config.mqttUrl,
+          this.log.error("MQTT Broker: Connection reset (url: %s). Will retry again in %s minute%s.", this.config.mqttUrl,
             PROTECT_MQTT_RECONNECT_INTERVAL / 60, PROTECT_MQTT_RECONNECT_INTERVAL / 60 > 1 ? "s": "");
           break;
 
         case "ENOTFOUND":
           this.mqtt?.end(true);
-          this.log.error("%s MQTT Broker: Hostname or IP address not found. (url: %s).", this.nvrApi.getNvrName(), this.config.mqttUrl);
+          this.log.error("MQTT Broker: Hostname or IP address not found. (url: %s).", this.config.mqttUrl);
           break;
 
         default:
-          this.log.error("%s MQTT Broker: %s (url: %s). Will retry again in %s minute%s.",
-            this.nvrApi.getNvrName(), error, this.config.mqttUrl,
+          this.log.error("MQTT Broker: %s (url: %s). Will retry again in %s minute%s.", error, this.config.mqttUrl,
             PROTECT_MQTT_RECONNECT_INTERVAL / 60, PROTECT_MQTT_RECONNECT_INTERVAL / 60 > 1 ? "s": "");
           break;
       }
@@ -134,7 +132,7 @@ export class ProtectMqtt {
       return;
     }
 
-    this.debug("%s: MQTT publish: %s Message: %s.", this.nvrApi.getNvrName(), expandedTopic, message);
+    this.log.debug("MQTT publish: %s Message: %s.", expandedTopic, message);
 
     // By default, we publish as: unifi/protect/mac/event/name
     this.mqtt?.publish(expandedTopic, message);
@@ -150,7 +148,7 @@ export class ProtectMqtt {
       return;
     }
 
-    this.debug("%s: MQTT subscribe: %s.", this.nvrApi.getNvrName(), expandedTopic);
+    this.log.debug("MQTT subscribe: %s.", expandedTopic);
 
     // Add to our callback list.
     this.subscriptions[expandedTopic] = callback;
@@ -204,7 +202,8 @@ export class ProtectMqtt {
 
     // Check to see if it's really a Protect device...if it is, use it's MAC address.
     if((typeof accessory !== "string") && ("device" in accessory.context)) {
-      mac = (accessory.context.device as ProtectCameraConfig).mac;
+
+      mac = this.nvr.configuredDevices[accessory.UUID]?.ufp.mac;
     }
 
     const expandedTopic = this.config.mqttTopic + "/" + mac + "/" + topic;

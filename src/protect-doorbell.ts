@@ -1,16 +1,15 @@
-/* Copyright(C) 2019-2022, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2019-2023, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * protect-doorbell.ts: Doorbell device class for UniFi Protect.
  */
-import {
-  CharacteristicValue,
-  Service
-} from "homebridge";
-import { ProtectCameraConfig, ProtectCameraLcdMessagePayload } from "unifi-protect";
-import { ProtectCamera } from "./protect-camera";
+import { CharacteristicValue, PlatformAccessory, Service } from "homebridge";
+import { ProtectCameraConfig, ProtectCameraConfigPayload, ProtectCameraLcdMessagePayload, ProtectEventPacket, ProtectNvrConfigPayload } from "unifi-protect";
+import { ProtectCamera } from "./protect-camera.js";
+import { ProtectNvr } from "./protect-nvr.js";
 
 // A doorbell message entry.
 interface MessageInterface {
+
   duration: number,
   text: string,
   type: string,
@@ -18,6 +17,7 @@ interface MessageInterface {
 
 // Extend the message interface to include a doorbell message switch.
 interface MessageSwitchInterface extends MessageInterface {
+
   service: Service,
   state: boolean
 }
@@ -29,27 +29,35 @@ export class ProtectDoorbell extends ProtectCamera {
   private isMessagesFromControllerEnabled!: boolean;
   private messageSwitches!: MessageSwitchInterface[];
 
+  // Create an instance.
+  constructor(nvr: ProtectNvr, device: ProtectCameraConfig, accessory: PlatformAccessory) {
+
+    super(nvr, device, accessory);
+  }
+
   // Configure the doorbell for HomeKit.
   protected async configureDevice(): Promise<boolean> {
 
-    this.defaultDuration = this.nvr?.nvrApi?.bootstrap?.nvr?.doorbellSettings?.defaultMessageResetTimeoutMs === undefined ? 60000 :
-      this.nvr.nvrApi.bootstrap.nvr.doorbellSettings.defaultMessageResetTimeoutMs;
+    this.defaultDuration = this.nvr.ufp.doorbellSettings?.defaultMessageResetTimeoutMs ?? 60000;
     this.isMessagesEnabled = true;
     this.isMessagesFromControllerEnabled = true;
     this.messageSwitches = [];
 
     // We only want to deal with cameras with chimes.
-    if(!(this.accessory.context.device as ProtectCameraConfig)?.featureFlags.hasChime) {
+    if(!this.ufp.featureFlags.hasChime) {
+
       return false;
     }
 
     // The user has disabled the doorbell message functionality.
-    if(!this.nvr.optionEnabled(this.accessory.context.device as ProtectCameraConfig, "Doorbell.Messages")) {
+    if(!this.nvr.optionEnabled(this.ufp, "Doorbell.Messages")) {
+
       this.isMessagesEnabled = false;
     }
 
     // The user has disabled the doorbell message functionality.
-    if(!this.nvr.optionEnabled(this.accessory.context.device as ProtectCameraConfig, "Doorbell.Messages.FromDoorbell")) {
+    if(!this.nvr.optionEnabled(this.ufp, "Doorbell.Messages.FromDoorbell")) {
+
       this.isMessagesFromControllerEnabled = false;
     }
 
@@ -58,19 +66,22 @@ export class ProtectDoorbell extends ProtectCamera {
 
     // Let's setup the doorbell-specific attributes.
     this.configureVideoDoorbell();
-    this.nvr.doorbellCount++;
 
     // Now, make the doorbell LCD message functionality available.
-    return this.configureDoorbellLcdSwitch();
+    this.configureDoorbellLcdSwitch();
+
+    // Register our event handlers.
+    this.nvr.events.on("updateEvent." + this.nvr.ufp.id, this.listeners["updateEvent." + this.nvr.ufp.id] = this.nvrEventHandler.bind(this));
+
+    return true;
   }
 
-  // Configure our access to the Doorbell LCD screen.
-  public configureDoorbellLcdSwitch(): boolean {
-
-    const camera = this.accessory?.context.device as ProtectCameraConfig;
+  // Configure our access to the doorbell LCD screen.
+  private configureDoorbellLcdSwitch(): boolean {
 
     // Make sure we're configuring a camera device with an LCD screen (aka a doorbell).
-    if((camera?.modelKey !== "camera") || !camera?.featureFlags.hasLcdScreen) {
+    if((this.ufp.modelKey !== "camera") || !this.ufp.featureFlags.hasLcdScreen) {
+
       return false;
     }
 
@@ -82,21 +93,23 @@ export class ProtectDoorbell extends ProtectCamera {
 
       // Truncate anything longer than the character limit that the doorbell will accept.
       if(entry.text.length > 30) {
+
         entry.text = entry.text.slice(0, 30);
       }
 
       // In the unlikely event someone tries to use words we have reserved for our own use.
       if(this.isReservedName(entry.text)) {
+
         continue;
       }
 
       // Check to see if we already have this message switch configured.
       if(this.messageSwitches?.some(x => (x.type === entry.type) && (x.text === entry.text))) {
+
         continue;
       }
 
-      this.log.info("%s: Discovered doorbell message switch%s: %s.",
-        this.name(), entry.duration ? " (" + (entry.duration / 1000).toString() + " seconds)" : "", entry.text);
+      this.log.info("Discovered doorbell message switch%s: %s.", entry.duration ? " (" + (entry.duration / 1000).toString() + " seconds)" : "", entry.text);
 
       // Use the message switch, if it already exists.
       let switchService = this.accessory.getServiceById(this.hap.Service.Switch, entry.type + "." + entry.text);
@@ -104,10 +117,12 @@ export class ProtectDoorbell extends ProtectCamera {
       // It's a new message, let's create the service for it. Each message cannot exceed 30 characters, but
       // given that HomeKit allows for strings to be up to 64 characters long, this should be fine.
       if(!switchService) {
+
         switchService = new this.hap.Service.Switch(entry.text, entry.type + "." + entry.text);
 
         if(!switchService) {
-          this.log.error("%s: Unable to add doorbell message switch: %s.", this.name(), entry.text);
+
+          this.log.error("Unable to add doorbell message switch: %s.", entry.text);
           continue;
         }
 
@@ -127,7 +142,7 @@ export class ProtectDoorbell extends ProtectCamera {
     }
 
     // Update the message switch state in HomeKit.
-    this.updateLcdSwitch(camera.lcdMessage);
+    this.updateLcdSwitch(this.ufp.lcdMessage);
 
     // Check to see if any of our existing doorbell messages have disappeared.
     this.validateMessageSwitches(doorbellMessages);
@@ -148,18 +163,17 @@ export class ProtectDoorbell extends ProtectCamera {
 
       // When we get the right message, we return the current message set on the doorbell.
       if(value?.toLowerCase() !== "true") {
+
         return;
       }
 
-      const device = this.accessory.context.device as ProtectCameraConfig;
-
-      const doorbellMessage = device.lcdMessage?.text ?? "";
-      const doorbellDuration = (("resetAt" in device.lcdMessage) && device.lcdMessage.resetAt !== null) ?
-        Math.round((device.lcdMessage.resetAt - Date.now()) / 1000) : 0;
+      const doorbellMessage = this.ufp.lcdMessage?.text ?? "";
+      const doorbellDuration = (("resetAt" in this.ufp.lcdMessage) && this.ufp.lcdMessage.resetAt !== null) ?
+        Math.round((this.ufp.lcdMessage.resetAt - Date.now()) / 1000) : 0;
 
       // Publish the current message.
       this.nvr.mqtt?.publish(this.accessory, "message", JSON.stringify({ duration: doorbellDuration, message: doorbellMessage }));
-      this.log.info("%s: Doorbell message information published via MQTT.", this.name());
+      this.log.info("Doorbell message information published via MQTT.");
     });
 
     // We support the ability to set the doorbell message like so:
@@ -172,6 +186,7 @@ export class ProtectDoorbell extends ProtectCamera {
     this.nvr.mqtt?.subscribe(this.accessory, "message/set", (message: Buffer) => {
 
       interface mqttMessageJSON {
+
         message: string,
         duration: number
       }
@@ -189,13 +204,14 @@ export class ProtectDoorbell extends ProtectCamera {
 
           throw new Error("The JSON object is not in the expected format");
         }
-
       } catch(error) {
 
         if(error instanceof SyntaxError) {
-          this.log.error("%s: Unable to process MQTT message: \"%s\". Error: %s.", this.name(), message.toString(), error.message);
+
+          this.log.error("Unable to process MQTT message: \"%s\". Error: %s.", message.toString(), error.message);
         } else {
-          this.log.error("%s: Unknown error has occurred: %s.", this.name(), error);
+
+          this.log.error("Unknown error has occurred: %s.", error);
         }
 
         // Errors mean that we're done now.
@@ -206,25 +222,29 @@ export class ProtectDoorbell extends ProtectCamera {
       // Our NaN test may seem strange - that's because NaN is the only JavaScript value that is treated as unequal
       // to itself. Meaning, you can always test if a value is NaN by checking it for equality to itself. Weird huh?
       if(!("message" in incomingPayload) || (("duration" in incomingPayload) && (incomingPayload.duration !== incomingPayload.duration))) {
-        this.log.error("%s: Unable to process MQTT message: \"%s\".", this.name(), incomingPayload);
+
+        this.log.error("Unable to process MQTT message: \"%s\".", incomingPayload);
         return;
       }
 
       // If no duration specified, or a negative duration, we assume the default duration.
       if(!("duration" in incomingPayload) || (("duration" in incomingPayload) && (incomingPayload.duration < 0))) {
+
         incomingPayload.duration = this.defaultDuration;
       } else {
+
         incomingPayload.duration = incomingPayload.duration * 1000;
       }
 
       // No message defined...we assume we're resetting the message.
       if(!incomingPayload.message.length) {
+
         outboundPayload = { resetAt: 0 };
-        this.log.info("%s: Received MQTT doorbell message reset.", this.name());
+        this.log.info("Received MQTT doorbell message reset.");
       } else {
+
         outboundPayload = { duration: incomingPayload.duration, text: incomingPayload.message, type: "CUSTOM_MESSAGE" };
-        this.log.info("%s: Received MQTT doorbell message%s: %s.",
-          this.name(),
+        this.log.info("Received MQTT doorbell message%s: %s.",
           outboundPayload.duration ? " (" + (outboundPayload.duration / 1000).toString() + " seconds)" : "",
           outboundPayload.text);
       }
@@ -240,10 +260,11 @@ export class ProtectDoorbell extends ProtectCamera {
   private getMessages(): MessageInterface[] {
 
     // First, we get our builtin and configured messages from the controller.
-    const doorbellSettings = this.nvr?.nvrApi?.bootstrap?.nvr?.doorbellSettings;
+    const doorbellSettings = this.nvr.ufp.doorbellSettings;
 
     // Something's not right with the configuration...we're done.
     if(!doorbellSettings || !this.isMessagesEnabled) {
+
       return [];
     }
 
@@ -251,11 +272,14 @@ export class ProtectDoorbell extends ProtectCamera {
 
     // Grab any messages that the user has configured.
     if(this.nvr.config.doorbellMessages) {
+
       for(const configEntry of this.nvr.config.doorbellMessages) {
+
         let duration = this.defaultDuration;
 
         // If we've set a duration, let's honor it. If it's less than zero, use the default duration.
         if(("duration" in configEntry) && !isNaN(configEntry.duration) && (configEntry.duration >= 0)) {
+
           duration = configEntry.duration * 1000;
         }
 
@@ -265,7 +289,8 @@ export class ProtectDoorbell extends ProtectCamera {
     }
 
     // If we've got messages on the controller, let's configure those, unless the user has disabled that feature.
-    if(this.isMessagesFromControllerEnabled && doorbellSettings.allMessages.length) {
+    if(this.isMessagesFromControllerEnabled) {
+
       doorbellMessages = (doorbellSettings.allMessages as MessageInterface[]).concat(doorbellMessages);
     }
 
@@ -284,7 +309,7 @@ export class ProtectDoorbell extends ProtectCamera {
         continue;
       }
 
-      this.log.info("%s: Removing saved doorbell message: %s.", this.name(), entry.text);
+      this.log.info("Removing saved doorbell message: %s.", entry.text);
 
       // The message has been deleted on the doorbell, remove it in HomeKit.
       this.accessory.removeService(entry.service);
@@ -312,17 +337,19 @@ export class ProtectDoorbell extends ProtectCamera {
       }
 
       // The message has been deleted on the doorbell - remove it from HomeKit and inform the user about it.
-      this.log.info("%s: Removing saved doorbell message: %s.", this.name(), switchService.subtype?.slice(switchService.subtype.indexOf(".") + 1));
+      this.log.info("Removing saved doorbell message: %s.", switchService.subtype?.slice(switchService.subtype.indexOf(".") + 1));
       this.accessory.removeService(switchService);
     }
   }
 
   // Update the message switch state in HomeKit.
-  public updateLcdSwitch(lcdMessage: ProtectCameraLcdMessagePayload): void {
+  private updateLcdSwitch(lcdMessage: ProtectCameraLcdMessagePayload): void {
 
     // The message has been cleared on the doorbell, turn off all message switches in HomeKit.
     if(!Object.keys(lcdMessage).length) {
+
       for(const lcdEntry of this.messageSwitches) {
+
         lcdEntry.state = false;
         lcdEntry.service.updateCharacteristic(this.hap.Characteristic.On, false);
       }
@@ -332,6 +359,7 @@ export class ProtectDoorbell extends ProtectCamera {
 
     // Sanity check.
     if(!("type" in lcdMessage) || !("text" in lcdMessage)) {
+
       return;
     }
 
@@ -340,6 +368,7 @@ export class ProtectDoorbell extends ProtectCamera {
 
       // If it's not the message we're interested in, make sure it's off and keep going.
       if(lcdEntry.service.subtype !== ((lcdMessage.type as string) + "." + (lcdMessage.text as string))) {
+
         lcdEntry.state = false;
         lcdEntry.service.updateCharacteristic(this.hap.Characteristic.On, false);
         continue;
@@ -347,6 +376,7 @@ export class ProtectDoorbell extends ProtectCamera {
 
       // If the message switch is already on, we're done.
       if(lcdEntry.state) {
+
         continue;
       }
 
@@ -354,7 +384,7 @@ export class ProtectDoorbell extends ProtectCamera {
       lcdEntry.state = true;
       lcdEntry.service.updateCharacteristic(this.hap.Characteristic.On, true);
 
-      this.log.info("%s: Doorbell message set%s: %s.", this.name(),
+      this.log.info("Doorbell message set%s: %s.",
         lcdMessage.resetAt !== null ? " (" + Math.round(((lcdMessage.resetAt ?? 0) - Date.now()) / 1000).toString() + " seconds)" : "", lcdMessage.text);
 
       // Publish to MQTT, if the user has configured it.
@@ -372,9 +402,8 @@ export class ProtectDoorbell extends ProtectCamera {
 
     // Tell the doorbell to display our message.
     if(messageSwitch.state !== value) {
-      const payload: ProtectCameraLcdMessagePayload = (value === true) ?
-        { duration: messageSwitch.duration, text: messageSwitch.text, type: messageSwitch.type } :
-        { resetAt: 0 };
+
+      const payload: ProtectCameraLcdMessagePayload = (value === true) ? { duration: messageSwitch.duration, text: messageSwitch.text, type: messageSwitch.type } : {};
 
       // Set the message and sync our states.
       await this.setMessage(payload);
@@ -382,29 +411,61 @@ export class ProtectDoorbell extends ProtectCamera {
   }
 
   // Set the message on the doorbell.
-  private async setMessage(payload: ProtectCameraLcdMessagePayload = { resetAt: 0 }): Promise<boolean> {
+  private async setMessage(payload: ProtectCameraLcdMessagePayload = {}): Promise<boolean> {
 
     // We take the duration and save it for MQTT and then translate the payload into what Protect is expecting from us.
     if("duration" in payload) {
+
       payload.resetAt = payload.duration ? Date.now() + payload.duration : null;
       delete payload.duration;
     }
 
-    // An empty payload means we're resetting. Set the reset timer to 0 and we're done.
-    if(!Object.keys(payload).length) {
-      payload.resetAt = 0;
-    }
-
-    // Push the update to the doorbell.
-    const newDevice = await this.nvr.nvrApi.updateCamera(this.accessory.context.device as ProtectCameraConfig, { lcdMessage: payload });
+    // Push the update to the doorbell. If we have an empty payload, it means we're resetting the LCD message back to it's default.
+    const newDevice = await this.nvr.ufpApi.updateDevice(this.ufp, { lcdMessage: payload });
 
     if(!newDevice) {
-      this.log.error("%s: Unable to set doorbell message. Please ensure this username has the Administrator role in UniFi Protect.", this.name());
+
+      this.log.error("Unable to set doorbell message. Please ensure this username has the Administrator role in UniFi Protect.");
       return false;
     }
 
-    // Set the context to our updated device configuration.
-    this.accessory.context.device = newDevice;
+    // Set our updated device configuration.
+    this.ufp = newDevice;
     return true;
+  }
+
+  // Handle doorbell-related events.
+  protected eventHandler(packet: ProtectEventPacket): void {
+
+    const payload = packet.payload as ProtectCameraConfigPayload;
+
+    super.eventHandler(packet);
+
+    // Process LCD message events.
+    if(payload.lcdMessage) {
+
+      this.updateLcdSwitch(payload.lcdMessage);
+    }
+  }
+
+  // Handle doorbell saved message updates on the Protect controller.
+  private nvrEventHandler(packet: ProtectEventPacket): void {
+
+    const payload = packet.payload as ProtectNvrConfigPayload;
+
+    // Process doorbell message save events.
+    if(payload.doorbellSettings) {
+
+      // We need to proactively update the allMessages object. This feels like a UniFi Protect bug, but all we can do is work around it.
+      if(payload.doorbellSettings.customMessages) {
+
+        const builtinMessages = this.nvr.ufp.doorbellSettings.allMessages.filter(x => x.type !== "CUSTOM_MESSAGE");
+        const customMessages = payload.doorbellSettings.customMessages.map(x => ({ text: x, type: "CUSTOM_MESSAGE" }));
+
+        this.nvr.ufp.doorbellSettings.allMessages = builtinMessages.concat(customMessages);
+      }
+
+      this.configureDoorbellLcdSwitch();
+    }
   }
 }
