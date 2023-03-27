@@ -418,7 +418,7 @@
         }
 
         const configTable = document.getElementById("configTable");
-        let configOptions = currentConfig[0].options;
+        let configOptions = currentConfig[0].options || [];
 
         // Show all the valid options configured by the user.
         optionsList = configOptions.filter(x => x.match(/^(Enable|Disable)\.*/gi)).map(x => x.toUpperCase());
