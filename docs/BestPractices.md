@@ -14,7 +14,7 @@
 </DIV>
 </SPAN>
 
-`homebridge-unifi-protect` is a [Homebridge](https://homebridge.io) plugin that provides HomeKit support to the [UniFi Protect](https://unifi-network.ui.com/video-security) device ecosystem. [UniFi Protect](https://unifi-network.ui.com/video-security) is [Ubiquiti's](https://www.ui.com) next-generation video security platform, with rich camera, doorbell, and NVR controller hardware options for you to choose from, as well as an app which you can use to view, configure and manage your video camera and doorbells.
+`homebridge-unifi-protect` is a [Homebridge](https://homebridge.io) plugin that provides HomeKit support to the [UniFi Protect](https://unifi-network.ui.com/video-security) device ecosystem. [UniFi Protect](https://unifi-network.ui.com/video-security) is [Ubiquiti's](https://www.ui.com) video security platform, with rich camera, doorbell, and NVR controller hardware options for you to choose from, as well as an app which you can use to view, configure and manage your video camera and doorbells.
 
 ### Best Practices
 I firmly believe that good software is opinionated. It should have a strong sense of what it's [north star is](https://github.com/hjdhjd/homebridge-unifi-protect#why), and what the user experience journey looks like. My north stars for `homebridge-unifi-protect`:
@@ -58,7 +58,7 @@ Go into iOS, iPadOS, or macOS and turn on notifications for all your cameras, *a
 
 Enabling notifications on all your cameras will ensure that iOS is alerted to when motion occurs and, crucially, *updates the snapshots of the cameras in the background*. What this means for you is that your HomeKit experience will feel more responsive and faster, because anytime there's a motion event, the Home app will refresh that image automatically in the background.
 
-"But wait!" you tell me..."how do I not get spammed?!" Under each notification setting you'll see additional options for `Time` and `People`. **This** is where you can set how often you want to your iPhone to alert you to a motion event. The options are quite robust and very flexible. So...if you only want to be alerted when you aren't home, use the `People` option to only alert you when you (or everyone in your house if you choose) aren't home.
+"But wait!" you say..."how do I not get spammed?!" Under each notification setting you'll see additional options for `Time` and `People`. **This** is where you can set how often you want to your iPhone to alert you to a motion event. The options are quite robust and very flexible. So...if you only want to be alerted when you aren't home, use the `People` option to only alert you when you (or everyone in your house if you choose) aren't home.
 
 What this allows you to do is to have your cake and eat it too - when the Home app is alerted that a motion event has occurred, it will refresh it's snapshot in the background, every time. You only get alerted with a push notification if you really wanted to be and you can customize those notifications in flexible ways within the Home app.
 

@@ -14,7 +14,7 @@
 </DIV>
 </SPAN>
 
-`homebridge-unifi-protect` is a [Homebridge](https://homebridge.io) plugin that provides HomeKit support to the [UniFi Protect](https://unifi-network.ui.com/video-security) device ecosystem. [UniFi Protect](https://unifi-network.ui.com/video-security) is [Ubiquiti's](https://www.ui.com) next-generation video security platform, with rich camera, doorbell, and other smart home options for you to choose from, as well as an app which you can use to view, configure and manage your video camera, doorbells, and more.
+`homebridge-unifi-protect` is a [Homebridge](https://homebridge.io) plugin that provides HomeKit support to the [UniFi Protect](https://unifi-network.ui.com/video-security) device ecosystem. [UniFi Protect](https://unifi-network.ui.com/video-security) is [Ubiquiti's](https://www.ui.com) video security platform, with rich camera, doorbell, and NVR controller hardware options for you to choose from, as well as an app which you can use to view, configure and manage your video camera and doorbells.
 
 ### HomeKit Secure Video Support
 HomeKit Secure Video has been a feature in HomeKit since the launch of iOS 13. It provides for several things:
@@ -30,7 +30,7 @@ HomeKit Secure Video has been a feature in HomeKit since the launch of iOS 13. I
 
   * Once you enable HomeKit Secure Video for your cameras in the Home app, you can configure the types of events and objects you're interested in recording and being informed about.
   * **Important note: You must configure HomeKit Secure Video in the Home app before it will start recording any events of any kind. Instructions for doing so are well beyond the scope of this documentation. Please look it up in the infinite guides online or ask a friend.**
-  * On a technical level, HKSV asks `homebridge-unifi-protect` to maintain a buffer - a few seconds of video (in practice, HomeKit always requests four seconds of history). Think of this buffer like a timeshifting DVR that's constantly updating. When a motion event occurs, we send the buffer to HomeKit, and continue to do so as long as HomeKit requests it.
+  * On a technical level, HKSV asks `homebridge-unifi-protect` to maintain a buffer (using the UniFi Protect livestream API) (this isn't quite the same thing as RTSP, which you may be familiar with, this is an **actual API** to access the livestream on the Protect controller) - a few seconds of video (in practice, HomeKit seems to always request four seconds of history). Think of this buffer like a timeshifting DVR that's constantly updating. When a motion event occurs, we send the buffer to HomeKit, and continue to do so as long as HomeKit requests it.
   * It's important to note: **HomeKit decides how long each event will be, by default**. In practice, I've seen events as long 5 or 10 minutes in high-traffic areas. HomeKit continues to record an event for as long as it thinks there's some motion of interest to the user.
   * In practice, if you place a camera in a very high traffic area, say a kitchen or a family room, and enable HKSV, you're likely going to get very long motion events captured in HomeKit. It's not a bug, it's the way HomeKit Secure Video is designed. :smile: You can modify this behavior with the [`Video.HKSV.Recording.MaxDuration` feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md#video), which allows you to set an upward limit on how long each HKSV event recording can be.
 
@@ -57,10 +57,10 @@ The Home hub devices are doing object recognition, in essence. Given their realt
 
 All of the above is based on observed behavior and conversations with other people. I'm sure someone much smarter than I may eventually find more definitive or better insights into the inner workings of the black box that is HomeKit Secure Video, but I doubt Apple is going to tell us much anytime soon. 😄
 
-For the best experience with HBUP and HKSV, you should run Homebridge and HBUP on decent hardware and not your several-year-old RPi or other aging CPU platform. There may be ways to run HBUP and HKSV on those platforms, but they are all going to begin to compromise the user experience in various ways. Stay tuned for more on that.
+For the best experience with HBUP and HKSV, you should run Homebridge and HBUP on decent hardware and not your several-year-old RPi or other aging CPU platform. There may be ways to run HBUP and HKSV on those platforms, but they are all going to begin to compromise the user experience in various ways. The performance considerations section will provide some helpful tips, but don't expect miracles powering those 20 G4 Pros on that RPi.
 
 #### Performance Considerations
-HKSV in `homebridge-unifi-protect` works very well by default if you have a decently performant and modern machine that you're running Homebridge on. The price you pay for having HKSV comes primarily in the area of CPU. HBUP *will need to transcode** any video it sends to a Home hub for analysis. The good and bad news is that it only happens when motion is detected, which triggers an analysis cycle by the Home hub. If you have a lot of cameras and a lot of motion events, expect this to happen often and the requisite consumption of CPU.
+HKSV in `homebridge-unifi-protect` works very well by default if you have a decently performant and modern machine that you're running Homebridge on. The price you pay for having HKSV comes primarily in the area of CPU. HBUP *will need to transcode** any video it sends to a Home hub for analysis. **The good and bad news is that it only happens when motion is detected, which triggers an analysis cycle by the Home hub. If you have a lot of cameras and a lot of motion events, expect this to happen often and the requisite consumption of CPU.**
 
 If you're struggling to get HKSV working in HBUP, try the following, in this order and see if it helps:
 

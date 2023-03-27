@@ -4,6 +4,7 @@
   "headerDisplay": "Full HomeKit support UniFi Protect devices. See the [homebridge-unifi-protect](https://github.com/hjdhjd/homebridge-unifi-protect) developer page for detailed documentation.",
   "footerDisplay": "A working **ffmpeg** installation is required for this plugin to work. For audio support, make sure your version of ffmpeg is compiled with support for **fdk-aac**.",
   "singular": true,
+  "customUi": true,
 
   "schema": {
     "type": "object",
@@ -25,6 +26,15 @@
               "format": "hostname",
               "placeholder": "e.g. 1.2.3.4",
               "description": "Hostname or IP address of your UniFi Protect controller."
+            },
+
+            "defaultDoorbellMessage": {
+              "type": "string",
+              "title": "Default doorbell message",
+              "required": false,
+              "maxLength": 30,
+              "placeholder": "e.g. WELCOME",
+              "description": "Default message to be used on UniFi Protect doorbells. Default: WELCOME."
             },
 
             "doorbellMessages": {
@@ -80,7 +90,7 @@
               "title": "Controller Name",
               "required": false,
               "placeholder": "e.g. UNVR",
-              "description": "Name for this UniFi Protect controller to be used for logging purposes. password. Default: Defined by the controller."
+              "description": "Name for this UniFi Protect controller to be used for logging purposes. Default: Defined by the controller."
             },
 
             "password": {
@@ -89,16 +99,6 @@
               "required": true,
               "placeholder": "e.g. unifi-protect-password",
               "description": "UniFi Protect password for this controller. Creating a homebridge-specific local user is strongly encouraged for security and sanity."
-            },
-
-            "refreshInterval": {
-              "type": "integer",
-              "title": "Controller Refresh Interval (seconds)",
-              "required": false,
-              "minimum": 2,
-              "maximum": 30,
-              "placeholder": "e.g. 10",
-              "description": "Refresh interval to check for cameras that have been added or removed to a controller. For UCK Gen2+ devices only, this is also the interval used to check for motion events. Default: 5 seconds for UCK Gen2+, 10 seconds for UniFI OS."
             },
 
             "username": {
@@ -130,8 +130,8 @@
           "type": "string",
           "title": "Feature Option",
           "required": false,
-          "description": "Enter only one option per entry. See project page for the complete list of available options.",
-          "placeholder": "e.g. Disable.Stream.High"
+          "description": "Enter only one option per entry. See the feature options tab above for the complete list of available options.",
+          "placeholder": "e.g. Disable.Video.Transcode"
         }
       },
 
@@ -212,6 +212,8 @@
               "expandable": true,
               "expanded": false,
               "items": [
+
+                "controllers[].defaultDoorbellMessage",
                 {
                   "key": "controllers[].doorbellMessages",
                   "type": "array",
@@ -237,8 +239,7 @@
                 {
                   "description": "These settings are optional. The defaults work well for almost everyone.",
                   "items": [
-                    "controllers[].name",
-                    "controllers[].refreshInterval"
+                    "controllers[].name"
                   ]
                 }
               ]
@@ -274,7 +275,7 @@
           "key": "options",
           "type": "array",
           "name": " ",
-          "description": "Feature options allow you to further customize the behavior of this plugin such as the ability to show or hide cameras or specify stream quality.",
+          "description": "Feature options allow you to further customize the behavior of this plugin such as the ability to show or hide cameras or specify stream quality. You can use the the feature options tab above (recommended) to customize these settings or enter them manually below.",
           "orderable": false,
           "buttonText": "Add Feature Option",
           "items": [

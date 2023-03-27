@@ -1,0 +1,715 @@
+<p class="text-center">
+    <img src="https://raw.githubusercontent.com/hjdhjd/homebridge-unifi-protect/main/homebridge-protect.svg"
+        alt="homebridge-unifi-protect logo" style="width: 60%;" />
+</p>
+<div id="pageIntro" style="display: none;">
+    <p class="lead text-center">Thank you for installing <strong>homebridge-unifi-protect</strong></p>
+    <div class="text-center">
+       <button type="button" class="btn btn-primary" id="introLink">Continue &rarr;</button>
+    </div>
+ </div>
+<div id="menuWrapper" class="btn-group w-100 mb-0" role="group" aria-label="UI Menu" style="display: none;">
+    <button type="button" class="btn btn-primary" id="menuSettings">
+        Main Settings
+    </button>
+    <button type="button" class="btn btn-primary" id="menuProtect">
+        Feature Options
+    </button>
+    <button type="button" class="btn btn-primary mr-0" id="menuHome">
+        Support
+    </button>
+</div>
+<div id="disabledBanner" class="alert alert-secondary mb-0 mt-3" role="alert" style="display: none;">
+    Plugin is currently disabled
+    <button id="disabledEnable" type="button" class="btn btn-link p-0 m-0 float-right">
+        Enable
+    </button>
+</div>
+<div id="pageDevices" class="mt-2" style="display: none;">
+    <div id="deviceInfo">
+        <table class="table table-sm table-borderless">
+          <tr class="align-top">
+            <td rowspan="2" class="w-25">
+              <table class="table table-sm table-bordered m-0 p-0">
+                <tr>
+                  <td>
+                    <table class="table table-sm table-borderless m-0 p-0" id="controllersTable">
+                    </table>
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <table class="table table-sm table-borderless m-0 p-0" id="devicesTable">
+                    </table>
+                  </td>
+                </tr>
+              </table>
+            </td>
+            <td>
+              <table class="table table-sm table-borderless border-bottom m-0 p-0" id="deviceStatsTable" style="display: none;">
+                <tr>
+                    <th style="width: 30%" class="m-0 p-0"><B>Model<B></th>
+                    <th style="width: 25%;" class="m-0 p-0"><B>IP Address</B></th>
+                    <th style="width: 20%;" class="m-0 p-0"><B>MAC Address</B></th>
+                    <th style="width: 25%;" class="m-0 p-0"><B>Status</B></th>
+                </tr>
+                <tr>
+                    <td id="device_model" class="m-0 p-0"></td>
+                    <td id="device_address" class="m-0 p-0"></td>
+                    <td id="device_mac" class="m-0 p-0"></td>
+                    <td id="device_online" class="m-0 p-0"></td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td id="configTable" width="100%">
+            </td>
+          </tr>
+        </table>
+    </div>
+</div>
+<div id="pageSupport" class="mt-4" style="display: none;">
+    <p class="text-center lead">Thank you for using <strong>homebridge-unifi-protect</strong>.</p>
+
+    <p>Other plugins by <a target="_blank" href="https://github.com/hjdhjd">HJD</a>: </p>
+
+    <ul dir="auto">
+      <li><a target="_blank" href="https://github.com/hjdhjd/homebridge-myq">homebridge-myQ: Liftmaster and Chamberlain garage door opener support for HomeKit</a></li>
+    </ul>
+
+    <p class="text-center lead">Documentation Reference</p>
+
+    <h5>Features</h5>
+    <ul dir="auto">
+        <li>
+            Getting Started
+            <ul dir="auto">
+                <li>
+                    <a target="_blank" href="#installation">Installation</a>
+                    : installing this plugin, including system requirements.
+                </li>
+                <li>
+                    <a target="_blank" href="#plugin-configuration">Plugin Configuration</a>
+                    : how to quickly get up and running.
+                </li>
+                <li>
+                    <a target="_blank" href="https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/BestPractices.md">Best Practices</a>
+                    : best practices for getting the most of your HomeKit setup and UniFi Protect.
+                </li>
+                <li>
+                    <a target="_blank" href="https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Troubleshooting.md">Troubleshooting</a>
+                    : run into login problems or streaming problems? Give this a read.
+                </li>
+            </ul>
+        </li>
+        <li>
+            Advanced Topics
+            <ul dir="auto">
+                <li>
+                    <a target="_blank" href="https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Autoconfiguration.md">Autoconfiguration</a>
+                    : what it is, design choices that I've made, and why.
+                </li>
+                <li>
+                    <a target="_blank" href="https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md">Feature Options</a>
+                    : granular options to allow you to set the camera quality individually, show or hide specific cameras, controllers, and more.
+                </li>
+                <li>
+                    <a target="_blank" href="https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/AudioOptions.md">Audio Options</a>
+                    : options to further tailor how audio is handled from Protect, such as background noise reduction.
+                </li>
+                <li>
+                    <a target="_blank" href="https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Doorbell.md">Doorbells</a>
+                    : how UniFi Protect doorbell support works in this plugin, and how to use all the available features including doorbell messages.
+                </li>
+                <li>
+                    <a target="_blank" href="https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/HomeKitSecureVideo.md">HomeKit Secure Video</a>
+                    : how HomeKit Secure Video support works in this plugin with UniFi Protect.
+                </li>
+                <li>
+                    <a target="_blank" href="https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Liveviews.md">Liveview Scenes</a>
+                    : use the UniFi Protect liveviews feature (available in the UniFi Protect controller webUI) to create motion-detection scenes.
+                </li>
+                <li>
+                    <a target="_blank" href="https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/MQTT.md">MQTT</a>
+                    : how to configure MQTT support.
+                </li>
+                <li>
+                    <a target="_blank" href="https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/AdvancedOptions.md">Advanced Configuration</a>
+                    : complete list of configuration options available in this plugin.
+                </li>
+                <li>
+                    <a target="_blank" href="https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/ProtectAPI.md">Realtime API Documentation</a>
+                    : documentation of how the Ubiquiti realtime updates API works and how to decode the binary protocol.
+                </li>
+                <li>
+                    <a target="_blank" href="https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Changelog.md">Changelog</a>
+                    : changes and release history of this plugin, starting with v3.0.
+                </li>
+            </ul>
+        </li>
+    </ul>
+
+    <h5>Help/About</h5>
+    <ul>
+        <li>
+            <a href="https://discord.gg/QXqfHEW"
+                target="_blank">Discord Support Channel</a>
+        </li>
+        <li>
+            <a href="https://github.com/hjdhjd/homebridge-unifi-protect/issues/new/choose"
+                target="_blank">Create a Developer Support Request</a>
+        </li>
+        <li>
+            <a href="https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Changelog.md"
+                target="_blank">View the Changelog and Release Notes</a>
+        </li>
+    </ul>
+</div>
+<script>
+  ;
+  (async () => {
+
+    try {
+
+      // Retrieve the current plugin configuration.
+      let currentConfig = await homebridge.getPluginConfig();
+
+      // Show an navigation bar at the top of the plugin configuration UI.
+      const showIntro = () => {
+
+        const introLink = document.getElementById("introLink");
+
+        introLink.addEventListener("click", () => {
+
+          // Show the beachball while we setup.
+          homebridge.showSpinner();
+
+          // Create our UI.
+          document.getElementById("pageIntro").style.display = "none";
+          document.getElementById("menuWrapper").style.display = "inline-flex";
+          showSettings();
+
+          // All done. Let the user interact with us.
+          homebridge.hideSpinner();
+        });
+
+        document.getElementById("pageIntro").style.display = "block";
+      }
+
+      // Our list of Protect controllers.
+      const controllerList = [];
+
+      // Show the list of controllers we've configured.
+      const showControllers = async () => {
+
+        // Show the beachball while we setup.
+        homebridge.showSpinner();
+        homebridge.hideSchemaForm();
+
+        // Make sure we have the refreshed configuration.
+        currentConfig = await homebridge.getPluginConfig();
+
+        // Create our custom UI.
+        document.getElementById("menuHome").classList.remove("btn-elegant");
+        document.getElementById("menuHome").classList.add("btn-primary");
+        document.getElementById("menuProtect").classList.add("btn-elegant");
+        document.getElementById("menuProtect").classList.remove("btn-primary");
+        document.getElementById("menuSettings").classList.remove("btn-elegant");
+        document.getElementById("menuSettings").classList.add("btn-primary");
+
+        // Hide the legacy UI.
+        document.getElementById("pageSupport").style.display = "none";
+        document.getElementById("pageDevices").style.display = "block";
+
+        // What we're going to do is display our global options, followed by the list of controllers the user has configured.
+        // We pre-select the first controller by default for the user as a starting point.
+
+        // Create the table for the our list of controllers and global options.
+        const controllersTable = document.getElementById("controllersTable");
+
+        // Start with a clean slate.
+        controllersTable.innerHTML = "";
+
+        // Enumerate our global settings.
+        const trGlobal = document.createElement("tr");
+
+        // Create the cell for our global settings.
+        const tdGlobal = document.createElement("td");
+        tdGlobal.classList.add("m-0", "p-0");
+
+        // Create our label target.
+        const globalLabel = document.createElement("label");
+
+        globalLabel.name = "UFP Global Settings";
+        globalLabel.appendChild(document.createTextNode("Global Settings"));
+        globalLabel.style.cursor = "pointer";
+        globalLabel.classList.add("mx-0", "my-2", "p-0", "w-100");
+
+        globalLabel.addEventListener("click", event => showDevices(null));
+
+        // Add the global settings label.
+        tdGlobal.appendChild(globalLabel);
+        tdGlobal.style.fontWeight = "bold";
+
+        // Add the global cell to the table.
+        trGlobal.appendChild(tdGlobal);
+
+        // Now add it to the overall controllers table.
+        controllersTable.appendChild(trGlobal);
+
+        // Add it as another controller, for UI purposes.
+        controllerList.push(globalLabel);
+
+        // Create a row for our controllers.
+        const trController = document.createElement("tr");
+
+        // Create the cell for our controller category row.
+        const tdController = document.createElement("td");
+        tdController.classList.add("m-0", "p-0");
+
+        // Add the category name, with appropriate casing.
+        tdController.appendChild(document.createTextNode("Protect Controller" + (currentConfig[0].controllers.length > 1 ? "s" : "")));
+        tdController.style.fontWeight = "bold";
+
+        // Add the cell to the table row.
+        trController.appendChild(tdController);
+
+        // Add the table row to the table.
+        controllersTable.appendChild(trController);
+
+        for(const ufpController of currentConfig[0].controllers) {
+
+          // Create a row for this controller.
+          const trDevice = document.createElement("tr");
+          trDevice.classList.add("m-0", "p-0");
+
+          // Create a cell for our controller.
+          const tdDevice = document.createElement("td");
+          tdDevice.classList.add("m-0", "p-0" , "w-100");
+
+          const label = document.createElement("label");
+
+          label.name = ufpController.address;
+          label.appendChild(document.createTextNode(ufpController.address));
+          label.style.cursor = "pointer";
+          label.classList.add("mx-2", "my-0", "p-0", "w-100");
+
+          label.addEventListener("click", event => showDevices(ufpController));
+
+          // Add the controller label to our cell.
+          tdDevice.appendChild(label);
+
+          // Add the cell to the table row.
+          trDevice.appendChild(tdDevice);
+
+          // Add the table row to the table.
+          controllersTable.appendChild(trDevice);
+
+          controllerList.push(label);
+
+        }
+
+        // All done. Let the user interact with us.
+        homebridge.hideSpinner();
+        showDevices(currentConfig[0].controllers[0]);
+      };
+
+      // Show the devices attached to a controller.
+      const showDevices = async (controller) => {
+
+        // Show the beachball while we setup.
+        homebridge.showSpinner();
+
+        // Make sure we highlight the selected controller so the user knows where we are.
+        controllerList.map(x => (x.name === (controller ? controller.address : "UFP Global Settings")) ?
+          x.parentElement.classList.add("bg-info", "text-white") : x.parentElement.classList.remove("bg-info", "text-white"));
+
+        const devicesTable = document.getElementById("devicesTable");
+        let ufpDevices = [];
+
+        // If we're not accessing global settings, pull a list of devices attached to this controller.
+        if(controller) {
+
+          ufpDevices = await homebridge.request("/getDevices", { address: controller.address, password: controller.password, username: controller.username });
+        }
+
+        // Couldn't connect to the Protect controller for some reason.
+        if(controller && !ufpDevices?.length) {
+
+          devicesTable.innerHTML = "";
+
+          document.getElementById("device_model").innerHTML = "Unable to connect to the Protect controller. Check your settings for this controller in the settings tab."
+          document.getElementById("device_mac").innerHTML = "";
+          document.getElementById("device_address").innerHTML = "";
+          document.getElementById("device_online").innerHTML = "";
+          document.getElementById("deviceStatsTable").style.display = "inline-table";
+
+          homebridge.hideSpinner();
+          return;
+        }
+
+        const modelKeys = [...new Set(ufpDevices.map(x => x.modelKey))];
+        const deviceList = [];
+
+        // Start with a clean slate.
+        devicesTable.innerHTML = "";
+
+        for(const key of modelKeys) {
+
+          // Get all the devices associated with this device category.
+          const devices = ufpDevices.filter(x => x.modelKey === key);
+
+          // If it's a controller, we handle that case differently.
+          if((key === "nvr") && devices.length) {
+
+            // Change the name of the controler that we show users once we've connected with the controller.
+            controllerList.map(x => (x.name === controller.address) ? x.childNodes[0].nodeValue = devices[0].name : true);
+            continue;
+          }
+
+          // Create a row for this device category.
+          const trCategory = document.createElement("tr");
+
+          // Create the cell for our device category row.
+          const tdCategory = document.createElement("td");
+          tdCategory.classList.add("m-0", "p-0");
+
+          // Add the category name, with appropriate casing.
+          tdCategory.appendChild(document.createTextNode((key === "nvr") ? "Protect Controller" : (key.charAt(0).toUpperCase() + key.slice(1) + "s")));
+          tdCategory.style.fontWeight = "bold";
+
+          // Add the cell to the table row.
+          trCategory.appendChild(tdCategory);
+
+          // Add the table row to the table.
+          devicesTable.appendChild(trCategory);
+
+          for(const device of devices) {
+
+            // Create a row for this device.
+            const trDevice = document.createElement("tr");
+            trDevice.classList.add("m-0", "p-0");
+
+            // Create a cell for our device.
+            const tdDevice = document.createElement("td");
+            tdDevice.classList.add("m-0", "p-0" , "w-100");
+
+            const label = document.createElement("label");
+
+            label.name = device.id;
+            label.appendChild(document.createTextNode(device.name));
+            label.style.cursor = "pointer";
+            label.classList.add("mx-2", "my-0", "p-0", "w-100");
+
+            label.addEventListener("click", event => showDeviceInfo(device.id));
+
+            // Add the device label to our cell.
+            tdDevice.appendChild(label);
+
+            // Add the cell to the table row.
+            trDevice.appendChild(tdDevice);
+
+            // Add the table row to the table.
+            devicesTable.appendChild(trDevice);
+
+            deviceList.push(label);
+          }
+        }
+
+        const configTable = document.getElementById("configTable");
+        let configOptions = currentConfig[0].options;
+
+        // Show all the valid options configured by the user.
+        optionsList = configOptions.filter(x => x.match(/^(Enable|Disable)\.*/gi)).map(x => x.toUpperCase());
+
+        // Is a feature option globally enabled?
+        const isGlobalOptionEnabled = (featureOption, defaultValue) => {
+
+          featureOption = featureOption.toUpperCase();
+
+          // Test device-specific options.
+          return optionsList.some(x => x === ("ENABLE." + featureOption)) ? true :
+            (optionsList.some(x => x === ("DISABLE." + featureOption)) ? false : defaultValue
+            );
+        }
+
+        // Is a feature option enabled at the device or controller level.
+        const isDeviceOptionEnabled = (featureOption, mac, defaultValue) => {
+
+          featureOption = featureOption.toUpperCase();
+          mac = mac.toUpperCase();
+
+          // Test device-specific options.
+          return optionsList.some(x => x === ("ENABLE." + featureOption + "." + mac)) ? true :
+            (optionsList.some(x => x === ("DISABLE." + featureOption + "." + mac)) ? false : defaultValue
+            );
+        }
+
+        // Show feature option information for a specific device, controller, or globally.
+        const showDeviceInfo = async (deviceId) => {
+
+          homebridge.showSpinner();
+
+          // Update the selected device for visibility.
+          deviceList.map(x => (x.name === deviceId) ? x.parentElement.classList.add("bg-info", "text-white") : x.parentElement.classList.remove("bg-info", "text-white"));
+
+          // Populate the device information info pane.
+          const ufpDevice = ufpDevices.find(x => x.id === deviceId);
+
+          // Ensure we have a controller or device. The only time this won't be the case is when we're looking at global settings.
+          if(ufpDevice) {
+
+            document.getElementById("device_model").innerHTML = ufpDevice.marketName ?? ufpDevice.type;
+            document.getElementById("device_mac").innerHTML = ufpDevice.mac;
+            document.getElementById("device_address").innerHTML = ufpDevice.host ?? (ufpDevice.modelKey === "sensor" ? "Bluetooth Device" : "None");
+            document.getElementById("device_online").innerHTML = ("state" in ufpDevice) ? (ufpDevice.state.charAt(0).toUpperCase() + ufpDevice.state.slice(1).toLowerCase()) : "Connected";
+
+            document.getElementById("deviceStatsTable").style.display = "inline-table";
+          } else {
+
+            document.getElementById("deviceStatsTable").style.display = "none";
+
+            document.getElementById("device_model").innerHTML = "N/A"
+            document.getElementById("device_mac").innerHTML = "N/A";
+            document.getElementById("device_address").innerHTML = "N/A";
+            document.getElementById("device_online").innerHTML = "N/A";
+          }
+
+          // Populate the feature options selected for this device.
+          const ufpFeatures = await homebridge.request("/getOptions", { configOptions: configOptions, nvrUfp: ufpDevices[0], deviceUfp: ufpDevice });
+          const optionsDevice = ufpFeatures.options;
+
+          let newConfigTableHtml = "";
+          configTable.innerHTML = "";
+
+          for(const category of ufpFeatures.categories) {
+
+            const optionTable = document.createElement("table");
+            const thead = document.createElement("thead");
+            const tbody = document.createElement("tbody");
+            const trFirst = document.createElement("tr");
+            const th = document.createElement("th");
+
+            // Set our table options.
+            optionTable.classList.add("table", "table-borderless", "table-hover", "table-sm");
+            th.classList.add("p-0");
+            th.style.fontWeight = "bold";
+            th.colSpan = 2;
+            tbody.classList.add("table-bordered");
+
+            // Add the feature option category description.
+            th.appendChild(document.createTextNode(category.description +
+              (!ufpDevice ? " (Global)" : (ufpDevice.modelKey === "nvr" ? " (Controller-wide)" : " (Device-specific)"))));
+
+            // Add the table header to the row.
+            trFirst.appendChild(th);
+
+            // Add the table row to the table head.
+            thead.appendChild(trFirst);
+
+            // Finally, add the table head to the table.
+            optionTable.appendChild(thead);
+
+            for(const option of optionsDevice[category.name]) {
+
+              // Create the next table row.
+              const trX = document.createElement("tr");
+              trX.classList.add("align-top");
+
+              // Create a checkbox for the option.
+              const tdCheckbox = document.createElement("td");
+
+              // Create the actual checkbox for the option.
+              const checkbox = document.createElement("input");
+
+              const featureOption = category.name + (option.name.length ? ("." + option.name): "");
+              checkbox.type = "checkbox";
+              checkbox.id = featureOption;
+              checkbox.name = featureOption;
+              checkbox.value = featureOption + (!ufpDevice ? "" : ("." + ufpDevice.mac)); // LEFT OFF HERE
+              checkbox.checked = !ufpDevice ? isGlobalOptionEnabled(featureOption, option.default) :
+                isDeviceOptionEnabled(featureOption, ufpDevice.mac, option.default);
+
+              checkbox.defaultChecked = option.default;
+              checkbox.classList.add("mx-2");
+
+              // Add or remove the setting from our configuration when we've changed our state.
+              checkbox.addEventListener("change", async () => {
+
+                // Find the option in our list and delete it if it exists.
+                const optionRegex = new RegExp("^(Enable|Disable)\." + checkbox.id + (!ufpDevice ? "" : ("\." + ufpDevice.mac)) + "$", "gi")
+                const newOptions = configOptions.filter(x => !x.match(optionRegex));
+
+                // The setting is different from the default, highlight it for the user, and add it to our configuration.
+                if(checkbox.checked !== option.default) {
+
+                  labelDescription.classList.add("text-info");
+                  newOptions.push((checkbox.checked ? "Enable." : "Disable.") + checkbox.value);
+                } else {
+
+                  // We've reset to the defaults, remove our highlighting.
+                  labelDescription.classList.remove("text-info");
+                }
+
+                // Update our configuration in Homebridge.
+                currentConfig[0].options = newOptions;
+                configOptions = newOptions;
+                await homebridge.updatePluginConfig(currentConfig);
+              });
+
+              // Add the checkbox to the table cell.
+              tdCheckbox.appendChild(checkbox);
+
+              // Add the checkbox to the table row.
+              trX.appendChild(tdCheckbox);
+
+              const tdLabel = document.createElement("td");
+              tdLabel.classList.add("w-100");
+
+              // Create a label for the checkbox with our option description.
+              const labelDescription = document.createElement("label");
+              labelDescription.for = checkbox.id;
+              labelDescription.style.cursor = "pointer";
+              labelDescription.classList.add("user-select-none", "my-0", "py-0");
+
+              // Highlight options for the user that are different than our defaults.
+              if(checkbox.checked !== checkbox.defaultChecked) {
+
+                labelDescription.classList.add("text-info");
+              }
+
+              // Add the actual description for the option after the checkbox.
+              labelDescription.appendChild(document.createTextNode(option.description));
+
+              // Add the label to the table cell.
+              tdLabel.appendChild(labelDescription);
+
+              // Provide a cell-wide target to click on options.
+              tdLabel.addEventListener("click", () => checkbox.click());
+
+              // Add the label table cell to the table row.
+              trX.appendChild(tdLabel);
+
+              // Add the table row to the table body.
+              tbody.appendChild(trX);
+            }
+
+            // Add the table body to the table.
+            optionTable.appendChild(tbody);
+
+            // Add the table to the page.
+            configTable.appendChild(optionTable);
+          }
+
+          homebridge.hideSpinner();
+        }
+
+        // Display the feature options to the user.
+        showDeviceInfo(controller ? ufpDevices[0].id : null);
+
+        // All done. Let the user interact with us.
+        homebridge.hideSpinner();
+      };
+
+      // Show the support tab.
+      const showSupport = () => {
+
+        // Show the beachball while we setup.
+        homebridge.showSpinner();
+        homebridge.hideSchemaForm();
+
+        // Create our UI.
+        document.getElementById("menuHome").classList.add("btn-elegant");
+        document.getElementById("menuHome").classList.remove("btn-primary");
+        document.getElementById("menuProtect").classList.remove("btn-elegant");
+        document.getElementById("menuProtect").classList.add("btn-primary");
+        document.getElementById("menuSettings").classList.remove("btn-elegant");
+        document.getElementById("menuSettings").classList.add("btn-primary");
+
+        document.getElementById("pageSupport").style.display = "block";
+        document.getElementById("pageDevices").style.display = "none";
+
+        // All done. Let the user interact with us.
+        homebridge.hideSpinner();
+      };
+
+      // Show the main plugin configuration tab.
+      const showSettings = () => {
+
+        // Show the beachball while we setup.
+        homebridge.showSpinner();
+
+        // Create our UI.
+        document.getElementById("menuHome").classList.remove("btn-elegant");
+        document.getElementById("menuHome").classList.add("btn-primary");
+        document.getElementById("menuProtect").classList.remove("btn-elegant");
+        document.getElementById("menuProtect").classList.add("btn-primary");
+        document.getElementById("menuSettings").classList.add("btn-elegant");
+        document.getElementById("menuSettings").classList.remove("btn-primary");
+
+        document.getElementById("pageSupport").style.display = "none";
+        document.getElementById("pageDevices").style.display = "none";
+
+        homebridge.showSchemaForm();
+
+        // All done. Let the user interact with us.
+        homebridge.hideSpinner();
+      };
+
+      // Show a disabled interface.
+      const showDisabledBanner = () => {
+
+        document.getElementById("disabledBanner").style.display = "block";
+      };
+
+      // Toggle our enabled state.
+      const enablePlugin = async () => {
+
+        // Show the beachball while we setup.
+        homebridge.showSpinner();
+
+        // Create our UI.
+        document.getElementById("disabledBanner").style.display = "none";
+        currentConfig[0].disablePlugin = false;
+
+        await homebridge.updatePluginConfig(currentConfig)
+        await homebridge.savePluginConfig()
+
+        // All done. Let the user interact with us.
+        homebridge.hideSpinner()
+      };
+
+      // Add our event listeners to animate the UI.
+      menuHome.addEventListener("click", () => showSupport());
+      menuProtect.addEventListener("click", () => showControllers());
+      menuSettings.addEventListener("click", () => showSettings());
+      disabledEnable.addEventListener("click", () => enablePlugin());
+
+      if(currentConfig.length) {
+
+        document.getElementById("menuWrapper").style.display = "inline-flex"
+        showSettings();
+
+        // If the plugin's disabled, inform the user.
+        if(currentConfig[0].disablePlugin) {
+
+          showDisabledBanner();
+        }
+      } else {
+
+        currentConfig.push({ name: "UniFi Protect" });
+        await homebridge.updatePluginConfig(currentConfig);
+        showIntro();
+      }
+    } catch (err) {
+
+      // If we had an error instantiating or updating the UI, notify the user.
+      homebridge.toast.error(err.message, "Error");
+    } finally {
+
+      // Always leave the UI in a usable place for the end user.
+      homebridge.hideSpinner();
+    }
+  })();
+</script>

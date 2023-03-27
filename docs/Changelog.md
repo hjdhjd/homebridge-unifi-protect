@@ -2,18 +2,21 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
-## 5.5.4 (2022-06-06)
-  * Housekeeping.
-
-## 5.5.3 (2022-06-06)
-  * Update dependencies to use the latest `ffmpeg-for-homebridge` once more.
-
-## 5.5.2 (2022-05-26)
-  * Revert `ffmpeg-for-homebridge` to a known working version until the upstream installation issues can be figured out.
-
-## 5.5.1 (2022-05-26)
-  * Support for UniFi Protect 2.0. This is a minor update to provide support for Protect 2.0 - a more significant update will be coming soon but I wanted to prioritize ensuring things work for folks as they update to the latest GA/production release of Protect.
-  * Housekeeping and minor bugfixes.
+## 6.0.0 (2023-03-26)
+  * **Breaking change: several feature options have been renamed, and some have been removed or made obsolete. If you use anything other than the defaults of this plugin, you should take the time to look through the revised list of feature options. This is a major version upgrade - there are breaking changes for some users.**
+  * New feature: a custom webUI is now the default and preferred way to configure feature options in this plugin, using the Homebridge webUI.
+  * New feature: hardware accelerated transcoding is now available on macOS. Other platforms coming soon. Disabled by default.
+  * New feature: customize the default doorbell mesage on a UniFi Protect doorbell. The UniFi Protect controller defaults this to "WELCOME".
+  * New feature: package cameras are supported on the G4 Doorbell Pro.
+  * New feature: when viewing cameras in the Home app over a high latency connection (e.g. looking at a livestream over a cellular connection), HBUP will transcode to provide the requested bitrates to HomeKit, by default. This should improve responsiveness for cellular connections. This behavior can be adjusted using the `Video.Transcode.HighLatency` feature option, which defaults to enabled.
+  * Change: HKSV feature option has been removed. HKSV will be available to any camera that supports it.
+  * Change: The HKSV recording stream selection feature option has been renamed.
+  * Improvement: The status light LEDs on Protect devices will be available in HomeKit by default. This behavior can be controlled with the `Device.StatusLed` feature option. HomeKit support for camera status lights is still flaky as of iOS 16.
+  * Improvement: further refinements to timeshifting.
+  * Improvement: audio support has been enhanced throughout to take advantage of the latest HomeKit capabilities.
+  * Improvement: complete rewrite of the core aspects of HBUP from scratch to prepare for the future, along with many optimizations and improvements.
+  * Improvement: liveview switch states are now more accurate at startup.
+  * Improvement: addressed some longstanding quirks related to Homebridge and HomeKit when viewing livestreams using the Home app on a Mac.
 
 ## 5.5.0 (2022-02-21)
   * New feature: For those that enable it, background noise reduction has been enhanced to use FFmpeg's `afftdn` noise filter, a modern background noise reducer. The classic `highpass` and `lowpass` filters are still there, of course. You can read all about the [`Audio.Filter.Noise.FftNr` feature options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md#audio) and in the [audio options documentation](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/AudioOptions.md). With this release, the defaults when using `Audio.Filter.Noise` will use `afftnr` instead of highpass and lowpass filters, by default.

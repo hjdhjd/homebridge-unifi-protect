@@ -14,7 +14,7 @@
 </DIV>
 </SPAN>
 
-`homebridge-unifi-protect` is a [Homebridge](https://homebridge.io) plugin that provides HomeKit support to the [UniFi Protect](https://unifi-network.ui.com/video-security) device ecosystem. [UniFi Protect](https://unifi-network.ui.com/video-security) is [Ubiquiti's](https://www.ui.com) next-generation video security platform, with rich camera, doorbell, and NVR controller hardware options for you to choose from, as well as an app which you can use to view, configure and manage your video camera and doorbells.
+`homebridge-unifi-protect` is a [Homebridge](https://homebridge.io) plugin that provides HomeKit support to the [UniFi Protect](https://unifi-network.ui.com/video-security) device ecosystem. [UniFi Protect](https://unifi-network.ui.com/video-security) is [Ubiquiti's](https://www.ui.com) video security platform, with rich camera, doorbell, and NVR controller hardware options for you to choose from, as well as an app which you can use to view, configure and manage your video camera and doorbells.
 
 ### Troubleshooting
 If you're on this page, you're probably frustrated and trying to figure out why isn't this plugin working. I've tried hard to make `homebridge-unifi-protect` easy to configure and setup, and for the vast majority of users, things work quite well. But...you being here, lucky reader, means something's not working and you're trying to figure out why and how to get things going. This page is intended to help you walk through troubleshooting two key areas - getting `homebridge-unifi-protect` connected to UniFi Protect, and streaming video from HomeKit using this plugin.
@@ -68,22 +68,6 @@ If that still doesn't do the trick, take a closer look at [how to select adverti
 ```
 
 The ports will correspond to those seen in the `ffmpeg` command if you turn on verbose logging. If you are seeing no entries then chances are you have firewall or routing issues. If you are seeing entries, but no video is streaming, then this is likely that the Home App is not expecting the *source IP* to be what it is. In the above case, even though the only ***advertised*** port was the "other" ethernet, it was not arriving via that route. Changing the advertisment to match fixed this and video started working.
-
-### <A NAME="push"></A>Push Notification Issues
-The good news is that push notifications should just work by default. If they don't, and you've ruled out network issues as a cause, the next thing to look at is your system clock. Wait...what does your system clock have to do with notifications?
-
-UniFi Protect provides a lot of notifications, and sometimes those notifications are duplicates or old ones we aren't interested in that happened in the past. As a result, `homebridge-unifi-protect` only alerts you to notifications that UniFi Protect alerts it to that happened in the last few seconds.
-
-Why does this matter?
-
-If you run `homebridge-unifi-protect` on a server that doesn't have a similar internal time to what UniFi Protect thinks is the time, then you might miss notifications if they're significantly different. By default most computers and UniFi Protect synchronize their clocks with the worldwide [NTP](https://www.ntp.org) time servers. Make sure that the server you run Homebridge on and UniFi Protect both agree on what time it is.
-
-Assuming you've setup all of the above, the most common issue people have:
-
-* Everything above is setup correctly, but you still don't receive notifications when motion or doorbell ring events happen.
-  * This is almost certainly a clock-related issue on your UniFi Protect controller or the device where you are running Homebridge.
-  * `homebridge-unifi-protect` checks the timestamps on any events received from Protect to ensure it's reasonably recent. If the event is too far in the past, it will be ignored.
-  * To fix this, ensure the clock is accurate and up-to-date on your Protect controller and on the device where Homebridge is running.
 
 ### <A NAME="video"></A>Video Streaming
 There are lots of things that can go wrong with video streaming, unfortunately. I want to start by providing a bit of background on how streaming actually works in HomeKit, homebridge and this plugin before getting into where things can break.
