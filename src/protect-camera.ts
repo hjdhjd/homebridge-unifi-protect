@@ -712,7 +712,7 @@ export class ProtectCamera extends ProtectDevice {
 
       // Refresh our snapshot cache.
       // eslint-disable-next-line no-await-in-loop
-      await this.stream.getSnapshot(undefined, false);
+      await this.stream?.getSnapshot(undefined, false);
 
       // Sleep for 59 seconds.
       // eslint-disable-next-line no-await-in-loop
