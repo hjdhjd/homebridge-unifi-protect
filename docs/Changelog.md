@@ -2,6 +2,7 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 6.0.1 (2023-03-26)
 ## 6.0.0 (2023-03-26)
   * **Breaking change: several feature options have been renamed, and some have been removed or made obsolete. If you use anything other than the defaults of this plugin, you should take the time to look through the revised list of feature options. This is a major version upgrade - there are breaking changes for some users.**
   * New feature: a custom webUI is now the default and preferred way to configure feature options in this plugin, using the Homebridge webUI.
