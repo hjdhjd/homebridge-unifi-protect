@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 6.0.3 (2023-03-27)
+  * Fix: ensure motion switch state is retained across restarts.
+
 ## 6.0.2 (2023-03-27)
   * Fix: bugfixes for the webUI when no options are selected.
   * Fix: bugfixes for the NVR temperature sensor accessory.
