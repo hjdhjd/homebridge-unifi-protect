@@ -20,7 +20,7 @@ jobs:
     # Create the build matrix for all the environments we're validating against.
     strategy:
       matrix:
-        node-version: [ 14.x, 16.x, 18.x ]
+        node-version: [ lts/-1, lts/* ]
         os: [ ubuntu-latest ]
 
     # Specify the environments we're going to build in.
@@ -29,10 +29,10 @@ jobs:
     # Execute the build activities.
     steps:
       - name: Checkout the repository.
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       - name: Setup the node ${{ matrix.node-version }} environment.
-        uses: actions/setup-node@v2
+        uses: actions/setup-node@v3
         with:
           node-version: ${{ matrix.node-version }}
 
@@ -55,14 +55,14 @@ jobs:
     # Execute the build and publish activities.
     steps:
     - name: Checkout the repository.
-      uses: actions/checkout@v2
+      uses: actions/checkout@v3
 
     - name: Setup the node environment.
-      uses: actions/setup-node@v2
+      uses: actions/setup-node@v3
       with:
 
         # Use the oldest node LTS version that we support.
-        node-version: '14.x'
+        node-version: lts/-1
 
         # Use the NPM registry.
         registry-url: 'https://registry.npmjs.org/'
@@ -71,6 +71,6 @@ jobs:
       run: npm ci
 
     - name: Publish the package to NPM.
-      run: npm publish
+      run: npm publish --access public
       env:
         NODE_AUTH_TOKEN: ${{ secrets.npm_token }}
