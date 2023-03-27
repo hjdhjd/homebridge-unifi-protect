@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 6.0.2 (2023-03-27)
+  * Bugfixes for the webUI when no options are selected.
+  * Bugfixes for the NVR temperature sensor accessory.
+
 ## 6.0.1 (2023-03-26)
 ## 6.0.0 (2023-03-26)
   * **Breaking change: several feature options have been renamed, and some have been removed or made obsolete. If you use anything other than the defaults of this plugin, you should take the time to look through the revised list of feature options. This is a major version upgrade - there are breaking changes for some users.**
