@@ -6,4 +6,5 @@
 !README.md
 !config.schema.json
 !dist/**
+!homebridge-ui/**
 !package.json
