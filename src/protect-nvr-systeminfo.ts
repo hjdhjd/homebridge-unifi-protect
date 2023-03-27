@@ -10,9 +10,10 @@ import { ProtectNvr } from "./protect-nvr.js";
 
 export class ProtectNvrSystemInfo extends ProtectBase {
 
+  private accessory: PlatformAccessory | null | undefined;
   private eventListener: ((packet: ProtectEventPacket) => void) | null;
   private isConfigured: boolean;
-  private accessory: PlatformAccessory | null | undefined;
+  private lastTemp: number;
 
   // Configure our NVR sensor capability.
   constructor(nvr: ProtectNvr) {
@@ -21,9 +22,10 @@ export class ProtectNvrSystemInfo extends ProtectBase {
     super(nvr);
 
     // Initialize the class.
+    this.accessory = null;
     this.eventListener = null;
     this.isConfigured = false;
-    this.accessory = null;
+    this.lastTemp = 0;
 
     this.configureAccessory();
     this.configureMqtt();
@@ -143,9 +145,6 @@ export class ProtectNvrSystemInfo extends ProtectBase {
       enabledSensors.push("cpu temperature");
     }
 
-    // Configure MQTT services.
-    // this.configureMqtt();
-
     return enabledSensors;
   }
 
@@ -206,19 +205,21 @@ export class ProtectNvrSystemInfo extends ProtectBase {
   // Retrieve the CPU temperature of the Protect NVR for HomeKit.
   private getCpuTemp(): number {
 
-    let cpuTemp = this.nvr.ufp.systemInfo.cpu.temperature;
+    let cpuTemp = this.nvr.ufp?.systemInfo?.cpu?.temperature;
 
     // No data available from the Protect NVR, so we default to a starting point.
     if(cpuTemp === undefined) {
-      return 0;
+
+      return this.lastTemp;
     }
 
     // HomeKit wants temperature values in Celsius, so we need to convert accordingly, if needed.
     if(this.nvr.ufp.temperatureUnit === "F") {
+
       cpuTemp = (cpuTemp - 32) * (5 / 9);
     }
 
-    return cpuTemp;
+    return this.lastTemp = cpuTemp;
   }
 
   // Configure MQTT capabilities for the security system.
