@@ -232,6 +232,7 @@ export abstract class ProtectDevice extends ProtectBase {
       // If we disable the switch, make sure we fully reset it's state. Otherwise, we can end up in a situation (e.g. liveview switches) where we have
       // disabled motion detection with no meaningful way to enable it again.
       this.accessory.context.detectMotion = true;
+
       return false;
     }
 
@@ -243,6 +244,7 @@ export abstract class ProtectDevice extends ProtectBase {
       switchService = new this.hap.Service.Switch(this.accessory.displayName + " Motion Events", ProtectReservedNames.SWITCH_MOTION_SENSOR);
 
       if(!switchService) {
+
         this.log.error("Unable to add motion sensor switch.");
         return false;
       }
@@ -251,8 +253,7 @@ export abstract class ProtectDevice extends ProtectBase {
     }
 
     // Activate or deactivate motion detection.
-    switchService
-      .getCharacteristic(this.hap.Characteristic.On)
+    switchService.getCharacteristic(this.hap.Characteristic.On)
       ?.onGet(() => {
 
         return this.accessory.context.detectMotion === true;
@@ -260,6 +261,7 @@ export abstract class ProtectDevice extends ProtectBase {
       .onSet((value: CharacteristicValue) => {
 
         if(this.accessory.context.detectMotion !== value) {
+
           this.log.info("Motion detection %s.", (value === true) ? "enabled" : "disabled");
         }
 

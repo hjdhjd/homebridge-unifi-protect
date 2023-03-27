@@ -76,6 +76,15 @@ export class ProtectCamera extends ProtectDevice {
   // Configure a camera accessory for HomeKit.
   protected async configureDevice(): Promise<boolean> {
 
+    // Default to enabling motion detection.
+    let detectMotion = true;
+
+    // Save the motion detection switch state before we wipeout the context.
+    if("detectMotion" in this.accessory.context) {
+
+      detectMotion = this.accessory.context.detectMotion as boolean;
+    }
+
     // Default to disabling the dynamic bitrate setting.
     let dynamicBitrate = false;
 
@@ -96,6 +105,7 @@ export class ProtectCamera extends ProtectDevice {
 
     // Clean out the context object in case it's been polluted somehow.
     this.accessory.context = {};
+    this.accessory.context.detectMotion = detectMotion;
     this.accessory.context.dynamicBitrate = dynamicBitrate;
     this.accessory.context.hksvRecording = hksvRecording;
     this.accessory.context.mac = this.ufp.mac;
