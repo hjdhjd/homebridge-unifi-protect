@@ -472,11 +472,11 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     ];
 
     // Inform the user.
-    this.log.info("Streaming request from %s%s: %sx%s@%sfps, %s kbps. %s %s, %s kbps. Audio packet time = %s",
+    this.log.info("Streaming request from %s%s: %sx%s@%sfps, %s kbps. %s %s, %s kbps.",
       sessionInfo.address, (request.audio.packet_time === 60) ? " (high latency connection)" : "",
       request.video.width, request.video.height, request.video.fps, request.video.max_bit_rate,
       isTranscoding ? (this.protectCamera.hasHwAccel ? "Hardware accelerated transcoding" : "Transcoding") : "Using",
-      this.rtspEntry.name, this.rtspEntry.channel.bitrate / 1000, request.audio.packet_time);
+      this.rtspEntry.name, this.rtspEntry.channel.bitrate / 1000);
 
     // Check to see if we're transcoding. If we are, set the right FFmpeg encoder options. If not, copy the video stream.
     if(isTranscoding) {
