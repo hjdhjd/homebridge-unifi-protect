@@ -622,11 +622,6 @@ export class ProtectCamera extends ProtectDevice {
     // Configure the video stream with our resolutions.
     this.stream = new ProtectStreamingDelegate(this, this.rtspEntries.map(x => x.resolution));
 
-    if(this.hasHwAccel) {
-
-      this.log.info("Hardware accelerated transcoding enabled.");
-    }
-
     // Fire up the controller and inform HomeKit about it.
     this.accessory.configureController(this.stream.controller);
     this.isVideoConfigured = true;

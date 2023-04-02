@@ -1185,6 +1185,9 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
           // Verify that we have the hardware encoder available to us.
           if(!this.platform.isEncoderAvailable("h264", "h264_videotoolbox")) {
 
+            this.log.error("Unable to enable hardware accelerated transcoding. " +
+              "Your video processor does not have support for the h264_videotoolbox encoder enabled. " +
+              "Using software transcoding instead.");
             this.protectCamera.hasHwAccel = false;
             break;
           }
@@ -1203,6 +1206,12 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
           this.protectCamera.hasHwAccel = false;
           break;
       }
+    }
+
+    // Inform the user.
+    if(this.protectCamera.hasHwAccel) {
+
+      this.log.info("Hardware accelerated transcoding enabled.");
     }
 
     return ["-vcodec", encoder, ...encoderOptions.split(" ")];
