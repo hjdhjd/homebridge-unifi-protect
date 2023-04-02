@@ -201,7 +201,7 @@ export class ProtectMqtt {
     let mac = (typeof accessory === "string") ? accessory : (accessory.context.nvr as string);
 
     // Check to see if it's really a Protect device...if it is, use it's MAC address.
-    if((typeof accessory !== "string") && ("device" in accessory.context)) {
+    if((typeof accessory !== "string") && ("mac" in accessory.context)) {
 
       mac = this.nvr.configuredDevices[accessory.UUID]?.ufp.mac;
     }
