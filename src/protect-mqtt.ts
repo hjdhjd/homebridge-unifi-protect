@@ -145,6 +145,7 @@ export class ProtectMqtt {
 
     // No valid topic returned, we're done.
     if(!expandedTopic) {
+
       return;
     }
 
