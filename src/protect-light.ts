@@ -75,6 +75,7 @@ export class ProtectLight extends ProtectDevice {
     // Turn the light on or off.
     lightService.getCharacteristic(this.hap.Characteristic.On)
       ?.onGet(() => {
+
         return this.ufp.isLightOn === true;
       })
       .onSet(async (value: CharacteristicValue) => {
@@ -114,8 +115,9 @@ export class ProtectLight extends ProtectDevice {
         // Set the context to our updated device configuration.
         this.ufp = newDevice;
 
-        // Make sure we properly reflect what brightness we're actually at.
+        // Make sure we properly reflect what brightness we're actually at, given the differences in setting granularity between Protect and HomeKit.
         setTimeout(() => {
+
           lightService?.updateCharacteristic(this.hap.Characteristic.Brightness, (brightness - 1) * 20);
         }, 50);
       });
@@ -133,6 +135,7 @@ export class ProtectLight extends ProtectDevice {
     const lightService = this.accessory.getService(this.hap.Service.Lightbulb);
 
     if(!lightService) {
+
       return false;
     }
 
