@@ -325,6 +325,7 @@ export class ProtectCamera extends ProtectDevice {
 
     // Add the switch to the camera, if needed.
     if(!triggerService) {
+
       triggerService = new this.hap.Service.Switch(this.accessory.displayName + " Motion Trigger", ProtectReservedNames.SWITCH_MOTION_TRIGGER);
 
       if(!triggerService) {
@@ -351,7 +352,9 @@ export class ProtectCamera extends ProtectDevice {
 
           // Check to see if motion events are disabled.
           if(switchService && !switchService.getCharacteristic(this.hap.Characteristic.On).value) {
+
             setTimeout(() => {
+
               triggerService?.updateCharacteristic(this.hap.Characteristic.On, false);
             }, 50);
 
@@ -366,7 +369,9 @@ export class ProtectCamera extends ProtectDevice {
 
           // If the motion sensor is still on, we should be as well.
           if(motionService?.getCharacteristic(this.hap.Characteristic.MotionDetected).value) {
+
             setTimeout(() => {
+
               triggerService?.updateCharacteristic(this.hap.Characteristic.On, true);
             }, 50);
           }
@@ -620,9 +625,10 @@ export class ProtectCamera extends ProtectDevice {
     //   320x240@30 (Apple Watch).
     //   320x240@15 (Apple Watch).
     //   320x180@30 (Apple Watch).
+    //   320x180@15 (Apple Watch).
     for(const entry of [
       [3840, 2160, 30], [1920, 1080, 30], [1280, 960, 30], [1280, 720, 30], [1024, 768, 30], [640, 480, 30],
-      [640, 360, 30], [480, 360, 30], [480, 270, 30], [320, 240, 30], [320, 240, 15], [320, 180, 30]
+      [640, 360, 30], [480, 360, 30], [480, 270, 30], [320, 240, 30], [320, 240, 15], [320, 180, 30], [320, 180, 15]
     ] ) {
 
       // We already have this resolution in our list.
@@ -1327,14 +1333,13 @@ export class ProtectPackageCamera extends ProtectCamera {
   // Configure the package camera.
   protected async configureDevice(): Promise<boolean> {
 
-    this.hints.probesize = 20480; //10240;
-    // this.hints.transcode = this.nvr.optionEnabled(this.ufp, "Video.Transcode", false);
-    // this.hints.transcode = true;
+    this.hints.probesize = 32768;
     this.hasHksv = false;
-    this.isRinging = false;
 
     // Clean out the context object in case it's been polluted somehow.
     this.accessory.context = {};
+
+    // We explicitly avoid adding the MAC address of the camera - that's reserved for real Protect devices, not synthetic ones we create.
     this.accessory.context.nvr = this.nvr.ufp.mac;
     this.accessory.context.packageCamera = true;
 
