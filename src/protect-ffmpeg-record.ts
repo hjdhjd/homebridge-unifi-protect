@@ -86,9 +86,6 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
     //                               Protect changes this in the future.
     //                               Yes, we included these above as well: they need to be included for every I/O stream to
     //                               maximize effectiveness it seems.
-    // -max_muxing_queue_size  9999  Workaround for a bug in pre-20221 versions of FFmpeg. This will ensure that FFmpeg maintains a
-    //                               a large enough queue to wait for an output packet to be available. Inputs aren't the issue in our
-    //                               situation.
     // -profile:v level              Use the H.264 profile HKSV is requesting when encoding.
     // -level:v level                Use the H.264 profile level HKSV is requesting when encoding.
     // -b:v bitrate                  The average bitrate to use for this stream as requested by HKSV.
@@ -103,7 +100,6 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
     this.commandLineArgs.push(
 
       "-map", "0:v:0",
-      "-max_muxing_queue_size", "9999",
       ...this.protectCamera.stream.videoEncoderOptions,
       "-profile:v", requestedProfile,
       "-level:v", requestedLevel,
