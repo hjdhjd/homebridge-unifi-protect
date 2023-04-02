@@ -244,7 +244,7 @@
         globalLabel.name = "UFP Global Settings";
         globalLabel.appendChild(document.createTextNode("Global Settings"));
         globalLabel.style.cursor = "pointer";
-        globalLabel.classList.add("mx-0", "my-2", "p-0", "w-100");
+        globalLabel.classList.add("mx-0", "py-2", "p-0", "w-100");
 
         globalLabel.addEventListener("click", event => showDevices(null));
 
@@ -485,6 +485,12 @@
 
           for(const category of ufpFeatures.categories) {
 
+            // Only show feature option categories that are valid for this context.
+            if(ufpDevice && (ufpDevice.modelKey !== "nvr") && !category.validFor.some(x => (x === ufpDevice.modelKey) || x === "all")) {
+
+              continue;
+            }
+
             const optionTable = document.createElement("table");
             const thead = document.createElement("thead");
             const tbody = document.createElement("tbody");
@@ -492,7 +498,7 @@
             const th = document.createElement("th");
 
             // Set our table options.
-            optionTable.classList.add("table", "table-borderless", "table-hover", "table-sm");
+            optionTable.classList.add("table", "table-borderless", "table-sm", "table-hover");
             th.classList.add("p-0");
             th.style.fontWeight = "bold";
             th.colSpan = 2;
@@ -512,6 +518,12 @@
             optionTable.appendChild(thead);
 
             for(const option of optionsDevice[category.name]) {
+
+              // Only show feature options that are valid for this device.
+              if(ufpDevice && (ufpDevice.modelKey !== "nvr") && option.hasFeature && (!ufpDevice.featureFlags || !ufpDevice.featureFlags[option.hasFeature])) {
+
+                continue;
+              }
 
               // Create the next table row.
               const trX = document.createElement("tr");
