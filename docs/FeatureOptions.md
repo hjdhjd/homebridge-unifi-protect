@@ -122,8 +122,7 @@ Feature options provide a rich mechanism for tailoring your `homebridge-unifi-pr
 #### <A NAME="motion"></A>Motion detection feature options.
 | Option                                 | Description
 |----------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------
-| `Motion.Sensor`                        | Enable this device's motion sensor in HomeKit. (default: true).
-| `Motion.SmartDetect`                   | UniFi Protect smart motion detection when on a supported device. (default: false).
+| `Motion.SmartDetect`                   | Use UniFi Protect smart motion detection for HomeKit motion events when on a supported device. (default: false).
 | `Motion.SmartDetect.ObjectSensors`     | Add contact sensor accessories for each smart motion object type that UniFi Protect supports. (default: false).
 | `Motion.Switch`                        | Add a switch accessory to activate or deactivate motion detection in HomeKit. (default: false).
 | `Motion.Trigger`                       | Add a switch accessory to manually trigger a motion detection event in HomeKit. (default: false).
@@ -144,9 +143,9 @@ Feature options provide a rich mechanism for tailoring your `homebridge-unifi-pr
 |----------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------
 | `Video.DynamicBitrate`                 | Dynamically adjust the bitrate on the UniFi Protect controller to accomodate HomeKit requests. (default: false).
 | `Video.DynamicBitrate.Switch`          | Add a switch accessory to enable or disable dynamic bitrate support on the Protect controller. (default: false).
-| `Video.Stream.Only.Low`                | For viewing livestreams, force the use of the low quality video stream from the Protect controller. (default: false).
-| `Video.Stream.Only.Medium`             | For viewing livestreams, force the use of the medium quality video stream from the Protect controller. (default: false).
 | `Video.Stream.Only.High`               | For viewing livestreams, force the use of the high quality video stream from the Protect controller. (default: false).
+| `Video.Stream.Only.Medium`             | For viewing livestreams, force the use of the medium quality video stream from the Protect controller. (default: false).
+| `Video.Stream.Only.Low`                | For viewing livestreams, force the use of the low quality video stream from the Protect controller. (default: false).
 | `Video.Transcode`                      | Transcode live video streams when viewing in the Home app instead of remuxing. (default: false).
 | `Video.Transcode.Hardware`             | Use hardware-accelerated transcoding, when available (macOS only). (default: false).
 | `Video.Transcode.HighLatency`          | When streaming to high-latency clients (e.g. cellular connections), transcode live video streams instead of remuxing them. (default: true).
@@ -156,6 +155,6 @@ Feature options provide a rich mechanism for tailoring your `homebridge-unifi-pr
 |----------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------
 | `Video.HKSV.TimeshiftBuffer`           | Enable the timeshift buffer for HomeKit Secure Video. (default: true).
 | `Video.HKSV.Recording.Switch`          | Add a switch accessory to enable or disable HKSV event recording. (default: false).
-| `Video.HKSV.Record.Only.Low`           | For HomeKit Secure Video recordings, force the use of the low quality video stream from the Protect controller. (default: false).
-| `Video.HKSV.Record.Only.Medium`        | For HomeKit Secure Video recordings, force the use of the medium quality video stream from the Protect controller. (default: false).
 | `Video.HKSV.Record.Only.High`          | For HomeKit Secure Video recordings, force the use of the high quality video stream from the Protect controller. (default: false).
+| `Video.HKSV.Record.Only.Medium`        | For HomeKit Secure Video recordings, force the use of the medium quality video stream from the Protect controller. (default: false).
+| `Video.HKSV.Record.Only.Low`           | For HomeKit Secure Video recordings, force the use of the low quality video stream from the Protect controller. (default: false).
