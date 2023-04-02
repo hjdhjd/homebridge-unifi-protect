@@ -37,7 +37,7 @@ export class ProtectSensor extends ProtectDevice {
     this.configureInfo();
 
     // Configure accessory services.
-    const enabledSensors = this.updateDevice();
+    const enabledSensors = this.updateDevice(false);
 
     // Configure MQTT services.
     this.configureMqtt();
@@ -58,7 +58,7 @@ export class ProtectSensor extends ProtectDevice {
   }
 
   // Update accessory services and characteristics.
-  public updateDevice(): string[] {
+  public updateDevice(isInitialized = true): string[] {
 
     const enabledSensors: string[] = [];
 
@@ -87,7 +87,7 @@ export class ProtectSensor extends ProtectDevice {
     }
 
     // Configure the motion sensor.
-    if(this.configureMotionSensor(this.ufp.motionSettings?.isEnabled)) {
+    if(this.configureMotionSensor(this.ufp.motionSettings?.isEnabled, isInitialized)) {
 
       // Sensor accessories also support battery, connection, and tamper status...we need to handle those ourselves.
       const motionService = this.accessory.getService(this.hap.Service.MotionSensor);
@@ -146,11 +146,11 @@ export class ProtectSensor extends ProtectDevice {
     // Retrieve the current contact sensor state when requested.
     contactService.getCharacteristic(this.hap.Characteristic.ContactSensorState)?.onGet(() => {
 
-      return this.getAlarmSound();
+      return this.alarmSound;
     });
 
     // Update the sensor.
-    contactService.updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.getAlarmSound());
+    contactService.updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.alarmSound);
 
     // Update the state characteristics.
     this.configureStateCharacteristics(contactService);
@@ -195,12 +195,12 @@ export class ProtectSensor extends ProtectDevice {
     lightService.getCharacteristic(this.hap.Characteristic.CurrentAmbientLightLevel)?.onGet(() => {
 
       // The minimum value for ambient light in HomeKit is 0.0001. I have no idea why...but it is. Honor it.
-      const value = this.getAmbientLight();
+      const value = this.ambientLight;
       return value >= 0.0001 ? value : 0.0001;
     });
 
     // Update the sensor. The minimum value for ambient light in HomeKit is 0.0001. I have no idea why...but it is. Honor it.
-    const value = this.getAmbientLight();
+    const value = this.ambientLight;
     lightService.updateCharacteristic(this.hap.Characteristic.CurrentAmbientLightLevel, value >= 0.0001 ? value : 0.0001);
 
     // Update the state characteristics.
@@ -245,11 +245,11 @@ export class ProtectSensor extends ProtectDevice {
     // Retrieve the current contact sensor state when requested.
     contactService.getCharacteristic(this.hap.Characteristic.ContactSensorState)?.onGet(() => {
 
-      return this.getContact();
+      return this.contact;
     });
 
     // Update the sensor.
-    contactService.updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.getContact());
+    contactService.updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.contact);
 
     // Update the state characteristics.
     this.configureStateCharacteristics(contactService);
@@ -293,12 +293,12 @@ export class ProtectSensor extends ProtectDevice {
     // Retrieve the current humidity when requested.
     humidityService.getCharacteristic(this.hap.Characteristic.CurrentRelativeHumidity)?.onGet(() => {
 
-      const value = this.getHumidity();
+      const value = this.humidity;
       return value < 0 ? 0 : value;
     });
 
     // Update the sensor.
-    const value = this.getHumidity();
+    const value = this.humidity;
     humidityService.updateCharacteristic(this.hap.Characteristic.CurrentRelativeHumidity, value < 0 ? 0 : value);
 
     // Update the state characteristics.
@@ -343,12 +343,12 @@ export class ProtectSensor extends ProtectDevice {
     // Retrieve the current temperature when requested.
     temperatureService.getCharacteristic(this.hap.Characteristic.CurrentTemperature)?.onGet(() => {
 
-      const value = this.getTemperature();
+      const value = this.temperature;
       return value < 0 ? 0 : value;
     });
 
     // Update the sensor.
-    const value = this.getTemperature();
+    const value = this.temperature;
     temperatureService.updateCharacteristic(this.hap.Characteristic.CurrentTemperature, value < 0 ? 0 : value);
 
     // Update the state characteristics.
@@ -418,7 +418,7 @@ export class ProtectSensor extends ProtectDevice {
   }
 
   // Get the current alarm sound information.
-  private getAlarmSound(): boolean {
+  private get alarmSound(): boolean {
 
     // Return true if we are not null, meaning the alarm has sounded.
     const value = this.ufp.alarmTriggeredAt !== null;
@@ -434,13 +434,13 @@ export class ProtectSensor extends ProtectDevice {
   }
 
   // Get the current ambient light information.
-  private getAmbientLight(): number {
+  private get ambientLight(): number {
 
     return this.ufp.stats.light.value ?? -1;
   }
 
   // Get the current contact sensor information.
-  private getContact(): boolean {
+  private get contact(): boolean {
 
     // Return true if we are open.
     const value = this.ufp.isOpened;
@@ -456,13 +456,13 @@ export class ProtectSensor extends ProtectDevice {
   }
 
   // Get the current humidity information.
-  private getHumidity(): number {
+  private get humidity(): number {
 
     return this.ufp.stats.humidity.value ?? -1;
   }
 
   // Get the current temperature information.
-  private getTemperature(): number {
+  private get temperature(): number {
 
     return this.ufp.stats.temperature.value ?? -1;
   }
@@ -471,23 +471,28 @@ export class ProtectSensor extends ProtectDevice {
   private configureMqtt(): void {
 
     this.nvr.mqtt?.subscribeGet(this.accessory, this.name, "alarmsound", "Alarm sound", () => {
-      return this.getAlarmSound().toString();
+
+      return this.alarmSound.toString();
     });
 
     this.nvr.mqtt?.subscribeGet(this.accessory, this.name, "ambientlight", "Ambient light", () => {
-      return this.getAmbientLight().toString();
+
+      return this.ambientLight.toString();
     });
 
     this.nvr.mqtt?.subscribeGet(this.accessory, this.name, "contact", "Contact sensor", () => {
-      return this.getContact().toString();
+
+      return this.contact.toString();
     });
 
     this.nvr.mqtt?.subscribeGet(this.accessory, this.name, "humidity", "Humidity", () => {
-      return this.getHumidity().toString();
+
+      return this.humidity.toString();
     });
 
     this.nvr.mqtt?.subscribeGet(this.accessory, this.name, "temperature", "Temperature", () => {
-      return this.getTemperature().toString();
+
+      return this.temperature.toString();
     });
   }
 
