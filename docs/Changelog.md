@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 6.1.0 (2023-04-02)
+  * Improvement: the feature option webUI has been made more contextually aware and will only show options that are relevant for the selected Protect device.
+  * Improvement: all UniFi devices (currently that's Protect cameras, Protect sensors, or Protect flood lights) that support motion sensors can now be configured to have motion switches and/or motion triggers by enabling those feature options for those devices.
+  * Improvement: when the Protect controller is unavailable when HBUP is starting up, retry at regular intervals rather than giving up entirely.
+  * Improvement: streaming from an Apple Watch is more reliable now.
+  * Improvement: further refinements to macOS hardware transcoding.
+  * Improvement: streaming session startup further optimized by moving encoder checks to plugin startup, rather than on each new session.
+  * Fix: livestreaming from the Home app on the same machine as Homebridge is running on should work correctly now.
+  * Fix: ensure MQTT notifications use the correct MAC addresses when publishing messages.
+  * Housekeeping.
+
 ## 6.0.3 (2023-03-27)
   * Fix: ensure motion switch state is retained across restarts.
 
