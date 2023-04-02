@@ -165,12 +165,12 @@ export abstract class ProtectDevice extends ProtectBase {
   }
 
   // Configure the Protect motion sensor for HomeKit.
-  protected configureMotionSensor(isEnabled = true): boolean {
+  protected configureMotionSensor(isEnabled = true, isInitialized = false): boolean {
 
     // Find the motion sensor service, if it exists.
     let motionService = this.accessory.getService(this.hap.Service.MotionSensor);
 
-    // Have we disabled motion sensors?
+    // Have we disabled the motion sensor?
     if(!isEnabled) {
 
       if(motionService) {
@@ -179,6 +179,9 @@ export abstract class ProtectDevice extends ProtectBase {
         this.nvr.mqtt?.unsubscribe(this.accessory, "motion/trigger");
         this.log.info("Disabling motion sensor.");
       }
+
+      this.configureMotionSwitch(isEnabled);
+      this.configureMotionTrigger(isEnabled);
 
       return false;
     }
@@ -196,33 +199,43 @@ export abstract class ProtectDevice extends ProtectBase {
       }
 
       this.accessory.addService(motionService);
+      isInitialized = false;
 
       this.log.info("Enabling motion sensor.");
     }
 
-    // Initialize the state of the motion sensor.
-    motionService.updateCharacteristic(this.hap.Characteristic.MotionDetected, false);
-    motionService.updateCharacteristic(this.hap.Characteristic.StatusActive, this.ufp.state === "CONNECTED");
+    // Have we previously initialized this sensor? We assume not by default, but this allows for scenarios where you may be dynamically reconfiguring a sensor at
+    // runtime (e.g. UniFi sensors can be reconfigured for various sensor modes in realtime).
+    if(!isInitialized) {
 
-    motionService.getCharacteristic(this.hap.Characteristic.StatusActive).onGet(() => {
+      // Initialize the state of the motion sensor.
+      motionService.updateCharacteristic(this.hap.Characteristic.MotionDetected, false);
+      motionService.updateCharacteristic(this.hap.Characteristic.StatusActive, this.ufp.state === "CONNECTED");
 
-      return this.ufp.state === "CONNECTED";
-    });
+      motionService.getCharacteristic(this.hap.Characteristic.StatusActive).onGet(() => {
 
-    // Configure our MQTT support.
-    this.configureMqttMotionTrigger();
+        return this.ufp.state === "CONNECTED";
+      });
+
+      // Configure our MQTT support.
+      this.configureMqttMotionTrigger();
+
+      // Configure any motion switches or triggers the user may have enabled or disabled.
+      this.configureMotionSwitch(isEnabled);
+      this.configureMotionTrigger(isEnabled);
+    }
 
     return true;
   }
 
   // Configure a switch to easily activate or deactivate motion sensor detection for HomeKit.
-  protected configureMotionSwitch(): boolean {
+  private configureMotionSwitch(isEnabled = true): boolean {
 
     // Find the switch service, if it exists.
     let switchService = this.accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_MOTION_SENSOR);
 
-    // Have we disabled motion sensors or the motion switch? Motion switches are disabled by default.
-    if(!this.nvr?.optionEnabled(this.ufp, "Motion.Switch", false)) {
+    // Motion switches are disabled by default unless the user enables them.
+    if(!isEnabled || !this.nvr.optionEnabled(this.ufp, "Motion.Switch", false)) {
 
       if(switchService) {
 
@@ -275,6 +288,84 @@ export abstract class ProtectDevice extends ProtectBase {
     }
 
     switchService.updateCharacteristic(this.hap.Characteristic.On, this.accessory.context.detectMotion as boolean);
+
+    return true;
+  }
+
+  // Configure a switch to manually trigger a motion sensor event for HomeKit.
+  private configureMotionTrigger(isEnabled = true): boolean {
+
+    // Find the switch service, if it exists.
+    let triggerService = this.accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_MOTION_TRIGGER);
+
+    // Motion triggers are disabled by default and primarily exist for automation purposes.
+    if(!isEnabled || !this.nvr.optionEnabled(this.ufp, "Motion.Trigger", false)) {
+
+      if(triggerService) {
+        this.accessory.removeService(triggerService);
+      }
+
+      return false;
+    }
+
+    // Add the switch to the camera, if needed.
+    if(!triggerService) {
+
+      triggerService = new this.hap.Service.Switch(this.accessory.displayName + " Motion Trigger", ProtectReservedNames.SWITCH_MOTION_TRIGGER);
+
+      if(!triggerService) {
+        this.log.error("Unable to add motion sensor trigger.");
+        return false;
+      }
+
+      this.accessory.addService(triggerService);
+    }
+
+    const motionService = this.accessory.getService(this.hap.Service.MotionSensor);
+    const switchService = this.accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_MOTION_SENSOR);
+
+    // Activate or deactivate motion detection.
+    triggerService.getCharacteristic(this.hap.Characteristic.On)
+      ?.onGet(() => {
+
+        return motionService?.getCharacteristic(this.hap.Characteristic.MotionDetected).value === true;
+      })
+      .onSet((value: CharacteristicValue) => {
+
+        if(value) {
+
+          // Check to see if motion events are disabled.
+          if(switchService && !switchService.getCharacteristic(this.hap.Characteristic.On).value) {
+
+            setTimeout(() => {
+
+              triggerService?.updateCharacteristic(this.hap.Characteristic.On, false);
+            }, 50);
+
+          } else {
+
+            // Trigger the motion event.
+            this.nvr.events.motionEventHandler(this, Date.now());
+            this.log.info("Motion event triggered.");
+          }
+
+        } else {
+
+          // If the motion sensor is still on, we should be as well.
+          if(motionService?.getCharacteristic(this.hap.Characteristic.MotionDetected).value) {
+
+            setTimeout(() => {
+
+              triggerService?.updateCharacteristic(this.hap.Characteristic.On, true);
+            }, 50);
+          }
+        }
+      });
+
+    // Initialize the switch.
+    triggerService.updateCharacteristic(this.hap.Characteristic.On, false);
+
+    this.log.info("Enabling motion sensor automation trigger.");
 
     return true;
   }

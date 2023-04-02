@@ -139,8 +139,6 @@ export class ProtectCamera extends ProtectDevice {
 
     // Configure the motion sensor.
     this.configureMotionSensor();
-    this.configureMotionSwitch();
-    this.configureMotionTrigger();
 
     // Configure smart motion contact sensors.
     this.configureMotionSmartSensor();
@@ -303,85 +301,6 @@ export class ProtectCamera extends ProtectDevice {
 
     this.log.info("Smart motion contact sensor%s enabled: %s.",
       this.ufp.featureFlags.smartDetectTypes.length > 1 ? "s" : "", this.ufp.featureFlags.smartDetectTypes.join(", "));
-
-    return true;
-  }
-
-  // Configure a switch to manually trigger a motion sensor event for HomeKit.
-  private configureMotionTrigger(): boolean {
-
-    // Find the switch service, if it exists.
-    let triggerService = this.accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_MOTION_TRIGGER);
-
-    // Motion triggers are disabled by default and primarily exist for automation purposes.
-    if(!this.nvr.optionEnabled(this.ufp, "Motion.Trigger", false)) {
-
-      if(triggerService) {
-        this.accessory.removeService(triggerService);
-      }
-
-      return false;
-    }
-
-    // Add the switch to the camera, if needed.
-    if(!triggerService) {
-
-      triggerService = new this.hap.Service.Switch(this.accessory.displayName + " Motion Trigger", ProtectReservedNames.SWITCH_MOTION_TRIGGER);
-
-      if(!triggerService) {
-        this.log.error("Unable to add motion sensor trigger.");
-        return false;
-      }
-
-      this.accessory.addService(triggerService);
-    }
-
-    const motionService = this.accessory.getService(this.hap.Service.MotionSensor);
-    const switchService = this.accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_MOTION_SENSOR);
-
-    // Activate or deactivate motion detection.
-    triggerService
-      .getCharacteristic(this.hap.Characteristic.On)
-      ?.onGet(() => {
-
-        return motionService?.getCharacteristic(this.hap.Characteristic.MotionDetected).value === true;
-      })
-      .onSet((value: CharacteristicValue) => {
-
-        if(value) {
-
-          // Check to see if motion events are disabled.
-          if(switchService && !switchService.getCharacteristic(this.hap.Characteristic.On).value) {
-
-            setTimeout(() => {
-
-              triggerService?.updateCharacteristic(this.hap.Characteristic.On, false);
-            }, 50);
-
-          } else {
-
-            // Trigger the motion event.
-            this.nvr.events.motionEventHandler(this, Date.now());
-            this.log.info("Motion event triggered.");
-          }
-
-        } else {
-
-          // If the motion sensor is still on, we should be as well.
-          if(motionService?.getCharacteristic(this.hap.Characteristic.MotionDetected).value) {
-
-            setTimeout(() => {
-
-              triggerService?.updateCharacteristic(this.hap.Characteristic.On, true);
-            }, 50);
-          }
-        }
-      });
-
-    // Initialize the switch.
-    triggerService.updateCharacteristic(this.hap.Characteristic.On, false);
-
-    this.log.info("Enabling motion sensor automation trigger.");
 
     return true;
   }
