@@ -20,7 +20,6 @@ import { ProtectRecordingDelegate } from "./protect-record.js";
 import { RtpDemuxer } from "./protect-rtp.js";
 import WebSocket from "ws";
 import events from "node:events";
-import ffmpegPath from "ffmpeg-for-homebridge";
 import { platform } from "node:process";
 
 type SessionInfo = {
@@ -67,7 +66,6 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   private snapshotCache: { [index: string]: { image: Buffer, time: number } };
   public verboseFfmpeg: boolean;
   public readonly videoEncoderOptions!: string[];
-  public readonly videoProcessor: string;
 
   // Create an instance of a HomeKit streaming delegate.
   constructor(protectCamera: ProtectCamera, resolutions: [number, number, number][]) {
@@ -89,7 +87,6 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     this.snapshotCache = {};
     this.verboseFfmpeg = false;
     this.videoEncoderOptions = this.getVideoEncoderOptions();
-    this.videoProcessor = this.config.videoProcessor || ffmpegPath || "ffmpeg";
 
     // Setup for HKSV, if enabled.
     if(this.protectCamera.hasHksv) {
@@ -173,7 +170,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
             {
               audioChannels: 1,
               bitrate: 0,
-              samplerate: AudioStreamingSamplerate.KHZ_24,
+              samplerate: [ AudioStreamingSamplerate.KHZ_16, AudioStreamingSamplerate.KHZ_24 ],
               type: AudioStreamingCodecType.AAC_ELD
             }
           ],
@@ -274,7 +271,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     const isAudioEnabled = this.nvr.optionEnabled(this.protectCamera.ufp, "Audio", true, request.targetAddress);
 
     // We need to check for AAC support because it's going to determine whether we support audio.
-    const hasLibFdk = isAudioEnabled && (await FfmpegStreamingProcess.codecEnabled(this.videoProcessor, "libfdk_aac", this.log));
+    const hasLibFdk = isAudioEnabled && this.platform.isEncoderAvailable("aac", "libfdk_aac");
 
     // Setup our audio plumbing.
     const audioIncomingRtcpPort = (await reservePort(request.addressVersion));
@@ -486,6 +483,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       // -profile:v high     Use the H.264 high profile when encoding, which provides for better stream quality and size efficiency.
       // -level:v high       Use the H.264 profile level that HomeKit is requesting when encoding.
       // -bf 0               Disable B-frames when encoding to increase compatibility against occasionally finicky HomeKit clients.
+      // -force_key_frames   Force a keyframe to be generated every two seconds to ensure a solid livestreaming experience balanced with video quality.
       // -b:v bitrate        The average bitrate to use for this stream. This is specified by HomeKit.
       // -bufsize size       This is the decoder buffer size, which drives the variability / quality of the output bitrate.
       // -maxrate bitrate    The maximum bitrate tolerance, used with -bufsize. We set this with max_bit_rate to effectively
@@ -497,6 +495,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
         "-profile:v", this.getH264Profile(request.video.profile),
         "-level:v", this.getH264Level(request.video.level),
         "-bf", "0",
+        "-force_key_frames", "expr:gte(t, n_forced * 2)",
         "-b:v", request.video.max_bit_rate.toString() + "k",
         "-bufsize", (2 * request.video.max_bit_rate).toString() + "k",
         "-maxrate", request.video.max_bit_rate.toString() + "k",
@@ -535,7 +534,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       "-srtp_out_suite", "AES_CM_128_HMAC_SHA1_80",
       "-srtp_out_params", sessionInfo.videoSRTP.toString("base64"),
       "srtp://" + sessionInfo.address + ":" + sessionInfo.videoPort.toString() + "?rtcpport=" + sessionInfo.videoPort.toString() +
-      "&localrtcpport=" + sessionInfo.videoPort.toString() + "&pkt_size=" + videomtu.toString()
+      "&pkt_size=" + videomtu.toString()
     );
 
     // Configure the audio portion of the command line, if we have a version of FFmpeg supports libfdk_aac. Options we use are:
@@ -640,7 +639,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
         "-srtp_out_suite", "AES_CM_128_HMAC_SHA1_80",
         "-srtp_out_params", sessionInfo.audioSRTP.toString("base64"),
         "srtp://" + sessionInfo.address + ":" + sessionInfo.audioPort.toString() + "?rtcpport=" + sessionInfo.audioPort.toString() +
-        "&localrtcpport=" + sessionInfo.audioPort.toString() + "&pkt_size=" + audiomtu.toString()
+        "&pkt_size=" + audiomtu.toString()
       );
     }
 
@@ -700,8 +699,9 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       "t=0 0",
       "m=audio " + sessionInfo.audioIncomingRtpPort.toString() + " RTP/AVP 110",
       "b=AS:24",
-      "a=rtpmap:110 MPEG4-GENERIC/24000/1",
-      "a=fmtp:110 profile-level-id=1;mode=AAC-hbr;sizelength=13;indexlength=3;indexdeltalength=3; config=F8EC212C00BC00",
+      "a=rtpmap:110 MPEG4-GENERIC/" + ((request.audio.sample_rate === 16) ? "16000" : "24000") + "/1",
+      "a=fmtp:110 profile-level-id=1;mode=AAC-hbr;sizelength=13;indexlength=3;indexdeltalength=3; config=" +
+        ((request.audio.sample_rate === 16) ? "F8F0212C00BC00" : "F8EC212C00BC00"),
       "a=crypto:1 AES_CM_128_HMAC_SHA1_80 inline:" + sessionInfo.audioSRTP.toString("base64")
     ].join("\n");
 
@@ -1182,12 +1182,19 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
         case "darwin":
 
+          // Verify that we have the hardware encoder available to us.
+          if(!this.platform.isEncoderAvailable("h264", "h264_videotoolbox")) {
+
+            this.protectCamera.hasHwAccel = false;
+            break;
+          }
+
           // h264_videotoolbox is the macOS hardware encoder API. We use the following options by default:
           //
           // -pix_fmt nv12           videotoolbox doesn't support the full yuvj420p pixel format, so we use nv12 to get us close.
           // -coder cabac            Use the cabac encoder for better video quality with the encoding profiles we use in HBUP.
           encoder = "h264_videotoolbox";
-          encoderOptions = "-pix_fmt nv12 -coder cabac";
+          encoderOptions = "-pix_fmt nv12 -coder cabac -allow_sw 1";
           break;
 
         default:
