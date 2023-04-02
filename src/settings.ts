@@ -17,6 +17,9 @@ export const PROTECT_API_RETRY_INTERVAL = 300;
 // Protect API response timeout, in seconds. This should never be greater than 5 seconds.
 export const PROTECT_API_TIMEOUT = 3.5;
 
+// How often, in seconds, should we retry logging into Protect on startup, when we failed the first time.
+export const PROTECT_CONTROLLER_LOGIN_INTERVAL = 60;
+
 // How often, in seconds, should we check Protect controllers for new or removed devices.
 export const PROTECT_CONTROLLER_REFRESH_INTERVAL = 120;
 
@@ -43,9 +46,6 @@ export const PROTECT_HKSV_TIMESHIFT_BUFFER_MAXLENGTH = PROTECT_HKSV_SEGMENT_LENG
 
 // HomeKit Secure Video segment resolution, in milliseconds. This defines the resolution of our buffer. It should never be less than 100ms or greater than 1500ms.
 export const PROTECT_HKSV_SEGMENT_RESOLUTION = 100;
-
-// How often, in seconds, should we refresh our Protect login credentials.
-export const PROTECT_LOGIN_REFRESH_INTERVAL = 1800;
 
 // Default duration, in seconds, of motion events. Setting this too low will potentially cause a lot of notification spam.
 export const PROTECT_MOTION_DURATION = 10;

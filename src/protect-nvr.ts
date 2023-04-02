@@ -3,7 +3,7 @@
  * protect-nvr.ts: NVR device class for UniFi Protect.
  */
 import { API, APIEvent, HAP, PlatformAccessory } from "homebridge";
-import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_CONTROLLER_REFRESH_INTERVAL } from "./settings.js";
+import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_CONTROLLER_LOGIN_INTERVAL, PROTECT_CONTROLLER_REFRESH_INTERVAL } from "./settings.js";
 import { ProtectApi, ProtectCameraConfig, ProtectLightConfig, ProtectNvrBootstrap, ProtectNvrConfig, ProtectSensorConfig, ProtectViewerConfig } from "unifi-protect";
 import { ProtectDeviceConfigTypes, ProtectDevices, ProtectLogging } from "./protect-types.js";
 import { ProtectNvrOptions, optionEnabled } from "./protect-options.js";
@@ -18,6 +18,7 @@ import { ProtectNvrSystemInfo } from "./protect-nvr-systeminfo.js";
 import { ProtectPlatform } from "./protect-platform.js";
 import { ProtectSensor } from "./protect-sensor.js";
 import { ProtectViewer } from "./protect-viewer.js";
+import { once } from "events";
 import util from "node:util";
 
 export class ProtectNvr {
@@ -75,47 +76,7 @@ export class ProtectNvr {
       return;
     }
 
-    // Initialize our connection to the UniFi Protect API.
-    const ufpLog = {
-
-      debug: (message: string, ...parameters: unknown[]): void => this.platform.debug(util.format(message, ...parameters)),
-      error: (message: string, ...parameters: unknown[]): void => {
-
-        if(this.logApiErrors) {
-
-          this.platform.log.error(util.format(message, ...parameters));
-        }
-      },
-      info: (message: string, ...parameters: unknown[]): void => this.platform.log.info(util.format(message, ...parameters)),
-      warn: (message: string, ...parameters: unknown[]): void => this.platform.log.warn(util.format(message, ...parameters))
-    };
-
-    this.ufpApi = new ProtectApi(ufpLog);
-
-    // Initialize our UniFi Protect realtime event handlers.
-    this.events = new ProtectNvrEvents(this);
-
-    // Inform users when we've logged in.
-    this.ufpApi.once("login", (success: boolean) => {
-
-      // We had login issues.
-      if(!success) {
-
-        this.ufpApi.clearLoginCredentials();
-        this.log.info("Unable to login to the UniFi Protect API. Ensure your login credentials and Protect controller address are correct.");
-
-        return;
-      }
-
-      // We logged in successfully.
-      this.platform.log.info("Connected to the UniFi Protect API at %s.", nvrOptions.address);
-      void this.ufpUpdate();
-    });
-
-    // Once we've connected to the Protect API, we can initialize ourselves.
-    this.ufpApi.once("bootstrap", this.ufpStartupHandler.bind(this));
-
-    // Cleanup any remaining streaming sessions on shutdown.
+    // Make sure we cleanup any remaining streaming sessions on shutdown.
     this.api.on(APIEvent.SHUTDOWN, () => {
 
       for(const protectDevice of Object.values(this.configuredDevices)) {
@@ -127,6 +88,9 @@ export class ProtectNvr {
         }
       }
     });
+
+    // Fire up our Protect controller connectivity.
+    void this.ufpStartupHandler();
   }
 
   // Maintain our connection to the UniFi Protect controller. This is only called after we've successfully logged in for the first time at plugin launch.
@@ -156,22 +120,77 @@ export class ProtectNvr {
     }
   }
 
-  // Initialize ourselves once we've bootstrapped the Protect controller for the first time.
-  private ufpStartupHandler(bootstrap: ProtectNvrBootstrap): void {
+  // Initialize our connection to the UniFi Protect controller.
+  private async ufpStartupHandler(): Promise<void> {
 
+    // Initialize our connection to the UniFi Protect API.
+    const ufpLog = {
+
+      debug: (message: string, ...parameters: unknown[]): void => this.platform.debug(util.format(message, ...parameters)),
+      error: (message: string, ...parameters: unknown[]): void => {
+
+        if(this.logApiErrors) {
+
+          this.platform.log.error(util.format(message, ...parameters));
+        }
+      },
+      info: (message: string, ...parameters: unknown[]): void => this.platform.log.info(util.format(message, ...parameters)),
+      warn: (message: string, ...parameters: unknown[]): void => this.platform.log.warn(util.format(message, ...parameters))
+    };
+
+    // Attempt to login to the Protect controller, retrying at reasonable intervals. This accounts for cases where the Protect controller or the network connection
+    // may not be fully available when we startup.
+    for(;;) {
+
+      // Create a new connection to the Protect API.
+      this.ufpApi = new ProtectApi(ufpLog);
+
+      // Let's try to login.
+      // eslint-disable-next-line no-await-in-loop
+      const [successfulLogin] = await once(this.ufpApi, "login") as boolean[];
+
+      // We had issues logging in, let's try again shortly.
+      if(!successfulLogin) {
+
+        this.ufpApi.clearLoginCredentials();
+        this.log.info(
+          "Unable to login to the UniFi Protect API. Ensure your login credentials and Protect controller address are correct. Will retry again in %s second%s.",
+          PROTECT_CONTROLLER_LOGIN_INTERVAL, PROTECT_CONTROLLER_LOGIN_INTERVAL > 1 ? "s" : "");
+
+        // eslint-disable-next-line no-await-in-loop
+        await this.sleep(PROTECT_CONTROLLER_LOGIN_INTERVAL * 1000);
+        continue;
+      }
+
+      // We logged in successfully.
+      this.platform.log.info("Connected to the UniFi Protect API at %s.", this.config.address);
+      break;
+    }
+
+    // Initialize our UniFi Protect realtime event handlers.
+    this.events = new ProtectNvrEvents(this);
+
+    // Fire off regular bootstrap updates.
+    void this.ufpUpdate();
+
+    // Initialize our UFP JSON with the bootstrap from the Protect controller.
+    const [bootstrap] = await once(this.ufpApi, "bootstrap") as ProtectNvrBootstrap[];
+
+    // Assign our Protect NVR configuration JSON from the bootstrap JSON.
     this.ufp = bootstrap.nvr;
 
     // Assign our name if the user hasn't explicitly specified a preference.
     this.name = this.nvrOptions.name ?? this.ufp.name;
 
     // This NVR has been disabled. Let the user know that we're done here.
-    if(!this.isEnabled && !this.optionEnabled(this.ufp, "Nvr")) {
+    if(!this.optionEnabled(this.ufp, "Nvr")) {
 
       this.log.info("Disabling this UniFi Protect controller.");
       this.ufpApi.clearLoginCredentials();
       return;
     }
 
+    // Mark this NVR as enabled and available.
     this.isEnabled = true;
 
     // Configure any NVR-specific settings.
@@ -310,7 +329,7 @@ export class ProtectNvr {
   public addHomeKitDevice(device: ProtectDeviceConfigTypes): ProtectDevice | null {
 
     // If we have no MAC address, name, or this camera isn't being managed by this Protect controller, we're done.
-    if(!device || !device.mac || !device.name || device.isAdoptedByOther || !device.isAdopted) {
+    if(!this.ufp?.mac || !device || !device.mac || !device.name || device.isAdoptedByOther || !device.isAdopted) {
 
       return null;
     }
@@ -436,7 +455,7 @@ export class ProtectNvr {
       if(!protectDevice) {
 
         // We only remove devices if they're on the Protect controller we're interested in.
-        if(("nvr" in accessory.context) && accessory.context.nvr !== this.ufp.mac) {
+        if(("nvr" in accessory.context) && (accessory.context.nvr !== this.ufp.mac)) {
 
           continue;
         }
