@@ -96,7 +96,8 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
 
       this.isInitialized = true;
 
-      this.log.info("HomeKit Secure Video event recording enabled: %s, %s kbps with %s",
+      this.log.info("HomeKit Secure Video %sevent recording enabled: %s, %s kbps with %s",
+        this.protectCamera.hasHwAccel ? "hardware accelerated " : "",
         this.rtspEntry?.name, this.recordingConfig?.videoCodec.parameters.bitRate,
         this.protectCamera.hints.timeshift ?
           "a " + (this.timeshift.length / 1000).toString() + " second timeshift buffer." :
