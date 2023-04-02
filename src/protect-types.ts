@@ -3,8 +3,9 @@
  * protect-types.ts: Interface and type definitions for UniFi Protect.
  */
 
-import { ProtectCameraConfig, ProtectLightConfig, ProtectSensorConfig, ProtectViewerConfig } from "unifi-protect";
+import { ProtectCameraConfig, ProtectChimeConfig, ProtectLightConfig, ProtectSensorConfig, ProtectViewerConfig } from "unifi-protect";
 import { ProtectCamera } from "./protect-camera.js";
+import { ProtectChime } from "./protect-chime.js";
 import { ProtectDoorbell } from "./protect-doorbell.js";
 import { ProtectLight } from "./protect-light.js";
 import { ProtectSensor } from "./protect-sensor.js";
@@ -47,8 +48,8 @@ export interface ProtectLogging {
 }
 
 // Some type aliases to signify what we device types we support.
-export type ProtectDeviceConfigTypes = ProtectCameraConfig | ProtectLightConfig | ProtectSensorConfig | ProtectViewerConfig;
-export type ProtectDevices = ProtectCamera | ProtectDoorbell | ProtectLight | ProtectSensor | ProtectViewer;
+export type ProtectDeviceConfigTypes = ProtectCameraConfig | ProtectChimeConfig | ProtectLightConfig | ProtectSensorConfig | ProtectViewerConfig;
+export type ProtectDevices = ProtectCamera | ProtectChime | ProtectDoorbell | ProtectLight | ProtectSensor | ProtectViewer;
 
 // HBUP reserved names.
 export enum ProtectReservedNames {

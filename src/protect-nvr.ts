@@ -4,10 +4,12 @@
  */
 import { API, APIEvent, HAP, PlatformAccessory } from "homebridge";
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_CONTROLLER_LOGIN_INTERVAL, PROTECT_CONTROLLER_REFRESH_INTERVAL } from "./settings.js";
-import { ProtectApi, ProtectCameraConfig, ProtectLightConfig, ProtectNvrBootstrap, ProtectNvrConfig, ProtectSensorConfig, ProtectViewerConfig } from "unifi-protect";
+import { ProtectApi, ProtectCameraConfig, ProtectChimeConfig, ProtectLightConfig, ProtectNvrBootstrap, ProtectNvrConfig,
+  ProtectSensorConfig, ProtectViewerConfig } from "unifi-protect";
 import { ProtectDeviceConfigTypes, ProtectDevices, ProtectLogging } from "./protect-types.js";
 import { ProtectNvrOptions, optionEnabled } from "./protect-options.js";
 import { ProtectCamera } from "./protect-camera.js";
+import { ProtectChime } from "./protect-chime.js";
 import { ProtectDevice } from "./protect-device.js";
 import { ProtectDoorbell } from "./protect-doorbell.js";
 import { ProtectLight } from "./protect-light.js";
@@ -211,7 +213,7 @@ export class ProtectNvr {
     // Inform the user about the devices we see.
     this.log.info("Discovered %s: %s.", this.ufp.modelKey, this.ufpApi.getDeviceName(this.ufp, this.ufp.name, true));
 
-    for(const device of [ ...bootstrap.cameras, ...bootstrap.lights, ...bootstrap.sensors, ...bootstrap.viewers ] ) {
+    for(const device of [ ...bootstrap.cameras, ...bootstrap.chimes, ...bootstrap.lights, ...bootstrap.sensors, ...bootstrap.viewers ] ) {
 
       // Filter out any devices that aren't adopted by this Protect controller.
       if(device.isAdoptedByOther || device.isAdopting || !device.isAdopted) {
@@ -278,6 +280,15 @@ export class ProtectNvr {
 
         break;
 
+      case "chime":
+
+        // We have a UniFi Protect chime.
+        this.configuredDevices[accessory.UUID] = new ProtectChime(this, device as ProtectChimeConfig, accessory);
+
+        return true;
+
+        break;
+
       case "light":
 
         // We have a UniFi Protect light.
@@ -338,6 +349,7 @@ export class ProtectNvr {
     switch(device.modelKey) {
 
       case "camera":
+      case "chime":
       case "light":
       case "sensor":
       case "viewer":
@@ -411,6 +423,11 @@ export class ProtectNvr {
     if(this.ufpApi.bootstrap.cameras && !this.discoverDevices(this.ufpApi.bootstrap?.cameras)) {
 
       this.log.error("Error discovering camera devices.");
+    }
+
+    if(this.ufpApi.bootstrap.chimes && !this.discoverDevices(this.ufpApi.bootstrap?.chimes)) {
+
+      this.log.error("Error discovering chime devices.");
     }
 
     if(this.ufpApi.bootstrap.lights && !this.discoverDevices(this.ufpApi.bootstrap?.lights)) {
@@ -490,6 +507,15 @@ export class ProtectNvr {
         case "camera":
 
           if(this.ufpApi.bootstrap.cameras.some((x: ProtectCameraConfig) => x.mac === protectDevice.ufp.mac) && this.optionEnabled(protectDevice.ufp, "Device")) {
+
+            continue;
+          }
+
+          break;
+
+        case "chime":
+
+          if(this.ufpApi.bootstrap.chimes.some((x: ProtectChimeConfig) => x.mac === protectDevice.ufp.mac) && this.optionEnabled(protectDevice.ufp, "Device")) {
 
             continue;
           }
