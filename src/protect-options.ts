@@ -38,15 +38,15 @@ export interface ProtectNvrOptions {
 // Feature option categories.
 export const featureOptionCategories = [
 
-  { description: "Audio feature options.", name: "Audio" },
-  { description: "Device feature options.", name: "Device" },
-  { description: "Doorbell feature options.", name: "Doorbell" },
-  { description: "Logging feature options.", name: "Log"},
-  { description: "Motion detection feature options.", name: "Motion" },
-  { description: "NVR feature options.", name: "Nvr" },
-  { description: "Security system feature options.", name: "SecuritySystem" },
-  { description: "Video feature options.", name: "Video" },
-  { description: "HomeKit Secure Video feature options.", name: "Video.HKSV" }
+  { description: "Audio feature options.", name: "Audio", validFor: [ "camera" ] },
+  { description: "Device feature options.", name: "Device", validFor: [ "all" ] },
+  { description: "Doorbell feature options.", name: "Doorbell", validFor: [ "camera" ] },
+  { description: "Logging feature options.", name: "Log", validFor: [ "all" ] },
+  { description: "Motion detection feature options.", name: "Motion", validFor: [ "camera", "light", "sensor" ] },
+  { description: "NVR feature options.", name: "Nvr", validFor: [ "nvr" ] },
+  { description: "Security system feature options.", name: "SecuritySystem", validFor: [ "nvr" ] },
+  { description: "Video feature options.", name: "Video", validFor: [ "camera" ] },
+  { description: "HomeKit Secure Video feature options.", name: "Video.HKSV", validFor: [ "camera" ] }
 ];
 
 /* eslint-disable max-len */
@@ -57,39 +57,38 @@ export const featureOptions: { [index: string]: FeatureOption[] } = {
   "Audio": [
 
     { default: true, description: "Audio support.", name: "" },
-    { default: false, description: "Audio filter for ambient noise suppression.", name: "Filter.Noise" },
-    { default: true, description: "Two-way audio support on supported cameras.", name: "TwoWay" }
+    { default: false, description: "Audio filter for ambient noise suppression.", hasFeature: "hasMotionZones", name: "Filter.Noise" },
+    { default: true, description: "Two-way audio support on supported cameras.", hasFeature: "hasSpeaker", name: "TwoWay" }
   ],
 
   // Device options.
   "Device": [
 
     { default: true, description: "Make this device available in HomeKit.", name: "" },
-    { default: false, description: "Enable the status LED for this device in HomeKit.", name: "StatusLed" }
+    { default: false, description: "Enable the status LED for this device in HomeKit.", hasFeature: "ledSettings",  name: "StatusLed" }
   ],
 
   // Doorbell options.
   "Doorbell": [
 
-    { default: true, description: "Enable the doorbell messages feature.", name: "Messages" },
-    { default: true, description: "Use messages saved to the Protect NVR as message switches.", name: "Messages.FromDoorbell" },
-    { default: false, description: "Add a switch accessory to trigger doorbell ring events on a Protect camera or doorbell.", name: "Trigger" }
+    { default: true, description: "Enable the doorbell messages feature.", hasFeature: "isDoorbell", name: "Messages" },
+    { default: true, description: "Use messages saved to the Protect NVR as message switches.", hasFeature: "isDoorbell", name: "Messages.FromDoorbell" },
+    { default: false, description: "Add a switch accessory to trigger doorbell ring events on a Protect camera or doorbell.", hasFeature: "hasMotionZones", name: "Trigger" }
   ],
 
   // Logging options.
   "Log": [
 
-    { default: true, description: "Log HomeKit Secure Video recording events in Homebridge.", name: "HKSV" },
-    { default: true, description: "Log doorbell ring events in Homebridge.", name: "Doorbell" },
+    { default: true, description: "Log HomeKit Secure Video recording events in Homebridge.", hasFeature: "hasMotionZones", name: "HKSV" },
+    { default: true, description: "Log doorbell ring events in Homebridge.", hasFeature: "hasMotionZones", name: "Doorbell" },
     { default: false, description: "Log motion events in Homebridge.", name: "Motion" }
   ],
 
   // Motion options.
   "Motion": [
 
-    { default: true, description: "Enable this device's motion sensor in HomeKit.", name: "Sensor" },
-    { default: false, description: "UniFi Protect smart motion detection when on a supported device.", name: "SmartDetect" },
-    { default: false, description: "Add contact sensor accessories for each smart motion object type that UniFi Protect supports.", name: "SmartDetect.ObjectSensors" },
+    { default: false, description: "Use UniFi Protect smart motion detection for HomeKit motion events when on a supported device.", hasFeature: "hasSmartDetect", name: "SmartDetect" },
+    { default: false, description: "Add contact sensor accessories for each smart motion object type that UniFi Protect supports.", hasFeature: "hasSmartDetect", name: "SmartDetect.ObjectSensors" },
     { default: false, description: "Add a switch accessory to activate or deactivate motion detection in HomeKit.", name: "Switch" },
     { default: false, description: "Add a switch accessory to manually trigger a motion detection event in HomeKit.", name: "Trigger" }
   ],
@@ -112,9 +111,9 @@ export const featureOptions: { [index: string]: FeatureOption[] } = {
 
     { default: false, description: "Dynamically adjust the bitrate on the UniFi Protect controller to accomodate HomeKit requests.", name: "DynamicBitrate" },
     { default: false, description: "Add a switch accessory to enable or disable dynamic bitrate support on the Protect controller.", name: "DynamicBitrate.Switch" },
-    { default: false, description: "For viewing livestreams, force the use of the low quality video stream from the Protect controller.", name: "Stream.Only.Low" },
-    { default: false, description: "For viewing livestreams, force the use of the medium quality video stream from the Protect controller.", name: "Stream.Only.Medium" },
     { default: false, description: "For viewing livestreams, force the use of the high quality video stream from the Protect controller.", name: "Stream.Only.High" },
+    { default: false, description: "For viewing livestreams, force the use of the medium quality video stream from the Protect controller.", name: "Stream.Only.Medium" },
+    { default: false, description: "For viewing livestreams, force the use of the low quality video stream from the Protect controller.", name: "Stream.Only.Low" },
     { default: false, description: "Transcode live video streams when viewing in the Home app instead of remuxing.", name: "Transcode" },
     { default: false, description: "Use hardware-accelerated transcoding, when available (macOS only).", name: "Transcode.Hardware" },
     { default: true, description: "When streaming to high-latency clients (e.g. cellular connections), transcode live video streams instead of remuxing them.", name: "Transcode.HighLatency" }
@@ -125,9 +124,9 @@ export const featureOptions: { [index: string]: FeatureOption[] } = {
 
     { default: true, description: "Enable the timeshift buffer for HomeKit Secure Video.", name: "TimeshiftBuffer" },
     { default: false, description: "Add a switch accessory to enable or disable HKSV event recording.", name: "Recording.Switch" },
-    { default: false, description: "For HomeKit Secure Video recordings, force the use of the low quality video stream from the Protect controller.", name: "Record.Only.Low" },
+    { default: false, description: "For HomeKit Secure Video recordings, force the use of the high quality video stream from the Protect controller.", name: "Record.Only.High" },
     { default: false, description: "For HomeKit Secure Video recordings, force the use of the medium quality video stream from the Protect controller.", name: "Record.Only.Medium" },
-    { default: false, description: "For HomeKit Secure Video recordings, force the use of the high quality video stream from the Protect controller.", name: "Record.Only.High" }
+    { default: false, description: "For HomeKit Secure Video recordings, force the use of the low quality video stream from the Protect controller.", name: "Record.Only.Low" }
   ]
 
 };
@@ -135,10 +134,10 @@ export const featureOptions: { [index: string]: FeatureOption[] } = {
 
 export interface FeatureOption {
 
-//  category: string,           // Motion
-  default: boolean,           // Disabled
-  description: string,         // Add a switch accessory to activate or deactivate motion detection in HomeKit.
-  name: string,               // Switch
+  default: boolean,           // Default feature option setting.
+  description: string,        // Description of the feature option.
+  hasFeature?: string,        // What hardware-specific features, if any, is this feature option dependent on.
+  name: string,               // Name of the feature option.
 }
 
 // Utility function to let us know if a device or feature should be enabled or not.
