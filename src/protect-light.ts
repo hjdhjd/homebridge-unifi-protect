@@ -85,8 +85,7 @@ export class ProtectLight extends ProtectDevice {
 
         if(!newDevice) {
 
-          this.log.error("Unable to turn the light %s. Please ensure this username has the Administrator role in UniFi Protect.",
-            lightState ? "on" : "off");
+          this.log.error("Unable to turn the light %s. Please ensure this username has the Administrator role in UniFi Protect.", lightState ? "on" : "off");
           return;
         }
 
