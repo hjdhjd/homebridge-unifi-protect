@@ -4,7 +4,7 @@
  *
  * This module is heavily inspired by the homebridge and homebridge-camera-ffmpeg source code. Thank you for your contributions to the HomeKit world.
  */
-import { ChildProcessWithoutNullStreams, execFile, spawn } from "node:child_process";
+import { ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { ProtectCamera, ProtectPackageCamera } from "./protect-camera.js";
 import { Readable, Writable } from "node:stream";
 import { EventEmitter } from "node:events";
@@ -109,10 +109,10 @@ export class FfmpegProcess extends EventEmitter {
     // Inform the user, if we've been asked to do so.
     if(this.isLogging || this.isVerbose || this.protectCamera.platform.config.debugAll) {
 
-      this.log.info("FFmpeg command: %s %s", this.protectCamera.stream.videoProcessor, this.commandLineArgs.join(" "));
+      this.log.info("FFmpeg command: %s %s", this.protectCamera.platform.config.videoProcessor, this.commandLineArgs.join(" "));
     } else {
 
-      this.log.debug("FFmpeg command: %s %s", this.protectCamera.stream.videoProcessor, this.commandLineArgs.join(" "));
+      this.log.debug("FFmpeg command: %s %s", this.protectCamera.platform.config.videoProcessor, this.commandLineArgs.join(" "));
     }
 
     this.isPrepared = true;
@@ -134,7 +134,7 @@ export class FfmpegProcess extends EventEmitter {
     }
 
     // Execute the command line based on what we've prepared.
-    this.process = spawn(this.protectCamera.stream.videoProcessor, this.commandLineArgs);
+    this.process = spawn(this.protectCamera.platform.config.videoProcessor, this.commandLineArgs);
 
     // Configure any post-spawn listeners and other plumbing.
     this.configureProcess(errorHandler);
@@ -291,7 +291,7 @@ export class FfmpegProcess extends EventEmitter {
     this.log.error("FFmpeg process ended unexpectedly with %s%s%s.", (exitCode !== null) ? "an exit code of " + exitCode.toString() : "",
       ((exitCode !== null) && signal) ? " and " : "", signal ? "a signal received of " + signal : "");
 
-    this.log.error("FFmpeg command line that errored out was: %s %s", this.protectCamera.stream.videoProcessor, this.commandLineArgs.join(" "));
+    this.log.error("FFmpeg command line that errored out was: %s %s", this.protectCamera.platform.config.videoProcessor, this.commandLineArgs.join(" "));
     this.stderrLog.map(x => this.log.error(x));
   }
 
@@ -311,50 +311,5 @@ export class FfmpegProcess extends EventEmitter {
   public get stderr(): Readable | null {
 
     return this.process?.stderr ?? null;
-  }
-
-  // Validate whether or not we have a specific codec available to us in FFmpeg.
-  public static async codecEnabled(videoProcessor: string, codec: string, log: ProtectLogging): Promise<boolean> {
-
-    try {
-
-      // Promisify exec to allow us to wait for it asynchronously.
-      const execAsync = util.promisify(execFile);
-
-      // Check for the codecs in FFmpeg.
-      const { stdout } = await execAsync(videoProcessor, ["-codecs"]);
-
-      // See if we can find the codec.
-      return stdout.includes(codec);
-    } catch(error) {
-
-      // It's really a SystemError, but Node hides that type from us for esoteric reasons.
-      if(error instanceof Error) {
-
-        interface SystemError {
-          cmd: string,
-          code: string,
-          errno: number,
-          path: string,
-          spawnargs: string[],
-          stderr: string,
-          stdout: string,
-          syscall: string
-        }
-
-        const execError = error as unknown as SystemError;
-
-        if(execError.code === "ENOENT") {
-
-          log.error("Unable to find FFmpeg at: '%s'. Please make sure that you have a working version of FFmpeg installed.", execError.path);
-
-        } else {
-
-          log.error("Error running FFmpeg: %s", error.message);
-        }
-      }
-    }
-
-    return false;
   }
 }
