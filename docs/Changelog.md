@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 6.2.3 (2023-04-03)
+  * Fix: address a rare race condition in motion event delivery.
+
 ## 6.2.2 (2023-04-03)
   * Fix: really ensure MQTT notifications use the correct MAC addresses when publishing messages.
 
