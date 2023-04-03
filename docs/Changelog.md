@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 6.2.0 (2023-04-02)
+  * New feature: support for chime accessories. They will appear as dimmer accessories in HomeKit and can be used to control the volume level of the Protect chimes. Unfortunately, this is the best we can do given there are no speaker / volume accessories in HomeKit.
+
 ## 6.1.0 (2023-04-02)
   * Improvement: the feature option webUI has been made more contextually aware and will only show options that are relevant for the selected Protect device.
   * Improvement: all UniFi devices (currently that's Protect cameras, Protect sensors, or Protect flood lights) that support motion sensors can now be configured to have motion switches and/or motion triggers by enabling those feature options for those devices.
