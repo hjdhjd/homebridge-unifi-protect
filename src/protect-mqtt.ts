@@ -64,11 +64,13 @@ export class ProtectMqtt {
 
     // We've been unable to even attempt to connect. It's likely we have a configuration issue - we're done here.
     if(!this.mqtt) {
+
       return;
     }
 
     // Notify the user when we connect to the broker.
     this.mqtt.on("connect", () => {
+
       this.isConnected = true;
 
       // Magic incantation to redact passwords.
@@ -195,6 +197,7 @@ export class ProtectMqtt {
 
     // No accessory, we're done.
     if(!accessory) {
+
       return null;
     }
 
@@ -204,7 +207,7 @@ export class ProtectMqtt {
     // Check to see if it's really a Protect device...if it is, use it's MAC address.
     if((typeof accessory !== "string") && ("mac" in accessory.context)) {
 
-      mac = this.nvr.configuredDevices[accessory.UUID]?.ufp.mac;
+      mac = accessory.context.mac as string;
     }
 
     const expandedTopic = this.config.mqttTopic + "/" + mac + "/" + topic;
