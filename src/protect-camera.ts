@@ -209,7 +209,7 @@ export class ProtectCamera extends ProtectDevice {
 
       // We only want to process the motion event if we have the right payload, and either HKSV recording is enabled, or
       // HKSV recording is disabled and we have smart motion events disabled since We handle those elsewhere.
-      if(this.stream.hksv?.isRecording || (!this.stream.hksv?.isRecording && !this.ufp.featureFlags.smartDetectTypes.length)) {
+      if(this.stream?.hksv?.isRecording || (!this.stream?.hksv?.isRecording && !this.ufp.featureFlags.smartDetectTypes.length)) {
 
         this.nvr.events.motionEventHandler(this, payload.lastMotion);
       }
