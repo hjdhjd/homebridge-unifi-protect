@@ -81,7 +81,7 @@ export const featureOptions: { [index: string]: FeatureOption[] } = {
 
     { default: true, description: "Log HomeKit Secure Video recording events in Homebridge.", hasFeature: "hasMotionZones", name: "HKSV" },
     { default: true, description: "Log doorbell ring events in Homebridge.", hasFeature: "hasMotionZones", name: "Doorbell" },
-    { default: false, description: "Log motion events in Homebridge.", name: "Motion" }
+    { default: false, description: "Log motion events in Homebridge.", hasProperty: "lastMotion", name: "Motion" }
   ],
 
   // Motion options.
@@ -137,7 +137,8 @@ export interface FeatureOption {
   default: boolean,           // Default feature option setting.
   description: string,        // Description of the feature option.
   hasFeature?: string,        // What hardware-specific features, if any, is this feature option dependent on.
-  name: string,               // Name of the feature option.
+  hasProperty?: string,       // What UFP JSON property, if any, is this feature option dependent on.
+  name: string                // Name of the feature option.
 }
 
 // Utility function to let us know if a device or feature should be enabled or not.

@@ -520,7 +520,8 @@
             for(const option of optionsDevice[category.name]) {
 
               // Only show feature options that are valid for this device.
-              if(ufpDevice && (ufpDevice.modelKey !== "nvr") && option.hasFeature && (!ufpDevice.featureFlags || !ufpDevice.featureFlags[option.hasFeature])) {
+              if(ufpDevice && (ufpDevice.modelKey !== "nvr") && ((option.hasFeature && (!ufpDevice.featureFlags || !ufpDevice.featureFlags[option.hasFeature])) ||
+                (option.hasProperty && !(option.hasProperty in ufpDevice)))) {
 
                 continue;
               }

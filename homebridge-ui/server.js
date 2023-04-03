@@ -43,11 +43,20 @@ class PluginUiServer extends HomebridgePluginUiServer {
         const bootstrap = ufpApi.bootstrap;
 
         bootstrap.cameras = bootstrap.cameras.filter(x => !x.isAdoptedByOther && x.isAdopted);
+        bootstrap.chimes = bootstrap.chimes.filter(x => !x.isAdoptedByOther && x.isAdopted);
         bootstrap.lights = bootstrap.lights.filter(x => !x.isAdoptedByOther && x.isAdopted);
         bootstrap.sensors = bootstrap.sensors.filter(x => !x.isAdoptedByOther && x.isAdopted);
         bootstrap.viewers = bootstrap.viewers.filter(x => !x.isAdoptedByOther && x.isAdopted);
 
         bootstrap.cameras.sort((a, b) => {
+
+          const aCase = a.name.toLowerCase();
+          const bCase = b.name.toLowerCase();
+
+          return aCase > bCase ? 1 : (bCase > aCase ? -1 : 0);
+        });
+
+        bootstrap.chimes.sort((a, b) => {
 
           const aCase = a.name.toLowerCase();
           const bCase = b.name.toLowerCase();
@@ -79,7 +88,7 @@ class PluginUiServer extends HomebridgePluginUiServer {
           return aCase > bCase ? 1 : (bCase > aCase ? -1 : 0);
         });
 
-        return [ ufpApi.bootstrap.nvr, ...ufpApi.bootstrap.cameras, ...ufpApi.bootstrap.lights, ...ufpApi.bootstrap.sensors, ...ufpApi.bootstrap.viewers ];
+        return [ ufpApi.bootstrap.nvr, ...ufpApi.bootstrap.cameras, ...ufpApi.bootstrap.chimes, ...ufpApi.bootstrap.lights, ...ufpApi.bootstrap.sensors, ...ufpApi.bootstrap.viewers ];
       } catch(err) {
 
         console.log("ERRORING OUT FOR " + controller.address);
