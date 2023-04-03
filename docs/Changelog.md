@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 6.2.1 (2023-04-02)
+  * Fix: make codec detection more robust across platforms.
+
 ## 6.2.0 (2023-04-02)
   * New feature: support for chime accessories. They will appear as dimmer accessories in HomeKit and can be used to control the volume level of the Protect chimes. Unfortunately, this is the best we can do given there are no speaker / volume accessories in HomeKit.
 
