@@ -162,7 +162,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
       const { stdout } = await execAsync(this.config.videoProcessor, [ "hide_banner", "-codecs" ]);
 
       // A regular expression to parse out the codec and it's supported encoders.
-      const encodersRegex = /(\S+)\s(\S*)\s+\(.*encoders: (.*?)\s*\)/;
+      const encodersRegex = /^.{8}(\S+).+\(encoders: (.*?)\s*\)$/;
 
       // Iterate through each line, and a build a list of encoders.
       for(const codecLine of stdout.split("\n")) {
@@ -177,7 +177,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
         }
 
         // Add the codec and supported encoders to our list of supported encoders.
-        this.videoProcessorEncoders[encodersMatch[2]] = encodersMatch[3].split(" ");
+        this.videoProcessorEncoders[encodersMatch[1]] = encodersMatch[2].split(" ");
       }
 
       return true;
