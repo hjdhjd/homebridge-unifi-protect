@@ -140,21 +140,34 @@ export class ProtectNvr {
       warn: (message: string, ...parameters: unknown[]): void => this.platform.log.warn(util.format(message, ...parameters))
     };
 
+    // Create our connection to the Protect API.
+    this.ufpApi = new ProtectApi(ufpLog);
+    let retryLoginAttempt = false;
+
     // Attempt to login to the Protect controller, retrying at reasonable intervals. This accounts for cases where the Protect controller or the network connection
     // may not be fully available when we startup.
     for(;;) {
 
-      // Create a new connection to the Protect API.
-      this.ufpApi = new ProtectApi(ufpLog);
+      let successfulLogin = false;
 
-      // Let's wait for the API login to be attempted.
-      // eslint-disable-next-line no-await-in-loop
-      const [successfulLogin] = await once(this.ufpApi, "login") as boolean[];
+      // Let's either wait for an inflight login attempt or retry logging into the controller.
+      if(retryLoginAttempt) {
+
+        // We've previously attempted a login at plugin startup and it's failed, so let's retry logging in to see if can be successful.
+        // eslint-disable-next-line no-await-in-loop
+        successfulLogin = await this.ufpApi.login(this.nvrOptions.address, this.nvrOptions.username, this.nvrOptions.password);
+      } else {
+
+        // Let's wait for the API login to be attempted.
+        // eslint-disable-next-line no-await-in-loop
+        [ successfulLogin ] = await once(this.ufpApi, "login") as boolean[];
+      }
 
       // We had issues logging in, let's try again shortly.
       if(!successfulLogin) {
 
         this.ufpApi.clearLoginCredentials();
+        retryLoginAttempt = true;
         this.log.info(
           "Unable to login to the UniFi Protect API. Ensure your login credentials and Protect controller address are correct. Will retry again in %s second%s.",
           PROTECT_CONTROLLER_LOGIN_INTERVAL, PROTECT_CONTROLLER_LOGIN_INTERVAL > 1 ? "s" : "");
