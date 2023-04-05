@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 6.2.5 (2023-04-05)
+  * Improvement: minor webUI refinements.
+
 ## 6.2.4 (2023-04-03)
 ## 6.2.3 (2023-04-03)
   * Fix: address a rare race condition in motion event delivery.
