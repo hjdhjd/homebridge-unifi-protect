@@ -147,7 +147,7 @@ export class ProtectNvr {
       // Create a new connection to the Protect API.
       this.ufpApi = new ProtectApi(ufpLog);
 
-      // Let's try to login.
+      // Let's wait for the API login to be attempted.
       // eslint-disable-next-line no-await-in-loop
       const [successfulLogin] = await once(this.ufpApi, "login") as boolean[];
 
