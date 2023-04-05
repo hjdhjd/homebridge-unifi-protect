@@ -41,7 +41,7 @@ export const featureOptionCategories = [
   { description: "Audio feature options.", name: "Audio", validFor: [ "camera" ] },
   { description: "Device feature options.", name: "Device", validFor: [ "all" ] },
   { description: "Doorbell feature options.", name: "Doorbell", validFor: [ "camera" ] },
-  { description: "Logging feature options.", name: "Log", validFor: [ "all" ] },
+  { description: "Logging feature options.", name: "Log", validFor: [ "camera", "light", "sensor" ] },
   { description: "Motion detection feature options.", name: "Motion", validFor: [ "camera", "light", "sensor" ] },
   { description: "NVR feature options.", name: "Nvr", validFor: [ "nvr" ] },
   { description: "Security system feature options.", name: "SecuritySystem", validFor: [ "nvr" ] },
@@ -57,40 +57,40 @@ export const featureOptions: { [index: string]: FeatureOption[] } = {
   "Audio": [
 
     { default: true, description: "Audio support.", name: "" },
-    { default: false, description: "Audio filter for ambient noise suppression.", hasFeature: "hasMotionZones", name: "Filter.Noise" },
-    { default: true, description: "Two-way audio support on supported cameras.", hasFeature: "hasSpeaker", name: "TwoWay" }
+    { default: false, description: "Audio filter for ambient noise suppression.", hasFeature: [ "hasMotionZones" ], name: "Filter.Noise" },
+    { default: true, description: "Two-way audio support on supported cameras.", hasFeature: [ "hasSpeaker" ], name: "TwoWay" }
   ],
 
   // Device options.
   "Device": [
 
     { default: true, description: "Make this device available in HomeKit.", name: "" },
-    { default: false, description: "Enable the status LED for this device in HomeKit.", hasFeature: "ledSettings",  name: "StatusLed" }
+    { default: false, description: "Enable the status LED for this device in HomeKit.", hasFeature: [ "ledSettings" ],  name: "StatusLed" }
   ],
 
   // Doorbell options.
   "Doorbell": [
 
-    { default: true, description: "Enable the doorbell messages feature.", hasFeature: "isDoorbell", name: "Messages" },
-    { default: true, description: "Use messages saved to the Protect NVR as message switches.", hasFeature: "isDoorbell", name: "Messages.FromDoorbell" },
-    { default: false, description: "Add a switch accessory to trigger doorbell ring events on a Protect camera or doorbell.", hasFeature: "hasMotionZones", name: "Trigger" }
+    { default: true, description: "Enable the doorbell messages feature.", hasFeature: [ "isDoorbell" ], name: "Messages" },
+    { default: true, description: "Use messages saved to the Protect NVR as message switches.", hasFeature: [ "isDoorbell" ], name: "Messages.FromDoorbell" },
+    { default: false, description: "Add a switch accessory to trigger doorbell ring events on a Protect camera or doorbell.", hasFeature: [ "hasMotionZones" ], name: "Trigger" }
   ],
 
   // Logging options.
   "Log": [
 
-    { default: true, description: "Log HomeKit Secure Video recording events in Homebridge.", hasFeature: "hasMotionZones", name: "HKSV" },
-    { default: true, description: "Log doorbell ring events in Homebridge.", hasFeature: "hasMotionZones", name: "Doorbell" },
-    { default: false, description: "Log motion events in Homebridge.", hasProperty: "lastMotion", name: "Motion" }
+    { default: true, description: "Log HomeKit Secure Video recording events in Homebridge.", hasFeature: [ "hasMotionZones" ], name: "HKSV" },
+    { default: true, description: "Log doorbell ring events in Homebridge.", hasFeature: [ "hasMotionZones" ], name: "Doorbell" },
+    { default: false, description: "Log motion events in Homebridge.", hasProperty: [ "isMotionDetected", "isPirMotionDetected" ], name: "Motion" }
   ],
 
   // Motion options.
   "Motion": [
 
-    { default: false, description: "Use UniFi Protect smart motion detection for HomeKit motion events when on a supported device.", hasFeature: "hasSmartDetect", name: "SmartDetect" },
-    { default: false, description: "Add contact sensor accessories for each smart motion object type that UniFi Protect supports.", hasFeature: "hasSmartDetect", name: "SmartDetect.ObjectSensors" },
-    { default: false, description: "Add a switch accessory to activate or deactivate motion detection in HomeKit.", name: "Switch" },
-    { default: false, description: "Add a switch accessory to manually trigger a motion detection event in HomeKit.", name: "Trigger" }
+    { default: false, description: "Use UniFi Protect smart motion detection for HomeKit motion events when on a supported device.", hasFeature: [ "hasSmartDetect" ], name: "SmartDetect" },
+    { default: false, description: "Add contact sensor accessories for each smart motion object type that UniFi Protect supports.", hasFeature: [ "hasSmartDetect" ], name: "SmartDetect.ObjectSensors" },
+    { default: false, description: "Add a switch accessory to activate or deactivate motion detection in HomeKit.", hasProperty: [ "isMotionDetected", "isPirMotionDetected" ], name: "Switch" },
+    { default: false, description: "Add a switch accessory to manually trigger a motion detection event in HomeKit.", hasProperty: [ "isMotionDetected", "isPirMotionDetected" ], name: "Trigger" }
   ],
 
   // NVR options.
@@ -136,8 +136,8 @@ export interface FeatureOption {
 
   default: boolean,           // Default feature option setting.
   description: string,        // Description of the feature option.
-  hasFeature?: string,        // What hardware-specific features, if any, is this feature option dependent on.
-  hasProperty?: string,       // What UFP JSON property, if any, is this feature option dependent on.
+  hasFeature?: string[],      // What hardware-specific features, if any, is this feature option dependent on.
+  hasProperty?: string[],     // What UFP JSON property, if any, is this feature option dependent on.
   name: string                // Name of the feature option.
 }
 
