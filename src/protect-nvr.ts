@@ -158,7 +158,7 @@ export class ProtectNvr {
         successfulLogin = await this.ufpApi.login(this.nvrOptions.address, this.nvrOptions.username, this.nvrOptions.password);
       } else {
 
-        // Let's wait for the API login to be attempted.
+        // Let's wait for the API login to be attempted at plugin startup.
         // eslint-disable-next-line no-await-in-loop
         [ successfulLogin ] = await once(this.ufpApi, "login") as boolean[];
       }
