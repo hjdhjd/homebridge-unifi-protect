@@ -25,11 +25,14 @@
         Enable
     </button>
 </div>
-<div id="pageDevices" class="mt-2" style="display: none;">
+<div id="pageOptions" class="mt-2" style="display: none;">
     <div id="deviceInfo">
         <table class="table table-sm table-borderless">
+          <tr class="align-center">
+            <td colspan="2" class="m-0 p-2 text-center font-weight-bold">Feature options are applied in prioritized order from lowest to highest:<br><i>Global options</i> (lowest) &rarr; <i>Protect controller options</i> &rarr; <i>Protect device options</i> (highest)</td>
+          </tr>
           <tr class="align-top">
-            <td rowspan="2" class="w-25">
+            <td rowspan="3" class="w-25">
               <table class="table table-sm table-bordered m-0 p-0">
                 <tr>
                   <td>
@@ -48,7 +51,7 @@
             <td>
               <table class="table table-sm table-borderless border-bottom m-0 p-0" id="deviceStatsTable" style="display: none;">
                 <tr>
-                    <th style="width: 30%" class="m-0 p-0"><B>Model<B></th>
+                    <th style="width: 30%;" class="m-0 p-0"><B>Model<B></th>
                     <th style="width: 25%;" class="m-0 p-0"><B>IP Address</B></th>
                     <th style="width: 20%;" class="m-0 p-0"><B>MAC Address</B></th>
                     <th style="width: 25%;" class="m-0 p-0"><B>Status</B></th>
@@ -63,7 +66,7 @@
             </td>
           </tr>
           <tr>
-            <td id="configTable" width="100%">
+            <td id="configTable" style="width: 100%;">
             </td>
           </tr>
         </table>
@@ -220,7 +223,7 @@
 
         // Hide the legacy UI.
         document.getElementById("pageSupport").style.display = "none";
-        document.getElementById("pageDevices").style.display = "block";
+        document.getElementById("pageOptions").style.display = "block";
 
         // What we're going to do is display our global options, followed by the list of controllers the user has configured.
         // We pre-select the first controller by default for the user as a starting point.
@@ -231,24 +234,24 @@
         // Start with a clean slate.
         controllersTable.innerHTML = "";
 
-        // Enumerate our global settings.
+        // Enumerate our global options.
         const trGlobal = document.createElement("tr");
 
-        // Create the cell for our global settings.
+        // Create the cell for our global options.
         const tdGlobal = document.createElement("td");
         tdGlobal.classList.add("m-0", "p-0");
 
         // Create our label target.
         const globalLabel = document.createElement("label");
 
-        globalLabel.name = "UFP Global Settings";
-        globalLabel.appendChild(document.createTextNode("Global Settings"));
+        globalLabel.name = "UFP Global Options";
+        globalLabel.appendChild(document.createTextNode("Global Options"));
         globalLabel.style.cursor = "pointer";
         globalLabel.classList.add("mx-0", "py-2", "p-0", "w-100");
 
         globalLabel.addEventListener("click", event => showDevices(null));
 
-        // Add the global settings label.
+        // Add the global options label.
         tdGlobal.appendChild(globalLabel);
         tdGlobal.style.fontWeight = "bold";
 
@@ -322,13 +325,13 @@
         homebridge.showSpinner();
 
         // Make sure we highlight the selected controller so the user knows where we are.
-        controllerList.map(x => (x.name === (controller ? controller.address : "UFP Global Settings")) ?
+        controllerList.map(x => (x.name === (controller ? controller.address : "UFP Global Options")) ?
           x.parentElement.classList.add("bg-info", "text-white") : x.parentElement.classList.remove("bg-info", "text-white"));
 
         const devicesTable = document.getElementById("devicesTable");
         let ufpDevices = [];
 
-        // If we're not accessing global settings, pull a list of devices attached to this controller.
+        // If we're not accessing global options, pull a list of devices attached to this controller.
         if(controller) {
 
           ufpDevices = await homebridge.request("/getDevices", { address: controller.address, password: controller.password, username: controller.username });
@@ -457,7 +460,7 @@
           // Populate the device information info pane.
           const ufpDevice = ufpDevices.find(x => x.id === deviceId);
 
-          // Ensure we have a controller or device. The only time this won't be the case is when we're looking at global settings.
+          // Ensure we have a controller or device. The only time this won't be the case is when we're looking at global options.
           if(ufpDevice) {
 
             document.getElementById("device_model").innerHTML = ufpDevice.marketName ?? ufpDevice.type;
@@ -480,6 +483,7 @@
           const ufpFeatures = await homebridge.request("/getOptions", { configOptions: configOptions, nvrUfp: ufpDevices[0], deviceUfp: ufpDevice });
           const optionsDevice = ufpFeatures.options;
 
+          // Start with a clean slate.
           let newConfigTableHtml = "";
           configTable.innerHTML = "";
 
@@ -520,8 +524,8 @@
             for(const option of optionsDevice[category.name]) {
 
               // Only show feature options that are valid for this device.
-              if(ufpDevice && (ufpDevice.modelKey !== "nvr") && ((option.hasFeature && (!ufpDevice.featureFlags || !ufpDevice.featureFlags[option.hasFeature])) ||
-                (option.hasProperty && !(option.hasProperty in ufpDevice)))) {
+              if(ufpDevice && (ufpDevice.modelKey !== "nvr") && ((option.hasFeature && (!ufpDevice.featureFlags || !option.hasFeature.some(x => ufpDevice.featureFlags[x]))) ||
+                (option.hasProperty && !option.hasProperty.some(x => x in ufpDevice)))) {
 
                 continue;
               }
@@ -641,7 +645,7 @@
         document.getElementById("menuSettings").classList.add("btn-primary");
 
         document.getElementById("pageSupport").style.display = "block";
-        document.getElementById("pageDevices").style.display = "none";
+        document.getElementById("pageOptions").style.display = "none";
 
         // All done. Let the user interact with us.
         homebridge.hideSpinner();
@@ -662,7 +666,7 @@
         document.getElementById("menuSettings").classList.remove("btn-primary");
 
         document.getElementById("pageSupport").style.display = "none";
-        document.getElementById("pageDevices").style.display = "none";
+        document.getElementById("pageOptions").style.display = "none";
 
         homebridge.showSchemaForm();
 
