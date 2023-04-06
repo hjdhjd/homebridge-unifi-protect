@@ -24,41 +24,29 @@ interface MessageSwitchInterface extends MessageInterface {
 
 export class ProtectDoorbell extends ProtectCamera {
 
-  private defaultDuration!: number;
-  private isMessagesEnabled!: boolean;
-  private isMessagesFromControllerEnabled!: boolean;
-  private messageSwitches!: MessageSwitchInterface[];
+  private defaultDuration: number;
+  private isMessagesEnabled: boolean;
+  private isMessagesFromControllerEnabled: boolean;
+  private messageSwitches: MessageSwitchInterface[];
 
   // Create an instance.
   constructor(nvr: ProtectNvr, device: ProtectCameraConfig, accessory: PlatformAccessory) {
 
     super(nvr, device, accessory);
+
+    this.defaultDuration = this.nvr.ufp.doorbellSettings?.defaultMessageResetTimeoutMs ?? 60000;
+    this.isMessagesEnabled = this.nvr.optionEnabled(this.ufp, "Doorbell.Messages");
+    this.isMessagesFromControllerEnabled = this.nvr.optionEnabled(this.ufp, "Doorbell.Messages.FromDoorbell");
+    this.messageSwitches = [];
   }
 
   // Configure the doorbell for HomeKit.
   protected async configureDevice(): Promise<boolean> {
 
-    this.defaultDuration = this.nvr.ufp.doorbellSettings?.defaultMessageResetTimeoutMs ?? 60000;
-    this.isMessagesEnabled = true;
-    this.isMessagesFromControllerEnabled = true;
-    this.messageSwitches = [];
-
-    // We only want to deal with cameras with chimes.
-    if(!this.ufp.featureFlags.hasChime) {
+    // We only want to deal with actual Protect doorbell devices.
+    if(!this.ufp.featureFlags.isDoorbell) {
 
       return false;
-    }
-
-    // The user has disabled the doorbell message functionality.
-    if(!this.nvr.optionEnabled(this.ufp, "Doorbell.Messages")) {
-
-      this.isMessagesEnabled = false;
-    }
-
-    // The user has disabled the doorbell message functionality.
-    if(!this.nvr.optionEnabled(this.ufp, "Doorbell.Messages.FromDoorbell")) {
-
-      this.isMessagesFromControllerEnabled = false;
     }
 
     // Call our parent to setup the camera portion of the doorbell.

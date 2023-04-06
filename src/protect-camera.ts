@@ -324,7 +324,7 @@ export class ProtectCamera extends ProtectDevice {
 
       // Since we aren't enabling the doorbell trigger on this camera, remove the doorbell service if the camera
       // isn't actually doorbell-capable hardware.
-      if(!this.ufp.featureFlags.hasChime && doorbellService) {
+      if(!this.ufp.featureFlags.isDoorbell && doorbellService) {
 
         this.accessory.removeService(doorbellService);
       }
