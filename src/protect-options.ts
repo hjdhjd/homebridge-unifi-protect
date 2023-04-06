@@ -96,8 +96,9 @@ export const featureOptions: { [index: string]: FeatureOption[] } = {
   // NVR options.
   "Nvr": [
 
+    { default: false, description: "Publish all the realtime telemetry received from the Protect controller to MQTT.", name: "Publish.Telemetry" },
     { default: false, description: "Add switch accessories to control the native recording capabilities of the UniFi Protect NVR.", name: "Recording.Switch" },
-    { default: false, description: "Add sensor accessories to display NVR system information (currently only the temperature).", name: "SystemInfo" }
+    { default: false, description: "Add sensor accessories to display the Protect controller system information (currently only the temperature).", name: "SystemInfo" }
   ],
 
   // Security system options.

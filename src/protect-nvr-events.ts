@@ -19,6 +19,7 @@ export class ProtectNvrEvents extends EventEmitter {
   private lastRing: { [index: string]: number };
   private log: ProtectLogging;
   private motionDuration: number;
+  private mqttPublishTelemetry: boolean;
   private nvr: ProtectNvr;
   private readonly eventTimers: { [index: string]: NodeJS.Timeout };
   private ufpApi: ProtectApi;
@@ -40,6 +41,7 @@ export class ProtectNvrEvents extends EventEmitter {
     this.lastMotion = {};
     this.lastRing = {};
     this.log = nvr.log;
+    this.mqttPublishTelemetry = nvr.optionEnabled(nvr.ufp, "Nvr.Publish.Telemetry", false);
     this.nvr = nvr;
     this.ufpApi = nvr.ufpApi;
     this.ufpDeviceState = {};
@@ -49,6 +51,12 @@ export class ProtectNvrEvents extends EventEmitter {
     this.unsupportedDevices = {};
     this.eventsHandler = null;
     this.ufpUpdatesHandler = null;
+
+    // If we've enabled telemetry from the controller inform the user.
+    if(this.mqttPublishTelemetry) {
+
+      this.log.info("Protect controller telemetry enabled.");
+    }
 
     this.configureEvents();
   }
@@ -213,6 +221,12 @@ export class ProtectNvrEvents extends EventEmitter {
         default:
 
           break;
+      }
+
+      // If enabled, publish all the event traffic coming from the Protect controller to MQTT.
+      if(this.mqttPublishTelemetry) {
+
+        this.nvr.mqtt?.publish(this.nvr.ufp.mac, "telemetry", JSON.stringify(packet));
       }
     });
 
