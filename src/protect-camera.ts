@@ -236,7 +236,7 @@ export class ProtectCamera extends ProtectDevice {
     const payload = packet.payload as ProtectEventAdd;
 
     // We're only interested in smart motion detection events.
-    if((packet.header.modelKey !== "event") || (payload.type !== "smartDetectZone") || !payload.smartDetectTypes.length) {
+    if((packet.header.modelKey !== "event") || ((payload.type !== "smartDetectZone") && (payload.type !== "smartDetectLine")) || !payload.smartDetectTypes.length) {
 
       return;
     }
