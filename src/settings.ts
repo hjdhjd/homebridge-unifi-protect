@@ -17,11 +17,11 @@ export const PROTECT_API_RETRY_INTERVAL = 300;
 // Protect API response timeout, in seconds. This should never be greater than 5 seconds.
 export const PROTECT_API_TIMEOUT = 3.5;
 
-// How often, in seconds, should we retry logging into Protect on startup, when we failed the first time.
-export const PROTECT_CONTROLLER_LOGIN_INTERVAL = 60;
-
 // How often, in seconds, should we check Protect controllers for new or removed devices.
 export const PROTECT_CONTROLLER_REFRESH_INTERVAL = 120;
+
+// How often, in seconds, should we retry getting our bootstrap configuration from the Protect controller.
+export const PROTECT_CONTROLLER_RETRY_INTERVAL = 10;
 
 // FFmpeg afftdn audio filter defaults - this setting uses FFTs to reduce noise in an audio signal by the number of decibels below.
 export const PROTECT_FFMPEG_AUDIO_FILTER_FFTNR = 90;
