@@ -5,15 +5,15 @@
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "lib": [
-      "ES2020", "DOM"
+      "ES2021", "DOM"
     ],
-    "module": "ES2020",
+    "module": "ES2022",
     "moduleResolution":"node",
     "outDir": "dist",
     "rootDir": "src",
     "sourceMap": true,
     "strict": true,
-    "target": "ES2020"
+    "target": "ES2021"
   },
   "include": [
     "src"
