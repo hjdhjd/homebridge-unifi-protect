@@ -413,7 +413,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
       // Calculate approximately how many seconds we've recorded. We have more accuracy in timeshifted segments, so we'll use the more
       // accurate statistics when we can. Otherwise, we use the number of segments transmitted to HomeKit as a close proxy.
       const recordedSeconds = this.timeshiftedSegments ?
-        ((this.timeshiftedSegments * this.timeshift.segmentLength) / 1000) : (this.transmittedSegments * this.rtspEntry?.channel.idrInterval);
+        ((this.timeshiftedSegments * this.timeshift.segmentLength) / 1000) : (this.transmittedSegments / this.rtspEntry?.channel.idrInterval);
 
       let recordedTime = "";
 
