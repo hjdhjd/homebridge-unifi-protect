@@ -20,7 +20,6 @@ import { ProtectRecordingDelegate } from "./protect-record.js";
 import { RtpDemuxer } from "./protect-rtp.js";
 import WebSocket from "ws";
 import events from "node:events";
-import { platform } from "node:process";
 
 type SessionInfo = {
   address: string; // Address of the HomeKit client.
@@ -65,7 +64,6 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   private savedBitrate: number;
   private snapshotCache: { [index: string]: { image: Buffer, time: number } };
   public verboseFfmpeg: boolean;
-  public readonly videoEncoderOptions!: string[];
 
   // Create an instance of a HomeKit streaming delegate.
   constructor(protectCamera: ProtectCamera, resolutions: [number, number, number][]) {
@@ -86,7 +84,9 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     this.savedBitrate = 0;
     this.snapshotCache = {};
     this.verboseFfmpeg = false;
-    this.videoEncoderOptions = this.getVideoEncoderOptions();
+
+    // Configure our hardware acceleration support.
+    this.configureHwAccel();
 
     // Setup for HKSV, if enabled.
     if(this.protectCamera.hasHksv) {
@@ -384,6 +384,15 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       return;
     }
 
+    // Has the user explicitly configured transcoding, or are we a high latency session (e.g. cellular)? If we're high latency, we'll transcode
+    // by default unless the user has asked us not to. Why? It generally results in a speedier experience, at the expense of some stream quality
+    // (HomeKit tends to request far lower bitrates than Protect is capable of producing).
+    //
+    // How do we determine if we're a high latency connection? We look at the RTP packet time of the audio packet time for a hint. HomeKit uses values
+    // of 20, 30, 40, and 60ms. We make an assumption, validated by lots of real-world testing, that when we see 60ms used by HomeKit, it's a
+    // high latency connection and act accordingly.
+    const isTranscoding = this.protectCamera.hints.transcode || ((request.audio.packet_time >= 60) && this.protectCamera.hints.transcodeHighLatency);
+
     // Find the best RTSP stream based on what we're looking for.
     this.rtspEntry = this.protectCamera.findRtsp(request.video.width, request.video.height, this.protectCamera.ufp, sessionInfo.address);
 
@@ -413,15 +422,6 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     // Set the desired bitrate in Protect. We don't need to for this to return, because Protect
     // will adapt the stream once it processes the configuration change.
     await this.protectCamera.setBitrate(this.rtspEntry.channel.id, request.video.max_bit_rate * 1000);
-
-    // Has the user explicitly configured transcoding, or are we a high latency session (e.g. cellular)? If we're high latency, we'll transcode
-    // by default unless the user has asked us not to. Why? It generally results in a speedier experience, at the expense of some stream quality
-    // (HomeKit tends to request far lower bitrates than Protect is capable of producing).
-    //
-    // How do we determine if we're a high latency connection? We look at the RTP packet time of the audio packet time for a hint. HomeKit uses values
-    // of 20, 30, 40, and 60ms. We make an assumption, validated by lots of real-world testing, that when we see 60ms used by HomeKit, it's a
-    // high latency connection and act accordingly.
-    const isTranscoding = this.protectCamera.hints.transcode || ((request.audio.packet_time >= 60) && this.protectCamera.hints.transcodeHighLatency);
 
     // Set our packet size to be 564. Why? MPEG transport stream (TS) packets are 188 bytes in size each.
     // These packets transmit the video data that you ultimately see on your screen and are transmitted using
@@ -480,8 +480,6 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
       // Configure our video parameters for transcoding:
       //
-      // -profile:v high     Use the H.264 high profile when encoding, which provides for better stream quality and size efficiency.
-      // -level:v high       Use the H.264 profile level that HomeKit is requesting when encoding.
       // -bf 0               Disable B-frames when encoding to increase compatibility against occasionally finicky HomeKit clients.
       // -force_key_frames   Force a keyframe to be generated every two seconds to ensure a solid livestreaming experience balanced with video quality.
       // -b:v bitrate        The average bitrate to use for this stream. This is specified by HomeKit.
@@ -491,9 +489,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       // -filter:v fps=fps=  Use the fps filter to get to the frame rate requested by HomeKit. This has better performance characteristics
       //                     for Protect rather than using "-r".
       ffmpegArgs.push(
-        ...this.videoEncoderOptions,
-        "-profile:v", this.getH264Profile(request.video.profile),
-        "-level:v", this.getH264Level(request.video.level),
+        ...this.videoEncoderOptions(request.video.profile, request.video.level),
         "-bf", "0",
         "-force_key_frames", "expr:gte(t, n_forced * 2)",
         "-b:v", request.video.max_bit_rate.toString() + "k",
@@ -1157,47 +1153,40 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   }
 
   // Determine the video encoder to use when transcoding.
-  private getVideoEncoderOptions(): string[] {
+  private configureHwAccel(): boolean {
 
-    // Default to the tried-and-true libx264. We use the following options by default:
-    //
-    // -pix_fmt yuvj420p             Use the yuvj420p pixel format, which is what Protect uses.
-    // -preset veryfast              Use the veryfast encoding preset in libx264, which provides a good balance of encoding
-    //                               speed and quality.
-    let encoder = "libx264";
-    let encoderOptions = "-pix_fmt yuvj420p -preset veryfast";
+    const encoderLogMessage = "";
 
-    // If the user has specified a video encoder, let's use it.
-    if(this.config.videoEncoder) {
-
-      encoder = this.config.videoEncoder;
-    }
-
-    // If we've enabled hardware-accelerated transcoding, Let's deduce what we are running on, and select encoder options accordingly.
+    // If we've enabled hardware-accelerated transcoding, let's select encoder options accordingly where supported.
     if(this.protectCamera.hints.hardwareTranscoding) {
 
       this.protectCamera.hasHwAccel = true;
 
-      switch(platform) {
+      // Utility function to check that we have a specific encoder codec available to us.
+      const hasEncoder = (codec: string): boolean => {
 
-        case "darwin":
+        if(!this.platform.isEncoderAvailable("h264", codec)) {
+
+          this.log.error("Unable to enable hardware accelerated transcoding. " + "Your video processor does not have support for the " + codec + " encoder enabled. " +
+            "Using software transcoding instead.");
+
+          this.protectCamera.hasHwAccel = false;
+          return false;
+        }
+
+        return true;
+      };
+
+      switch(this.platform.systemInfo) {
+
+        case "macOS":
 
           // Verify that we have the hardware encoder available to us.
-          if(!this.platform.isEncoderAvailable("h264", "h264_videotoolbox")) {
+          if(!hasEncoder("h264_videotoolbox")) {
 
-            this.log.error("Unable to enable hardware accelerated transcoding. " +
-              "Your video processor does not have support for the h264_videotoolbox encoder enabled. " +
-              "Using software transcoding instead.");
-            this.protectCamera.hasHwAccel = false;
             break;
           }
 
-          // h264_videotoolbox is the macOS hardware encoder API. We use the following options by default:
-          //
-          // -pix_fmt nv12           videotoolbox doesn't support the full yuvj420p pixel format, so we use nv12 to get us close.
-          // -coder cabac            Use the cabac encoder for better video quality with the encoding profiles we use in HBUP.
-          encoder = "h264_videotoolbox";
-          encoderOptions = "-pix_fmt nv12 -coder cabac -allow_sw 1";
           break;
 
         default:
@@ -1211,9 +1200,67 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     // Inform the user.
     if(this.protectCamera.hasHwAccel) {
 
-      this.log.info("Hardware accelerated transcoding enabled.");
+      this.log.info("Hardware accelerated transcoding enabled.%s", encoderLogMessage);
     }
 
-    return ["-vcodec", encoder, ...encoderOptions.split(" ")];
+    return this.protectCamera.hasHwAccel;
+  }
+
+  // Determine the video encoder to use when transcoding.
+  public videoEncoderOptions(profile: H264Profile, level: H264Level): string[] {
+
+    // Default to the tried-and-true libx264. We use the following options by default:
+    //
+    // -vcodec libx264               Use the excellent libx264 H.264 encoder by default, unless the user explicitly overrides it.
+    // -pix_fmt yuvj420p             Use the yuvj420p pixel format, which is what Protect uses.
+    // -preset veryfast              Use the veryfast encoding preset in libx264, which provides a good balance of encoding speed and quality.
+    // -profile:v                    Use the H.264 profile that HomeKit is requesting when encoding.
+    // -level:v                      Use the H.264 profile level that HomeKit is requesting when encoding.
+    let encoderOptions = [
+
+      // If the user has specified a video encoder, let's use it.
+      "-vcodec", this.config.videoEncoder ?? "libx264",
+      "-pix_fmt", "yuvj420p",
+      "-preset", "veryfast",
+      "-profile:v", this.getH264Profile(profile),
+      "-level:v", this.getH264Level(level)
+    ];
+
+    // If we've enabled hardware-accelerated transcoding, let's select encoder options accordingly where supported.
+    if(this.protectCamera.hints.hardwareTranscoding) {
+
+      switch(this.platform.systemInfo) {
+
+        case "macOS":
+
+          // h264_videotoolbox is the macOS hardware encoder API. We use the following options:
+          //
+          // -pix_fmt nv12           videotoolbox doesn't support the full yuvj420p pixel format, so we use nv12 to get us close.
+          // -coder cabac            Use the cabac encoder for better video quality with the encoding profiles we use in HBUP.
+          // -allow_sw 1             Allow the use of the software encoder if the hardware encoder is occupied or unavailable.
+          //                         This allows us to scale when we get multiple streaming requests simultaneously that might consume all the available encode engines.
+          // -profile:v              Use the H.264 profile that HomeKit is requesting when encoding.
+          // -level:v 5.1            We override what HomeKit requests for the H.264 profile level on macOS when we're using hardware accelerated transcoding because the
+          //                         hardware encoder won't transcode to anything below H.264 level 5.1 on higher bitrate streams like the G4 Pro.
+          encoderOptions = [
+            "-vcodec", "h264_videotoolbox",
+            "-pix_fmt", "nv12",
+            "-coder", "cabac",
+            "-allow_sw", "1",
+            "-profile:v", this.getH264Profile(profile),
+            "-level:v", "5.1"
+          ];
+
+          break;
+
+        default:
+
+          // Back to software encoding.
+          this.protectCamera.hasHwAccel = false;
+          break;
+      }
+    }
+
+    return encoderOptions;
   }
 }

@@ -7,7 +7,6 @@ import { ProtectCamera, RtspEntry } from "./protect-camera.js";
 import { CameraRecordingConfiguration } from "homebridge";
 import { FfmpegProcess } from "./protect-ffmpeg.js";
 import events from "node:events";
-import { platform } from "node:process";
 
 // FFmpeg HomeKit Streaming Video recording process management.
 export class FfmpegRecordingProcess extends FfmpegProcess {
@@ -26,14 +25,6 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
 
     // Initialize our recording buffer.
     this.recordingBuffer = [];
-
-    // Determine which H.264 profile HomeKit is expecting from us.
-    const requestedProfile = protectCamera.stream.getH264Profile(recordingConfig.videoCodec.parameters.profile);
-
-    // Determine which H.264 level HomeKit is expecting form us. We override this for macOS when we've enabled hardware accelerated transcoding because
-    // the hardware encoder won't transcode to anything below level 5.1 on higher bitrate streams like the G4 Pro.
-    const requestedLevel = (protectCamera.hasHwAccel && (platform === "darwin")) ? "5.1" :
-      protectCamera.stream.getH264Level(recordingConfig.videoCodec.parameters.level);
 
     // -hide_banner  Suppress printing the startup banner in FFmpeg.
     this.commandLineArgs = [
@@ -100,9 +91,7 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
     this.commandLineArgs.push(
 
       "-map", "0:v:0",
-      ...this.protectCamera.stream.videoEncoderOptions,
-      "-profile:v", requestedProfile,
-      "-level:v", requestedLevel,
+      ...this.protectCamera.stream.videoEncoderOptions(recordingConfig.videoCodec.parameters.profile, recordingConfig.videoCodec.parameters.level),
       "-b:v", recordingConfig.videoCodec.parameters.bitRate.toString() + "k",
       "-bufsize", (2 * recordingConfig.videoCodec.parameters.bitRate).toString() + "k",
       "-maxrate", recordingConfig.videoCodec.parameters.bitRate.toString() + "k",
