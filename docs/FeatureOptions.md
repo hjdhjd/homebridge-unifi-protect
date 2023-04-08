@@ -93,68 +93,96 @@ Feature options provide a rich mechanism for tailoring your `homebridge-unifi-pr
  * [Video.HKSV](#video.hksv): HomeKit Secure Video feature options.
 
 #### <A NAME="audio"></A>Audio feature options.
+
+These option(s) apply to: Protect cameras
+
 | Option                                 | Description
 |----------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------
-| `Audio`                                | Audio support. (default: true).
-| `Audio.Filter.Noise`                   | Audio filter for ambient noise suppression. (default: false).
-| `Audio.TwoWay`                         | Two-way audio support on supported cameras. (default: true).
+| `Audio`                                | Audio support. **(default: enabled)**.
+| `Audio.Filter.Noise`                   | Audio filter for ambient noise suppression. **(default: disabled)**. <BR>*Supported on Protect cameras that have a motion sensor.*
+| `Audio.TwoWay`                         | Two-way audio support on supported cameras. **(default: enabled)**. <BR>*Supported on Protect devices that have a speaker (e.g. Protect doorbells).*
 
 #### <A NAME="device"></A>Device feature options.
+
+These option(s) apply to: all Protect devices
+
 | Option                                 | Description
 |----------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------
-| `Device`                               | Make this device available in HomeKit. (default: true).
-| `Device.StatusLed`                     | Enable the status LED for this device in HomeKit. (default: false).
+| `Device`                               | Make this device available in HomeKit. **(default: enabled)**.
+| `Device.StatusLed`                     | Enable the status LED for this device in HomeKit. **(default: disabled)**. <BR>*Supported on Protect devices that have a status LED.*
 
 #### <A NAME="doorbell"></A>Doorbell feature options.
+
+These option(s) apply to: Protect cameras
+
 | Option                                 | Description
 |----------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------
-| `Doorbell.Messages`                    | Enable the doorbell messages feature. (default: true).
-| `Doorbell.Messages.FromDoorbell`       | Use messages saved to the Protect NVR as message switches. (default: true).
-| `Doorbell.Trigger`                     | Add a switch accessory to trigger doorbell ring events on a Protect camera or doorbell. (default: false).
+| `Doorbell.Messages`                    | Enable the doorbell messages feature. **(default: enabled)**. <BR>*Supported on Protect devices that have a doorbell.*
+| `Doorbell.Messages.FromDoorbell`       | Use messages saved to the Protect NVR as message switches. **(default: enabled)**. <BR>*Supported on Protect devices that have a doorbell.*
+| `Doorbell.Trigger`                     | Add a switch accessory to trigger doorbell ring events on a Protect camera or doorbell. **(default: disabled)**. <BR>*Supported on Protect cameras that have a motion sensor.*
 
 #### <A NAME="log"></A>Logging feature options.
+
+These option(s) apply to: Protect cameras, Protect lights, Protect sensors
+
 | Option                                 | Description
 |----------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------
-| `Log.HKSV`                             | Log HomeKit Secure Video recording events in Homebridge. (default: true).
-| `Log.Doorbell`                         | Log doorbell ring events in Homebridge. (default: true).
-| `Log.Motion`                           | Log motion events in Homebridge. (default: false).
+| `Log.HKSV`                             | Log HomeKit Secure Video recording events in Homebridge. **(default: enabled)**. <BR>*Supported on Protect cameras that have a motion sensor.*
+| `Log.Doorbell`                         | Log doorbell ring events in Homebridge. **(default: enabled)**. <BR>*Supported on Protect cameras that have a motion sensor.*
+| `Log.Motion`                           | Log motion events in Homebridge. **(default: disabled)**. <BR>*Supported on Protect devices that have a motion sensor.*
 
 #### <A NAME="motion"></A>Motion detection feature options.
+
+These option(s) apply to: Protect cameras, Protect lights, Protect sensors
+
 | Option                                 | Description
 |----------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------
-| `Motion.SmartDetect`                   | Use UniFi Protect smart motion detection for HomeKit motion events when on a supported device. (default: false).
-| `Motion.SmartDetect.ObjectSensors`     | Add contact sensor accessories for each smart motion object type that UniFi Protect supports. (default: false).
-| `Motion.Switch`                        | Add a switch accessory to activate or deactivate motion detection in HomeKit. (default: false).
-| `Motion.Trigger`                       | Add a switch accessory to manually trigger a motion detection event in HomeKit. (default: false).
+| `Motion.SmartDetect`                   | Use UniFi Protect smart motion detection for HomeKit motion events when on a supported device. **(default: disabled)**. <BR>*Supported on Protect devices that support smart motion detection (e.g. G4-series cameras and better).*
+| `Motion.SmartDetect.ObjectSensors`     | Add contact sensor accessories for each smart motion object type that UniFi Protect supports. **(default: disabled)**. <BR>*Supported on Protect devices that support smart motion detection (e.g. G4-series cameras and better).*
+| `Motion.Switch`                        | Add a switch accessory to activate or deactivate motion detection in HomeKit. **(default: disabled)**. <BR>*Supported on Protect devices that have a motion sensor.*
+| `Motion.Trigger`                       | Add a switch accessory to manually trigger a motion detection event in HomeKit. **(default: disabled)**. <BR>*Supported on Protect devices that have a motion sensor.*
 
 #### <A NAME="nvr"></A>NVR feature options.
+
+These option(s) apply to: Protect controllers
+
 | Option                                 | Description
 |----------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------
-| `Nvr.Recording.Switch`                 | Add switch accessories to control the native recording capabilities of the UniFi Protect NVR. (default: false).
-| `Nvr.SystemInfo`                       | Add sensor accessories to display NVR system information (currently only the temperature). (default: false).
+| `Nvr.Publish.Telemetry`                | Publish all the realtime telemetry received from the Protect controller to MQTT. **(default: disabled)**.
+| `Nvr.Recording.Switch`                 | Add switch accessories to control the native recording capabilities of the UniFi Protect NVR. **(default: disabled)**.
+| `Nvr.SystemInfo`                       | Add sensor accessories to display the Protect controller system information (currently only the temperature). **(default: disabled)**.
 
 #### <A NAME="securitysystem"></A>Security system feature options.
+
+These option(s) apply to: Protect controllers
+
 | Option                                 | Description
 |----------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------
-| `SecuritySystem.Alarm`                 | Add a switch accessory to trigger the security system accessory, when using the liveview feature option. (default: false).
+| `SecuritySystem.Alarm`                 | Add a switch accessory to trigger the security system accessory, when using the liveview feature option. **(default: disabled)**.
 
 #### <A NAME="video"></A>Video feature options.
+
+These option(s) apply to: Protect cameras
+
 | Option                                 | Description
 |----------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------
-| `Video.DynamicBitrate`                 | Dynamically adjust the bitrate on the UniFi Protect controller to accomodate HomeKit requests. (default: false).
-| `Video.DynamicBitrate.Switch`          | Add a switch accessory to enable or disable dynamic bitrate support on the Protect controller. (default: false).
-| `Video.Stream.Only.High`               | For viewing livestreams, force the use of the high quality video stream from the Protect controller. (default: false).
-| `Video.Stream.Only.Medium`             | For viewing livestreams, force the use of the medium quality video stream from the Protect controller. (default: false).
-| `Video.Stream.Only.Low`                | For viewing livestreams, force the use of the low quality video stream from the Protect controller. (default: false).
-| `Video.Transcode`                      | Transcode live video streams when viewing in the Home app instead of remuxing. (default: false).
-| `Video.Transcode.Hardware`             | Use hardware-accelerated transcoding, when available (macOS only). (default: false).
-| `Video.Transcode.HighLatency`          | When streaming to high-latency clients (e.g. cellular connections), transcode live video streams instead of remuxing them. (default: true).
+| `Video.DynamicBitrate`                 | Dynamically adjust the bitrate on the UniFi Protect controller to accomodate HomeKit requests. **(default: disabled)**.
+| `Video.DynamicBitrate.Switch`          | Add a switch accessory to enable or disable dynamic bitrate support on the Protect controller. **(default: disabled)**.
+| `Video.Stream.Only.High`               | For viewing livestreams, force the use of the high quality video stream from the Protect controller. **(default: disabled)**.
+| `Video.Stream.Only.Medium`             | For viewing livestreams, force the use of the medium quality video stream from the Protect controller. **(default: disabled)**.
+| `Video.Stream.Only.Low`                | For viewing livestreams, force the use of the low quality video stream from the Protect controller. **(default: disabled)**.
+| `Video.Transcode`                      | Transcode live video streams when viewing in the Home app instead of remuxing. **(default: disabled)**.
+| `Video.Transcode.Hardware`             | Use hardware-accelerated transcoding, when available (macOS only). **(default: disabled)**.
+| `Video.Transcode.HighLatency`          | When streaming to high-latency clients (e.g. cellular connections), transcode live video streams instead of remuxing them. **(default: enabled)**.
 
 #### <A NAME="video.hksv"></A>HomeKit Secure Video feature options.
+
+These option(s) apply to: Protect cameras
+
 | Option                                 | Description
 |----------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------
-| `Video.HKSV.TimeshiftBuffer`           | Enable the timeshift buffer for HomeKit Secure Video. (default: true).
-| `Video.HKSV.Recording.Switch`          | Add a switch accessory to enable or disable HKSV event recording. (default: false).
-| `Video.HKSV.Record.Only.High`          | For HomeKit Secure Video recordings, force the use of the high quality video stream from the Protect controller. (default: false).
-| `Video.HKSV.Record.Only.Medium`        | For HomeKit Secure Video recordings, force the use of the medium quality video stream from the Protect controller. (default: false).
-| `Video.HKSV.Record.Only.Low`           | For HomeKit Secure Video recordings, force the use of the low quality video stream from the Protect controller. (default: false).
+| `Video.HKSV.TimeshiftBuffer`           | Enable the timeshift buffer for HomeKit Secure Video. **(default: enabled)**.
+| `Video.HKSV.Recording.Switch`          | Add a switch accessory to enable or disable HKSV event recording. **(default: disabled)**.
+| `Video.HKSV.Record.Only.High`          | For HomeKit Secure Video recordings, force the use of the high quality video stream from the Protect controller. **(default: disabled)**.
+| `Video.HKSV.Record.Only.Medium`        | For HomeKit Secure Video recordings, force the use of the medium quality video stream from the Protect controller. **(default: disabled)**.
+| `Video.HKSV.Record.Only.Low`           | For HomeKit Secure Video recordings, force the use of the low quality video stream from the Protect controller. **(default: disabled)**.
