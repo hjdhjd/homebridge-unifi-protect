@@ -9,6 +9,8 @@ import { ProtectNvr } from "./protect-nvr.js";
 import { RtpPortAllocator } from "./protect-rtp.js";
 import { execFile } from "node:child_process";
 import ffmpegPath from "ffmpeg-for-homebridge";
+import { platform } from "node:process";
+import { readFileSync } from "node:fs";
 import util from "node:util";
 
 export class ProtectPlatform implements DynamicPlatformPlugin {
@@ -20,11 +22,13 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
   private readonly controllers: ProtectNvr[];
   public readonly log: Logging;
   public readonly rtpPorts: RtpPortAllocator;
+  private _systemInfo: string;
   public verboseFfmpeg: boolean;
   private videoProcessorEncoders: { [index: string]: string[] };
 
   constructor(log: Logging, config: PlatformConfig, api: API) {
 
+    this._systemInfo = "";
     this.accessories = [];
     this.api = api;
     this.configOptions = [];
@@ -118,6 +122,9 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
       this.controllers.push(new ProtectNvr(this, controllerConfig));
     }
 
+    // Identify what we're running on so we can take advantage of hardware-specific features.
+    this.probeHwOs();
+
     // Avoid a prospective race condition by waiting to configure our controllers until Homebridge is done
     // loading all the cached accessories it knows about, and calling configureAccessory() on each.
     // eslint-disable-next-line @typescript-eslint/no-misused-promises
@@ -146,7 +153,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
     for(const controller of this.controllers) {
 
       // Login to the Protect controller.
-      void controller.ufpApi.login(controller.nvrOptions.address, controller.nvrOptions.username, controller.nvrOptions.password);
+      void controller.login();
     }
   }
 
@@ -223,6 +230,55 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
     encoder = encoder.toLowerCase();
 
     return this.videoProcessorEncoders[codec]?.some(x => x === encoder);
+  }
+
+  // Identify what hardware and operating system environment we're actually running on.
+  private probeHwOs(): void {
+
+    // Start off with a generic identifier.
+    this._systemInfo = "generic";
+
+    // Take a look at the platform we're on for an initial hint of what we are.
+    switch(platform) {
+
+      // The beloved macOS.
+      case "darwin":
+
+        this._systemInfo = "macOS";
+        break;
+
+      // The indomitable Linux.
+      case "linux":
+
+        // Let's further see if we're a small, but scrappy, Raspberry Pi.
+        try {
+
+          // As of the 4.9 kernel, Raspberry Pi prefers to be identified using this method and has deprecated cpuinfo.
+          const systemId = readFileSync("/sys/firmware/devicetree/base/model", { encoding: "utf8" });
+
+          // Is it a Pi 4?
+          if(systemId.includes("Raspberry Pi 4")) {
+
+            this._systemInfo = "raspbian";
+          }
+        } catch(error) {
+
+          // We aren't especially concerned with errors here, given we're just trying to ascertain the system information through hints.
+        }
+
+        break;
+
+      default:
+
+        // We aren't trying to solve for every system type.
+        break;
+    }
+  }
+
+  // Utility to return the hardware environment we're on.
+  public get systemInfo(): string {
+
+    return this._systemInfo;
   }
 
   // Utility for debug logging.
