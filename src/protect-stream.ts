@@ -19,7 +19,7 @@ import { ProtectPlatform } from "./protect-platform.js";
 import { ProtectRecordingDelegate } from "./protect-record.js";
 import { RtpDemuxer } from "./protect-rtp.js";
 import WebSocket from "ws";
-import events from "node:events";
+import { once } from "node:events";
 
 type SessionInfo = {
   address: string; // Address of the HomeKit client.
@@ -460,7 +460,8 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     const ffmpegArgs = [
 
       "-hide_banner",
-      "-probesize", this.probesizeOverride ? this.probesizeOverride.toString() : this.protectCamera.hints.probesize.toString(),
+      ...this.videoDecoderOptions(),
+      "-probesize", this.probesize.toString(),
       "-max_delay", "500000",
       "-r", this.rtspEntry.channel.fps.toString(),
       "-rtsp_transport", "tcp",
@@ -791,7 +792,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       // Wait for the first RTP packet to be received before trying to launch FFmpeg.
       if(sessionInfo.rtpDemuxer) {
 
-        await events.once(sessionInfo.rtpDemuxer, "rtp");
+        await once(sessionInfo.rtpDemuxer, "rtp");
 
         // If we've already closed the RTP demuxer, we're done here,
         if(!sessionInfo.rtpDemuxer.isRunning) {
@@ -1075,7 +1076,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
     // Increase the probesize by a factor of two each time we need to do something about it. This idea is to balance the latency implications
     // for the user, but also ensuring we have a functional streaming experience.
-    this.probesizeOverride = (this.probesizeOverride ? this.probesizeOverride : this.protectCamera.hints.probesize) * 2;
+    this.probesizeOverride = this.probesize * 2;
 
     // Safety check to make sure this never gets too crazy.
     if(this.probesizeOverride > 5000000) {
@@ -1096,6 +1097,12 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
         this.probesizeOverrideTimeout = undefined;
       }, 1000 * 60 * 10);
     }
+  }
+
+  // Utility to return the currently set probesize for a camera.
+  public get probesize(): number {
+
+    return this.probesizeOverride ? this.probesizeOverride : this.protectCamera.hints.probesize;
   }
 
   // Translate HomeKit H.264 level information for FFmpeg.
@@ -1206,7 +1213,36 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     return this.protectCamera.hasHwAccel;
   }
 
-  // Determine the video encoder to use when transcoding.
+  // Determine the video decoder options to use when decoding video.
+  public videoDecoderOptions(): string[] {
+
+    // Default to no special decoder options for inbound streams.
+    let decoderOptions: string[] = [];
+
+    // If we've enabled hardware-accelerated transcoding, let's select decoder options accordingly where supported.
+    if(this.protectCamera.hints.hardwareTranscoding) {
+
+      switch(this.platform.systemInfo) {
+
+        case "macOS":
+
+          // h264_videotoolbox is the macOS hardware encoder API. We use the following options for decoding video:
+          //
+          // -hwaccel auto           Automatically select hardware accelerated video decoding hardware when it's available.
+          decoderOptions = [ "-hwaccel", "auto" ];
+
+          break;
+
+        default:
+
+          break;
+      }
+    }
+
+    return decoderOptions;
+  }
+
+  // Determine the video encoder options to use when transcoding.
   public videoEncoderOptions(profile: H264Profile, level: H264Level): string[] {
 
     // Default to the tried-and-true libx264. We use the following options by default:
@@ -1255,8 +1291,6 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
         default:
 
-          // Back to software encoding.
-          this.protectCamera.hasHwAccel = false;
           break;
       }
     }

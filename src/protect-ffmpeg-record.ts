@@ -6,7 +6,7 @@
 import { ProtectCamera, RtspEntry } from "./protect-camera.js";
 import { CameraRecordingConfiguration } from "homebridge";
 import { FfmpegProcess } from "./protect-ffmpeg.js";
-import events from "node:events";
+import { once } from "node:events";
 
 // FFmpeg HomeKit Streaming Video recording process management.
 export class FfmpegRecordingProcess extends FfmpegProcess {
@@ -53,8 +53,7 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
 
       // We're not using the timeshift buffer, so let's use the RTSP stream as the input to HKSV.
       //
-      // -hide_banner                     Suppress printing the startup banner in FFmpeg.
-      // -probesize 8192                  How many bytes should be analyzed for stream information. We default to to analyze time should be spent analyzing
+      // -probesize amount                How many bytes should be analyzed for stream information. We default to to analyze time should be spent analyzing
       //                                  the input stream.
       // -max_delay 500000                Set an upper limit on how much time FFmpeg can take in demuxing packets.
       // -r fps                           Set the input frame rate for the video stream.
@@ -62,7 +61,8 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
       // -i this.rtspEntry.url            RTSPS URL to get our input stream from.
       this.commandLineArgs.push(
 
-        "-probesize", "8192",
+        ...this.protectCamera.stream.videoDecoderOptions(),
+        "-probesize", this.protectCamera.stream.probesize.toString(),
         "-max_delay", "500000",
         "-r", rtspEntry.channel.fps.toString(),
         "-rtsp_transport", "tcp",
@@ -292,7 +292,7 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
       if(!this.recordingBuffer.length) {
 
         // eslint-disable-next-line no-await-in-loop
-        await events.once(this, "mp4box");
+        await once(this, "mp4box");
       }
 
       // Grab the next fMP4 box from our buffer.
@@ -313,8 +313,8 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
       //   beginning of any valid fMP4 stream. HomeKit Secure Video looks for this before anything
       //   else.
       //
-      // - a complete MOOF/MDAT pair. MOOF describes XXX and MDAT describes the actual audio and video
-      //   data related to that segment.
+      // - a complete MOOF/MDAT pair. MOOF describes the sample locations and their sizes and MDAT contains the actual audio and video
+      //   data related to that segment. This of MOOF as the audio/video data "header", and MDAT as the "payload".
       //
       // Once we see these, we combine all the segments in our queue to send back to HomeKit.
       if((box.type === "moov") || (box.type === "mdat")) {
