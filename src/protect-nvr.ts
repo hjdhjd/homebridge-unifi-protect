@@ -91,28 +91,6 @@ export class ProtectNvr {
     });
   }
 
-  // Maintain our connection to the UniFi Protect controller. This is only called after we've successfully logged in for the first time at plugin launch.
-  private async ufpUpdate(): Promise<void> {
-
-    // Periodically refresh our bootstrap of the Protect controller to ensure our state always remains in sync in between updates.
-    for(;;) {
-
-      // Let's refresh the bootstrap configuration.
-      // eslint-disable-next-line no-await-in-loop
-      await this.bootstrapNvr();
-
-      // Sync status and check for any new or removed accessories.
-      this.discoverAndSyncAccessories();
-
-      // Refresh the accessory cache.
-      this.api.updatePlatformAccessories(this.platform.accessories);
-
-      // Sleep and continue looping.
-      // eslint-disable-next-line no-await-in-loop
-      await this.sleep(PROTECT_CONTROLLER_REFRESH_INTERVAL * 1000);
-    }
-  }
-
   // Retrieve the bootstrap configuration from the Protect controller.
   private async bootstrapNvr(): Promise<void> {
 
@@ -247,8 +225,31 @@ export class ProtectNvr {
       this.log.info("Discovered %s: %s.", device.modelKey, this.ufpApi.getDeviceName(device, device.name, true));
     }
 
-    // Fire off regular bootstrap updates to ensure we stay in sync.
-    void this.ufpUpdate();
+    // Sync the Protect controller's devices with HomeKit.
+    const syncUfpHomeKit = (): void => {
+
+      // Sync status and check for any new or removed accessories.
+      this.discoverAndSyncAccessories();
+
+      // Refresh the accessory cache.
+      this.api.updatePlatformAccessories(this.platform.accessories);
+    };
+
+    // Initialize our Protect controller device sync.
+    syncUfpHomeKit();
+
+    // Let's set a listener to wait for bootstrap events to occur so we can keep ourselves in sync with the Protect controller.
+    this.ufpApi.on("bootstrap", () => {
+
+      // Sync our device view.
+      syncUfpHomeKit();
+
+      // Sleep until it's time to bootstrap again.
+      setTimeout(() => void this.bootstrapNvr(), PROTECT_CONTROLLER_REFRESH_INTERVAL * 1000);
+    });
+
+    // Fire off the first round of regular bootstrap updates to ensure we stay in sync.
+    setTimeout(() => void this.bootstrapNvr(), PROTECT_CONTROLLER_REFRESH_INTERVAL * 1000);
   }
 
   // Configure NVR-specific settings.
