@@ -2,6 +2,7 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 6.4.1 (2023-04-10)
 ## 6.4.0 (2023-04-10)
   * Improvement: hardware accelerated decoding is always-on on macOS. This has no negative implications to quality, and is only a net quality-of-life for those running Homebridge on macOS.
   * Improvement: further speed improvements and optimizations - connections to the Protect controller are faster and more resilient.
