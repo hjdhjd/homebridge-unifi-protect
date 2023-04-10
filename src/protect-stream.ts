@@ -930,7 +930,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     }
 
     // Request the image from the controller.
-    const response = await this.nvr.ufpApi.fetch(this.protectCamera.snapshotUrl + "?" + params.toString(), { method: "GET" }, true, false);
+    const response = await this.nvr.ufpApi.retrieve(this.protectCamera.snapshotUrl + "?" + params.toString(), { method: "GET" }, true, false);
 
     if(!isLoggingErrors) {
 
@@ -965,7 +965,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       if(error instanceof FetchError) {
         let cachedSnapshot;
 
-        switch(error.code) {
+        switch(error.code as unknown as string) {
 
           case "ERR_STREAM_PREMATURE_CLOSE":
 
@@ -1220,7 +1220,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     let decoderOptions: string[] = [];
 
     // If we've enabled hardware-accelerated transcoding, let's select decoder options accordingly where supported.
-    if(this.protectCamera.hints.hardwareTranscoding) {
+    if(this.protectCamera.hints.hardwareDecoding) {
 
       switch(this.platform.systemInfo) {
 

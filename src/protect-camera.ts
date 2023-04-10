@@ -60,6 +60,7 @@ export class ProtectCamera extends ProtectDevice {
     super.configureHints();
 
     // Configure our device-class specific hints.
+    this.hints.hardwareDecoding = this.nvr.optionEnabled(this.ufp, "Video.Decode.Hardware");
     this.hints.hardwareTranscoding = this.nvr.optionEnabled(this.ufp, "Video.Transcode.Hardware", false);
     this.hints.ledStatus = this.ufp.featureFlags.hasLedStatus && this.nvr.optionEnabled(this.ufp, "Device.StatusLed", false);
     this.hints.logDoorbell = this.nvr.optionEnabled(this.ufp, "Log.Doorbell", false);

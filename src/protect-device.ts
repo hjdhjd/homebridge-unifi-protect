@@ -22,6 +22,7 @@ export interface ProtectDevice {
 // Device-specific options and settings.
 export interface ProtectHints {
 
+  hardwareDecoding: boolean,
   hardwareTranscoding: boolean,
   ledStatus: boolean,
   logDoorbell: boolean,
