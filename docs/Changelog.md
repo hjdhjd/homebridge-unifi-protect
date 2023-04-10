@@ -2,10 +2,15 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 6.4.0 (2023-04-10)
+  * Improvement: hardware accelerated decoding is always-on on macOS. This has no negative implications to quality, and is only a net quality-of-life for those running Homebridge on macOS.
+  * Improvement: further speed improvements and optimizations - connections to the Protect controller are faster and more resilient.
+  * Housekeeping.
+
 ## 6.3.0 (2023-04-08)
-  * New feature: Hardware accelerated decoding support on macOS.
+  * New feature: hardware accelerated decoding support on macOS.
   * New feature: Protect "crossing line" smart motion detection is now supported on cameras that support the functionality. You can configure this in the Protect controller webUI, on G4-series and higher cameras in the same place you can configure motion zones.
-  * New feature: You can have all the Protect controller telemetry published in MQTT under the *telemetry* topic. This is the raw feed of the realtime telemetry as it's received from the Protect controller, so expect a lot of data. This can be enabled with a new feature option: `NVR.Publish.Telemetry`. For the MQTT enthusiasts, this really gives you the ultimate flexibility to build automations and events in a more granular way for specific use cases. For most users, I would not recommend enabling this option - it's a lot of data, and you'll need to parse through everything that the controller is publishing. The MQTT support that's provided for cameras, motion detection, etc. by HBUP is more refined and feature-rich in important ways, but for those that want the raw telemetry...here it is.
+  * New feature: you can have all the Protect controller telemetry published in MQTT under the *telemetry* topic. This is the raw feed of the realtime telemetry as it's received from the Protect controller, so expect a lot of data. This can be enabled with a new feature option: `NVR.Publish.Telemetry`. For the MQTT enthusiasts, this really gives you the ultimate flexibility to build automations and events in a more granular way for specific use cases. For most users, I would not recommend enabling this option - it's a lot of data, and you'll need to parse through everything that the controller is publishing. The MQTT support that's provided for cameras, motion detection, etc. by HBUP is more refined and feature-rich in important ways, but for those that want the raw telemetry...here it is.
   * Improvement: Further refinements to plugin startup.
   * Housekeeping.
 
@@ -61,7 +66,7 @@ All notable changes to this project will be documented in this file. This projec
   * New feature: when viewing cameras in the Home app over a high latency connection (e.g. looking at a livestream over a cellular connection), HBUP will transcode to provide the requested bitrates to HomeKit by default. This should improve responsiveness for cellular connections. This behavior can be adjusted using the `Video.Transcode.HighLatency` feature option, which defaults to enabled.
   * Change: The HKSV feature option has been removed. HKSV will be available to any camera that supports it. You can choose to enable or disable HKSV in the Home app, which provides a consistent experience with all other native HomeKit cameras.
   * Change: The HKSV recording stream selection feature option has been renamed.
-  * Improvement: The status light LEDs on Protect devices will be disabled in HomeKit by default. This behavior can be controlled with the `Device.StatusLed` feature option. HomeKit support for camera status lights is still flaky as of iOS 16.
+  * Improvement: the status light LEDs on Protect devices will be disabled in HomeKit by default. This behavior can be controlled with the `Device.StatusLed` feature option. HomeKit support for camera status lights is still flaky as of iOS 16.
   * Improvement: further refinements to timeshifting.
   * Improvement: audio support has been enhanced throughout to take advantage of the latest HomeKit capabilities.
   * Improvement: complete rewrite of the core aspects of HBUP from scratch to prepare for the future, along with many optimizations and improvements.
