@@ -301,7 +301,7 @@ export class ProtectNvrEvents extends EventEmitter {
 
       protectDevice.log.info("Motion detected%s.",
         ((protectDevice.ufp.modelKey === "camera") && detectedObjects.length &&
-        (!protectCamera.stream?.hksv?.isRecording || this.nvr.optionEnabled(protectDevice.ufp, "Motion.SmartDetect.ObjectSensors", false)))
+        (!protectCamera.stream?.hksv?.isRecording || protectCamera.hints.smartDetect || this.nvr.optionEnabled(protectDevice.ufp, "Motion.SmartDetect.ObjectSensors", false)))
           ? ": " + detectedObjects.join(", ") : "");
     }
 
