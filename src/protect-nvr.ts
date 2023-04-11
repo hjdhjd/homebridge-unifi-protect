@@ -182,14 +182,9 @@ export class ProtectNvr {
       // when all the cached accessories are loaded at startup.
       await this.sleep(30);
 
-      // Unregister all the accessories for this controller from Homebridge.
-      this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, this.platform.accessories.filter(x => x.context.nvr === this.ufp.mac));
-
-      // Filter the overall accessory list to exclude all accessories from this controller.
-      this.platform.accessories = this.platform.accessories.filter(x => x.context.nvr !== this.ufp.mac);
-
-      // Tell Homebridge to update it's cache of accessories to reflect the changes.
-      this.api.updatePlatformAccessories(this.platform.accessories);
+      // Unregister all the accessories for this controller from Homebridge that may have been restored already. Any additional ones will be automatically caught when
+      // they are restored.
+      this.removeHomeKitAccessories(this.platform.accessories.filter(x => x.context.nvr === this.ufp.mac));
       return;
     }
 
@@ -634,7 +629,6 @@ export class ProtectNvr {
 
         // Ensure we delete the accessory and cleanup after ourselves.
         deletingAccessories.push(protectCamera.packageCamera.accessory);
-        this.platform.accessories.splice(this.platform.accessories.indexOf(protectCamera.packageCamera.accessory), 1);
         protectCamera.packageCamera.cleanup();
         protectCamera.packageCamera = null;
       }
@@ -644,9 +638,29 @@ export class ProtectNvr {
     protectDevice.cleanup();
 
     // Unregister the accessory and delete it's remnants from HomeKit and the plugin.
-    this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, deletingAccessories);
     delete this.configuredDevices[protectDevice.accessory.UUID];
-    this.platform.accessories.splice(this.platform.accessories.indexOf(protectDevice.accessory), 1);
+    this.removeHomeKitAccessories(deletingAccessories);
+  }
+
+  // Remove accessories from HomeKit and Homebridge.
+  private removeHomeKitAccessories(deletingAccessories: PlatformAccessory[]): void {
+
+    // Sanity check.
+    if(!deletingAccessories || (deletingAccessories.length <= 0)) {
+
+      return;
+    }
+
+    // Unregister the accessories from Homebridge and HomeKit.
+    this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, deletingAccessories);
+
+    // Update our internal list of all the accessories we know about.
+    for(const accessory of deletingAccessories) {
+
+      this.platform.accessories.splice(this.platform.accessories.indexOf(accessory), 1);
+    }
+
+    // Tell Homebridge to save the updated list of accessories.
     this.api.updatePlatformAccessories(this.platform.accessories);
   }
 
