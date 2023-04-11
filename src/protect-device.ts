@@ -29,6 +29,7 @@ export interface ProtectHints {
   logHksv: boolean,
   logMotion: boolean,
   probesize: number,
+  smartDetect: boolean,
   timeshift: boolean,
   transcode: boolean,
   transcodeHighLatency: boolean,

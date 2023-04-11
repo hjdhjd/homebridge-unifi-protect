@@ -66,6 +66,7 @@ export class ProtectCamera extends ProtectDevice {
     this.hints.logDoorbell = this.nvr.optionEnabled(this.ufp, "Log.Doorbell", false);
     this.hints.logHksv = this.nvr.optionEnabled(this.ufp, "Log.HKSV");
     this.hints.probesize = 16384;
+    this.hints.smartDetect = this.nvr.optionEnabled(this.ufp, "Motion.SmartDetect", false);
     this.hints.timeshift = this.nvr.optionEnabled(this.ufp, "Video.HKSV.TimeshiftBuffer");
     this.hints.transcode = this.nvr.optionEnabled(this.ufp, "Video.Transcode", false);
     this.hints.transcodeHighLatency = this.nvr.optionEnabled(this.ufp, "Video.Transcode.HighLatency");
@@ -119,7 +120,7 @@ export class ProtectCamera extends ProtectDevice {
     }
 
     // If the camera supports it, check to see if we have smart motion events enabled.
-    if(this.ufp.featureFlags.hasSmartDetect && this.nvr.optionEnabled(this.ufp, "Motion.SmartDetect", false)) {
+    if(this.ufp.featureFlags.hasSmartDetect && this.hints.smartDetect) {
 
       // We deal with smart motion detection options here and save them on the ProtectCamera instance because
       // we're trying to optimize and reduce the number of feature option lookups we do in realtime, when possible.
@@ -172,7 +173,7 @@ export class ProtectCamera extends ProtectDevice {
     // Listen for events.
     this.nvr.events.on("updateEvent." + this.ufp.id, this.listeners["updateEvent." + this.ufp.id] = this.eventHandler.bind(this));
 
-    if(this.ufp.featureFlags.hasSmartDetect && this.nvr.optionEnabled(this.ufp, "Motion.SmartDetect", false)) {
+    if(this.ufp.featureFlags.hasSmartDetect && this.hints.smartDetect) {
 
       this.nvr.events.on("addEvent." + this.ufp.id, this.listeners["addEvent." + this.ufp.id] = this.smartMotionEventHandler.bind(this));
     }
@@ -209,8 +210,9 @@ export class ProtectCamera extends ProtectDevice {
     if(payload.isMotionDetected && payload.lastMotion) {
 
       // We only want to process the motion event if we have the right payload, and either HKSV recording is enabled, or
-      // HKSV recording is disabled and we have smart motion events disabled since We handle those elsewhere.
-      if(this.stream?.hksv?.isRecording || (!this.stream?.hksv?.isRecording && !this.ufp.featureFlags.smartDetectTypes.length)) {
+      // HKSV recording is disabled and we have smart motion events disabled (or a device without smart motion capabilities) since those are handled elsewhere.
+      if(this.stream?.hksv?.isRecording || (!this.stream?.hksv?.isRecording &&
+        (!this.ufp.featureFlags.smartDetectTypes.length || (this.ufp.featureFlags.smartDetectTypes.length && !this.hints.smartDetect)))) {
 
         this.nvr.events.motionEventHandler(this, payload.lastMotion);
       }
@@ -702,7 +704,7 @@ export class ProtectCamera extends ProtectDevice {
     this.hasHksv = true;
 
     // If we have smart motion events enabled, let's warn the user that things will not work quite the way they expect.
-    if(this.ufp.featureFlags.hasSmartDetect && this.nvr.optionEnabled(this.ufp, "Motion.SmartDetect", false)) {
+    if(this.ufp.featureFlags.hasSmartDetect && this.hints.smartDetect) {
 
       this.log.info("WARNING: Smart motion detection and HomeKit Secure Video provide overlapping functionality. " +
         "Only HomeKit Secure Video, when event recording is enabled in the Home app, will be used to trigger motion event notifications for this camera." +
