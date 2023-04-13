@@ -73,11 +73,17 @@ export class ProtectChime extends ProtectDevice {
       })
       .onSet(async (value: CharacteristicValue) => {
 
-        const newDevice = await this.nvr.ufpApi.updateDevice(this.ufp, { volume: (value === true) ? 100 : 0 });
+        // We really only want to act when the chime is turned off. Otherwise, it's handled by the brightness event.
+        if(value) {
+
+          return;
+        }
+
+        const newDevice = await this.nvr.ufpApi.updateDevice(this.ufp, { volume: 0 });
 
         if(!newDevice) {
 
-          this.log.error("Unable to turn the volume %s. Please ensure this username has the Administrator role in UniFi Protect.", (value === true) ? "on" : "off");
+          this.log.error("Unable to turn the volume off. Please ensure this username has the Administrator role in UniFi Protect.");
           return;
         }
 
