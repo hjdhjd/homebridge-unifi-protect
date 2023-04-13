@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 6.4.3 (2023-04-13)
+  * Fix: ensure chime volume settings are properly set.
+  * Housekeeping.
+
 ## 6.4.2 (2023-04-11)
   * Fix: correctly discern motion events when smart motion detection is disabled on smart motion detection capable cameras.
 
