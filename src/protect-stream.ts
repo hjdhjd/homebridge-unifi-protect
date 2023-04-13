@@ -965,7 +965,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       if(error instanceof FetchError) {
         let cachedSnapshot;
 
-        switch(error.code as unknown as string) {
+        switch(error.code) {
 
           case "ERR_STREAM_PREMATURE_CLOSE":
 
