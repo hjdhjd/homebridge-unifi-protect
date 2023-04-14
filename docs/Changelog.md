@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 6.4.4 (2023-04-14)
+  * Fix: ensure doorbells can be accessed on UDMPs - Ubiquiti hasn't updated these devices to UniFi OS 3.0 yet.
+  * Housekeeping.
+
 ## 6.4.3 (2023-04-13)
   * Fix: ensure chime volume settings are properly set.
   * Housekeeping.
