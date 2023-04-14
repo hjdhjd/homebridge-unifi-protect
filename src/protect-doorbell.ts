@@ -44,7 +44,7 @@ export class ProtectDoorbell extends ProtectCamera {
   protected async configureDevice(): Promise<boolean> {
 
     // We only want to deal with actual Protect doorbell devices.
-    if(!this.ufp.featureFlags.isDoorbell) {
+    if(!this.ufp.featureFlags.hasChime) {
 
       return false;
     }
