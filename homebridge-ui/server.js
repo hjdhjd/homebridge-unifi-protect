@@ -131,15 +131,15 @@ class PluginUiServer extends HomebridgePluginUiServer {
     this.onRequest("/getCachedAccessories", async () => {
       try {
 
-        // Define the plugin and create the array to return
+        // Define the plugin and create the array to return.
         const plugin = "homebridge-unifi-protect";
         const devicesToReturn = [];
 
-        // The path and file of the cached accessories
+        // The path and file of the cached accessories.
         const accFile = this.homebridgeStoragePath + "/accessories/cachedAccessories";
 
-        // Check the file exists
-        if (fs.existsSync(accFile)) {
+        // Check the file exists.
+        if(fs.existsSync(accFile)) {
 
           // Read the cached accessories file
           let cachedAccessories = await fs.promises.readFile(accFile);
@@ -153,8 +153,9 @@ class PluginUiServer extends HomebridgePluginUiServer {
 
         // Return the array
         return devicesToReturn;
-      } catch (err) {
-        // Just return an empty accessory list in case of any errors
+      } catch(err) {
+
+        // Just return an empty accessory list in case of any errors.
         return [];
       }
     });
