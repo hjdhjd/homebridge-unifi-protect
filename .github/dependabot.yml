@@ -15,7 +15,7 @@ updates:
       interval: "daily"
 
     # Allow up to ten pull requests to be generated at any one time.
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 0
 
 #  # Enable version updates for npm.
 #  - package-ecosystem: "npm"
