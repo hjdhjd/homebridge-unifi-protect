@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Autoclose issues that don't follow the issue templates.
-      uses: roots/issue-closer@v1.1
+      uses: roots/issue-closer@v1.2
       with:
         issue-close-message: "@${issue.user.login} - this issue is being automatically closed because it does not follow either the feature request or bug report issue template. The issue templates have been designed to help in the troubleshooting (or feature request) process. Please use them and populate it as completely as possible to streamline troubleshooting or feature request discussions."
         issue-pattern: "Describe alternatives you've considered|Homebridge-UniFi-Protect Plugin Version"
