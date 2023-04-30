@@ -35,9 +35,6 @@ export const PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS = 1000;
 // Magic incantantion to further streamline FFmpeg for Protect.
 export const PROTECT_FFMPEG_OPTIONS = [];
 
-// HomeKit prefers a video streaming I-frame interval of 4 seconds.
-export const PROTECT_HOMEKIT_IDR_INTERVAL = 4;
-
 // HomeKit Secure Video segment length, in milliseconds. HomeKit only supports this value currently.
 export const PROTECT_HKSV_SEGMENT_LENGTH = 4000;
 
@@ -46,6 +43,12 @@ export const PROTECT_HKSV_TIMESHIFT_BUFFER_MAXLENGTH = PROTECT_HKSV_SEGMENT_LENG
 
 // HomeKit Secure Video segment resolution, in milliseconds. This defines the resolution of our buffer. It should never be less than 100ms or greater than 1500ms.
 export const PROTECT_HKSV_SEGMENT_RESOLUTION = 100;
+
+// Additional headroom for bitrates beyond what HomeKit is requesting when streaming to improve quality with a minor additional bandwidth cost.
+export const PROTECT_HOMEKIT_STREAMING_HEADROOM = 64;
+
+// HomeKit prefers a video streaming I-frame interval of 2 seconds.
+export const PROTECT_HOMEKIT_IDR_INTERVAL = 2;
 
 // Default duration, in seconds, of motion events. Setting this too low will potentially cause a lot of notification spam.
 export const PROTECT_MOTION_DURATION = 10;

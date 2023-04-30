@@ -6,6 +6,7 @@
 import { ProtectCamera, RtspEntry } from "./protect-camera.js";
 import { CameraRecordingConfiguration } from "homebridge";
 import { FfmpegProcess } from "./protect-ffmpeg.js";
+import { PROTECT_HOMEKIT_STREAMING_HEADROOM } from "./settings.js";
 import { once } from "node:events";
 
 // FFmpeg HomeKit Streaming Video recording process management.
@@ -26,10 +27,12 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
     // Initialize our recording buffer.
     this.recordingBuffer = [];
 
-    // -hide_banner  Suppress printing the startup banner in FFmpeg.
+    // -hide_banner     Suppress printing the startup banner in FFmpeg.
+    // -nostats         Suppress printing progress reports while encoding in FFmpeg.
     this.commandLineArgs = [
 
-      "-hide_banner"
+      "-hide_banner",
+      "-nostats"
     ];
 
     // If we're timeshifting, read from the timeshift buffer.
@@ -61,7 +64,7 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
       // -i this.rtspEntry.url            RTSPS URL to get our input stream from.
       this.commandLineArgs.push(
 
-        ...this.protectCamera.stream.videoDecoderOptions(),
+        ...this.protectCamera.stream.videoDecoderOptions,
         "-probesize", this.protectCamera.stream.probesize.toString(),
         "-max_delay", "500000",
         "-r", rtspEntry.channel.fps.toString(),
@@ -77,13 +80,10 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
     //                               Protect changes this in the future.
     //                               Yes, we included these above as well: they need to be included for every I/O stream to
     //                               maximize effectiveness it seems.
-    // -profile:v level              Use the H.264 profile HKSV is requesting when encoding.
-    // -level:v level                Use the H.264 profile level HKSV is requesting when encoding.
-    // -b:v bitrate                  The average bitrate to use for this stream as requested by HKSV.
+    // -g:v                          Set the group of pictures to the number of frames per second * the interval in between keyframes as HKSV requests it to be.
     // -bufsize size                 This is the decoder buffer size, which drives the variability / quality of the output bitrate.
     // -maxrate bitrate              The maximum bitrate tolerance, used with -bufsize. We set this to max_bit_rate to effectively
     //                               create a constant bitrate.
-    // -force_key_frames condition   Inject an I-frame at the interval that HKSV requests. This is calculated using a conditional expression.
     // -fflags flags                 Set format flags to generate a presentation timestamp if it's missing and discard any corrupt packets rather than exit.
     // -reset_timestamps             Reset timestamps at the beginning of each segment.
     // -movflags flags               In the generated fMP4 stream: start a new fragment at each keyframe, write a blank MOOV box, and
@@ -91,11 +91,11 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
     this.commandLineArgs.push(
 
       "-map", "0:v:0",
-      ...this.protectCamera.stream.videoEncoderOptions(recordingConfig.videoCodec.parameters.profile, recordingConfig.videoCodec.parameters.level),
-      "-b:v", recordingConfig.videoCodec.parameters.bitRate.toString() + "k",
+      ...this.protectCamera.stream.videoEncoderOptions(recordingConfig.videoCodec.parameters.profile, recordingConfig.videoCodec.parameters.level,
+        recordingConfig.videoCodec.resolution[0], recordingConfig.videoCodec.resolution[1]),
+      "-g:v", (rtspEntry.channel.fps * (recordingConfig.videoCodec.parameters.iFrameInterval / 1000)).toString(),
       "-bufsize", (2 * recordingConfig.videoCodec.parameters.bitRate).toString() + "k",
-      "-maxrate", recordingConfig.videoCodec.parameters.bitRate.toString() + "k",
-      "-force_key_frames", "expr:gte(t, n_forced * " + (recordingConfig.videoCodec.parameters.iFrameInterval / 1000).toString() + ")",
+      "-maxrate", (recordingConfig.videoCodec.parameters.bitRate + PROTECT_HOMEKIT_STREAMING_HEADROOM).toString() + "k",
       "-fflags", "+genpts+discardcorrupt",
       "-reset_timestamps", "1",
       "-movflags", "frag_keyframe+empty_moov+default_base_moof"
@@ -105,14 +105,13 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
 
       // Configure the audio portion of the command line. Options we use are:
       //
-      // -map 0:a:0    Selects the first available audio track from the stream. Protect actually maps audio
-      //               and video tracks in opposite locations from where FFmpeg typically expects them. This
-      //               setting is a more general solution than naming the track locations directly in case
-      //               Protect changes this in the future.
-      // -acodec copy  Copy the stream without reencoding it.
+      // -map 0:a:0?                 Selects the first available audio track from the stream, if it exists. Protect actually maps audio and video tracks in opposite
+      //                             locations from where FFmpeg typically expects them. This setting is a more general solution than naming the track locations directly
+      //                             in case Protect changes this in the future.
+      // -acodec copy                Copy the stream without reencoding it.
       this.commandLineArgs.push(
 
-        "-map", "0:a:0",
+        "-map", "0:a:0?",
         "-acodec", "copy"
       );
     }
