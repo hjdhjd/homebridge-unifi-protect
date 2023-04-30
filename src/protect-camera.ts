@@ -599,19 +599,61 @@ export class ProtectCamera extends ProtectDevice {
       }
     }
 
-    // Check for explicit RTSP profile preferences.
+    // Canary to ensure we stop once we find.
+    let onlyStreamFound = false;
+    let onlyRecordFound = false;
+
+    // Check for explicit RTSP profile preferences at the device level.
     for(const rtspProfile of [ "LOW", "MEDIUM", "HIGH" ]) {
 
       // Check to see if the user has requested a specific streaming profile for this camera.
-      if(this.nvr.optionEnabled(this.ufp, "Video.Stream.Only." + rtspProfile, false)) {
+      if(this.nvr.optionEnabled(this.ufp, "Video.Stream.Only." + rtspProfile + "." + this.ufp.mac, false)) {
 
         this.rtspQuality.StreamingDefault = rtspProfile;
+        onlyStreamFound = true;
       }
 
       // Check to see if the user has requested a specific recording profile for this camera.
-      if(this.nvr.optionEnabled(this.ufp, "Video.HKSV.Record.Only." + rtspProfile, false)) {
+      if(this.nvr.optionEnabled(this.ufp, "Video.HKSV.Record.Only." + rtspProfile + "." + this.ufp.mac, false)) {
 
         this.rtspQuality.RecordingDefault = rtspProfile;
+        onlyRecordFound = true;
+      }
+    }
+
+    // Check for explicit RTSP profile preferences at the controller level.
+    for(const rtspProfile of [ "LOW", "MEDIUM", "HIGH" ]) {
+
+      // Check to see if the user has requested a specific streaming profile for this camera.
+      if(!onlyStreamFound && this.nvr.optionEnabled(this.ufp, "Video.Stream.Only." + rtspProfile + "." + this.nvr.ufp.mac, false)) {
+
+        this.rtspQuality.StreamingDefault = rtspProfile;
+        onlyStreamFound = true;
+      }
+
+      // Check to see if the user has requested a specific recording profile for this camera.
+      if(!onlyRecordFound && this.nvr.optionEnabled(this.ufp, "Video.HKSV.Record.Only." + rtspProfile + "." + this.nvr.ufp.mac, false)) {
+
+        this.rtspQuality.RecordingDefault = rtspProfile;
+        onlyRecordFound = true;
+      }
+    }
+
+    // Check for explicit RTSP profile preferences globally.
+    for(const rtspProfile of [ "LOW", "MEDIUM", "HIGH" ]) {
+
+      // Check to see if the user has requested a specific streaming profile for this camera.
+      if(!onlyStreamFound && this.nvr.optionEnabled(this.ufp, "Video.Stream.Only." + rtspProfile, false)) {
+
+        this.rtspQuality.StreamingDefault = rtspProfile;
+        onlyStreamFound = true;
+      }
+
+      // Check to see if the user has requested a specific recording profile for this camera.
+      if(!onlyRecordFound && this.nvr.optionEnabled(this.ufp, "Video.HKSV.Record.Only." + rtspProfile, false)) {
+
+        this.rtspQuality.RecordingDefault = rtspProfile;
+        onlyRecordFound = true;
       }
     }
 
