@@ -233,10 +233,12 @@ export class ProtectSecuritySystem extends ProtectBase {
 
     }
 
+    const switchName = this.accessory.displayName + " Security Alarm";
+
     // Add the security alarm switch to the security system.
     if(!switchService) {
 
-      switchService = new this.hap.Service.Switch(this.accessory.displayName + " Security Alarm");
+      switchService = new this.hap.Service.Switch(switchName);
 
       if(!switchService) {
 
@@ -263,6 +265,8 @@ export class ProtectSecuritySystem extends ProtectBase {
       });
 
     // Initialize the value.
+    switchService.addOptionalCharacteristic(this.hap.Characteristic.ConfiguredName);
+    switchService.updateCharacteristic(this.hap.Characteristic.ConfiguredName, switchName);
     switchService.updateCharacteristic(this.hap.Characteristic.On, this.isAlarmTriggered);
 
     return true;

@@ -65,6 +65,7 @@ export class ProtectLiveviews extends ProtectBase {
     if(!this.liveviews?.some(x => regexSecuritySystemLiveview.test(x.name))) {
 
       if(this.securityAccessory) {
+
         this.log.info("No plugin-specific liveviews found. Disabling the security system accessory associated with this UniFi Protect controller.");
 
         // Unregister the accessory and delete it's remnants from HomeKit and the plugin.

@@ -97,7 +97,7 @@ export class ProtectDoorbell extends ProtectCamera {
         continue;
       }
 
-      this.log.info("Discovered doorbell message switch%s: %s.", entry.duration ? " (" + (entry.duration / 1000).toString() + " seconds)" : "", entry.text);
+      this.log.info("Enabled doorbell message switch%s: %s.", entry.duration ? " (" + (entry.duration / 1000).toString() + " seconds)" : "", entry.text);
 
       // Use the message switch, if it already exists.
       let switchService = this.accessory.getServiceById(this.hap.Service.Switch, entry.type + "." + entry.text);
@@ -123,6 +123,8 @@ export class ProtectDoorbell extends ProtectCamera {
       this.messageSwitches.push({ duration: duration, service: switchService, state: false, text: entry.text, type: entry.type }) - 1;
 
       // Configure the message switch.
+      switchService.addOptionalCharacteristic(this.hap.Characteristic.ConfiguredName);
+      switchService.updateCharacteristic(this.hap.Characteristic.ConfiguredName, entry.text);
       switchService
         .getCharacteristic(this.hap.Characteristic.On)
         ?.onGet(this.getSwitchState.bind(this, this.messageSwitches[this.messageSwitches.length - 1]))

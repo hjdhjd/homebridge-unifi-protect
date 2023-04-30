@@ -253,10 +253,12 @@ export abstract class ProtectDevice extends ProtectBase {
 
     this.log.info("Enabling motion sensor switch.");
 
+    const switchName = this.accessory.displayName + " Motion Events";
+
     // Add the switch to the camera, if needed.
     if(!switchService) {
 
-      switchService = new this.hap.Service.Switch(this.accessory.displayName + " Motion Events", ProtectReservedNames.SWITCH_MOTION_SENSOR);
+      switchService = new this.hap.Service.Switch(switchName, ProtectReservedNames.SWITCH_MOTION_SENSOR);
 
       if(!switchService) {
 
@@ -289,6 +291,8 @@ export abstract class ProtectDevice extends ProtectBase {
       this.accessory.context.detectMotion = true;
     }
 
+    switchService.addOptionalCharacteristic(this.hap.Characteristic.ConfiguredName);
+    switchService.updateCharacteristic(this.hap.Characteristic.ConfiguredName, switchName);
     switchService.updateCharacteristic(this.hap.Characteristic.On, this.accessory.context.detectMotion as boolean);
 
     return true;
@@ -310,10 +314,12 @@ export abstract class ProtectDevice extends ProtectBase {
       return false;
     }
 
+    const triggerName = this.accessory.displayName + " Motion Trigger";
+
     // Add the switch to the camera, if needed.
     if(!triggerService) {
 
-      triggerService = new this.hap.Service.Switch(this.accessory.displayName + " Motion Trigger", ProtectReservedNames.SWITCH_MOTION_TRIGGER);
+      triggerService = new this.hap.Service.Switch(triggerName, ProtectReservedNames.SWITCH_MOTION_TRIGGER);
 
       if(!triggerService) {
         this.log.error("Unable to add motion sensor trigger.");
@@ -365,6 +371,8 @@ export abstract class ProtectDevice extends ProtectBase {
       });
 
     // Initialize the switch.
+    triggerService.addOptionalCharacteristic(this.hap.Characteristic.ConfiguredName);
+    triggerService.updateCharacteristic(this.hap.Characteristic.ConfiguredName, triggerName);
     triggerService.updateCharacteristic(this.hap.Characteristic.On, false);
 
     this.log.info("Enabling motion sensor automation trigger.");
@@ -393,7 +401,8 @@ export abstract class ProtectDevice extends ProtectBase {
     return true;
   }
 
-  public isOptionEnabled(option: string, defaultReturnValue = true, address = "", addressOnly = false): boolean {
+  // Utility for checking feature options on a device.
+  public hasFeature(option: string, defaultReturnValue = true, address = "", addressOnly = false): boolean {
 
     return optionEnabled(this.platform.configOptions, this.nvr.ufp, this.ufp, option, defaultReturnValue, address, addressOnly);
   }

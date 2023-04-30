@@ -279,14 +279,15 @@ export class ProtectCamera extends ProtectDevice {
     // Add individual contact sensors for each object detection type, if needed.
     for(const smartDetectType of this.ufp.featureFlags.smartDetectTypes) {
 
+      const contactName = this.accessory.displayName + " " + smartDetectType.charAt(0).toUpperCase() + smartDetectType.slice(1);
+
       // See if we already have this contact sensor configured.
       let contactService = this.accessory.getServiceById(this.hap.Service.ContactSensor, ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + "." + smartDetectType);
 
       // If not, let's add it.
       if(!contactService) {
 
-        contactService = new this.hap.Service.ContactSensor(this.accessory.displayName + " " + smartDetectType.charAt(0).toUpperCase() + smartDetectType.slice(1),
-          ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + "." + smartDetectType);
+        contactService = new this.hap.Service.ContactSensor(contactName, ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + "." + smartDetectType);
 
         // Something went wrong, we're done here.
         if(!contactService) {
@@ -299,6 +300,8 @@ export class ProtectCamera extends ProtectDevice {
       }
 
       // Initialize the sensor.
+      contactService.addOptionalCharacteristic(this.hap.Characteristic.ConfiguredName);
+      contactService.updateCharacteristic(this.hap.Characteristic.ConfiguredName, contactName);
       contactService.updateCharacteristic(this.hap.Characteristic.ContactSensorState, false);
     }
 
@@ -351,9 +354,11 @@ export class ProtectCamera extends ProtectDevice {
       }
     }
 
+    const triggerName = this.accessory.displayName + " Doorbell Trigger";
+
     // Add the switch to the camera, if needed.
     if(!triggerService) {
-      triggerService = new this.hap.Service.Switch(this.accessory.displayName + " Doorbell Trigger", ProtectReservedNames.SWITCH_DOORBELL_TRIGGER);
+      triggerService = new this.hap.Service.Switch(triggerName, ProtectReservedNames.SWITCH_DOORBELL_TRIGGER);
 
       if(!triggerService) {
         this.log.error("Unable to add the doorbell trigger.");
@@ -391,6 +396,8 @@ export class ProtectCamera extends ProtectDevice {
       });
 
     // Initialize the switch.
+    triggerService.addOptionalCharacteristic(this.hap.Characteristic.ConfiguredName);
+    triggerService.updateCharacteristic(this.hap.Characteristic.ConfiguredName, triggerName);
     triggerService.updateCharacteristic(this.hap.Characteristic.On, false);
 
     this.log.info("Enabling doorbell automation trigger.");
@@ -735,10 +742,12 @@ export class ProtectCamera extends ProtectDevice {
       return false;
     }
 
+    const switchName = this.accessory.displayName + " HKSV Recording";
+
     // Add the switch to the camera, if needed.
     if(!switchService) {
 
-      switchService = new this.hap.Service.Switch(this.accessory.displayName + " HKSV Recording", ProtectReservedNames.SWITCH_HKSV_RECORDING);
+      switchService = new this.hap.Service.Switch(switchName, ProtectReservedNames.SWITCH_HKSV_RECORDING);
 
       if(!switchService) {
 
@@ -767,6 +776,8 @@ export class ProtectCamera extends ProtectDevice {
       });
 
     // Initialize the switch.
+    switchService.addOptionalCharacteristic(this.hap.Characteristic.ConfiguredName);
+    switchService.updateCharacteristic(this.hap.Characteristic.ConfiguredName, switchName);
     switchService.updateCharacteristic(this.hap.Characteristic.On, this.accessory.context.hksvRecording as boolean);
 
     this.log.info("Enabling HomeKit Secure Video recording switch.");
@@ -794,10 +805,12 @@ export class ProtectCamera extends ProtectDevice {
       return false;
     }
 
+    const switchName = this.accessory.displayName + " Dynamic Bitrate";
+
     // Add the switch to the camera, if needed.
     if(!switchService) {
 
-      switchService = new this.hap.Service.Switch(this.accessory.displayName + " Dynamic Bitrate", ProtectReservedNames.SWITCH_DYNAMIC_BITRATE);
+      switchService = new this.hap.Service.Switch(switchName, ProtectReservedNames.SWITCH_DYNAMIC_BITRATE);
 
       if(!switchService) {
 
@@ -856,6 +869,8 @@ export class ProtectCamera extends ProtectDevice {
       });
 
     // Initialize the switch.
+    switchService.addOptionalCharacteristic(this.hap.Characteristic.ConfiguredName);
+    switchService.updateCharacteristic(this.hap.Characteristic.ConfiguredName, switchName);
     switchService.updateCharacteristic(this.hap.Characteristic.On, this.accessory.context.dynamicBitrate as boolean);
 
     this.log.info("Enabling the dynamic streaming bitrate adjustment switch.");
@@ -888,12 +903,12 @@ export class ProtectCamera extends ProtectDevice {
         continue;
       }
 
+      const switchName = this.accessory.displayName + " UFP Recording " + ufpRecordingSetting.charAt(0).toUpperCase() + ufpRecordingSetting.slice(1);
+
       // Add the switch to the camera, if needed.
       if(!switchService) {
 
-        switchService = new this.hap.Service.Switch(
-          this.accessory.displayName + " UFP Recording " + ufpRecordingSetting.charAt(0).toUpperCase() + ufpRecordingSetting.slice(1),
-          ufpRecordingSwitchType);
+        switchService = new this.hap.Service.Switch(switchName, ufpRecordingSwitchType);
 
         if(!switchService) {
 
@@ -960,6 +975,8 @@ export class ProtectCamera extends ProtectDevice {
         });
 
       // Initialize the recording switch state.
+      switchService.addOptionalCharacteristic(this.hap.Characteristic.ConfiguredName);
+      switchService.updateCharacteristic(this.hap.Characteristic.ConfiguredName, switchName);
       switchService.updateCharacteristic(this.hap.Characteristic.On, this.ufp.recordingSettings.mode === ufpRecordingSetting);
       switchesEnabled.push(ufpRecordingSetting);
     }

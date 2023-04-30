@@ -131,7 +131,8 @@ export class ProtectSensor extends ProtectDevice {
     // Add the service to the accessory, if needed.
     if(!contactService) {
 
-      contactService = new this.hap.Service.ContactSensor(this.accessory.displayName + " Alarm Sound", ProtectReservedNames.CONTACT_SENSOR_ALARM_SOUND);
+      const contactName = this.accessory.displayName + " Alarm Sound";
+      contactService = new this.hap.Service.ContactSensor(contactName, ProtectReservedNames.CONTACT_SENSOR_ALARM_SOUND);
 
       if(!contactService) {
 
@@ -139,7 +140,10 @@ export class ProtectSensor extends ProtectDevice {
         return false;
       }
 
+      contactService.addOptionalCharacteristic(this.hap.Characteristic.ConfiguredName);
+      contactService.updateCharacteristic(this.hap.Characteristic.ConfiguredName, contactName);
       this.accessory.addService(contactService);
+
       this.log.info("Enabling alarm sound contact sensor.");
     }
 
