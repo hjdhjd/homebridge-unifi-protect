@@ -344,17 +344,15 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
       // but there's a lot going on here.
       this.transmitListener = (segment: Buffer): void => {
 
-        if(!seenInitSegment && this.timeshift.isInitSegment(segment)) {
-
-          seenInitSegment = true;
-          this.ffmpegStream?.stdin?.write(segment);
-
-          return;
-        }
-
         // We don't want to send the initialization segment more than once - FFmpeg will get confused if you do, plus
         // it's wrong and you should only send the fMP4 stream header information once.
         if(this.timeshift.isInitSegment(segment)) {
+
+          if(!seenInitSegment) {
+
+            seenInitSegment = true;
+            this.ffmpegStream?.stdin?.write(segment);
+          }
 
           return;
         }
