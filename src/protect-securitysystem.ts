@@ -222,7 +222,7 @@ export class ProtectSecuritySystem extends ProtectBase {
     let switchService = this.accessory.getService(this.hap.Service.Switch);
 
     // Have we enabled the security system alarm?
-    if(!this.nvr?.optionEnabled(null, "SecuritySystem.Alarm", false)) {
+    if(!this.nvr?.hasFeature("SecuritySystem.Alarm")) {
 
       if(switchService) {
 

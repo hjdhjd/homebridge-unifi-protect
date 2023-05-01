@@ -269,7 +269,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     };
 
     // Check if audio support is enabled.
-    const isAudioEnabled = this.nvr.optionEnabled(this.protectCamera.ufp, "Audio", true, request.targetAddress);
+    const isAudioEnabled = this.protectCamera.hasFeature("Audio", request.targetAddress);
 
     // We need to check for AAC support because it's going to determine whether we support audio.
     const hasAudioSupport = isAudioEnabled && (this.audioEncoderOptions.length > 0);
@@ -564,7 +564,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       );
 
       // If we are audio filtering, address it here.
-      if(this.nvr.optionEnabled(this.protectCamera.ufp, "Audio.Filter.Noise", false, sessionInfo.address)) {
+      if(this.protectCamera.hasFeature("Audio.Filter.Noise", sessionInfo.address)) {
 
         const afOptions = [];
 
@@ -585,10 +585,10 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
         afOptions.push("afftdn=nt=w:om=o:tn=1:tr=1:nr=" + fftNr.toString());
 
         let highpass: number | string | undefined = this.nvr.optionGet(this.protectCamera.ufp, "Audio.Filter.Noise.HighPass", sessionInfo.address) ??
-          (this.nvr.optionEnabled(this.protectCamera.ufp, "Audio.Filter.Noise.HighPass", false) ? PROTECT_FFMPEG_AUDIO_FILTER_HIGHPASS.toString() : undefined);
+          (this.protectCamera.hasFeature("Audio.Filter.Noise.HighPass") ? PROTECT_FFMPEG_AUDIO_FILTER_HIGHPASS.toString() : undefined);
 
         let lowpass: number | string | undefined = this.nvr.optionGet(this.protectCamera.ufp, "Audio.Filter.Noise.LowPass", sessionInfo.address) ??
-          (this.nvr.optionEnabled(this.protectCamera.ufp, "Audio.Filter.Noise.LowPass", false) ? PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS.toString() : undefined);
+          (this.protectCamera.hasFeature("Audio.Filter.Noise.LowPass") ? PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS.toString() : undefined);
 
         // Only set the highpass and lowpass filters if the user has explicitly enabled them.
         if((highpass !== undefined) || (lowpass !== undefined)) {

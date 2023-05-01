@@ -60,17 +60,17 @@ export class ProtectCamera extends ProtectDevice {
     super.configureHints();
 
     // Configure our device-class specific hints.
-    this.hints.hardwareDecoding = this.nvr.optionEnabled(this.ufp, "Video.Decode.Hardware");
-    this.hints.hardwareTranscoding = this.nvr.optionEnabled(this.ufp, "Video.Transcode.Hardware", false);
-    this.hints.ledStatus = this.ufp.featureFlags.hasLedStatus && this.nvr.optionEnabled(this.ufp, "Device.StatusLed", false);
-    this.hints.logDoorbell = this.nvr.optionEnabled(this.ufp, "Log.Doorbell", false);
-    this.hints.logHksv = this.nvr.optionEnabled(this.ufp, "Log.HKSV");
+    this.hints.hardwareDecoding = this.hasFeature("Video.Decode.Hardware");
+    this.hints.hardwareTranscoding = this.hasFeature("Video.Transcode.Hardware");
+    this.hints.ledStatus = this.ufp.featureFlags.hasLedStatus && this.hasFeature("Device.StatusLed");
+    this.hints.logDoorbell = this.hasFeature("Log.Doorbell");
+    this.hints.logHksv = this.hasFeature("Log.HKSV");
     this.hints.probesize = 16384;
-    this.hints.smartDetect = this.nvr.optionEnabled(this.ufp, "Motion.SmartDetect", false);
-    this.hints.timeshift = this.nvr.optionEnabled(this.ufp, "Video.HKSV.TimeshiftBuffer");
-    this.hints.transcode = this.nvr.optionEnabled(this.ufp, "Video.Transcode", false);
-    this.hints.transcodeHighLatency = this.nvr.optionEnabled(this.ufp, "Video.Transcode.HighLatency");
-    this.hints.twoWayAudio = this.ufp.hasSpeaker && this.nvr.optionEnabled(this.ufp, "Audio") && this.nvr.optionEnabled(this.ufp, "Audio.TwoWay");
+    this.hints.smartDetect = this.hasFeature("Motion.SmartDetect");
+    this.hints.timeshift = this.hasFeature("Video.HKSV.TimeshiftBuffer");
+    this.hints.transcode = this.hasFeature("Video.Transcode");
+    this.hints.transcodeHighLatency = this.hasFeature("Video.Transcode.HighLatency");
+    this.hints.twoWayAudio = this.ufp.hasSpeaker && this.hasFeature("Audio") && this.hasFeature("Audio.TwoWay");
 
     return true;
   }
@@ -114,7 +114,7 @@ export class ProtectCamera extends ProtectDevice {
     this.accessory.context.nvr = this.nvr.ufp.mac;
 
     // Inform the user if we have enabled the dynamic bitrate setting.
-    if(this.nvr.optionEnabled(this.ufp, "Video.DynamicBitrate", false)) {
+    if(this.hasFeature("Video.DynamicBitrate")) {
 
       this.log.info("Dynamic streaming bitrate adjustment on the UniFi Protect controller enabled.");
     }
@@ -261,7 +261,7 @@ export class ProtectCamera extends ProtectDevice {
     for(const objectService of this.accessory.services.filter(x => x.subtype?.startsWith(ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + "."))) {
 
       // If we have motion sensors as well as object contact sensors enabled, and we have this object type enabled on this camera, we're good here.
-      if(this.nvr.optionEnabled(this.ufp, "Motion.SmartDetect.ObjectSensors", false)) {
+      if(this.hasFeature("Motion.SmartDetect.ObjectSensors")) {
         continue;
       }
 
@@ -271,7 +271,7 @@ export class ProtectCamera extends ProtectDevice {
     }
 
     // Have we enabled discrete contact sensors for specific object types? If not, we're done here.
-    if(!this.nvr.optionEnabled(this.ufp, "Motion.SmartDetect.ObjectSensors", false)) {
+    if(!this.hasFeature("Motion.SmartDetect.ObjectSensors")) {
 
       return false;
     }
@@ -321,7 +321,7 @@ export class ProtectCamera extends ProtectDevice {
     let doorbellService = this.accessory.getService(this.hap.Service.Doorbell);
 
     // Doorbell switches are disabled by default and primarily exist for automation purposes.
-    if(!this.nvr.optionEnabled(this.ufp, "Doorbell.Trigger", false)) {
+    if(!this.hasFeature("Doorbell.Trigger")) {
 
       if(triggerService) {
 
@@ -498,7 +498,7 @@ export class ProtectCamera extends ProtectDevice {
     this.ufp = await this.nvr.ufpApi.enableRtsp(this.ufp) ?? this.ufp;
 
     // Figure out which camera channels are RTSP-enabled, and user-enabled.
-    const cameraChannels = this.ufp.channels.filter(x => x.isRtspEnabled && this.nvr.optionEnabled(this.ufp, "Video.Stream." + x.name));
+    const cameraChannels = this.ufp.channels.filter(x => x.isRtspEnabled && this.hasFeature("Video.Stream." + x.name));
 
     // Make sure we've got a HomeKit compatible IDR frame interval. If not, let's take care of that.
     let idrChannels = cameraChannels.filter(x => x.idrInterval !== PROTECT_HOMEKIT_IDR_INTERVAL);
@@ -643,14 +643,14 @@ export class ProtectCamera extends ProtectDevice {
     for(const rtspProfile of [ "LOW", "MEDIUM", "HIGH" ]) {
 
       // Check to see if the user has requested a specific streaming profile for this camera.
-      if(!onlyStreamFound && this.nvr.optionEnabled(this.ufp, "Video.Stream.Only." + rtspProfile, false)) {
+      if(!onlyStreamFound && this.hasFeature("Video.Stream.Only." + rtspProfile)) {
 
         this.rtspQuality.StreamingDefault = rtspProfile;
         onlyStreamFound = true;
       }
 
       // Check to see if the user has requested a specific recording profile for this camera.
-      if(!onlyRecordFound && this.nvr.optionEnabled(this.ufp, "Video.HKSV.Record.Only." + rtspProfile, false)) {
+      if(!onlyRecordFound && this.hasFeature("Video.HKSV.Record.Only." + rtspProfile)) {
 
         this.rtspQuality.RecordingDefault = rtspProfile;
         onlyRecordFound = true;
@@ -757,8 +757,7 @@ export class ProtectCamera extends ProtectDevice {
 
       this.log.info("WARNING: Smart motion detection and HomeKit Secure Video provide overlapping functionality. " +
         "Only HomeKit Secure Video, when event recording is enabled in the Home app, will be used to trigger motion event notifications for this camera." +
-        (this.nvr.optionEnabled(this.ufp, "Motion.SmartDetect.ObjectSensors", false) ?
-          " Smart motion contact sensors will continue to function using telemetry from UniFi Protect." : ""));
+        (this.hasFeature("Motion.SmartDetect.ObjectSensors") ? " Smart motion contact sensors will continue to function using telemetry from UniFi Protect." : ""));
     }
 
     return true;
@@ -771,7 +770,7 @@ export class ProtectCamera extends ProtectDevice {
     let switchService = this.accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_HKSV_RECORDING);
 
     // If we don't have HKSV or the HKSV recording switch enabled, disable it and we're done.
-    if(!this.nvr.optionEnabled(this.ufp, "Video.HKSV.Recording.Switch", false)) {
+    if(!this.hasFeature("Video.HKSV.Recording.Switch")) {
 
       if(switchService) {
 
@@ -834,7 +833,7 @@ export class ProtectCamera extends ProtectDevice {
     let switchService = this.accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_DYNAMIC_BITRATE);
 
     // If we don't want a dynamic bitrate switch, disable it and we're done.
-    if(!this.nvr.optionEnabled(this.ufp, "Video.DynamicBitrate.Switch", false)) {
+    if(!this.hasFeature("Video.DynamicBitrate.Switch")) {
 
       if(switchService) {
 
@@ -935,7 +934,7 @@ export class ProtectCamera extends ProtectDevice {
       let switchService = this.accessory.getServiceById(this.hap.Service.Switch, ufpRecordingSwitchType);
 
       // If we don't have the feature option enabled, disable the switch and we're done.
-      if(!this.nvr.optionEnabled(this.ufp, "Nvr.Recording.Switch", false)) {
+      if(!this.hasFeature("Nvr.Recording.Switch")) {
 
         if(switchService) {
 
@@ -1093,7 +1092,7 @@ export class ProtectCamera extends ProtectDevice {
     }
 
     // Check for updates to the recording state, if we have the switches configured.
-    if(this.nvr.optionEnabled(this.ufp, "Nvr.Recording.Switch", false)) {
+    if(this.hasFeature("Nvr.Recording.Switch")) {
 
       // Update all the switch states.
       for(const ufpRecordingSwitchType of
@@ -1125,9 +1124,8 @@ export class ProtectCamera extends ProtectDevice {
     // If we've disabled the ability to set the bitrate dynamically, silently fail. We prioritize switches over the global
     // setting here, in case the user enabled both, using the principle that the most specific setting always wins. If the
     // user has both the global setting and the switch enabled, the switch setting will take precedence.
-    if((!this.accessory.context.dynamicBitrate && !this.nvr.optionEnabled(this.ufp, "Video.DynamicBitrate", false)) ||
-      (!this.accessory.context.dynamicBitrate && this.nvr.optionEnabled(this.ufp, "Video.DynamicBitrate", false) &&
-      this.nvr.optionEnabled(this.ufp, "Video.DynamicBitrate.Switch", false))) {
+    if((!this.accessory.context.dynamicBitrate && !this.hasFeature("Video.DynamicBitrate")) ||
+      (!this.accessory.context.dynamicBitrate && this.hasFeature("Video.DynamicBitrate") && this.hasFeature("Video.DynamicBitrate.Switch"))) {
 
       return true;
     }

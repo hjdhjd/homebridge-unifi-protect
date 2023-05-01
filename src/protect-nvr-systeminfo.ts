@@ -54,7 +54,7 @@ export class ProtectNvrSystemInfo extends ProtectBase {
     }
 
     // If we've disabled NVR system information, remove the accessory if it exists.
-    if(!this.nvr.optionEnabled(null, "NVR.SystemInfo", false)) {
+    if(!this.nvr.hasFeature("NVR.SystemInfo")) {
 
       if(this.accessory) {
 
@@ -161,7 +161,7 @@ export class ProtectNvrSystemInfo extends ProtectBase {
     let temperatureService = this.accessory.getService(this.hap.Service.TemperatureSensor);
 
     // Have we disabled the temperature sensor?
-    if(!this.nvr?.optionEnabled(null, "NVR.SystemInfo.Temperature")) {
+    if(!this.nvr?.hasFeature("NVR.SystemInfo.Temperature")) {
 
       if(temperatureService) {
 

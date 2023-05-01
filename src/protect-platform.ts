@@ -4,7 +4,7 @@
  */
 import { API, APIEvent, DynamicPlatformPlugin, Logging, PlatformAccessory, PlatformConfig } from "homebridge";
 import { PROTECT_FFMPEG_OPTIONS, PROTECT_MOTION_DURATION, PROTECT_MQTT_TOPIC, PROTECT_RING_DURATION } from "./settings.js";
-import { ProtectNvrOptions, ProtectOptions } from "./protect-options.js";
+import { ProtectNvrOptions, ProtectOptions, featureOptionCategories, featureOptions } from "./protect-options.js";
 import { ProtectNvr } from "./protect-nvr.js";
 import { RtpPortAllocator } from "./protect-rtp.js";
 import { execFile } from "node:child_process";
@@ -20,6 +20,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
   public readonly config!: ProtectOptions;
   public readonly configOptions: string[];
   private readonly controllers: ProtectNvr[];
+  private featureOptionDefaults: { [index: string]: boolean };
   public readonly log: Logging;
   public readonly rtpPorts: RtpPortAllocator;
   private _systemInfo: string;
@@ -33,10 +34,20 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
     this.api = api;
     this.configOptions = [];
     this.controllers = [];
+    this.featureOptionDefaults = {};
     this.log = log;
     this.rtpPorts = new RtpPortAllocator();
     this.verboseFfmpeg = false;
     this.videoProcessorEncoders = {};
+
+    // Build our list of default values for our feature options.
+    for(const category of featureOptionCategories) {
+
+      for(const options of featureOptions[category.name]) {
+
+        this.featureOptionDefaults[(category.name + (options.name.length ? "." + options.name : "")).toLowerCase()] = options.default;
+      }
+    }
 
     // We can't start without being configured.
     if(!config) {
@@ -279,6 +290,20 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
   public get systemInfo(): string {
 
     return this._systemInfo;
+  }
+
+  // Utility to return the default value for a feature option.
+  public featureOptionDefault(option: string): boolean {
+
+    const defaultValue = this.featureOptionDefaults[option.toLowerCase()];
+
+    // If it's unknown to us, assume it's true.
+    if(defaultValue === undefined) {
+
+      return true;
+    }
+
+    return defaultValue;
   }
 
   // Utility for debug logging.

@@ -146,7 +146,7 @@ export abstract class ProtectDevice extends ProtectBase {
   // Configure device-specific settings.
   protected configureHints(): boolean {
 
-    this.hints.logMotion = this.nvr.optionEnabled(this.ufp, "Log.Motion", false);
+    this.hints.logMotion = this.hasFeature("Log.Motion");
     return true;
   }
 
@@ -237,7 +237,7 @@ export abstract class ProtectDevice extends ProtectBase {
     let switchService = this.accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_MOTION_SENSOR);
 
     // Motion switches are disabled by default unless the user enables them.
-    if(!isEnabled || !this.nvr.optionEnabled(this.ufp, "Motion.Switch", false)) {
+    if(!isEnabled || !this.hasFeature("Motion.Switch")) {
 
       if(switchService) {
 
@@ -305,7 +305,7 @@ export abstract class ProtectDevice extends ProtectBase {
     let triggerService = this.accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_MOTION_TRIGGER);
 
     // Motion triggers are disabled by default and primarily exist for automation purposes.
-    if(!isEnabled || !this.nvr.optionEnabled(this.ufp, "Motion.Trigger", false)) {
+    if(!isEnabled || !this.hasFeature("Motion.Trigger")) {
 
       if(triggerService) {
         this.accessory.removeService(triggerService);
@@ -402,9 +402,9 @@ export abstract class ProtectDevice extends ProtectBase {
   }
 
   // Utility for checking feature options on a device.
-  public hasFeature(option: string, defaultReturnValue = true, address = "", addressOnly = false): boolean {
+  public hasFeature(option: string, address = "", addressOnly = false): boolean {
 
-    return optionEnabled(this.platform.configOptions, this.nvr.ufp, this.ufp, option, defaultReturnValue, address, addressOnly);
+    return optionEnabled(this.platform.configOptions, this.nvr.ufp, this.ufp, option, this.platform.featureOptionDefault(option), address, addressOnly);
   }
 
   // Utility function for reserved identifiers for switches.

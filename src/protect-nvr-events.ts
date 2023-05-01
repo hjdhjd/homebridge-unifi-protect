@@ -41,7 +41,7 @@ export class ProtectNvrEvents extends EventEmitter {
     this.lastMotion = {};
     this.lastRing = {};
     this.log = nvr.log;
-    this.mqttPublishTelemetry = nvr.optionEnabled(nvr.ufp, "Nvr.Publish.Telemetry", false);
+    this.mqttPublishTelemetry = nvr.hasFeature("Nvr.Publish.Telemetry");
     this.nvr = nvr;
     this.ufpApi = nvr.ufpApi;
     this.ufpDeviceState = {};
@@ -302,8 +302,7 @@ export class ProtectNvrEvents extends EventEmitter {
       protectDevice.log.info("Motion detected%s.",
         ((protectDevice.ufp.modelKey === "camera") && detectedObjects.length &&
         (!protectCamera.stream?.hksv?.isRecording ||
-        protectCamera.hints.smartDetect || this.nvr.optionEnabled(protectDevice.ufp, "Motion.SmartDetect.ObjectSensors", false)))
-          ? ": " + detectedObjects.join(", ") : "");
+        protectCamera.hints.smartDetect || protectDevice.hasFeature("Motion.SmartDetect.ObjectSensors"))) ? ": " + detectedObjects.join(", ") : "");
     }
 
     // Trigger smart motion contact sensors, if configured.

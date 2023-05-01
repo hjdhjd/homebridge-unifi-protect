@@ -35,8 +35,8 @@ export class ProtectDoorbell extends ProtectCamera {
     super(nvr, device, accessory);
 
     this.defaultDuration = this.nvr.ufp.doorbellSettings?.defaultMessageResetTimeoutMs ?? 60000;
-    this.isMessagesEnabled = this.nvr.optionEnabled(this.ufp, "Doorbell.Messages");
-    this.isMessagesFromControllerEnabled = this.nvr.optionEnabled(this.ufp, "Doorbell.Messages.FromDoorbell");
+    this.isMessagesEnabled = this.hasFeature("Doorbell.Messages");
+    this.isMessagesFromControllerEnabled = this.hasFeature("Doorbell.Messages.FromDoorbell");
     this.messageSwitches = [];
   }
 

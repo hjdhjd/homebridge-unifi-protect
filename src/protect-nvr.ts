@@ -115,7 +115,7 @@ export class ProtectNvr {
   public async login(): Promise<void> {
 
     // The plugin has been disabled globally. Let the user know that we're done here.
-    if(!this.optionEnabled(null, "Device")) {
+    if(!this.hasFeature("Device")) {
 
       this.log.info("Disabling this UniFi Protect controller.");
       return;
@@ -170,7 +170,7 @@ export class ProtectNvr {
     this.name = this.nvrOptions.name ?? this.ufp.name;
 
     // Mark this NVR as enabled or disabled.
-    this.isEnabled = this.optionEnabled(this.ufp, "Device");
+    this.isEnabled = this.hasFeature("Device");
 
     // If the Protect controller is disabled, we're done.
     if(!this.isEnabled) {
@@ -528,7 +528,7 @@ export class ProtectNvr {
 
         case "camera":
 
-          if(this.ufpApi.bootstrap.cameras.some((x: ProtectCameraConfig) => x.mac === protectDevice.ufp.mac) && this.optionEnabled(protectDevice.ufp, "Device")) {
+          if(this.ufpApi.bootstrap.cameras.some((x: ProtectCameraConfig) => x.mac === protectDevice.ufp.mac) && protectDevice.hasFeature("Device")) {
 
             continue;
           }
@@ -537,7 +537,7 @@ export class ProtectNvr {
 
         case "chime":
 
-          if(this.ufpApi.bootstrap.chimes.some((x: ProtectChimeConfig) => x.mac === protectDevice.ufp.mac) && this.optionEnabled(protectDevice.ufp, "Device")) {
+          if(this.ufpApi.bootstrap.chimes.some((x: ProtectChimeConfig) => x.mac === protectDevice.ufp.mac) && protectDevice.hasFeature("Device")) {
 
             continue;
           }
@@ -546,7 +546,7 @@ export class ProtectNvr {
 
         case "light":
 
-          if(this.ufpApi.bootstrap.lights.some((x: ProtectLightConfig) => x.mac === protectDevice.ufp.mac) && this.optionEnabled(protectDevice.ufp, "Device")) {
+          if(this.ufpApi.bootstrap.lights.some((x: ProtectLightConfig) => x.mac === protectDevice.ufp.mac) && protectDevice.hasFeature("Device")) {
 
             continue;
           }
@@ -555,7 +555,7 @@ export class ProtectNvr {
 
         case "sensor":
 
-          if(this.ufpApi.bootstrap.sensors.some((x: ProtectSensorConfig) => x.mac === protectDevice.ufp.mac) && this.optionEnabled(protectDevice.ufp, "Device")) {
+          if(this.ufpApi.bootstrap.sensors.some((x: ProtectSensorConfig) => x.mac === protectDevice.ufp.mac) && protectDevice.hasFeature("Device")) {
 
             continue;
           }
@@ -564,7 +564,7 @@ export class ProtectNvr {
 
         case "viewer":
 
-          if(this.ufpApi.bootstrap.viewers.some((x: ProtectViewerConfig) => x.mac === protectDevice.ufp.mac) && this.optionEnabled(protectDevice.ufp, "Device")) {
+          if(this.ufpApi.bootstrap.viewers.some((x: ProtectViewerConfig) => x.mac === protectDevice.ufp.mac) && protectDevice.hasFeature("Device")) {
 
             continue;
           }
@@ -703,6 +703,12 @@ export class ProtectNvr {
     const foundDevice = Object.keys(this.configuredDevices).find(x => (this.configuredDevices[x].ufp).id === deviceId);
 
     return foundDevice ? this.configuredDevices[foundDevice] : null;
+  }
+
+  // Utility for checking feature options on the NVR.
+  public hasFeature(option: string): boolean {
+
+    return optionEnabled(this.platform.configOptions, this.ufp, null, option, this.platform.featureOptionDefault(option));
   }
 
   // Utility function to let us know if a device or feature should be enabled or not.
