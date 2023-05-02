@@ -9,6 +9,7 @@ import { ProtectNvr } from "./protect-nvr.js";
 import { RtpPortAllocator } from "./protect-rtp.js";
 import { execFile } from "node:child_process";
 import ffmpegPath from "ffmpeg-for-homebridge";
+import os from "node:os";
 import { platform } from "node:process";
 import { readFileSync } from "node:fs";
 import util from "node:util";
@@ -23,13 +24,13 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
   private featureOptionDefaults: { [index: string]: boolean };
   public readonly log: Logging;
   public readonly rtpPorts: RtpPortAllocator;
-  private _systemInfo: string;
+  private _hostSystem: string;
   public verboseFfmpeg: boolean;
   private videoProcessorEncoders: { [index: string]: string[] };
 
   constructor(log: Logging, config: PlatformConfig, api: API) {
 
-    this._systemInfo = "";
+    this._hostSystem = "";
     this.accessories = [];
     this.api = api;
     this.configOptions = [];
@@ -247,7 +248,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
   private probeHwOs(): void {
 
     // Start off with a generic identifier.
-    this._systemInfo = "generic";
+    this._hostSystem = "generic";
 
     // Take a look at the platform we're on for an initial hint of what we are.
     switch(platform) {
@@ -255,7 +256,8 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
       // The beloved macOS.
       case "darwin":
 
-        this._systemInfo = "macOS";
+        this._hostSystem = "macOS." + (os.cpus()[0].model.includes("Apple") ? "Apple" : "Intel");
+
         break;
 
       // The indomitable Linux.
@@ -270,7 +272,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
           // Is it a Pi 4?
           if(systemId.includes("Raspberry Pi 4")) {
 
-            this._systemInfo = "raspbian";
+            this._hostSystem = "raspbian";
           }
         } catch(error) {
 
@@ -287,9 +289,9 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
   }
 
   // Utility to return the hardware environment we're on.
-  public get systemInfo(): string {
+  public get hostSystem(): string {
 
-    return this._systemInfo;
+    return this._hostSystem;
   }
 
   // Utility to return the default value for a feature option.
