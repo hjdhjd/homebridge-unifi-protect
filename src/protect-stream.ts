@@ -395,7 +395,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     const isTranscoding = this.protectCamera.hints.transcode || ((request.audio.packet_time >= 60) && this.protectCamera.hints.transcodeHighLatency);
 
     // Find the best RTSP stream based on what we're looking for.
-    this.rtspEntry = this.protectCamera.findRtsp(request.video.width, request.video.height, this.protectCamera.ufp, sessionInfo.address);
+    this.rtspEntry = this.protectCamera.findRtsp(request.video.width, request.video.height, sessionInfo.address);
 
     if(!this.rtspEntry) {
 
@@ -492,7 +492,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       // -maxrate bitrate    The maximum bitrate tolerance, used with -bufsize. This provides an upper bound on bitrate, with a little bit extra to allow encoders
       //                     some variation in order to maximize quality while honoring bandwidth constraints.
       ffmpegArgs.push(
-        ...this.videoEncoderOptions(request.video.profile, request.video.level, request.video.width, request.video.height),
+        ...this.videoEncoderOptions(request.video.max_bit_rate, request.video.width, request.video.height, request.video.profile, request.video.level),
         "-bf", "0",
         "-g:v", (this.rtspEntry.channel.fps * PROTECT_HOMEKIT_IDR_INTERVAL).toString(),
         "-bufsize", (2 * request.video.max_bit_rate).toString() + "k",
@@ -1181,9 +1181,10 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
         return true;
       };
 
-      switch(this.platform.systemInfo) {
+      switch(this.platform.hostSystem) {
 
-        case "macOS":
+        case "macOS.Apple":
+        case "macOS.Intel":
 
           // Verify that we have the hardware encoder available to us.
           validateEncoder("h264_videotoolbox");
@@ -1242,9 +1243,10 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       }
     };
 
-    switch(this.platform.systemInfo) {
+    switch(this.platform.hostSystem) {
 
-      case "macOS":
+      case "macOS.Apple":
+      case "macOS.Intel":
 
         // If we don't have audiotoolbox available, let's default back to libfdk_aac.
         if(!this.platform.isEncoderAvailable("aac", "aac_at")) {
@@ -1289,7 +1291,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     // If we've enabled hardware-accelerated transcoding, let's select decoder options accordingly where supported.
     if(this.protectCamera.hints.hardwareDecoding) {
 
-      switch(this.platform.systemInfo) {
+      switch(this.platform.hostSystem) {
 
         case "macOS":
 
@@ -1313,7 +1315,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   }
 
   // Return the video encoder options to use when transcoding.
-  public videoEncoderOptions(profile: H264Profile, level: H264Level, width: number, height: number): string[] {
+  public videoEncoderOptions(bitrate: number, width: number, height: number, profile: H264Profile, level: H264Level): string[] {
 
     // Default to the tried-and-true libx264. We use the following options by default:
     //
@@ -1334,18 +1336,18 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       "-profile:v", this.getH264Profile(profile),
       "-level:v", this.getH264Level(level),
       "-noautoscale",
-      "-filter:v", "format=yuvj420p|videotoolbox_vld|nv12,scale=-2:min(ih\\," + height.toString() + ")",
+      "-filter:v", "format=yuvj420p|videotoolbox_vld|nv12|yuv420p,scale=-2:min(ih\\," + height.toString() + ")",
       "-crf", "20"
     ];
 
     // If we've enabled hardware-accelerated transcoding, let's select encoder options accordingly where supported.
     if(this.protectCamera.hints.hardwareTranscoding) {
 
-      switch(this.platform.systemInfo) {
+      switch(this.platform.hostSystem) {
 
-        case "macOS":
+        case "macOS.Apple":
 
-          // h264_videotoolbox is the macOS hardware encoder API. We use the following options:
+          // h264_videotoolbox is the macOS hardware encoder API. We use the following options on Apple Silicon:
           //
           // -vcodec                 Specify the macOS hardware encoder, h264_videotoolbox.
           // -allow_sw 1             Allow the use of the software encoder if the hardware encoder is occupied or unavailable.
@@ -1353,14 +1355,15 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
           // -realtime 1             We prefer speed over quality - if the encoder has to make a choice, sacrifice one for the other.
           // -coder cabac            Use the cabac encoder for better video quality with the encoding profiles we use in HBUP.
           // -profile:v              Use the H.264 profile that HomeKit is requesting when encoding.
-          // -level:v 0              We override what HomeKit requests for the H.264 profile level on macOS when we're using hardware accelerated transcoding because the
-          //                         hardware encoder is particular about how to use levels. Setting it to 0 allows the encoder to decide for itself.
+          // -level:v 0              We override what HomeKit requests for the H.264 profile level on macOS when we're using hardware accelerated transcoding because
+          //                         the hardware encoder is particular about how to use levels. Setting it to 0 allows the encoder to decide for itself.
           // -noautoscale            Don't attempt to scale the video stream automatically.
           // -filter:v               Set the pixel format and scale the video to the size we want while respecting aspect ratios and ensuring our final dimensions are a
           //                         power of two.
           // -q:v 90                 Use a fixed quality scale of 90, to allow videotoolbox the ability to vary bitrates to achieve the visual quality we want,
-          //                         constrained by our maximum bitrate.
+          //                         constrained by our maximum bitrate. This is only available on Apple Silicon.
           encoderOptions = [
+
             "-vcodec", "h264_videotoolbox",
             "-allow_sw", "1",
             "-realtime", "1",
@@ -1368,8 +1371,38 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
             "-profile:v", this.getH264Profile(profile),
             "-level:v", "0",
             "-noautoscale",
-            "-filter:v", "format=videotoolbox_vld|nv12,scale=-2:min(ih\\," + height.toString() + ")",
+            "-filter:v", "format=videotoolbox_vld|nv12, scale=-2:min(ih\\," + height.toString() + ")",
             "-q:v", "90"
+          ];
+
+          break;
+
+        case "macOS.Intel":
+
+          // h264_videotoolbox is the macOS hardware encoder API. We use the following options on Intel-based Macs:
+          //
+          // -vcodec                 Specify the macOS hardware encoder, h264_videotoolbox.
+          // -allow_sw 1             Allow the use of the software encoder if the hardware encoder is occupied or unavailable.
+          //                         This allows us to scale when we get multiple streaming requests simultaneously that might consume all the available encode engines.
+          // -realtime 1             We prefer speed over quality - if the encoder has to make a choice, sacrifice one for the other.
+          // -coder cabac            Use the cabac encoder for better video quality with the encoding profiles we use in HBUP.
+          // -profile:v              Use the H.264 profile that HomeKit is requesting when encoding.
+          // -level:v 0              We override what HomeKit requests for the H.264 profile level on macOS when we're using hardware accelerated transcoding because
+          //                         the hardware encoder is particular about how to use levels. Setting it to 0 allows the encoder to decide for itself.
+          // -noautoscale            Don't attempt to scale the video stream automatically.
+          // -filter:v               Set the pixel format and scale the video to the size we want while respecting aspect ratios and ensuring our final dimensions are a
+          //                         power of two.
+          encoderOptions = [
+
+            "-vcodec", "h264_videotoolbox",
+            "-allow_sw", "1",
+            "-realtime", "1",
+            "-coder", "cabac",
+            "-profile:v", this.getH264Profile(profile),
+            "-level:v", "0",
+            "-noautoscale",
+            "-filter:v", "format=videotoolbox_vld|nv12, scale=-2:min(ih\\," + height.toString() + ")",
+            "-b:v", bitrate.toString() + "k"
           ];
 
           break;

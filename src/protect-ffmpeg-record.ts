@@ -91,8 +91,9 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
     this.commandLineArgs.push(
 
       "-map", "0:v:0",
-      ...this.protectCamera.stream.videoEncoderOptions(recordingConfig.videoCodec.parameters.profile, recordingConfig.videoCodec.parameters.level,
-        recordingConfig.videoCodec.resolution[0], recordingConfig.videoCodec.resolution[1]),
+      ...this.protectCamera.stream.videoEncoderOptions(recordingConfig.videoCodec.parameters.bitRate,
+        recordingConfig.videoCodec.resolution[0], recordingConfig.videoCodec.resolution[1],
+        recordingConfig.videoCodec.parameters.profile, recordingConfig.videoCodec.parameters.level),
       "-g:v", (rtspEntry.channel.fps * (recordingConfig.videoCodec.parameters.iFrameInterval / 1000)).toString(),
       "-bufsize", (2 * recordingConfig.videoCodec.parameters.bitRate).toString() + "k",
       "-maxrate", (recordingConfig.videoCodec.parameters.bitRate + PROTECT_HOMEKIT_STREAMING_HEADROOM).toString() + "k",
