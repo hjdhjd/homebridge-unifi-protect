@@ -2,9 +2,12 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 6.5.1 (2023-05-02)
+  * Fix: address a regression in hardware transcoding for non-Apple Silicon Macs.
+
 ## 6.5.0 (2023-04-30)
   * Improvement: Various transcoding improvements and optimizations across platforms.
-  * Improvement: on macOS, hardware transcoding optimizations that should noticeably improve video quality.
+  * Improvement: on macOS, hardware transcoding optimizations that should noticeably improve video quality. These refinements are primarily for Apple Silicon Macs.
   * Improvement: on macOS, use the extra-awesome native macOS AAC encoder.
   * Fix: address iOS 16+ HomeKit naming changes - HBUP now correctly names the switches and sensors it creates. If you've got blank or missing names for switches / sensors created by HBUP after this update, you can disable, restart Homebridge, and then reenable them and restart Homebridge a second time.
   * Fix: when using the "only"-specific feature options related to selecting stream quality, ensure we propagate selections correctly when selecting both controller/global options and device-level ones.
