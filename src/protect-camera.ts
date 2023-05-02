@@ -567,7 +567,7 @@ export class ProtectCamera extends ProtectDevice {
       }
 
       // Find the closest RTSP match for this resolution.
-      const foundRtsp = this.findRtsp(entry[0], entry[1], undefined, undefined, rtspEntries);
+      const foundRtsp = this.findRtsp(entry[0], entry[1], undefined, rtspEntries);
 
       if(!foundRtsp) {
 
@@ -1164,7 +1164,7 @@ export class ProtectCamera extends ProtectDevice {
   }
 
   // Find an RTSP configuration for a given target resolution.
-  private findRtspEntry(width: number, height: number, camera: ProtectCameraConfig | null, address: string, rtspEntries: RtspEntry[],
+  private findRtspEntry(width: number, height: number, address: string, rtspEntries: RtspEntry[],
     defaultStream = this.rtspQuality.StreamingDefault): RtspEntry | null {
 
     // No RTSP entries to choose from, we're done.
@@ -1174,19 +1174,19 @@ export class ProtectCamera extends ProtectDevice {
     }
 
     // First, we check to see if we've set an explicit preference for the target address.
-    if(camera && address) {
+    if(address) {
 
       // If we don't have this address cached, look it up and cache it.
       if(!this.rtspQuality[address]) {
 
         // Check to see if there's an explicit preference set and cache the result.
-        if(this.nvr.optionEnabled(camera, "Video.Stream.Only.Low", false, address, true)) {
+        if(this.hasFeature("Video.Stream.Only.Low", address, true)) {
 
           this.rtspQuality[address] = "LOW";
-        } else if(this.nvr.optionEnabled(camera, "Video.Stream.Only.Medium", false, address, true)) {
+        } else if(this.hasFeature("Video.Stream.Only.Medium", address, true)) {
 
           this.rtspQuality[address] = "MEDIUM";
-        } else if(this.nvr.optionEnabled(camera, "Video.Stream.Only.High", false, address, true)) {
+        } else if(this.hasFeature("Video.Stream.Only.High", address, true)) {
 
           this.rtspQuality[address] = "HIGH";
         } else {
@@ -1222,43 +1222,29 @@ export class ProtectCamera extends ProtectDevice {
     // before looking for something lower resolution.
     if((width >= 1280) && (height >= 720)) {
 
-      for(const entry of rtspEntries) {
+      const entry = rtspEntries.find(x => x.resolution[0] >= 1280);
 
-        // Make sure we're looking at an HD resolution.
-        if(entry.resolution[0] < 1280) {
-
-          continue;
-        }
-
-        // Return the first one we find.
-        return entry;
-      }
-    }
-
-    // If we didn't request an HD resolution, or we couldn't find anything HD to use, we try to find whatever we
-    // can find that's close.
-    for(const entry of rtspEntries) {
-
-      if(width >= entry.resolution[0]) {
+      if(entry) {
 
         return entry;
       }
     }
 
-    // We couldn't find a close match, return the lowest resolution we found.
-    return rtspEntries[rtspEntries.length - 1];
+    // If we didn't request an HD resolution, or we couldn't find anything HD to use, we try to find the highest resolution we can find
+    // that's at least our requested width or larger. If we can't find anything that matches, we return the lowest resolution we have available.
+    return rtspEntries.find(x => width >= x.resolution[0]) ?? rtspEntries[rtspEntries.length - 1];
   }
 
   // Find a streaming RTSP configuration for a given target resolution.
-  public findRtsp(width: number, height: number, camera: ProtectCameraConfig | null = null, address = "", rtspEntries = this.rtspEntries): RtspEntry | null {
+  public findRtsp(width: number, height: number, address = "", rtspEntries = this.rtspEntries): RtspEntry | null {
 
-    return this.findRtspEntry(width, height, camera, address, rtspEntries);
+    return this.findRtspEntry(width, height, address, rtspEntries);
   }
 
   // Find a recording RTSP configuration for a given target resolution.
-  public findRecordingRtsp(width: number, height: number, camera: ProtectCameraConfig | null = null, rtspEntries = this.rtspEntries): RtspEntry | null {
+  public findRecordingRtsp(width: number, height: number, rtspEntries = this.rtspEntries): RtspEntry | null {
 
-    return this.findRtspEntry(width, height, camera, "", rtspEntries, this.rtspQuality.RecordingDefault);
+    return this.findRtspEntry(width, height, "", rtspEntries, this.rtspQuality.RecordingDefault);
   }
 
   // Utility function for sorting by resolution.

@@ -238,8 +238,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     const oldRtspEntry = this.rtspEntry;
 
     // Figure out which camera channel we should use for the based on the HKSV-requested resolution.
-    this.rtspEntry = this.protectCamera.findRecordingRtsp(this.recordingConfig.videoCodec.resolution[0], this.recordingConfig.videoCodec.resolution[1],
-      this.protectCamera.ufp);
+    this.rtspEntry = this.protectCamera.findRecordingRtsp(this.recordingConfig.videoCodec.resolution[0], this.recordingConfig.videoCodec.resolution[1]);
 
     if(!this.rtspEntry) {
 
