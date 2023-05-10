@@ -421,10 +421,21 @@
         }
 
         const configTable = document.getElementById("configTable");
-        let configOptions = currentConfig[0].options || [];
+        let configOptions = [];
+        let optionsList = [];
 
-        // Show all the valid options configured by the user.
-        optionsList = configOptions.filter(x => x.match(/^(Enable|Disable)\.*/gi)).map(x => x.toUpperCase());
+        // Update our configuration options.
+        const updateConfigOptions = (newConfig) => {
+
+          // Update our configuration.
+          configOptions = newConfig;
+
+          // Show all the valid options configured by the user.
+          optionsList = configOptions.filter(x => x.match(/^(Enable|Disable)\.*/gi)).map(x => x.toUpperCase());
+        };
+
+        // Initialize our feature option configuration.
+        updateConfigOptions(currentConfig[0].options ?? [])
 
         // Is a feature option globally enabled?
         const isGlobalOptionEnabled = (featureOption, defaultValue) => {
@@ -435,7 +446,7 @@
           return optionsList.some(x => x === ("ENABLE." + featureOption)) ? true :
             (optionsList.some(x => x === ("DISABLE." + featureOption)) ? false : defaultValue
             );
-        }
+        };
 
         // Is a feature option enabled at the device or controller level.
         const isDeviceOptionEnabled = (featureOption, mac, defaultValue) => {
@@ -447,7 +458,7 @@
           return optionsList.some(x => x === ("ENABLE." + featureOption + "." + mac)) ? true :
             (optionsList.some(x => x === ("DISABLE." + featureOption + "." + mac)) ? false : defaultValue
             );
-        }
+        };
 
         // Show feature option information for a specific device, controller, or globally.
         const showDeviceInfo = async (deviceId) => {
@@ -544,7 +555,7 @@
               checkbox.type = "checkbox";
               checkbox.id = featureOption;
               checkbox.name = featureOption;
-              checkbox.value = featureOption + (!ufpDevice ? "" : ("." + ufpDevice.mac)); // LEFT OFF HERE
+              checkbox.value = featureOption + (!ufpDevice ? "" : ("." + ufpDevice.mac));
               checkbox.checked = !ufpDevice ? isGlobalOptionEnabled(featureOption, option.default) :
                 isDeviceOptionEnabled(featureOption, ufpDevice.mac, option.default);
 
@@ -571,7 +582,7 @@
 
                 // Update our configuration in Homebridge.
                 currentConfig[0].options = newOptions;
-                configOptions = newOptions;
+                updateConfigOptions(newOptions);
                 await homebridge.updatePluginConfig(currentConfig);
               });
 
