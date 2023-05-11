@@ -156,12 +156,15 @@ export class RtpPortAllocator {
         // Exclude this socket from Node's reference counting so we don't have issues later.
         socket.unref();
 
+        // Listen for the bind event.
+        const eventListener = once(socket, "listening");
+
         // Bind to the port in question. If port is set to 0, we'll get a randomly generated port generated for us.
         socket.bind(port);
 
         // Ensure we wait for the socket to be bound.
         // eslint-disable-next-line no-await-in-loop
-        await once(socket, "listening");
+        await eventListener;
 
         // Retrieve the port number we've gotten from the bind request.
         const assignedPort = socket.address().port;
