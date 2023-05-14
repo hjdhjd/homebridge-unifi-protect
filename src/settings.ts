@@ -62,6 +62,9 @@ export const PROTECT_MQTT_TOPIC = "unifi/protect";
 // Default duration, in seconds, of ring events.
 export const PROTECT_RING_DURATION = 3;
 
+// Minimum required GPU memory on a Raspberry Pi for hardware acceleration.
+export const PROTECT_RPI_GPU_MINIMUM = 128;
+
 // Maximum age of a snapshot in seconds.
 export const PROTECT_SNAPSHOT_CACHE_MAXAGE = 90;
 

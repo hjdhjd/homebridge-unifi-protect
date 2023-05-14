@@ -21,7 +21,6 @@ export interface RtspEntry {
 export class ProtectCamera extends ProtectDevice {
 
   public hasHksv: boolean;
-  public hasHwAccel: boolean;
   private isDeleted: boolean;
   private isDoorbellConfigured: boolean;
   public isRinging: boolean;
@@ -40,7 +39,6 @@ export class ProtectCamera extends ProtectDevice {
 
     this.isDoorbellConfigured = false;
     this.hasHksv = false;
-    this.hasHwAccel = false;
     this.isDeleted = false;
     this.isRinging = false;
     this.isVideoConfigured = false;
@@ -60,7 +58,7 @@ export class ProtectCamera extends ProtectDevice {
     super.configureHints();
 
     // Configure our device-class specific hints.
-    this.hints.hardwareDecoding = this.hasFeature("Video.Decode.Hardware");
+    this.hints.hardwareDecoding = true;
     this.hints.hardwareTranscoding = this.hasFeature("Video.Transcode.Hardware");
     this.hints.ledStatus = this.ufp.featureFlags.hasLedStatus && this.hasFeature("Device.StatusLed");
     this.hints.logDoorbell = this.hasFeature("Log.Doorbell");
@@ -183,6 +181,12 @@ export class ProtectCamera extends ProtectDevice {
 
   // Cleanup after ourselves if we're being deleted.
   public cleanup(): void {
+
+    // If we've got HomeKit Secure Video enabled and recording, disable it.
+    if(this.stream?.hksv?.isRecording) {
+
+      void this.stream.hksv.updateRecordingActive(false);
+    }
 
     super.cleanup();
 
@@ -516,7 +520,7 @@ export class ProtectCamera extends ProtectDevice {
     }
 
     // Set the camera and shapshot URLs.
-    const cameraUrl = "rtsps://" + this.nvr.nvrOptions.address + ":" + this.nvr.ufp.ports.rtsps.toString() + "/";
+    const cameraUrl = "rtsps://" + (this.nvr.nvrOptions.overrideAddress ?? this.ufp.connectionHost) + ":" + this.nvr.ufp.ports.rtsps.toString() + "/";
     this.snapshotUrl = this.nvr.ufpApi.getApiEndpoint(this.ufp.modelKey) + "/" + this.ufp.id + "/snapshot";
 
     // No RTSP streams are available that meet our criteria - we're done.
@@ -539,9 +543,12 @@ export class ProtectCamera extends ProtectDevice {
         continue;
       }
 
-      rtspEntries.push({ channel: channel,
+      rtspEntries.push({
+        channel: channel,
         name: this.getResolution([channel.width, channel.height, channel.fps]) + " (" + channel.name + ")",
-        resolution: [ channel.width, channel.height, channel.fps ], url: cameraUrl + channel.rtspAlias + "?enableSrtp" });
+        resolution: [ channel.width, channel.height, channel.fps ],
+        url: cameraUrl + channel.rtspAlias + "?enableSrtp"
+      });
     }
 
     // Sort the list of resolutions, from high to low.
@@ -1205,6 +1212,8 @@ export class ProtectCamera extends ProtectDevice {
     // Second, we check to see if we've set an explicit preference for stream quality.
     if(defaultStream) {
 
+      defaultStream = defaultStream.toUpperCase();
+
       return rtspEntries.find(x => x.channel.name.toUpperCase() === defaultStream) ?? null;
     }
 
@@ -1236,7 +1245,13 @@ export class ProtectCamera extends ProtectDevice {
   }
 
   // Find a streaming RTSP configuration for a given target resolution.
-  public findRtsp(width: number, height: number, address = "", rtspEntries = this.rtspEntries): RtspEntry | null {
+  public findRtsp(width: number, height: number, address = "", rtspEntries = this.rtspEntries, constrainPixels = 0): RtspEntry | null {
+
+    // If we've imposed a constraint on the maximum dimensions of what we want due to a hardware limitation, filter out those entries.
+    if(constrainPixels) {
+
+      rtspEntries = rtspEntries.filter(x => (x.channel.width * x.channel.height) <= constrainPixels);
+    }
 
     return this.findRtspEntry(width, height, address, rtspEntries);
   }
@@ -1244,7 +1259,7 @@ export class ProtectCamera extends ProtectDevice {
   // Find a recording RTSP configuration for a given target resolution.
   public findRecordingRtsp(width: number, height: number, rtspEntries = this.rtspEntries): RtspEntry | null {
 
-    return this.findRtspEntry(width, height, "", rtspEntries, this.rtspQuality.RecordingDefault);
+    return this.findRtspEntry(width, height, "", rtspEntries, this.rtspQuality.RecordingDefault ?? this.stream.ffmpegOptions.recordingDefaultChannel);
   }
 
   // Utility function for sorting by resolution.
@@ -1301,7 +1316,7 @@ export class ProtectPackageCamera extends ProtectCamera {
 
     // We explicitly avoid adding the MAC address of the camera - that's reserved for real Protect devices, not synthetic ones we create.
     this.accessory.context.nvr = this.nvr.ufp.mac;
-    this.accessory.context.packageCamera = true;
+    this.accessory.context.packageCamera = this.ufp.mac;
 
     // Configure accessory information.
     this.configureInfo();

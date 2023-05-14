@@ -5,9 +5,9 @@
 import { API, APIEvent, DynamicPlatformPlugin, Logging, PlatformAccessory, PlatformConfig } from "homebridge";
 import { PROTECT_FFMPEG_OPTIONS, PROTECT_MOTION_DURATION, PROTECT_MQTT_TOPIC, PROTECT_RING_DURATION } from "./settings.js";
 import { ProtectNvrOptions, ProtectOptions, featureOptionCategories, featureOptions } from "./protect-options.js";
+import { FfmpegCodecs } from "./protect-ffmpeg-codecs.js";
 import { ProtectNvr } from "./protect-nvr.js";
 import { RtpPortAllocator } from "./protect-rtp.js";
-import { execFile } from "node:child_process";
 import ffmpegPath from "ffmpeg-for-homebridge";
 import os from "node:os";
 import { platform } from "node:process";
@@ -18,6 +18,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
 
   public accessories: PlatformAccessory[];
   public readonly api: API;
+  public readonly codecSupport!: FfmpegCodecs;
   public readonly config!: ProtectOptions;
   public readonly configOptions: string[];
   private readonly controllers: ProtectNvr[];
@@ -26,7 +27,6 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
   public readonly rtpPorts: RtpPortAllocator;
   private _hostSystem: string;
   public verboseFfmpeg: boolean;
-  private videoProcessorEncoders: { [index: string]: string[] };
 
   constructor(log: Logging, config: PlatformConfig, api: API) {
 
@@ -39,7 +39,6 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
     this.log = log;
     this.rtpPorts = new RtpPortAllocator();
     this.verboseFfmpeg = false;
-    this.videoProcessorEncoders = {};
 
     // Build our list of default values for our feature options.
     for(const category of featureOptionCategories) {
@@ -137,14 +136,16 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
     // Identify what we're running on so we can take advantage of hardware-specific features.
     this.probeHwOs();
 
+    // Probe our FFmpeg capabilities.
+    this.codecSupport = new FfmpegCodecs(this);
+
     // Avoid a prospective race condition by waiting to configure our controllers until Homebridge is done
     // loading all the cached accessories it knows about, and calling configureAccessory() on each.
     // eslint-disable-next-line @typescript-eslint/no-misused-promises
     api.on(APIEvent.DID_FINISH_LAUNCHING, this.launchControllers.bind(this));
   }
 
-  // This gets called when homebridge restores cached accessories at startup. We
-  // intentionally avoid doing anything significant here, and save all that logic
+  // This gets called when homebridge restores cached accessories at startup. We intentionally avoid doing anything significant here, and save all that logic
   // for device discovery.
   public configureAccessory(accessory: PlatformAccessory): void {
 
@@ -156,7 +157,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
   private async launchControllers(): Promise<void> {
 
     // First things first - ensure we've got a working video processor before we do anything else.
-    if(!(await this.probeVideoProcessorCodecs())) {
+    if(!(await this.codecSupport.probe())) {
 
       return;
     }
@@ -167,81 +168,6 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
       // Login to the Protect controller.
       void controller.login();
     }
-  }
-
-  // Probe our video processor's encoding and decoding capabilities.
-  private async probeVideoProcessorCodecs(): Promise<boolean> {
-
-    try {
-
-      // Promisify exec to allow us to wait for it asynchronously.
-      const execAsync = util.promisify(execFile);
-
-      // Check for the codecs in our video processor.
-      const { stdout } = await execAsync(this.config.videoProcessor, [ "hide_banner", "-codecs" ]);
-
-      // A regular expression to parse out the codec and it's supported encoders.
-      const encodersRegex = /^.{8}(\S+).+\(encoders: (.*?)\s*\)$/;
-
-      // Iterate through each line, and a build a list of encoders.
-      for(const codecLine of stdout.split("\n")) {
-
-        // Let's see if we have encoders.
-        const encodersMatch = encodersRegex.exec(codecLine);
-
-        // No encoders found, keep going.
-        if(!encodersMatch) {
-
-          continue;
-        }
-
-        // Add the codec and supported encoders to our list of supported encoders.
-        this.videoProcessorEncoders[encodersMatch[1]] = encodersMatch[2].split(" ");
-      }
-
-      return true;
-    } catch(error) {
-
-      // It's really a SystemError, but Node hides that type from us for esoteric reasons.
-      if(error instanceof Error) {
-
-        interface SystemError {
-          cmd: string,
-          code: string,
-          errno: number,
-          path: string,
-          spawnargs: string[],
-          stderr: string,
-          stdout: string,
-          syscall: string
-        }
-
-        const execError = error as unknown as SystemError;
-
-        if(execError.code === "ENOENT") {
-
-          this.log.error("Unable to find FFmpeg at: '%s'. Please make sure that you have a working version of FFmpeg installed in order to use this plugin.",
-            execError.path);
-
-        } else {
-
-          this.log.error("Error running FFmpeg: %s", error.message);
-        }
-      }
-
-      this.log.error("Unable to complete plugin startup without a working version of FFmpeg.");
-      return false;
-    }
-  }
-
-  // Utility to determine whether or not a specific encoder is available to the video processor for a given codec.
-  public isEncoderAvailable(codec: string, encoder: string): boolean {
-
-    // Normalize our lookups.
-    codec = codec.toLowerCase();
-    encoder = encoder.toLowerCase();
-
-    return this.videoProcessorEncoders[codec]?.some(x => x === encoder);
   }
 
   // Identify what hardware and operating system environment we're actually running on.

@@ -6,7 +6,6 @@
 import { ProtectCamera, RtspEntry } from "./protect-camera.js";
 import { CameraRecordingConfiguration } from "homebridge";
 import { FfmpegProcess } from "./protect-ffmpeg.js";
-import { PROTECT_HOMEKIT_STREAMING_HEADROOM } from "./settings.js";
 import { once } from "node:events";
 
 // FFmpeg HomeKit Streaming Video recording process management.
@@ -40,13 +39,13 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
 
       // Configure our video parameters for our input:
       //
-      // -fflags flags  Set the format flags to discard any corrupt packets rather than exit, and ensure that packets are written out immediately.
+      // -fflags flags  Set the format flags to generate a presentation timestamp if it's missing and discard any corrupt packets rather than exit.
       // -r fps         Set the input frame rate for the video stream.
       // -f mp4         Tell ffmpeg that it should expect an MP4-encoded input stream.
       // -i pipe:0      Use standard input to get video data.
       this.commandLineArgs.push(
 
-        "-fflags", "+discardcorrupt",
+        "-fflags", "+discardcorrupt+genpts",
         "-r", rtspEntry.channel.fps.toString(),
         "-f", "mp4",
         "-i", "pipe:0"
@@ -64,7 +63,7 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
       // -i this.rtspEntry.url            RTSPS URL to get our input stream from.
       this.commandLineArgs.push(
 
-        ...this.protectCamera.stream.videoDecoderOptions,
+        ...this.protectCamera.stream.ffmpegOptions.videoDecoder,
         "-probesize", this.protectCamera.stream.probesize.toString(),
         "-max_delay", "500000",
         "-r", rtspEntry.channel.fps.toString(),
@@ -74,30 +73,24 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
 
     }
 
+    // Configure our recording options for the video stream:
+    //
     // -map 0:v:0                    Selects the first available video track from the stream. Protect actually maps audio
     //                               and video tracks in opposite locations from where FFmpeg typically expects them. This
     //                               setting is a more general solution than naming the track locations directly in case
     //                               Protect changes this in the future.
     //                               Yes, we included these above as well: they need to be included for every I/O stream to
     //                               maximize effectiveness it seems.
-    // -g:v                          Set the group of pictures to the number of frames per second * the interval in between keyframes as HKSV requests it to be.
-    // -bufsize size                 This is the decoder buffer size, which drives the variability / quality of the output bitrate.
-    // -maxrate bitrate              The maximum bitrate tolerance, used with -bufsize. We set this to max_bit_rate to effectively
-    //                               create a constant bitrate.
-    // -fflags flags                 Set format flags to generate a presentation timestamp if it's missing and discard any corrupt packets rather than exit.
     // -reset_timestamps             Reset timestamps at the beginning of each segment.
     // -movflags flags               In the generated fMP4 stream: start a new fragment at each keyframe, write a blank MOOV box, and
     //                               avoid writing absolute offsets
     this.commandLineArgs.push(
 
       "-map", "0:v:0",
-      ...this.protectCamera.stream.videoEncoderOptions(recordingConfig.videoCodec.parameters.bitRate,
-        recordingConfig.videoCodec.resolution[0], recordingConfig.videoCodec.resolution[1],
-        recordingConfig.videoCodec.parameters.profile, recordingConfig.videoCodec.parameters.level),
-      "-g:v", (rtspEntry.channel.fps * (recordingConfig.videoCodec.parameters.iFrameInterval / 1000)).toString(),
-      "-bufsize", (2 * recordingConfig.videoCodec.parameters.bitRate).toString() + "k",
-      "-maxrate", (recordingConfig.videoCodec.parameters.bitRate + PROTECT_HOMEKIT_STREAMING_HEADROOM).toString() + "k",
-      "-fflags", "+genpts+discardcorrupt",
+      ...this.protectCamera.stream.ffmpegOptions.recordEncoder(recordingConfig.videoCodec.resolution[0], recordingConfig.videoCodec.resolution[1],
+        rtspEntry.channel.fps, recordingConfig.videoCodec.parameters.bitRate,
+        recordingConfig.videoCodec.parameters.profile, recordingConfig.videoCodec.parameters.level,
+        recordingConfig.videoCodec.parameters.iFrameInterval / 1000),
       "-reset_timestamps", "1",
       "-movflags", "frag_keyframe+empty_moov+default_base_moof"
     );
@@ -124,7 +117,7 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
     this.commandLineArgs.push("-f", "mp4", "pipe:1");
 
     // Additional logging, but only if we're debugging.
-    if(protectCamera.platform.verboseFfmpeg) {
+    if(this.protectCamera.platform.verboseFfmpeg) {
 
       this.commandLineArgs.unshift("-loglevel", "level+verbose");
     }
@@ -148,7 +141,7 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
     let type = "";
 
     // Process FFmpeg output and parse out the fMP4 stream it's generating for HomeKit Secure Video.
-    this.process?.stdout?.on("data", dataListener = (buffer: Buffer): void => {
+    this.process?.stdout.on("data", dataListener = (buffer: Buffer): void => {
 
       // If we have anything left from the last buffer we processed, prepend it to this buffer.
       if(bufferRemaining.length > 0) {
@@ -260,12 +253,14 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
   protected logFfmpegError(exitCode: number, signal: NodeJS.Signals): void {
 
     // Known HKSV-related errors due to occasional inconsistencies in the Protect livestream API.
-    const ffmpegKnownHksvError = new RegExp("(Invalid data found when processing input)|(Could not write header for output file #0)");
+    const ffmpegKnownHksvError = new RegExp(
+      "(Invalid data found when processing input)|(Error splitting the input into NAL units\\.)|(Could not write header for output file #0)"
+    );
 
     // See if we know about this error.
     if(this.stderrLog.some(x => ffmpegKnownHksvError.test(x))) {
 
-      this.log.error("FFmpeg ended unexpectedly due to issues with the media stream provided by the UniFi Protect livestream API. " +
+      this.log.error("FFmpeg ended unexpectedly due to issues processing the media stream provided by the UniFi Protect livestream API. " +
         "This error can be safely ignored - they will occur occasionally.");
       return;
     }

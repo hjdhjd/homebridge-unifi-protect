@@ -13,12 +13,6 @@ import { ProtectNvr } from "./protect-nvr.js";
 import { StreamRequestCallback } from "homebridge";
 import util from "node:util";
 
-// Port and IP version information.
-export interface PortInterface {
-  addressVersion: string,
-  port: number
-}
-
 // Base class for all FFmpeg process management.
 export class FfmpegProcess extends EventEmitter {
 
@@ -35,6 +29,7 @@ export class FfmpegProcess extends EventEmitter {
   protected readonly nvr: ProtectNvr;
   protected process: ChildProcessWithoutNullStreams | null;
   protected protectCamera: ProtectCamera | ProtectPackageCamera;
+  private stderrBuffer: string;
   protected stderrLog: string[];
 
   // Create a new FFmpeg process instance.
@@ -54,6 +49,7 @@ export class FfmpegProcess extends EventEmitter {
     this.nvr = protectCamera.nvr;
     this.process = null;
     this.protectCamera = protectCamera;
+    this.stderrBuffer = "";
     this.stderrLog = [];
 
     // Toggle FFmpeg logging, if configured.
@@ -189,22 +185,31 @@ export class FfmpegProcess extends EventEmitter {
         }
       }
 
+      // Append to the current line we've been buffering. We don't want to output not-printable characters to ensure the log output is readable.
+      this.stderrBuffer += data.toString().replace(/\p{C}+/gu, "\n");
+
       // Debugging and additional logging collection.
-      for(const line of data.toString().split(/\n/)) {
+      for(;;) {
 
-        // Don't output not-printable characters to ensure the log output is readable.
-        const cleanLine = line.replace(/[\p{Cc}\p{Cn}\p{Cs}]+/gu, "");
+        // Find the next newline.
+        const lineIndex = this.stderrBuffer.indexOf("\n");
 
-        // Don't print the FFmpeg progress bar to give clearer insights into what's going on.
-        if(cleanLine.length && ((cleanLine.indexOf("frame=") === -1) || (cleanLine.indexOf("size=") === -1))) {
+        // If there's no newline, we're done until we get more data.
+        if(lineIndex === -1) {
 
-          this.stderrLog.push(cleanLine + "\n");
+          return;
+        }
 
-          // Show it to the user if it's been requested.
-          if(this.isLogging || this.isVerbose || this.protectCamera.platform.config.debugAll) {
+        // Grab the next complete line, and increment our buffer.
+        const line = this.stderrBuffer.slice(0, lineIndex);
+        this.stderrBuffer = this.stderrBuffer.slice(lineIndex + 1);
 
-            this.log.info(cleanLine);
-          }
+        this.stderrLog.push(line + "\n");
+
+        // Show it to the user if it's been requested.
+        if(this.isLogging || this.isVerbose || this.protectCamera.platform.config.debugAll) {
+
+          this.log.info(line);
         }
       }
     });
@@ -236,6 +241,13 @@ export class FfmpegProcess extends EventEmitter {
 
         // Flag that we've run into an FFmpeg error.
         this.hasError = true;
+
+        // Flush out any remaining output in our error buffer.
+        if(this.stderrBuffer.length) {
+
+          this.stderrLog.push(this.stderrBuffer + "\n");
+          this.stderrBuffer = "";
+        }
 
         // Inform the user.
         this.logFfmpegError(exitCode, signal);

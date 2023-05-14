@@ -8,10 +8,10 @@ import { API, AudioRecordingCodecType, AudioRecordingSamplerate, AudioStreamingC
   CameraControllerOptions, CameraStreamingDelegate, H264Level, H264Profile, HAP, MediaContainerType, PrepareStreamCallback, PrepareStreamRequest, PrepareStreamResponse,
   SRTPCryptoSuites, SnapshotRequest, SnapshotRequestCallback, StartStreamRequest, StreamRequestCallback, StreamRequestTypes, StreamingRequest } from "homebridge";
 import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_FFMPEG_AUDIO_FILTER_HIGHPASS, PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS,
-  PROTECT_HKSV_SEGMENT_LENGTH, PROTECT_HKSV_TIMESHIFT_BUFFER_MAXLENGTH, PROTECT_HOMEKIT_IDR_INTERVAL, PROTECT_HOMEKIT_STREAMING_HEADROOM,
-  PROTECT_SNAPSHOT_CACHE_MAXAGE } from "./settings.js";
+  PROTECT_HKSV_SEGMENT_LENGTH, PROTECT_HKSV_TIMESHIFT_BUFFER_MAXLENGTH, PROTECT_HOMEKIT_IDR_INTERVAL, PROTECT_SNAPSHOT_CACHE_MAXAGE } from "./settings.js";
 import { ProtectCamera, ProtectPackageCamera, RtspEntry } from "./protect-camera.js";
 import { FetchError } from "unifi-protect";
+import { FfmpegOptions } from "./protect-ffmpeg-options.js";
 import { FfmpegStreamingProcess } from "./protect-ffmpeg-stream.js";
 import { ProtectLogging } from "./protect-types.js";
 import { ProtectNvr } from "./protect-nvr.js";
@@ -50,6 +50,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   private readonly api: API;
   private readonly config: ProtectOptions;
   public controller: CameraController;
+  public readonly ffmpegOptions: FfmpegOptions;
   private readonly hap: HAP;
   public hksv: ProtectRecordingDelegate | null;
   public readonly log: ProtectLogging;
@@ -87,7 +88,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     this.verboseFfmpeg = false;
 
     // Configure our hardware acceleration support.
-    this.configureHwAccel();
+    this.ffmpegOptions = new FfmpegOptions(protectCamera);
 
     // Setup for HKSV, if enabled.
     if(this.protectCamera.hasHksv) {
@@ -272,7 +273,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     const isAudioEnabled = this.protectCamera.hasFeature("Audio", request.targetAddress);
 
     // We need to check for AAC support because it's going to determine whether we support audio.
-    const hasAudioSupport = isAudioEnabled && (this.audioEncoderOptions.length > 0);
+    const hasAudioSupport = isAudioEnabled && (this.ffmpegOptions.audioEncoder.length > 0);
 
     // Setup our audio plumbing.
     const audioIncomingRtcpPort = (await reservePort(request.addressVersion));
@@ -395,7 +396,8 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     const isTranscoding = this.protectCamera.hints.transcode || ((request.audio.packet_time >= 60) && this.protectCamera.hints.transcodeHighLatency);
 
     // Find the best RTSP stream based on what we're looking for.
-    this.rtspEntry = this.protectCamera.findRtsp(request.video.width, request.video.height, sessionInfo.address);
+    this.rtspEntry = this.protectCamera.findRtsp(request.video.width, request.video.height, sessionInfo.address, undefined,
+      isTranscoding ? this.ffmpegOptions.hostSystemMaxPixels : 0);
 
     if(!this.rtspEntry) {
 
@@ -448,10 +450,10 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
     // -hide_banner                     Suppress printing the startup banner in FFmpeg.
     // -nostats                         Suppress printing progress reports while encoding in FFmpeg.
+    // -fflags flags                    Set format flags to discard any corrupt packets rather than exit.
     // -probesize number                How many bytes should be analyzed for stream information.
     // -max_delay 500000                Set an upper limit on how much time FFmpeg can take in demuxing packets, in microseconds.
     // -r fps                           Set the input frame rate for the video stream.
-    // -fflags flags                    Set format flags to generate a presentation timestamp if it's missing and discard any corrupt packets rather than exit.
     // -rtsp_transport tcp              Tell the RTSP stream handler that we're looking for a TCP connection.
     // -i this.rtspEntry.url            RTSPS URL to get our input stream from.
     // -map 0:v:0                       selects the first available video track from the stream. Protect actually maps audio
@@ -464,11 +466,11 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
       "-hide_banner",
       "-nostats",
-      ...this.videoDecoderOptions,
+      "-fflags", "+discardcorrupt",
+      ...this.ffmpegOptions.videoDecoder,
       "-probesize", this.probesize.toString(),
       "-max_delay", "500000",
       "-r", this.rtspEntry.channel.fps.toString(),
-      "-fflags", "+discardcorrupt+genpts",
       "-rtsp_transport", "tcp",
       "-i", this.rtspEntry.url,
       "-map", "0:v:0"
@@ -478,26 +480,15 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     this.log.info("Streaming request from %s%s: %sx%s@%sfps, %s kbps. %s %s, %s kbps.",
       sessionInfo.address, (request.audio.packet_time === 60) ? " (high latency connection)" : "",
       request.video.width, request.video.height, request.video.fps, request.video.max_bit_rate,
-      isTranscoding ? (this.protectCamera.hasHwAccel ? "Hardware accelerated transcoding" : "Transcoding") : "Using",
+      isTranscoding ? (this.protectCamera.hints.hardwareTranscoding ? "Hardware accelerated transcoding" : "Transcoding") : "Using",
       this.rtspEntry.name, this.rtspEntry.channel.bitrate / 1000);
 
     // Check to see if we're transcoding. If we are, set the right FFmpeg encoder options. If not, copy the video stream.
     if(isTranscoding) {
 
-      // Configure our video parameters for transcoding:
-      //
-      // -bf 0               Disable B-frames when encoding to increase compatibility against occasionally finicky HomeKit clients.
-      // -g:v                Set the group of pictures to the number of frames per second * the interval in between keyframes to ensure a solid livestreamng exerience.
-      // -bufsize size       This is the decoder buffer size, which drives the variability / quality of the output bitrate.
-      // -maxrate bitrate    The maximum bitrate tolerance, used with -bufsize. This provides an upper bound on bitrate, with a little bit extra to allow encoders
-      //                     some variation in order to maximize quality while honoring bandwidth constraints.
-      ffmpegArgs.push(
-        ...this.videoEncoderOptions(request.video.max_bit_rate, request.video.width, request.video.height, request.video.profile, request.video.level),
-        "-bf", "0",
-        "-g:v", (this.rtspEntry.channel.fps * PROTECT_HOMEKIT_IDR_INTERVAL).toString(),
-        "-bufsize", (2 * request.video.max_bit_rate).toString() + "k",
-        "-maxrate", (request.video.max_bit_rate + PROTECT_HOMEKIT_STREAMING_HEADROOM).toString() + "k"
-      );
+      // Configure our video parameters for transcoding.
+      ffmpegArgs.push(...this.ffmpegOptions.streamEncoder(request.video.width, request.video.height, this.rtspEntry.channel.fps, request.video.max_bit_rate,
+        request.video.profile, request.video.level, PROTECT_HOMEKIT_IDR_INTERVAL));
     } else {
 
       // Configure our video parameters for just copying the input stream from Protect - it tends to be quite solid in most cases:
@@ -553,7 +544,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       ffmpegArgs.push(
 
         "-map", "0:a:0?",
-        ...this.audioEncoderOptions,
+        ...this.ffmpegOptions.audioEncoder,
         "-profile:a", "38",
         "-flags", "+global_header",
         "-f", "null",
@@ -720,10 +711,10 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       "-nostats",
       "-protocol_whitelist", "crypto,file,pipe,rtp,udp",
       "-f", "sdp",
-      "-acodec", this.audioDecoderOptions,
+      "-acodec", this.ffmpegOptions.audioDecoder,
       "-i", "pipe:0",
       "-map", "0:a:0",
-      ...this.audioEncoderOptions,
+      ...this.ffmpegOptions.audioEncoder,
       "-flags", "+global_header",
       "-ar", this.protectCamera.ufp.talkbackSettings.samplingRate.toString(),
       "-b:a", request.audio.max_bit_rate.toString() + "k",
@@ -1100,319 +1091,5 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   public get probesize(): number {
 
     return this.probesizeOverride ? this.probesizeOverride : this.protectCamera.hints.probesize;
-  }
-
-  // Translate HomeKit H.264 level information for FFmpeg.
-  public getH264Level(level: H264Level): string {
-
-    switch(level) {
-
-      case H264Level.LEVEL3_1:
-
-        return "3.1";
-        break;
-
-      case H264Level.LEVEL3_2:
-
-        return "3.2";
-        break;
-
-      case H264Level.LEVEL4_0:
-
-        return "4.0";
-        break;
-
-      default:
-
-        return "3.1";
-        break;
-    }
-  }
-
-  // Translate HomeKit H.264 profile information for FFmpeg.
-  public getH264Profile(profile: H264Profile): string {
-
-    switch(profile) {
-
-      case H264Profile.BASELINE:
-
-        return "baseline";
-        break;
-
-      case H264Profile.HIGH:
-
-        return "high";
-        break;
-
-      case H264Profile.MAIN:
-
-        return "main";
-        break;
-
-      default:
-
-        return "main";
-        break;
-    }
-  }
-
-  // Determine the video encoder to use when transcoding.
-  private configureHwAccel(): boolean {
-
-    const encoderLogMessage = "";
-
-    // If we've enabled hardware-accelerated transcoding, let's select encoder options accordingly where supported.
-    if(this.protectCamera.hints.hardwareTranscoding) {
-
-      this.protectCamera.hasHwAccel = true;
-
-      // Utility function to check that we have a specific encoder codec available to us.
-      const validateEncoder = (codec: string): boolean => {
-
-        if(!this.platform.isEncoderAvailable("h264", codec)) {
-
-          this.log.error("Unable to enable hardware accelerated transcoding. " + "Your video processor does not have support for the " + codec + " encoder. " +
-            "Using software transcoding instead.");
-
-          this.protectCamera.hasHwAccel = false;
-          return false;
-        }
-
-        return true;
-      };
-
-      switch(this.platform.hostSystem) {
-
-        case "macOS.Apple":
-        case "macOS.Intel":
-
-          // Verify that we have the hardware encoder available to us.
-          validateEncoder("h264_videotoolbox");
-
-          if(!this.platform.isEncoderAvailable("aac", "aac_at")) {
-
-            this.log.error("Your video processor does not have support for the native macOS AAC encoder, aac_at. Will attempt to use libfdk_aac instead.");
-          }
-
-          break;
-
-        default:
-
-          // Back to software encoding.
-          this.protectCamera.hasHwAccel = false;
-          break;
-      }
-    }
-
-    // Inform the user.
-    if(this.protectCamera.hasHwAccel) {
-
-      this.log.info("Hardware accelerated transcoding enabled.%s", encoderLogMessage);
-    }
-
-    return this.protectCamera.hasHwAccel;
-  }
-
-  // Return the audio encoder options to use when transcoding.
-  private get audioEncoderOptions(): string[] {
-
-    // If we don't have libfdk_aac available to us, we're essentially dead in the water.
-    let encoderOptions: string[] = [];
-
-    // Utility function to return a default audio encoder codec.
-    const defaultEncoderOptions = (): string[] => {
-
-      if(this.platform.isEncoderAvailable("aac", "libfdk_aac")) {
-
-        // Default to libfdk_aac since FFmpeg doesn't natively support AAC-ELD. We use the following options by default:
-        //
-        // -acodec libfdk_aac          Use the libfdk_aac encoder.
-        // -afterburner 1              Increases audio quality at the expense of needing a little bit more computational power in libfdk_aac.
-        // -eld_sbr 1                  Use spectral band replication to further enhance audio.
-        // -eld_v2 1                   Use the enhanced low delay v2 standard for better audio characteristics.
-        return [
-
-          "-acodec", "libfdk_aac",
-          "-afterburner", "1",
-          "-eld_sbr", "1",
-          "-eld_v2", "1"
-        ];
-      } else {
-
-        return [];
-      }
-    };
-
-    switch(this.platform.hostSystem) {
-
-      case "macOS.Apple":
-      case "macOS.Intel":
-
-        // If we don't have audiotoolbox available, let's default back to libfdk_aac.
-        if(!this.platform.isEncoderAvailable("aac", "aac_at")) {
-
-          encoderOptions = defaultEncoderOptions();
-          break;
-        }
-
-        // aac_at is the macOS audio encoder API. We use the following options:
-        //
-        // -acodec aac_at            Use the aac_at encoder on macOS.
-        // -aac_at_mode cvbr         Use the constrained variable bitrate setting to allow the encoder to optimize audio, while remaining within the requested bitrates.
-        encoderOptions = [
-
-          "-acodec", "aac_at",
-          "-aac_at_mode", "cvbr"
-        ];
-
-        break;
-
-      default:
-
-        encoderOptions = defaultEncoderOptions();
-        break;
-    }
-
-    return encoderOptions;
-  }
-
-  // Return the audio encoder to use when decoding.
-  private get audioDecoderOptions(): string {
-
-    return "libfdk_aac";
-  }
-
-  // Return the video decoder options to use when decoding video.
-  public get videoDecoderOptions(): string[] {
-
-    // Default to no special decoder options for inbound streams.
-    let decoderOptions: string[] = [];
-
-    // If we've enabled hardware-accelerated transcoding, let's select decoder options accordingly where supported.
-    if(this.protectCamera.hints.hardwareDecoding) {
-
-      switch(this.platform.hostSystem) {
-
-        case "macOS":
-
-          // h264_videotoolbox is the macOS hardware encoder API. We use the following options for decoding video:
-          //
-          // -hwaccel videotoolbox   Select videotoolbox for hardware accelerated H.264 decoding.
-          decoderOptions = [
-
-            "-hwaccel", "videotoolbox"
-          ];
-
-          break;
-
-        default:
-
-          break;
-      }
-    }
-
-    return decoderOptions;
-  }
-
-  // Return the video encoder options to use when transcoding.
-  public videoEncoderOptions(bitrate: number, width: number, height: number, profile: H264Profile, level: H264Level): string[] {
-
-    // Default to the tried-and-true libx264. We use the following options by default:
-    //
-    // -vcodec libx264               Use the excellent libx264 H.264 encoder by default, unless the user explicitly overrides it.
-    // -preset veryfast              Use the veryfast encoding preset in libx264, which provides a good balance of encoding speed and quality.
-    // -profile:v                    Use the H.264 profile that HomeKit is requesting when encoding.
-    // -level:v                      Use the H.264 profile level that HomeKit is requesting when encoding.
-    // -noautoscale                  Don't attempt to scale the video stream automatically.
-    // -filter:v                     Set the pixel format and scale the video to the size we want while respecting aspect ratios and ensuring our final
-    //                               dimensions are a power of two.
-    // -crf 20                       Use a constant rate factor of 20, to allow libx264 the ability to vary bitrates to achieve the visual quality we
-    //                               want, constrained by our maximum bitrate.
-    let encoderOptions = [
-
-      // If the user has specified a video encoder, let's use it.
-      "-vcodec", this.config.videoEncoder ?? "libx264",
-      "-preset", "veryfast",
-      "-profile:v", this.getH264Profile(profile),
-      "-level:v", this.getH264Level(level),
-      "-noautoscale",
-      "-filter:v", "format=yuvj420p|videotoolbox_vld|nv12|yuv420p,scale=-2:min(ih\\," + height.toString() + ")",
-      "-crf", "20"
-    ];
-
-    // If we've enabled hardware-accelerated transcoding, let's select encoder options accordingly where supported.
-    if(this.protectCamera.hints.hardwareTranscoding) {
-
-      switch(this.platform.hostSystem) {
-
-        case "macOS.Apple":
-
-          // h264_videotoolbox is the macOS hardware encoder API. We use the following options on Apple Silicon:
-          //
-          // -vcodec                 Specify the macOS hardware encoder, h264_videotoolbox.
-          // -allow_sw 1             Allow the use of the software encoder if the hardware encoder is occupied or unavailable.
-          //                         This allows us to scale when we get multiple streaming requests simultaneously that might consume all the available encode engines.
-          // -realtime 1             We prefer speed over quality - if the encoder has to make a choice, sacrifice one for the other.
-          // -coder cabac            Use the cabac encoder for better video quality with the encoding profiles we use in HBUP.
-          // -profile:v              Use the H.264 profile that HomeKit is requesting when encoding.
-          // -level:v 0              We override what HomeKit requests for the H.264 profile level on macOS when we're using hardware accelerated transcoding because
-          //                         the hardware encoder is particular about how to use levels. Setting it to 0 allows the encoder to decide for itself.
-          // -noautoscale            Don't attempt to scale the video stream automatically.
-          // -filter:v               Set the pixel format and scale the video to the size we want while respecting aspect ratios and ensuring our final dimensions are a
-          //                         power of two.
-          // -q:v 90                 Use a fixed quality scale of 90, to allow videotoolbox the ability to vary bitrates to achieve the visual quality we want,
-          //                         constrained by our maximum bitrate. This is only available on Apple Silicon.
-          encoderOptions = [
-
-            "-vcodec", "h264_videotoolbox",
-            "-allow_sw", "1",
-            "-realtime", "1",
-            "-coder", "cabac",
-            "-profile:v", this.getH264Profile(profile),
-            "-level:v", "0",
-            "-noautoscale",
-            "-filter:v", "format=videotoolbox_vld|nv12, scale=-2:min(ih\\," + height.toString() + ")",
-            "-q:v", "90"
-          ];
-
-          break;
-
-        case "macOS.Intel":
-
-          // h264_videotoolbox is the macOS hardware encoder API. We use the following options on Intel-based Macs:
-          //
-          // -vcodec                 Specify the macOS hardware encoder, h264_videotoolbox.
-          // -allow_sw 1             Allow the use of the software encoder if the hardware encoder is occupied or unavailable.
-          //                         This allows us to scale when we get multiple streaming requests simultaneously that might consume all the available encode engines.
-          // -realtime 1             We prefer speed over quality - if the encoder has to make a choice, sacrifice one for the other.
-          // -coder cabac            Use the cabac encoder for better video quality with the encoding profiles we use in HBUP.
-          // -profile:v              Use the H.264 profile that HomeKit is requesting when encoding.
-          // -level:v 0              We override what HomeKit requests for the H.264 profile level on macOS when we're using hardware accelerated transcoding because
-          //                         the hardware encoder is particular about how to use levels. Setting it to 0 allows the encoder to decide for itself.
-          // -noautoscale            Don't attempt to scale the video stream automatically.
-          // -filter:v               Set the pixel format and scale the video to the size we want while respecting aspect ratios and ensuring our final dimensions are a
-          //                         power of two.
-          encoderOptions = [
-
-            "-vcodec", "h264_videotoolbox",
-            "-allow_sw", "1",
-            "-realtime", "1",
-            "-coder", "cabac",
-            "-profile:v", this.getH264Profile(profile),
-            "-level:v", "0",
-            "-noautoscale",
-            "-filter:v", "format=videotoolbox_vld|nv12, scale=-2:min(ih\\," + height.toString() + ")",
-            "-b:v", bitrate.toString() + "k"
-          ];
-
-          break;
-
-        default:
-
-          break;
-      }
-    }
-
-    return encoderOptions;
   }
 }

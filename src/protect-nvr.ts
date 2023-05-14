@@ -503,7 +503,22 @@ export class ProtectNvr {
         // and are managed elsewhere.
         if(!("mac" in accessory.context)) {
 
-          continue;
+          // If it's not a package camera, we're done.
+          if(!("packageCamera" in accessory.context)) {
+
+            continue;
+          }
+
+          if((accessory.context.packageCamera as string).length) {
+
+            const uuid = this.hap.uuid.generate(accessory.context.packageCamera as string);
+
+            // If we have a matching parent camera for the package camera, we're done here. Otherwise, this is an orphan that we need to remove.
+            if(this.platform.accessories.some(x => x.UUID === uuid)) {
+
+              continue;
+            }
+          }
         }
 
         this.log.info("%s: Removing device from HomeKit.", accessory.displayName);
@@ -580,7 +595,7 @@ export class ProtectNvr {
     }
   }
 
-  // Cleanup removed Protect devices from HomeKit.
+  // Remove an individual Protect device from HomeKit.
   public removeHomeKitDevice(protectDevice: ProtectDevice): void {
 
     // Sanity check.
@@ -598,7 +613,13 @@ export class ProtectNvr {
     // Package cameras are handled elsewhere.
     if("packageCamera" in protectDevice.accessory.context) {
 
-      return;
+      const uuid = this.hap.uuid.generate(protectDevice.accessory.context.packageCamera as string);
+
+      // If we have a matching parent camera, we're done here. Otherwise, this is an orphan that we need to remove.
+      if(this.platform.accessories.some(x => x.UUID === uuid)) {
+
+        return;
+      }
     }
 
     // The NVR system information accessory is handled elsewhere.

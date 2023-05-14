@@ -3,8 +3,8 @@
  * protect-ffmpeg-stream.ts: Provide FFmpeg process control to support HomeKit livestreaming.
  *
  */
-import { FfmpegProcess, PortInterface } from "./protect-ffmpeg.js";
 import { ChildProcessWithoutNullStreams } from "child_process";
+import { FfmpegProcess } from "./protect-ffmpeg.js";
 import { ProtectStreamingDelegate } from "./protect-stream.js";
 import { StreamRequestCallback } from "homebridge";
 import { createSocket } from "node:dgram";
@@ -17,7 +17,8 @@ export class FfmpegStreamingProcess extends FfmpegProcess {
   private streamTimeout?: NodeJS.Timeout;
 
   // Create a new FFmpeg process instance.
-  constructor(delegate: ProtectStreamingDelegate, sessionId: string, commandLineArgs: string[], returnPort?: PortInterface, callback?: StreamRequestCallback) {
+  constructor(delegate: ProtectStreamingDelegate, sessionId: string, commandLineArgs: string[], returnPort?: { addressVersion: string, port: number },
+    callback?: StreamRequestCallback) {
 
     // Initialize our parent.
     super(delegate.protectCamera);
@@ -53,7 +54,7 @@ export class FfmpegStreamingProcess extends FfmpegProcess {
   }
 
   // Create the port for FFmpeg to send data through.
-  private createSocket(portInfo: PortInterface): void {
+  private createSocket(portInfo: { addressVersion: string, port: number }): void {
 
     let errorListener: (error: Error) => void;
     let messageListener: () => void;
@@ -110,15 +111,18 @@ export class FfmpegStreamingProcess extends FfmpegProcess {
   // Log errors.
   protected logFfmpegError(exitCode: number, signal: NodeJS.Signals): void {
 
+    const probesizeRegex = new RegExp("not enough frames to estimate rate; consider increasing probesize");
+
     // Known streaming-related errors due to the performance and latency tweaks we've made to the FFmpeg command line.
-    const ffmpegKnownStreamingError = new RegExp("not enough frames to estimate rate; consider increasing probesize");
+    for(const line of this.stderrLog) {
 
-    // See if we know about this error.
-    if(this.stderrLog.some(x => ffmpegKnownStreamingError.test(x))) {
+      // Test for probesize errors.
+      if(probesizeRegex.test(line)) {
 
-      // Let the streaming delegate know to adjust it's parameters for the next run and inform the user.
-      this.delegate.adjustProbeSize();
-      return;
+        // Let the streaming delegate know to adjust it's parameters for the next run and inform the user.
+        this.delegate.adjustProbeSize();
+        return;
+      }
     }
 
     // Otherwise, revert to our default logging in our parent.

@@ -31,6 +31,7 @@ export interface ProtectNvrOptions {
   mqttTopic: string,
   mqttUrl: string,
   name: string,
+  overrideAddress: string,
   username: string,
   password: string
 }
@@ -116,7 +117,7 @@ export const featureOptions: { [index: string]: FeatureOption[] } = {
     { default: false, description: "For viewing livestreams, force the use of the medium quality video stream from the Protect controller.", name: "Stream.Only.Medium" },
     { default: false, description: "For viewing livestreams, force the use of the low quality video stream from the Protect controller.", name: "Stream.Only.Low" },
     { default: false, description: "Transcode live video streams when viewing in the Home app instead of remuxing.", name: "Transcode" },
-    { default: false, description: "Use hardware-accelerated transcoding, when available (macOS only).", name: "Transcode.Hardware" },
+    { default: false, description: "Use hardware-accelerated transcoding, when available (Apple Macs, Intel Quick Sync Video-enabled CPUs, Raspberry Pi 4).", name: "Transcode.Hardware" },
     { default: true, description: "When streaming to high-latency clients (e.g. cellular connections), transcode live video streams instead of remuxing them.", name: "Transcode.HighLatency" }
   ],
 
