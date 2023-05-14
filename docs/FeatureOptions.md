@@ -117,8 +117,8 @@ These option(s) apply to: Protect cameras
 
 | Option                                 | Description
 |----------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------
-| `Doorbell.Messages`                    | Enable the doorbell messages feature. **(default: enabled)**. <BR>*Supported on Protect devices that have a doorbell.*
-| `Doorbell.Messages.FromDoorbell`       | Use messages saved to the Protect NVR as message switches. **(default: enabled)**. <BR>*Supported on Protect devices that have a doorbell.*
+| `Doorbell.Messages`                    | Enable the doorbell messages feature. **(default: enabled)**. <BR>*Supported on undefined.*
+| `Doorbell.Messages.FromDoorbell`       | Use messages saved to the Protect NVR as message switches. **(default: enabled)**. <BR>*Supported on undefined.*
 | `Doorbell.Trigger`                     | Add a switch accessory to trigger doorbell ring events on a Protect camera or doorbell. **(default: disabled)**. <BR>*Supported on Protect cameras that have a motion sensor.*
 
 #### <A NAME="log"></A>Logging feature options.
@@ -172,7 +172,7 @@ These option(s) apply to: Protect cameras
 | `Video.Stream.Only.Medium`             | For viewing livestreams, force the use of the medium quality video stream from the Protect controller. **(default: disabled)**.
 | `Video.Stream.Only.Low`                | For viewing livestreams, force the use of the low quality video stream from the Protect controller. **(default: disabled)**.
 | `Video.Transcode`                      | Transcode live video streams when viewing in the Home app instead of remuxing. **(default: disabled)**.
-| `Video.Transcode.Hardware`             | Use hardware-accelerated transcoding, when available (macOS only). **(default: disabled)**.
+| `Video.Transcode.Hardware`             | Use hardware-accelerated transcoding when available (Apple Macs, Intel Quick Sync Video-enabled CPUs, Raspberry Pi 4). **(default: disabled)**.
 | `Video.Transcode.HighLatency`          | When streaming to high-latency clients (e.g. cellular connections), transcode live video streams instead of remuxing them. **(default: enabled)**.
 
 #### <A NAME="video.hksv"></A>HomeKit Secure Video feature options.
