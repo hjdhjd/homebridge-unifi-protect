@@ -93,6 +93,14 @@
               "description": "Name for this UniFi Protect controller to be used for logging purposes. Default: Defined by the controller."
             },
 
+            "overrideAddress": {
+
+              "type": "string",
+              "title": "Override Controller Address",
+              "required": false,
+              "description": "Override the address used when livestreaming. This is useful in VPN and remote scenarios where you want to override the address of the UniFi Protect controller. Warning: due to the way stacked Protect controller installations work, this option is unavailable for those configurations."
+            },
+
             "password": {
               "type": "string",
               "title": "Controller Password",
@@ -141,9 +149,9 @@
         "title": "Motion Event Duration (seconds)",
         "required": false,
         "minimum": 5,
-        "maximum": 20,
+        "maximum": 300,
         "placeholder": "e.g. 10",
-        "description": "Duration of a single motion event. Setting this too low will potentially cause a lot of excess notifications. Default: 10."
+        "description": "Duration of a single motion event, before allowing a new motion event. Setting this too low will potentially cause a lot of excess notifications. Default: 10."
       },
 
       "ringDuration": {
@@ -239,7 +247,8 @@
                 {
                   "description": "These settings are optional. The defaults work well for almost everyone.",
                   "items": [
-                    "controllers[].name"
+                    "controllers[].name",
+                    "controllers[].overrideAddress"
                   ]
                 }
               ]
