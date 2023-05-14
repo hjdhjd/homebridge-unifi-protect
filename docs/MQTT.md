@@ -71,6 +71,8 @@ The topics and messages that `homebridge-unifi-protect` publishes are:
 | `securitysystem`      | One of `Alarm`, `Away`, `Home`, `Night`, `Off`. This message is published every time the security state is set.
 |                       |
 | `snapshot`            | A [data URL](https://developer.mozilla.org/en-US/docs/Web/HTTP/Basics_of_HTTP/Data_URIs) containing a base64-encoded JPEG of the snapshot that was requested (either by HomeKit or MQTT).
+|                       |
+| `telemetry`           | All UniFi Protect telemetry from the realtime events API. This is the raw feed - you're on your own to parse through it for the messages you may be interested in.
 
 Messages are published to MQTT when an action occurs on a camera, controller, or doorbell that triggers the respective event, or when an MQTT message is received for one of the topics `homebridge-unifi-protect` subscribes to. For example, snapshot images are published every time HomeKit requests a snapshot as well as when a request is received through MQTT to trigger a new snapshot.
 

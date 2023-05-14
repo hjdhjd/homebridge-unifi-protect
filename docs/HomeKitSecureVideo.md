@@ -68,8 +68,6 @@ If you're struggling to get HKSV working in HBUP, try the following, in this ord
 
   * Try forcing HBUP to only use the lowest quality video stream as a starting point. You do this by using the [`Video.HKSV.Recording.Only.Low` feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md#video).
 
-  * Optionally, in addition to forcing the use of a lower-quality video stream, you can also try adjusting the video encoder used for transcoding HKSV. If you're running on a **Raspberry Pi** or similar low-power, but **Linux-based** platforms, you can try enabling hardware-based encoding. You can do that by setting the `Video Encoder` to `h264_omx` or `h264_v4l2m2m` under the *Advanced Settings* section of the HBUP configuration webUI. **Note: hardware encoders can and will sometimes produce lower-quality or incorrect video, but it should be more than acceptable for most people. If you want to do HKSV right, get beefier hardware. 😊 I would advise you not to use hardware encoding in general, and I won't provide any support for issues relating to hardware encoding.**
-
 The above recommendations should help you get up and running in most lower-powered environments.
 
 Even if things run well in your environment, I would **strongly encourage** you to ensure you're getting the best performance you can out of HKSV and HBUP more broadly by [running HBUP in a child bridge within Homebridge](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/BestPractices.md#homebridge). You can ignore this recommendation if the **only** thing you are running in Homebridge is `homebridge-unifi-protect` as it will be redundant.
