@@ -38,6 +38,7 @@ This step is not required. The defaults should work well for almost everyone, bu
       {
         "name": "My UniFi Protect Controller",
         "address": "1.2.3.4",
+        "addressOverride": "a.b.c.d",
         "username": "some-homebridge-user (or create a new one just for homebridge)",
         "password": "some-password",
         "doorbellMessages": [
@@ -61,12 +62,13 @@ This step is not required. The defaults should work well for almost everyone, bu
 | address                | Host or IP address of your UniFi Protect controller.    |                                                                                       | Yes      |
 | username               | Your UniFi Protect username.                            |                                                                                       | Yes      |
 | password               | Your UniFi Protect password.                            |                                                                                       | Yes      |
+| addressOverride        | Override the address used when HBUP accesses camera URLs.|                                                                                      | No       |
 | doorbellMessages       | Configure [doorbell messages](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Doorbell.md) for your UniFi Protect controller. | [] | No |
 | videoProcessor         | Specify path of ffmpeg or avconv.                       | "ffmpeg"                                                                              | No       |
 | ffmpegOptions          | Additional parameters to pass ffmpeg to render video.   |                                                                                       | No       |
 | motionDuration         | Duration of motion events. Setting this too low will potentially cause a lot of notification spam. | 10                                         | No       |
 | refreshInterval        | Interval, in seconds, to check UniFi Protect for new or removed devices. | 10                                                                   | No       |
-| options                | Configure plugin [feature options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md).   | []               | No       |
+| options                | Configure plugin [feature options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md).   | []                 | No       |
 | name                   | Controller name to use for homebridge logging purposes. | UniFi Protect controller name                                                         | No       |
 | mqttUrl                | The URL of your MQTT broker. **This must be in URL form**, e.g.: `mqtt://user:password@1.2.3.4`. |                                              | No       |
 | mqttTopic              | The base topic to use when publishing MQTT messages.    | "unifi/protect"                                                                       | No       |
