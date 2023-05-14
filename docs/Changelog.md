@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 6.6.0 (2023-05-14)
+  * New feature: Raspberry Pi 4 hardware accelerated decoding and encoding. This requires that you've configured your RPi4 to use at least 128MB for the GPU. HKSV event recording will not be hardware accelerated due to ongoing driver quirks. I hope once the software and drivers evolve, we can more effectively leverage it for HKSV as well.
+  * New feature: Intel Quick Sync Video hardware accelerated decoding and encoding. Many Intel CPUs come with QSV support builtin. Thie feature requires a QSV-supported CPU and h264_qsv codec support in your version of FFmpeg.
+  * New feature: the base address used for accessing camera URLs on the Protect controller can now be independently configured as an advanced option under controller settings.
+  * Fix: stacked UNVRs couldn't access cameras in certain circumstances.
+
 ## 6.5.1 (2023-05-02)
   * Fix: address a regression in hardware transcoding for non-Apple Silicon Macs.
 
