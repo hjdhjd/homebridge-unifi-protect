@@ -129,6 +129,7 @@ class PluginUiServer extends HomebridgePluginUiServer {
 
     // Compatibility for older versions of the Homebridge UI.
     this.onRequest("/getCachedAccessories", async () => {
+
       try {
 
         // Define the plugin and create the array to return.
@@ -159,6 +160,7 @@ class PluginUiServer extends HomebridgePluginUiServer {
         return [];
       }
     });
+
     this.ready();
   }
 }

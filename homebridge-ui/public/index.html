@@ -29,7 +29,7 @@
     <div id="deviceInfo">
         <table class="table table-sm table-borderless">
           <tr class="align-center">
-            <td colspan="2" class="m-0 p-2 text-center font-weight-bold">Feature options are applied in prioritized order, from global to device-specific options:<br><i>Global options</i> (lowest priority) &rarr; <i>Protect controller options</i> &rarr; <i>Protect device options</i> (highest priority)</td>
+            <td id="headerInfo" colspan="2" class="m-0 p-2 text-center font-weight-bold"></td>
           </tr>
           <tr class="align-top">
             <td rowspan="3" class="w-25">
@@ -50,7 +50,7 @@
             </td>
             <td>
               <table class="table table-sm table-borderless border-bottom m-0 p-0" id="deviceStatsTable" style="display: none;">
-                <tr>
+                <tr id="deviceStatsHeader">
                     <th style="width: 30%;" class="m-0 p-0"><B>Model<B></th>
                     <th style="width: 25%;" class="m-0 p-0"><B>IP Address</B></th>
                     <th style="width: 20%;" class="m-0 p-0"><B>MAC Address</B></th>
@@ -234,6 +234,17 @@
         // Start with a clean slate.
         controllersTable.innerHTML = "";
 
+        // We haven't configured anything yet - we're done.
+        if(!currentConfig[0]?.controllers?.length) {
+
+          document.getElementById("headerInfo").innerHTML = "Please configure a UniFi Protect controller to access in the main settings tab before configuring feature options."
+          homebridge.hideSpinner();
+          return;
+        }
+
+        // Initialize our informational header.
+        document.getElementById("headerInfo").innerHTML = "Feature options are applied in prioritized order, from global to device-specific options:<br><i>Global options</i> (lowest priority) &rarr; <i>Protect controller options</i> &rarr; <i>Protect device options</i> (highest priority)"
+
         // Enumerate our global options.
         const trGlobal = document.createElement("tr");
 
@@ -342,7 +353,12 @@
 
           devicesTable.innerHTML = "";
 
-          document.getElementById("device_model").innerHTML = "Unable to connect to the Protect controller. Check your settings for this controller in the settings tab."
+          document.getElementById("device_model").innerHTML = "Unable to connect to the Protect controller. Check your settings for this controller in the main settings tab to verify they are correct."
+          document.getElementById("device_model").colSpan = 3;
+          document.getElementById("device_model").style.fontWeight = "bold";
+          document.getElementById("device_model").classList.add("text-center");
+          document.getElementById("deviceStatsHeader").style.display = "none";
+
           document.getElementById("device_mac").innerHTML = "";
           document.getElementById("device_address").innerHTML = "";
           document.getElementById("device_online").innerHTML = "";
@@ -474,6 +490,10 @@
           // Ensure we have a controller or device. The only time this won't be the case is when we're looking at global options.
           if(ufpDevice) {
 
+            document.getElementById("deviceStatsHeader").style.display = "";
+            document.getElementById("device_model").classList.remove("text-center");
+            document.getElementById("device_model").colSpan = 1;
+            document.getElementById("device_model").style.fontWeight = "normal";
             document.getElementById("device_model").innerHTML = ufpDevice.marketName ?? ufpDevice.type;
             document.getElementById("device_mac").innerHTML = ufpDevice.mac;
             document.getElementById("device_address").innerHTML = ufpDevice.host ?? (ufpDevice.modelKey === "sensor" ? "Bluetooth Device" : "None");
@@ -484,6 +504,10 @@
 
             document.getElementById("deviceStatsTable").style.display = "none";
 
+            document.getElementById("deviceStatsHeader").style.display = "";
+            document.getElementById("device_model").classList.remove("text-center");
+            document.getElementById("device_model").colSpan = 1;
+            document.getElementById("device_model").style.fontWeight = "normal";
             document.getElementById("device_model").innerHTML = "N/A"
             document.getElementById("device_mac").innerHTML = "N/A";
             document.getElementById("device_address").innerHTML = "N/A";
