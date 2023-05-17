@@ -188,10 +188,10 @@ export abstract class ProtectDevice extends ProtectBase {
       return false;
     }
 
-    // We don't have a motion sensor, let's add it to the camera.
+    // We don't have a motion sensor, let's add it to the device.
     if(!motionService) {
 
-      // We don't have it, add the motion sensor to the camera.
+      // We don't have it, add the motion sensor to the device.
       motionService = new this.hap.Service.MotionSensor(this.accessory.displayName);
 
       if(!motionService) {
@@ -397,6 +397,53 @@ export abstract class ProtectDevice extends ProtectBase {
       this.nvr.events.motionEventHandler(this, Date.now());
       this.log.info("Motion event triggered via MQTT.");
     });
+
+    return true;
+  }
+
+  // Configure the Protect motion sensor for HomeKit.
+  protected configureOccupancySensor(isEnabled = true): boolean {
+
+    // Find the occupancy sensor service, if it exists.
+    let occupancyService = this.accessory.getService(this.hap.Service.OccupancySensor);
+
+    // Occupancy sensors are disabled by default and primarily exist for automation purposes.
+    if(!isEnabled || !this.hasFeature("Motion.OccupancySensor")) {
+
+      if(occupancyService) {
+
+        this.accessory.removeService(occupancyService);
+        this.log.info("Disabling occupancy sensor.");
+      }
+
+      return false;
+    }
+
+    // We don't have an occupancy sensor, let's add it to the device.
+    if(!occupancyService) {
+
+      // We don't have it, add the occupancy sensor to the device.
+      occupancyService = new this.hap.Service.OccupancySensor(this.accessory.displayName);
+
+      if(!occupancyService) {
+
+        this.log.error("Unable to add occupancy sensor.");
+        return false;
+      }
+
+      this.accessory.addService(occupancyService);
+    }
+
+    // Initialize the state of the occupancy sensor.
+    occupancyService.updateCharacteristic(this.hap.Characteristic.OccupancyDetected, false);
+    occupancyService.updateCharacteristic(this.hap.Characteristic.StatusActive, this.ufp.state === "CONNECTED");
+
+    occupancyService.getCharacteristic(this.hap.Characteristic.StatusActive).onGet(() => {
+
+      return this.ufp.state === "CONNECTED";
+    });
+
+    this.log.info("Enabling occupancy sensor.");
 
     return true;
   }

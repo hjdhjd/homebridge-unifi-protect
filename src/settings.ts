@@ -59,6 +59,9 @@ export const PROTECT_MQTT_RECONNECT_INTERVAL = 60;
 // Default MQTT topic to use when publishing events. This is in the form of: unifi/protect/camera/event
 export const PROTECT_MQTT_TOPIC = "unifi/protect";
 
+// Default duration, in seconds, of occupancy events.
+export const PROTECT_OCCUPANCY_DURATION = 300;
+
 // Default duration, in seconds, of ring events.
 export const PROTECT_RING_DURATION = 3;
 

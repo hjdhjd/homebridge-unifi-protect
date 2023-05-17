@@ -143,6 +143,9 @@ export class ProtectCamera extends ProtectDevice {
     // Configure smart motion contact sensors.
     this.configureMotionSmartSensor();
 
+    // Configure the occupancy sensor.
+    this.configureOccupancySensor();
+
     // Configure HomeKit Secure Video suport.
     this.configureHksv();
     this.configureHksvRecordingSwitch();

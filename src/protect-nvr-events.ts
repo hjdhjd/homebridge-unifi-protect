@@ -18,14 +18,12 @@ export class ProtectNvrEvents extends EventEmitter {
   private lastMotion: { [index: string]: number };
   private lastRing: { [index: string]: number };
   private log: ProtectLogging;
-  private motionDuration: number;
   private mqttPublishTelemetry: boolean;
   private nvr: ProtectNvr;
   private readonly eventTimers: { [index: string]: NodeJS.Timeout };
   private ufpApi: ProtectApi;
   private ufpDeviceState: { [index: string]: ProtectDeviceConfigTypes };
   private platform: ProtectPlatform;
-  private ringDuration: number;
   private unsupportedDevices: { [index: string]: boolean };
   private eventsHandler: ((packet: ProtectEventPacket) => void) | null;
   private ufpUpdatesHandler:  ((packet: ProtectEventPacket) => void) | null;
@@ -45,9 +43,7 @@ export class ProtectNvrEvents extends EventEmitter {
     this.nvr = nvr;
     this.ufpApi = nvr.ufpApi;
     this.ufpDeviceState = {};
-    this.motionDuration = nvr.platform.config.motionDuration;
     this.platform = nvr.platform;
-    this.ringDuration = nvr.platform.config.ringDuration;
     this.unsupportedDevices = {};
     this.eventsHandler = null;
     this.ufpUpdatesHandler = null;
@@ -347,7 +343,7 @@ export class ProtectNvrEvents extends EventEmitter {
 
         // Delete the timer from our motion event tracker.
         delete this.eventTimers[protectDevice.ufp.mac];
-      }, this.motionDuration * 1000);
+      }, this.nvr.platform.config.motionDuration * 1000);
     }
 
     // Reset our smart motion contact sensors after motionDuration.
@@ -374,7 +370,48 @@ export class ProtectNvrEvents extends EventEmitter {
 
         // Delete the timer from our motion event tracker.
         delete this.eventTimers[protectDevice.ufp.mac + ".Motion.SmartDetect.ObjectSensors"];
-      }, this.motionDuration * 1000);
+      }, this.nvr.platform.config.motionDuration * 1000);
+    }
+
+    // Let's handle occupancy sensors, if the user has configured them.
+    const occupancyService = protectDevice.accessory.getService(this.hap.Service.OccupancySensor);
+
+    if(occupancyService) {
+
+      // Kill any inflight reset timer.
+      if(this.eventTimers[protectDevice.ufp.mac + ".Motion.OccupancySensor"]) {
+
+        clearTimeout(this.eventTimers[protectDevice.ufp.mac + ".Motion.OccupancySensor"]);
+      }
+
+      // If the occupancy sensor isn't already triggered, let's do so now.
+      if(occupancyService.getCharacteristic(this.hap.Characteristic.OccupancyDetected).value !== true) {
+
+        // Trigger the occupancy event in HomeKit.
+        occupancyService.updateCharacteristic(this.hap.Characteristic.OccupancyDetected, true);
+
+        // Publish the occupancy event to MQTT, if the user has configured it.
+        this.nvr.mqtt?.publish(protectDevice.accessory, "occupancy", "true");
+
+        // Log the event, if configured to do so.
+        if(protectDevice.hints.logMotion) {
+
+          protectDevice.log.info("Occupancy detected.");
+        }
+      }
+
+      // Reset our occupancy state after occupancyDuration.
+      this.eventTimers[protectDevice.ufp.mac + ".Motion.OccupancySensor"] = setTimeout(() => {
+
+        // Reset the occupancy sensor.
+        occupancyService.updateCharacteristic(this.hap.Characteristic.OccupancyDetected, false);
+
+        // Publish to MQTT, if the user has configured it.
+        this.nvr.mqtt?.publish(protectDevice.accessory, "occupancy", "false");
+
+        // Delete the timer from our motion event tracker.
+        delete this.eventTimers[protectDevice.ufp.mac];
+      }, this.nvr.platform.config.occupancyDuration * 1000);
     }
   }
 
@@ -440,7 +477,7 @@ export class ProtectNvrEvents extends EventEmitter {
 
         // Delete the timer from our motion event tracker.
         delete this.eventTimers[protectDevice.ufp.mac + ".Doorbell.Ring.Trigger"];
-      }, this.ringDuration * 1000);
+      }, this.nvr.platform.config.ringDuration * 1000);
     }
 
     // Publish to MQTT, if the user has configured it.
@@ -465,6 +502,6 @@ export class ProtectNvrEvents extends EventEmitter {
 
       // Delete the timer from our event tracker.
       delete this.eventTimers[protectDevice.ufp.mac + ".Doorbell.Ring"];
-    }, this.ringDuration * 1000);
+    }, this.nvr.platform.config.ringDuration * 1000);
   }
 }

@@ -3,7 +3,7 @@
  * protect-platform.ts: homebridge-unifi-protect platform class.
  */
 import { API, APIEvent, DynamicPlatformPlugin, Logging, PlatformAccessory, PlatformConfig } from "homebridge";
-import { PROTECT_FFMPEG_OPTIONS, PROTECT_MOTION_DURATION, PROTECT_MQTT_TOPIC, PROTECT_RING_DURATION } from "./settings.js";
+import { PROTECT_FFMPEG_OPTIONS, PROTECT_MOTION_DURATION, PROTECT_MQTT_TOPIC, PROTECT_OCCUPANCY_DURATION, PROTECT_RING_DURATION } from "./settings.js";
 import { ProtectNvrOptions, ProtectOptions, featureOptionCategories, featureOptions } from "./protect-options.js";
 import { FfmpegCodecs } from "./protect-ffmpeg-codecs.js";
 import { ProtectNvr } from "./protect-nvr.js";
@@ -62,6 +62,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
       debugAll: config.debug as boolean === true,
       ffmpegOptions: config.ffmpegOptions as string[] ?? PROTECT_FFMPEG_OPTIONS,
       motionDuration: config.motionDuration as number ?? PROTECT_MOTION_DURATION,
+      occupancyDuration: config.occupancyDuration as number ?? PROTECT_OCCUPANCY_DURATION,
       options: config.options as string[],
       ringDuration: config.ringDuration as number ?? PROTECT_RING_DURATION,
       verboseFfmpeg: config.verboseFfmpeg === true,
@@ -99,6 +100,12 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
     if(this.config.motionDuration < 2 ) {
 
       this.config.motionDuration = 2;
+    }
+
+    // Occupancy detection duration. Make sure it's never less than 60 seconds so we can actually alert the user.
+    if(this.config.occupancyDuration < 60 ) {
+
+      this.config.occupancyDuration = 60;
     }
 
     // Ring trigger duration. Make sure it's never less than 3 seconds so we can ensure automations work.
