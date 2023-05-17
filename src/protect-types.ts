@@ -11,33 +11,6 @@ import { ProtectLight } from "./protect-light.js";
 import { ProtectSensor } from "./protect-sensor.js";
 import { ProtectViewer } from "./protect-viewer.js";
 
-// Plugin configuration options.
-export interface ProtectOptions {
-  controllers: ProtectNvrOptions[],
-  debugAll: boolean,
-  ffmpegOptions: string[],
-  motionDuration: number,
-  options: string[],
-  ringDuration: number,
-  verboseFfmpeg: boolean,
-  videoEncoder: string,
-  videoProcessor: string
-}
-
-// NVR configuration options.
-export interface ProtectNvrOptions {
-  address: string,
-  doorbellMessages: {
-    duration: number,
-    message: string
-  }[],
-  mqttTopic: string,
-  mqttUrl: string,
-  name: string,
-  username: string,
-  password: string
-}
-
 // Define Protect logging conventions.
 export interface ProtectLogging {
 
