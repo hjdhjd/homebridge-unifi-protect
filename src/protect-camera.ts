@@ -1174,8 +1174,7 @@ export class ProtectCamera extends ProtectDevice {
   }
 
   // Find an RTSP configuration for a given target resolution.
-  private findRtspEntry(width: number, height: number, address: string, rtspEntries: RtspEntry[],
-    defaultStream = this.rtspQuality.StreamingDefault): RtspEntry | null {
+  private findRtspEntry(width: number, height: number, address: string, rtspEntries: RtspEntry[], defaultStream = this.rtspQuality.StreamingDefault): RtspEntry | null {
 
     // No RTSP entries to choose from, we're done.
     if(!rtspEntries || !rtspEntries.length) {
