@@ -11,6 +11,7 @@ import { EventEmitter } from "node:events";
 import { ProtectLogging } from "./protect-types.js";
 import { ProtectNvr } from "./protect-nvr.js";
 import { StreamRequestCallback } from "homebridge";
+import os from "node:os";
 import util from "node:util";
 
 // Base class for all FFmpeg process management.
@@ -186,13 +187,13 @@ export class FfmpegProcess extends EventEmitter {
       }
 
       // Append to the current line we've been buffering. We don't want to output not-printable characters to ensure the log output is readable.
-      this.stderrBuffer += data.toString().replace(/\p{C}+/gu, "\n");
+      this.stderrBuffer += data.toString().replace(/\p{C}+/gu, os.EOL);
 
       // Debugging and additional logging collection.
       for(;;) {
 
         // Find the next newline.
-        const lineIndex = this.stderrBuffer.indexOf("\n");
+        const lineIndex = this.stderrBuffer.indexOf(os.EOL);
 
         // If there's no newline, we're done until we get more data.
         if(lineIndex === -1) {
@@ -202,9 +203,9 @@ export class FfmpegProcess extends EventEmitter {
 
         // Grab the next complete line, and increment our buffer.
         const line = this.stderrBuffer.slice(0, lineIndex);
-        this.stderrBuffer = this.stderrBuffer.slice(lineIndex + 1);
+        this.stderrBuffer = this.stderrBuffer.slice(lineIndex + os.EOL.length);
 
-        this.stderrLog.push(line + "\n");
+        this.stderrLog.push(line);
 
         // Show it to the user if it's been requested.
         if(this.isLogging || this.isVerbose || this.protectCamera.platform.config.debugAll) {

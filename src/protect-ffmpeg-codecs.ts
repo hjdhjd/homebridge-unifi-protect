@@ -5,6 +5,7 @@
 import { Logging } from "homebridge";
 import { ProtectPlatform } from "./protect-platform.js";
 import { execFile } from "node:child_process";
+import os from "node:os";
 import util from "node:util";
 
 export class FfmpegCodecs {
@@ -89,7 +90,7 @@ export class FfmpegCodecs {
     return this.probeCmd(this.videoProcessor, [ "-hide_banner", "-hwaccels" ], (stdout: string) => {
 
       // Iterate through each line, and a build a list of encoders.
-      for(const accel of stdout.split(/\r?\n/)) {
+      for(const accel of stdout.split(os.EOL)) {
 
         // Skip blank lines.
         if(!accel.length) {
@@ -121,7 +122,7 @@ export class FfmpegCodecs {
       const encodersRegex = /\S+\s+(\S+).+\(encoders: (.*?)\s*\)/;
 
       // Iterate through each line, and a build a list of encoders.
-      for(const codecLine of stdout.split(/\r?\n/)) {
+      for(const codecLine of stdout.split(os.EOL)) {
 
         // Let's see if we have decoders.
         const decodersMatch = decodersRegex.exec(codecLine);
