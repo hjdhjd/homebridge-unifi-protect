@@ -373,45 +373,50 @@ export class ProtectNvrEvents extends EventEmitter {
       }, this.nvr.platform.config.motionDuration * 1000);
     }
 
-    // Let's handle occupancy sensors, if the user has configured them.
-    const occupancyService = protectDevice.accessory.getService(this.hap.Service.OccupancySensor);
+    // If we don't have smart motion detection enabled, or if we do have it enabled and we have a smart motion event that's detected a person,
+    // let's process our occupancy event updates.
+    if(!protectDevice.hints.smartDetect || (protectDevice.hints.smartDetect && detectedObjects.includes("person"))) {
 
-    if(occupancyService) {
+      // First, let's determine if the user has an occupancy sensor configured, before we process anything.
+      const occupancyService = protectDevice.accessory.getService(this.hap.Service.OccupancySensor);
 
-      // Kill any inflight reset timer.
-      if(this.eventTimers[protectDevice.ufp.mac + ".Motion.OccupancySensor"]) {
+      if(occupancyService) {
 
-        clearTimeout(this.eventTimers[protectDevice.ufp.mac + ".Motion.OccupancySensor"]);
-      }
+        // Kill any inflight reset timer.
+        if(this.eventTimers[protectDevice.ufp.mac + ".Motion.OccupancySensor"]) {
 
-      // If the occupancy sensor isn't already triggered, let's do so now.
-      if(occupancyService.getCharacteristic(this.hap.Characteristic.OccupancyDetected).value !== true) {
-
-        // Trigger the occupancy event in HomeKit.
-        occupancyService.updateCharacteristic(this.hap.Characteristic.OccupancyDetected, true);
-
-        // Publish the occupancy event to MQTT, if the user has configured it.
-        this.nvr.mqtt?.publish(protectDevice.accessory, "occupancy", "true");
-
-        // Log the event, if configured to do so.
-        if(protectDevice.hints.logMotion) {
-
-          protectDevice.log.info("Occupancy detected.");
+          clearTimeout(this.eventTimers[protectDevice.ufp.mac + ".Motion.OccupancySensor"]);
         }
+
+        // If the occupancy sensor isn't already triggered, let's do so now.
+        if(occupancyService.getCharacteristic(this.hap.Characteristic.OccupancyDetected).value !== true) {
+
+          // Trigger the occupancy event in HomeKit.
+          occupancyService.updateCharacteristic(this.hap.Characteristic.OccupancyDetected, true);
+
+          // Publish the occupancy event to MQTT, if the user has configured it.
+          this.nvr.mqtt?.publish(protectDevice.accessory, "occupancy", "true");
+
+          // Log the event, if configured to do so.
+          if(protectDevice.hints.logMotion) {
+
+            protectDevice.log.info("Occupancy detected.");
+          }
+        }
+
+        // Reset our occupancy state after occupancyDuration.
+        this.eventTimers[protectDevice.ufp.mac + ".Motion.OccupancySensor"] = setTimeout(() => {
+
+          // Reset the occupancy sensor.
+          occupancyService.updateCharacteristic(this.hap.Characteristic.OccupancyDetected, false);
+
+          // Publish to MQTT, if the user has configured it.
+          this.nvr.mqtt?.publish(protectDevice.accessory, "occupancy", "false");
+
+          // Delete the timer from our motion event tracker.
+          delete this.eventTimers[protectDevice.ufp.mac];
+        }, this.nvr.platform.config.occupancyDuration * 1000);
       }
-
-      // Reset our occupancy state after occupancyDuration.
-      this.eventTimers[protectDevice.ufp.mac + ".Motion.OccupancySensor"] = setTimeout(() => {
-
-        // Reset the occupancy sensor.
-        occupancyService.updateCharacteristic(this.hap.Characteristic.OccupancyDetected, false);
-
-        // Publish to MQTT, if the user has configured it.
-        this.nvr.mqtt?.publish(protectDevice.accessory, "occupancy", "false");
-
-        // Delete the timer from our motion event tracker.
-        delete this.eventTimers[protectDevice.ufp.mac];
-      }, this.nvr.platform.config.occupancyDuration * 1000);
     }
   }
 
