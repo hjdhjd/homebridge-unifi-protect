@@ -2,17 +2,22 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 6.7.0 (2023-05-21)
+  * New feature: occupancy sensors for Protect devices with motion sensors. If you enable the occupancy sensor feature option on a Protect device, an occupancy sensor accessory will be added to that device. The occupancy sensor works like this: when any motion is detected by that device's motion sensor, occupancy is triggered. When no motion has been detected for a certain amount of time (5 minutes by default), occupancy will no longer be triggered. This is useful in various automation scenarios that folks might want (e.g. occupancy triggering a light turning on/off). If you enable the smart motion events feature option as well, the occupancy sensor will use smart motion events to determine occupancy state, meaning rather than trigger occupancy on *any* motion, occupancy will only be triggered when **Protect** thinks it has detected a person.
+  * Housekeeping and minor bugfixes.
+
 ## 6.6.0 (2023-05-14)
   * New feature: Raspberry Pi 4 hardware accelerated decoding and encoding. This requires that you've configured your RPi4 to use at least 128MB for the GPU. HKSV event recording will not be hardware accelerated due to ongoing driver quirks. I hope once the software and drivers evolve, we can more effectively leverage it for HKSV as well.
   * New feature: Intel Quick Sync Video hardware accelerated decoding and encoding. Many Intel CPUs come with QSV support builtin. Thie feature requires a QSV-supported CPU and h264_qsv codec support in your version of FFmpeg.
   * New feature: the base address used for accessing camera URLs on the Protect controller can now be independently configured as an advanced option under controller settings.
   * Fix: stacked UNVRs couldn't access cameras in certain circumstances.
+  * Housekeeping.
 
 ## 6.5.1 (2023-05-02)
   * Fix: address a regression in hardware transcoding for non-Apple Silicon Macs.
 
 ## 6.5.0 (2023-04-30)
-  * Improvement: Various transcoding improvements and optimizations across platforms.
+  * Improvement: various transcoding improvements and optimizations across platforms.
   * Improvement: on macOS, hardware transcoding optimizations that should noticeably improve video quality. These refinements are primarily for Apple Silicon Macs.
   * Improvement: on macOS, use the extra-awesome native macOS AAC encoder.
   * Fix: address iOS 16+ HomeKit naming changes - HBUP now correctly names the switches and sensors it creates. If you've got blank or missing names for switches / sensors created by HBUP after this update, you can disable, restart Homebridge, and then reenable them and restart Homebridge a second time.
