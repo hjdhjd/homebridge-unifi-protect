@@ -89,7 +89,7 @@ export const featureOptions: { [index: string]: FeatureOption[] } = {
   // Motion options.
   "Motion": [
 
-    { default: false, description: "Add an occupancy sensor accessory using motion sensor activity to determine occupancy.", hasProperty: [ "isMotionDetected", "isPirMotionDetected" ], name: "OccupancySensor" },
+    { default: false, description: "Add an occupancy sensor accessory using motion sensor activity to determine occupancy. If smart motion detection is enabled, the occupancy sensor will use UniFi Protect's person detection to determine occupancy state. Otherwise, by default, all motion will trigger occupancy.", hasProperty: [ "isMotionDetected", "isPirMotionDetected" ], name: "OccupancySensor" },
     { default: false, description: "Use UniFi Protect smart motion detection for HomeKit motion events when on a supported device.", hasFeature: [ "hasSmartDetect" ], name: "SmartDetect" },
     { default: false, description: "Add contact sensor accessories for each smart motion object type that UniFi Protect supports.", hasFeature: [ "hasSmartDetect" ], name: "SmartDetect.ObjectSensors" },
     { default: false, description: "Add a switch accessory to activate or deactivate motion detection in HomeKit.", hasProperty: [ "isMotionDetected", "isPirMotionDetected" ], name: "Switch" },
