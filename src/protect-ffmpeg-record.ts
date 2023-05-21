@@ -31,7 +31,8 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
     this.commandLineArgs = [
 
       "-hide_banner",
-      "-nostats"
+      "-nostats",
+      "-fflags", "+discardcorrupt+genpts"
     ];
 
     // If we're timeshifting, read from the timeshift buffer.
@@ -39,15 +40,14 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
 
       // Configure our video parameters for our input:
       //
-      // -fflags flags  Set the format flags to generate a presentation timestamp if it's missing and discard any corrupt packets rather than exit.
-      // -r fps         Set the input frame rate for the video stream.
-      // -f mp4         Tell ffmpeg that it should expect an MP4-encoded input stream.
-      // -i pipe:0      Use standard input to get video data.
+      // -fflags flags               Set the format flags to generate a presentation timestamp if it's missing and discard any corrupt packets rather than exit.
+      // -r fps                      Set the input frame rate for the video stream.
+      // -f mp4                      Tell ffmpeg that it should expect an MP4-encoded input stream.
+      // -i pipe:0                   Use standard input to get video data.
       this.commandLineArgs.push(
 
-        "-fflags", "+discardcorrupt+genpts",
-        "-r", rtspEntry.channel.fps.toString(),
         "-f", "mp4",
+        "-r", rtspEntry.channel.fps.toString(),
         "-i", "pipe:0"
       );
 
@@ -55,12 +55,12 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
 
       // We're not using the timeshift buffer, so let's use the RTSP stream as the input to HKSV.
       //
-      // -probesize amount                How many bytes should be analyzed for stream information. We default to to analyze time should be spent analyzing
-      //                                  the input stream.
-      // -max_delay 500000                Set an upper limit on how much time FFmpeg can take in demuxing packets.
-      // -r fps                           Set the input frame rate for the video stream.
-      // -rtsp_transport tcp              Tell the RTSP stream handler that we're looking for a TCP connection.
-      // -i this.rtspEntry.url            RTSPS URL to get our input stream from.
+      // -probesize amount           How many bytes should be analyzed for stream information. We default to to analyze time should be spent analyzing
+      //                             the input stream.
+      // -max_delay 500000           Set an upper limit on how much time FFmpeg can take in demuxing packets.
+      // -r fps                      Set the input frame rate for the video stream.
+      // -rtsp_transport tcp         Tell the RTSP stream handler that we're looking for a TCP connection.
+      // -i this.rtspEntry.url       RTSPS URL to get our input stream from.
       this.commandLineArgs.push(
 
         ...this.protectCamera.stream.ffmpegOptions.videoDecoder,
