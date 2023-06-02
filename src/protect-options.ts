@@ -67,7 +67,7 @@ export const featureOptions: { [index: string]: FeatureOption[] } = {
   "Device": [
 
     { default: true, description: "Make this device available in HomeKit.", name: "" },
-    { default: false, description: "Enable the status LED for this device in HomeKit.", hasFeature: [ "ledSettings" ],  name: "StatusLed" }
+    { default: false, description: "Enable the status LED for this device in HomeKit.", hasProperty: [ "ledSettings" ],  name: "StatusLed" }
   ],
 
   // Doorbell options.
