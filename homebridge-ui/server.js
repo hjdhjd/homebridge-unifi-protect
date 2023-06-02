@@ -50,40 +50,40 @@ class PluginUiServer extends HomebridgePluginUiServer {
 
         bootstrap.cameras.sort((a, b) => {
 
-          const aCase = a.name.toLowerCase();
-          const bCase = b.name.toLowerCase();
+          const aCase = (a.name ?? a.marketName).toLowerCase();
+          const bCase = (b.name ?? b.marketName).toLowerCase();
 
           return aCase > bCase ? 1 : (bCase > aCase ? -1 : 0);
         });
 
         bootstrap.chimes.sort((a, b) => {
 
-          const aCase = a.name.toLowerCase();
-          const bCase = b.name.toLowerCase();
+          const aCase = (a.name ?? a.marketName).toLowerCase();
+          const bCase = (b.name ?? b.marketName).toLowerCase();
 
           return aCase > bCase ? 1 : (bCase > aCase ? -1 : 0);
         });
 
         bootstrap.lights.sort((a, b) => {
 
-          const aCase = a.name.toLowerCase();
-          const bCase = b.name.toLowerCase();
+          const aCase = (a.name ?? a.marketName).toLowerCase();
+          const bCase = (b.name ?? b.marketName).toLowerCase();
 
           return aCase > bCase ? 1 : (bCase > aCase ? -1 : 0);
         });
 
         bootstrap.sensors.sort((a, b) => {
 
-          const aCase = a.name.toLowerCase();
-          const bCase = b.name.toLowerCase();
+          const aCase = (a.name ?? a.marketName).toLowerCase();
+          const bCase = (b.name ?? b.marketName).toLowerCase();
 
           return aCase > bCase ? 1 : (bCase > aCase ? -1 : 0);
         });
 
         bootstrap.viewers.sort((a, b) => {
 
-          const aCase = a.name.toLowerCase();
-          const bCase = b.name.toLowerCase();
+          const aCase = (a.name ?? a.marketName).toLowerCase();
+          const bCase = (b.name ?? b.marketName).toLowerCase();
 
           return aCase > bCase ? 1 : (bCase > aCase ? -1 : 0);
         });
