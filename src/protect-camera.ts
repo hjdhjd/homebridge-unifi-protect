@@ -64,7 +64,7 @@ export class ProtectCamera extends ProtectDevice {
     this.hints.logDoorbell = this.hasFeature("Log.Doorbell");
     this.hints.logHksv = this.hasFeature("Log.HKSV");
     this.hints.probesize = 16384;
-    this.hints.smartDetect = this.hasFeature("Motion.SmartDetect");
+    this.hints.smartDetect = this.ufp.featureFlags.hasSmartDetect && this.hasFeature("Motion.SmartDetect");
     this.hints.timeshift = this.hasFeature("Video.HKSV.TimeshiftBuffer");
     this.hints.transcode = this.hasFeature("Video.Transcode");
     this.hints.transcodeHighLatency = this.hasFeature("Video.Transcode.HighLatency");
@@ -117,8 +117,8 @@ export class ProtectCamera extends ProtectDevice {
       this.log.info("Dynamic streaming bitrate adjustment on the UniFi Protect controller enabled.");
     }
 
-    // If the camera supports it, check to see if we have smart motion events enabled.
-    if(this.ufp.featureFlags.hasSmartDetect && this.hints.smartDetect) {
+    // Check to see if we have smart motion events enabled on a supported camera.
+    if(this.hints.smartDetect) {
 
       // We deal with smart motion detection options here and save them on the ProtectCamera instance because
       // we're trying to optimize and reduce the number of feature option lookups we do in realtime, when possible.
@@ -174,7 +174,7 @@ export class ProtectCamera extends ProtectDevice {
     // Listen for events.
     this.nvr.events.on("updateEvent." + this.ufp.id, this.listeners["updateEvent." + this.ufp.id] = this.eventHandler.bind(this));
 
-    if(this.ufp.featureFlags.hasSmartDetect && this.hints.smartDetect) {
+    if(this.hints.smartDetect) {
 
       this.nvr.events.on("addEvent." + this.ufp.id, this.listeners["addEvent." + this.ufp.id] = this.smartMotionEventHandler.bind(this));
     }
@@ -763,7 +763,7 @@ export class ProtectCamera extends ProtectDevice {
     this.hasHksv = true;
 
     // If we have smart motion events enabled, let's warn the user that things will not work quite the way they expect.
-    if(this.ufp.featureFlags.hasSmartDetect && this.hints.smartDetect) {
+    if(this.hints.smartDetect) {
 
       this.log.info("WARNING: Smart motion detection and HomeKit Secure Video provide overlapping functionality. " +
         "Only HomeKit Secure Video, when event recording is enabled in the Home app, will be used to trigger motion event notifications for this camera." +
