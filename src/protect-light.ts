@@ -43,6 +43,9 @@ export class ProtectLight extends ProtectDevice {
     // Configure the motion sensor.
     this.configureMotionSensor();
 
+    // Configure the occupancy sensor.
+    this.configureOccupancySensor();
+
     // Configure MQTT services.
     this.configureMqtt();
 

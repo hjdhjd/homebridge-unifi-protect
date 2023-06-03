@@ -101,6 +101,9 @@ export class ProtectSensor extends ProtectDevice {
       enabledSensors.push("motion sensor");
     }
 
+    // Configure the occupancy sensor.
+    this.configureOccupancySensor(this.ufp.motionSettings?.isEnabled, isInitialized);
+
     // Configure the temperature sensor.
     if(this.configureTemperatureSensor()) {
 

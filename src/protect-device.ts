@@ -402,7 +402,7 @@ export abstract class ProtectDevice extends ProtectBase {
   }
 
   // Configure the Protect motion sensor for HomeKit.
-  protected configureOccupancySensor(isEnabled = true): boolean {
+  protected configureOccupancySensor(isEnabled = true, isInitialized = false): boolean {
 
     // Find the occupancy sensor service, if it exists.
     let occupancyService = this.accessory.getService(this.hap.Service.OccupancySensor);
@@ -434,16 +434,21 @@ export abstract class ProtectDevice extends ProtectBase {
       this.accessory.addService(occupancyService);
     }
 
-    // Initialize the state of the occupancy sensor.
-    occupancyService.updateCharacteristic(this.hap.Characteristic.OccupancyDetected, false);
-    occupancyService.updateCharacteristic(this.hap.Characteristic.StatusActive, this.ufp.state === "CONNECTED");
+    // Have we previously initialized this sensor? We assume not by default, but this allows for scenarios where you may be dynamically reconfiguring a sensor at
+    // runtime (e.g. UniFi sensors can be reconfigured for various sensor modes in realtime).
+    if(!isInitialized) {
 
-    occupancyService.getCharacteristic(this.hap.Characteristic.StatusActive).onGet(() => {
+      // Initialize the state of the occupancy sensor.
+      occupancyService.updateCharacteristic(this.hap.Characteristic.OccupancyDetected, false);
+      occupancyService.updateCharacteristic(this.hap.Characteristic.StatusActive, this.ufp.state === "CONNECTED");
 
-      return this.ufp.state === "CONNECTED";
-    });
+      occupancyService.getCharacteristic(this.hap.Characteristic.StatusActive).onGet(() => {
 
-    this.log.info("Enabling occupancy sensor.");
+        return this.ufp.state === "CONNECTED";
+      });
+
+      this.log.info("Enabling occupancy sensor.");
+    }
 
     return true;
   }
