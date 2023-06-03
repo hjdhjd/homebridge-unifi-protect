@@ -413,6 +413,12 @@ export class ProtectNvrEvents extends EventEmitter {
           // Publish to MQTT, if the user has configured it.
           this.nvr.mqtt?.publish(protectDevice.accessory, "occupancy", "false");
 
+          // Log the event, if configured to do so.
+          if(protectDevice.hints.logMotion) {
+
+            protectDevice.log.info("Occupancy no longer detected.");
+          }
+
           // Delete the timer from our motion event tracker.
           delete this.eventTimers[protectDevice.ufp.mac];
         }, this.nvr.platform.config.occupancyDuration * 1000);
