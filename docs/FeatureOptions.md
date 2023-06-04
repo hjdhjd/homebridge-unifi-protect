@@ -127,8 +127,8 @@ These option(s) apply to: Protect cameras, Protect lights, Protect sensors
 
 | Option                                 | Description
 |----------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------
-| `Log.HKSV`                             | Log HomeKit Secure Video recording events in Homebridge. **(default: enabled)**. <BR>*Supported on Protect cameras that have a motion sensor.*
 | `Log.Doorbell`                         | Log doorbell ring events in Homebridge. **(default: enabled)**. <BR>*Supported on Protect cameras that have a motion sensor.*
+| `Log.HKSV`                             | Log HomeKit Secure Video recording events in Homebridge. **(default: enabled)**. <BR>*Supported on Protect cameras that have a motion sensor.*
 | `Log.Motion`                           | Log motion events in Homebridge. **(default: disabled)**. <BR>*Supported on Protect devices that have a motion sensor.*
 
 #### <A NAME="motion"></A>Motion detection feature options.
@@ -137,7 +137,9 @@ These option(s) apply to: Protect cameras, Protect lights, Protect sensors
 
 | Option                                 | Description
 |----------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------
-| `Motion.OccupancySensor`               | Add an occupancy sensor accessory using motion sensor activity to determine occupancy. If smart motion detection is enabled, the occupancy sensor will use UniFi Protect's person detection to determine occupancy state. Otherwise, by default, all motion will trigger occupancy. **(default: disabled)**. <BR>*Supported on Protect devices that have a motion sensor.*
+| `Motion.OccupancySensor`               | Add an occupancy sensor accessory using motion sensor activity to determine occupancy. By default, any motion will trigger occupancy. If the smart motion detection feature option is enabled, it will be used instead. **(default: disabled)**. <BR>*Supported on Protect devices that have a motion sensor.*
+| `Motion.OccupancySensor.Person`        | When using both the occupancy sensor and smart motion detection feature options, use UniFi Protect's person detection to trigger occupancy. **(default: enabled)**. <BR>*Supported on Protect devices that support smart motion detection (e.g. G4-series cameras and better).*
+| `Motion.OccupancySensor.Vehicle`       | When using both the occupancy sensor and smart motion detection feature options, use UniFi Protect's vehicle detection to trigger occupancy. **(default: disabled)**. <BR>*Supported on Protect devices that support smart motion detection (e.g. G4-series cameras and better).*
 | `Motion.SmartDetect`                   | Use UniFi Protect smart motion detection for HomeKit motion events when on a supported device. **(default: disabled)**. <BR>*Supported on Protect devices that support smart motion detection (e.g. G4-series cameras and better).*
 | `Motion.SmartDetect.ObjectSensors`     | Add contact sensor accessories for each smart motion object type that UniFi Protect supports. **(default: disabled)**. <BR>*Supported on Protect devices that support smart motion detection (e.g. G4-series cameras and better).*
 | `Motion.Switch`                        | Add a switch accessory to activate or deactivate motion detection in HomeKit. **(default: disabled)**. <BR>*Supported on Protect devices that have a motion sensor.*
