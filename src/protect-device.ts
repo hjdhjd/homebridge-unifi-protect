@@ -3,10 +3,9 @@
  * protect-device.ts: Base class for all UniFi Protect devices.
  */
 import { API, CharacteristicValue, HAP, PlatformAccessory } from "homebridge";
-import { ProtectApi, ProtectEventPacket } from "unifi-protect";
+import { ProtectApi, ProtectCameraConfig, ProtectEventPacket, ProtectNvrConfig } from "unifi-protect";
 import { ProtectDeviceConfigTypes, ProtectLogging, ProtectReservedNames } from "./protect-types.js";
 import { ProtectNvr } from "./protect-nvr.js";
-import { ProtectNvrConfig } from "unifi-protect";
 import { ProtectPlatform } from "./protect-platform.js";
 import { optionEnabled } from "./protect-options.js";
 import util from "node:util";
@@ -30,6 +29,7 @@ export interface ProtectHints {
   logMotion: boolean,
   probesize: number,
   smartDetect: boolean,
+  smartOccupancy: string[],
   timeshift: boolean,
   transcode: boolean,
   transcodeHighLatency: boolean,
@@ -147,6 +147,7 @@ export abstract class ProtectDevice extends ProtectBase {
   protected configureHints(): boolean {
 
     this.hints.logMotion = this.hasFeature("Log.Motion");
+    this.hints.smartOccupancy = [];
     return true;
   }
 
@@ -447,7 +448,27 @@ export abstract class ProtectDevice extends ProtectBase {
         return this.ufp.state === "CONNECTED";
       });
 
-      this.log.info("Enabling occupancy sensor.");
+      // If we have smart motion detection, allow users to choose which object types determine occupancy.
+      if(this.hints.smartDetect) {
+
+        // Iterate through all the individual object detection types Protect has configured.
+        for(const smartDetectType of (this.ufp as ProtectCameraConfig).featureFlags.smartDetectTypes) {
+
+          if(this.hasFeature("Motion.OccupancySensor." + smartDetectType)) {
+
+            this.hints.smartOccupancy.push(smartDetectType);
+          }
+        }
+
+        // If the user has disabled all the object types, warn them.
+        if(!this.hints.smartOccupancy.length) {
+
+          this.hints.smartOccupancy.push("no smart motion detection object type configured");
+        }
+      }
+
+      this.log.info("Enabling occupancy sensor%s.",
+        this.hints.smartDetect ? " using smart motion detection: " + this.hints.smartOccupancy.join(", ")  : "");
     }
 
     return true;

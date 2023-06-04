@@ -375,7 +375,7 @@ export class ProtectNvrEvents extends EventEmitter {
 
     // If we don't have smart motion detection enabled, or if we do have it enabled and we have a smart motion event that's detected a person,
     // let's process our occupancy event updates.
-    if(!protectDevice.hints.smartDetect || (protectDevice.hints.smartDetect && detectedObjects.includes("person"))) {
+    if(!protectDevice.hints.smartDetect || (protectDevice.hints.smartDetect && detectedObjects.some(x => protectDevice.hints.smartOccupancy.includes(x)))) {
 
       // First, let's determine if the user has an occupancy sensor configured, before we process anything.
       const occupancyService = protectDevice.accessory.getService(this.hap.Service.OccupancySensor);
@@ -400,7 +400,8 @@ export class ProtectNvrEvents extends EventEmitter {
           // Log the event, if configured to do so.
           if(protectDevice.hints.logMotion) {
 
-            protectDevice.log.info("Occupancy detected.");
+            protectDevice.log.info("Occupancy detected%s.",
+              protectDevice.hints.smartDetect ? ": " + protectDevice.hints.smartOccupancy.filter(x => detectedObjects.includes(x)).join(", ") : "");
           }
         }
 

@@ -81,15 +81,17 @@ export const featureOptions: { [index: string]: FeatureOption[] } = {
   // Logging options.
   "Log": [
 
-    { default: true, description: "Log HomeKit Secure Video recording events in Homebridge.", hasFeature: [ "hasMotionZones" ], name: "HKSV" },
     { default: true, description: "Log doorbell ring events in Homebridge.", hasFeature: [ "hasMotionZones" ], name: "Doorbell" },
+    { default: true, description: "Log HomeKit Secure Video recording events in Homebridge.", hasFeature: [ "hasMotionZones" ], name: "HKSV" },
     { default: false, description: "Log motion events in Homebridge.", hasProperty: [ "isMotionDetected", "isPirMotionDetected" ], name: "Motion" }
   ],
 
   // Motion options.
   "Motion": [
 
-    { default: false, description: "Add an occupancy sensor accessory using motion sensor activity to determine occupancy. If smart motion detection is enabled, the occupancy sensor will use UniFi Protect's person detection to determine occupancy state. Otherwise, by default, all motion will trigger occupancy.", hasProperty: [ "isMotionDetected", "isPirMotionDetected" ], name: "OccupancySensor" },
+    { default: false, description: "Add an occupancy sensor accessory using motion sensor activity to determine occupancy. By default, any motion will trigger occupancy. If the smart motion detection feature option is enabled, it will be used instead.", hasProperty: [ "isMotionDetected", "isPirMotionDetected" ], name: "OccupancySensor" },
+    { default: true, description: "When using both the occupancy sensor and smart motion detection feature options, use UniFi Protect's person detection to trigger occupancy.", hasFeature: [ "hasSmartDetect" ], name: "OccupancySensor.Person" },
+    { default: false, description: "When using both the occupancy sensor and smart motion detection feature options, use UniFi Protect's vehicle detection to trigger occupancy.", hasFeature: [ "hasSmartDetect" ], name: "OccupancySensor.Vehicle" },
     { default: false, description: "Use UniFi Protect smart motion detection for HomeKit motion events when on a supported device.", hasFeature: [ "hasSmartDetect" ], name: "SmartDetect" },
     { default: false, description: "Add contact sensor accessories for each smart motion object type that UniFi Protect supports.", hasFeature: [ "hasSmartDetect" ], name: "SmartDetect.ObjectSensors" },
     { default: false, description: "Add a switch accessory to activate or deactivate motion detection in HomeKit.", hasProperty: [ "isMotionDetected", "isPirMotionDetected" ], name: "Switch" },
