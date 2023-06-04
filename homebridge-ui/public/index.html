@@ -243,7 +243,7 @@
         }
 
         // Initialize our informational header.
-        document.getElementById("headerInfo").innerHTML = "Feature options are applied in prioritized order, from global to device-specific options:<br><i>Global options</i> (lowest priority) &rarr; <i>Protect controller options</i> &rarr; <i>Protect device options</i> (highest priority)"
+        document.getElementById("headerInfo").innerHTML = "Feature options are applied in prioritized order, from global to device-specific options:<br><i class=\"text-warning\">Global options</i> (lowest priority) &rarr; <i class=\"text-success\">Protect controller options</i> &rarr; <i class=\"text-info\">Protect device options</i> (highest priority)"
 
         // Enumerate our global options.
         const trGlobal = document.createElement("tr");
@@ -371,6 +371,9 @@
         const modelKeys = [...new Set(ufpDevices.map(x => x.modelKey))];
         const deviceList = [];
 
+        // The first entry returned by getDevices is always the controller.
+        const nvr = ufpDevices[0];
+
         // Start with a clean slate.
         devicesTable.innerHTML = "";
 
@@ -382,7 +385,7 @@
           // If it's a controller, we handle that case differently.
           if((key === "nvr") && devices.length) {
 
-            // Change the name of the controler that we show users once we've connected with the controller.
+            // Change the name of the controller that we show users once we've connected with the controller.
             controllerList.map(x => (x.name === controller.address) ? x.childNodes[0].nodeValue = devices[0].name : true);
             continue;
           }
@@ -417,7 +420,7 @@
             const label = document.createElement("label");
 
             label.name = device.id;
-            label.appendChild(document.createTextNode(device.name));
+            label.appendChild(document.createTextNode(device.name ?? device.marketName));
             label.style.cursor = "pointer";
             label.classList.add("mx-2", "my-0", "p-0", "w-100");
 
@@ -453,6 +456,13 @@
         // Initialize our feature option configuration.
         updateConfigOptions(currentConfig[0].options ?? [])
 
+        // Is this feature option set explicitly?
+        const isOptionSet = (featureOption, deviceMac) => {
+
+          const optionRegex = new RegExp("^(Enable|Disable)\." + featureOption + (!deviceMac ? "" : "\." + deviceMac) + "$", "gi");
+          return optionsList.filter(x => x.match(optionRegex)).length ? true : false;
+        };
+
         // Is a feature option globally enabled?
         const isGlobalOptionEnabled = (featureOption, defaultValue) => {
 
@@ -464,8 +474,13 @@
             );
         };
 
-        // Is a feature option enabled at the device or controller level.
+        // Is a feature option enabled at the device or global level. It does not traverse the scoping hierarchy.
         const isDeviceOptionEnabled = (featureOption, mac, defaultValue) => {
+
+          if(!mac) {
+
+            return isGlobalOptionEnabled(featureOption, defaultValue);
+          }
 
           featureOption = featureOption.toUpperCase();
           mac = mac.toUpperCase();
@@ -474,6 +489,92 @@
           return optionsList.some(x => x === ("ENABLE." + featureOption + "." + mac)) ? true :
             (optionsList.some(x => x === ("DISABLE." + featureOption + "." + mac)) ? false : defaultValue
             );
+        };
+
+        // Is a feature option enabled at the device or global level. It does traverse the scoping hierarchy.
+        const isOptionEnabled = (featureOption, deviceMac, defaultValue) => {
+
+          if(deviceMac) {
+
+            // Device level check.
+            if(isDeviceOptionEnabled(featureOption, deviceMac, defaultValue) !== defaultValue) {
+
+              return !defaultValue;
+            }
+
+            // Controller level check.
+            if(isDeviceOptionEnabled(featureOption, nvr.mac, defaultValue) !== defaultValue) {
+
+              return !defaultValue;
+            }
+          }
+
+          // Global check.
+          if(isGlobalOptionEnabled(featureOption, defaultValue) !== defaultValue) {
+
+            return !defaultValue;
+          }
+
+          // Return the default.
+          return defaultValue;
+        };
+
+        // Return the scope level of a feature option.
+        const optionScope = (featureOption, deviceMac, defaultValue) => {
+
+          // Scope priority is always: device, NVR, global.
+
+          if(deviceMac) {
+
+            // Let's see if we've set it at the device-level.
+            if((isDeviceOptionEnabled(featureOption, deviceMac, defaultValue) !== defaultValue) || isOptionSet(featureOption, deviceMac)) {
+
+              return "device";
+            }
+
+            // Now let's test the controller level.
+            if((isDeviceOptionEnabled(featureOption, nvr.mac, defaultValue) !== defaultValue) || isOptionSet(featureOption, nvr.mac)) {
+
+              return "nvr";
+            }
+          }
+
+          // Finally, let's test the global level.
+          if((isGlobalOptionEnabled(featureOption, defaultValue) !== defaultValue) || isOptionSet(featureOption)) {
+
+            return "global";
+          }
+
+          // Option isn't set to a non-default value.
+          return "none";
+        };
+
+        // Return the color hinting for a given option's scope.
+        const optionScopeColor = (featureOption, deviceMac, defaultValue) => {
+
+          switch(optionScope(featureOption, deviceMac, defaultValue)) {
+
+            case "device":
+
+              return "text-info";
+              break;
+
+            case "nvr":
+
+              return "text-success";
+              break;
+
+            case "global":
+
+              return deviceMac ? "text-warning" : "text-info";
+              break;
+
+            default:
+
+              break;
+          }
+
+          return null;
         };
 
         // Show feature option information for a specific device, controller, or globally.
@@ -556,6 +657,7 @@
             // Finally, add the table head to the table.
             optionTable.appendChild(thead);
 
+            // Now enumerate all the feature options for a given device.
             for(const option of optionsDevice[category.name]) {
 
               // Only show feature options that are valid for this device.
@@ -577,38 +679,42 @@
 
               const featureOption = category.name + (option.name.length ? ("." + option.name): "");
               checkbox.type = "checkbox";
+              checkbox.readOnly = false;
               checkbox.id = featureOption;
               checkbox.name = featureOption;
               checkbox.value = featureOption + (!ufpDevice ? "" : ("." + ufpDevice.mac));
-              checkbox.checked = !ufpDevice ? isGlobalOptionEnabled(featureOption, option.default) :
-                isDeviceOptionEnabled(featureOption, ufpDevice.mac, option.default);
+
+              switch(optionScope(featureOption, ufpDevice?.mac, option.default)) {
+
+                case "global":
+                case "nvr":
+
+                  // If we're looking at the global scope, show the option value. Otherwise, we show that we're inheriting a value from the scope above.
+                  if(!ufpDevice) {
+
+                    checkbox.checked = isGlobalOptionEnabled(featureOption, option.default);
+
+                    if(checkbox.checked) {
+
+                      checkbox.indeterminate = false;
+                    }
+
+                  } else {
+
+                    checkbox.readOnly = checkbox.indeterminate = true;
+                  }
+
+                  break;
+
+                case "device":
+                case "none":
+                default:
+                  checkbox.checked = isDeviceOptionEnabled(featureOption, ufpDevice?.mac, option.default);
+                  break;
+              }
 
               checkbox.defaultChecked = option.default;
               checkbox.classList.add("mx-2");
-
-              // Add or remove the setting from our configuration when we've changed our state.
-              checkbox.addEventListener("change", async () => {
-
-                // Find the option in our list and delete it if it exists.
-                const optionRegex = new RegExp("^(Enable|Disable)\." + checkbox.id + (!ufpDevice ? "" : ("\." + ufpDevice.mac)) + "$", "gi")
-                const newOptions = configOptions.filter(x => !x.match(optionRegex));
-
-                // The setting is different from the default, highlight it for the user, and add it to our configuration.
-                if(checkbox.checked !== option.default) {
-
-                  labelDescription.classList.add("text-info");
-                  newOptions.push((checkbox.checked ? "Enable." : "Disable.") + checkbox.value);
-                } else {
-
-                  // We've reset to the defaults, remove our highlighting.
-                  labelDescription.classList.remove("text-info");
-                }
-
-                // Update our configuration in Homebridge.
-                currentConfig[0].options = newOptions;
-                updateConfigOptions(newOptions);
-                await homebridge.updatePluginConfig(currentConfig);
-              });
 
               // Add the checkbox to the table cell.
               tdCheckbox.appendChild(checkbox);
@@ -626,10 +732,98 @@
               labelDescription.classList.add("user-select-none", "my-0", "py-0");
 
               // Highlight options for the user that are different than our defaults.
-              if(checkbox.checked !== checkbox.defaultChecked) {
+              const scopeColor = optionScopeColor(featureOption, ufpDevice?.mac, option.default);
 
-                labelDescription.classList.add("text-info");
+              if(scopeColor) {
+
+                labelDescription.classList.add(scopeColor);
               }
+
+              // Add or remove the setting from our configuration when we've changed our state.
+              checkbox.addEventListener("change", async () => {
+
+                // Find the option in our list and delete it if it exists.
+                const optionRegex = new RegExp("^(Enable|Disable)\." + checkbox.id + (!ufpDevice ? "" : ("\." + ufpDevice.mac)) + "$", "gi");
+                const newOptions = configOptions.filter(x => !x.match(optionRegex));
+
+                // Figure out if we've got the option set upstream.
+                let upstreamOption = false;
+
+                // We explicitly want to check for the scope of the feature option above where we are now, so we can appropriately determine what we should show.
+                switch(optionScope(checkbox.id, (ufpDevice && (ufpDevice.mac !== nvr.mac)) ? nvr.mac : null, option.default)) {
+
+                  case "device":
+                  case "nvr":
+
+                    if(ufpDevice.mac !== nvr.mac) {
+
+                      upstreamOption = true;
+                    }
+
+                    break;
+
+                  case "global":
+
+                    if(ufpDevice) {
+
+                      upstreamOption = true;
+                    }
+
+                    break;
+
+                  default:
+
+                    break;
+                }
+
+                if(checkbox.readOnly) {
+
+                  // We're truly unchecked. We need this because a checkbox can be in both an unchecked and indeterminate simultaneously,
+                  // so we use the readOnly property to let us know that we've just cycled from an indeterminate state.
+                  checkbox.checked = checkbox.readOnly = false;
+                } else if(!checkbox.checked) {
+
+                  // If we have an upstream option configured, we reveal a third state to show inheritance of that option and allow the user to select it.
+                  if(upstreamOption) {
+
+                    // We want to set the readOnly property as well, since it will survive a user interaction when they click the checkbox to clear out the
+                    // indeterminate state. This allows us to effectively cycle between three states.
+                    checkbox.readOnly = checkbox.indeterminate = true;
+                  }
+
+                } else if(checkbox.checked) {
+
+                  // We've explicitly checked this option.
+                  checkbox.readOnly = checkbox.indeterminate = false;
+                }
+
+                // The setting is different from the default, highlight it for the user, accounting for upstream scope, and add it to our configuration.
+                if(!checkbox.indeterminate && ((checkbox.checked !== option.default) || upstreamOption)) {
+
+                  labelDescription.classList.add("text-info");
+                  newOptions.push((checkbox.checked ? "Enable." : "Disable.") + checkbox.value);
+                } else {
+
+                  // We've reset to the defaults, remove our highlighting.
+                  labelDescription.classList.remove("text-info");
+                }
+
+                // Update our configuration in Homebridge.
+                currentConfig[0].options = newOptions;
+                updateConfigOptions(newOptions);
+                await homebridge.updatePluginConfig(currentConfig);
+
+                // If we've reset to defaults, make sure our color coding for scope is reflected.
+                if((checkbox.checked === option.default) || checkbox.indeterminate) {
+
+                  const scopeColor = optionScopeColor(featureOption, ufpDevice?.mac, option.default);
+
+                  if(scopeColor) {
+
+                    labelDescription.classList.add(scopeColor);
+                  }
+                }
+              });
 
               // Add the actual description for the option after the checkbox.
               labelDescription.appendChild(document.createTextNode(option.description));
