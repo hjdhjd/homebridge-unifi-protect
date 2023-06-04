@@ -2,6 +2,7 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 6.8.1 (2023-06-04)
 ## 6.8.0 (2023-06-04)
   * Improvement: when using occupancy sensors in combination with smart motion detection, you can now tailor which Protect object detection types trigger occupancy. See the webUI or documentation for more.
   * Improvement: the webUI now visually shows you the scope of a feature option (global, controller, or device), and allows you to cycle between them. This makes it easier to set a global or controller default, but individually override it for a device.
