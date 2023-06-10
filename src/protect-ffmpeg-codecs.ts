@@ -6,6 +6,7 @@ import { Logging } from "homebridge";
 import { ProtectPlatform } from "./protect-platform.js";
 import { execFile } from "node:child_process";
 import os from "node:os";
+import process from "node:process";
 import util from "node:util";
 
 export class FfmpegCodecs {
@@ -155,7 +156,7 @@ export class FfmpegCodecs {
   // Probe Raspberry Pi GPU.
   private async probeRpiGpuMem(): Promise<boolean> {
 
-    return this.probeCmd("/usr/bin/vcgencmd", [ "get_mem", "gpu" ], (stdout: string) => {
+    return this.probeCmd("vcgencmd", [ "get_mem", "gpu" ], (stdout: string) => {
 
       // A regular expression to parse out the configured GPU memory on the Raspberry Pi.
       const gpuRegex = /^gpu=(.*)M\n$/;
@@ -212,16 +213,16 @@ export class FfmpegCodecs {
 
         if(execError.code === "ENOENT") {
 
-          this.log.error("Unable to find FFmpeg at: '%s'. Please make sure that you have a working version of FFmpeg installed in order to use this plugin.",
-            execError.path);
-
+          this.log.error("Unable to find '%s' in path: '%s'.", command, process.env.PATH);
         } else {
 
-          this.log.error("Error running FFmpeg: %s", error.message);
+          this.log.error("Error running %s: %s", command, error.message);
         }
       }
 
-      this.log.error("Unable to complete plugin startup without a working version of FFmpeg.");
+      this.log.error("Unable to probe the capabilities of your Homebridge host without access to '%s'. Ensure that it is available in your path and correctly working.",
+        command);
+
       return false;
     }
   }
