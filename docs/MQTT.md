@@ -58,13 +58,18 @@ The topics and messages that `homebridge-unifi-protect` publishes are:
 
 | Topic                 | Message Published
 |-----------------------|----------------------------------
+| `alarm`               | `true` or `false` when a UniFi Protect sensor detects a recognized alarm sound.
+| `ambientlight`        | Ambient light level, in lux, on a UniFi Protect sensor.
+| `contact`             | `true` or `false` when a UniFi Protect sensor detects contact. Note: UniFi Protect will set this state differently depending on the placement type you select in the Protect app or the Protect webUI.
 | `doorbell`            | `true` when the doorbell is rung. Each press of the doorbell will trigger a new event.
+| `humidity`            | Humidity percentage level on a UniFi Protect sensor.
+| `leak`                | `true` or `false` when a UniFi Protect sensor detects a leak.
 | `message`             | `{"message":"Some Message","duration":60}`. See [Doorbell Messages](#doorbell-messages) for additional documentation.
 |                       |
 | `liveviews`           | `[{"name": "LiveviewName", "state": true},{"name": "AnotherLiveview", "state": false}]`. `state` can be `true` or `false`, indicating whether a liveview scene is active.
 | `motion`              | `true` when motion is detected. `false` when the motion event is reset.
 |                       |
-| <CODE>motion/smart/<I>object</I></CODE>            | `true` when a smart motion event is detected for *object*. `false` when the smart motion event is reset. Valid *object* types are currently: `person`, `vehicle`. <BR>Note: to maximize flexibility, all smart motion object events will be published, whether or not specific object types were configured using the <CODE>Motion.SmartDetect.<I>object</I></CODE> to tailor which motion events are triggered in HomeKit. If what you want to listen for is whether a motion event is sent to HomeKit, use the `motion` topic instead.</BR>
+| <CODE>motion/smart/<I>object</I></CODE>            | `true` when a smart motion event is detected for *object*. `false` when the smart motion event is reset. Valid *object* types are currently: `person`, `vehicle`. If what you want to listen for is whether a motion event is sent to HomeKit, use the `motion` topic instead.</BR>
 |                       |
 | `rtsp`                | `{"Name": "URL"}`. Represents a JSON containing all the valid RTSP URLs that can be used to stream from this camera. `Name` is the name assigned by UniFi Protect to the RTSP URL. `URL` represents the URL that can be used for streaming.
 |                       |
@@ -72,7 +77,8 @@ The topics and messages that `homebridge-unifi-protect` publishes are:
 |                       |
 | `snapshot`            | A [data URL](https://developer.mozilla.org/en-US/docs/Web/HTTP/Basics_of_HTTP/Data_URIs) containing a base64-encoded JPEG of the snapshot that was requested (either by HomeKit or MQTT).
 |                       |
-| `telemetry`           | All UniFi Protect telemetry from the realtime events API. This is the raw feed - you're on your own to parse through it for the messages you may be interested in.
+| `telemetry`           | All UniFi Protect telemetry from the realtime events API. This is the raw feed - you're on your own to parse through it for the messages you may be interested in. This is published to the NVR MAC address.
+| `temperature`         | Temperature, in Celsius, on a UniFi Protect sensor.
 
 Messages are published to MQTT when an action occurs on a camera, controller, or doorbell that triggers the respective event, or when an MQTT message is received for one of the topics `homebridge-unifi-protect` subscribes to. For example, snapshot images are published every time HomeKit requests a snapshot as well as when a request is received through MQTT to trigger a new snapshot.
 
@@ -81,6 +87,11 @@ The topics that `homebridge-unifi-protect` subscribes to are:
 
 | Topic                   | Message Expected
 |-------------------------|----------------------------------
+| `alarm/get`             | `true` will trigger a publish event of the current alarm state for a UniFi Protect sensor.
+| `ambientlight/get`      | `true` will trigger a publish event of the ambient light level, in lux, for a UniFi Protect sensor.
+| `contact/get`           | `true` will trigger a publish event of the current contact state for a UniFi Protect sensor. Note: UniFi Protect will set this state differently depending on the placement type you select in the Protect app or the Protect webUI.
+| `humidity/get`          | `true` will trigger a publish event of the humidity level, as a percentage, for a UniFi Protect sensor.
+| `leak/get`              | `true` will trigger a publish event of the current leak sensor state for a UniFi Protect sensor.
 | `liveviews/get`         | `true` will request that the plugin publish the current state of all liveviews to the `liveviews` topic.
 | `liveviews/set `        | A JSON-compatible array in the format `[{"name": "view1", "state": true }, ...]` This will activate or deactivate one of more liveviews, depending on the respective state.
 |                         |
@@ -95,6 +106,7 @@ The topics that `homebridge-unifi-protect` subscribes to are:
 | `securitysystem/set`    | One of `AlarmOff`, `AlarmOn`, `Away`, `Home`, `Night`, `Off`. This will set the respective state on the security system accessory.
 |                         |
 | `snapshot/trigger`      | `true` will trigger the camera or doorbell to generate a snapshot.
+| `temperature/get`       | `true` will trigger a publish event of the temperature, in Celsius, for a UniFi Protect sensor.
 
 Some messages, such as those for the liveviews and securitysystem topics, are controller-specific. To use these topics, make sure you use the controller MAC address when you create your topic strings.
 

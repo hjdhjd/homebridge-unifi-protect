@@ -10,8 +10,9 @@ import { ProtectReservedNames } from "./protect-types.js";
 
 export class ProtectSensor extends ProtectDevice {
 
-  private savedAlarmSound!: boolean;
-  private savedContact!: boolean;
+  private lastAlarm!: boolean;
+  private lastContact!: boolean;
+  private lastLeak!: boolean;
   public ufp: ProtectSensorConfig;
 
   // Create an instance.
@@ -86,6 +87,12 @@ export class ProtectSensor extends ProtectDevice {
       enabledSensors.push("humidity");
     }
 
+    // Configure the alarm sound sensor.
+    if(this.configureLeakSensor()) {
+
+      enabledSensors.push("leak");
+    }
+
     // Configure the motion sensor.
     if(this.configureMotionSensor(this.ufp.motionSettings?.isEnabled, isInitialized)) {
 
@@ -153,11 +160,11 @@ export class ProtectSensor extends ProtectDevice {
     // Retrieve the current contact sensor state when requested.
     contactService.getCharacteristic(this.hap.Characteristic.ContactSensorState)?.onGet(() => {
 
-      return this.alarmSound;
+      return this.alarmDetected;
     });
 
     // Update the sensor.
-    contactService.updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.alarmSound);
+    contactService.updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.alarmDetected);
 
     // Update the state characteristics.
     this.configureStateCharacteristics(contactService);
@@ -222,8 +229,8 @@ export class ProtectSensor extends ProtectDevice {
     // Find the service, if it exists.
     let contactService = this.accessory.getServiceById(this.hap.Service.ContactSensor, ProtectReservedNames.CONTACT_SENSOR);
 
-    // Have we disabled the sensor?
-    if(!this.ufp.mountType || (this.ufp.mountType === "none")) {
+    // Have we disabled the sensor or are we configured as a leak sensor?
+    if(!this.ufp.mountType || (this.ufp.mountType === "leak") || (this.ufp.mountType === "none")) {
 
       if(contactService) {
 
@@ -310,6 +317,55 @@ export class ProtectSensor extends ProtectDevice {
 
     // Update the state characteristics.
     this.configureStateCharacteristics(humidityService);
+
+    return true;
+  }
+
+  // Configure the leak sensor for HomeKit.
+  private configureLeakSensor(): boolean {
+
+    // Find the service, if it exists.
+    let leakService = this.accessory.getService(this.hap.Service.LeakSensor);
+
+    // Have we disabled the leak sensor?
+    if(this.ufp.mountType !== "leak") {
+
+      if(leakService) {
+
+        this.accessory.removeService(leakService);
+        this.log.info("Disabling leak sensor.");
+      }
+
+      return false;
+    }
+
+    // Add the service to the accessory, if needed.
+    if(!leakService) {
+
+      leakService = new this.hap.Service.LeakSensor(this.accessory.displayName);
+
+      if(!leakService) {
+
+        this.log.error("Unable to add leak sensor.");
+        return false;
+      }
+
+      this.accessory.addService(leakService);
+
+      this.log.info("Enabling leak sensor.");
+    }
+
+    // Retrieve the current contact sensor state when requested.
+    leakService.getCharacteristic(this.hap.Characteristic.LeakDetected)?.onGet(() => {
+
+      return this.leakDetected;
+    });
+
+    // Update the sensor.
+    leakService.updateCharacteristic(this.hap.Characteristic.LeakDetected, this.leakDetected);
+
+    // Update the state characteristics.
+    this.configureStateCharacteristics(leakService);
 
     return true;
   }
@@ -424,17 +480,19 @@ export class ProtectSensor extends ProtectDevice {
     return true;
   }
 
-  // Get the current alarm sound information.
-  private get alarmSound(): boolean {
+  // Get the current alarm alert detection information.
+  private get alarmDetected(): boolean {
 
     // Return true if we are not null, meaning the alarm has sounded.
     const value = this.ufp.alarmTriggeredAt !== null;
 
     // Save the state change and publish to MQTT.
-    if(value !== this.savedAlarmSound) {
+    if(value !== this.lastAlarm) {
 
-      this.savedAlarmSound = value;
-      this.nvr.mqtt?.publish(this.accessory, "alarmsound", value.toString());
+      this.lastAlarm = value;
+      this.nvr.mqtt?.publish(this.accessory, "alarm", value.toString());
+
+      this.log.info("Alarm %sdetected.", value ? "" : "no longer ");
     }
 
     return value;
@@ -453,9 +511,9 @@ export class ProtectSensor extends ProtectDevice {
     const value = this.ufp.isOpened;
 
     // Save the state change and publish to MQTT.
-    if(value !== this.savedContact) {
+    if(value !== this.lastContact) {
 
-      this.savedContact = value;
+      this.lastContact = value;
       this.nvr.mqtt?.publish(this.accessory, "contact", value.toString());
     }
 
@@ -468,6 +526,24 @@ export class ProtectSensor extends ProtectDevice {
     return this.ufp.stats.humidity.value ?? -1;
   }
 
+  // Get the current leak sensor information.
+  private get leakDetected(): boolean {
+
+    // Return true if we are not null, meaning a leak has been detected.
+    const value = this.ufp.leakDetectedAt !== null;
+
+    // Save the state change and publish to MQTT.
+    if(value !== this.lastLeak) {
+
+      this.lastLeak = value;
+      this.nvr.mqtt?.publish(this.accessory, "leak", value.toString());
+
+      this.log.info("Leak %sdetected.", value ? "" : "no longer ");
+    }
+
+    return value;
+  }
+
   // Get the current temperature information.
   private get temperature(): number {
 
@@ -477,9 +553,9 @@ export class ProtectSensor extends ProtectDevice {
   // Configure MQTT capabilities for sensors.
   private configureMqtt(): void {
 
-    this.nvr.mqtt?.subscribeGet(this.accessory, this.name, "alarmsound", "Alarm sound", () => {
+    this.nvr.mqtt?.subscribeGet(this.accessory, this.name, "alarm", "Alarm detected", () => {
 
-      return this.alarmSound.toString();
+      return this.alarmDetected.toString();
     });
 
     this.nvr.mqtt?.subscribeGet(this.accessory, this.name, "ambientlight", "Ambient light", () => {
@@ -495,6 +571,11 @@ export class ProtectSensor extends ProtectDevice {
     this.nvr.mqtt?.subscribeGet(this.accessory, this.name, "humidity", "Humidity", () => {
 
       return this.humidity.toString();
+    });
+
+    this.nvr.mqtt?.subscribeGet(this.accessory, this.name, "leak", "Leak detected", () => {
+
+      return this.leakDetected.toString();
     });
 
     this.nvr.mqtt?.subscribeGet(this.accessory, this.name, "temperature", "Temperature", () => {
