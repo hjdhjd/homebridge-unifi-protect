@@ -144,7 +144,6 @@ export class ProtectNvrEvents extends EventEmitter {
 
       if(protectDevice) {
 
-        this.log.error("WE HAVE THE DEVICE ALREADY - WE ARE SCREWED!");
         return;
       }
 

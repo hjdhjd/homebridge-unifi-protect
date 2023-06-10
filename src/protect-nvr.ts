@@ -167,7 +167,7 @@ export class ProtectNvr {
     this.ufp = bootstrap.nvr;
 
     // Assign our name if the user hasn't explicitly specified a preference.
-    this.name = this.nvrOptions.name ?? this.ufp.name;
+    this.name = this.nvrOptions.name ?? (this.ufp.name ?? this.ufp.marketName);
 
     // Mark this NVR as enabled or disabled.
     this.isEnabled = this.hasFeature("Device");
@@ -207,17 +207,16 @@ export class ProtectNvr {
     }
 
     // Inform the user about the devices we see.
-    this.log.info("Discovered %s: %s.", this.ufp.modelKey, this.ufpApi.getDeviceName(this.ufp, this.ufp.name, true));
-
-    for(const device of [ ...bootstrap.cameras, ...bootstrap.chimes, ...bootstrap.lights, ...bootstrap.sensors, ...bootstrap.viewers ] ) {
+    for(const device of [ this.ufp, ...bootstrap.cameras, ...bootstrap.chimes, ...bootstrap.lights, ...bootstrap.sensors, ...bootstrap.viewers ] ) {
 
       // Filter out any devices that aren't adopted by this Protect controller.
-      if(device.isAdoptedByOther || device.isAdopting || !device.isAdopted) {
+      if((device.modelKey !== "nvr") &&
+        ((device as ProtectDeviceConfigTypes).isAdoptedByOther || (device as ProtectDeviceConfigTypes).isAdopting || !(device as ProtectDeviceConfigTypes).isAdopted)) {
 
         continue;
       }
 
-      this.log.info("Discovered %s: %s.", device.modelKey, this.ufpApi.getDeviceName(device, device.name, true));
+      this.log.info("Discovered %s: %s.", device.modelKey, this.ufpApi.getDeviceName(device, device.name ?? device.marketName, true));
     }
 
     // Sync the Protect controller's devices with HomeKit.
@@ -258,6 +257,13 @@ export class ProtectNvr {
   // Configure a default doorbell message on the Protect doorbell.
   private async configureDefaultDoorbellMessage(): Promise<boolean> {
 
+    // If we aren't an admin user, don't attempt to set the default doorbell message.
+    if(!this.ufpApi.isAdminUser) {
+
+      return false;
+    }
+
+    // Set the default doorbell message to either what the user configured, or the Protect default.
     const defaultMessage = this.nvrOptions.defaultDoorbellMessage ?? "WELCOME";
 
     // Set the default message.
@@ -340,7 +346,7 @@ export class ProtectNvr {
 
       default:
 
-        this.log.error("Unknown device class `%s` detected for ``%s``", device.modelKey, device.name);
+        this.log.error("Unknown device class `%s` detected for ``%s``", device.modelKey, device.name ?? device.marketName);
 
         return false;
     }
@@ -362,7 +368,7 @@ export class ProtectNvr {
   public addHomeKitDevice(device: ProtectDeviceConfigTypes): ProtectDevice | null {
 
     // If we have no MAC address, name, or this camera isn't being managed by this Protect controller, we're done.
-    if(!this.ufp?.mac || !device || !device.mac || !device.name || device.isAdoptedByOther || !device.isAdopted) {
+    if(!this.ufp?.mac || !device || !device.mac || device.isAdoptedByOther || !device.isAdopted) {
 
       return null;
     }
@@ -409,7 +415,7 @@ export class ProtectNvr {
     // See if we already know about this accessory or if it's truly new. If it is new, add it to HomeKit.
     if((accessory = this.platform.accessories.find(x => x.UUID === uuid)) === undefined) {
 
-      accessory = new this.api.platformAccessory(device.name, uuid);
+      accessory = new this.api.platformAccessory(device.name ?? device.marketName, uuid);
 
       this.log.info("%s: Adding %s to HomeKit.", this.ufpApi.getFullName(device), device.modelKey);
 

@@ -204,7 +204,7 @@ export class ProtectCamera extends ProtectDevice {
     // Update the package camera, if we have one.
     if(this.packageCamera) {
 
-      this.packageCamera.ufp = Object.assign({}, this.ufp, { name: this.ufp.name + " Package Camera"}) as ProtectCameraConfig;
+      this.packageCamera.ufp = Object.assign({}, this.ufp, { name: (this.ufp.name ?? this.ufp.marketName) + " Package Camera"}) as ProtectCameraConfig;
     }
 
     // Process any RTSP stream updates.
@@ -753,7 +753,8 @@ export class ProtectCamera extends ProtectDevice {
     }
 
     // Now create the package camera accessory. We do want to modify the camera name to ensure things look pretty.
-    this.packageCamera = new ProtectPackageCamera(this.nvr, Object.assign({}, this.ufp, { name: this.ufp.name + " Package Camera"}), packageCameraAccessory);
+    this.packageCamera = new ProtectPackageCamera(this.nvr,
+      Object.assign({}, this.ufp, { name: (this.ufp.name ?? this.ufp.marketName) + " Package Camera"}), packageCameraAccessory);
     return true;
   }
 

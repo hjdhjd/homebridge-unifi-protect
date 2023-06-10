@@ -74,7 +74,7 @@ export class ProtectNvrSystemInfo extends ProtectBase {
     if(!this.accessory) {
 
       // We will use the NVR MAC address + ".NVRSystemInfo" to create our UUID. That should provide the guaranteed uniqueness we need.
-      this.accessory = new this.api.platformAccessory(this.nvr.ufp.name, uuid);
+      this.accessory = new this.api.platformAccessory(this.nvr.ufp.name ?? this.nvr.ufp.marketName, uuid);
 
       if(!this.accessory) {
         this.log.error("Unable to create the system information accessory.");
