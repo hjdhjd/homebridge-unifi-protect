@@ -3,9 +3,9 @@
  * protect-viewer.ts: Viewer device class for UniFi Protect.
  */
 import { CharacteristicValue, PlatformAccessory, Service } from "homebridge";
+import { ProtectEventPacket, ProtectViewerConfig, ProtectViewerConfigPayload } from "unifi-protect";
 import { ProtectDevice } from "./protect-device.js";
 import { ProtectNvr } from "./protect-nvr.js";
-import { ProtectViewerConfig } from "unifi-protect";
 
 export class ProtectViewer extends ProtectDevice {
 
@@ -38,6 +38,9 @@ export class ProtectViewer extends ProtectDevice {
 
     // Configure MQTT services.
     this.configureMqtt();
+
+    // Listen for events.
+    this.nvr.events.on("updateEvent." + this.ufp.id, this.listeners["updateEvent." + this.ufp.id] = this.eventHandler.bind(this));
 
     // Inform the user what we're enabling on startup.
     if(enabledLiveviews.length) {
@@ -114,10 +117,15 @@ export class ProtectViewer extends ProtectDevice {
 
           return this.setLiveviewSwitchState(switchService, value);
         });
+
+
+      switchService.addOptionalCharacteristic(this.hap.Characteristic.ConfiguredName);
     }
 
     // Set the state to reflect Protect.
     switchService.updateCharacteristic(this.hap.Characteristic.On, switchService.subtype === this.ufp.liveview);
+    switchService.updateCharacteristic(this.hap.Characteristic.ConfiguredName,
+      this.ufpApi.bootstrap?.liveviews?.find(x => x.id === switchService.subtype)?.name ?? this.accessory.displayName);
 
     return true;
   }
@@ -246,5 +254,17 @@ export class ProtectViewer extends ProtectDevice {
     });
 
     return true;
+  }
+
+  // Handle viewer-related events.
+  private eventHandler(packet: ProtectEventPacket): void {
+
+    const payload = packet.payload as ProtectViewerConfigPayload;
+
+    // It's a liveview update event - process it accordingly.
+    if(payload.liveview) {
+
+      this.updateDevice();
+    }
   }
 }
