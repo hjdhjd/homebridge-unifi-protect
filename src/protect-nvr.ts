@@ -38,10 +38,10 @@ export class ProtectNvr {
   public mqtt: ProtectMqtt | null;
   private name: string;
   public nvrOptions: ProtectNvrOptions;
-  public ufpApi!: ProtectApi;
   public systemInfo: ProtectNvrSystemInfo | null;
   public platform: ProtectPlatform;
   public ufp: ProtectNvrConfig;
+  public ufpApi!: ProtectApi;
   private unsupportedDevices: { [index: string]: boolean };
 
   constructor(platform: ProtectPlatform, nvrOptions: ProtectNvrOptions) {
