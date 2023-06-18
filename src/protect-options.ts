@@ -59,8 +59,8 @@ export const featureOptions: { [index: string]: FeatureOption[] } = {
   "Audio": [
 
     { default: true, description: "Audio support.", name: "" },
-    { default: false, description: "Audio filter for ambient noise suppression.", hasFeature: [ "hasMotionZones" ], name: "Filter.Noise" },
-    { default: true, description: "Two-way audio support on supported cameras.", hasFeature: [ "hasSpeaker" ], name: "TwoWay" }
+    { default: false, description: "Audio filter for ambient noise suppression.", group: "", hasFeature: [ "hasMotionZones" ], name: "Filter.Noise" },
+    { default: true, description: "Two-way audio support on supported cameras.", group: "", hasFeature: [ "hasSpeaker" ], name: "TwoWay" }
   ],
 
   // Device options.
@@ -74,7 +74,7 @@ export const featureOptions: { [index: string]: FeatureOption[] } = {
   "Doorbell": [
 
     { default: true, description: "Enable the doorbell messages feature.", hasFeature: [ "hasChime" ], name: "Messages" },
-    { default: true, description: "Use messages saved to the Protect NVR as message switches.", hasFeature: [ "hasChime" ], name: "Messages.FromDoorbell" },
+    { default: true, description: "Use messages saved to the Protect NVR as message switches.", group: "Messages", hasFeature: [ "hasChime" ], name: "Messages.FromDoorbell" },
     { default: false, description: "Add a switch accessory to trigger doorbell ring events on a Protect camera or doorbell.", hasFeature: [ "hasMotionZones" ], name: "Trigger" }
   ],
 
@@ -90,10 +90,10 @@ export const featureOptions: { [index: string]: FeatureOption[] } = {
   "Motion": [
 
     { default: false, description: "Add an occupancy sensor accessory using motion sensor activity to determine occupancy. By default, any motion will trigger occupancy. If the smart motion detection feature option is enabled, it will be used instead.", hasProperty: [ "isMotionDetected", "isPirMotionDetected" ], name: "OccupancySensor" },
-    { default: true, description: "When using both the occupancy sensor and smart motion detection feature options, use UniFi Protect's person detection to trigger occupancy.", hasFeature: [ "hasSmartDetect" ], name: "OccupancySensor.Person" },
-    { default: false, description: "When using both the occupancy sensor and smart motion detection feature options, use UniFi Protect's vehicle detection to trigger occupancy.", hasFeature: [ "hasSmartDetect" ], name: "OccupancySensor.Vehicle" },
+    { default: true, description: "When using both the occupancy sensor and smart motion detection feature options, use UniFi Protect's person detection to trigger occupancy.", group: "OccupancySensor", hasFeature: [ "hasSmartDetect" ], name: "OccupancySensor.Person" },
+    { default: false, description: "When using both the occupancy sensor and smart motion detection feature options, use UniFi Protect's vehicle detection to trigger occupancy.", group: "OccupancySensor", hasFeature: [ "hasSmartDetect" ], name: "OccupancySensor.Vehicle" },
     { default: false, description: "Use UniFi Protect smart motion detection for HomeKit motion events when on a supported device.", hasFeature: [ "hasSmartDetect" ], name: "SmartDetect" },
-    { default: false, description: "Add contact sensor accessories for each smart motion object type that UniFi Protect supports.", hasFeature: [ "hasSmartDetect" ], name: "SmartDetect.ObjectSensors" },
+    { default: false, description: "Add contact sensor accessories for each smart motion object type that UniFi Protect supports.", group: "SmartDetect", hasFeature: [ "hasSmartDetect" ], name: "SmartDetect.ObjectSensors" },
     { default: false, description: "Add a switch accessory to activate or deactivate motion detection in HomeKit.", hasProperty: [ "isMotionDetected", "isPirMotionDetected" ], name: "Switch" },
     { default: false, description: "Add a switch accessory to manually trigger a motion detection event in HomeKit.", hasProperty: [ "isMotionDetected", "isPirMotionDetected" ], name: "Trigger" }
   ],
@@ -117,9 +117,9 @@ export const featureOptions: { [index: string]: FeatureOption[] } = {
 
     { default: false, description: "Dynamically adjust the bitrate on the UniFi Protect controller to accomodate HomeKit requests.", name: "DynamicBitrate" },
     { default: false, description: "Add a switch accessory to enable or disable dynamic bitrate support on the Protect controller.", name: "DynamicBitrate.Switch" },
-    { default: false, description: "For viewing livestreams, force the use of the high quality video stream from the Protect controller.", name: "Stream.Only.High" },
-    { default: false, description: "For viewing livestreams, force the use of the medium quality video stream from the Protect controller.", name: "Stream.Only.Medium" },
-    { default: false, description: "For viewing livestreams, force the use of the low quality video stream from the Protect controller.", name: "Stream.Only.Low" },
+    { default: false, description: "When viewing livestreams, force the use of the high quality video stream from the Protect controller.", name: "Stream.Only.High" },
+    { default: false, description: "When viewing livestreams, force the use of the medium quality video stream from the Protect controller.", name: "Stream.Only.Medium" },
+    { default: false, description: "When viewing livestreams, force the use of the low quality video stream from the Protect controller.", name: "Stream.Only.Low" },
     { default: false, description: "Transcode live video streams when viewing in the Home app instead of remuxing.", name: "Transcode" },
     { default: false, description: "Use hardware-accelerated transcoding when available (Apple Macs, Intel Quick Sync Video-enabled CPUs, Raspberry Pi 4).", name: "Transcode.Hardware" },
     { default: true, description: "When streaming to high-latency clients (e.g. cellular connections), transcode live video streams instead of remuxing them.", name: "Transcode.HighLatency" }
@@ -130,9 +130,9 @@ export const featureOptions: { [index: string]: FeatureOption[] } = {
 
     { default: true, description: "Enable the timeshift buffer for HomeKit Secure Video.", name: "TimeshiftBuffer" },
     { default: false, description: "Add a switch accessory to enable or disable HKSV event recording.", name: "Recording.Switch" },
-    { default: false, description: "For HomeKit Secure Video recordings, force the use of the high quality video stream from the Protect controller.", name: "Record.Only.High" },
-    { default: false, description: "For HomeKit Secure Video recordings, force the use of the medium quality video stream from the Protect controller.", name: "Record.Only.Medium" },
-    { default: false, description: "For HomeKit Secure Video recordings, force the use of the low quality video stream from the Protect controller.", name: "Record.Only.Low" }
+    { default: false, description: "When recording HomeKit Secure Video events, force the use of the high quality video stream from the Protect controller.", name: "Record.Only.High" },
+    { default: false, description: "When recording HomeKit Secure Video events, force the use of the medium quality video stream from the Protect controller.", name: "Record.Only.Medium" },
+    { default: false, description: "When recording HomeKit Secure Video events, force the use of the low quality video stream from the Protect controller.", name: "Record.Only.Low" }
   ]
 
 };
@@ -142,6 +142,7 @@ export interface FeatureOption {
 
   default: boolean,           // Default feature option setting.
   description: string,        // Description of the feature option.
+  group?: string,              // Feature option grouping for related options.
   hasFeature?: string[],      // What hardware-specific features, if any, is this feature option dependent on.
   hasProperty?: string[],     // What UFP JSON property, if any, is this feature option dependent on.
   name: string                // Name of the feature option.

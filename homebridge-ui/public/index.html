@@ -178,6 +178,10 @@
       // Retrieve the current plugin configuration.
       let currentConfig = await homebridge.getPluginConfig();
 
+      // Keep a list of all the feature options and option groups.
+      let featureOptionList = {};
+      let featureOptionGroups = {};
+
       // Show an navigation bar at the top of the plugin configuration UI.
       const showIntro = () => {
 
@@ -321,7 +325,6 @@
           controllersTable.appendChild(trDevice);
 
           controllerList.push(label);
-
         }
 
         // All done. Let the user interact with us.
@@ -492,7 +495,9 @@
         };
 
         // Is a feature option enabled at the device or global level. It does traverse the scoping hierarchy.
-        const isOptionEnabled = (featureOption, deviceMac, defaultValue) => {
+        const isOptionEnabled = (featureOption, deviceMac) => {
+
+          const defaultValue = featureOptionList[featureOption]?.default ?? true;
 
           if(deviceMac) {
 
@@ -623,6 +628,36 @@
           let newConfigTableHtml = "";
           configTable.innerHTML = "";
 
+          // Initialize the full list of options.
+          featureOptionList = {};
+          featureOptionGroups = {};
+
+          for(const category of ufpFeatures.categories) {
+
+            // Now enumerate all the feature options for a given device and add then to the full list.
+            for(const option of optionsDevice[category.name]) {
+
+              const featureOption = category.name + (option.name.length ? ("." + option.name): "");
+
+              // Add it to our full list.
+              featureOptionList[featureOption] = option;
+
+              // Cross reference the feature option group it belongs to, if any.
+              if(option.group !== undefined) {
+
+                const expandedGroup = category.name + (option.group.length ? ("." + option.group): "");
+
+                // Initialize the group entry if needed.
+                if(!featureOptionGroups[expandedGroup]) {
+
+                  featureOptionGroups[expandedGroup] = [];
+                }
+
+                featureOptionGroups[expandedGroup].push(featureOption);
+              }
+            }
+          }
+
           for(const category of ufpFeatures.categories) {
 
             // Only show feature option categories that are valid for this context.
@@ -667,9 +702,13 @@
                 continue;
               }
 
+              // Expand the full feature option.
+              const featureOption = category.name + (option.name.length ? ("." + option.name): "");
+
               // Create the next table row.
               const trX = document.createElement("tr");
               trX.classList.add("align-top");
+              trX.id = "row-" + featureOption;
 
               // Create a checkbox for the option.
               const tdCheckbox = document.createElement("td");
@@ -677,7 +716,6 @@
               // Create the actual checkbox for the option.
               const checkbox = document.createElement("input");
 
-              const featureOption = category.name + (option.name.length ? ("." + option.name): "");
               checkbox.type = "checkbox";
               checkbox.readOnly = false;
               checkbox.id = featureOption;
@@ -823,6 +861,18 @@
                     labelDescription.classList.add(scopeColor);
                   }
                 }
+
+                // Adjust visibility of other feature options that depend on us.
+                if(featureOptionGroups[checkbox.id]) {
+
+                  const entryVisibility = isOptionEnabled(featureOption, ufpDevice?.mac) ? "" : "none";
+
+                  // Lookup each feature option setting and set the visibility accordingly.
+                  for(const entry of featureOptionGroups[checkbox.id]) {
+
+                    document.getElementById("row-" + entry).style.display = entryVisibility;
+                  }
+                }
               });
 
               // Add the actual description for the option after the checkbox.
@@ -836,6 +886,12 @@
 
               // Add the label table cell to the table row.
               trX.appendChild(tdLabel);
+
+              // Adjust the visibility of the feature option, if it's logically grouped.
+              if((option.group !== undefined) && !isOptionEnabled(category.name + (option.group.length ? ("." + option.group): ""), ufpDevice?.mac)) {
+
+                trX.style.display = "none";
+              }
 
               // Add the table row to the table body.
               tbody.appendChild(trX);
