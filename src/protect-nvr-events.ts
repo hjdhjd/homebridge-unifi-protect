@@ -237,17 +237,17 @@ export class ProtectNvrEvents extends EventEmitter {
     }
 
     // Have we seen this event before? If so...move along.
-    if(this.lastMotion[protectDevice.ufp.mac] >= lastMotion) {
+    if(this.lastMotion[protectDevice.id] >= lastMotion) {
 
       this.log.debug("Skipping duplicate motion event.");
       return;
     }
 
     // Remember this event.
-    this.lastMotion[protectDevice.ufp.mac] = lastMotion;
+    this.lastMotion[protectDevice.id] = lastMotion;
 
     // If we already have a motion event inflight, allow it to complete so we don't spam users.
-    if(this.eventTimers[protectDevice.ufp.mac]) {
+    if(this.eventTimers[protectDevice.id]) {
 
       return;
     }
@@ -316,9 +316,9 @@ export class ProtectNvrEvents extends EventEmitter {
     }
 
     // Reset our motion event after motionDuration if we don't already have a reset timer inflight.
-    if(!this.eventTimers[protectDevice.ufp.mac]) {
+    if(!this.eventTimers[protectDevice.id]) {
 
-      this.eventTimers[protectDevice.ufp.mac] = setTimeout(() => {
+      this.eventTimers[protectDevice.id] = setTimeout(() => {
 
         const thisMotionService = protectDevice.accessory.getService(this.hap.Service.MotionSensor);
 
@@ -341,14 +341,14 @@ export class ProtectNvrEvents extends EventEmitter {
         this.nvr.mqtt?.publish(protectDevice.accessory, "motion", "false");
 
         // Delete the timer from our motion event tracker.
-        delete this.eventTimers[protectDevice.ufp.mac];
-      }, this.nvr.platform.config.motionDuration * 1000);
+        delete this.eventTimers[protectDevice.id];
+      }, protectDevice.hints.motionDuration * 1000);
     }
 
     // Reset our smart motion contact sensors after motionDuration.
-    if(!this.eventTimers[protectDevice.ufp.mac + ".Motion.SmartDetect.ObjectSensors"]) {
+    if(!this.eventTimers[protectDevice.id + ".Motion.SmartDetect.ObjectSensors"]) {
 
-      this.eventTimers[protectDevice.ufp.mac + ".Motion.SmartDetect.ObjectSensors"] = setTimeout(() => {
+      this.eventTimers[protectDevice.id + ".Motion.SmartDetect.ObjectSensors"] = setTimeout(() => {
 
         // Reset smart motion contact sensors, if configured.
         for(const detectedObject of detectedObjects) {
@@ -368,8 +368,8 @@ export class ProtectNvrEvents extends EventEmitter {
         }
 
         // Delete the timer from our motion event tracker.
-        delete this.eventTimers[protectDevice.ufp.mac + ".Motion.SmartDetect.ObjectSensors"];
-      }, this.nvr.platform.config.motionDuration * 1000);
+        delete this.eventTimers[protectDevice.id + ".Motion.SmartDetect.ObjectSensors"];
+      }, protectDevice.hints.motionDuration * 1000);
     }
 
     // If we don't have smart motion detection enabled, or if we do have it enabled and we have a smart motion event that's detected a person,
@@ -382,9 +382,9 @@ export class ProtectNvrEvents extends EventEmitter {
       if(occupancyService) {
 
         // Kill any inflight reset timer.
-        if(this.eventTimers[protectDevice.ufp.mac + ".Motion.OccupancySensor"]) {
+        if(this.eventTimers[protectDevice.id + ".Motion.OccupancySensor"]) {
 
-          clearTimeout(this.eventTimers[protectDevice.ufp.mac + ".Motion.OccupancySensor"]);
+          clearTimeout(this.eventTimers[protectDevice.id + ".Motion.OccupancySensor"]);
         }
 
         // If the occupancy sensor isn't already triggered, let's do so now.
@@ -405,7 +405,7 @@ export class ProtectNvrEvents extends EventEmitter {
         }
 
         // Reset our occupancy state after occupancyDuration.
-        this.eventTimers[protectDevice.ufp.mac + ".Motion.OccupancySensor"] = setTimeout(() => {
+        this.eventTimers[protectDevice.id + ".Motion.OccupancySensor"] = setTimeout(() => {
 
           // Reset the occupancy sensor.
           occupancyService.updateCharacteristic(this.hap.Characteristic.OccupancyDetected, false);
@@ -420,8 +420,8 @@ export class ProtectNvrEvents extends EventEmitter {
           }
 
           // Delete the timer from our motion event tracker.
-          delete this.eventTimers[protectDevice.ufp.mac];
-        }, this.nvr.platform.config.occupancyDuration * 1000);
+          delete this.eventTimers[protectDevice.id];
+        }, protectDevice.hints.occupancyDuration * 1000);
       }
     }
   }
@@ -435,14 +435,14 @@ export class ProtectNvrEvents extends EventEmitter {
     }
 
     // Have we seen this event before? If so...move along. It's unlikely we hit this in a doorbell scenario, but just in case.
-    if(this.lastRing[protectDevice.ufp.mac] >= lastRing) {
+    if(this.lastRing[protectDevice.id] >= lastRing) {
 
       this.log.debug("Skipping duplicate doorbell ring.");
       return;
     }
 
     // Remember this event.
-    this.lastRing[protectDevice.ufp.mac] = lastRing;
+    this.lastRing[protectDevice.id] = lastRing;
 
     // Only notify the user if we have a doorbell.
     const doorbellService = protectDevice.accessory.getService(this.hap.Service.Doorbell);
@@ -466,10 +466,10 @@ export class ProtectNvrEvents extends EventEmitter {
     if(triggerService) {
 
       // Kill any inflight trigger reset.
-      if(this.eventTimers[protectDevice.ufp.mac + ".Doorbell.Ring.Trigger"]) {
+      if(this.eventTimers[protectDevice.id + ".Doorbell.Ring.Trigger"]) {
 
-        clearTimeout(this.eventTimers[protectDevice.ufp.mac + ".Doorbell.Ring.Trigger"]);
-        delete this.eventTimers[protectDevice.ufp.mac + ".Doorbell.Ring.Trigger"];
+        clearTimeout(this.eventTimers[protectDevice.id + ".Doorbell.Ring.Trigger"]);
+        delete this.eventTimers[protectDevice.id + ".Doorbell.Ring.Trigger"];
       }
 
       // Flag that we're ringing.
@@ -479,7 +479,7 @@ export class ProtectNvrEvents extends EventEmitter {
       triggerService.updateCharacteristic(this.hap.Characteristic.On, true);
 
       // Reset our doorbell trigger after ringDuration.
-      this.eventTimers[protectDevice.ufp.mac + ".Doorbell.Ring.Trigger"] = setTimeout(() => {
+      this.eventTimers[protectDevice.id + ".Doorbell.Ring.Trigger"] = setTimeout(() => {
 
         protectDevice.isRinging = false;
 
@@ -487,7 +487,7 @@ export class ProtectNvrEvents extends EventEmitter {
         this.log.debug("Resetting doorbell ring trigger.");
 
         // Delete the timer from our motion event tracker.
-        delete this.eventTimers[protectDevice.ufp.mac + ".Doorbell.Ring.Trigger"];
+        delete this.eventTimers[protectDevice.id + ".Doorbell.Ring.Trigger"];
       }, this.nvr.platform.config.ringDuration * 1000);
     }
 
@@ -500,19 +500,19 @@ export class ProtectNvrEvents extends EventEmitter {
     }
 
     // Kill any inflight ring reset.
-    if(this.eventTimers[protectDevice.ufp.mac + ".Doorbell.Ring"]) {
+    if(this.eventTimers[protectDevice.id + ".Doorbell.Ring"]) {
 
-      clearTimeout(this.eventTimers[protectDevice.ufp.mac + ".Doorbell.Ring"]);
-      delete this.eventTimers[protectDevice.ufp.mac + ".Doorbell.Ring"];
+      clearTimeout(this.eventTimers[protectDevice.id + ".Doorbell.Ring"]);
+      delete this.eventTimers[protectDevice.id + ".Doorbell.Ring"];
     }
 
     // Fire off our MQTT doorbell ring event after ringDuration.
-    this.eventTimers[protectDevice.ufp.mac + ".Doorbell.Ring"] = setTimeout(() => {
+    this.eventTimers[protectDevice.id + ".Doorbell.Ring"] = setTimeout(() => {
 
       this.nvr.mqtt?.publish(protectDevice.accessory, "doorbell", "false");
 
       // Delete the timer from our event tracker.
-      delete this.eventTimers[protectDevice.ufp.mac + ".Doorbell.Ring"];
+      delete this.eventTimers[protectDevice.id + ".Doorbell.Ring"];
     }, this.nvr.platform.config.ringDuration * 1000);
   }
 }

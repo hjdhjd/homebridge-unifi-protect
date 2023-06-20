@@ -1,6 +1,6 @@
 /* Copyright(C) 2023, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * protect-ffmpeg-options.ts: FFmpeg decoder and encoder options with hardware accelerated codec support where available.
+ * protect-ffmpeg-options.ts: FFmpeg decoder and encoder options with hardware-accelerated codec support where available.
  */
 import { H264Level, H264Profile } from "homebridge";
 import { PROTECT_HOMEKIT_STREAMING_HEADROOM, PROTECT_RPI_GPU_MINIMUM } from "./settings.js";
@@ -41,7 +41,7 @@ export class FfmpegOptions {
 
         if(!this.platform.codecSupport.hasDecoder("h264", codec)) {
 
-          this.log.error("Unable to enable hardware accelerated decoding. Your video processor does not have support for the " + codec + " decoder. " +
+          this.log.error("Unable to enable hardware-accelerated decoding. Your video processor does not have support for the " + codec + " decoder. " +
             "Using software decoding instead.");
 
           this.protectCamera.hints.hardwareDecoding = false;
@@ -58,7 +58,7 @@ export class FfmpegOptions {
 
         if(!this.platform.codecSupport.hasHwAccel(accel)) {
 
-          this.log.error("Unable to enable hardware accelerated decoding. Your video processor does not have support for the " + accel + " hardware accelerator. " +
+          this.log.error("Unable to enable hardware-accelerated decoding. Your video processor does not have support for the " + accel + " hardware accelerator. " +
             "Using software decoding instead.");
 
           this.protectCamera.hints.hardwareDecoding = false;
@@ -85,7 +85,7 @@ export class FfmpegOptions {
           // If it's less than the minimum hardware GPU memory we need on an Raspberry Pi, we revert back to our default decoder.
           if(this.platform.codecSupport.gpuMem < PROTECT_RPI_GPU_MINIMUM) {
 
-            this.log.info("Disabling hardware accelerated %s. Adjust the GPU memory configuration on your Raspberry Pi to at least %s MB to enable it.",
+            this.log.info("Disabling hardware-accelerated %s. Adjust the GPU memory configuration on your Raspberry Pi to at least %s MB to enable it.",
               accelCategories, PROTECT_RPI_GPU_MINIMUM);
 
             this.protectCamera.hints.hardwareDecoding = false;
@@ -95,7 +95,7 @@ export class FfmpegOptions {
           }
 
           // Verify that we have the hardware decoder available to us.
-          validateDecoder("h264_mmal", ["mmal", "yuv420p"]);
+          validateDecoder("h264_mmal", [ "mmal", "yuv420p" ]);
 
           break;
 
@@ -116,7 +116,7 @@ export class FfmpegOptions {
 
         if(!this.platform.codecSupport.hasEncoder("h264", codec)) {
 
-          this.log.error("Unable to enable hardware accelerated transcoding. Your video processor does not have support for the " + codec + " encoder. " +
+          this.log.error("Unable to enable hardware-accelerated transcoding. Your video processor does not have support for the " + codec + " encoder. " +
             "Using software transcoding instead.");
 
           this.protectCamera.hints.hardwareTranscoding = false;
@@ -175,7 +175,7 @@ export class FfmpegOptions {
     // Inform the user.
     if(this.protectCamera.hints.hardwareDecoding || this.protectCamera.hints.hardwareTranscoding) {
 
-      this.log.info("Hardware accelerated %s enabled%s.", accelCategories, logMessage.length ? ": " + logMessage : "");
+      this.log.info("Hardware-accelerated %s enabled%s.", accelCategories, logMessage.length ? ": " + logMessage : "");
     }
 
     return this.protectCamera.hints.hardwareTranscoding;
@@ -267,7 +267,7 @@ export class FfmpegOptions {
 
           // h264_videotoolbox is the macOS hardware decoder and encoder API. We use the following options for decoding video:
           //
-          // -hwaccel videotoolbox   Select Video Toolbox for hardware accelerated H.264 decoding.
+          // -hwaccel videotoolbox   Select Video Toolbox for hardware-accelerated H.264 decoding.
           decoderOptions = [
 
             "-hwaccel", "videotoolbox"
@@ -279,7 +279,7 @@ export class FfmpegOptions {
 
           // h264_mmal is the preferred Raspberry Pi hardware decoder codec. We use the following options for decoding video:
           //
-          // -c:v h264_mmal          Select the Multimedia Abstraction Layer codec for hardware accelerated H.264 processing.
+          // -c:v h264_mmal          Select the Multimedia Abstraction Layer codec for hardware-accelerated H.264 processing.
           decoderOptions = [
 
             "-c:v", "h264_mmal"
@@ -291,8 +291,8 @@ export class FfmpegOptions {
 
           // h264_qsv is the Intel Quick Sync Video hardware encoder and decoder.
           //
-          // -hwaccel qsv            Select Quick Sync Video to enable hardware accelerated H.264 decoding.
-          // -c:v h264_qsv           Select the Quick Sync Video codec for hardware accelerated H.264 processing.
+          // -hwaccel qsv            Select Quick Sync Video to enable hardware-accelerated H.264 decoding.
+          // -c:v h264_qsv           Select the Quick Sync Video codec for hardware-accelerated H.264 processing.
           decoderOptions = [
 
             "-hwaccel", "qsv",
@@ -308,8 +308,26 @@ export class FfmpegOptions {
   }
 
   // Utility function to provide our default encoder options.
-  private defaultVideoEncoderOptions(width: number, height: number, fps: number, bitrate: number,
-    profile: H264Profile, level: H264Level, idrInterval: number, useSmartQuality = true): string[] {
+  private defaultVideoEncoderOptions(width: number, height: number, fps: number, bitrate: number, profile: H264Profile, level: H264Level,
+    idrInterval: number, inputFps: number, useSmartQuality = true): string[] {
+
+    const videoFilters = [];
+
+    // Set our FFmpeg video filter options:
+    //
+    // format=                     Set the pixel formats we want to target for output.
+    videoFilters.push("format=" + [ ...new Set([ ...this.hwPixelFormat, "yuvj420p" ]) ].join("|"));
+
+    // fps=fps=                    Use the fps filter to provide the frame rate requested by HomeKit. This has better performance characteristics for Protect
+    //                             rather than using "-r". We only need to apply this filter if our input and output frame rates aren't already identical.
+    if(fps !== inputFps) {
+
+      videoFilters.push("fps=fps=" + fps.toString());
+    }
+
+    // scale=-2:min(ih\,height)    Scale the video to the size that's being requested while respecting aspect ratios and ensuring our final dimensions are
+    //                             a power of two.
+    videoFilters.push("scale=-2:min(ih\\," + height.toString() + ")");
 
     // Default to the tried-and-true libx264. We use the following options by default:
     //
@@ -335,7 +353,7 @@ export class FfmpegOptions {
       "-level:v", this.getH264Level(level),
       "-noautoscale",
       "-bf", "0",
-      "-filter:v", "format=" + [...this.hwPixelFormat, "yuvj420p"].join("|") + ", scale=-2:min(ih\\," + height.toString() + ")",
+      "-filter:v", videoFilters.join(", "),
       "-g:v", (fps * idrInterval).toString(),
       "-bufsize", (2 * bitrate).toString() + "k",
       "-maxrate", (bitrate + (useSmartQuality ? PROTECT_HOMEKIT_STREAMING_HEADROOM : 0)).toString() + "k"
@@ -363,217 +381,267 @@ export class FfmpegOptions {
   }
 
   // Return the video encoder options to use for HKSV.
-  public recordEncoder(width: number, height: number, fps: number, bitrate: number, profile: H264Profile, level: H264Level, idrInterval: number): string[] {
+  public recordEncoder(width: number, height: number, fps: number, bitrate: number, profile: H264Profile, level: H264Level,
+    idrInterval: number, inputFps: number): string[] {
 
     // Generaly, we default to using the same encoding options we use to transcode livestreams, unless we have platform-specific quirks we need to address,
-    // such as where we can have hardware accelerated transcoded livestreaming, but not hardware-accelerated HKSV event recording. The other noteworthy
+    // such as where we can have hardware-accelerated transcoded livestreaming, but not hardware-accelerated HKSV event recording. The other noteworthy
     // aspect here is that HKSV is quite specific in what it wants, and isn't vary tolerant of creative license in how you may choose to alter bitrate to
     // address quality. When we call our encoders, we also let them know we don't want any additional quality optimizations when transcoding HKSV events.
     switch(this.platform.hostSystem) {
 
       case "raspbian":
 
-        // Raspberry Pi struggles with hardware accelerated HKSV event recording due to issues in the FFmpeg codec driver, currently. We hope this improves
+        // Raspberry Pi struggles with hardware-accelerated HKSV event recording due to issues in the FFmpeg codec driver, currently. We hope this improves
         // over time and can offer it to Pi users, or develop a workaround. For now, we default to libx264.
-        return this.defaultVideoEncoderOptions(width, height, fps, bitrate, profile, level, idrInterval, false);
+        return this.defaultVideoEncoderOptions(width, height, fps, bitrate, profile, level, idrInterval, inputFps, false);
         break;
 
       default:
 
         // By default, we use the same options for HKSV and streaming.
-        return this.streamEncoder(width, height, fps, bitrate, profile, level, idrInterval, false);
+        return this.streamEncoder(width, height, fps, bitrate, profile, level, idrInterval, inputFps, false);
     }
   }
 
   // Return the video encoder options to use when transcoding.
-  public streamEncoder(width: number, height: number, fps: number, bitrate: number,
-    profile: H264Profile, level: H264Level, idrInterval: number, useSmartQuality = true): string[] {
+  public streamEncoder(width: number, height: number, fps: number, bitrate: number, profile: H264Profile, level: H264Level,
+    idrInterval: number, inputFps: number, useSmartQuality = true): string[] {
 
-    const encoderOptions = [];
+    // In case we don't have a defined pixel format.
+    if(!this.hwPixelFormat.length) {
 
-    // Adjust the maximum bitrate tolerance used with -bufsize. This provides an upper bound on bitrate, with a little bit extra to allow encoders some
+      this.hwPixelFormat.push("yuvj420p");
+    }
+
+    // If we aren't hardware-accelerated, we default to libx264.
+    if(!this.protectCamera.hints.hardwareTranscoding) {
+
+      return this.defaultVideoEncoderOptions(width, height, fps, bitrate, profile, level, idrInterval, inputFps, useSmartQuality);
+    }
+
+    // If we've enabled hardware-accelerated transcoding, let's select encoder options accordingly.
+    //
+    // We begin by adjusting the maximum bitrate tolerance used with -bufsize. This provides an upper bound on bitrate, with a little bit extra to allow encoders some
     // variation in order to maximize quality while honoring bandwidth constraints.
     const adjustedMaxBitrate = bitrate + (useSmartQuality ? PROTECT_HOMEKIT_STREAMING_HEADROOM : 0);
 
-    // If we've enabled hardware-accelerated transcoding, let's select encoder options accordingly where supported.
-    if(this.protectCamera.hints.hardwareTranscoding) {
+    // Check the input and output frame rates to see if we need to change it.
+    const useFpsFilter = fps !== inputFps;
 
-      switch(this.platform.hostSystem) {
+    // Initialize our options.
+    const encoderOptions = [];
+    let videoFilters = [];
 
-        case "macOS.Apple":
+    // Set our FFmpeg video filter options:
+    //
+    // format=                     Set the pixel formats we want to target for output.
+    videoFilters.push("format=" + this.hwPixelFormat.join("|"));
 
-          // h264_videotoolbox is the macOS hardware encoder API. We use the following options on Apple Silicon:
-          //
-          // -c:v                    Specify the macOS hardware encoder, h264_videotoolbox.
-          // -allow_sw 1             Allow the use of the software encoder if the hardware encoder is occupied or unavailable.
-          //                         This allows us to scale when we get multiple streaming requests simultaneously that might consume all the available encode engines.
-          // -realtime 1             We prefer speed over quality - if the encoder has to make a choice, sacrifice one for the other.
-          // -coder cabac            Use the cabac encoder for better video quality with the encoding profiles we use in HBUP.
-          // -profile:v              Use the H.264 profile that HomeKit is requesting when encoding.
-          // -level:v 0              We override what HomeKit requests for the H.264 profile level on macOS when we're using hardware accelerated transcoding because
-          //                         the hardware encoder is particular about how to use levels. Setting it to 0 allows the encoder to decide for itself.
-          // -bf 0                   Disable B-frames when encoding to increase compatibility against occasionally finicky HomeKit clients.
-          // -noautoscale            Don't attempt to scale the video stream automatically.
-          // -filter:v               Set the pixel format and scale the video to the size we want while respecting aspect ratios and ensuring our final dimensions are a
-          //                         power of two.
-          // -g:v                    Set the group of pictures to the number of frames per second * the interval in between keyframes to ensure a solid
-          //                         livestreamng exerience.
-          // -bufsize size           This is the decoder buffer size, which drives the variability / quality of the output bitrate.
-          // -maxrate bitrate        The maximum bitrate tolerance used in concert with -bufsize to constrain the maximum bitrate permitted.
-          encoderOptions.push(
+    // fps=fps=                    Use the fps filter to provide the frame rate requested by HomeKit. This has better performance characteristics for Protect
+    //                             rather than using "-r". We only need to apply this filter if our input and output frame rates aren't already identical.
+    if(useFpsFilter) {
 
-            "-c:v", "h264_videotoolbox",
-            "-allow_sw", "1",
-            "-realtime", "1",
-            "-coder", "cabac",
-            "-profile:v", this.getH264Profile(profile),
-            "-level:v", "0",
-            "-bf", "0",
-            "-noautoscale",
-            "-filter:v", "format=" + this.hwPixelFormat.join("|") + ", scale=-2:min(ih\\," + height.toString() + ")",
-            "-g:v", (fps * idrInterval).toString(),
-            "-bufsize", (2 * bitrate).toString() + "k",
-            "-maxrate", adjustedMaxBitrate.toString() + "k"
-          );
-
-          if(useSmartQuality) {
-
-            // -q:v 90               Use a fixed quality scale of 90, to allow videotoolbox the ability to vary bitrates to achieve the visual quality we want,
-            //                       constrained by our maximum bitrate. This is an Apple Silicon-specific feature.
-            encoderOptions.push("-q:v", "90");
-          } else {
-
-            // -b:v                  Average bitrate that's being requested by HomeKit.
-            encoderOptions.push("-b:v", bitrate.toString() + "k");
-          }
-
-          return encoderOptions;
-
-          break;
-
-        case "macOS.Intel":
-
-          // h264_videotoolbox is the macOS hardware encoder API. We use the following options on Intel-based Macs:
-          //
-          // -c:v                    Specify the macOS hardware encoder, h264_videotoolbox.
-          // -allow_sw 1             Allow the use of the software encoder if the hardware encoder is occupied or unavailable.
-          //                         This allows us to scale when we get multiple streaming requests simultaneously that might consume all the available encode engines.
-          // -realtime 1             We prefer speed over quality - if the encoder has to make a choice, sacrifice one for the other.
-          // -coder cabac            Use the cabac encoder for better video quality with the encoding profiles we use in HBUP.
-          // -profile:v              Use the H.264 profile that HomeKit is requesting when encoding.
-          // -level:v 0              We override what HomeKit requests for the H.264 profile level on macOS when we're using hardware accelerated transcoding because
-          //                         the hardware encoder is particular about how to use levels. Setting it to 0 allows the encoder to decide for itself.
-          // -bf 0                   Disable B-frames when encoding to increase compatibility against occasionally finicky HomeKit clients.
-          // -noautoscale            Don't attempt to scale the video stream automatically.
-          // -filter:v               Set the pixel format and scale the video to the size we want while respecting aspect ratios and ensuring our final dimensions are a
-          //                         power of two.
-          // -b:v                    Average bitrate that's being requested by HomeKit. We can't use a quality constraint and allow for more optimization of the bitrate
-          //                         on Intel-based Macs due to hardware / API limitations.
-          // -g:v                    Set the group of pictures to the number of frames per second * the interval in between keyframes to ensure a solid
-          //                         livestreamng exerience.
-          // -bufsize size           This is the decoder buffer size, which drives the variability / quality of the output bitrate.
-          // -maxrate bitrate        The maximum bitrate tolerance used in concert with -bufsize to constrain the maximum bitrate permitted.
-          return [
-
-            "-c:v", "h264_videotoolbox",
-            "-allow_sw", "1",
-            "-realtime", "1",
-            "-coder", "cabac",
-            "-profile:v", this.getH264Profile(profile),
-            "-level:v", "0",
-            "-bf", "0",
-            "-noautoscale",
-            "-filter:v", "format=" + this.hwPixelFormat.join("|") + ", scale=-2:min(ih\\," + height.toString() + ")",
-            "-b:v", bitrate.toString() + "k",
-            "-g:v", (fps * idrInterval).toString(),
-            "-bufsize", (2 * bitrate).toString() + "k",
-            "-maxrate", adjustedMaxBitrate.toString() + "k"
-          ];
-
-          break;
-
-        case "raspbian":
-
-          // h264_v4l2m2m is the preferred interface to the Raspberry Pi hardware encoder API. We use the following options:
-          //
-          // -c:v                    Specify the Raspberry Pi hardware encoder, h264_v4l2m2m.
-          // -noautoscale            Don't attempt to scale the video stream automatically.
-          // -filter:v               Set the pixel format and scale the video to the size we want while respecting aspect ratios and ensuring our final dimensions are a
-          //                         power of two.
-          // -b:v                    Average bitrate that's being requested by HomeKit. We can't use a quality constraint and allow for more optimization of the bitrate
-          //                         due to v4l2m2m limitations.
-          // -g:v                    Set the group of pictures to the number of frames per second * the interval in between keyframes to ensure a solid
-          //                         livestreamng exerience.
-          // -bufsize size           This is the decoder buffer size, which drives the variability / quality of the output bitrate.
-          // -maxrate bitrate        The maximum bitrate tolerance used in concert with -bufsize to constrain the maximum bitrate permitted.
-          return [
-
-            "-c:v", "h264_v4l2m2m",
-            "-profile:v", this.getH264Profile(profile, true),
-            "-bf", "0",
-            "-noautoscale",
-            "-reset_timestamps", "1",
-            "-filter:v", "format=" + this.hwPixelFormat.join("|") + ", scale=-2:min(ih\\," + height.toString() + ")",
-            "-b:v", bitrate.toString() + "k",
-            "-g:v", (fps * idrInterval).toString(),
-            "-bufsize", (2 * bitrate).toString() + "k",
-            "-maxrate", adjustedMaxBitrate.toString() + "k"
-          ];
-
-          break;
-
-        default:
-
-          // h264_qsv is the Intel Quick Sync Video hardware encoder API. We use the following options:
-          //
-          // -c:v                    Specify the macOS hardware encoder, h264_videotoolbox.
-          // -profile:v              Use the H.264 profile that HomeKit is requesting when encoding.
-          // -level:v 0              We override what HomeKit requests for the H.264 profile level when we're using hardware accelerated transcoding because
-          //                         the hardware encoder will determine which levels to use. Setting it to 0 allows the encoder to decide for itself.
-          // -bf 0                   Disable B-frames when encoding to increase compatibility against occasionally finicky HomeKit clients.
-          // -noautoscale            Don't attempt to scale the video stream automatically.
-          // -init_hw_device         Initialize our hardware accelerator and assign it a name to be used in the FFmpeg command line.
-          // -filter_hw_device       Specify the hardware accelerator to be used with our video filter pipeline.
-          // -filter:v               Set the pixel format and scale the video to the size we want while respecting aspect ratios and ensuring our final dimensions are a
-          //                         power of two.
-          // -g:v                    Set the group of pictures to the number of frames per second * the interval in between keyframes to ensure a solid
-          //                         livestreamng exerience.
-          // -bufsize size           This is the decoder buffer size, which drives the variability / quality of the output bitrate.
-          // -maxrate bitrate        The maximum bitrate tolerance used in concert with -bufsize to constrain the maximum bitrate permitted.
-          encoderOptions.push(
-
-            "-c:v", "h264_qsv",
-            "-profile:v", this.getH264Profile(profile),
-            "-level:v", "0",
-            "-bf", "0",
-            "-noautoscale",
-            "-init_hw_device", "qsv=hw",
-            "-filter_hw_device", "hw",
-            "-filter:v", "vpp_qsv=format=same:w=min(iw\\, (iw / ih) * " + height.toString() + "):h=min(ih\\, " + height.toString() + ")",
-            "-g:v", (fps * idrInterval).toString(),
-            "-bufsize", (2 * bitrate).toString() + "k",
-            "-maxrate", adjustedMaxBitrate.toString() + "k"
-          );
-
-          if(useSmartQuality) {
-
-            // -global_quality 20    Use a global quality setting of 20, to allow QSV the ability to vary bitrates to achieve the visual quality we want,
-            //                       constrained by our maximum bitrate. This leverages a QSV-specific feature known as intelligent constant quality.
-            encoderOptions.push("-global_quality", "20");
-          } else {
-
-            // -b:v                  Average bitrate that's being requested by HomeKit.
-            encoderOptions.push("-b:v", bitrate.toString() + "k");
-          }
-
-          return encoderOptions;
-
-          break;
-      }
+      videoFilters.push("fps=fps=" + fps.toString());
     }
 
-    // If we aren't hardware accelerated, we default to libx264.
-    return this.defaultVideoEncoderOptions(width, height, fps, bitrate, profile, level, idrInterval, useSmartQuality);
+    // scale=-2:min(ih\,height)    Scale the video to the size that's being requested while respecting aspect ratios and ensuring our final dimensions are
+    //                             a power of two.
+    videoFilters.push("scale=-2:min(ih\\," + height.toString() + ")");
+
+    switch(this.platform.hostSystem) {
+
+      case "macOS.Apple":
+
+        // h264_videotoolbox is the macOS hardware encoder API. We use the following options on Apple Silicon:
+        //
+        // -c:v                    Specify the macOS hardware encoder, h264_videotoolbox.
+        // -allow_sw 1             Allow the use of the software encoder if the hardware encoder is occupied or unavailable.
+        //                         This allows us to scale when we get multiple streaming requests simultaneously that might consume all the available encode engines.
+        // -realtime 1             We prefer speed over quality - if the encoder has to make a choice, sacrifice one for the other.
+        // -coder cabac            Use the cabac encoder for better video quality with the encoding profiles we use in HBUP.
+        // -profile:v              Use the H.264 profile that HomeKit is requesting when encoding.
+        // -level:v 0              We override what HomeKit requests for the H.264 profile level on macOS when we're using hardware-accelerated transcoding because
+        //                         the hardware encoder is particular about how to use levels. Setting it to 0 allows the encoder to decide for itself.
+        // -bf 0                   Disable B-frames when encoding to increase compatibility against occasionally finicky HomeKit clients.
+        // -noautoscale            Don't attempt to scale the video stream automatically.
+        // -filter:v               Set the pixel format, adjust the frame rate if needed, and scale the video to the size we want while respecting aspect ratios and
+        //                         ensuring our final dimensions are a power of two.
+        // -g:v                    Set the group of pictures to the number of frames per second * the interval in between keyframes to ensure a solid
+        //                         livestreamng exerience.
+        // -bufsize size           This is the decoder buffer size, which drives the variability / quality of the output bitrate.
+        // -maxrate bitrate        The maximum bitrate tolerance used in concert with -bufsize to constrain the maximum bitrate permitted.
+        encoderOptions.push(
+
+          "-c:v", "h264_videotoolbox",
+          "-allow_sw", "1",
+          "-realtime", "1",
+          "-coder", "cabac",
+          "-profile:v", this.getH264Profile(profile),
+          "-level:v", "0",
+          "-bf", "0",
+          "-noautoscale",
+          "-filter:v", videoFilters.join(", "),
+          "-g:v", (fps * idrInterval).toString(),
+          "-bufsize", (2 * bitrate).toString() + "k",
+          "-maxrate", adjustedMaxBitrate.toString() + "k"
+        );
+
+        if(useSmartQuality) {
+
+          // -q:v 90               Use a fixed quality scale of 90, to allow videotoolbox the ability to vary bitrates to achieve the visual quality we want,
+          //                       constrained by our maximum bitrate. This is an Apple Silicon-specific feature.
+          encoderOptions.push("-q:v", "90");
+        } else {
+
+          // -b:v                  Average bitrate that's being requested by HomeKit.
+          encoderOptions.push("-b:v", bitrate.toString() + "k");
+        }
+
+        return encoderOptions;
+
+        break;
+
+      case "macOS.Intel":
+
+        // h264_videotoolbox is the macOS hardware encoder API. We use the following options on Intel-based Macs:
+        //
+        // -c:v                    Specify the macOS hardware encoder, h264_videotoolbox.
+        // -allow_sw 1             Allow the use of the software encoder if the hardware encoder is occupied or unavailable.
+        //                         This allows us to scale when we get multiple streaming requests simultaneously that might consume all the available encode engines.
+        // -realtime 1             We prefer speed over quality - if the encoder has to make a choice, sacrifice one for the other.
+        // -coder cabac            Use the cabac encoder for better video quality with the encoding profiles we use in HBUP.
+        // -profile:v              Use the H.264 profile that HomeKit is requesting when encoding.
+        // -level:v 0              We override what HomeKit requests for the H.264 profile level on macOS when we're using hardware-accelerated transcoding because
+        //                         the hardware encoder is particular about how to use levels. Setting it to 0 allows the encoder to decide for itself.
+        // -bf 0                   Disable B-frames when encoding to increase compatibility against occasionally finicky HomeKit clients.
+        // -noautoscale            Don't attempt to scale the video stream automatically.
+        // -filter:v               Set the pixel format, adjust the frame rate if needed, and scale the video to the size we want while respecting aspect ratios and
+        //                         ensuring our final dimensions are a power of two.
+        // -b:v                    Average bitrate that's being requested by HomeKit. We can't use a quality constraint and allow for more optimization of the bitrate
+        //                         on Intel-based Macs due to hardware / API limitations.
+        // -g:v                    Set the group of pictures to the number of frames per second * the interval in between keyframes to ensure a solid
+        //                         livestreamng exerience.
+        // -bufsize size           This is the decoder buffer size, which drives the variability / quality of the output bitrate.
+        // -maxrate bitrate        The maximum bitrate tolerance used in concert with -bufsize to constrain the maximum bitrate permitted.
+        return [
+
+          "-c:v", "h264_videotoolbox",
+          "-allow_sw", "1",
+          "-realtime", "1",
+          "-coder", "cabac",
+          "-profile:v", this.getH264Profile(profile),
+          "-level:v", "0",
+          "-bf", "0",
+          "-noautoscale",
+          "-filter:v", videoFilters.join(", "),
+          "-b:v", bitrate.toString() + "k",
+          "-g:v", (fps * idrInterval).toString(),
+          "-bufsize", (2 * bitrate).toString() + "k",
+          "-maxrate", adjustedMaxBitrate.toString() + "k"
+        ];
+
+        break;
+
+      case "raspbian":
+
+        // h264_v4l2m2m is the preferred interface to the Raspberry Pi hardware encoder API. We use the following options:
+        //
+        // -c:v                    Specify the Raspberry Pi hardware encoder, h264_v4l2m2m.
+        // -noautoscale            Don't attempt to scale the video stream automatically.
+        // -filter:v               Set the pixel format, adjust the frame rate if needed, and scale the video to the size we want while respecting aspect ratios and
+        //                         ensuring our final dimensions are a power of two.
+        // -b:v                    Average bitrate that's being requested by HomeKit. We can't use a quality constraint and allow for more optimization of the bitrate
+        //                         due to v4l2m2m limitations.
+        // -g:v                    Set the group of pictures to the number of frames per second * the interval in between keyframes to ensure a solid
+        //                         livestreamng exerience.
+        // -bufsize size           This is the decoder buffer size, which drives the variability / quality of the output bitrate.
+        // -maxrate bitrate        The maximum bitrate tolerance used in concert with -bufsize to constrain the maximum bitrate permitted.
+        return [
+
+          "-c:v", "h264_v4l2m2m",
+          "-profile:v", this.getH264Profile(profile, true),
+          "-bf", "0",
+          "-noautoscale",
+          "-reset_timestamps", "1",
+          "-filter:v", videoFilters.join(", "),
+          "-b:v", bitrate.toString() + "k",
+          "-g:v", (fps * idrInterval).toString(),
+          "-bufsize", (2 * bitrate).toString() + "k",
+          "-maxrate", adjustedMaxBitrate.toString() + "k"
+        ];
+
+        break;
+
+      default:
+
+        // Clear out any prior video filters.
+        videoFilters = [];
+
+        // We execute the following GPU-accelerated operations using the Quick Sync Video post-processing filter:
+        //
+        // format=same             Set the output pixel format to the same as the input, since it's already in the GPU.
+        // w=...:h...              Scale the video to the size that's being requested while respecting aspect ratios.
+        videoFilters.push("vpp_qsv=" + [
+
+          "format=same",
+          "w=min(iw\\, (iw / ih) * " + height.toString() + ")",
+          "h=min(ih\\, " + height.toString() + ")"
+        ].join(":"));
+
+        // fps=fps=                Use the fps filter to provide the frame rate requested by HomeKit. This has better performance characteristics for Protect
+        //                         rather than using "-r". We only need to apply this filter if our input and output frame rates aren't already identical.
+        if(useFpsFilter) {
+
+          videoFilters.push("fps=fps=" + fps.toString());
+        }
+
+        // h264_qsv is the Intel Quick Sync Video hardware encoder API. We use the following options:
+        //
+        // -c:v                    Specify the macOS hardware encoder, h264_videotoolbox.
+        // -profile:v              Use the H.264 profile that HomeKit is requesting when encoding.
+        // -level:v 0              We override what HomeKit requests for the H.264 profile level when we're using hardware-accelerated transcoding because
+        //                         the hardware encoder will determine which levels to use. Setting it to 0 allows the encoder to decide for itself.
+        // -bf 0                   Disable B-frames when encoding to increase compatibility against occasionally finicky HomeKit clients.
+        // -noautoscale            Don't attempt to scale the video stream automatically.
+        // -init_hw_device         Initialize our hardware accelerator and assign it a name to be used in the FFmpeg command line.
+        // -filter_hw_device       Specify the hardware accelerator to be used with our video filter pipeline.
+        // -filter:v               Set the pixel format, adjust the frame rate if needed, and scale the video to the size we want while respecting aspect ratios and
+        //                         ensuring our final dimensions are a power of two.
+        // -g:v                    Set the group of pictures to the number of frames per second * the interval in between keyframes to ensure a solid
+        //                         livestreamng exerience.
+        // -bufsize size           This is the decoder buffer size, which drives the variability / quality of the output bitrate.
+        // -maxrate bitrate        The maximum bitrate tolerance used in concert with -bufsize to constrain the maximum bitrate permitted.
+        encoderOptions.push(
+
+          "-c:v", "h264_qsv",
+          "-profile:v", this.getH264Profile(profile),
+          "-level:v", "0",
+          "-bf", "0",
+          "-noautoscale",
+          "-init_hw_device", "qsv=hw",
+          "-filter_hw_device", "hw",
+          "-filter:v", videoFilters.join(", "),
+          "-g:v", (fps * idrInterval).toString(),
+          "-bufsize", (2 * bitrate).toString() + "k",
+          "-maxrate", adjustedMaxBitrate.toString() + "k"
+        );
+
+        if(useSmartQuality) {
+
+          // -global_quality 20    Use a global quality setting of 20, to allow QSV the ability to vary bitrates to achieve the visual quality we want,
+          //                       constrained by our maximum bitrate. This leverages a QSV-specific feature known as intelligent constant quality.
+          encoderOptions.push("-global_quality", "20");
+        } else {
+
+          // -b:v                  Average bitrate that's being requested by HomeKit.
+          encoderOptions.push("-b:v", bitrate.toString() + "k");
+        }
+
+        return encoderOptions;
+
+        break;
+    }
   }
 
   // Use the host system information to determine which recording channel to use by default for HKSV.
@@ -585,7 +653,7 @@ export class FfmpegOptions {
 
         // For constrained CPU environments like Raspberry Pi, we default to recording from the highest quality channel we can, that's at or below 1080p.
         // That provides a reasonable default, while still allowing users who really want to, to be able to specify something else.
-        return this.protectCamera.findRtsp(1920, 1080, undefined, undefined, this.hostSystemMaxPixels)?.channel.name ?? undefined;
+        return this.protectCamera.findRtsp(1920, 1080, undefined, this.hostSystemMaxPixels)?.channel.name ?? undefined;
 
         break;
 

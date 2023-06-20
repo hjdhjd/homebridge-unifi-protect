@@ -7,9 +7,9 @@
 import { API, AudioRecordingCodecType, AudioRecordingSamplerate, AudioStreamingCodecType, AudioStreamingSamplerate, CameraController,
   CameraControllerOptions, CameraStreamingDelegate, H264Level, H264Profile, HAP, MediaContainerType, PrepareStreamCallback, PrepareStreamRequest, PrepareStreamResponse,
   SRTPCryptoSuites, SnapshotRequest, SnapshotRequestCallback, StartStreamRequest, StreamRequestCallback, StreamRequestTypes, StreamingRequest } from "homebridge";
-import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_FFMPEG_AUDIO_FILTER_HIGHPASS, PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS,
-  PROTECT_HKSV_SEGMENT_LENGTH, PROTECT_HKSV_TIMESHIFT_BUFFER_MAXLENGTH, PROTECT_HOMEKIT_IDR_INTERVAL, PROTECT_SNAPSHOT_CACHE_MAXAGE } from "./settings.js";
-import { ProtectCamera, ProtectPackageCamera, RtspEntry } from "./protect-camera.js";
+import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_HKSV_SEGMENT_LENGTH, PROTECT_HKSV_TIMESHIFT_BUFFER_MAXLENGTH, PROTECT_HOMEKIT_IDR_INTERVAL,
+  PROTECT_SNAPSHOT_CACHE_MAXAGE } from "./settings.js";
+import { ProtectCamera, RtspEntry } from "./protect-camera.js";
 import { FetchError } from "unifi-protect";
 import { FfmpegOptions } from "./protect-ffmpeg-options.js";
 import { FfmpegStreamingProcess } from "./protect-ffmpeg-stream.js";
@@ -58,7 +58,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   private ongoingSessions: { [index: string]: { ffmpeg: FfmpegStreamingProcess[], rtpDemuxer: RtpDemuxer | null, rtpPortReservations: number[] } };
   private pendingSessions: { [index: string]: SessionInfo };
   public readonly platform: ProtectPlatform;
-  public readonly protectCamera: ProtectCamera | ProtectPackageCamera;
+  public readonly protectCamera: ProtectCamera;
   private probesizeOverride: number;
   private probesizeOverrideCount: number;
   private probesizeOverrideTimeout?: NodeJS.Timeout;
@@ -146,7 +146,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
               // only the H.264 Main profile, though it does support various H.264 levels, ranging from Level 3
               // through Level 5.1 (G4 Pro at maximum resolution). However, HomeKit only supports Level 3.1, 3.2,
               // and 4.0 currently.
-              levels: [H264Level.LEVEL3_1, H264Level.LEVEL3_2, H264Level.LEVEL4_0],
+              levels: [ H264Level.LEVEL3_1, H264Level.LEVEL3_2, H264Level.LEVEL4_0 ],
               profiles: [ H264Profile.MAIN ]
             },
 
@@ -270,7 +270,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     };
 
     // Check if audio support is enabled.
-    const isAudioEnabled = this.protectCamera.hasFeature("Audio", request.targetAddress);
+    const isAudioEnabled = this.protectCamera.hasFeature("Audio");
 
     // We need to check for AAC support because it's going to determine whether we support audio.
     const hasAudioSupport = isAudioEnabled && (this.ffmpegOptions.audioEncoder.length > 0);
@@ -396,8 +396,12 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     const isTranscoding = this.protectCamera.hints.transcode || ((request.audio.packet_time >= 60) && this.protectCamera.hints.transcodeHighLatency);
 
     // Find the best RTSP stream based on what we're looking for.
-    this.rtspEntry = this.protectCamera.findRtsp(request.video.width, request.video.height, sessionInfo.address, undefined,
-      isTranscoding ? this.ffmpegOptions.hostSystemMaxPixels : 0);
+    this.rtspEntry = this.protectCamera.findRtsp(
+      this.protectCamera.hints.hardwareTranscoding ? 3840 : request.video.width,
+      this.protectCamera.hints.hardwareTranscoding ? 2160 : request.video.height,
+      undefined,
+      isTranscoding ? this.ffmpegOptions.hostSystemMaxPixels : 0
+    );
 
     if(!this.rtspEntry) {
 
@@ -488,7 +492,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
       // Configure our video parameters for transcoding.
       ffmpegArgs.push(...this.ffmpegOptions.streamEncoder(request.video.width, request.video.height, this.rtspEntry.channel.fps, request.video.max_bit_rate,
-        request.video.profile, request.video.level, PROTECT_HOMEKIT_IDR_INTERVAL));
+        request.video.profile, request.video.level, PROTECT_HOMEKIT_IDR_INTERVAL, this.rtspEntry.channel.fps));
     } else {
 
       // Configure our video parameters for just copying the input stream from Protect - it tends to be quite solid in most cases:
@@ -555,19 +559,21 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       );
 
       // If we are audio filtering, address it here.
-      if(this.protectCamera.hasFeature("Audio.Filter.Noise", sessionInfo.address)) {
+      if(this.protectCamera.hasFeature("Audio.Filter.Noise")) {
 
         const afOptions = [];
 
         // See what the user has set for the afftdn filter for this camera.
-        let fftNr = parseFloat(this.nvr.optionGet(this.protectCamera.ufp, "Audio.Filter.Noise.FftNr", sessionInfo.address) ?? "");
+        let fftNr = this.protectCamera.getFeatureFloat("Audio.Filter.Noise.FftNr") ?? PROTECT_FFMPEG_AUDIO_FILTER_FFTNR;
 
         // If we have an invalid setting, use the defaults.
-        if((fftNr !== fftNr) || (fftNr < 0.01) || (fftNr > 97)) {
+        if((fftNr < 0.01) || (fftNr > 97)) {
 
-          fftNr = (fftNr > 97) ? 97 : ((fftNr < 0.01) ? 0.01 : PROTECT_FFMPEG_AUDIO_FILTER_FFTNR);
+          fftNr = (fftNr > 97) ? 97 : ((fftNr < 0.01) ? 0.01 : fftNr);
         }
 
+        // The afftdn filter options we use are:
+        //
         // nt=w  Focus on eliminating white noise.
         // om=o  Output the filtered audio.
         // tn=1  Enable noise tracking.
@@ -575,37 +581,22 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
         // nr=X  Noise reduction value in decibels.
         afOptions.push("afftdn=nt=w:om=o:tn=1:tr=1:nr=" + fftNr.toString());
 
-        let highpass: number | string | undefined = this.nvr.optionGet(this.protectCamera.ufp, "Audio.Filter.Noise.HighPass", sessionInfo.address) ??
-          (this.protectCamera.hasFeature("Audio.Filter.Noise.HighPass") ? PROTECT_FFMPEG_AUDIO_FILTER_HIGHPASS.toString() : undefined);
-
-        let lowpass: number | string | undefined = this.nvr.optionGet(this.protectCamera.ufp, "Audio.Filter.Noise.LowPass", sessionInfo.address) ??
-          (this.protectCamera.hasFeature("Audio.Filter.Noise.LowPass") ? PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS.toString() : undefined);
+        const highpass = this.protectCamera.getFeatureNumber("Audio.Filter.Noise.HighPass");
+        const lowpass = this.protectCamera.getFeatureNumber("Audio.Filter.Noise.LowPass");
 
         // Only set the highpass and lowpass filters if the user has explicitly enabled them.
-        if((highpass !== undefined) || (lowpass !== undefined)) {
+        if(highpass !== undefined) {
 
-          // See what the user has set for the highpass filter for this camera.
-          highpass = parseInt(highpass ?? "");
+          afOptions.push("highpass=f=" + highpass.toString());
+        }
 
-          // If we have an invalid setting, use the defaults.
-          if((highpass !== highpass) || (highpass < 0)) {
-            highpass = PROTECT_FFMPEG_AUDIO_FILTER_HIGHPASS;
-          }
+        if(lowpass !== undefined) {
 
-          // See what the user has set for the highpass filter for this camera.
-          lowpass = parseInt(lowpass ?? "");
-
-          // If we have an invalid setting, use the defaults.
-          if((lowpass !== lowpass) || (lowpass < 0)) {
-
-            lowpass = PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS;
-          }
-
-          afOptions.push("highpass=f=" + highpass.toString(), "lowpass=f=" + lowpass.toString());
+          afOptions.push("lowpass=f=" + lowpass.toString());
         }
 
         // Return the assembled audio filter option.
-        ffmpegArgs.push("-af", afOptions.join(","));
+        ffmpegArgs.push("-af", afOptions.join(", "));
       }
 
       // Add the required RTP settings and encryption for the stream:

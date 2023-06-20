@@ -7,7 +7,7 @@ import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_CONTROLLER_REFRESH_INTERVAL, PROTEC
 import { ProtectApi, ProtectCameraConfig, ProtectChimeConfig, ProtectLightConfig, ProtectNvrBootstrap, ProtectNvrConfig,
   ProtectSensorConfig, ProtectViewerConfig } from "unifi-protect";
 import { ProtectDeviceConfigTypes, ProtectDevices, ProtectLogging } from "./protect-types.js";
-import { ProtectNvrOptions, optionEnabled } from "./protect-options.js";
+import { ProtectNvrOptions, isOptionEnabled } from "./protect-options.js";
 import { ProtectCamera } from "./protect-camera.js";
 import { ProtectChime } from "./protect-chime.js";
 import { ProtectDevice } from "./protect-device.js";
@@ -650,14 +650,14 @@ export class ProtectNvr {
     // Check to see if we're removing a camera device that has a package camera as well.
     if(protectDevice.ufp.modelKey === "camera") {
 
-      const protectCamera = protectDevice as ProtectCamera;
+      const protectDoorbell = protectDevice as ProtectDoorbell;
 
-      if(protectCamera && protectCamera.packageCamera) {
+      if(protectDoorbell && protectDoorbell.packageCamera) {
 
         // Ensure we delete the accessory and cleanup after ourselves.
-        deletingAccessories.push(protectCamera.packageCamera.accessory);
-        protectCamera.packageCamera.cleanup();
-        protectCamera.packageCamera = null;
+        deletingAccessories.push(protectDoorbell.packageCamera.accessory);
+        protectDoorbell.packageCamera.cleanup();
+        protectDoorbell.packageCamera = null;
       }
     }
 
@@ -735,136 +735,13 @@ export class ProtectNvr {
   // Utility for checking feature options on the NVR.
   public hasFeature(option: string): boolean {
 
-    return optionEnabled(this.platform.configOptions, this.ufp, null, option, this.platform.featureOptionDefault(option));
+    return isOptionEnabled(this.platform.configOptions, this.ufp, null, option, this.platform.featureOptionDefault(option));
   }
 
   // Utility function to let us know if a device or feature should be enabled or not.
-  public optionEnabled(device: ProtectDeviceConfigTypes | ProtectNvrConfig | null, option = "", defaultReturnValue = true, address = "", addressOnly = false): boolean {
+  public optionEnabled(device: ProtectDeviceConfigTypes | ProtectNvrConfig | null, option = "", defaultReturnValue = true): boolean {
 
-    return optionEnabled(this.platform.configOptions, this.ufp, device, option, defaultReturnValue, address, addressOnly);
-  }
-
-  // Utility function to return a configuration parameter for a Protect device.
-  public optionGet(device: ProtectDeviceConfigTypes | null, option: string, address = ""): string | undefined {
-
-    // Using the same rules as we do to test for whether an option is enabled, retrieve options with parameters and
-    // return them. If we don't find anything, we return undefined.
-    const configOptions = this.platform?.configOptions;
-
-    // Nothing configured - we assume there's nothing.
-    if(!configOptions || !option) {
-
-      return undefined;
-    }
-
-    // Upper case parameters for easier checks.
-    address = address ? address.toUpperCase() : "";
-    option = option.toUpperCase();
-    const deviceMac = device?.mac.toUpperCase() ?? null;
-
-    let foundOption;
-    let optionSetting: string;
-
-    // If we've specified an address parameter - we check for device and address-specific options before
-    // anything else.
-    if(address) {
-
-      // Test for device-specific and address-specific option settings, used together.
-      if(deviceMac) {
-
-        // We've explicitly enabled this option for this device and address combination.
-        optionSetting = "ENABLE." + option + "." + deviceMac + "." + address + ".";
-
-        if((foundOption = configOptions.find(x => optionSetting === x.slice(0, optionSetting.length))) !== undefined) {
-
-          return foundOption.slice(optionSetting.length);
-        }
-
-        // We've explicitly disabled this option for this device and address combination.
-        optionSetting = "DISABLE." + option + "." + deviceMac + "." + address;
-
-        if(configOptions.indexOf(optionSetting) !== -1) {
-
-          return undefined;
-        }
-      }
-
-      // We've explicitly enabled this option for this address.
-      optionSetting = "ENABLE." + option + "." + address + ".";
-
-      if((foundOption = configOptions.find(x => optionSetting === x.slice(0, optionSetting.length))) !== undefined) {
-
-        return foundOption.slice(optionSetting.length);
-      }
-
-      // We've explicitly disabled this option for this address.
-      optionSetting = "DISABLE." + option + "." + address;
-
-      if(configOptions.indexOf(optionSetting) !== -1) {
-
-        return undefined;
-      }
-    }
-
-    // If we've specified a device, check for device-specific options first. Otherwise, we're dealing
-    // with an NVR-specific or global option.
-    if(deviceMac) {
-
-      // First we test for camera-level option settings.
-      // No option specified means we're testing to see if this device should be shown in HomeKit.
-      optionSetting = "ENABLE." + option + "." + deviceMac + ".";
-
-      // We've explicitly enabled this option for this device.
-      if((foundOption = configOptions.find(x => optionSetting === x.slice(0, optionSetting.length))) !== undefined) {
-
-        return foundOption.slice(optionSetting.length);
-      }
-
-      // We've explicitly disabled this option for this device.
-      optionSetting = "DISABLE." + option + "." + deviceMac;
-
-      if(configOptions.indexOf(optionSetting) !== -1) {
-
-        return undefined;
-      }
-    }
-
-    // If we don't have a managing device attached, we're done here.
-    if(!this.ufp.mac) {
-
-      return undefined;
-    }
-
-    // Now we test for NVR-level option settings.
-    // No option specified means we're testing to see if this NVR (and it's attached devices) should be shown in HomeKit.
-    const nvrMac = this.ufp.mac.toUpperCase();
-    optionSetting = "ENABLE." + option + "." + nvrMac + ".";
-
-    // We've explicitly enabled this option for this NVR and all the devices attached to it.
-    if((foundOption = configOptions.find(x => optionSetting === x.slice(0, optionSetting.length))) !== undefined) {
-
-      return foundOption.slice(optionSetting.length);
-    }
-
-    // We've explicitly disabled this option for this NVR and all the devices attached to it.
-    optionSetting = "DISABLE." + option + "." + nvrMac;
-
-    if(configOptions.indexOf(optionSetting) !== -1) {
-
-      return undefined;
-    }
-
-    // Finally, let's see if we have a global option here.
-    optionSetting = "ENABLE." + option + ".";
-
-    // We've explicitly enabled this globally for all devices.
-    if((foundOption = configOptions.find(x => optionSetting === x.slice(0, optionSetting.length))) !== undefined) {
-
-      return foundOption.slice(optionSetting.length);
-    }
-
-    // Nothing special to do - assume the option is defaultReturnValue.
-    return undefined;
+    return isOptionEnabled(this.platform.configOptions, this.ufp, device, option, defaultReturnValue);
   }
 
   // Emulate a sleep function.

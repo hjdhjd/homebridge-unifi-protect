@@ -88,9 +88,9 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
 
       "-map", "0:v:0",
       ...this.protectCamera.stream.ffmpegOptions.recordEncoder(recordingConfig.videoCodec.resolution[0], recordingConfig.videoCodec.resolution[1],
-        rtspEntry.channel.fps, recordingConfig.videoCodec.parameters.bitRate,
+        recordingConfig.videoCodec.resolution[2], recordingConfig.videoCodec.parameters.bitRate,
         recordingConfig.videoCodec.parameters.profile, recordingConfig.videoCodec.parameters.level,
-        recordingConfig.videoCodec.parameters.iFrameInterval / 1000),
+        recordingConfig.videoCodec.parameters.iFrameInterval / 1000, rtspEntry.channel.fps),
       "-reset_timestamps", "1",
       "-movflags", "frag_keyframe+empty_moov+default_base_moof"
     );

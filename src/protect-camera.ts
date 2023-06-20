@@ -2,8 +2,8 @@
  *
  * protect-camera.ts: Camera device class for UniFi Protect.
  */
-import { CharacteristicValue, PlatformAccessory } from "homebridge";
-import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_HOMEKIT_IDR_INTERVAL, PROTECT_SNAPSHOT_CACHE_REFRESH_INTERVAL } from "./settings.js";
+import { CharacteristicValue, PlatformAccessory, Resolution } from "homebridge";
+import { PROTECT_HOMEKIT_IDR_INTERVAL, PROTECT_SNAPSHOT_CACHE_REFRESH_INTERVAL } from "./settings.js";
 import { ProtectCameraChannelConfig, ProtectCameraConfig, ProtectCameraConfigPayload, ProtectEventAdd, ProtectEventPacket } from "unifi-protect";
 import { ProtectDevice } from "./protect-device.js";
 import { ProtectNvr } from "./protect-nvr.js";
@@ -13,8 +13,9 @@ import { ProtectStreamingDelegate } from "./protect-stream.js";
 export interface RtspEntry {
 
   channel: ProtectCameraChannelConfig,
+  lens?: number,
   name: string,
-  resolution: [ number, number, number],
+  resolution: Resolution,
   url: string
 }
 
@@ -25,7 +26,6 @@ export class ProtectCamera extends ProtectDevice {
   private isDoorbellConfigured: boolean;
   public isRinging: boolean;
   private isVideoConfigured: boolean;
-  public packageCamera: ProtectPackageCamera | null;
   private rtspEntries: RtspEntry[];
   private rtspQuality: { [index: string]: string };
   public snapshotUrl!: string;
@@ -42,7 +42,6 @@ export class ProtectCamera extends ProtectDevice {
     this.isDeleted = false;
     this.isRinging = false;
     this.isVideoConfigured = false;
-    this.packageCamera = null;
     this.rtspEntries = [];
     this.rtspQuality = {};
     this.ufp = device;
@@ -156,9 +155,6 @@ export class ProtectCamera extends ProtectDevice {
     // Configure our snapshot updates.
     void this.configureSnapshotUpdates();
 
-    // Configure our package camera.
-    this.configurePackageCamera();
-
     // Configure our camera details.
     this.configureCameraDetails();
 
@@ -201,12 +197,6 @@ export class ProtectCamera extends ProtectDevice {
 
     const payload = packet.payload as ProtectCameraConfigPayload;
 
-    // Update the package camera, if we have one.
-    if(this.packageCamera) {
-
-      this.packageCamera.ufp = Object.assign({}, this.ufp, { name: (this.ufp.name ?? this.ufp.marketName) + " Package Camera"}) as ProtectCameraConfig;
-    }
-
     // Process any RTSP stream updates.
     if(payload.channels) {
 
@@ -232,9 +222,10 @@ export class ProtectCamera extends ProtectDevice {
     }
 
     // Process camera details updates:
+    //   - availability state.
     //   - camera status light.
     //   - camera recording settings.
-    if((payload.ledSettings && ("isEnabled" in payload.ledSettings)) || (payload.recordingSettings && ("mode" in payload.recordingSettings))) {
+    if(payload.state || (payload.ledSettings && ("isEnabled" in payload.ledSettings)) || (payload.recordingSettings && ("mode" in payload.recordingSettings))) {
 
       this.updateDevice();
     }
@@ -505,7 +496,7 @@ export class ProtectCamera extends ProtectDevice {
     this.ufp = await this.nvr.ufpApi.enableRtsp(this.ufp) ?? this.ufp;
 
     // Figure out which camera channels are RTSP-enabled, and user-enabled.
-    const cameraChannels = this.ufp.channels.filter(x => x.isRtspEnabled && this.hasFeature("Video.Stream." + x.name));
+    let cameraChannels = this.ufp.channels.filter(x => x.isRtspEnabled && this.hasFeature("Video.Stream." + x.name));
 
     // Make sure we've got a HomeKit compatible IDR frame interval. If not, let's take care of that.
     let idrChannels = cameraChannels.filter(x => x.idrInterval !== PROTECT_HOMEKIT_IDR_INTERVAL);
@@ -525,6 +516,9 @@ export class ProtectCamera extends ProtectDevice {
     // Set the camera and shapshot URLs.
     const cameraUrl = "rtsps://" + (this.nvr.nvrOptions.overrideAddress ?? this.ufp.connectionHost) + ":" + this.nvr.ufp.ports.rtsps.toString() + "/";
     this.snapshotUrl = this.nvr.ufpApi.getApiEndpoint(this.ufp.modelKey) + "/" + this.ufp.id + "/snapshot";
+
+    // Filter out any package camera entries.
+    cameraChannels = cameraChannels.filter(x => x.name !== "Package Camera");
 
     // No RTSP streams are available that meet our criteria - we're done.
     if(!cameraChannels.length) {
@@ -547,6 +541,7 @@ export class ProtectCamera extends ProtectDevice {
       }
 
       rtspEntries.push({
+
         channel: channel,
         name: this.getResolution([channel.width, channel.height, channel.fps]) + " (" + channel.name + ")",
         resolution: [ channel.width, channel.height, channel.fps ],
@@ -557,35 +552,58 @@ export class ProtectCamera extends ProtectDevice {
     // Sort the list of resolutions, from high to low.
     rtspEntries.sort(this.sortByResolutions.bind(this));
 
-    // Next, ensure we have mandatory resolutions required by HomeKit, as well as special support for Apple TV and Apple Watch:
-    //   3840x2160@30 (4k).
-    //   1920x1080@30 (1080p).
-    //   1280x720@30 (720p).
-    //   320x240@30 (Apple Watch).
-    //   320x240@15 (Apple Watch).
-    //   320x180@30 (Apple Watch).
-    //   320x180@15 (Apple Watch).
-    for(const entry of [
-      [3840, 2160, 30], [1920, 1080, 30], [1280, 960, 30], [1280, 720, 30], [1024, 768, 30], [640, 480, 30],
-      [640, 360, 30], [480, 360, 30], [480, 270, 30], [320, 240, 30], [320, 240, 15], [320, 180, 30], [320, 180, 15]
-    ] ) {
+    let validResolutions = [];
 
-      // We already have this resolution in our list.
-      if(rtspEntries.some(x => (x.resolution[0] === entry[0]) && (x.resolution[1] === entry[1]) && (x.resolution[2] === entry[2]))) {
+    // Next, ensure we have mandatory resolutions required by HomeKit, as well as special support for Apple TV and Apple Watch, while respecting aspect ratios.
+    // We use the frame rate of the first entry, which should be our highest resolution option that's native to the camera as the upper bound for frame rate.
+    //
+    // Our supported resolutions range from 4K through 320p.
+    if((rtspEntries[0].resolution[0] / rtspEntries[0].resolution[1]) === (16 / 9)) {
+
+      validResolutions = [
+
+        [ 3840, 2160, 30 ], [ 2560, 1440, 30 ],
+        [ 1920, 1080, 30], [ 1280, 720, 30 ],
+        [ 640, 360, 30 ], [ 480, 270, 30 ],
+        [ 320, 180, 30 ]
+      ];
+    } else {
+
+      validResolutions = [
+
+        [ 3840, 2880, 30 ], [ 2560, 1920, 30 ],
+        [ 1920, 1440, 30 ], [ 1280, 960, 30 ],
+        [ 640, 480, 30 ], [ 480, 360, 30 ],
+        [ 320, 240, 30 ]
+      ];
+    }
+
+    // Validate and add our entries to the list of what we make available to HomeKit. We map these resolutions to the channels we have available to us on the camera.
+    for(const entry of validResolutions) {
+
+      // This resolution is larger than the highest resolution on the camera, natively. We make an exception for
+      // 1080p and 720p resolutions since HomeKit explicitly requires them.
+      if((entry[0] >= rtspEntries[0].resolution[0]) && ![ 1920, 1280 ].includes(entry[0])) {
 
         continue;
       }
 
       // Find the closest RTSP match for this resolution.
-      const foundRtsp = this.findRtsp(entry[0], entry[1], undefined, rtspEntries);
+      const foundRtsp = this.findRtsp(entry[0], entry[1], rtspEntries);
 
       if(!foundRtsp) {
 
         continue;
       }
 
-      // Add the resolution to the list of supported resolutions.
-      rtspEntries.push({ channel: foundRtsp.channel, name: foundRtsp.name, resolution: [ entry[0], entry[1], entry[2] ], url: foundRtsp.url });
+      // We already have this resolution in our list.
+      if(rtspEntries.some(x => (x.resolution[0] === entry[0]) && (x.resolution[1] === entry[1]) && (x.resolution[2] === foundRtsp.channel.fps))) {
+
+        continue;
+      }
+
+      // Add the resolution to the list of supported resolutions, but use the selected camera channel's native frame rate.
+      rtspEntries.push({ channel: foundRtsp.channel, name: foundRtsp.name, resolution: [ entry[0], entry[1], foundRtsp.channel.fps ], url: foundRtsp.url });
 
       // Since we added resolutions to the list, resort resolutions, from high to low.
       rtspEntries.sort(this.sortByResolutions.bind(this));
@@ -711,50 +729,6 @@ export class ProtectCamera extends ProtectDevice {
       await this.nvr.sleep(PROTECT_SNAPSHOT_CACHE_REFRESH_INTERVAL * 1000);
     }
 
-    return true;
-  }
-
-  // Configure a package camera, if one exists.
-  private configurePackageCamera(): boolean {
-
-    // First, confirm the device has a package camera.
-    if(!this.ufp.featureFlags.hasPackageCamera) {
-
-      return false;
-    }
-
-    // If we've already setup the package camera, we're done.
-    if(this.packageCamera) {
-
-      return true;
-    }
-
-    // Generate a UUID for the package camera.
-    const uuid = this.hap.uuid.generate(this.ufp.mac + ".PackageCamera");
-
-    // Let's find it if we've already created it.
-    let packageCameraAccessory = this.platform.accessories.find((x: PlatformAccessory) => x.UUID === uuid) ?? (null as unknown as PlatformAccessory);
-
-    // We can't find the accessory. Let's create it.
-    if(!packageCameraAccessory) {
-
-      // We will use the NVR MAC address + ".NVRSystemInfo" to create our UUID. That should provide the guaranteed uniqueness we need.
-      packageCameraAccessory = new this.api.platformAccessory(this.accessory.displayName + " Package Camera", uuid);
-
-      if(!packageCameraAccessory) {
-
-        this.log.error("Unable to create the package camera accessory.");
-        return false;
-      }
-
-      // Register this accessory with homebridge and add it to the platform accessory array so we can track it.
-      this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [ packageCameraAccessory ]);
-      this.platform.accessories.push(packageCameraAccessory);
-    }
-
-    // Now create the package camera accessory. We do want to modify the camera name to ensure things look pretty.
-    this.packageCamera = new ProtectPackageCamera(this.nvr,
-      Object.assign({}, this.ufp, { name: (this.ufp.name ?? this.ufp.marketName) + " Package Camera"}), packageCameraAccessory);
     return true;
   }
 
@@ -1175,41 +1149,12 @@ export class ProtectCamera extends ProtectDevice {
   }
 
   // Find an RTSP configuration for a given target resolution.
-  private findRtspEntry(width: number, height: number, address: string, rtspEntries: RtspEntry[], defaultStream = this.rtspQuality.StreamingDefault): RtspEntry | null {
+  private findRtspEntry(width: number, height: number, rtspEntries: RtspEntry[], defaultStream = this.rtspQuality.StreamingDefault): RtspEntry | null {
 
     // No RTSP entries to choose from, we're done.
     if(!rtspEntries || !rtspEntries.length) {
 
       return null;
-    }
-
-    // First, we check to see if we've set an explicit preference for the target address.
-    if(address) {
-
-      // If we don't have this address cached, look it up and cache it.
-      if(!this.rtspQuality[address]) {
-
-        // Check to see if there's an explicit preference set and cache the result.
-        if(this.hasFeature("Video.Stream.Only.Low", address, true)) {
-
-          this.rtspQuality[address] = "LOW";
-        } else if(this.hasFeature("Video.Stream.Only.Medium", address, true)) {
-
-          this.rtspQuality[address] = "MEDIUM";
-        } else if(this.hasFeature("Video.Stream.Only.High", address, true)) {
-
-          this.rtspQuality[address] = "HIGH";
-        } else {
-
-          this.rtspQuality[address] = "None";
-        }
-      }
-
-      // If it's set to none, we default to our normal lookup logic.
-      if(this.rtspQuality[address] !== "None") {
-
-        return rtspEntries.find(x => x.channel.name.toUpperCase() === this.rtspQuality[address]) ?? null;
-      }
     }
 
     // Second, we check to see if we've set an explicit preference for stream quality.
@@ -1248,7 +1193,7 @@ export class ProtectCamera extends ProtectDevice {
   }
 
   // Find a streaming RTSP configuration for a given target resolution.
-  public findRtsp(width: number, height: number, address = "", rtspEntries = this.rtspEntries, constrainPixels = 0): RtspEntry | null {
+  public findRtsp(width: number, height: number, rtspEntries = this.rtspEntries, constrainPixels = 0): RtspEntry | null {
 
     // If we've imposed a constraint on the maximum dimensions of what we want due to a hardware limitation, filter out those entries.
     if(constrainPixels) {
@@ -1256,13 +1201,13 @@ export class ProtectCamera extends ProtectDevice {
       rtspEntries = rtspEntries.filter(x => (x.channel.width * x.channel.height) <= constrainPixels);
     }
 
-    return this.findRtspEntry(width, height, address, rtspEntries);
+    return this.findRtspEntry(width, height, rtspEntries);
   }
 
   // Find a recording RTSP configuration for a given target resolution.
   public findRecordingRtsp(width: number, height: number, rtspEntries = this.rtspEntries): RtspEntry | null {
 
-    return this.findRtspEntry(width, height, "", rtspEntries, this.rtspQuality.RecordingDefault ?? this.stream.ffmpegOptions.recordingDefaultChannel);
+    return this.findRtspEntry(width, height, rtspEntries, this.rtspQuality.RecordingDefault ?? this.stream.ffmpegOptions.recordingDefaultChannel);
   }
 
   // Utility function for sorting by resolution.
@@ -1270,28 +1215,34 @@ export class ProtectCamera extends ProtectDevice {
 
     // Check width.
     if(a.resolution[0] < b.resolution[0]) {
+
       return 1;
     }
 
     if(a.resolution[0] > b.resolution[0]) {
+
       return -1;
     }
 
     // Check height.
     if(a.resolution[1] < b.resolution[1]) {
+
       return 1;
     }
 
     if(a.resolution[1] > b.resolution[1]) {
+
       return -1;
     }
 
     // Check FPS.
     if(a.resolution[2] < b.resolution[2]) {
+
       return 1;
     }
 
     if(a.resolution[2] > b.resolution[2]) {
+
       return -1;
     }
 
@@ -1299,80 +1250,8 @@ export class ProtectCamera extends ProtectDevice {
   }
 
   // Utility function to format resolution entries.
-  private getResolution(resolution: [number, number, number]): string {
+  protected getResolution(resolution: Resolution): string {
 
     return resolution[0].toString() + "x" + resolution[1].toString() + "@" + resolution[2].toString() + "fps";
-  }
-}
-
-// Package camera class.
-export class ProtectPackageCamera extends ProtectCamera {
-
-  // Configure the package camera.
-  protected async configureDevice(): Promise<boolean> {
-
-    this.hints.probesize = 32768;
-    this.hasHksv = false;
-
-    // Clean out the context object in case it's been polluted somehow.
-    this.accessory.context = {};
-
-    // We explicitly avoid adding the MAC address of the camera - that's reserved for real Protect devices, not synthetic ones we create.
-    this.accessory.context.nvr = this.nvr.ufp.mac;
-    this.accessory.context.packageCamera = this.ufp.mac;
-
-    // Configure accessory information.
-    this.configureInfo();
-
-    // Set the snapshot URL.
-    this.snapshotUrl = this.nvr.ufpApi.getApiEndpoint(this.ufp.modelKey) + "/" + this.ufp.id + "/package-snapshot";
-
-    // Configure the video stream with our required resolutions. No, package cameras don't really support any of these resolutions, but they're required
-    // by HomeKit in order to stream video.
-    this.stream = new ProtectStreamingDelegate(this, [ [3840, 2160, 30], [1920, 1080, 30], [1280, 960, 30], [1280, 720, 30], [1024, 768, 30], [640, 480, 30],
-      [640, 360, 30], [480, 360, 30], [480, 270, 30], [320, 240, 30], [320, 240, 15], [320, 180, 30] ]);
-
-    // Fire up the controller and inform HomeKit about it.
-    this.accessory.configureController(this.stream.controller);
-
-    // Periodically refresh our snapshot cache.
-    void this.configureSnapshotUpdates();
-
-    // We're done.
-    return Promise.resolve(true);
-  }
-
-  // Make our RTSP stream findable.
-  public findRtsp(): RtspEntry | null {
-
-    const channel = this.ufp.channels.find(x => x.name === "Package Camera");
-
-    if(!channel) {
-
-      return null;
-    }
-
-    return {
-
-      channel: channel,
-      name: channel.name,
-      resolution: [ channel.width, channel.height, channel.fps ],
-      url:  "rtsps://" + this.nvr.nvrOptions.address + ":" + this.nvr.ufp.ports.rtsps.toString() + "/" + channel.rtspAlias + "?enableSrtp"
-    };
-  }
-
-  // Get the current bitrate for a specific camera channel.
-  public getBitrate(channelId: number): number {
-
-    // Find the right channel.
-    const channel = this.ufp.channels.find(x => x.id === channelId);
-
-    return channel?.bitrate ?? -1;
-  }
-
-  // Set the bitrate for a specific camera channel.
-  public setBitrate(): Promise<boolean> {
-
-    return Promise.resolve(true);
   }
 }

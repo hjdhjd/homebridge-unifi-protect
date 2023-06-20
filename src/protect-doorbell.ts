@@ -3,8 +3,10 @@
  * protect-doorbell.ts: Doorbell device class for UniFi Protect.
  */
 import { CharacteristicValue, PlatformAccessory, Service } from "homebridge";
+import { PLATFORM_NAME, PLUGIN_NAME } from "./settings.js";
 import { ProtectCameraConfig, ProtectCameraConfigPayload, ProtectCameraLcdMessagePayload, ProtectEventPacket, ProtectNvrConfigPayload } from "unifi-protect";
 import { ProtectCamera } from "./protect-camera.js";
+import { ProtectCameraPackage } from "./protect-camera-package.js";
 import { ProtectNvr } from "./protect-nvr.js";
 
 // A doorbell message entry.
@@ -28,6 +30,7 @@ export class ProtectDoorbell extends ProtectCamera {
   private isMessagesEnabled: boolean;
   private isMessagesFromControllerEnabled: boolean;
   private messageSwitches: MessageSwitchInterface[];
+  public packageCamera!: ProtectCameraPackage | null;
 
   // Create an instance.
   constructor(nvr: ProtectNvr, device: ProtectCameraConfig, accessory: PlatformAccessory) {
@@ -43,6 +46,8 @@ export class ProtectDoorbell extends ProtectCamera {
   // Configure the doorbell for HomeKit.
   protected async configureDevice(): Promise<boolean> {
 
+    this.packageCamera = null;
+
     // We only want to deal with actual Protect doorbell devices.
     if(!this.ufp.featureFlags.hasChime) {
 
@@ -51,6 +56,9 @@ export class ProtectDoorbell extends ProtectCamera {
 
     // Call our parent to setup the camera portion of the doorbell.
     await super.configureDevice();
+
+    // Configure our package camera, if we have one.
+    this.configurePackageCamera();
 
     // Let's setup the doorbell-specific attributes.
     this.configureVideoDoorbell();
@@ -137,6 +145,50 @@ export class ProtectDoorbell extends ProtectCamera {
     // Check to see if any of our existing doorbell messages have disappeared.
     this.validateMessageSwitches(doorbellMessages);
 
+    return true;
+  }
+
+  // Configure a package camera, if one exists.
+  private configurePackageCamera(): boolean {
+
+    // First, confirm the device has a package camera.
+    if(!this.ufp.featureFlags.hasPackageCamera) {
+
+      return false;
+    }
+
+    // If we've already setup the package camera, we're done.
+    if(this.packageCamera) {
+
+      return true;
+    }
+
+    // Generate a UUID for the package camera.
+    const uuid = this.hap.uuid.generate(this.ufp.mac + ".PackageCamera");
+
+    // Let's find it if we've already created it.
+    let packageCameraAccessory = this.platform.accessories.find((x: PlatformAccessory) => x.UUID === uuid) ?? (null as unknown as PlatformAccessory);
+
+    // We can't find the accessory. Let's create it.
+    if(!packageCameraAccessory) {
+
+      // We will use the NVR MAC address + ".NVRSystemInfo" to create our UUID. That should provide the guaranteed uniqueness we need.
+      packageCameraAccessory = new this.api.platformAccessory(this.accessory.displayName + " Package Camera", uuid);
+
+      if(!packageCameraAccessory) {
+
+        this.log.error("Unable to create the package camera accessory.");
+        return false;
+      }
+
+      // Register this accessory with homebridge and add it to the platform accessory array so we can track it.
+      this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [ packageCameraAccessory ]);
+      this.platform.accessories.push(packageCameraAccessory);
+    }
+
+    // Now create the package camera accessory. We do want to modify the camera name to ensure things look pretty.
+    this.packageCamera = new ProtectCameraPackage(this.nvr,
+      Object.assign({}, this.ufp, { name: (this.ufp.name ?? this.ufp.marketName) + " Package Camera"}), packageCameraAccessory);
     return true;
   }
 
@@ -242,6 +294,20 @@ export class ProtectDoorbell extends ProtectCamera {
       // Send it to the doorbell and we're done.
       void this.setMessage(outboundPayload);
     });
+
+    return true;
+  }
+
+  // Refresh doorbell-specific characteristics.
+  public updateDevice(): boolean {
+
+    super.updateDevice();
+
+    // Update the package camera state, if we have one.
+    if(this.packageCamera) {
+
+      this.packageCamera.accessory.getService(this.hap.Service.MotionSensor)?.updateCharacteristic(this.hap.Characteristic.StatusActive, this.ufp.state === "CONNECTED");
+    }
 
     return true;
   }
@@ -430,6 +496,20 @@ export class ProtectDoorbell extends ProtectCamera {
     const payload = packet.payload as ProtectCameraConfigPayload;
 
     super.eventHandler(packet);
+
+    // Update the package camera, if we have one.
+    if(this.packageCamera) {
+
+      this.packageCamera.ufp = Object.assign({}, this.ufp, { name: (this.ufp.name ?? this.ufp.marketName) + " Package Camera"}) as ProtectCameraConfig;
+    }
+
+    // If we have a package camera that has HKSV enabled, we'll trigger it's motion sensor here. Why? HKSV requires a motion sensor attached to that
+    // camera accessory, and since package cameras are really a secondary camera on a device with a single motion sensor, we use that motion sensor to trigger
+    // the package camera's HKSV event recording.
+    if(payload.isMotionDetected && payload.lastMotion && this.packageCamera?.stream?.hksv?.isRecording) {
+
+      this.nvr.events.motionEventHandler(this.packageCamera, payload.lastMotion);
+    }
 
     // Process LCD message events.
     if(payload.lcdMessage) {

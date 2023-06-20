@@ -48,7 +48,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     this.log = protectCamera.log;
     this.nvr = protectCamera.nvr;
     this.protectCamera = protectCamera;
-    this.maxRecordingDuration = parseInt(this.nvr.optionGet(this.protectCamera.ufp, "Video.HKSV.Recording.MaxDuration") ?? "0");
+    this.maxRecordingDuration = this.protectCamera.getFeatureNumber("Video.HKSV.Recording.MaxDuration") ?? 0;
     this.timeshiftedSegments = 0;
     this.transmittedSegments = 0;
     this.rtspEntry = null;
@@ -97,7 +97,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
       this.isInitialized = true;
 
       this.log.info("HomeKit Secure Video %sevent recording enabled: %s, %s kbps with %s",
-        this.protectCamera.hints.hardwareTranscoding ? "hardware accelerated " : "",
+        this.protectCamera.hints.hardwareTranscoding ? "hardware-accelerated " : "",
         this.rtspEntry?.name, this.recordingConfig?.videoCodec.parameters.bitRate,
         this.protectCamera.hints.timeshift ?
           "a " + (this.timeshift.length / 1000).toString() + " second timeshift buffer." :
@@ -261,14 +261,15 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
       return false;
     }
 
-    // If we haven't changed the camera channel we're using, and we've already started timeshifting, we're done.
-    if(this.timeshift.isStarted && (this.rtspEntry.channel.id === oldRtspEntry?.channel.id)) {
+    // If we haven't changed the camera channel or lens we're using, and we've already started timeshifting, we're done.
+    if(this.timeshift.isStarted && (this.rtspEntry.channel.id === oldRtspEntry?.channel.id) &&
+      ((this.rtspEntry.lens === undefined) || (this.rtspEntry.lens === oldRtspEntry?.lens))) {
 
       return true;
     }
 
-    // Fire up the timeshift buffer.
-    if(!(await this.timeshift.start(this.rtspEntry.channel.id))) {
+    // Fire up the timeshift buffer. If we've got multiple lenses, we use the first channel and explicitly request the lens we want.
+    if(!(await this.timeshift.start((this.rtspEntry.lens === undefined) ? this.rtspEntry.channel.id : 0, this.rtspEntry.lens))) {
 
       this.log.error("%s.", timeshiftError);
       return false;

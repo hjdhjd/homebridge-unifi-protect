@@ -3,11 +3,12 @@
  * protect-device.ts: Base class for all UniFi Protect devices.
  */
 import { API, CharacteristicValue, HAP, PlatformAccessory } from "homebridge";
+import { PROTECT_MOTION_DURATION, PROTECT_OCCUPANCY_DURATION} from "./settings.js";
 import { ProtectApi, ProtectCameraConfig, ProtectEventPacket, ProtectNvrConfig } from "unifi-protect";
 import { ProtectDeviceConfigTypes, ProtectLogging, ProtectReservedNames } from "./protect-types.js";
+import { getOptionValue, isOptionEnabled } from "./protect-options.js";
 import { ProtectNvr } from "./protect-nvr.js";
 import { ProtectPlatform } from "./protect-platform.js";
-import { optionEnabled } from "./protect-options.js";
 import util from "node:util";
 
 /*
@@ -27,6 +28,8 @@ export interface ProtectHints {
   logDoorbell: boolean,
   logHksv: boolean,
   logMotion: boolean,
+  motionDuration: number,
+  occupancyDuration: number,
   probesize: number,
   smartDetect: boolean,
   smartOccupancy: string[],
@@ -147,7 +150,33 @@ export abstract class ProtectDevice extends ProtectBase {
   protected configureHints(): boolean {
 
     this.hints.logMotion = this.hasFeature("Log.Motion");
+    this.hints.motionDuration = this.getFeatureNumber("Motion.Duration") ?? PROTECT_MOTION_DURATION;
+    this.hints.occupancyDuration = this.getFeatureNumber("Motion.OccupancySensor.Duration") ?? PROTECT_OCCUPANCY_DURATION;
     this.hints.smartOccupancy = [];
+
+    // Sanity check motion detection duration. Make sure it's never less than 2 seconds so we can actually alert the user.
+    if(this.hints.motionDuration < 2 ) {
+
+      this.hints.motionDuration = 2;
+    }
+
+    // Sanity check occupancy detection duration. Make sure it's never less than 60 seconds so we can actually alert the user.
+    if(this.hints.occupancyDuration < 60 ) {
+
+      this.hints.occupancyDuration = 60;
+    }
+
+    // Inform the user if we've opted for something other than the defaults.
+    if(this.hints.motionDuration !== PROTECT_MOTION_DURATION) {
+
+      this.log.info("Motion event duration set to %s seconds", this.hints.motionDuration);
+    }
+
+    if(this.hints.occupancyDuration !== PROTECT_OCCUPANCY_DURATION) {
+
+      this.log.info("Occupancy event duration set to %s seconds", this.hints.occupancyDuration);
+    }
+
     return true;
   }
 
@@ -179,7 +208,7 @@ export abstract class ProtectDevice extends ProtectBase {
       if(motionService) {
 
         this.accessory.removeService(motionService);
-        this.nvr.mqtt?.unsubscribe(this.accessory, "motion/trigger");
+        this.nvr.mqtt?.unsubscribe(this.id, "motion/trigger");
         this.log.info("Disabling motion sensor.");
       }
 
@@ -309,6 +338,7 @@ export abstract class ProtectDevice extends ProtectBase {
     if(!isEnabled || !this.hasFeature("Motion.Trigger")) {
 
       if(triggerService) {
+
         this.accessory.removeService(triggerService);
       }
 
@@ -323,6 +353,7 @@ export abstract class ProtectDevice extends ProtectBase {
       triggerService = new this.hap.Service.Switch(triggerName, ProtectReservedNames.SWITCH_MOTION_TRIGGER);
 
       if(!triggerService) {
+
         this.log.error("Unable to add motion sensor trigger.");
         return false;
       }
@@ -355,6 +386,8 @@ export abstract class ProtectDevice extends ProtectBase {
 
             // Trigger the motion event.
             this.nvr.events.motionEventHandler(this, Date.now());
+
+            // Inform the user.
             this.log.info("Motion event triggered.");
           }
 
@@ -385,7 +418,7 @@ export abstract class ProtectDevice extends ProtectBase {
   private configureMqttMotionTrigger(): boolean {
 
     // Trigger a motion event in MQTT, if requested to do so.
-    this.nvr.mqtt?.subscribe(this.accessory, "motion/trigger", (message: Buffer) => {
+    this.nvr.mqtt?.subscribe(this.id, "motion/trigger", (message: Buffer) => {
 
       const value = message.toString();
 
@@ -474,16 +507,64 @@ export abstract class ProtectDevice extends ProtectBase {
     return true;
   }
 
-  // Utility for checking feature options on a device.
-  public hasFeature(option: string, address = "", addressOnly = false): boolean {
+  // Utility function to return a numeric configuration parameter on a device.
+  private getFeature(option: string, convert: (value: string) => number): number | undefined {
 
-    return optionEnabled(this.platform.configOptions, this.nvr.ufp, this.ufp, option, this.platform.featureOptionDefault(option), address, addressOnly);
+    let optionValue: number | string | undefined = getOptionValue(this.platform.configOptions, this.nvr.ufp, this.ufp, option);
+
+    // We don't have the option configured -- we're done.
+    if(optionValue === undefined) {
+
+      return undefined;
+    }
+
+    // Convert it to a number.
+    optionValue = convert(optionValue);
+
+    // Let's validate to make sure it's really a number.
+    if(isNaN(optionValue) || (optionValue < 0)) {
+
+      return undefined;
+    }
+
+    // Return the value.
+    return optionValue;
+  }
+
+  // Utility function to return a floating point configuration parameter on a device.
+  public getFeatureFloat(option: string): number | undefined {
+
+    return this.getFeature(option, (value: string) => {
+
+      return parseFloat(value);
+    });
+  }
+
+  // Utility function to return an integer configuration parameter on a device.
+  public getFeatureNumber(option: string): number | undefined {
+
+    return this.getFeature(option, (value: string) => {
+
+      return parseInt(value);
+    });
+  }
+
+  // Utility for checking feature options on a device.
+  public hasFeature(option: string): boolean {
+
+    return isOptionEnabled(this.platform.configOptions, this.nvr.ufp, this.ufp, option, this.platform.featureOptionDefault(option));
   }
 
   // Utility function for reserved identifiers for switches.
   public isReservedName(name: string | undefined): boolean {
 
     return name === undefined ? false : Object.values(ProtectReservedNames).map(x => x.toUpperCase()).includes(name.toUpperCase());
+  }
+
+  // Return a unique identifier for a Protect device. We need this for package cameras in particular, since they present multiple cameras in a single physical device.
+  public get id(): string {
+
+    return this.ufp.mac;
   }
 
   // Utility function to return the fully enumerated name of this camera.

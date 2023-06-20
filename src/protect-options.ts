@@ -2,6 +2,8 @@
  *
  * protect-options.ts: Type definitions for UniFi Protect.
  */
+import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_FFMPEG_AUDIO_FILTER_HIGHPASS, PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS,
+  PROTECT_MOTION_DURATION, PROTECT_OCCUPANCY_DURATION } from "./settings.js";
 import { ProtectDeviceConfigTypes } from "./protect-types.js";
 import { ProtectNvrConfig } from "unifi-protect";
 
@@ -11,8 +13,6 @@ export interface ProtectOptions {
   controllers: ProtectNvrOptions[],
   debugAll: boolean,
   ffmpegOptions: string[],
-  motionDuration: number,
-  occupancyDuration: number,
   options: string[],
   ringDuration: number,
   verboseFfmpeg: boolean,
@@ -60,6 +60,9 @@ export const featureOptions: { [index: string]: FeatureOption[] } = {
 
     { default: true, description: "Audio support.", name: "" },
     { default: false, description: "Audio filter for ambient noise suppression.", group: "", hasFeature: [ "hasMotionZones" ], name: "Filter.Noise" },
+    { default: false, defaultValue: PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, description: "Noise reduction amount, in decibels, for the FFmpeg afftdn filter.", group: "Filter.Noise", name: "Filter.Noise.FftNr" },
+    { default: false, defaultValue: PROTECT_FFMPEG_AUDIO_FILTER_HIGHPASS, description: "Frequency, in Hertz, for the FFmpeg highpass filter.", group: "Filter.Noise", name: "Filter.Noise.HighPass" },
+    { default: false, defaultValue: PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS, description: "Frequency, in Hertz, for the FFmpeg lowpass filter.", group: "Filter.Noise", name: "Filter.Noise.LowPass" },
     { default: true, description: "Two-way audio support on supported cameras.", group: "", hasFeature: [ "hasSpeaker" ], name: "TwoWay" }
   ],
 
@@ -89,7 +92,9 @@ export const featureOptions: { [index: string]: FeatureOption[] } = {
   // Motion options.
   "Motion": [
 
+    { default: false, defaultValue: PROTECT_MOTION_DURATION, description: "Duration, in seconds, of a single motion event, before allowing a new one.", name: "Duration" },
     { default: false, description: "Add an occupancy sensor accessory using motion sensor activity to determine occupancy. By default, any motion will trigger occupancy. If the smart motion detection feature option is enabled, it will be used instead.", hasProperty: [ "isMotionDetected", "isPirMotionDetected" ], name: "OccupancySensor" },
+    { default: false, defaultValue: PROTECT_OCCUPANCY_DURATION, description: "Duration, in seconds, to wait without receiving a motion event to determine when occupancy is no longer detected.", group: "OccupancySensor", name: "OccupancySensor.Duration" },
     { default: true, description: "When using both the occupancy sensor and smart motion detection feature options, use UniFi Protect's person detection to trigger occupancy.", group: "OccupancySensor", hasFeature: [ "hasSmartDetect" ], name: "OccupancySensor.Person" },
     { default: false, description: "When using both the occupancy sensor and smart motion detection feature options, use UniFi Protect's vehicle detection to trigger occupancy.", group: "OccupancySensor", hasFeature: [ "hasSmartDetect" ], name: "OccupancySensor.Vehicle" },
     { default: false, description: "Use UniFi Protect smart motion detection for HomeKit motion events when on a supported device.", hasFeature: [ "hasSmartDetect" ], name: "SmartDetect" },
@@ -128,11 +133,12 @@ export const featureOptions: { [index: string]: FeatureOption[] } = {
   // HomeKit Secure Video options.
   "Video.HKSV": [
 
-    { default: true, description: "Enable the timeshift buffer for HomeKit Secure Video.", name: "TimeshiftBuffer" },
+    { default: false, defaultValue: 0, description: "Maximum HomeKit Secure Video event duration, in seconds.", name: "Recording.MaxDuration" },
     { default: false, description: "Add a switch accessory to enable or disable HKSV event recording.", name: "Recording.Switch" },
     { default: false, description: "When recording HomeKit Secure Video events, force the use of the high quality video stream from the Protect controller.", name: "Record.Only.High" },
     { default: false, description: "When recording HomeKit Secure Video events, force the use of the medium quality video stream from the Protect controller.", name: "Record.Only.Medium" },
-    { default: false, description: "When recording HomeKit Secure Video events, force the use of the low quality video stream from the Protect controller.", name: "Record.Only.Low" }
+    { default: false, description: "When recording HomeKit Secure Video events, force the use of the low quality video stream from the Protect controller.", name: "Record.Only.Low" },
+    { default: true, description: "Enable the timeshift buffer for HomeKit Secure Video.", name: "TimeshiftBuffer" }
   ]
 
 };
@@ -140,17 +146,18 @@ export const featureOptions: { [index: string]: FeatureOption[] } = {
 
 export interface FeatureOption {
 
-  default: boolean,           // Default feature option setting.
+  default: boolean,           // Default feature option state.
+  defaultValue?: number,      // Default value for value-based feature options.
   description: string,        // Description of the feature option.
-  group?: string,              // Feature option grouping for related options.
+  group?: string,             // Feature option grouping for related options.
   hasFeature?: string[],      // What hardware-specific features, if any, is this feature option dependent on.
   hasProperty?: string[],     // What UFP JSON property, if any, is this feature option dependent on.
   name: string                // Name of the feature option.
 }
 
-// Utility function to let us know if a device or feature should be enabled or not.
-export function optionEnabled(configOptions: string[], nvrUfp: ProtectNvrConfig | null, device: ProtectDeviceConfigTypes | ProtectNvrConfig | null,
-  option = "", defaultReturnValue = true, address = "", addressOnly = false): boolean {
+// Utility function to let us know whether a feature option should be enabled or not, traversing the scope hierarchy.
+export function isOptionEnabled(configOptions: string[], nvrUfp: ProtectNvrConfig | null, device: ProtectDeviceConfigTypes | ProtectNvrConfig | null, option = "",
+  defaultReturnValue = true): boolean {
 
   // There are a couple of ways to enable and disable options. The rules of the road are:
   //
@@ -168,122 +175,109 @@ export function optionEnabled(configOptions: string[], nvrUfp: ProtectNvrConfig 
     return defaultReturnValue;
   }
 
-  // Upper case parameters for easier checks.
-  option = option ? option.toUpperCase() : "";
-  address = address ? address.toUpperCase() : "";
+  const isOptionSet = (checkOption: string, checkMac: string | undefined = undefined): boolean | undefined => {
 
-  const deviceMac = device?.mac ? device.mac.toUpperCase() : "";
+    // This regular expression is a bit more intricate than you might think it should be due to the need to ensure we capture values at the very end of the option.
+    const optionRegex = new RegExp("^(Enable|Disable)\\." + checkOption + (!checkMac ? "" : "\\." + checkMac) + "$", "gi");
 
-  let optionSetting;
+    // Get the option value, if we have one.
+    for(const entry of configOptions) {
 
-  // If we've specified an address parameter - we check for device and address-specific options before
-  // anything else.
-  if(address && option) {
+      const regexMatch = optionRegex.exec(entry);
 
-    // Test for device-specific and address-specific option settings, used together.
-    if(deviceMac) {
+      if(regexMatch) {
 
-      optionSetting = option + "." + deviceMac + "." + address;
-
-      // We've explicitly enabled this option for this device and address combination.
-      if(configOptions.indexOf("ENABLE." + optionSetting) !== -1) {
-
-        return true;
-      }
-
-      // We've explicitly disabled this option for this device and address combination.
-      if(configOptions.indexOf("DISABLE." + optionSetting) !== -1) {
-
-        return false;
+        return regexMatch[1].toLowerCase() === "enable";
       }
     }
 
-    // Test for address-specific option settings only.
-    optionSetting = option + "." + address;
+    return undefined;
+  };
 
-    // We've explicitly enabled this option for this address.
-    if(configOptions.indexOf("ENABLE." + optionSetting) !== -1) {
+  // Check to see if we have a device-level option first.
+  if(device?.mac) {
 
-      return true;
-    }
+    const value = isOptionSet(option, device.mac);
 
-    // We've explicitly disabled this option for this address.
-    if(configOptions.indexOf("DISABLE." + optionSetting) !== -1) {
+    if(value !== undefined) {
 
-      return false;
-    }
-
-    // We're only interested in address-specific options.
-    if(addressOnly) {
-
-      return false;
+      return value;
     }
   }
 
-  // If we've specified a device, check for device-specific options first. Otherwise, we're dealing
-  // with an NVR-specific or global option.
-  if(deviceMac) {
+  // Now check to see if we have an NVR-level option.
+  if(nvrUfp?.mac) {
 
-    // First we test for camera-level option settings.
-    // No option specified means we're testing to see if this device should be shown in HomeKit.
-    optionSetting = option ? option + "." + deviceMac : deviceMac;
+    const value = isOptionSet(option, nvrUfp.mac);
 
-    // We've explicitly enabled this option for this device.
-    if(configOptions.indexOf("ENABLE." + optionSetting) !== -1) {
+    if(value !== undefined) {
 
-      return true;
-    }
-
-    // We've explicitly disabled this option for this device.
-    if(configOptions.indexOf("DISABLE." + optionSetting) !== -1) {
-
-      return false;
+      return value;
     }
   }
 
-  // If we don't have a managing device attached, we're done here.
-  if(!nvrUfp?.mac) {
+  // Finally, we check for a global-level value.
+  const value = isOptionSet(option);
 
-    return defaultReturnValue;
+  if(value !== undefined) {
+
+    return value;
   }
 
-  // Now we test for NVR-level option settings.
-  // No option specified means we're testing to see if this NVR (and it's attached devices) should be shown in HomeKit.
-  const nvrMac = nvrUfp.mac.toUpperCase();
-  optionSetting = option ? option + "." + nvrMac : nvrMac;
-
-  // We've explicitly enabled this option for this NVR and all the devices attached to it.
-  if(configOptions.indexOf("ENABLE." + optionSetting) !== -1) {
-
-    return true;
-  }
-
-  // We've explicitly disabled this option for this NVR and all the devices attached to it.
-  if(configOptions.indexOf("DISABLE." + optionSetting) !== -1) {
-
-    return false;
-  }
-
-  // Finally, let's see if we have a global option here.
-  // No option means we're done - it's a special case for testing if an NVR or camera should be hidden in HomeKit.
-  if(!option) {
-
-    return defaultReturnValue;
-  }
-
-  // We've explicitly enabled this globally for all devices.
-  if(configOptions.indexOf("ENABLE." + option) !== -1) {
-
-    return true;
-  }
-
-  // We've explicitly disabled this globally for all devices.
-  if(configOptions.indexOf("DISABLE." + option) !== -1) {
-
-    return false;
-  }
-
-  // Nothing special to do - assume the option is defaultReturnValue.
+  // The option hasn't been set at any scope, return our default value.
   return defaultReturnValue;
 }
 
+// Utility function to return a value-based feature option for a Protect device.
+export function getOptionValue(configOptions: string[], nvrUfp: ProtectNvrConfig | null, device: ProtectDeviceConfigTypes | null, option: string): string | undefined {
+
+  // Nothing configured - we assume there's nothing.
+  if(!configOptions.length || !option) {
+
+    return undefined;
+  }
+
+  const getValue = (checkOption: string, checkMac: string | undefined = undefined): string | undefined => {
+
+    // This regular expression is a bit more intricate than you might think it should be due to the need to ensure we capture values at the very end of the option.
+    const optionRegex = new RegExp("^Enable\\." + checkOption + (!checkMac ? "" : "\\." + checkMac) + "\\.([^\\.]+)$", "gi");
+
+    // Get the option value, if we have one.
+    for(const entry of configOptions) {
+
+      const regexMatch = optionRegex.exec(entry);
+
+      if(regexMatch) {
+
+        return regexMatch[1];
+      }
+    }
+
+    return undefined;
+  };
+
+  // Check to see if we have a device-level value first.
+  if(device?.mac) {
+
+    const value = getValue(option, device.mac);
+
+    if(value) {
+
+      return value;
+    }
+  }
+
+  // Now check to see if we have an NVR-level value.
+  if(nvrUfp?.mac) {
+
+    const value = getValue(option, nvrUfp.mac);
+
+    if(value) {
+
+      return value;
+    }
+  }
+
+  // Finally, we check for a global-level value.
+  return getValue(option);
+}

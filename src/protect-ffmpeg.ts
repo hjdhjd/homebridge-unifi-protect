@@ -5,9 +5,9 @@
  * This module is heavily inspired by the homebridge and homebridge-camera-ffmpeg source code. Thank you for your contributions to the HomeKit world.
  */
 import { ChildProcessWithoutNullStreams, spawn } from "node:child_process";
-import { ProtectCamera, ProtectPackageCamera } from "./protect-camera.js";
 import { Readable, Writable } from "node:stream";
 import { EventEmitter } from "node:events";
+import { ProtectCamera } from "./protect-camera.js";
 import { ProtectLogging } from "./protect-types.js";
 import { ProtectNvr } from "./protect-nvr.js";
 import { StreamRequestCallback } from "homebridge";
@@ -29,12 +29,12 @@ export class FfmpegProcess extends EventEmitter {
   protected readonly log: ProtectLogging;
   protected readonly nvr: ProtectNvr;
   protected process: ChildProcessWithoutNullStreams | null;
-  protected protectCamera: ProtectCamera | ProtectPackageCamera;
+  protected protectCamera: ProtectCamera;
   private stderrBuffer: string;
   protected stderrLog: string[];
 
   // Create a new FFmpeg process instance.
-  constructor(protectCamera: ProtectCamera | ProtectPackageCamera, commandLineArgs?: string[], callback?: StreamRequestCallback) {
+  constructor(protectCamera: ProtectCamera, commandLineArgs?: string[], callback?: StreamRequestCallback) {
 
     // Initialize our parent.
     super();

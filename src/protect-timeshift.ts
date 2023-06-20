@@ -105,7 +105,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
   }
 
   // Start the livestream and begin maintaining our timeshift buffer.
-  public async start(channelId: number): Promise<boolean> {
+  public async start(channelId: number, lens = 0): Promise<boolean> {
 
     // Stop the timeshift buffer if it's already running.
     this.stop();
@@ -125,7 +125,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
     this.buffer = [];
 
     // Start the livestream and start buffering.
-    if(!(await this.livestream.start(this.protectCamera.ufp.id, channelId, this.segmentLength))) {
+    if(!(await this.livestream.start(this.protectCamera.ufp.id, channelId, lens, this.segmentLength))) {
 
       // Something went wrong in communicating with the controller.
       return false;
