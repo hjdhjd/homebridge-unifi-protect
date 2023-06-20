@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 6.9.0 (2023-06-19)
+  * New feature: package camera HKSV support is here. Ubiquiti has stabilized access to the package camera and finally provided reliable access to it through the API. Package cameras will appear as HKSV-capable within the Home app, you can configure it the same as any other camera.
+  * New feature: leak sensor support, now that it's fully available in UniFi Protect sensors, are now fully supported. A leak sensor service will be configured in HomeKit if you enable the functionality is enabled in the Protect webUI or app. I also realized that I hadn't previously updated the MQTT documentation for Protect sensors - that's now documented as well.
+  * New feature: motion and occupancy event durations can now be granularly controlled through feature options. You can configure them using the webUI. **Note: if you previously set a default motion or occupancy event as an advanced setting - these will no longer be used. To replicate the behavior, set a global feature option for motion and occupancy event durations.**
+  * New feature: the webUI now will hide or show feature options that are dependent on other feature options being enabled or disabled, reducing visual clutter and making the webUI easier to navigate for people.
+  * New feature: value-centric feature options can now be configured using the webUI. This completes the feature set for the webUI - all feature options should be configured using the webUI moving forward.
+  * Improvement: additional speed and quality improvements for those that have hardware acceleration available to them. When using hardware acceleration, the highest stream quality will always be used by HBUP now, which significantly improves transcoding speed and quality.
+  * Improvement: ViewPort liveview state changes from the Protect webUI are now detected in realtime.
+  * Housekeeping.
+
 ## 6.8.1 (2023-06-04)
 ## 6.8.0 (2023-06-04)
   * Improvement: when using occupancy sensors in combination with smart motion detection, you can now tailor which Protect object detection types trigger occupancy. See the webUI or documentation for more.
