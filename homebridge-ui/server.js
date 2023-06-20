@@ -11,7 +11,7 @@
 /* eslint-disable new-cap */
 "use strict";
 
-import { featureOptionCategories, featureOptions, optionEnabled } from "../dist/protect-options.js";
+import { featureOptionCategories, featureOptions, isOptionEnabled } from "../dist/protect-options.js";
 import { HomebridgePluginUiServer } from "@homebridge/plugin-ui-utils";
 import { ProtectApi } from "unifi-protect";
 import * as fs from "node:fs";
@@ -113,7 +113,7 @@ class PluginUiServer extends HomebridgePluginUiServer {
 
           for(const options of featureOptions[category.name]) {
 
-            options.value = optionEnabled(request.configOptions, request.nvrUfp, request.deviceUfp, category.name + "." + options.name, options.default);
+            options.value = isOptionEnabled(request.configOptions, request.nvrUfp, request.deviceUfp, category.name + "." + options.name, options.default);
             optionSet[category.name].push(options);
           }
         }
