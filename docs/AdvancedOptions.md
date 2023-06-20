@@ -27,12 +27,10 @@ This step is not required. The defaults should work well for almost everyone, bu
     "videoProcessor": "/usr/local/bin/ffmpeg",
     "ffmpegOptions": [
     ]
-    "motionDuration": 10,
-    "occupancyDuration": 300,
     "verboseFfmpeg": false,
 
     "options": [
-      "Disable.Stream.High"
+      "Disable.Video.Stream.High"
     ],
 
     "controllers": [
@@ -67,8 +65,6 @@ This step is not required. The defaults should work well for almost everyone, bu
 | doorbellMessages       | Configure [doorbell messages](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Doorbell.md) for your UniFi Protect controller. | [] | No |
 | videoProcessor         | Specify path of ffmpeg or avconv.                       | "ffmpeg"                                                                              | No       |
 | ffmpegOptions          | Additional parameters to pass ffmpeg to render video.   |                                                                                       | No       |
-| motionDuration         | Duration of motion events. Setting this too low will potentially cause a lot of notification spam. | 10                                         | No       |
-| occupancyDuration      | Duration of occupancy events, in seconds.               | 300                                                                                   | No       |
 | refreshInterval        | Interval, in seconds, to check UniFi Protect for new or removed devices. | 10                                                                   | No       |
 | options                | Configure plugin [feature options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md).   | []                 | No       |
 | name                   | Controller name to use for homebridge logging purposes. | UniFi Protect controller name                                                         | No       |
