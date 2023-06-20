@@ -143,28 +143,6 @@
         }
       },
 
-      "occupancyDuration": {
-
-        "type": "integer",
-        "title": "Occupancy Event Duration (seconds)",
-        "required": false,
-        "minimum": 60,
-        "maximum": 3600,
-        "placeholder": "e.g. 300",
-        "description": "Duration of time to wait without receiving a motion event to determine when occupancy is no longer detected. Default: 300."
-      },
-
-      "motionDuration": {
-
-        "type": "integer",
-        "title": "Motion Event Duration (seconds)",
-        "required": false,
-        "minimum": 5,
-        "maximum": 300,
-        "placeholder": "e.g. 10",
-        "description": "Duration of a single motion event, before allowing a new motion event. Setting this too low will potentially cause a lot of excess notifications. Default: 10."
-      },
-
       "ringDuration": {
 
         "type": "integer",
@@ -318,8 +296,6 @@
             "videoProcessor",
             "videoEncoder",
             "verboseFfmpeg",
-            "motionDuration",
-            "occupancyDuration",
             "ringDuration"
           ]
         }
