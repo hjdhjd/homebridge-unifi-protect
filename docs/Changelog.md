@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 6.9.2 (2023-06-24)
+  * Fix: ensure HKSV recording can be enabled on Protect cameras with native frame rates that are different than what HomeKit accepts.
+
 ## 6.9.1 (2023-06-23)
   * Fix: improve  webUI compatibility across browsers for value-centric feature options.
   * Housekeeping.
