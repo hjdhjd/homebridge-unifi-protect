@@ -13,7 +13,7 @@
 </DIV>
 </SPAN>
 
-`homebridge-unifi-protect` is a [Homebridge](https://homebridge.io) plugin that provides HomeKit support to the [UniFi Protect](https://unifi-network.ui.com/video-security) device ecosystem. [UniFi Protect](https://unifi-network.ui.com/video-security) is [Ubiquiti's](https://www.ui.com) video security platform, with rich camera, doorbell, and NVR controller hardware options for you to choose from, as well as an app which you can use to view, configure and manage your video camera and doorbells.
+`homebridge-unifi-protect` is a [Homebridge](https://homebridge.io) plugin that provides HomeKit support to the [UniFi Protect](https://ui.com/us/camera-security) device ecosystem. [UniFi Protect](https://ui.com/us/camera-security) is [Ubiquiti's](https://www.ui.com) video security platform, with rich camera, doorbell, and NVR controller hardware options for you to choose from, as well as an app which you can use to view, configure and manage your video camera and doorbells.
 
 ## <A NAME="why"></A>Why Use This Plugin For UniFi Protect Support In HomeKit?
 This plugin attempts to bridge a gap in the UniFi Protect ecosystem by providing native HomeKit support on par with what you would expect from a first-party of native HomeKit solution. My north star is to create a plugin that *just works* with minimal required configuration by you to get up and running. The goal is to provide as close to a streamlined experience as you would expect from a first-party or native HomeKit solution. For the adventurous, there are more granular options available to enable you to further tailor your experience.
@@ -23,13 +23,13 @@ What does *just works* mean in practice? It means that this plugin will discover
 For the more technically inclined - this plugin has continued to pioneer the HomeKit user experience for UniFi Protect by being the ***first*** Homebridge plugin (and first third-party app, to my knowledge) to successfully reverse engineer the UniFi Protect realtime events API that was introduced with UniFi OS. This allows instantaneous, realtime capturing of events as they occur in the Protect ecosystem, allowing us to provide that same level of realtime sensor and camera feedback to HomeKit. Since reverse engineering the realtime events API, most of the major open source smart automation projects have benefited and also incorporated our work, improving the experience for everyone across smart home ecosystems.
 
 ### Features
-- ***Easy* configuration - all you need is your UniFi Protect controller IP address, username, and password to get started.** The defaults work for the vast majority of users. When you want more, there are [additional options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md) you can play with, if you choose.
+- ***Easy* configuration - all you need is your UniFi Protect controller IP address, username, and password to get started.** The defaults work quite well for the vast majority of users. When you want more, there are [additional options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md) you can play with, if you choose.
 
 - **Full HomeKit support for the UniFi Protect ecosystem.** All generally available UniFi Protect devices are supported, including cameras, chimes, doorbells, lights, sensors, and ViewPorts.
 
 - **[Complete HomeKit Secure Video support for all UniFi Protect cameras.](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/HomeKitSecureVideo.md)** Complete HomeKit Secure Video support, without the need for additional plugins or software beyond FFmpeg. Another community first - all without the need for additional tools to get a complete solution.
 
-- **Blazing fast video streaming.** Video streaming from HomeKit will start within in 1-2 seconds for cameras, in most cases - less than a second when using a fast machine like an Apple Silicon Mac mini. I've spent the time to optimize the video streaming experience to ensure it feels very responsive, and *just works*.
+- **Blazing fast video streaming.** Video streaming from HomeKit will start within in 1-2 seconds for cameras, in most cases - less than a second when using a fast machine like an Apple Silicon Mac mini. I've spent the time to optimize the video streaming experience to ensure it feels very responsive, and *just works*. For those that have hardware-accelerated CPUs and GPUs, streaming load times that can be as low as 0.2-0.3 seconds on a day-to-day basis, which is often better than the native UniFi Protect app! Supported hardware-accelerated platforms are currently: Apple Macs (both Intel and Apple Silicon), Intel Quick Sync Video-enabled CPUs, and Raspberry Pi 4.
 
 - **[Full UniFi Protect Doorbell support.](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Doorbell.md).** This plugin provides complete support for [UniFi Protect Doorbells](https://store.ui.com/collections/unifi-protect/products/uvc-g4-doorbell). We support all the features of the doorbell including - doorbell rings, two-way audio, package camera support, and the use of the onboard LCD screen for messages. Two-way audio has caveats you should be aware of.
 
@@ -87,19 +87,6 @@ Audio on cameras is tricky in the HomeKit world to begin with, and when you thro
 * There is one notable caveat, currently, with two-way audio: the lack of acoustic echo cancellation, or AEC. [Read more on about two-way audio here](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Doorbell.md#doorbell-twoway).
 
 * **Audio support will not work unless you have a version of FFmpeg that supports fdk-aac.** Unfortunately, most default installations of FFmpeg are not compiled with support for fdk-aac. You'll need to compile or acquire a version of FFmpeg that does. Doing so is beyond the scope of this documentation. There are plenty of guides to this - Google is your friend. This plugin uses [ffmpeg-for-homebridge](https://www.npmjs.com/package/ffmpeg-for-homebridge) which eases the pain somewhat by providing prebuilt static binaries of FFmpeg for certain platforms, and save you the trouble of having to compile a version of FFmpeg yourself.
-
-### Using Other Video Processors
-`videoProcessor` is the video processor used to stream video. By default, this is [FFmpeg](https://ffmpeg.org), but can be your own custom version of ffmpeg or other video processor that accepts and understands FFmpeg command line semantics.
-
-```
-{
-  "platform": "UniFi Protect",
-  "videoProcessor": "/my/own/compiled/ffmpeg",
-  "controllers": [
-    ...
-  ]
-}
-```
 
 ### Things To Be Aware Of
 - **Make sure you are running on the latest production / stable firmwares for both your controller platform (UCKgen2+, UDM-Pro, UNVR, etc.) as well as the latest production / stable UniFi Protect controller firmware.**
