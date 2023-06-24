@@ -609,6 +609,29 @@ export class ProtectCamera extends ProtectDevice {
       rtspEntries.sort(this.sortByResolutions.bind(this));
     }
 
+    // Ensure we've got at least one entry that can be used for HomeKit Secure Video. Some Protect cameras (e.g. G3 Flex) don't have a native frame rate that
+    // maps to HomeKit's specific requirements for event recording, so we ensure there's at least one. This doesn't directly affect which stream is used to
+    // actually record something, but it does determine whether HomeKit even attempts to use the camera for HomeKit Secure Video.
+    if(![15, 24, 30].includes(rtspEntries[0].resolution[2])) {
+
+      const entry = rtspEntries[0];
+
+      // Determine the best frame rate to use that's closest to what HomeKit wants.
+      if(entry.resolution[2] > 24) {
+
+        entry.resolution[2] = 30;
+      } else if(entry.resolution[2] > 15) {
+
+        entry.resolution[2] = 24;
+      } else {
+
+        entry.resolution[2] = 15;
+      }
+
+      // Add it to the top of the list of supported resolutions.
+      rtspEntries.unshift(entry);
+    }
+
     // Publish our updated list of supported resolutions and their URLs.
     this.rtspEntries = rtspEntries;
 
