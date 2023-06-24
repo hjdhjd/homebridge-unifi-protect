@@ -846,13 +846,14 @@
               if(("defaultValue" in option)) {
 
                 const tdInput = document.createElement("td");
+                tdInput.classList.add("mr-2");
+                tdInput.style.width = "10%";
 
                 inputValue = document.createElement("input");
                 inputValue.type = "text";
                 inputValue.value = initialValue ?? option.defaultValue;
                 inputValue.size = 5;
                 inputValue.readOnly = !checkbox.checked;
-                inputValue.classList.add("mr-2");
 
                 // Add or remove the setting from our configuration when we've changed our state.
                 inputValue.addEventListener("change", async () => {
