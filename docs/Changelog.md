@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 6.9.1 (2023-06-23)
+  * Fix: improve  webUI compatibility across browsers for value-centric feature options.
+  * Housekeeping.
+
 ## 6.9.0 (2023-06-19)
   * New feature: package camera HKSV support is here. Ubiquiti has stabilized access to the package camera and finally provided reliable access to it through the API. Package cameras will appear as HKSV-capable within the Home app, you can configure it the same as any other camera.
   * New feature: leak sensor support, now that it's fully available in UniFi Protect sensors, are now fully supported. A leak sensor service will be configured in HomeKit if you enable the functionality is enabled in the Protect webUI or app. I also realized that I hadn't previously updated the MQTT documentation for Protect sensors - that's now documented as well.
