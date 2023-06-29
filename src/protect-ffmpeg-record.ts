@@ -110,6 +110,12 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
       );
     }
 
+    // Configure QSV Low Power mode
+    //
+    if (this.protectCamera.platform.config.qsvLowPower) {
+        this.commandLineArgs.push("-low_power", "1");
+    }
+
     // Configure our video parameters for outputting our final stream:
     //
     // -f mp4  Tell ffmpeg that it should create an MP4-encoded output stream.

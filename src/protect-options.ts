@@ -14,6 +14,7 @@ export interface ProtectOptions {
   debugAll: boolean,
   ffmpegOptions: string[],
   options: string[],
+  qsvLowPower: boolean;
   ringDuration: number,
   verboseFfmpeg: boolean,
   videoEncoder: string,

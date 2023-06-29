@@ -142,7 +142,15 @@
           "placeholder": "e.g. Disable.Video.Transcode"
         }
       },
+      
+      "qsvLowPower": {
 
+        "type": "boolean",
+        "title": "QSV Low Power Mode. Only useful when video encoder is h264_qsv.",
+        "required": false,
+        "description": "Enable Low Power mode for the QSV encoder. Default: false."
+      },
+      
       "ringDuration": {
 
         "type": "integer",
@@ -296,6 +304,7 @@
             "videoProcessor",
             "videoEncoder",
             "verboseFfmpeg",
+            "qsvLowPower",
             "ringDuration"
           ]
         }
