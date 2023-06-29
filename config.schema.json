@@ -148,7 +148,7 @@
         "type": "boolean",
         "title": "QSV Low Power Mode. Only useful when video encoder is h264_qsv.",
         "required": false,
-        "description": "Enable Low Power mode for the QSV encoder. Default: false."
+        "description": "Enable Low Power mode for the QSV encoder. Only supported on Gen9 CPUs and higher. Default: false."
       },
       
       "ringDuration": {
