@@ -3,11 +3,11 @@
  * protect-nvr.ts: NVR device class for UniFi Protect.
  */
 import { API, APIEvent, HAP, PlatformAccessory } from "homebridge";
-import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_CONTROLLER_REFRESH_INTERVAL, PROTECT_CONTROLLER_RETRY_INTERVAL } from "./settings.js";
+import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_CONTROLLER_REFRESH_INTERVAL, PROTECT_CONTROLLER_RETRY_INTERVAL, PROTECT_M3U_PLAYLIST_PORT } from "./settings.js";
 import { ProtectApi, ProtectCameraConfig, ProtectChimeConfig, ProtectLightConfig, ProtectNvrBootstrap, ProtectNvrConfig,
   ProtectSensorConfig, ProtectViewerConfig } from "unifi-protect";
 import { ProtectDeviceConfigTypes, ProtectDevices, ProtectLogging } from "./protect-types.js";
-import { ProtectNvrOptions, isOptionEnabled } from "./protect-options.js";
+import { ProtectNvrOptions, getOptionFloat, getOptionNumber, getOptionValue, isOptionEnabled } from "./protect-options.js";
 import { ProtectCamera } from "./protect-camera.js";
 import { ProtectChime } from "./protect-chime.js";
 import { ProtectDevice } from "./protect-device.js";
@@ -20,6 +20,7 @@ import { ProtectNvrSystemInfo } from "./protect-nvr-systeminfo.js";
 import { ProtectPlatform } from "./protect-platform.js";
 import { ProtectSensor } from "./protect-sensor.js";
 import { ProtectViewer } from "./protect-viewer.js";
+import http from "node:http";
 import util from "node:util";
 
 export class ProtectNvr {
@@ -204,6 +205,12 @@ export class ProtectNvr {
     if(!this.mqtt && this.config.mqttUrl) {
 
       this.mqtt = new ProtectMqtt(this);
+    }
+
+    // Initialize our playlist service, if enabled.
+    if(this.getFeatureNumber("Nvr.Service.Playlist") !== undefined) {
+
+      this.servePlaylist();
     }
 
     // Inform the user about the devices we see.
@@ -691,6 +698,104 @@ export class ProtectNvr {
     this.api.updatePlatformAccessories(this.platform.accessories);
   }
 
+  // Create a web service to publish an M3U playlist of Protect camera livestreams.
+  private servePlaylist(): void {
+
+    const port = this.getFeatureNumber("Nvr.Service.Playlist") ?? PROTECT_M3U_PLAYLIST_PORT;
+    const server = http.createServer();
+
+    // Respond to requests for a Protect camera playlist.
+    server.on("request", (request, response) => {
+
+      // Set the right MIME type for M3U playlists.
+      response.writeHead(200, { "Content-Type": "application/x-mpegURL" });
+
+      // Output the M3U header.
+      response.write("#EXTM3U\n");
+
+      // Make sure we have access to the Protect API bootstrap before we begin.
+      if(this.ufpApi.bootstrap) {
+
+        // Find the RTSP aliases and publish them. We filter out any cameras that don't have RTSP aliases since they would be inaccessible in this context.
+        for(const camera of this.ufpApi.bootstrap.cameras.filter(x => x.channels.some(channel => channel.isRtspEnabled)).sort((a, b) => {
+
+          if(a.name < b.name) {
+
+            return -1;
+          }
+
+          if(a.name > b.name) {
+
+            return 1;
+          }
+
+          return 0;
+        })) {
+
+          // Create a playlist entry for each camera, including guide information that's suitable for apps that support it, such as Channels DVR.
+          response.write(util.format(
+            "#EXTINF:0 channel-id=\"%s\" tvc-stream-vcodec=\"h264\" tvc-stream-acodec=\"aac\" tvg-logo=\"%s\" tvc-guide-title=\"%s Livestream\",%s\n",
+            camera.name, "https://raw.githubusercontent.com/hjdhjd/homebridge-unifi-protect/main/images/homebridge-unifi-protect.png", camera.name, camera.name));
+
+          // By convention, the first RTSP alias is always the highest quality on UniFi Protect cameras. Grab it and we're done. We might be tempted to use the RTSPS
+          // stream here, but many apps only supports RTSP, and we'll opt for maximizing compatibility here.
+          response.write(util.format("rtsp://%s:%s/%s\n", this.ufpApi.bootstrap.nvr.host, this.ufpApi.bootstrap.nvr.ports.rtsp, camera.channels[0].rtspAlias));
+
+          // Ensure we publish package cameras as well, when we have them.
+          if(camera.featureFlags.hasPackageCamera) {
+
+            const packageChannel = camera.channels.find(x => x.isRtspEnabled && (x.name === "Package Camera"));
+
+            if(!packageChannel) {
+
+              continue;
+            }
+
+            const packageName = camera.name + " " + packageChannel.name;
+
+            response.write(util.format(
+              "#EXTINF:0 channel-id=\"%s\" tvc-stream-vcodec=\"h264\" tvc-stream-acodec=\"aac\" tvg-logo=\"%s\" tvc-guide-title=\"%s Livestream\",%s\n",
+              packageName, "https://raw.githubusercontent.com/hjdhjd/homebridge-unifi-protect/main/images/homebridge-unifi-protect.png", packageName, packageName));
+            response.write(util.format("rtsp://%s:%s/%s\n", this.ufpApi.bootstrap.nvr.host, this.ufpApi.bootstrap.nvr.ports.rtsp, packageChannel.rtspAlias));
+          }
+        }
+      }
+
+      // We're done with this response.
+      response.end();
+    });
+
+    // Handle errors when they occur.
+    server.on("error", (error) => {
+
+      // Explicitly handle address in use errors, given their relative common nature. Everything else, we log and abandon.
+      if((error as NodeJS.ErrnoException).code === "EADDRINUSE") {
+
+        this.log.error("The address and port we are attempting to use is already in use by something else. Will retry again shortly.");
+
+        setTimeout(() => {
+
+          server.close();
+          server.listen(port);
+        }, 5000);
+
+        return;
+      }
+
+      this.log.error("M3U playlist publisher error: %s", error);
+      server.close();
+    });
+
+    // Let users know we're up and running.
+    server.on("listening", () => {
+
+      this.log.info("Publishing an M3U playlist of Protect camera livestream URLs on port %s.", port);
+    });
+
+    // Listen on the port we've configured.
+    server.listen(port);
+  }
+
   // Reauthenticate with the NVR and reset any HKSV timeshift buffers, as needed.
   public async resetNvrConnection(): Promise<void> {
 
@@ -730,6 +835,18 @@ export class ProtectNvr {
     const foundDevice = Object.keys(this.configuredDevices).find(x => (this.configuredDevices[x].ufp).id === deviceId);
 
     return foundDevice ? this.configuredDevices[foundDevice] : null;
+  }
+
+  // Utility function to return a floating point configuration parameter on a device.
+  public getFeatureFloat(option: string): number | undefined {
+
+    return getOptionFloat(getOptionValue(this.platform.configOptions, this.ufp, null, option));
+  }
+
+  // Utility function to return an integer configuration parameter on a device.
+  public getFeatureNumber(option: string): number | undefined {
+
+    return getOptionNumber(getOptionValue(this.platform.configOptions, this.ufp, null, option));
   }
 
   // Utility for checking feature options on the NVR.

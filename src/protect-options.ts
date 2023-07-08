@@ -3,7 +3,7 @@
  * protect-options.ts: Type definitions for UniFi Protect.
  */
 import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_FFMPEG_AUDIO_FILTER_HIGHPASS, PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS,
-  PROTECT_MOTION_DURATION, PROTECT_OCCUPANCY_DURATION } from "./settings.js";
+  PROTECT_M3U_PLAYLIST_PORT, PROTECT_MOTION_DURATION, PROTECT_OCCUPANCY_DURATION } from "./settings.js";
 import { ProtectDeviceConfigTypes } from "./protect-types.js";
 import { ProtectNvrConfig } from "unifi-protect";
 
@@ -106,6 +106,7 @@ export const featureOptions: { [index: string]: FeatureOption[] } = {
   // NVR options.
   "Nvr": [
 
+    { default: false, defaultValue: PROTECT_M3U_PLAYLIST_PORT, description: "Publish an M3U playlist of Protect cameras on the specified port of this Homebridge server that is suitable for use in apps (e.g. Channels DVR) that can make camera livestreams available through them.", name: "Service.Playlist" },
     { default: false, description: "Publish all the realtime telemetry received from the Protect controller to MQTT.", name: "Publish.Telemetry" },
     { default: false, description: "Add switch accessories to control the native recording capabilities of the UniFi Protect NVR.", name: "Recording.Switch" },
     { default: false, description: "Add sensor accessories to display the Protect controller system information (currently only the temperature).", name: "SystemInfo" }
