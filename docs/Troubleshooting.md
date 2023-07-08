@@ -1,7 +1,7 @@
 <SPAN ALIGN="CENTER" STYLE="text-align:center">
 <DIV ALIGN="CENTER" STYLE="text-align:center">
 
-[![homebridge-unifi-protect: Native HomeKit support for UniFi Protect](https://raw.githubusercontent.com/hjdhjd/homebridge-unifi-protect/main/homebridge-protect.svg)](https://github.com/hjdhjd/homebridge-unifi-protect)
+[![homebridge-unifi-protect: Native HomeKit support for UniFi Protect](https://raw.githubusercontent.com/hjdhjd/homebridge-unifi-protect/main/images/homebridge-unifi-protect.svg)](https://github.com/hjdhjd/homebridge-unifi-protect)
 
 # Homebridge UniFi Protect
 
@@ -52,13 +52,11 @@ Getting `homebridge-unifi-protect` connected to UniFi Protect is the foundationa
       * Without either of those privileges, you won't be able to see any cameras without enabling a role.
 
 ### <A NAME="network"></A>Network Issues
-If you run homebridge in Docker, or a VM or VM-like environment, you might run into a network issue without realizing it due to situations with multiple network interface cards (NICs). By default, Homebridge listens for HomeKit requests on all the network interfaces it finds when it starts up. Historically, this has created a challenge for video-streaming plugins like `homebridge-unifi-protect` because the plugin doesn't have a way of knowing which interface the streaming request came from. So what this plugin, and pretty much all the other similar plugins do, is guess by looking for the default network interface on the system and assuming that's where video should be sent out of.
+If you run homebridge in Docker, or a VM or VM-like environment, you might run into a network issue without realizing it due to situations with multiple network interface cards (NICs). By default, Homebridge listens for HomeKit requests on all the network interfaces it finds when it starts up. Homebridge, not `homebridge-unifi-protect`, decides which interface to use when streaming video.
 
-The good news is that the leading camera plugin developers and the Homebridge developers have been collaborating on a solution for this, and as of Homebridge 1.1.3, Homebridge now takes over responsibility for determining which interface and IP address to use when streaming video. This is an ideal solution because Homebridge is really who knows where the request came from and is in the best position to determine which interface to use to stream from.
+**If your symptoms are something along the lines of "snapshots work, but video streaming doesn't", it's almost certainly a network interface issue.**
 
-If you're having issues with this plugin, or others, not using the correct network interface, I'd encourage you to upgrade to Homebridge 1.1.3 or greater and see if that resolves the issue.
-
-If that still doesn't do the trick, take a closer look at [how to select advertised network interfaces in Homebridge](https://github.com/homebridge/homebridge/wiki/mDNS-Options#how-to-select-advertised-network-interfaces). **If your symptoms are something along the lines of "snapshots work, but video streaming doesn't", it's almost certainly a network interface issue.**
+[You will need to select the correct advertised network interface in Homebridge](https://github.com/homebridge/homebridge/wiki/mDNS-Options#how-to-select-advertised-network-interfaces).
 
 **Note: Setting advertised network interfaces doesn't always work as expected.** The ffmpeg command will be unaware of this information and will choose whatever outbound IP the environment gives it. One way of checking this, if you have a Mac with the Home app, is to run `tcpdump` while you try to stream the camera. You should see entries such as
 
@@ -67,7 +65,7 @@ If that still doesn't do the trick, take a closer look at [how to select adverti
 13:57:08.547542 IP 192.168.2.16.59594 > 192.168.0.55.62642: UDP, length 120
 ```
 
-The ports will correspond to those seen in the `ffmpeg` command if you turn on verbose logging. If you are seeing no entries then chances are you have firewall or routing issues. If you are seeing entries, but no video is streaming, then this is likely that the Home App is not expecting the *source IP* to be what it is. In the above case, even though the only ***advertised*** port was the "other" ethernet, it was not arriving via that route. Changing the advertisment to match fixed this and video started working.
+The ports will correspond to those seen in the `ffmpeg` command if you turn on verbose logging. If you are seeing no entries then chances are you have firewall or routing issues. If you are seeing entries, but no video is streaming, then this is likely that the Home App is not expecting the *source IP* to be what it is. In the above case, even though the only ***advertised*** port was the "other" ethernet, it was not arriving via that route. Changing the advertisment to match should fix this.
 
 ### <A NAME="video"></A>Video Streaming
 There are lots of things that can go wrong with video streaming, unfortunately. I want to start by providing a bit of background on how streaming actually works in HomeKit, homebridge and this plugin before getting into where things can break.
