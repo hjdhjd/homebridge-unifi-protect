@@ -98,8 +98,8 @@ These option(s) apply to: Protect cameras
 
 | Option                                           | Description
 |--------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-| `Audio`                                          | Audio support. **(default: enabled)**.
-| `Audio.Filter.Noise`                             | Audio filter for ambient noise suppression. **(default: disabled)**. <BR>*Supported on Protect cameras that have a motion sensor.*
+| `Audio`                                          | Audio support. **(default: enabled)**. <BR>*Supported on Protect cameras that have a microphone.*
+| `Audio.Filter.Noise`                             | Audio filter for ambient noise suppression. **(default: disabled)**. <BR>*Supported on Protect cameras that have a microphone.*
 | `Audio.Filter.Noise.FftNr<I>.Value</I>`          | Noise reduction amount, in decibels, for the FFmpeg afftdn filter. **(default: 90)**.
 | `Audio.Filter.Noise.HighPass<I>.Value</I>`       | Frequency, in Hertz, for the FFmpeg highpass filter. **(default: 200)**.
 | `Audio.Filter.Noise.LowPass<I>.Value</I>`        | Frequency, in Hertz, for the FFmpeg lowpass filter. **(default: 1000)**.
@@ -120,8 +120,8 @@ These option(s) apply to: Protect cameras
 
 | Option                                           | Description
 |--------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-| `Doorbell.Messages`                              | Enable the doorbell messages feature. **(default: enabled)**. <BR>*Supported on undefined.*
-| `Doorbell.Messages.FromDoorbell`                 | Use messages saved to the Protect NVR as message switches. **(default: enabled)**. <BR>*Supported on undefined.*
+| `Doorbell.Messages`                              | Enable the doorbell messages feature. **(default: enabled)**. <BR>*Supported on Protect devices that have a doorbell.*
+| `Doorbell.Messages.FromDoorbell`                 | Use messages saved to the Protect NVR as message switches. **(default: enabled)**. <BR>*Supported on Protect devices that have a doorbell.*
 | `Doorbell.Trigger`                               | Add a switch accessory to trigger doorbell ring events on a Protect camera or doorbell. **(default: disabled)**. <BR>*Supported on Protect cameras that have a motion sensor.*
 
 #### <A NAME="log"></A>Logging feature options.
@@ -156,6 +156,7 @@ These option(s) apply to: Protect controllers
 
 | Option                                           | Description
 |--------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+| `Nvr.Service.Playlist<I>.Value</I>`              | Publish an M3U playlist of Protect cameras on the specified port of this Homebridge server that is suitable for use in apps (e.g. Channels DVR) that can make camera livestreams available through them. **(default: 10110)**.
 | `Nvr.Publish.Telemetry`                          | Publish all the realtime telemetry received from the Protect controller to MQTT. **(default: disabled)**.
 | `Nvr.Recording.Switch`                           | Add switch accessories to control the native recording capabilities of the UniFi Protect NVR. **(default: disabled)**.
 | `Nvr.SystemInfo`                                 | Add sensor accessories to display the Protect controller system information (currently only the temperature). **(default: disabled)**.
