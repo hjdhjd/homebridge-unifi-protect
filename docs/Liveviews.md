@@ -40,7 +40,7 @@ First, we need to understand the security system accessory in [HomeKit](https://
 | **Night**             | Your home is occupied, and the residents are sleeping.
 | **Off**               | disarmed.
 
-Next, you have the UniFi Protect *Liveview* functionality in the Protect webUI. You can manage your liveviews by going to `https://your-protect-controller/liveview`. You can add, remove, or modify any liveviews you have setup in this interface.
+Next, you have the UniFi Protect *Liveview* functionality in the Protect webUI. You can manage your liveviews by going to `https://your-protect-controller/protect/liveview`. You can add, remove, or modify any liveviews you have setup in this interface.
 
 Now, to put all the pieces together. What `homebridge-unifi-protect` does is:
 
