@@ -269,8 +269,8 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       return assignedPort;
     };
 
-    // Check if audio support is enabled.
-    const isAudioEnabled = this.protectCamera.hasFeature("Audio");
+    // Check if the camera has a microphone and if we have audio support is enabled in the plugin.
+    const isAudioEnabled = this.protectCamera.ufp.featureFlags.hasMic && this.protectCamera.hasFeature("Audio");
 
     // We need to check for AAC support because it's going to determine whether we support audio.
     const hasAudioSupport = isAudioEnabled && (this.ffmpegOptions.audioEncoder.length > 0);
