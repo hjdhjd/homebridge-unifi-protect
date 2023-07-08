@@ -256,6 +256,14 @@ export class ProtectNvr {
   // Configure NVR-specific settings.
   private async configureNvr(): Promise<boolean> {
 
+    // Warn users if they're running versions of UniFi OS below 3.0.
+    const firmwareVersion = this.ufp.firmwareVersion.split(".");
+
+    if(parseInt(firmwareVersion[0]) < 3) {
+
+      this.log.error("Warning: your Protect controller firmware version is less than UniFi OS 3.0. Some features may not work correctly.");
+    }
+
     // Configure the default doorbell message on the NVR.
     await this.configureDefaultDoorbellMessage();
     return true;
