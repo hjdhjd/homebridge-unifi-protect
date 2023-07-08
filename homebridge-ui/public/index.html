@@ -1,5 +1,5 @@
 <p class="text-center">
-    <img src="https://raw.githubusercontent.com/hjdhjd/homebridge-unifi-protect/main/homebridge-protect.svg"
+    <img src="https://raw.githubusercontent.com/hjdhjd/homebridge-unifi-protect/main/images/homebridge-unifi-protect.svg"
         alt="homebridge-unifi-protect logo" style="width: 60%;" />
 </p>
 <div id="pageIntro" style="display: none;">
@@ -101,8 +101,8 @@
                     : best practices for getting the most of your HomeKit setup and UniFi Protect.
                 </li>
                 <li>
-                    <a target="_blank" href="https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Troubleshooting.md">Troubleshooting</a>
-                    : run into login problems or streaming problems? Give this a read.
+                    <b><a target="_blank" href="https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Troubleshooting.md">Troubleshooting</a>
+                    : run into login problems or streaming problems? Give this a read before looking anywhere else.</b>
                 </li>
             </ul>
         </li>
@@ -743,6 +743,9 @@
             // Finally, add the table head to the table.
             optionTable.appendChild(thead);
 
+            // Keep track of the number of options we have made available in a given category.
+            let optionsVisibleCount = 0;
+
             // Now enumerate all the feature options for a given device.
             for(const option of optionsDevice[category.name]) {
 
@@ -1032,6 +1035,10 @@
               if((option.group !== undefined) && !isOptionEnabled(category.name + (option.group.length ? ("." + option.group): ""), ufpDevice?.mac)) {
 
                 trX.style.display = "none";
+              } else {
+
+                // Increment the visible option count.
+                optionsVisibleCount++;
               }
 
               // Add the table row to the table body.
@@ -1040,6 +1047,12 @@
 
             // Add the table body to the table.
             optionTable.appendChild(tbody);
+
+            // If we have no options visible in a given category, then hide the entire category.
+            if(!optionsVisibleCount) {
+
+              optionTable.style.display = "none";
+            }
 
             // Add the table to the page.
             configTable.appendChild(optionTable);
