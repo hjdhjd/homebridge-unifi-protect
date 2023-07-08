@@ -58,8 +58,8 @@ export const featureOptions: { [index: string]: FeatureOption[] } = {
   // Audio options.
   "Audio": [
 
-    { default: true, description: "Audio support.", name: "" },
-    { default: false, description: "Audio filter for ambient noise suppression.", group: "", hasFeature: [ "hasMotionZones" ], name: "Filter.Noise" },
+    { default: true, description: "Audio support.", hasFeature: [ "hasMic" ], name: "" },
+    { default: false, description: "Audio filter for ambient noise suppression.", group: "", hasFeature: [ "hasMic" ], name: "Filter.Noise" },
     { default: false, defaultValue: PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, description: "Noise reduction amount, in decibels, for the FFmpeg afftdn filter.", group: "Filter.Noise", name: "Filter.Noise.FftNr" },
     { default: false, defaultValue: PROTECT_FFMPEG_AUDIO_FILTER_HIGHPASS, description: "Frequency, in Hertz, for the FFmpeg highpass filter.", group: "Filter.Noise", name: "Filter.Noise.HighPass" },
     { default: false, defaultValue: PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS, description: "Frequency, in Hertz, for the FFmpeg lowpass filter.", group: "Filter.Noise", name: "Filter.Noise.LowPass" },
