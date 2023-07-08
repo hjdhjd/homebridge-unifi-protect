@@ -281,3 +281,43 @@ export function getOptionValue(configOptions: string[], nvrUfp: ProtectNvrConfig
   // Finally, we check for a global-level value.
   return getValue(option);
 }
+
+// Utility function to parse and return a numeric configuration parameter.
+function parseOptionNumeric(optionValue: string | undefined, convert: (value: string) => number): number | undefined {
+
+  // We don't have the option configured -- we're done.
+  if(optionValue === undefined) {
+
+    return undefined;
+  }
+
+  // Convert it to a number, if needed.
+  const convertedValue = convert(optionValue);
+
+  // Let's validate to make sure it's really a number.
+  if(isNaN(convertedValue) || (convertedValue < 0)) {
+
+    return undefined;
+  }
+
+  // Return the value.
+  return convertedValue;
+}
+
+// Utility function to return a floating point configuration parameter.
+export function getOptionFloat(optionValue: string | undefined): number | undefined {
+
+  return parseOptionNumeric(optionValue, (value: string) => {
+
+    return parseFloat(value);
+  });
+}
+
+// Utility function to return an integer configuration parameter on a device.
+export function getOptionNumber(optionValue: string | undefined): number | undefined {
+
+  return parseOptionNumeric(optionValue, (value: string) => {
+
+    return parseInt(value);
+  });
+}

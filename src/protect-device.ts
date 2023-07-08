@@ -6,7 +6,7 @@ import { API, CharacteristicValue, HAP, PlatformAccessory } from "homebridge";
 import { PROTECT_MOTION_DURATION, PROTECT_OCCUPANCY_DURATION} from "./settings.js";
 import { ProtectApi, ProtectCameraConfig, ProtectEventPacket, ProtectNvrConfig } from "unifi-protect";
 import { ProtectDeviceConfigTypes, ProtectLogging, ProtectReservedNames } from "./protect-types.js";
-import { getOptionValue, isOptionEnabled } from "./protect-options.js";
+import { getOptionFloat, getOptionNumber, getOptionValue, isOptionEnabled } from "./protect-options.js";
 import { ProtectNvr } from "./protect-nvr.js";
 import { ProtectPlatform } from "./protect-platform.js";
 import util from "node:util";
@@ -507,46 +507,16 @@ export abstract class ProtectDevice extends ProtectBase {
     return true;
   }
 
-  // Utility function to return a numeric configuration parameter on a device.
-  private getFeature(option: string, convert: (value: string) => number): number | undefined {
-
-    let optionValue: number | string | undefined = getOptionValue(this.platform.configOptions, this.nvr.ufp, this.ufp, option);
-
-    // We don't have the option configured -- we're done.
-    if(optionValue === undefined) {
-
-      return undefined;
-    }
-
-    // Convert it to a number.
-    optionValue = convert(optionValue);
-
-    // Let's validate to make sure it's really a number.
-    if(isNaN(optionValue) || (optionValue < 0)) {
-
-      return undefined;
-    }
-
-    // Return the value.
-    return optionValue;
-  }
-
   // Utility function to return a floating point configuration parameter on a device.
   public getFeatureFloat(option: string): number | undefined {
 
-    return this.getFeature(option, (value: string) => {
-
-      return parseFloat(value);
-    });
+    return getOptionFloat(getOptionValue(this.platform.configOptions, this.nvr.ufp, this.ufp, option));
   }
 
   // Utility function to return an integer configuration parameter on a device.
   public getFeatureNumber(option: string): number | undefined {
 
-    return this.getFeature(option, (value: string) => {
-
-      return parseInt(value);
-    });
+    return getOptionNumber(getOptionValue(this.platform.configOptions, this.nvr.ufp, this.ufp, option));
   }
 
   // Utility for checking feature options on a device.
