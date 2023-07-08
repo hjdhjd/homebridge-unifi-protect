@@ -37,7 +37,10 @@ export class ProtectSensor extends ProtectDevice {
     // Configure accessory information.
     this.configureInfo();
 
-    // Configure accessory services.
+    // Configure the battery status.
+    this.configureBatteryService();
+
+    // Configure the sensor services that have been enabled.
     const enabledSensors = this.updateDevice(false);
 
     // Configure MQTT services.
@@ -58,10 +61,51 @@ export class ProtectSensor extends ProtectDevice {
     return true;
   }
 
+  // Update battery status information for HomeKit.
+  private configureBatteryService(): boolean {
+
+    // Find the battery service, if it exists.
+    let batteryService = this.accessory.getService(this.hap.Service.Battery);
+
+    // We don't have the battery service, let's add it to the sensor.
+    if(!batteryService) {
+
+      // We don't have it, add it to the sensor.
+      batteryService = new this.hap.Service.Battery(this.accessory.displayName);
+
+      if(!batteryService) {
+
+        this.log.error("Unable to add the battery service.");
+        return false;
+      }
+
+      this.accessory.addService(batteryService);
+    }
+
+    // Retrieve the current battery status when requested.
+    batteryService.getCharacteristic(this.hap.Characteristic.StatusLowBattery)?.onGet(() => {
+
+      return this.ufp.batteryStatus?.percentage ?? 0;
+    });
+
+    batteryService.getCharacteristic(this.hap.Characteristic.StatusLowBattery)?.onGet(() => {
+
+      return this.ufp.batteryStatus?.isLow ?? false;
+    });
+
+    // Initialize the battery state.
+    this.updateBatteryStatus();
+
+    return true;
+  }
+
   // Update accessory services and characteristics.
   public updateDevice(isInitialized = true): string[] {
 
     const enabledSensors: string[] = [];
+
+    // Update the battery status for the accessory.
+    this.updateBatteryStatus();
 
     // Configure the alarm sound sensor.
     if(this.configureAlarmSoundSensor()) {
@@ -435,17 +479,21 @@ export class ProtectSensor extends ProtectDevice {
     return true;
   }
 
-  // Configure the battery status in HomeKit.
-  private configureBatteryStatus(service: Service): boolean {
+  // Update the battery status in HomeKit.
+  private updateBatteryStatus(): boolean {
 
-    // Retrieve the current battery status when requested.
-    service.getCharacteristic(this.hap.Characteristic.StatusLowBattery)?.onGet(() => {
+    // Find the battery service, if it exists.
+    const batteryService = this.accessory.getService(this.hap.Service.Battery);
 
-      return this.ufp.batteryStatus?.isLow;
-    });
+    // We don't have the battery service, we're done.
+    if(!batteryService) {
+
+      return false;
+    }
 
     // Update the battery status.
-    service.updateCharacteristic(this.hap.Characteristic.StatusLowBattery, this.ufp.batteryStatus?.isLow);
+    batteryService.updateCharacteristic(this.hap.Characteristic.BatteryLevel, this.ufp.batteryStatus?.percentage ?? 0);
+    batteryService.updateCharacteristic(this.hap.Characteristic.StatusLowBattery, this.ufp.batteryStatus?.isLow);
 
     return true;
   }
@@ -470,9 +518,6 @@ export class ProtectSensor extends ProtectDevice {
 
     // Update the active connection status.
     this.configureActiveStatus(service);
-
-    // Update the battery status.
-    this.configureBatteryStatus(service);
 
     // Update the tamper status.
     this.configureTamperedStatus(service);
