@@ -76,8 +76,8 @@ export const featureOptions: { [index: string]: FeatureOption[] } = {
   // Doorbell options.
   "Doorbell": [
 
-    { default: true, description: "Enable the doorbell messages feature.", hasFeature: [ "hasChime" ], name: "Messages" },
-    { default: true, description: "Use messages saved to the Protect NVR as message switches.", group: "Messages", hasFeature: [ "hasChime" ], name: "Messages.FromDoorbell" },
+    { default: true, description: "Enable the doorbell messages feature.", hasFeature: [ "isDoorbell" ], name: "Messages" },
+    { default: true, description: "Use messages saved to the Protect NVR as message switches.", group: "Messages", hasFeature: [ "isDoorbell" ], name: "Messages.FromDoorbell" },
     { default: false, description: "Add a switch accessory to trigger doorbell ring events on a Protect camera or doorbell.", hasFeature: [ "hasMotionZones" ], name: "Trigger" }
   ],
 

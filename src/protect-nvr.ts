@@ -303,7 +303,7 @@ export class ProtectNvr {
       case "camera":
 
         // We have a UniFi Protect camera or doorbell.
-        if((device as ProtectCameraConfig).featureFlags.hasChime) {
+        if((device as ProtectCameraConfig).featureFlags.isDoorbell) {
 
           this.configuredDevices[accessory.UUID] = new ProtectDoorbell(this, device as ProtectCameraConfig, accessory);
         } else {

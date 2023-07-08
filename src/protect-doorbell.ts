@@ -49,7 +49,7 @@ export class ProtectDoorbell extends ProtectCamera {
     this.packageCamera = null;
 
     // We only want to deal with actual Protect doorbell devices.
-    if(!this.ufp.featureFlags.hasChime) {
+    if(!this.ufp.featureFlags.isDoorbell) {
 
       return false;
     }
