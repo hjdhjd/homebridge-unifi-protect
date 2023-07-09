@@ -741,9 +741,14 @@ export class ProtectNvr {
         })) {
 
           // Create a playlist entry for each camera, including guide information that's suitable for apps that support it, such as Channels DVR.
-          response.write(util.format(
-            "#EXTINF:0 channel-id=\"%s\" tvc-stream-vcodec=\"h264\" tvc-stream-acodec=\"aac\" tvg-logo=\"%s\" tvc-guide-title=\"%s Livestream\",%s\n",
-            camera.name, "https://raw.githubusercontent.com/hjdhjd/homebridge-unifi-protect/main/images/homebridge-unifi-protect.png", camera.name, camera.name));
+          response.write(util.format("#EXTINF:0 channel-id=\"%s\" tvc-stream-vcodec=\"h264\" tvc-stream-acodec=\"aac\" tvg-logo=\"%s\" ",
+            camera.name, "https://raw.githubusercontent.com/hjdhjd/homebridge-unifi-protect/main/images/homebridge-unifi-protect-4x3.png"));
+
+          response.write(util.format("tvc-guide-title=\"%s Livestream\" tvc-guide-description=\"UniFi Protect %s camera livestream.\" ",
+            camera.name, camera.marketName));
+
+          response.write(util.format("tvc-guide-art=\"%s\" tvc-guide-tags=\"HD, Live, New, UniFi Protect\", %s\n",
+            "https://raw.githubusercontent.com/hjdhjd/homebridge-unifi-protect/main/images/homebridge-unifi-protect-4x3.png", camera.name));
 
           // By convention, the first RTSP alias is always the highest quality on UniFi Protect cameras. Grab it and we're done. We might be tempted to use the RTSPS
           // stream here, but many apps only supports RTSP, and we'll opt for maximizing compatibility here.
@@ -761,9 +766,15 @@ export class ProtectNvr {
 
             const packageName = camera.name + " " + packageChannel.name;
 
-            response.write(util.format(
-              "#EXTINF:0 channel-id=\"%s\" tvc-stream-vcodec=\"h264\" tvc-stream-acodec=\"aac\" tvg-logo=\"%s\" tvc-guide-title=\"%s Livestream\",%s\n",
-              packageName, "https://raw.githubusercontent.com/hjdhjd/homebridge-unifi-protect/main/images/homebridge-unifi-protect.png", packageName, packageName));
+            response.write(util.format("#EXTINF:0 channel-id=\"%s\" tvc-stream-vcodec=\"h264\" tvc-stream-acodec=\"aac\" tvg-logo=\"%s\" ",
+              packageName, "https://raw.githubusercontent.com/hjdhjd/homebridge-unifi-protect/main/images/homebridge-unifi-protect-4x3.png"));
+
+            response.write(util.format("tvc-guide-title=\"%s Livestream\" tvc-guide-description=\"UniFi Protect %s package camera livestream.\" ",
+              packageName, camera.marketName));
+
+            response.write(util.format("tvc-guide-art=\"%s\" tvc-guide-tags=\"HD, Live, New, UniFi Protect\", %s\n",
+              "https://raw.githubusercontent.com/hjdhjd/homebridge-unifi-protect/main/images/homebridge-unifi-protect-4x3.png", packageName));
+
             response.write(util.format("rtsp://%s:%s/%s\n", this.ufpApi.bootstrap.nvr.host, this.ufpApi.bootstrap.nvr.ports.rtsp, packageChannel.rtspAlias));
           }
         }
