@@ -309,8 +309,9 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     this.transmittedSegments = 0;
 
     // Check to see if the user has audio enabled or disabled for recordings.
-    const isAudioActive = this.protectCamera.stream.controller.recordingManagement?.recordingManagementService
-      .getCharacteristic(this.api.hap.Characteristic.RecordingAudioActive).value === 1 ? true : false;
+    const isAudioActive = (this.protectCamera.ufp.featureFlags.hasMic && this.protectCamera.hasFeature("Audio") &&
+      (this.protectCamera.stream.controller.recordingManagement?.recordingManagementService
+        .getCharacteristic(this.api.hap.Characteristic.RecordingAudioActive).value === 1)) ? true : false;
 
     // Start a new FFmpeg instance to transcode using HomeKit's requirements.
     this.ffmpegStream = new FfmpegRecordingProcess(this.protectCamera, this.recordingConfig, this.rtspEntry, isAudioActive);
