@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 6.10.0 (2023-07-08)
+  * **Note: as of 6.10.0, HBUP requires UniFi OS 3.0 or greater. Given Ubiquiti has completed the rollout of UniFi OS 3.0+ to all supported console platforms, if you're running on recent GA firmware releases of UniFi Protect controllers, this requirement will have no impact to you. If you don't, please note that while HBUP may continue to work for the time being, there is no support or guarantee of compatibility for future releases.**
+  * New feature: You can now enable a new feature option that will enable HBUP to publish an M3U playlist that can be ingested by other apps. This is useful in certain scenarios, such as an app that can make Protect livestreams available through it's own UI, but doesn't know how to speak to the Protect API. An example of this would be creating a custom channel in Channels DVR. M3U playlist will be made available on a user-selectable port, via HTTP. The playlist contains additional metadata that is especially useful in Channels DVR. See the HBUP webUI for more under NVR feature options.
+  * New feature: Protect sensors now display battery percentages in the Home app.
+  * Improvement: webUI refinements and branding updates.
+  * Fix: further refinements to ensuring HomeKit recording and streaming profile requirements are met.
+  * Housekeeping, documentation updates, and visual refreshes.
+
 ## 6.9.2 (2023-06-24)
   * Fix: ensure HKSV recording can be enabled on Protect cameras with native frame rates that are different than what HomeKit accepts.
 
