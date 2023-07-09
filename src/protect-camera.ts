@@ -558,16 +558,7 @@ export class ProtectCamera extends ProtectDevice {
     // We use the frame rate of the first entry, which should be our highest resolution option that's native to the camera as the upper bound for frame rate.
     //
     // Our supported resolutions range from 4K through 320p.
-    if((rtspEntries[0].resolution[0] / rtspEntries[0].resolution[1]) === (16 / 9)) {
-
-      validResolutions = [
-
-        [ 3840, 2160, 30 ], [ 2560, 1440, 30 ],
-        [ 1920, 1080, 30], [ 1280, 720, 30 ],
-        [ 640, 360, 30 ], [ 480, 270, 30 ],
-        [ 320, 180, 30 ]
-      ];
-    } else {
+    if((rtspEntries[0].resolution[0] / rtspEntries[0].resolution[1]) === (4 / 3)) {
 
       validResolutions = [
 
@@ -575,6 +566,15 @@ export class ProtectCamera extends ProtectDevice {
         [ 1920, 1440, 30 ], [ 1280, 960, 30 ],
         [ 640, 480, 30 ], [ 480, 360, 30 ],
         [ 320, 240, 30 ]
+      ];
+    } else {
+
+      validResolutions = [
+
+        [ 3840, 2160, 30 ], [ 2560, 1440, 30 ],
+        [ 1920, 1080, 30], [ 1280, 720, 30 ],
+        [ 640, 360, 30 ], [ 480, 270, 30 ],
+        [ 320, 180, 30 ]
       ];
     }
 
@@ -614,22 +614,29 @@ export class ProtectCamera extends ProtectDevice {
     // actually record something, but it does determine whether HomeKit even attempts to use the camera for HomeKit Secure Video.
     if(![15, 24, 30].includes(rtspEntries[0].resolution[2])) {
 
-      const entry = rtspEntries[0];
+      // Iterate through the list of RTSP entries we're providing to HomeKit and ensure we have at least one that will meet HomeKit's requirements for frame rate.
+      for(let i = 0; i < rtspEntries.length; i++) {
 
-      // Determine the best frame rate to use that's closest to what HomeKit wants.
-      if(entry.resolution[2] > 24) {
+        // We're only interested in the first 1080p or 1440p entry.
+        if((rtspEntries[i].resolution[0] !== 1920) || ![ 1080, 1440 ].includes(rtspEntries[i].resolution[1])) {
 
-        entry.resolution[2] = 30;
-      } else if(entry.resolution[2] > 15) {
+          continue;
+        }
 
-        entry.resolution[2] = 24;
-      } else {
+        // Determine the best frame rate to use that's closest to what HomeKit wants to see.
+        if(rtspEntries[i].resolution[2] > 24) {
 
-        entry.resolution[2] = 15;
+          rtspEntries[i].resolution[2] = 30;
+        } else if(rtspEntries[i].resolution[2] > 15) {
+
+          rtspEntries[i].resolution[2] = 24;
+        } else {
+
+          rtspEntries[i].resolution[2] = 15;
+        }
+
+        break;
       }
-
-      // Add it to the top of the list of supported resolutions.
-      rtspEntries.unshift(entry);
     }
 
     // Publish our updated list of supported resolutions and their URLs.
