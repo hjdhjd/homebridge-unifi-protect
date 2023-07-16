@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 6.11.0 (2023-07-16)
+  * New feature: Protect doorbells with attached physical chimes can now be controlled. This option adds three switch accessories that you can toggle between: none, mechanical, and digital. It allows those who have physical chimes attached to their Protect doorbells to be able to silence them selectively. **Note: these switches are special in that they can only be set to on. Trying to turn off the individual switches won't work. If you want to turn off the physical chime, you turn *on* the "None" switch, which will turn off the others. Inelegant, but it's the only meaningful way to add three-state switches in the HomeKit world.** This option will appear in the webUI under the `Doorbell` configuration section, if you have a Protect doorbell with a physical chime. Enabling it will expose an additional feature option, allowing you to select the duration for digital chimes, which should correspond to the same settings in the Protect webUI and app.
+  * Improvement: further refinements to M3U playlist generation, including live guide data and keywords for consuming apps that support it.
+  * Housekeeping.
+
 ## 6.10.0 (2023-07-08)
   * **Note: as of 6.10.0, HBUP requires UniFi OS 3.0 or greater. Given Ubiquiti has completed the rollout of UniFi OS 3.0+ to all supported console platforms, if you're running on recent GA firmware releases of UniFi Protect controllers, this requirement will have no impact to you. If you don't, please note that while HBUP may continue to work for the time being, there is no support or guarantee of compatibility for future releases.**
   * New feature: You can now enable a new feature option that will enable HBUP to publish an M3U playlist that can be ingested by other apps. This is useful in certain scenarios, such as an app that can make Protect livestreams available through it's own UI, but doesn't know how to speak to the Protect API. An example of this would be creating a custom channel in Channels DVR. M3U playlist will be made available on a user-selectable port, via HTTP. The playlist contains additional metadata that is especially useful in Channels DVR. See the HBUP webUI for more under NVR feature options.
