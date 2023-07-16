@@ -33,6 +33,9 @@ export enum ProtectReservedNames {
   CONTACT_SENSOR_ALARM_SOUND = "ContactAlarmSound",
 
   // Manage our switch types.
+  SWITCH_DOORBELL_CHIME_DIGITAL = "DoorbellChime.digital",
+  SWITCH_DOORBELL_CHIME_MECHANICAL = "DoorbellChime.mechanical",
+  SWITCH_DOORBELL_CHIME_NONE = "DoorbellChime.none",
   SWITCH_DOORBELL_TRIGGER = "DoorbellTrigger",
   SWITCH_DYNAMIC_BITRATE = "DynamicBitrate",
   SWITCH_HKSV_RECORDING = "HKSVRecordingSwitch",

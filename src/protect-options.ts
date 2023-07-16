@@ -2,7 +2,7 @@
  *
  * protect-options.ts: Type definitions for UniFi Protect.
  */
-import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_FFMPEG_AUDIO_FILTER_HIGHPASS, PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS,
+import { PROTECT_DOORBELL_CHIME_DURATION_DIGITAL, PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_FFMPEG_AUDIO_FILTER_HIGHPASS, PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS,
   PROTECT_M3U_PLAYLIST_PORT, PROTECT_MOTION_DURATION, PROTECT_OCCUPANCY_DURATION } from "./settings.js";
 import { ProtectDeviceConfigTypes } from "./protect-types.js";
 import { ProtectNvrConfig } from "unifi-protect";
@@ -78,6 +78,8 @@ export const featureOptions: { [index: string]: FeatureOption[] } = {
 
     { default: true, description: "Enable the doorbell messages feature.", hasFeature: [ "isDoorbell" ], name: "Messages" },
     { default: true, description: "Use messages saved to the Protect NVR as message switches.", group: "Messages", hasFeature: [ "isDoorbell" ], name: "Messages.FromDoorbell" },
+    { default: false, description: "Add switch accessories to control the physical chimes attached to a Protect doorbell.", hasFeature: [ "hasChime" ], name: "PhysicalChime" },
+    { default: false, defaultValue: PROTECT_DOORBELL_CHIME_DURATION_DIGITAL, description: "Chime duration, in milliseconds, of a digital physical chime attached to a Protect doorbell.", group: "PhysicalChime", hasFeature: [ "hasChime" ], name: "PhysicalChime.Duration.Digital" },
     { default: false, description: "Add a switch accessory to trigger doorbell ring events on a Protect camera or doorbell.", hasFeature: [ "hasMotionZones" ], name: "Trigger" }
   ],
 

@@ -3,11 +3,12 @@
  * protect-doorbell.ts: Doorbell device class for UniFi Protect.
  */
 import { CharacteristicValue, PlatformAccessory, Service } from "homebridge";
-import { PLATFORM_NAME, PLUGIN_NAME } from "./settings.js";
+import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_DOORBELL_CHIME_DURATION_DIGITAL } from "./settings.js";
 import { ProtectCameraConfig, ProtectCameraConfigPayload, ProtectCameraLcdMessagePayload, ProtectEventPacket, ProtectNvrConfigPayload } from "unifi-protect";
 import { ProtectCamera } from "./protect-camera.js";
 import { ProtectCameraPackage } from "./protect-camera-package.js";
 import { ProtectNvr } from "./protect-nvr.js";
+import { ProtectReservedNames } from "./protect-types.js";
 
 // A doorbell message entry.
 interface MessageInterface {
@@ -26,7 +27,8 @@ interface MessageSwitchInterface extends MessageInterface {
 
 export class ProtectDoorbell extends ProtectCamera {
 
-  private defaultDuration: number;
+  private chimeDigitalDuration: number;
+  private defaultMessageDuration: number;
   private isMessagesEnabled: boolean;
   private isMessagesFromControllerEnabled: boolean;
   private messageSwitches: MessageSwitchInterface[];
@@ -37,10 +39,20 @@ export class ProtectDoorbell extends ProtectCamera {
 
     super(nvr, device, accessory);
 
-    this.defaultDuration = this.nvr.ufp.doorbellSettings?.defaultMessageResetTimeoutMs ?? 60000;
+    this.chimeDigitalDuration = this.getFeatureNumber("Doorbell.PhysicalChime.Duration.Digital") ?? PROTECT_DOORBELL_CHIME_DURATION_DIGITAL;
+    this.defaultMessageDuration = this.nvr.ufp.doorbellSettings?.defaultMessageResetTimeoutMs ?? 60000;
     this.isMessagesEnabled = this.hasFeature("Doorbell.Messages");
     this.isMessagesFromControllerEnabled = this.hasFeature("Doorbell.Messages.FromDoorbell");
     this.messageSwitches = [];
+
+    // Ensure physical chimes that are digital have sane durations.
+    if(this.chimeDigitalDuration < 1000) {
+
+      this.chimeDigitalDuration = 1000;
+    } else if(this.chimeDigitalDuration > 10000) {
+
+      this.chimeDigitalDuration = 10000;
+    }
   }
 
   // Configure the doorbell for HomeKit.
@@ -65,6 +77,9 @@ export class ProtectDoorbell extends ProtectCamera {
 
     // Now, make the doorbell LCD message functionality available.
     this.configureDoorbellLcdSwitch();
+
+    // Configure physical chime switches, if configured.
+    this.configurePhysicalChimes();
 
     // Register our event handlers.
     this.nvr.events.on("updateEvent." + this.nvr.ufp.id, this.listeners["updateEvent." + this.nvr.ufp.id] = this.nvrEventHandler.bind(this));
@@ -125,7 +140,7 @@ export class ProtectDoorbell extends ProtectCamera {
         this.accessory.addService(switchService);
       }
 
-      const duration = "duration" in entry ? entry.duration : this.defaultDuration;
+      const duration = "duration" in entry ? entry.duration : this.defaultMessageDuration;
 
       // Save the message switch in the list we maintain.
       this.messageSwitches.push({ duration: duration, service: switchService, state: false, text: entry.text, type: entry.type }) - 1;
@@ -189,6 +204,116 @@ export class ProtectDoorbell extends ProtectCamera {
     // Now create the package camera accessory. We do want to modify the camera name to ensure things look pretty.
     this.packageCamera = new ProtectCameraPackage(this.nvr,
       Object.assign({}, this.ufp, { name: (this.ufp.name ?? this.ufp.marketName) + " Package Camera"}), packageCameraAccessory);
+    return true;
+  }
+
+  // Configure a series of switches to manually enable or disable chimes on Protect doorbells that support attached physical chimes.
+  private configurePhysicalChimes(): boolean {
+
+    const switchesEnabled = [];
+
+    // The Protect controller supports three modes for attached, physical chimes on a doorbell: none, mechanical, and digital. We create switches for each of the modes.
+    for(const physicalChimeType of
+      [ ProtectReservedNames.SWITCH_DOORBELL_CHIME_NONE, ProtectReservedNames.SWITCH_DOORBELL_CHIME_MECHANICAL, ProtectReservedNames.SWITCH_DOORBELL_CHIME_DIGITAL ]) {
+
+      const chimeSetting = physicalChimeType.slice(physicalChimeType.lastIndexOf(".") + 1);
+
+      // Find the switch service, if it exists.
+      let switchService = this.accessory.getServiceById(this.hap.Service.Switch, physicalChimeType);
+
+      // If we don't have the physical capabilities or the feature option enabled, disable the switch and we're done.
+      if(!this.ufp.featureFlags.hasChime || !this.hasFeature("Doorbell.PhysicalChime")) {
+
+        if(switchService) {
+
+          this.accessory.removeService(switchService);
+        }
+
+        continue;
+      }
+
+      const switchName = this.accessory.displayName + " Physical Chime " + chimeSetting.charAt(0).toUpperCase() + chimeSetting.slice(1);
+
+      // Add the switch to the doorbell, if needed.
+      if(!switchService) {
+
+        switchService = new this.hap.Service.Switch(switchName, physicalChimeType);
+
+        if(!switchService) {
+
+          this.log.error("Unable to add the physical chime switches.");
+          continue;
+        }
+
+        this.accessory.addService(switchService);
+      }
+
+      // Get the current status of the physical chime mode on the doorbell.
+      switchService.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => {
+
+        return this.ufp.chimeDuration === this.getPhysicalChimeDuration(physicalChimeType);
+      });
+
+      // Activate the appropriate physical chime mode on the doorbell.
+      switchService.getCharacteristic(this.hap.Characteristic.On)?.onSet(async (value: CharacteristicValue) => {
+
+        // We only want to do something if we're being activated. Turning off the switch would really be an undefined state given that
+        // there are three different settings one can choose from. Instead, we do nothing and leave it to the user to choose what state
+        // they really want to set.
+        if(!value) {
+
+          setTimeout(() => {
+
+            this.updateDevice();
+          }, 50);
+
+          return;
+        }
+
+        // Set our physical chime duration.
+        const newDevice = await this.nvr.ufpApi.updateDevice(this.ufp, { chimeDuration: this.getPhysicalChimeDuration(physicalChimeType) });
+
+        if(!newDevice) {
+
+          this.log.error("Unable to set the physical chime mode to %s.", chimeSetting);
+          return false;
+        }
+
+        // Save our updated device context.
+        this.ufp = newDevice;
+
+        // Update all the other physical chime switches.
+        for(const otherChimeSwitch of
+          [ ProtectReservedNames.SWITCH_DOORBELL_CHIME_NONE, ProtectReservedNames.SWITCH_DOORBELL_CHIME_MECHANICAL,
+            ProtectReservedNames.SWITCH_DOORBELL_CHIME_DIGITAL ]) {
+
+          // Don't update ourselves a second time.
+          if(physicalChimeType === otherChimeSwitch) {
+
+            continue;
+          }
+
+          // Update the other physical chime switches.
+          this.accessory.getServiceById(this.hap.Service.Switch, otherChimeSwitch)?.updateCharacteristic(this.hap.Characteristic.On, false);
+        }
+
+        // Inform the user, and we're done.
+        this.log.info("Physical chime type set to %s.", chimeSetting);
+      });
+
+      // Initialize the physical chime switch state.
+      switchService.addOptionalCharacteristic(this.hap.Characteristic.ConfiguredName);
+      switchService.updateCharacteristic(this.hap.Characteristic.ConfiguredName, switchName);
+      switchService.updateCharacteristic(this.hap.Characteristic.On, this.ufp.chimeDuration === this.getPhysicalChimeDuration(physicalChimeType));
+      switchesEnabled.push(chimeSetting);
+    }
+
+    if(switchesEnabled.length) {
+
+      this.log.info("Enabling physical chime switches: %s (digital chime duration: %s ms).", switchesEnabled.join(", "),
+        this.chimeDigitalDuration.toLocaleString("en-US"));
+    }
+
     return true;
   }
 
@@ -272,7 +397,7 @@ export class ProtectDoorbell extends ProtectCamera {
       // If no duration specified, or a negative duration, we assume the default duration.
       if(!("duration" in incomingPayload) || (("duration" in incomingPayload) && (incomingPayload.duration < 0))) {
 
-        incomingPayload.duration = this.defaultDuration;
+        incomingPayload.duration = this.defaultMessageDuration;
       } else {
 
         incomingPayload.duration = incomingPayload.duration * 1000;
@@ -309,7 +434,44 @@ export class ProtectDoorbell extends ProtectCamera {
       this.packageCamera.accessory.getService(this.hap.Service.MotionSensor)?.updateCharacteristic(this.hap.Characteristic.StatusActive, this.ufp.state === "CONNECTED");
     }
 
+    // Check for updates to the physical chime state, if we have the switches configured on doorbell that supports chimes.
+    if(this.ufp.featureFlags.hasChime && this.hasFeature("Doorbell.PhysicalChime")) {
+
+      // Update all the switch states.
+      for(const physicalChimeType of
+        [ ProtectReservedNames.SWITCH_DOORBELL_CHIME_NONE, ProtectReservedNames.SWITCH_DOORBELL_CHIME_MECHANICAL, ProtectReservedNames.SWITCH_DOORBELL_CHIME_DIGITAL ]) {
+
+        // Update state based on the physical chime mode.
+        this.accessory.getServiceById(this.hap.Service.Switch, physicalChimeType)?.
+          updateCharacteristic(this.hap.Characteristic.On, this.ufp.chimeDuration === this.getPhysicalChimeDuration(physicalChimeType));
+      }
+    }
+
     return true;
+  }
+
+  // Return the physical chime duration, in milliseconds.
+  private getPhysicalChimeDuration(physicalChimeType: ProtectReservedNames): number {
+
+    // Set the physical chime duration to correspond to the settings that Protect configures when selecting different physical chime types.
+    switch(physicalChimeType) {
+
+      case ProtectReservedNames.SWITCH_DOORBELL_CHIME_DIGITAL:
+
+        return this.chimeDigitalDuration;
+        break;
+
+      case ProtectReservedNames.SWITCH_DOORBELL_CHIME_MECHANICAL:
+
+        return 300;
+        break;
+
+      case ProtectReservedNames.SWITCH_DOORBELL_CHIME_NONE:
+      default:
+
+        return 0;
+        break;
+    }
   }
 
   // Get the list of messages from the doorbell and the user configuration.
@@ -331,7 +493,7 @@ export class ProtectDoorbell extends ProtectCamera {
 
       for(const configEntry of this.nvr.config.doorbellMessages) {
 
-        let duration = this.defaultDuration;
+        let duration = this.defaultMessageDuration;
 
         // If we've set a duration, let's honor it. If it's less than zero, use the default duration.
         if(("duration" in configEntry) && !isNaN(configEntry.duration) && (configEntry.duration >= 0)) {
@@ -450,6 +612,7 @@ export class ProtectDoorbell extends ProtectCamera {
 
   // Get the current state of this message switch.
   private getSwitchState(messageSwitch: MessageSwitchInterface): CharacteristicValue {
+
     return messageSwitch.state;
   }
 

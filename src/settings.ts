@@ -23,6 +23,9 @@ export const PROTECT_CONTROLLER_REFRESH_INTERVAL = 120;
 // How often, in seconds, should we retry getting our bootstrap configuration from the Protect controller.
 export const PROTECT_CONTROLLER_RETRY_INTERVAL = 10;
 
+// Default duration, in milliseconds, of a physical digital chime attached to a Protect doorbell.
+export const PROTECT_DOORBELL_CHIME_DURATION_DIGITAL = 1000;
+
 // FFmpeg afftdn audio filter defaults - this setting uses FFTs to reduce noise in an audio signal by the number of decibels below.
 export const PROTECT_FFMPEG_AUDIO_FILTER_FFTNR = 90;
 
