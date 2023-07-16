@@ -43,9 +43,6 @@ export class ProtectCameraPackage extends ProtectCamera {
     // Configure the motion sensor.
     this.configureMotionSensor();
 
-    // Set the snapshot URL.
-    this.snapshotUrl = this.nvr.ufpApi.getApiEndpoint(this.ufp.modelKey) + "/" + this.ufp.id + "/package-snapshot";
-
     let hkResolutions: Resolution[] = [];
     const validResolutions: Resolution[] = [ this.findRtsp()?.resolution ?? [ 1600, 1200, 2 ] ];
 

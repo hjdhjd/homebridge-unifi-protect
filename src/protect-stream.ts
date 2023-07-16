@@ -10,7 +10,6 @@ import { API, AudioRecordingCodecType, AudioRecordingSamplerate, AudioStreamingC
 import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_HKSV_SEGMENT_LENGTH, PROTECT_HKSV_TIMESHIFT_BUFFER_MAXLENGTH, PROTECT_HOMEKIT_IDR_INTERVAL,
   PROTECT_SNAPSHOT_CACHE_MAXAGE } from "./settings.js";
 import { ProtectCamera, RtspEntry } from "./protect-camera.js";
-import { FetchError } from "unifi-protect";
 import { FfmpegOptions } from "./protect-ffmpeg-options.js";
 import { FfmpegStreamingProcess } from "./protect-ffmpeg-stream.js";
 import { ProtectLogging } from "./protect-types.js";
@@ -884,20 +883,11 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       }
     };
 
-    const params = new URLSearchParams({ ts: Date.now().toString() });
-
     // If we aren't connected, we're done.
     if(this.protectCamera.ufp.state !== "CONNECTED") {
 
       logError("Unable to retrieve a snapshot: the camera is offline or unavailable.");
       return null;
-    }
-
-    // If we have details of the snapshot request, use it to request the right size.
-    if(request) {
-
-      params.append("h", request.height.toString());
-      params.append("w", request.width.toString());
     }
 
     // Don't log the inevitable API errors related to response delays from the Protect controller.
@@ -908,8 +898,9 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       this.nvr.logApiErrors = false;
     }
 
-    // Request the image from the controller.
-    const response = await this.nvr.ufpApi.retrieve(this.protectCamera.snapshotUrl + "?" + params.toString(), { method: "GET" }, true, false);
+    // Request the image from the controller. If we've specified a specific dimension, we pass that along in our snapshot request.
+    const snapshot = await this.nvr.ufpApi.getSnapshot(this.protectCamera.ufp, request ? request.width : undefined, request ? request.height : undefined,
+      undefined, "packageCamera" in this.protectCamera.accessory.context);
 
     if(!isLoggingErrors) {
 
@@ -918,7 +909,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
     // Occasional snapshot failures will happen. The controller isn't always able to generate them if it's already generating one,
     // or it's requested too quickly after the last one.
-    if(!response?.ok) {
+    if(!snapshot) {
 
       // See if we have an image cached that we can use instead.
       const cachedSnapshot = this.getCachedSnapshot(this.protectCamera.ufp.mac);
@@ -929,48 +920,14 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
         return cachedSnapshot;
       }
 
-      logError("Unable to retrieve a snapshot.%s", response ? " " + response.status.toString() + " - " + response.statusText + "." : "");
+      logError("Unable to retrieve a snapshot.");
 
       return null;
     }
 
-    try {
-
-      // Retrieve the image.
-      this.snapshotCache[this.protectCamera.ufp.mac] = { image: Buffer.from(await response.arrayBuffer()), time: Date.now() };
-      return this.snapshotCache[this.protectCamera.ufp.mac].image;
-    } catch(error) {
-
-      if(error instanceof FetchError) {
-        let cachedSnapshot;
-
-        switch(error.code) {
-
-          case "ERR_STREAM_PREMATURE_CLOSE":
-
-            cachedSnapshot = this.getCachedSnapshot(this.protectCamera.ufp.mac);
-
-            if(cachedSnapshot) {
-
-              logError("Unable to retrieve a snapshot. Using a cached snapshot instead.");
-              return cachedSnapshot;
-            }
-
-            logError("Unable to retrieve a snapshot: the Protect controller closed the connection prematurely.");
-            return null;
-            break;
-
-          default:
-
-            this.log.error("Unknown error: %s", error.message);
-            return null;
-            break;
-        }
-      }
-
-      this.log.error("An error occurred while making a snapshot request: %s.", error);
-      return null;
-    }
+    // Cache the image before returning it.
+    this.snapshotCache[this.protectCamera.ufp.mac] = { image: snapshot, time: Date.now() };
+    return this.snapshotCache[this.protectCamera.ufp.mac].image;
   }
 
   // Close a video stream.

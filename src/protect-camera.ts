@@ -28,7 +28,6 @@ export class ProtectCamera extends ProtectDevice {
   private isVideoConfigured: boolean;
   private rtspEntries: RtspEntry[];
   private rtspQuality: { [index: string]: string };
-  public snapshotUrl!: string;
   public stream!: ProtectStreamingDelegate;
   public ufp: ProtectCameraConfig;
 
@@ -515,7 +514,6 @@ export class ProtectCamera extends ProtectDevice {
 
     // Set the camera and shapshot URLs.
     const cameraUrl = "rtsps://" + (this.nvr.nvrOptions.overrideAddress ?? this.ufp.connectionHost) + ":" + this.nvr.ufp.ports.rtsps.toString() + "/";
-    this.snapshotUrl = this.nvr.ufpApi.getApiEndpoint(this.ufp.modelKey) + "/" + this.ufp.id + "/snapshot";
 
     // Filter out any package camera entries.
     cameraChannels = cameraChannels.filter(x => x.name !== "Package Camera");
