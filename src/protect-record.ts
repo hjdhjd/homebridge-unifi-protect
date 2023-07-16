@@ -98,7 +98,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
 
       this.log.info("HomeKit Secure Video %sevent recording enabled: %s, %s kbps with %s",
         this.protectCamera.hints.hardwareTranscoding ? "hardware-accelerated " : "",
-        this.rtspEntry?.name, this.recordingConfig?.videoCodec.parameters.bitRate,
+        this.rtspEntry?.name, this.recordingConfig?.videoCodec.parameters.bitRate.toLocaleString("en-US"),
         this.protectCamera.hints.timeshift ?
           "a " + (this.timeshift.length / 1000).toString() + " second timeshift buffer." :
           "no timeshift buffer. This will provide a suboptimal HKSV experience."
@@ -257,7 +257,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     // try to match it as closely as posible, assuming dynamic bitrates are enabled.
     if(!(await this.protectCamera.setBitrate(this.rtspEntry.channel.id, this.recordingConfig.videoCodec.parameters.bitRate * 1000))) {
 
-      this.log.error("%s: unable to set the bitrate to %skbps.", timeshiftError, this.recordingConfig.videoCodec.parameters.bitRate);
+      this.log.error("%s: unable to set the bitrate to %skbps.", timeshiftError, this.recordingConfig.videoCodec.parameters.bitRate.toLocaleString("en-US"));
       return false;
     }
 

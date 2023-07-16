@@ -407,7 +407,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       const errorMessage = "Unable to start video stream: no valid RTSP stream profile was found.";
 
       this.log.error("%s %sx%s, %s fps, %s kbps.", errorMessage,
-        request.video.width, request.video.height, request.video.fps, request.video.max_bit_rate);
+        request.video.width, request.video.height, request.video.fps, request.video.max_bit_rate.toLocaleString("en-US"));
 
       callback(new Error(this.protectCamera.name + ": " + errorMessage));
       return;
@@ -482,9 +482,9 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     // Inform the user.
     this.log.info("Streaming request from %s%s: %sx%s@%sfps, %s kbps. %s %s, %s kbps.",
       sessionInfo.address, (request.audio.packet_time === 60) ? " (high latency connection)" : "",
-      request.video.width, request.video.height, request.video.fps, request.video.max_bit_rate,
+      request.video.width, request.video.height, request.video.fps, request.video.max_bit_rate.toLocaleString("en-US"),
       isTranscoding ? (this.protectCamera.hints.hardwareTranscoding ? "Hardware accelerated transcoding" : "Transcoding") : "Using",
-      this.rtspEntry.name, this.rtspEntry.channel.bitrate / 1000);
+      this.rtspEntry.name, (this.rtspEntry.channel.bitrate / 1000).toLocaleString("en-US"));
 
     // Check to see if we're transcoding. If we are, set the right FFmpeg encoder options. If not, copy the video stream.
     if(isTranscoding) {
@@ -838,7 +838,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
         // Once FFmpeg is updated to support this, we'll enable this one.
         this.log.info("Streaming parameters adjustment requested by HomeKit: %sx%s, %s fps, %s kbps.",
-          request.video.width, request.video.height, request.video.fps, request.video.max_bit_rate);
+          request.video.width, request.video.height, request.video.fps, request.video.max_bit_rate.toLocaleString("en-US"));
 
         // Set the desired bitrate in Protect.
         if(this.rtspEntry) {
