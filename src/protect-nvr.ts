@@ -740,19 +740,25 @@ export class ProtectNvr {
           return 0;
         })) {
 
-          // Create a playlist entry for each camera, including guide information that's suitable for apps that support it, such as Channels DVR.
-          response.write(util.format("#EXTINF:0 channel-id=\"%s\" tvc-stream-vcodec=\"h264\" tvc-stream-acodec=\"aac\" tvg-logo=\"%s\" ",
-            camera.name, "https://raw.githubusercontent.com/hjdhjd/homebridge-unifi-protect/main/images/homebridge-unifi-protect-4x3.png"));
+          // Publish a playlist entry, including guide information that's suitable for apps that support it, such as Channels DVR.
+          const publishEntry = (name = camera.name, description = "camera", rtspAlias = camera.channels[0].rtspAlias): void => {
 
-          response.write(util.format("tvc-guide-title=\"%s Livestream\" tvc-guide-description=\"UniFi Protect %s camera livestream.\" ",
-            camera.name, camera.marketName));
+            response.write(util.format("#EXTINF:0 channel-id=\"%s\" tvc-stream-vcodec=\"h264\" tvc-stream-acodec=\"opus\" tvg-logo=\"%s\" ",
+              name, "https://raw.githubusercontent.com/hjdhjd/homebridge-unifi-protect/main/images/homebridge-unifi-protect-4x3.png"));
 
-          response.write(util.format("tvc-guide-art=\"%s\" tvc-guide-tags=\"HD, Live, New, UniFi Protect\", %s\n",
-            "https://raw.githubusercontent.com/hjdhjd/homebridge-unifi-protect/main/images/homebridge-unifi-protect-4x3.png", camera.name));
+            response.write(util.format("tvc-guide-title=\"%s Livestream\" tvc-guide-description=\"UniFi Protect %s %s livestream.\" ",
+              name, camera.marketName, description));
 
-          // By convention, the first RTSP alias is always the highest quality on UniFi Protect cameras. Grab it and we're done. We might be tempted to use the RTSPS
-          // stream here, but many apps only supports RTSP, and we'll opt for maximizing compatibility here.
-          response.write(util.format("rtsp://%s:%s/%s\n", this.ufpApi.bootstrap.nvr.host, this.ufpApi.bootstrap.nvr.ports.rtsp, camera.channels[0].rtspAlias));
+            response.write(util.format("tvc-guide-art=\"%s\" tvc-guide-tags=\"HD, Live, New, UniFi Protect\", %s\n",
+              "https://raw.githubusercontent.com/hjdhjd/homebridge-unifi-protect/main/images/homebridge-unifi-protect-4x3.png", name));
+
+            // By convention, the first RTSP alias is always the highest quality on UniFi Protect cameras. Grab it and we're done. We might be tempted
+            // to use the RTSPS stream here, but many apps only supports RTSP, and we'll opt for maximizing compatibility here.
+            response.write(util.format("rtsp://%s:%s/%s\n", this.ufpApi.bootstrap?.nvr.host, this.ufpApi.bootstrap?.nvr.ports.rtsp, rtspAlias));
+          };
+
+          // Create a playlist entry for each camera.
+          publishEntry();
 
           // Ensure we publish package cameras as well, when we have them.
           if(camera.featureFlags.hasPackageCamera) {
@@ -764,18 +770,7 @@ export class ProtectNvr {
               continue;
             }
 
-            const packageName = camera.name + " " + packageChannel.name;
-
-            response.write(util.format("#EXTINF:0 channel-id=\"%s\" tvc-stream-vcodec=\"h264\" tvc-stream-acodec=\"aac\" tvg-logo=\"%s\" ",
-              packageName, "https://raw.githubusercontent.com/hjdhjd/homebridge-unifi-protect/main/images/homebridge-unifi-protect-4x3.png"));
-
-            response.write(util.format("tvc-guide-title=\"%s Livestream\" tvc-guide-description=\"UniFi Protect %s package camera livestream.\" ",
-              packageName, camera.marketName));
-
-            response.write(util.format("tvc-guide-art=\"%s\" tvc-guide-tags=\"HD, Live, New, UniFi Protect\", %s\n",
-              "https://raw.githubusercontent.com/hjdhjd/homebridge-unifi-protect/main/images/homebridge-unifi-protect-4x3.png", packageName));
-
-            response.write(util.format("rtsp://%s:%s/%s\n", this.ufpApi.bootstrap.nvr.host, this.ufpApi.bootstrap.nvr.ports.rtsp, packageChannel.rtspAlias));
+            publishEntry(camera.name + " " + packageChannel.name, "package camera", packageChannel.rtspAlias);
           }
         }
       }
