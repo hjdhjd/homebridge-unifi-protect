@@ -122,6 +122,8 @@ These option(s) apply to: Protect cameras
 |--------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 | `Doorbell.Messages`                              | Enable the doorbell messages feature. **(default: enabled)**. <BR>*Supported on Protect devices that have a doorbell.*
 | `Doorbell.Messages.FromDoorbell`                 | Use messages saved to the Protect NVR as message switches. **(default: enabled)**. <BR>*Supported on Protect devices that have a doorbell.*
+| `Doorbell.PhysicalChime`                         | Add switch accessories to control the physical chimes attached to a Protect doorbell. **(default: disabled)**. <BR>*Supported on undefined.*
+| `Doorbell.PhysicalChime.Duration.Digital<I>.Value</I>`  | Chime duration, in milliseconds, of a digital physical chime attached to a Protect doorbell. **(default: 1000)**. <BR>*Supported on undefined.*
 | `Doorbell.Trigger`                               | Add a switch accessory to trigger doorbell ring events on a Protect camera or doorbell. **(default: disabled)**. <BR>*Supported on Protect cameras that have a motion sensor.*
 
 #### <A NAME="log"></A>Logging feature options.
