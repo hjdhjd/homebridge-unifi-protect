@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 6.11.1 (2023-07-27)
+  * Housekeeping and minor bugfixes.
+
 ## 6.11.0 (2023-07-16)
   * New feature: Protect doorbells with attached physical chimes can now be controlled. This option adds three switch accessories that you can toggle between: none, mechanical, and digital. It allows those who have physical chimes attached to their Protect doorbells to be able to silence them selectively. **Note: these switches are special in that they can only be set to on. Trying to turn off the individual switches won't work. If you want to turn off the physical chime, you turn *on* the "None" switch, which will turn off the others. Inelegant, but it's the only meaningful way to add three-state switches in the HomeKit world.** This option will appear in the webUI under the `Doorbell` configuration section, if you have a Protect doorbell with a physical chime. Enabling it will expose an additional feature option, allowing you to select the duration for digital chimes, which should correspond to the same settings in the Protect webUI and app.
   * Improvement: further refinements to M3U playlist generation, including live guide data and keywords for consuming apps that support it.
