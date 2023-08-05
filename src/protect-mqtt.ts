@@ -98,8 +98,8 @@ export class ProtectMqtt {
     });
 
     // Notify the user when there's a connectivity error.
-    this.mqtt.on("error", (error: NodeJS.ErrnoException) => {
-      switch(error.code) {
+    this.mqtt.on("error", (error: Error) => {
+      switch((error as NodeJS.ErrnoException).code) {
 
         case "ECONNREFUSED":
           this.log.error("MQTT Broker: Connection refused (url: %s). Will retry again in %s minute%s.", this.config.mqttUrl,
