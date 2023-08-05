@@ -189,7 +189,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
           const systemId = readFileSync("/sys/firmware/devicetree/base/model", { encoding: "utf8" });
 
           // Is it a Pi 4?
-          if(systemId.includes("Raspberry Pi 4") || systemId.includes("Raspberry Pi Compute Module 4")) {
+          if(/Raspberry Pi (Compute Module )?4/.test(systemId)) {
 
             this._hostSystem = "raspbian";
           }
