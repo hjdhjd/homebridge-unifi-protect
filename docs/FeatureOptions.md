@@ -182,9 +182,9 @@ These option(s) apply to: Protect cameras
 | `Video.Stream.Only.High`                         | When viewing livestreams, force the use of the high quality video stream from the Protect controller. **(default: disabled)**.
 | `Video.Stream.Only.Medium`                       | When viewing livestreams, force the use of the medium quality video stream from the Protect controller. **(default: disabled)**.
 | `Video.Stream.Only.Low`                          | When viewing livestreams, force the use of the low quality video stream from the Protect controller. **(default: disabled)**.
-| `Video.Transcode`                                | Transcode live video streams when viewing in the Home app instead of remuxing. **(default: disabled)**.
+| `Video.Transcode`                                | When streaming to local clients (e.g. at home), always transcode livestreams, instead of transmuxing them. **(default: disabled)**.
+| `Video.Transcode.HighLatency`                    | When streaming to high-latency clients (e.g. cellular connections), transcode livestreams instead of transmuxing them. **(default: enabled)**.
 | `Video.Transcode.Hardware`                       | Use hardware-accelerated transcoding when available (Apple Macs, Intel Quick Sync Video-enabled CPUs, Raspberry Pi 4). **(default: disabled)**.
-| `Video.Transcode.HighLatency`                    | When streaming to high-latency clients (e.g. cellular connections), transcode live video streams instead of remuxing them. **(default: enabled)**.
 
 #### <A NAME="video.hksv"></A>HomeKit Secure Video feature options.
 

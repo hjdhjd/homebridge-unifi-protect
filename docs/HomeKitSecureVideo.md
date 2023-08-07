@@ -19,7 +19,7 @@
 ### HomeKit Secure Video Support
 HomeKit Secure Video has been a feature in HomeKit since the launch of iOS 13. It provides for several things:
 
-  * The ability to securely record and store motion events of interest using a HomeKit hub (Apple TV, HomePod mini, etc.).
+  * The ability to securely record and store motion events of interest using a HomeKit hub (Apple TV, HomePod, etc.).
   * Intelligent analysis of those events for specific things like animals, people, and vehicles.
   * Facial recognition based on your own photo library for people it recognizes in your recorded motion events.
   * Granular notifications based on the analysis of those motions events (animal detected, package detected, etc.).
@@ -45,7 +45,7 @@ However, if you have the smart motion detection object sensors feature option en
 HomeKit Secure Video is more than recorded events with some AI/ML applied to it. In many ways, it's like a "camera v2" accessory being exposed in HomeKit and gives us access to much richer capabilities and settings. In the case of UniFi Protect, one of those settings is the **Camera Status Light** setting in the Home app. It allows you to turn on or off the **Camera Status Light** setting for a HomeKit-enabled camera. In the UniFi Protect world, that means the ability to turn on or off the status LED on a camera. That's great functionality, but there's also a bug in the Home app itself (still present as of iOS 16) related to this. Specifically, the camera status light setting *is initially forced on by the Home app*. There is no way to actually force this to default to what is currently set on the UniFi Protect controller, and sync accordingly. We are left with a situation where, if I want to provide access to this feature - which I do - you are forced into having to turn off the camera status light, *in the Home app* in order to have a setting that *sticks*. It's annoying. It's frustrating. It a bug in the Home app, not in the plugin. I would prefer to keep the state synced across HomeKit and Protect, so any state changes in the camera status light sync across seamlessly, which is what the user should be able to expect, but unfortunately, this bug in the Home app makes that impossible at the moment. The camera status LED feature is disabled by default unless enabled using the `Device.StatusLed` feature option.
 
 #### How HomeKit Secure Video Works
-HKSV, in practice, works quite well for most things. Apple created a pretty robust system that leverages it's home-based devices such as HomePod minis and Apple TVs for the heavy lifting of analyzing video.
+HKSV, in practice, works quite well for most things. Apple created a pretty robust system that leverages it's home-based devices such as HomePods and Apple TVs for the heavy lifting of analyzing video.
 
   * To preserve the performance and integrity of those Apple home-based devices it uses for processing video, there are specific requirements for video.
 
