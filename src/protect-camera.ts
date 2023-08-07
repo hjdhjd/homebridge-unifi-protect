@@ -813,21 +813,20 @@ export class ProtectCamera extends ProtectDevice {
     }
 
     // Activate or deactivate HKSV recording.
-    switchService
-      .getCharacteristic(this.hap.Characteristic.On)
-      ?.onGet(() => {
+    switchService.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => {
 
-        return this.accessory.context.hksvRecording as boolean;
-      })
-      .onSet((value: CharacteristicValue) => {
+      return this.accessory.context.hksvRecording as boolean;
+    });
 
-        if(this.accessory.context.hksvRecording !== value) {
+    switchService.getCharacteristic(this.hap.Characteristic.On)?.onSet((value: CharacteristicValue) => {
 
-          this.log.info("HomeKit Secure Video event recording has been %s.", value === true ? "enabled" : "disabled");
-        }
+      if(this.accessory.context.hksvRecording !== value) {
 
-        this.accessory.context.hksvRecording = value === true;
-      });
+        this.log.info("HomeKit Secure Video event recording has been %s.", value === true ? "enabled" : "disabled");
+      }
+
+      this.accessory.context.hksvRecording = value === true;
+    });
 
     // Initialize the switch.
     switchService.addOptionalCharacteristic(this.hap.Characteristic.ConfiguredName);
