@@ -35,7 +35,7 @@ Briefly:
 * *Transcoding* involves a CPU-intensive conversion of a video stream from one format or quality level to another. The process can be made significantly faster (with caveats and compromises) and less resource intensive through the use of GPU hardware acceleration.
 * *Transmuxing* involves repackaging a video stream from one container format or another. No change in format or quality occurs. Notably, it is not a resource intensive activity.
 
-#### How HBUP Decides When To Transcode Or Transmux
+#### How HBUP Decides When to Transcode or Transmux
 Here are the rules that are used by default to decide when to transcode and when to transmux:
 
 * At home, on a local network, livestreams are transmuxed rather than transcoded. HBUP will select the Protect stream that is closest to the resolution that HomeKit is requesting, with a bias toward providing a higher quality stream than is being requested, when available. This results in high quality video with low latency being streamed to clients - *with the exception of the Apple Watch. Apple Watch clients will always receives transcoded video due to Watch hardware constraints.*
