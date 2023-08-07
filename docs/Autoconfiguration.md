@@ -35,19 +35,23 @@ Briefly:
 * *Transcoding* involves a CPU-intensive conversion of a video stream from one format or quality level to another. The process can be made significantly faster (with caveats and compromises) and less resource intensive through the use of GPU hardware acceleration.
 * *Transmuxing* involves repackaging a video stream from one container format or another. No change in format or quality occurs. Notably, it is not a resource intensive activity.
 
+#### How Does HBUP Decide When To Transcode Or Transmux?
 Here are the rules that are used by default to decide when to transcode and when to transmux:
 
-* At home, on a local network, livestreams are transmuxed rather than transcoded. This results in high quality video with low latency being streamed to clients - *with the exception of the Apple Watch. Apple Watch clients will always receives transcoded video due to Watch hardware constraints.*
+* At home, on a local network, livestreams are transmuxed rather than transcoded. HBUP will select the Protect stream that is closest to the resolution that HomeKit is requesting, with a bias toward providing a higher quality stream than is being requested, when available. This results in high quality video with low latency being streamed to clients - *with the exception of the Apple Watch. Apple Watch clients will always receives transcoded video due to Watch hardware constraints.*
 * When away from home, Apple Watch, or on a high-latency connection (as decided upon by HomeKit, not HBUP), livestreams are transcoded.
 
+The defaault behavior can be tailored to your preferences, using the appropriate [feature options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md#video).
+
+#### How Does HBUP Stream Quality Selection Work When Transcding? 
 When transcoding, these are the rules used to determine which Protect camera streams (Protect has three stream qualities available: High, Medium, and Low) are used for transcoding.
 
-For livestreams:
+##### For livestreams:
 
 * If you’re on a hardware accelerated platform, we always use the highest quality camera stream that's available to us as a starting point when transcoding. It always yields better performance and quality results for fixed-function hardware transcoders (e.g. most GPUs).
 * If you’re not on a hardware accelerated platform, we always try to match the quality that’s being requested, with a bias of going higher versus lower, and then passing that along to the software transcoded.
 
-For HomeKit Secure Video event recording:
+##### For HomeKit Secure Video event recording:
 
 * By default, the highest available stream quality is used to give you the best event recording output you can get before HomeKit further processes and compresses it.
 * On Raspberry Pi platform, the software interface to the onboard GPU transcoder has issues dealing with very high bitrate stream quality and HBUP will default to a starting point of **Medium** because of those capability constraints.
