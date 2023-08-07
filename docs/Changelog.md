@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 6.12.0 (2023-08-06)
+  * Fix: correctly detect Raspberry Pi Compute Module 4 variants.
+  * Housekeeping.
+
 ## 6.11.1 (2023-07-27)
   * Housekeeping and minor bugfixes.
 
