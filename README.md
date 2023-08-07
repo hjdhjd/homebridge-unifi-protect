@@ -61,7 +61,7 @@ I hope to continue to work on this one to get AEC working for two-way audio. [Yo
   * [Best Practices](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/BestPractices.md): best practices for getting the most of your HomeKit setup and UniFi Protect.
   * [Troubleshooting](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Troubleshooting.md): run into login problems or streaming problems? Give this a read.
 * Advanced Topics
-  * [Autoconfiguration](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Autoconfiguration.md): what it is, design choices that I've made, and why.
+  * [Autoconfiguration](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Autoconfiguration.md): how Protect controller autoconfiguration, transcoding and transmuxing work in HBUP, and why.
   * [Feature Options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md): granular options to allow you to set the camera quality individually, show or hide specific cameras, controllers, and more.
   * [Audio Options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/AudioOptions.md): options to further tailor how audio is handled from Protect, such as background noise reduction.
   * [Doorbells](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Doorbell.md): how UniFi Protect doorbell support works in this plugin, and how to use all the available features including doorbell messages.
