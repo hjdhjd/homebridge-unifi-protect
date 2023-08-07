@@ -56,6 +56,7 @@ When transcoding, these are the rules used to determine which Protect camera str
 * By default, the highest available stream quality is used to give you the best event recording output you can get before HomeKit further processes and compresses it.
 * On Raspberry Pi platform, the software interface to the onboard GPU transcoder has issues dealing with very high bitrate stream quality and HBUP will default to a starting point of **Medium** because of those capability constraints.
 
+#### Customizing Defaults
 All of the behavior described above can be tailored to your environment and taste. Specifically, you can:
 
 * Choose to transcode instead of transmux for local clients or not. **Default: transmux local clients.**
@@ -63,3 +64,5 @@ All of the behavior described above can be tailored to your environment and tast
 * Which Protect stream qualities to make available for HBUP. **Default: all stream qualities are available (High, Medium, and Low) that are configured on the Protect camera.**
 * Bypass the intelligence applied by HBUP when selecting which Protect stream quality to use for transcoding livestreams by forcing the use of a specific Protect stream quality. **Default: HBUP will decide based on the transcoding rules above.**
 * Change the Protect stream quality used for HomeKit Secure Video event recording. **Default: HBUP will use the highest quality Protect stream available.**
+
+***In general, I would discourage most users from changing the defaults unless they have a specific need to do so. But if you're reading this, probably like to tinker with things. 😄 I have taken a lot of time and care to design these behaviors and defaults - they really do exist for good reasons.***
