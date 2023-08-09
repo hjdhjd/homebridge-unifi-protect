@@ -29,6 +29,8 @@ Well, the Protect webUI already has a nice feature called liveviews that allows 
 
 Finally, you might want to create a way to toggle multiple cameras at once in the form of a switch, either in addition to, or instead of, a security system accessory, so we support that too to give you as much flexibility as you'd like in tailoring your experience.
 
+Please note: **by design, you must have at least one camera configured in a given liveview scene. The reason for this is to ensure there is no ambiguity in which cameras will and will not have motion detection enabled. The `Off` state in the [security system](#security-system) accessory is intentionally the only one that will universally disable motion detection across *all* cameras (presuming you don't override this behavior as described below).**
+
 ### <A NAME="security-system"></A>Configuring the Liveview Security System Feature
 
 First, we need to understand the security system accessory in [HomeKit](https://www.apple.com/ios/home/). This accessory is best described as a switch with multiple settings. You can set a security system accessory to the following states using the Home app:
@@ -67,7 +69,7 @@ In addition to the above, `homebridge-unifi-protect` can create switches based o
 
 For example, if you configure a liveview named `Protect-Outside`, you'll see a switch created in the Home app called *UDM-Pro Outside*, assuming your controller is named UDM-Pro. Toggling the switch on and off will turn on and off motion detection in the cameras configured in the liveview.
 
-There's a crucial difference between liveview switches and the liveview security system accessory: ***liveview switches only impact the cameras you've configured in that liveview***. The security system accessory will disable motion detection on all cameras not explicitly configured in a given liveview scene (with the exception of the *Off* scene, which is special - [see above](#security-system)).
+There's a crucial difference between liveview switches and the liveview security system accessory: ***liveview switches only impact the cameras you've configured in that liveview***. The security system accessory will disable motion detection on all cameras not explicitly configured in a given liveview scene (with the exception of the *Off* scene, which is special - [see below](#fun-facts)).
 
 ### MQTT Support
 [MQTT support](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/MQTT.md) is available for liveviews. You can set liveviews, as well as security system states, using MQTT. The following MQTT actions are supported:
@@ -80,7 +82,7 @@ There's a crucial difference between liveview switches and the liveview security
 
 To learn more about the MQTT support provided by this plugin, see the [MQTT](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/MQTT.md) page.
 
-### Some Fun Facts
+### <A NAME="fun-facts"></A>Some Fun Facts
   * You don't need to configure all the liveviews. If you have at least one, the security system accessory will appear. For security system states with no corresponding liveviews, nothing will happen.
   * UniFi Protect will allow you to have multiple liveviews with the same name. In this case, `homebridge-unifi-protect` will pull all the cameras in all the liveviews with the same name and control them together.
   * There is a setting when editing liveviews called `Share view with others`. This makes a given liveview available to all users, instead of just the user you're currently logged in with. Why does this matter? If you use a different username and password for `homebridge-unifi-protect` than the one you use to login, you'll want to ensure that any views you create are shared with all users so they can be used with other usernames. Alternatively, login to the Protect webUI with the same username you configured `homebridge-unifi-protect` to configure liveviews for that user.
