@@ -212,7 +212,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
       return Promise.resolve(this.livestream.initSegment);
     }
 
-    // We haven't seen it yet, wait for a couple of seconds and check again.
+    // We haven't seen it yet, wait for a couple of seconds and check an additional time.
     await this.nvr.sleep(2000);
 
     // We either have it or we don't - we can't afford to wait too long for this - HKSV is time-sensitive and we need to ensure we have a reasonable

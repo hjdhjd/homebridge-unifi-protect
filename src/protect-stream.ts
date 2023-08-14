@@ -14,7 +14,6 @@ import { FfmpegOptions } from "./protect-ffmpeg-options.js";
 import { FfmpegStreamingProcess } from "./protect-ffmpeg-stream.js";
 import { ProtectLogging } from "./protect-types.js";
 import { ProtectNvr } from "./protect-nvr.js";
-import { ProtectOptions } from "./protect-options.js";
 import { ProtectPlatform } from "./protect-platform.js";
 import { ProtectRecordingDelegate } from "./protect-record.js";
 import { RtpDemuxer } from "./protect-rtp.js";
@@ -47,7 +46,6 @@ type SessionInfo = {
 export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
   private readonly api: API;
-  private readonly config: ProtectOptions;
   public controller: CameraController;
   public readonly ffmpegOptions: FfmpegOptions;
   private readonly hap: HAP;
@@ -70,7 +68,6 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   constructor(protectCamera: ProtectCamera, resolutions: [number, number, number][]) {
 
     this.api = protectCamera.api;
-    this.config = protectCamera.platform.config;
     this.hap = protectCamera.api.hap;
     this.hksv = null;
     this.log = protectCamera.log;
