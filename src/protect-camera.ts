@@ -738,24 +738,21 @@ export class ProtectCamera extends ProtectDevice {
   }
 
   // Configure a periodic refresh of our snapshot images.
-  protected async configureSnapshotUpdates(): Promise<boolean> {
+  protected configureSnapshotUpdates(): boolean {
 
-    for(;;) {
+    // Set an ongoing refresh interval for our snapshot cache.
+    const interval = setInterval(() => {
 
       // If we've removed the device, make sure we stop refreshing.
       if(this.isDeleted) {
 
-        return true;
+        clearInterval(interval);
+        return;
       }
 
       // Refresh our snapshot cache.
-      // eslint-disable-next-line no-await-in-loop
-      await this.stream?.getSnapshot(undefined, false);
-
-      // Sleep for 59 seconds.
-      // eslint-disable-next-line no-await-in-loop
-      await this.nvr.sleep(PROTECT_SNAPSHOT_CACHE_REFRESH_INTERVAL * 1000);
-    }
+      void this.stream?.getSnapshot(undefined, false);
+    }, PROTECT_SNAPSHOT_CACHE_REFRESH_INTERVAL * 1000);
 
     return true;
   }

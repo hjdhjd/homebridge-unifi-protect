@@ -95,21 +95,8 @@ export class ProtectNvr {
   // Retrieve the bootstrap configuration from the Protect controller.
   private async bootstrapNvr(): Promise<void> {
 
-    // Gently bootstrap the Protect controller until we're successful.
-    for(;;) {
-
-      // Bootstrap the controller.
-      // eslint-disable-next-line no-await-in-loop
-      if(!(await this.ufpApi.getBootstrap())) {
-
-        // We didn't succeed, let's sleep for a bit and try again.
-        // eslint-disable-next-line no-await-in-loop
-        await this.sleep(PROTECT_CONTROLLER_RETRY_INTERVAL * 1000);
-        continue;
-      }
-
-      break;
-    }
+    // Attempt to bootstrap the controller until we're successful.
+    await this.retry(() => this.ufpApi.getBootstrap(), PROTECT_CONTROLLER_RETRY_INTERVAL * 1000);
   }
 
   // Initialize our connection to the UniFi Protect controller.
@@ -142,21 +129,10 @@ export class ProtectNvr {
 
     // Attempt to login to the Protect controller, retrying at reasonable intervals. This accounts for cases where the Protect controller or the network connection
     // may not be fully available when we startup.
-    for(;;) {
+    await this.retry(() => this.ufpApi.login(this.nvrOptions.address, this.nvrOptions.username, this.nvrOptions.password), PROTECT_CONTROLLER_RETRY_INTERVAL * 1000);
 
-      // Let's attempt to login, retrying if we have an issue logging in.
-      // eslint-disable-next-line no-await-in-loop
-      if(!(await this.ufpApi.login(this.nvrOptions.address, this.nvrOptions.username, this.nvrOptions.password))) {
-
-        // eslint-disable-next-line no-await-in-loop
-        await this.sleep(PROTECT_CONTROLLER_RETRY_INTERVAL * 1000);
-        continue;
-      }
-
-      // We logged in successfully.
-      this.log.info("Connected to the UniFi Protect API at %s.", this.config.address);
-      break;
-    }
+    // We successfully logged in.
+    this.log.info("Connected to the UniFi Protect API at %s.", this.config.address);
 
     // Now, let's get the bootstrap configuration from the Protect controller.
     await this.bootstrapNvr();
@@ -876,8 +852,23 @@ export class ProtectNvr {
   }
 
   // Emulate a sleep function.
-  public sleep(ms: number): Promise<NodeJS.Timeout> {
+  public sleep(sleepTimer: number): Promise<NodeJS.Timeout> {
 
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise(resolve => setTimeout(resolve, sleepTimer));
+  }
+
+  // Retry an operation until we're successful.
+  private async retry(operation: () => Promise<boolean>, retryInterval: number): Promise<boolean> {
+
+    // Try the operation that was requested.
+    if(!(await operation())) {
+
+      // If the operation wasn't successful, let's sleep for the requested interval and try again.
+      await this.sleep(retryInterval);
+      return this.retry(operation, retryInterval);
+    }
+
+    // We were successful - we're done.
+    return true;
   }
 }
