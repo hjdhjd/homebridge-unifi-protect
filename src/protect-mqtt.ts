@@ -11,6 +11,7 @@ import { ProtectNvr } from "./protect-nvr.js";
 import { ProtectNvrOptions } from "./protect-options.js";
 
 export class ProtectMqtt {
+
   private config: ProtectNvrOptions;
   private isConnected: boolean;
   private log: ProtectLogging;
@@ -85,7 +86,11 @@ export class ProtectMqtt {
       if(this.isConnected) {
 
         this.isConnected = false;
-        this.log.info("Disconnected from MQTT broker: %s.", this.config.mqttUrl);
+
+        // Magic incantation to redact passwords.
+        const redact = /^(?<pre>.*:\/{0,2}.*:)(?<pass>.*)(?<post>@.*)/;
+
+        this.log.info("Disconnected from MQTT broker: %s.", this.config.mqttUrl.replace(redact, "$<pre>REDACTED$<post>"));
       }
     });
 
