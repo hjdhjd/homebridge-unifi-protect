@@ -1,6 +1,6 @@
 {
   "name": "homebridge-unifi-protect",
-  "version": "6.12.0",
+  "version": "6.12.1",
   "displayName": "Homebridge UniFi Protect",
   "description": "Homebridge UniFi Protect plugin providing complete HomeKit integration for the UniFi Protect ecosystem with full support for most features including autoconfiguration, motion detection, multiple controllers, and realtime updates.",
   "author": {
@@ -25,6 +25,9 @@
     "homebridge",
     "homebridge-plugin",
     "homebridge-unifi-protect",
+    "homekit",
+    "homekit secure video",
+    "hksv",
     "camera",
     "doorbell",
     "ubiquiti",
@@ -49,8 +52,14 @@
     "unifi nvr",
     "unifi-nvr",
     "unifios",
+    "uvc ai pro",
+    "uvc g3 bullet",
     "uvc g3 flex",
+    "uvc g3 instant",
+    "uvc g4 bullet",
     "uvc g4 doorbell",
+    "uvc g4 flex",
+    "uvc g4 instant",
     "uvc g4 pro",
     "rtsp"
   ],
@@ -58,6 +67,7 @@
     "build": "rimraf ./dist && tsc",
     "clean": "rimraf ./dist",
     "lint": "eslint src/**.ts",
+    "jlint": "eslint homebridge-ui/public/**.mjs",
     "postpublish": "npm run clean",
     "prepublishOnly": "npm run lint && npm run build",
     "test": "eslint src/**.ts",
@@ -65,22 +75,22 @@
   },
   "main": "dist/index.js",
   "dependencies": {
-    "@homebridge/plugin-ui-utils": "^0.0.19",
-    "ffmpeg-for-homebridge": "^0.1.4",
-    "mqtt": "5.0.2",
-    "unifi-protect": "^4.5.0",
-    "ws": "^8.13.0"
+    "@homebridge/plugin-ui-utils": "0.1.0",
+    "ffmpeg-for-homebridge": "0.1.4",
+    "mqtt": "5.0.3",
+    "unifi-protect": "4.6.0",
+    "ws": "8.13.0"
   },
   "devDependencies": {
-    "@types/node": "^20.4.8",
-    "@types/readable-stream": "^4.0.0",
-    "@types/ws": "^8.5.5",
-    "@typescript-eslint/eslint-plugin": "^6.2.1",
-    "@typescript-eslint/parser": "^6.2.1",
-    "eslint": "^8.46.0",
-    "homebridge": "=1.6.1",
-    "nodemon": "^3.0.1",
-    "rimraf": "^5.0.1",
-    "typescript": "^5.1.6"
+    "@types/node": "20.5.1",
+    "@types/readable-stream": "4.0.1",
+    "@types/ws": "8.5.5",
+    "@typescript-eslint/eslint-plugin": "6.4.0",
+    "@typescript-eslint/parser": "6.4.0",
+    "eslint": "8.47.0",
+    "homebridge": "1.6.1",
+    "nodemon": "3.0.1",
+    "rimraf": "5.0.1",
+    "typescript": "5.1.6"
   }
 }
