@@ -75,7 +75,7 @@ I hope to continue to work on this one to get AEC working for two-way audio. [Yo
 ## Installation
 If you are new to Homebridge, please first read the [Homebridge](https://homebridge.io) [documentation](https://github.com/homebridge/homebridge/wiki) and installation instructions before proceeding.
 
-If you have installed the [Homebridge Config UI](https://github.com/oznu/homebridge-config-ui-x), you can intall this plugin by going to the `Plugins` tab and searching for `homebridge-unifi-protect` and installing it.
+If you have installed the [Homebridge Config UI](https://github.com/homebridge/homebridge-config-ui-x), you can intall this plugin by going to the `Plugins` tab and searching for `homebridge-unifi-protect` and installing it.
 
 **Important:** you will need a working **ffmpeg** installation for `homebridge-unifi-protect` to work correctly. To make installation more convenient, this plugin uses [ffmpeg-for-homebridge](https://www.npmjs.com/package/ffmpeg-for-homebridge) which provides prebuilt versions of ffmpeg for some of the more popular platforms. [Click here](https://github.com/homebridge/ffmpeg-for-homebridge#supported-platforms) for a list of platforms supported by `ffmpeg-for-homebridge`. If you don't find your platform listed, you'll need to install a working version of ffmpeg for yourself, if you want video streaming to work. **Setting up and configuring ffmpeg is beyond the scope of this documentation.**
 
@@ -98,7 +98,7 @@ Audio on cameras is tricky in the HomeKit world to begin with, and when you thro
 - ***For extra clarity and to reiterate the above - before you install this plugin, make sure you are on the latest production / stable controller platform firmware and the latest production / stable UniFi Protect firmware.***
 
 ## Plugin Configuration
-If you choose to configure this plugin directly instead of using the [Homebridge Configuration webUI](https://github.com/oznu/homebridge-config-ui-x), you'll need to add the platform to your `config.json` in your home directory inside `.homebridge`.
+If you choose to configure this plugin directly instead of using the [Homebridge Configuration webUI](https://github.com/homebridge/homebridge-config-ui-x), you'll need to add the platform to your `config.json` in your home directory inside `.homebridge`.
 
 ```js
 "platforms": [
@@ -115,7 +115,7 @@ If you choose to configure this plugin directly instead of using the [Homebridge
   }
 ]
 ```
-**For most people, I recommend using [Homebridge Configuration web UI](https://github.com/oznu/homebridge-config-ui-x) to configure this plugin rather than doing so directly. It's easier to use for most users, especially newer users, and less prone to typos, leading to other problems. This plugin has a custom webUI built on top of the Homebridge webUI framework that should simplify feature configuration, and make them more accessible to users.**
+**For most people, I recommend using [Homebridge Configuration web UI](https://github.com/homebridge/homebridge-config-ui-x) to configure this plugin rather than doing so directly. It's easier to use for most users, especially newer users, and less prone to typos, leading to other problems. This plugin has a custom webUI built on top of the Homebridge webUI framework that should simplify feature configuration, and make them more accessible to users.**
 
 You can use your Ubiquiti account credentials, though 2FA is not currently supported. That said, **I strongly recommend creating a local user just for Homebridge instead of using this option.**
 
