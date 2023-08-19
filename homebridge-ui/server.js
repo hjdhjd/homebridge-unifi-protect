@@ -127,40 +127,6 @@ class PluginUiServer extends HomebridgePluginUiServer {
       }
     });
 
-    // Compatibility for older versions of the Homebridge UI.
-    this.onRequest("/getCachedAccessories", async () => {
-
-      try {
-
-        // Define the plugin and create the array to return.
-        const plugin = "homebridge-unifi-protect";
-        const devicesToReturn = [];
-
-        // The path and file of the cached accessories.
-        const accFile = this.homebridgeStoragePath + "/accessories/cachedAccessories";
-
-        // Check the file exists.
-        if(fs.existsSync(accFile)) {
-
-          // Read the cached accessories file
-          let cachedAccessories = await fs.promises.readFile(accFile);
-
-          // Parse the JSON
-          cachedAccessories = JSON.parse(cachedAccessories);
-
-          // We only want the accessories for this plugin
-          cachedAccessories.filter(accessory => accessory.plugin === plugin).map(accessory => devicesToReturn.push(accessory));
-        }
-
-        // Return the array
-        return devicesToReturn;
-      } catch(err) {
-
-        // Just return an empty accessory list in case of any errors.
-        return [];
-      }
-    });
-
     this.ready();
   }
 }
