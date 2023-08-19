@@ -78,9 +78,7 @@ export abstract class ProtectBase {
     }
 
     // Update the manufacturer information for this device.
-    accessory
-      .getService(this.hap.Service.AccessoryInformation)
-      ?.updateCharacteristic(this.hap.Characteristic.Manufacturer, "Ubiquiti Networks");
+    accessory.getService(this.hap.Service.AccessoryInformation)?.updateCharacteristic(this.hap.Characteristic.Manufacturer, "Ubiquiti Networks");
 
     // Update the model information for this device.
     let deviceModel = device.type;

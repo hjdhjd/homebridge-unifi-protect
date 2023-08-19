@@ -1,6 +1,6 @@
 /* Copyright(C) 2020-2023, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * protect-options.ts: Type definitions for UniFi Protect.
+ * protect-options.ts: Feature option and type definitions for UniFi Protect.
  */
 import { PROTECT_DOORBELL_CHIME_DURATION_DIGITAL, PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_FFMPEG_AUDIO_FILTER_HIGHPASS, PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS,
   PROTECT_M3U_PLAYLIST_PORT, PROTECT_MOTION_DURATION, PROTECT_OCCUPANCY_DURATION } from "./settings.js";
@@ -123,14 +123,14 @@ export const featureOptions: { [index: string]: FeatureOption[] } = {
   // Video options.
   "Video": [
 
-    { default: false, description: "Dynamically adjust the bitrate on the UniFi Protect controller to accomodate HomeKit requests.", name: "DynamicBitrate" },
-    { default: false, description: "Add a switch accessory to enable or disable dynamic bitrate support on the Protect controller.", name: "DynamicBitrate.Switch" },
+    { default: false, description: "Use hardware-accelerated transcoding when available (Apple Macs, Intel Quick Sync Video-enabled CPUs, Raspberry Pi 4).", name: "Transcode.Hardware" },
     { default: false, description: "When viewing livestreams, force the use of the high quality video stream from the Protect controller.", name: "Stream.Only.High" },
     { default: false, description: "When viewing livestreams, force the use of the medium quality video stream from the Protect controller.", name: "Stream.Only.Medium" },
     { default: false, description: "When viewing livestreams, force the use of the low quality video stream from the Protect controller.", name: "Stream.Only.Low" },
     { default: false, description: "When streaming to local clients (e.g. at home), always transcode livestreams, instead of transmuxing them.", name: "Transcode" },
     { default: true, description: "When streaming to high-latency clients (e.g. cellular connections), transcode livestreams instead of transmuxing them.", name: "Transcode.HighLatency" },
-    { default: false, description: "Use hardware-accelerated transcoding when available (Apple Macs, Intel Quick Sync Video-enabled CPUs, Raspberry Pi 4).", name: "Transcode.Hardware" }
+    { default: false, description: "Dynamically adjust the image quality of the camera directly on the UniFi Protect controller to accomodate HomeKit requests.", name: "DynamicBitrate" },
+    { default: false, description: "Add a switch accessory to enable or disable dynamic bitrate support on the Protect controller.", name: "DynamicBitrate.Switch" }
   ],
 
   // HomeKit Secure Video options.
