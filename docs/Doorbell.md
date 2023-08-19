@@ -100,7 +100,7 @@ Here's how it works:
 
 #### Configuring the Doorbell Messages Feature
 
-Doorbell messages can be configured using the [Homebridge webUI](https://github.com/oznu/homebridge-config-ui-x), and I would encourage you to use that as the primary configuration method for this plugin - it contains additional validation checking (e.g. character length) to ensure the configuration is always valid.
+Doorbell messages can be configured using the [Homebridge webUI](https://github.com/homebridge/homebridge-config-ui-x), and I would encourage you to use that as the primary configuration method for this plugin - it contains additional validation checking (e.g. character length) to ensure the configuration is always valid.
 
 For those of the command-line persuasion, you can see what an example `config.json` looks like when configured with doorbell messages:
 

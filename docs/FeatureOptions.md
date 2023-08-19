@@ -28,22 +28,22 @@ The priority given to these options works in the following order, from highest t
 
 All feature options can be set at any scope level, or at multiple scope levels. If an option isn't applicable to a particular category of device, it is ignored. For example, if you have two doorbells in your environment, and want to enable the same feature options on both, you can enable the doorbell-related feature options globally rather than specifying them for each individual doorbell. If you want to override a global feature option you've set, you can override the global feature option for the individual doorbell in this example.
 
-**Note: it's strongly recommended that you use the Homebridge webUI](https://github.com/oznu/homebridge-config-ui-x) to configure this plugin - it's easier to use for most people, and will ensure you always have a valid configuration.**
+**Note: it's strongly recommended that you use the Homebridge webUI](https://github.com/homebridge/homebridge-config-ui-x) to configure this plugin - it's easier to use for most people, and will ensure you always have a valid configuration.**
 
 #### Specifying Scope
-There are two types of scope specifiers that you can use with feature options - MAC addresses and streaming client IP addresses.
+There are two types of scope specifiers that you can use with feature options - MAC addresses.
 
 Scoping rules:
 
-  * If you don't use a scoping specifier, feature options will be applied globally for all devices and streaming clients.
+  * If you don't use a scoping specifier, feature options will be applied globally for all devices.
   * To use a device or controller-specific feature option, append the option with `.MAC`, where `MAC` is the MAC address of either a UniFi Protect controller or a camera.
 
-`homebridge-unifi-protect` will log all devices it discovers on startup, including MAC addresses, which you can use to tailor the feature options you'd like to enable or disable on a per-device basis. Additionally, when a client requests a video stream, the IP address of that client will be logged, which you can also use to further tailor the streaming experience.
+`homebridge-unifi-protect` will log all devices it discovers on startup, including MAC addresses, which you can use to tailor the feature options you'd like to enable or disable on a per-device basis.
 
 ### Getting Started
 Before using these features, you should understand how feature options propagate to controllers and the devices attached to them. If you choose to disable a controller from being available to HomeKit, you will also disable all the cameras attached to that controller. If you've disabled a controller, you can selectively enable a single device associated with that controller by explicitly using the `Enable.` Feature Option with that device's MAC address. This provides you a lot of richness in how you enable or disable devices for HomeKit use.
 
-The `options` setting is an array of strings used to customize Feature Options in your `config.json`. I would encourage most users, however, to use the [Homebridge webUI](https://github.com/oznu/homebridge-config-ui-x), to configure Feature Options as well as other options in this plugin. It contains additional validation checking of parameters to ensure the configuration is always valid.
+The `options` setting is an array of strings used to customize Feature Options in your `config.json`. I would encourage most users, however, to use the [Homebridge webUI](https://github.com/homebridge/homebridge-config-ui-x), to configure Feature Options as well as other options in this plugin. It contains additional validation checking of parameters to ensure the configuration is always valid.
 
 #### Example Configuration
 An example `options` setting might look like this in your config.json:
@@ -80,7 +80,7 @@ In this example:
 ### <A NAME="reference"></A>Feature Options Reference
 Feature options provide a rich mechanism for tailoring your `homebridge-unifi-protect` experience. The reference below is divided into functional category groups:
 
-**Note: it's strongly recommended that you use the Homebridge webUI](https://github.com/oznu/homebridge-config-ui-x) to configure this plugin - it's easier to use for most people, and will ensure you always have a valid configuration.**
+**Note: it's strongly recommended that you use the Homebridge webUI](https://github.com/homebridge/homebridge-config-ui-x) to configure this plugin - it's easier to use for most people, and will ensure you always have a valid configuration.**
 
  * [Audio](#audio): Audio feature options.
  * [Device](#device): Device feature options.
@@ -177,14 +177,14 @@ These option(s) apply to: Protect cameras
 
 | Option                                           | Description
 |--------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-| `Video.DynamicBitrate`                           | Dynamically adjust the bitrate on the UniFi Protect controller to accomodate HomeKit requests. **(default: disabled)**.
-| `Video.DynamicBitrate.Switch`                    | Add a switch accessory to enable or disable dynamic bitrate support on the Protect controller. **(default: disabled)**.
+| `Video.Transcode.Hardware`                       | Use hardware-accelerated transcoding when available (Apple Macs, Intel Quick Sync Video-enabled CPUs, Raspberry Pi 4). **(default: disabled)**.
 | `Video.Stream.Only.High`                         | When viewing livestreams, force the use of the high quality video stream from the Protect controller. **(default: disabled)**.
 | `Video.Stream.Only.Medium`                       | When viewing livestreams, force the use of the medium quality video stream from the Protect controller. **(default: disabled)**.
 | `Video.Stream.Only.Low`                          | When viewing livestreams, force the use of the low quality video stream from the Protect controller. **(default: disabled)**.
 | `Video.Transcode`                                | When streaming to local clients (e.g. at home), always transcode livestreams, instead of transmuxing them. **(default: disabled)**.
 | `Video.Transcode.HighLatency`                    | When streaming to high-latency clients (e.g. cellular connections), transcode livestreams instead of transmuxing them. **(default: enabled)**.
-| `Video.Transcode.Hardware`                       | Use hardware-accelerated transcoding when available (Apple Macs, Intel Quick Sync Video-enabled CPUs, Raspberry Pi 4). **(default: disabled)**.
+| `Video.DynamicBitrate`                           | Dynamically adjust the image quality of the camera directly on the UniFi Protect controller to accomodate HomeKit requests. **(default: disabled)**.
+| `Video.DynamicBitrate.Switch`                    | Add a switch accessory to enable or disable dynamic bitrate support on the Protect controller. **(default: disabled)**.
 
 #### <A NAME="video.hksv"></A>HomeKit Secure Video feature options.
 
