@@ -125,7 +125,7 @@
         "type": "string",
         "title": "Plugin Name",
         "required": true,
-        "placeholder": "UniFi Protect",
+        "default": "UniFi Protect",
         "description": "Name to use for Homebridge logging purposes. Default: UniFi Protect."
       },
 
@@ -138,7 +138,7 @@
           "type": "string",
           "title": "Feature Option",
           "required": false,
-          "description": "Enter only one option per entry. See the feature options tab above for the complete list of available options.",
+          "description": "Enter only one option per entry. See the plugin documentation for the complete list of available options or use the feature options webUI tab above.",
           "placeholder": "e.g. Disable.Video.Transcode"
         }
       },
