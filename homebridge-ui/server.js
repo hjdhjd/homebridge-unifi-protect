@@ -1,25 +1,32 @@
 /* Copyright(C) 2017-2023, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * server.js: Homebridge camera streaming delegate implementation for Protect.
+ * server.js: homebridge-unifi-protect webUI server API.
  *
  * This module is heavily inspired by the homebridge-config-ui-x source code and borrows from both.
  * Thank you oznu for your contributions to the HomeKit world.
  */
-/* eslint-disable no-undef */
-/* eslint-disable @typescript-eslint/no-var-requires */
-/* jshint node: true,esversion: 9, -W014, -W033 */
-/* eslint-disable new-cap */
 "use strict";
 
 import { featureOptionCategories, featureOptions, isOptionEnabled } from "../dist/protect-options.js";
 import { HomebridgePluginUiServer } from "@homebridge/plugin-ui-utils";
 import { ProtectApi } from "unifi-protect";
-import * as fs from "node:fs";
 
 class PluginUiServer extends HomebridgePluginUiServer {
 
   constructor () {
     super();
+
+    // Register getDevices() with the Homebridge server API.
+    this.#registerGetDevices();
+
+    // Register getOptions() with the Homebridge server API.
+    this.#registerGetOptions();
+
+    this.ready();
+  }
+
+  // Register the getDevices() webUI server API endpoint.
+  #registerGetDevices() {
 
     // Return the list of Protect devices.
     this.onRequest("/getDevices", async (controller) => {
@@ -98,6 +105,10 @@ class PluginUiServer extends HomebridgePluginUiServer {
         return [];
       }
     });
+  }
+
+  // Register the getOptions() webUI server API endpoint.
+  #registerGetOptions() {
 
     // Return the list of options configured for a given Protect device.
     this.onRequest("/getOptions", async(request) => {
@@ -126,8 +137,6 @@ class PluginUiServer extends HomebridgePluginUiServer {
         return {};
       }
     });
-
-    this.ready();
   }
 }
 
