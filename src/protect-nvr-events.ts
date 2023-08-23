@@ -246,12 +246,6 @@ export class ProtectNvrEvents extends EventEmitter {
     // Remember this event.
     this.lastMotion[protectDevice.id] = lastMotion;
 
-    // If we already have a motion event inflight, allow it to complete so we don't spam users.
-    if(this.eventTimers[protectDevice.id]) {
-
-      return;
-    }
-
     // Only notify the user if we have a motion sensor and it's active.
     const motionService = protectDevice.accessory.getService(this.hap.Service.MotionSensor);
 
@@ -280,13 +274,8 @@ export class ProtectNvrEvents extends EventEmitter {
     // Trigger the motion event in HomeKit.
     motionService.updateCharacteristic(this.hap.Characteristic.MotionDetected, true);
 
-    // Check to see if we have a motion trigger switch configured. If we do, update it.
-    const triggerService = protectDevice.accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_MOTION_TRIGGER);
-
-    if(triggerService) {
-
-      triggerService.updateCharacteristic(this.hap.Characteristic.On, true);
-    }
+    // If we have a motion trigger switch configured, update it.
+    protectDevice.accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_MOTION_TRIGGER)?.updateCharacteristic(this.hap.Characteristic.On, true);
 
     // Publish the motion event to MQTT, if the user has configured it.
     this.nvr.mqtt?.publish(protectDevice.accessory, "motion", "true");
@@ -303,74 +292,63 @@ export class ProtectNvrEvents extends EventEmitter {
     // Trigger smart motion contact sensors, if configured.
     for(const detectedObject of detectedObjects) {
 
-      const contactService = protectDevice.accessory.getServiceById(this.hap.Service.ContactSensor,
-        ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + "." + detectedObject);
-
-      if(contactService) {
-
-        contactService.updateCharacteristic(this.hap.Characteristic.ContactSensorState, true);
-      }
+      protectDevice.accessory.getServiceById(this.hap.Service.ContactSensor, ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + "." + detectedObject)
+        ?.updateCharacteristic(this.hap.Characteristic.ContactSensorState, true);
 
       // Publish the smart motion event to MQTT, if the user has configured it.
       this.nvr.mqtt?.publish(protectDevice.accessory, "motion/smart/" + detectedObject, "true");
     }
 
-    // Reset our motion event after motionDuration if we don't already have a reset timer inflight.
-    if(!this.eventTimers[protectDevice.id]) {
+    // If we have an active motion event reset timer, let's cancel it and create a new one.
+    if(this.eventTimers[protectDevice.id]) {
 
-      this.eventTimers[protectDevice.id] = setTimeout(() => {
+      // Clear out the inflight timer from our motion event tracker.
+      clearTimeout(this.eventTimers[protectDevice.id]);
+    }
 
-        const thisMotionService = protectDevice.accessory.getService(this.hap.Service.MotionSensor);
+    // Reset our motion event after motionDuration.
+    this.eventTimers[protectDevice.id] = setTimeout(() => {
 
-        if(thisMotionService) {
+      motionService.updateCharacteristic(this.hap.Characteristic.MotionDetected, false);
 
-          thisMotionService.updateCharacteristic(this.hap.Characteristic.MotionDetected, false);
+      // If we have a motion trigger switch configured, update it.
+      protectDevice.accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_MOTION_TRIGGER)
+        ?.updateCharacteristic(this.hap.Characteristic.On, false);
 
-          // Check to see if we have a motion trigger switch configured. If we do, update it.
-          const thisTriggerService = protectDevice.accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_MOTION_TRIGGER);
+      protectDevice.log.debug("Resetting motion event.");
 
-          if(thisTriggerService) {
+      // Publish to MQTT, if the user has configured it.
+      this.nvr.mqtt?.publish(protectDevice.accessory, "motion", "false");
 
-            thisTriggerService.updateCharacteristic(this.hap.Characteristic.On, false);
-          }
+      // Delete the timer from our motion event tracker.
+      delete this.eventTimers[protectDevice.id];
+    }, protectDevice.hints.motionDuration * 1000);
 
-          this.log.debug("Resetting motion event.");
-        }
+    // If we have an active smart motion contact sensor reset timer, let's cancel it and create a new one.
+    if(this.eventTimers[protectDevice.id + ".Motion.SmartDetect.ObjectSensors"]) {
 
-        // Publish to MQTT, if the user has configured it.
-        this.nvr.mqtt?.publish(protectDevice.accessory, "motion", "false");
-
-        // Delete the timer from our motion event tracker.
-        delete this.eventTimers[protectDevice.id];
-      }, protectDevice.hints.motionDuration * 1000);
+      // Clear out the inflight timer from our motion event tracker.
+      clearTimeout(this.eventTimers[protectDevice.id + ".Motion.SmartDetect.ObjectSensors"]);
     }
 
     // Reset our smart motion contact sensors after motionDuration.
-    if(!this.eventTimers[protectDevice.id + ".Motion.SmartDetect.ObjectSensors"]) {
+    this.eventTimers[protectDevice.id + ".Motion.SmartDetect.ObjectSensors"] = setTimeout(() => {
 
-      this.eventTimers[protectDevice.id + ".Motion.SmartDetect.ObjectSensors"] = setTimeout(() => {
+      // Reset smart motion contact sensors, if configured.
+      for(const detectedObject of detectedObjects) {
 
-        // Reset smart motion contact sensors, if configured.
-        for(const detectedObject of detectedObjects) {
+        protectDevice.accessory.getServiceById(this.hap.Service.ContactSensor, ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + "." + detectedObject)
+          ?.updateCharacteristic(this.hap.Characteristic.ContactSensorState, false);
 
-          const contactService = protectDevice.accessory.getServiceById(this.hap.Service.ContactSensor,
-            ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + "." + detectedObject);
+        // Publish the smart motion event to MQTT, if the user has configured it.
+        this.nvr.mqtt?.publish(protectDevice.accessory, "motion/smart/" + detectedObject, "false");
 
-          if(contactService) {
+        protectDevice.log.debug("Resetting smart object motion event.");
+      }
 
-            contactService.updateCharacteristic(this.hap.Characteristic.ContactSensorState, false);
-          }
-
-          // Publish the smart motion event to MQTT, if the user has configured it.
-          this.nvr.mqtt?.publish(protectDevice.accessory, "motion/smart/" + detectedObject, "false");
-
-          this.log.debug("Resetting smart object motion event.");
-        }
-
-        // Delete the timer from our motion event tracker.
-        delete this.eventTimers[protectDevice.id + ".Motion.SmartDetect.ObjectSensors"];
-      }, protectDevice.hints.motionDuration * 1000);
-    }
+      // Delete the timer from our motion event tracker.
+      delete this.eventTimers[protectDevice.id + ".Motion.SmartDetect.ObjectSensors"];
+    }, protectDevice.hints.motionDuration * 1000);
 
     // If we don't have smart motion detection enabled, or if we do have it enabled and we have a smart motion event that's detected a person,
     // let's process our occupancy event updates.
