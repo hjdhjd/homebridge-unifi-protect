@@ -577,6 +577,13 @@ export class ProtectSensor extends ProtectDevice {
     // Return true if we are not null, meaning a leak has been detected.
     const value = this.ufp.leakDetectedAt !== null;
 
+    // If it's our first run, just save the state and we're done if we don't have a leak. If we do have a leak, make sure we inform the user.
+    if((this.lastLeak === undefined) && !value) {
+
+      this.lastLeak = value;
+      return value;
+    }
+
     // Save the state change and publish to MQTT.
     if(value !== this.lastLeak) {
 
