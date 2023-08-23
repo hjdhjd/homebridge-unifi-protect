@@ -470,11 +470,11 @@ export class ProtectSensor extends ProtectDevice {
     // Retrieve the current connection status when requested.
     service.getCharacteristic(this.hap.Characteristic.StatusActive)?.onGet(() => {
 
-      return this.ufp.state === "CONNECTED";
+      return this.isOnline;
     });
 
     // Update the current connection status.
-    service.updateCharacteristic(this.hap.Characteristic.StatusActive, this.ufp.state === "CONNECTED");
+    service.updateCharacteristic(this.hap.Characteristic.StatusActive, this.isOnline);
 
     return true;
   }

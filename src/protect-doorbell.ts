@@ -431,7 +431,7 @@ export class ProtectDoorbell extends ProtectCamera {
     // Update the package camera state, if we have one.
     if(this.packageCamera) {
 
-      this.packageCamera.accessory.getService(this.hap.Service.MotionSensor)?.updateCharacteristic(this.hap.Characteristic.StatusActive, this.ufp.state === "CONNECTED");
+      this.packageCamera.accessory.getService(this.hap.Service.MotionSensor)?.updateCharacteristic(this.hap.Characteristic.StatusActive, this.isOnline);
     }
 
     // Check for updates to the physical chime state, if we have the switches configured on doorbell that supports chimes.

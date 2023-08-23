@@ -136,6 +136,7 @@ export class ProtectMqtt {
 
     // No valid topic returned, we're done.
     if(!expandedTopic) {
+
       return;
     }
 
@@ -215,8 +216,6 @@ export class ProtectMqtt {
       mac = accessory.context.mac as string;
     }
 
-    const expandedTopic = this.config.mqttTopic + "/" + mac + "/" + topic;
-
-    return expandedTopic;
+    return this.config.mqttTopic + "/" + mac + "/" + topic;
   }
 }

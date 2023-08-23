@@ -240,11 +240,11 @@ export abstract class ProtectDevice extends ProtectBase {
 
       // Initialize the state of the motion sensor.
       motionService.updateCharacteristic(this.hap.Characteristic.MotionDetected, false);
-      motionService.updateCharacteristic(this.hap.Characteristic.StatusActive, this.ufp.state === "CONNECTED");
+      motionService.updateCharacteristic(this.hap.Characteristic.StatusActive, this.isOnline);
 
       motionService.getCharacteristic(this.hap.Characteristic.StatusActive).onGet(() => {
 
-        return this.ufp.state === "CONNECTED";
+        return this.isOnline;
       });
 
       // Configure our MQTT support.
@@ -363,44 +363,44 @@ export abstract class ProtectDevice extends ProtectBase {
     const switchService = this.accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_MOTION_SENSOR);
 
     // Activate or deactivate motion detection.
-    triggerService.getCharacteristic(this.hap.Characteristic.On)
-      ?.onGet(() => {
+    triggerService.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => {
 
-        return motionService?.getCharacteristic(this.hap.Characteristic.MotionDetected).value === true;
-      })
-      .onSet((value: CharacteristicValue) => {
+      return motionService?.getCharacteristic(this.hap.Characteristic.MotionDetected).value === true;
+    });
 
-        if(value) {
+    triggerService.getCharacteristic(this.hap.Characteristic.On)?.onSet((isOn: CharacteristicValue) => {
 
-          // Check to see if motion events are disabled.
-          if(switchService && !switchService.getCharacteristic(this.hap.Characteristic.On).value) {
+      if(isOn) {
 
-            setTimeout(() => {
+        // Check to see if motion events are disabled.
+        if(switchService && !switchService.getCharacteristic(this.hap.Characteristic.On).value) {
 
-              triggerService?.updateCharacteristic(this.hap.Characteristic.On, false);
-            }, 50);
+          setTimeout(() => {
 
-          } else {
-
-            // Trigger the motion event.
-            this.nvr.events.motionEventHandler(this, Date.now());
-
-            // Inform the user.
-            this.log.info("Motion event triggered.");
-          }
+            triggerService?.updateCharacteristic(this.hap.Characteristic.On, false);
+          }, 50);
 
         } else {
 
-          // If the motion sensor is still on, we should be as well.
-          if(motionService?.getCharacteristic(this.hap.Characteristic.MotionDetected).value) {
+          // Trigger the motion event.
+          this.nvr.events.motionEventHandler(this, Date.now());
 
-            setTimeout(() => {
-
-              triggerService?.updateCharacteristic(this.hap.Characteristic.On, true);
-            }, 50);
-          }
+          // Inform the user.
+          this.log.info("Motion event triggered.");
         }
-      });
+
+        return;
+      }
+
+      // If the motion sensor is still on, we should be as well.
+      if(motionService?.getCharacteristic(this.hap.Characteristic.MotionDetected).value) {
+
+        setTimeout(() => {
+
+          triggerService?.updateCharacteristic(this.hap.Characteristic.On, true);
+        }, 50);
+      }
+    });
 
     // Initialize the switch.
     triggerService.addOptionalCharacteristic(this.hap.Characteristic.ConfiguredName);
@@ -433,7 +433,7 @@ export abstract class ProtectDevice extends ProtectBase {
     return true;
   }
 
-  // Configure the Protect motion sensor for HomeKit.
+  // Configure the Protect occupancy sensor for HomeKit.
   protected configureOccupancySensor(isEnabled = true, isInitialized = false): boolean {
 
     // Find the occupancy sensor service, if it exists.
@@ -472,11 +472,11 @@ export abstract class ProtectDevice extends ProtectBase {
 
       // Initialize the state of the occupancy sensor.
       occupancyService.updateCharacteristic(this.hap.Characteristic.OccupancyDetected, false);
-      occupancyService.updateCharacteristic(this.hap.Characteristic.StatusActive, this.ufp.state === "CONNECTED");
+      occupancyService.updateCharacteristic(this.hap.Characteristic.StatusActive, this.isOnline);
 
       occupancyService.getCharacteristic(this.hap.Characteristic.StatusActive).onGet(() => {
 
-        return this.ufp.state === "CONNECTED";
+        return this.isOnline;
       });
 
       // If we have smart motion detection, allow users to choose which object types determine occupancy.
@@ -527,6 +527,12 @@ export abstract class ProtectDevice extends ProtectBase {
   public isReservedName(name: string | undefined): boolean {
 
     return name === undefined ? false : Object.values(ProtectReservedNames).map(x => x.toUpperCase()).includes(name.toUpperCase());
+  }
+
+  // Utility function to determine whether or not a device is currently online.
+  public get isOnline(): boolean {
+
+    return this.ufp?.state === "CONNECTED";
   }
 
   // Return a unique identifier for a Protect device. We need this for package cameras in particular, since they present multiple cameras in a single physical device.

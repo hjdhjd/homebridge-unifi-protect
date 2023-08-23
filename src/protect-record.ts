@@ -228,7 +228,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     const timeshiftError = "Unable to configure HomeKit Secure Video event recording support";
 
     // If the camera isn't connected, don't attempt to do anything with the timeshift buffer or HKSV quite yet.
-    if(this.protectCamera.ufp.state !== "CONNECTED") {
+    if(!this.protectCamera.isOnline) {
 
       this.log.error("%s: the camera is not currently connected to the Protect controller." +
         " HomeKit Secure Video event recording will resume once the camera reconnects to the Protect controller.", timeshiftError);

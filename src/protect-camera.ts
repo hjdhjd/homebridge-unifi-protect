@@ -1044,6 +1044,7 @@ export class ProtectCamera extends ProtectDevice {
 
     // Return the RTSP URLs when requested.
     this.nvr.mqtt?.subscribe(this.accessory, "rtsp/get", (message: Buffer) => {
+
       const value = message.toString();
 
       // When we get the right message, we trigger the snapshot request.
@@ -1091,7 +1092,7 @@ export class ProtectCamera extends ProtectDevice {
   public updateDevice(): boolean {
 
     // Update the camera state.
-    this.accessory.getService(this.hap.Service.MotionSensor)?.updateCharacteristic(this.hap.Characteristic.StatusActive, this.ufp.state === "CONNECTED");
+    this.accessory.getService(this.hap.Service.MotionSensor)?.updateCharacteristic(this.hap.Characteristic.StatusActive, this.isOnline);
 
     // Check to see if this device has a status light.
     if(this.hints.ledStatus) {

@@ -374,7 +374,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     const sdpIpVersion = sessionInfo.addressVersion === "ipv6" ? "IP6 ": "IP4";
 
     // If we aren't connected, we're done.
-    if(this.protectCamera.ufp.state !== "CONNECTED") {
+    if(!this.protectCamera.isOnline) {
       const errorMessage = "Unable to start video stream: the camera is offline or unavailable.";
 
       this.log.error(errorMessage);
@@ -881,7 +881,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     };
 
     // If we aren't connected, we're done.
-    if(this.protectCamera.ufp.state !== "CONNECTED") {
+    if(!this.protectCamera.isOnline) {
 
       logError("Unable to retrieve a snapshot: the camera is offline or unavailable.");
       return null;

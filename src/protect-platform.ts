@@ -132,8 +132,8 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
     // Probe our FFmpeg capabilities.
     this.codecSupport = new FfmpegCodecs(this);
 
-    // Avoid a prospective race condition by waiting to configure our controllers until Homebridge is done
-    // loading all the cached accessories it knows about, and calling configureAccessory() on each.
+    // Avoid a prospective race condition by waiting to configure our controllers until Homebridge is done loading all the cached accessories it knows about,
+    // and calling configureAccessory() on each.
     // eslint-disable-next-line @typescript-eslint/no-misused-promises
     api.on(APIEvent.DID_FINISH_LAUNCHING, this.launchControllers.bind(this));
   }
