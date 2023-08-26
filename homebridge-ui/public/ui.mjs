@@ -9,49 +9,85 @@ import { ProtectFeatureOptions } from "./protect-featureoptions.mjs";
 // Keep a list of all the feature options and option groups.
 const featureOptions = new ProtectFeatureOptions();
 
-// Toggle our enabled state.
-async function enablePlugin() {
+// Show the first run user experience if we don't have valid login credentials.
+function showFirstRun () {
 
-  // Show the beachball while we setup.
-  homebridge.showSpinner();
+  const buttonFirstRun = document.getElementById("firstRun");
+  const inputAddress = document.getElementById("address");
+  const inputUsername = document.getElementById("username");
+  const inputPassword = document.getElementById("password");
+  const tdLoginError = document.getElementById("loginError");
 
-  // Create our UI.
-  document.getElementById("disabledBanner").style.display = "none";
-  featureOptions.currentConfig[0].disablePlugin = false;
+  // If we don't have any controllers configured, initialize the list.
+  if(!featureOptions.currentConfig[0].controllers) {
 
-  await homebridge.updatePluginConfig(featureOptions.currentConfig)
-  await homebridge.savePluginConfig()
+    featureOptions.currentConfig[0].controllers = [ {} ];
+  }
 
-  // All done. Let the user interact with us.
-  homebridge.hideSpinner()
-}
+  // Pre-populate with anything we might already have in our configuration.
+  inputAddress.value = featureOptions.currentConfig[0].controllers[0].address ?? "";
+  inputUsername.value = featureOptions.currentConfig[0].controllers[0].username ?? "";
+  inputPassword.value = featureOptions.currentConfig[0].controllers[0].password ?? "";
 
-// Show a disabled interface.
-function showDisabledBanner() {
+  // Clear login error messages when the login credentials change.
+  inputAddress.addEventListener("input", () => {
 
-  document.getElementById("disabledBanner").style.display = "block";
-}
+    tdLoginError.innerHTML = "&nbsp;";
+  });
 
-// Show an navigation bar at the top of the plugin configuration UI.
-function showIntro () {
+  inputUsername.addEventListener("input", () => {
 
-  const introLink = document.getElementById("introLink");
+    tdLoginError.innerHTML = "&nbsp;";
+  });
 
-  introLink.addEventListener("click", () => {
+  inputPassword.addEventListener("input", () => {
+
+    tdLoginError.innerHTML = "&nbsp;";
+  });
+
+  // First run user experience.
+  buttonFirstRun.addEventListener("click", async () => {
 
     // Show the beachball while we setup.
     homebridge.showSpinner();
 
-    // Create our UI.
-    document.getElementById("pageIntro").style.display = "none";
-    document.getElementById("menuWrapper").style.display = "inline-flex";
-    showSettings();
+    const address = inputAddress.value;
+    const username = inputUsername.value;
+    const password = inputPassword.value;
 
-    // All done. Let the user interact with us.
-    homebridge.hideSpinner();
+    tdLoginError.innerHTML = "&nbsp;";
+
+    if(!address?.length || !username?.length || !password?.length) {
+
+      tdLoginError.appendChild(document.createTextNode("Please enter a valid UniFi Protect controller address, username and password."));
+      homebridge.hideSpinner();
+      return;
+    }
+
+    const ufpDevices = await homebridge.request("/getDevices", { address: address, username: username, password: password });
+
+    // Couldn't connect to the Protect controller for some reason.
+    if(!ufpDevices?.length) {
+
+      tdLoginError.innerHTML = "Unable to login to the UniFi Protect controller.<br>Please check your controller address, username, and password.<br><code class=\"text-danger\">" + (await homebridge.request("/getErrorMessage")) + "</code>";
+      homebridge.hideSpinner();
+      return;
+    }
+
+    // Save the login credentials to our configuration.
+    featureOptions.currentConfig[0].controllers[0].address = address;
+    featureOptions.currentConfig[0].controllers[0].username = username;
+    featureOptions.currentConfig[0].controllers[0].password = password;
+
+    await homebridge.updatePluginConfig(featureOptions.currentConfig);
+
+    // Create our UI.
+    document.getElementById("pageFirstRun").style.display = "none";
+    document.getElementById("menuWrapper").style.display = "inline-flex";
+    featureOptions.showUI();
   });
 
-  document.getElementById("pageIntro").style.display = "block";
+  document.getElementById("pageFirstRun").style.display = "block";
 }
 
 // Show the main plugin configuration tab.
@@ -109,31 +145,35 @@ async function launchWebUI() {
   menuHome.addEventListener("click", () => showSupport());
   menuFeatureOptions.addEventListener("click", () => featureOptions.showUI());
   menuSettings.addEventListener("click", () => showSettings());
-  disabledEnable.addEventListener("click", () => enablePlugin());
 
-  if(featureOptions.currentConfig.length) {
+  // If we've got a valid Protect controller, username, and password configured, we launch our feature option UI. Otherwise, we launch our first run UI.
+  if(featureOptions.currentConfig.length && featureOptions.currentConfig[0].controllers?.length && featureOptions.currentConfig[0].controllers[0]?.address?.length && featureOptions.currentConfig[0].controllers[0]?.username?.length && featureOptions.currentConfig[0].controllers[0]?.password?.length) {
 
-    document.getElementById("menuWrapper").style.display = "inline-flex"
-    showSettings();
-
-    // If the plugin's disabled, inform the user.
-    if(featureOptions.currentConfig[0].disablePlugin) {
-
-      showDisabledBanner();
-    }
-  } else {
-
-    featureOptions.currentConfig.push({ name: "UniFi Protect" });
-    await homebridge.updatePluginConfig(featureOptions.currentConfig);
-    showIntro();
+    document.getElementById("menuWrapper").style.display = "inline-flex";
+    featureOptions.showUI();
+    return;
   }
+
+  // If we have no configuration, let's create one.
+  if(!featureOptions.currentConfig.length) {
+
+    featureOptions.currentConfig.push({ controllers: [ {} ], name: "UniFi Protect" });
+  } else if(!("name" in featureOptions.currentConfig[0])) {
+
+    // If we haven't set the name, let's do so now.
+    featureOptions.currentConfig[0].name = "UniFi Protect";
+  }
+
+  // Update the plugin configuration and launch the first run UI.
+  await homebridge.updatePluginConfig(featureOptions.currentConfig);
+  showFirstRun();
 }
 
 // Fire off our UI, catching errors along the way.
 try {
 
   launchWebUI();
-} catch (err) {
+} catch(err) {
 
   // If we had an error instantiating or updating the UI, notify the user.
   homebridge.toast.error(err.message, "Error");

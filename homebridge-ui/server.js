@@ -10,11 +10,19 @@
 import { featureOptionCategories, featureOptions, isOptionEnabled } from "../dist/protect-options.js";
 import { HomebridgePluginUiServer } from "@homebridge/plugin-ui-utils";
 import { ProtectApi } from "unifi-protect";
+import util from "node:util";
 
 class PluginUiServer extends HomebridgePluginUiServer {
 
+  errorInfo;
+
   constructor () {
     super();
+
+    this.errorInfo = "";
+
+    // Register getErrorMessage() with the Homebridge server API.
+    this.#registerGetErrorMessage();
 
     // Register getDevices() with the Homebridge server API.
     this.#registerGetDevices();
@@ -25,6 +33,25 @@ class PluginUiServer extends HomebridgePluginUiServer {
     this.ready();
   }
 
+  // Register the getErrorMessage() webUI server API endpoint.
+  #registerGetErrorMessage() {
+
+    // Return the list of Protect devices.
+    this.onRequest("/getErrorMessage", async () => {
+
+      try {
+
+        return this.errorInfo;
+      } catch(err) {
+
+        console.log(err);
+
+        // Return nothing if we error out for some reason.
+        return "";
+      }
+    });
+  }
+
   // Register the getDevices() webUI server API endpoint.
   #registerGetDevices() {
 
@@ -33,8 +60,21 @@ class PluginUiServer extends HomebridgePluginUiServer {
 
       try {
 
+        const log = {
+
+          debug: (message, parameters) => {},
+          error: (message, parameters = []) => {
+
+            // Save the error to inform the user in the webUI.
+            this.errorInfo = util.format(message, ...parameters);
+            console.log(this.errorInfo);
+          },
+          info: (message, parameters) => {},
+          warn: (message, parameters = []) => console.log(util.format(message, ...parameters))
+        };
+
         // Connect to the Protect controller.
-        const ufpApi = new ProtectApi();
+        const ufpApi = new ProtectApi(log);
 
         if(!(await ufpApi.login(controller.address, controller.username, controller.password))) {
 
@@ -98,7 +138,6 @@ class PluginUiServer extends HomebridgePluginUiServer {
         return [ ufpApi.bootstrap.nvr, ...ufpApi.bootstrap.cameras, ...ufpApi.bootstrap.chimes, ...ufpApi.bootstrap.lights, ...ufpApi.bootstrap.sensors, ...ufpApi.bootstrap.viewers ];
       } catch(err) {
 
-        console.log("ERRORING OUT FOR " + controller.address);
         console.log(err);
 
         // Return nothing if we error out for some reason.

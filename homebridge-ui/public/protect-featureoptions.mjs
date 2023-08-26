@@ -81,12 +81,10 @@ export class ProtectFeatureOptions extends FeatureOptions {
     if(!this.currentConfig[0]?.controllers?.length) {
 
       document.getElementById("headerInfo").innerHTML = "Please configure a UniFi Protect controller to access in the main settings tab before configuring feature options."
+      document.getElementById("headerInfo").style.display = "";
       homebridge.hideSpinner();
       return;
     }
-
-    // Initialize our informational header.
-    document.getElementById("headerInfo").innerHTML = "Feature options are applied in prioritized order, from global to device-specific options:<br><i class=\"text-warning\">Global options</i> (lowest priority) &rarr; <i class=\"text-success\">Protect controller options</i> &rarr; <i class=\"text-info\">Protect device options</i> (highest priority)"
 
     // Enumerate our global options.
     const trGlobal = document.createElement("tr");
@@ -189,7 +187,7 @@ export class ProtectFeatureOptions extends FeatureOptions {
     // If we're not accessing global options, pull a list of devices attached to this controller.
     if(controller) {
 
-      this.ufpDevices = await homebridge.request("/getDevices", { address: controller.address, password: controller.password, username: controller.username });
+      this.ufpDevices = await homebridge.request("/getDevices", { address: controller.address, username: controller.username, password: controller.password });
     }
 
     // Couldn't connect to the Protect controller for some reason.
@@ -198,24 +196,21 @@ export class ProtectFeatureOptions extends FeatureOptions {
       devicesTable.innerHTML = "";
       this.configTable.innerHTML = "";
 
-      document.getElementById("device_model").innerHTML = "Unable to connect to the Protect controller. Check your settings for this controller in the main settings tab to verify they are correct."
-      document.getElementById("device_model").colSpan = 3;
-      document.getElementById("device_model").style.fontWeight = "bold";
-      document.getElementById("device_model").classList.add("text-center");
-      document.getElementById("deviceStatsHeader").style.display = "none";
-
-      document.getElementById("device_mac").innerHTML = "";
-      document.getElementById("device_address").innerHTML = "";
-      document.getElementById("device_online").innerHTML = "";
-      document.getElementById("deviceStatsTable").style.display = "inline-table";
+      document.getElementById("headerInfo").innerHTML = "Unable to connect to the Protect controller.<br>Check your settings for this controller in the settings tab to verify they are correct.<br><code class=\"text-danger\">" + (await homebridge.request("/getErrorMessage")) + "</code>";
+      document.getElementById("headerInfo").style.display = "";
+      document.getElementById("deviceStatsTable").style.display = "none";
 
       homebridge.hideSpinner();
       return;
     }
 
+    // Initialize our informational header.
+    document.getElementById("headerInfo").innerHTML = "Feature options are applied in prioritized order, from global to device-specific options:<br><i class=\"text-warning\">Global options</i> (lowest priority) &rarr; <i class=\"text-success\">Protect controller options</i> &rarr; <i class=\"text-info\">Protect device options</i> (highest priority)"
+
     // Make the UI visible.
-    document.getElementById("sidebar").style.display = "";
     document.getElementById("headerInfo").style.display = "";
+    document.getElementById("sidebar").style.display = "";
+    document.getElementById("deviceStatsTable").style.display = "";
 
     const modelKeys = [...new Set(this.ufpDevices.map(x => x.modelKey))];
     this.deviceList = [];
@@ -314,7 +309,6 @@ export class ProtectFeatureOptions extends FeatureOptions {
     // Ensure we have a controller or device. The only time this won't be the case is when we're looking at global options.
     if(ufpDevice) {
 
-      document.getElementById("deviceStatsHeader").style.display = "";
       document.getElementById("device_model").classList.remove("text-center");
       document.getElementById("device_model").colSpan = 1;
       document.getElementById("device_model").style.fontWeight = "normal";
@@ -322,13 +316,10 @@ export class ProtectFeatureOptions extends FeatureOptions {
       document.getElementById("device_mac").innerHTML = ufpDevice.mac;
       document.getElementById("device_address").innerHTML = ufpDevice.host ?? (ufpDevice.modelKey === "sensor" ? "Bluetooth Device" : "None");
       document.getElementById("device_online").innerHTML = ("state" in ufpDevice) ? (ufpDevice.state.charAt(0).toUpperCase() + ufpDevice.state.slice(1).toLowerCase()) : "Connected";
-
-      document.getElementById("deviceStatsTable").style.display = "inline-table";
+      document.getElementById("deviceStatsTable").style.display = "";
     } else {
 
       document.getElementById("deviceStatsTable").style.display = "none";
-
-      document.getElementById("deviceStatsHeader").style.display = "";
       document.getElementById("device_model").classList.remove("text-center");
       document.getElementById("device_model").colSpan = 1;
       document.getElementById("device_model").style.fontWeight = "normal";
