@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 6.13.0 (2023-08-26)
+  * Improvement: webUI enhancements. Users now default into the feature options tab, and new users will get a first run screen prompting for Protect controller and login credentials. Protect API errors are reported in the webUI. And more.
+  * Improvement: modernized and refined motion detection event delivery.
+  * Housekeeipng. Lots of housekeeping.
+
 ## 6.12.2 (2023-08-19)
 ## 6.12.1 (2023-08-19)
   * Housekeeping.
