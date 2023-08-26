@@ -19,13 +19,13 @@ export class FfmpegProcess extends EventEmitter {
 
   protected callback: StreamRequestCallback | null;
   protected commandLineArgs: string[];
+  private ffmpegTimeout?: NodeJS.Timeout;
   public hasError: boolean;
   public isEnded: boolean;
   private isLogging: boolean;
   private isPrepared: boolean;
   public isStarted: boolean;
   protected isVerbose: boolean;
-  private ffmpegTimeout?: NodeJS.Timeout;
   protected readonly log: ProtectLogging;
   protected readonly nvr: ProtectNvr;
   protected process: ChildProcessWithoutNullStreams | null;
