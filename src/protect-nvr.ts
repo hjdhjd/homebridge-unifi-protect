@@ -38,9 +38,10 @@ export class ProtectNvr {
   public readonly log: ProtectLogging;
   public mqtt: ProtectMqtt | null;
   private name: string;
+  public nvrHksvErrors: number;
   public nvrOptions: ProtectNvrOptions;
-  public systemInfo: ProtectNvrSystemInfo | null;
   public platform: ProtectPlatform;
+  public systemInfo: ProtectNvrSystemInfo | null;
   public ufp: ProtectNvrConfig;
   public ufpApi!: ProtectApi;
   private unsupportedDevices: { [index: string]: boolean };
@@ -58,6 +59,7 @@ export class ProtectNvr {
     this.logApiErrors = true;
     this.mqtt = null;
     this.name = nvrOptions.name ?? nvrOptions.address;
+    this.nvrHksvErrors = 0;
     this.nvrOptions = nvrOptions;
     this.platform = platform;
     this.systemInfo = null;
@@ -789,18 +791,14 @@ export class ProtectNvr {
   // Reauthenticate with the NVR and reset any HKSV timeshift buffers, as needed.
   public async resetNvrConnection(): Promise<void> {
 
-    // Clear our login credentials.
+    // Clear our login credentials and statistics.
+    this.nvrHksvErrors = 0;
     this.ufpApi.clearLoginCredentials();
 
     // Bootstrap the Protect NVR.
-    if(!(await this.ufpApi.getBootstrap())) {
-
-      return;
-    }
+    await this.bootstrapNvr();
 
     // Inform all HKSV-enabled devices that are using a timeshift buffer to reset.
-    // protectCamera.hints.timeshift for timeshift buffer enablement.
-    //
     for(const accessory of this.platform.accessories) {
 
       // Retrieve the HBUP object for this device.

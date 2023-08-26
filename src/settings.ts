@@ -41,6 +41,9 @@ export const PROTECT_FFMPEG_OPTIONS = [];
 // HomeKit Secure Video segment length, in milliseconds. HomeKit only supports this value currently.
 export const PROTECT_HKSV_SEGMENT_LENGTH = 4000;
 
+// HomeKit Secure Video maximum event recording errors to accept before resetting a connection to the Protect controller.
+export const PROTECT_HKSV_MAX_EVENT_ERRORS = 3;
+
 // HomeKit Secure Video timeshift buffer default length, in milliseconds. This defines how far back in time we can look when we see a motion event.
 export const PROTECT_HKSV_TIMESHIFT_BUFFER_MAXLENGTH = PROTECT_HKSV_SEGMENT_LENGTH * 2;
 
