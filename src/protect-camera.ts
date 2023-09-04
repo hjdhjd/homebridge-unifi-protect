@@ -1085,6 +1085,20 @@ export class ProtectCamera extends ProtectDevice {
       this.log.info("Snapshot triggered via MQTT.");
     });
 
+    // Trigger doorbell when requested.
+    this.nvr.mqtt?.subscribe(this.accessory, "doorbell/trigger", (message: Buffer) => {
+
+      const value = message.toString();
+
+      // When we get the right message, we trigger the doorbell request.
+      if(value?.toLowerCase() !== "true") {
+
+        return;
+      }
+      this.nvr.events.doorbellEventHandler(this, Date.now());
+      this.log.info("Doorbell ring event triggered via MQTT.");
+    });
+
     return true;
   }
 
