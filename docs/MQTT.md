@@ -26,7 +26,7 @@ I've provided MQTT support for those that are interested - I'm genuinely curious
 
   * Camera-specific RTSP information.
   * Doorbell message events. See [doorbell message events](#doorbell-messages) for additional details.
-  * Doorbell ring events.
+  * Doorbell ring events. Including triggering via MQTT.
   * Liveview-related events, including the security system accessory and security alarm.
   * Motion events.
   * Snapshot events, including publishing the actual images over MQTT.
@@ -106,6 +106,7 @@ The topics that `homebridge-unifi-protect` subscribes to are:
 | `securitysystem/set`    | One of `AlarmOff`, `AlarmOn`, `Away`, `Home`, `Night`, `Off`. This will set the respective state on the security system accessory.
 |                         |
 | `snapshot/trigger`      | `true` will trigger the camera or doorbell to generate a snapshot.
+| `doorbell/trigger`      | `true` will trigger the camera (if set as doorbell) or doorbell to generate a ring event.
 | `temperature/get`       | `true` will trigger a publish event of the temperature, in Celsius, for a UniFi Protect sensor.
 
 Some messages, such as those for the liveviews and securitysystem topics, are controller-specific. To use these topics, make sure you use the controller MAC address when you create your topic strings.
