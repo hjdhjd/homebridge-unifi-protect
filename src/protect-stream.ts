@@ -393,8 +393,8 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
     // Find the best RTSP stream based on what we're looking for.
     this.rtspEntry = this.protectCamera.findRtsp(
-      this.protectCamera.hints.hardwareTranscoding ? 3840 : request.video.width,
-      this.protectCamera.hints.hardwareTranscoding ? 2160 : request.video.height,
+      (isTranscoding && this.protectCamera.hints.hardwareTranscoding) ? 3840 : request.video.width,
+      (isTranscoding && this.protectCamera.hints.hardwareTranscoding) ? 2160 : request.video.height,
       undefined,
       isTranscoding ? this.ffmpegOptions.hostSystemMaxPixels : 0
     );
