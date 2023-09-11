@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 6.14.0 (2023-09-11)
+  * New feature: you can now trigger doorbell ring events through MQTT. See the MQTT documentation reference for more details. Thanks to @glynd for the contribution.
+  * Fix: address two edge cases on which Protect camera streams are used when HBUP tries to be smart about selecting one to use. One edge case relates to hardware transcoding and the other to some of the more exotic camera resolutions Protect uses. Thanks to @bSr43 for encountering one part of this bug and raising it to my attention wherein I discovered the second part of my shame and corrected both problems.
+
 ## 6.13.1 (2023-08-26)
   * Fix: ensure audio settings are honored for HKSV event recordings.
 
