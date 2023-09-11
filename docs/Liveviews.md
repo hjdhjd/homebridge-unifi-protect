@@ -29,7 +29,7 @@ Well, the Protect webUI already has a nice feature called liveviews that allows 
 
 Finally, you might want to create a way to toggle multiple cameras at once in the form of a switch, either in addition to, or instead of, a security system accessory, so we support that too to give you as much flexibility as you'd like in tailoring your experience.
 
-Please note: **by design, you must have at least one camera configured in a given liveview scene. The reason for this is to ensure there is no ambiguity in which cameras will and will not have motion detection enabled. The `Off` state in the [security system](#security-system) accessory is intentionally the only one that will universally disable motion detection across *all* cameras (presuming you don't override this behavior as described below).**
+Please note: **by design, you must have at least one camera configured in a given liveview scene. The reason for this is to ensure there is no ambiguity regarding which cameras will and will not have motion detection enabled. The `Off` state in the [security system](#security-system) accessory is intentionally the only one that will universally disable motion detection across *all* cameras (presuming you don't override this behavior as described below). HBUP will ignore any liveview scenes with no cameras in them.**
 
 ### <A NAME="security-system"></A>Configuring the Liveview Security System Feature
 
