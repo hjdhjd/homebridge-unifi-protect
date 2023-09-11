@@ -335,17 +335,18 @@ export class ProtectCamera extends ProtectDevice {
       return false;
     }
 
-    // We don't have a doorbell service configured, but since we've enabled a doorbell switch, we create the doorbell for
-    // automation purposes.
+    // We don't have a doorbell service configured, but since we've enabled a doorbell switch, we create the doorbell for automation purposes.
     if(!doorbellService) {
 
       // Configure the doorbell service.
       if(!this.configureVideoDoorbell()) {
+
         return false;
       }
 
       // Now find the doorbell service.
       if(!(doorbellService = this.accessory.getService(this.hap.Service.Doorbell))) {
+
         this.log.error("Unable to find the doorbell service.");
         return false;
       }
@@ -355,9 +356,11 @@ export class ProtectCamera extends ProtectDevice {
 
     // Add the switch to the camera, if needed.
     if(!triggerService) {
+
       triggerService = new this.hap.Service.Switch(triggerName, ProtectReservedNames.SWITCH_DOORBELL_TRIGGER);
 
       if(!triggerService) {
+
         this.log.error("Unable to add the doorbell trigger.");
         return false;
       }
@@ -366,31 +369,30 @@ export class ProtectCamera extends ProtectDevice {
     }
 
     // Trigger the doorbell.
-    triggerService
-      .getCharacteristic(this.hap.Characteristic.On)
-      ?.onGet(() => {
+    triggerService.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => {
 
-        return this.isRinging;
-      })
-      .onSet((value: CharacteristicValue) => {
+      return this.isRinging;
+    });
 
-        if(value) {
+    triggerService.getCharacteristic(this.hap.Characteristic.On)?.onSet((value: CharacteristicValue) => {
 
-          // Trigger the motion event.
-          this.nvr.events.doorbellEventHandler(this, Date.now());
-          this.log.info("Doorbell ring event triggered.");
+      if(value) {
 
-        } else {
+        // Trigger the ring event.
+        this.nvr.events.doorbellEventHandler(this, Date.now());
+        this.log.info("Doorbell ring event triggered.");
 
-          // If the doorbell ring event is still going, we should be as well.
-          if(this.isRinging) {
+      } else {
 
-            setTimeout(() => {
-              triggerService?.updateCharacteristic(this.hap.Characteristic.On, true);
-            }, 50);
-          }
+        // If the doorbell ring event is still going, we should be as well.
+        if(this.isRinging) {
+
+          setTimeout(() => {
+            triggerService?.updateCharacteristic(this.hap.Characteristic.On, true);
+          }, 50);
         }
-      });
+      }
+    });
 
     // Initialize the switch.
     triggerService.addOptionalCharacteristic(this.hap.Characteristic.ConfiguredName);
@@ -407,6 +409,7 @@ export class ProtectCamera extends ProtectDevice {
 
     // Only configure the doorbell service if we haven't configured it before.
     if(this.isDoorbellConfigured) {
+
       return true;
     }
 
@@ -416,9 +419,11 @@ export class ProtectCamera extends ProtectDevice {
     // Add the doorbell service to this Protect doorbell. HomeKit requires the doorbell service to be
     // marked as the primary service on the accessory.
     if(!doorbellService) {
+
       doorbellService = new this.hap.Service.Doorbell(this.accessory.displayName);
 
       if(!doorbellService) {
+
         this.log.error("Unable to add doorbell.");
         return false;
       }
@@ -441,27 +446,27 @@ export class ProtectCamera extends ProtectDevice {
     if(this.hints.ledStatus && statusLedService) {
 
       // Turn the status light on or off.
-      statusLedService.getCharacteristic(this.hap.Characteristic.CameraOperatingModeIndicator)
-        ?.onGet(() => {
+      statusLedService.getCharacteristic(this.hap.Characteristic.CameraOperatingModeIndicator)?.onGet(() => {
 
-          return this.ufp.ledSettings?.isEnabled === true;
-        })
-        .onSet(async (value: CharacteristicValue) => {
+        return this.ufp.ledSettings?.isEnabled === true;
+      });
 
-          const ledState = value === true;
+      statusLedService.getCharacteristic(this.hap.Characteristic.CameraOperatingModeIndicator)?.onSet(async (value: CharacteristicValue) => {
 
-          // Update the status light in Protect.
-          const newDevice = await this.nvr.ufpApi.updateDevice(this.ufp, { ledSettings: { isEnabled: ledState } });
+        const ledState = value === true;
 
-          if(!newDevice) {
+        // Update the status light in Protect.
+        const newDevice = await this.nvr.ufpApi.updateDevice(this.ufp, { ledSettings: { isEnabled: ledState } });
 
-            this.log.error("Unable to turn the status light %s. Please ensure this username has the Administrator role in UniFi Protect.", ledState ? "on" : "off");
-            return;
-          }
+        if(!newDevice) {
 
-          // Update our internal view of the device configuration.
-          this.ufp = newDevice;
-        });
+          this.log.error("Unable to turn the status light %s. Please ensure this username has the Administrator role in UniFi Protect.", ledState ? "on" : "off");
+          return;
+        }
+
+        // Update our internal view of the device configuration.
+        this.ufp = newDevice;
+      });
 
 
       // Initialize the status light state.
@@ -579,8 +584,8 @@ export class ProtectCamera extends ProtectDevice {
     // Validate and add our entries to the list of what we make available to HomeKit. We map these resolutions to the channels we have available to us on the camera.
     for(const entry of validResolutions) {
 
-      // This resolution is larger than the highest resolution on the camera, natively. We make an exception for
-      // 1080p and 720p resolutions since HomeKit explicitly requires them.
+      // This resolution is larger than the highest resolution on the camera, natively. We make an exception for 1080p and 720p resolutions since HomeKit explicitly
+      // requires them.
       if((entry[0] >= rtspEntries[0].resolution[0]) && ![ 1920, 1280 ].includes(entry[0])) {
 
         continue;
@@ -1085,6 +1090,9 @@ export class ProtectCamera extends ProtectDevice {
       this.log.info("Snapshot triggered via MQTT.");
     });
 
+    // Enable doorbell-specific MQTT capabilities only when we have a Protect doorbell or a doorbell trigger enabled.
+    if(this.ufp.featureFlags.isDoorbell || this.hasFeature("Doorbell.Trigger")) {
+
     // Trigger doorbell when requested.
     this.nvr.mqtt?.subscribe(this.accessory, "doorbell/trigger", (message: Buffer) => {
 
@@ -1095,9 +1103,11 @@ export class ProtectCamera extends ProtectDevice {
 
         return;
       }
+
       this.nvr.events.doorbellEventHandler(this, Date.now());
       this.log.info("Doorbell ring event triggered via MQTT.");
     });
+}
 
     return true;
   }
@@ -1204,8 +1214,7 @@ export class ProtectCamera extends ProtectDevice {
       return rtspEntries.find(x => x.channel.name.toUpperCase() === defaultStream) ?? null;
     }
 
-    // See if we have a match for our desired resolution on the camera. We ignore FPS - HomeKit clients seem
-    // to be able to handle it just fine.
+    // See if we have a match for our desired resolution on the camera. We ignore FPS - HomeKit clients seem to be able to handle it just fine.
     const exactRtsp = rtspEntries.find(x => (x.resolution[0] === width) && (x.resolution[1] === height));
 
     if(exactRtsp) {
@@ -1213,9 +1222,8 @@ export class ProtectCamera extends ProtectDevice {
       return exactRtsp;
     }
 
-    // No match found, let's see what we have that's closest. We try to be a bit smart about how we select our
-    // stream - if it's an HD quality stream request (720p+), we want to try to return something that's HD quality
-    // before looking for something lower resolution.
+    // No match found, let's see what we have that's closest. We try to be a bit smart about how we select our stream - if it's an HD quality stream request (720p+),
+    // we want to try to return something that's HD quality before looking for something lower resolution.
     if((width >= 1280) && (height >= 720)) {
 
       const entry = rtspEntries.find(x => x.resolution[0] >= 1280);
@@ -1226,9 +1234,9 @@ export class ProtectCamera extends ProtectDevice {
       }
     }
 
-    // If we didn't request an HD resolution, or we couldn't find anything HD to use, we try to find the highest resolution we can find
-    // that's at least our requested width or larger. If we can't find anything that matches, we return the lowest resolution we have available.
-    return rtspEntries.find(x => width >= x.resolution[0]) ?? rtspEntries[rtspEntries.length - 1];
+    // If we didn't request an HD resolution, or we couldn't find anything HD to use, we try to find the highest resolution we can find that's at least our requested
+    // width or larger. If we can't find anything that matches, we return the lowest resolution we have available.
+    return rtspEntries.filter(x => x.resolution[0] >= width)?.pop() ?? rtspEntries[rtspEntries.length - 1];
   }
 
   // Find a streaming RTSP configuration for a given target resolution.
