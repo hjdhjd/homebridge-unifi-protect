@@ -16,8 +16,8 @@ jobs:
   build:
     name: 'Build package'
 
-    # Build only if we've received a push event.
-    if: github.event_name == 'push'
+    # Build only if we've received a push, manual workflow dispatch, or release event with a release tag (aka v1.2.3).
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'release' && startsWith(github.ref, 'refs/tags/v'))
 
     # Create the build matrix for all the environments we're validating against.
     strategy:
@@ -47,7 +47,7 @@ jobs:
 
   # Publish the release to the NPM registry.
   publish-npm:
-    name: 'Publishing package'
+    name: 'Publish package'
     needs: build
 
     # Publish only if we've received a release event and the tag starts with "v" (aka v1.2.3).
