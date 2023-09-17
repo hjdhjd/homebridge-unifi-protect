@@ -151,6 +151,12 @@ export class FfmpegOptions {
           logMessage = "Raspberry Pi hardware acceleration will be used for livestreaming. " +
             "HomeKit Secure Video recordings are not supported by the hardware encoder and will use software transcoding instead";
 
+          // Ensure we have the pixel format the Raspberry Pi GPU is expecting available to us, if it isn't already.
+          if(!this.hwPixelFormat.some(x => x === "yuv420p")) {
+
+            this.hwPixelFormat.push("yuv420p");
+          }
+
           break;
 
         default:
