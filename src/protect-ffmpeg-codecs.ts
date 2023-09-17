@@ -80,6 +80,7 @@ export class FfmpegCodecs {
     return this.videoProcessorHwAccels[accel.toLowerCase()] ? true : false;
   }
 
+  // Utility that returns the amount of GPU memory available to us.
   public get gpuMem(): number {
 
     return this._gpuMem;

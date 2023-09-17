@@ -31,12 +31,30 @@ export class FfmpegOptions {
   private configureHwAccel(): boolean {
 
     let logMessage = "";
-    const accelCategories = this.protectCamera.hints.hardwareTranscoding ? "decoding and transcoding" : "decoding";
+
+    // Utility to return which hardware acceleration features are currently available to us.
+    const accelCategories = (): string => {
+
+      const categories = [];
+
+      if(this.protectCamera.hints.hardwareDecoding) {
+
+        categories.push("decoding");
+      }
+
+      if(this.protectCamera.hints.hardwareTranscoding) {
+
+        categories.push("transcoding");
+      }
+
+      return categories.join(" and ");
+    };
 
     // Hardware-accelerated decoding is enabled by default, where supported. Let's select the decoder options accordingly where supported.
     if(this.protectCamera.hints.hardwareDecoding) {
 
       // Utility function to check that we have a specific decoder codec available to us.
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const validateDecoder = (codec: string, pixelFormat: string[]): boolean => {
 
         if(!this.platform.codecSupport.hasDecoder("h264", codec)) {
@@ -86,7 +104,7 @@ export class FfmpegOptions {
           if(this.platform.codecSupport.gpuMem < PROTECT_RPI_GPU_MINIMUM) {
 
             this.log.info("Disabling hardware-accelerated %s. Adjust the GPU memory configuration on your Raspberry Pi to at least %s MB to enable it.",
-              accelCategories, PROTECT_RPI_GPU_MINIMUM);
+              accelCategories(), PROTECT_RPI_GPU_MINIMUM);
 
             this.protectCamera.hints.hardwareDecoding = false;
             this.protectCamera.hints.hardwareTranscoding = false;
@@ -94,8 +112,10 @@ export class FfmpegOptions {
             return false;
           }
 
-          // Verify that we have the hardware decoder available to us.
-          validateDecoder("h264_mmal", [ "mmal", "yuv420p" ]);
+          // Verify that we have the hardware decoder available to us. Unfortunately, at the moment, it seems that hardware decoding is flaky, at best, on Raspberry Pi.
+          // validateDecoder("h264_mmal", [ "mmal", "yuv420p" ]);
+          // validateDecoder("h264_v4l2m2ml", [ "yuv420p" ]);
+          this.protectCamera.hints.hardwareDecoding = false;
 
           break;
 
@@ -152,7 +172,7 @@ export class FfmpegOptions {
             "HomeKit Secure Video recordings are not supported by the hardware encoder and will use software transcoding instead";
 
           // Ensure we have the pixel format the Raspberry Pi GPU is expecting available to us, if it isn't already.
-          if(!this.hwPixelFormat.some(x => x === "yuv420p")) {
+          if(!this.hwPixelFormat.includes("yuv420p")) {
 
             this.hwPixelFormat.push("yuv420p");
           }
@@ -181,7 +201,7 @@ export class FfmpegOptions {
     // Inform the user.
     if(this.protectCamera.hints.hardwareDecoding || this.protectCamera.hints.hardwareTranscoding) {
 
-      this.log.info("Hardware-accelerated %s enabled%s.", accelCategories, logMessage.length ? ": " + logMessage : "");
+      this.log.info("Hardware-accelerated %s enabled%s.", accelCategories(), logMessage.length ? ": " + logMessage : "");
     }
 
     return this.protectCamera.hints.hardwareTranscoding;
