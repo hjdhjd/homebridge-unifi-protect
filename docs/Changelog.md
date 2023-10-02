@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 6.15.0 (2023-10-02)
+  * New feature: sync Protect device names between HomeKit and Protect (available under device feature options in the HBUP webUI). Protect device name synchronization is one-way, from Protect to HomeKit, and is not real-time. Name synchronization with HomeKit will be delivered to HomeKit on plugin startup. In reality - name synchronization is a real-time activity in HBUP, but there seems to be an issue somewhere along the way that'll be resolved in either a future HBUP or Homebridge release. **This feature is off by default, but may become the default in a future release.**
+  * New feature: license plate telemetry contact sensor support (available under motion feature options in the HBUP webUI). If you have an AI-series camera and have license plate detection enabled, you can now look for individual license plates and potentially execute specific automation scenarios (say in combination with [homebridge-myq](https://github.com/hjdhjd/homebridge-myq) and automatically open or close a garage door when detected). This works by using Protect's native detection of individual license plates - in my testing, it's imperfect but works the vast majority of the time in good lighting conditions. If you enable motion event logging, you'll see the license plate telemetry logged and, of course, there is MQTT support available as well. You must enable smart motion event detection in HBUP to use this feature - and of course, it's available in the webUI. One last thing: you can set detections for multiple license plates by hyphenating the license plates (PLATE1-PLATE2-PLATE3...) when enabling the feature option and you'll get a contact sensor for each plate.
+  * New feature: ring delay intervals. For those situations where you want to prevent someone from hitting the doorbell too many times in a row, you can now configure how much time must pass in between each doorbell ring. Available in the settings tab in the HBUP webUI under additional options and defaults to no delay between rings. Thanks to @vincer for the suggestion.
+  * New feature: device removal delay feature option (available under NVR feature options). There are certain unique scenarios (almost entirely revolving around UniFi Protect bugs related to stacked NVR configurations) where real-time removal of Protect devices from HomeKit is undesirable. This feature option allows users to configure a delay once a device removal event has been detected before HBUP removes the device from HomeKit. This can be helpful in instances where Protect devices temporarily disappear from a Protect controller before reappearing a short time later.
+  * Improvement: motion event delivery is more robust, with several under-the-hood optimizations that should make motion detection feel even snappier than they already are for users. Additionally, HBUP now warns users when Protect controller settings will prevent HBUP from seeing motion events.
+  * Improvement: native Intel QSV support comes to this release, courtesy of the latest ffmpeg-for-homebridge has now been updated with support for Intel Quick Sync Video GPU hardware acceleration. For users of QSV-enabled systems, you can give hardware-accelerated transcoding a try and see what we've been enjoying on the macOS end of the world.
+  * Housekeeping.
+
 ## 6.14.0 (2023-09-11)
   * New feature: you can now trigger doorbell ring events through MQTT. See the MQTT documentation reference for more details. Thanks to @glynd for the contribution.
   * Fix: address two edge cases on which Protect camera streams are used when HBUP tries to be smart about selecting one to use. One edge case relates to hardware transcoding and the other to some of the more exotic camera resolutions Protect uses. Thanks to @bSr43 for encountering one part of this bug and raising it to my attention wherein I discovered the second part of my shame and corrected both problems.
@@ -52,7 +61,7 @@ All notable changes to this project will be documented in this file. This projec
   * New feature: the webUI now will hide or show feature options that are dependent on other feature options being enabled or disabled, reducing visual clutter and making the webUI easier to navigate for people.
   * New feature: value-centric feature options can now be configured using the webUI. This completes the feature set for the webUI - all feature options should be configured using the webUI moving forward.
   * Improvement: additional speed and quality improvements for those that have hardware acceleration available to them. When using hardware acceleration, the highest stream quality will always be used by HBUP now, which significantly improves transcoding speed and quality.
-  * Improvement: ViewPort liveview state changes from the Protect webUI are now detected in realtime.
+  * Improvement: Viewport liveview state changes from the Protect webUI are now detected in realtime.
   * Housekeeping.
 
 ## 6.8.1 (2023-06-04)
@@ -270,7 +279,7 @@ All notable changes to this project will be documented in this file. This projec
   * Fix: increase the duration a doorbell trigger is on. In certain setups, doorbell triggers don't stay on for a long enough time to trigger HomeKit automations or update the Home app.
   * New feature: full UniFi Protect floodlight support. Floodlights will appear as a dimmer in HomeKit, allowing you to turn them on, off, and set various lighting levels. Floodlights include motion sensors that are also accessible in HomeKit.
   * New feature: full UniFi Protect sensor support. This includes ambient light sensors, contact sensors, motion sensors, and temperature sensors...and more!
-  * New feature: full UniFi Protect ViewPort support. You can configure which liveview is used for ViewPort directly in HomeKit.
+  * New feature: full UniFi Protect Viewport support. You can configure which liveview is used for Viewport directly in HomeKit.
   * New feature: UniFi Protect controller system information sensor support. Currently, we support the controller CPU temperature as a HomeKit sensor. More perhaps in the future. This feature is disabled by default. Enable the feature option `NVR.SystemInfo` to use it. See the documentation for details.
   * New feature: MQTT support for UniFi Protect floodlights.
   * New feature: MQTT support for UniFi Protect sensors.
