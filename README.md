@@ -25,7 +25,7 @@ For the more technically inclined - this plugin has continued to pioneer the Hom
 ### Features
 - ***Easy* configuration - all you need is your UniFi Protect controller IP address, username, and password to get started.** The defaults work quite well for the vast majority of users. When you want more, there are [additional options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md) you can play with, if you choose.
 
-- **Full HomeKit support for the UniFi Protect ecosystem.** All generally available UniFi Protect devices are supported, including cameras, chimes, doorbells, lights, sensors, and ViewPorts.
+- **Full HomeKit support for the UniFi Protect ecosystem.** All generally available UniFi Protect devices are supported, including cameras, chimes, doorbells, lights, sensors, and Viewports.
 
 - **[Complete HomeKit Secure Video support for all UniFi Protect cameras.](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/HomeKitSecureVideo.md)** Complete HomeKit Secure Video support, without the need for additional plugins or software beyond FFmpeg. Another community first - all without the need for additional tools to get a complete solution.
 
