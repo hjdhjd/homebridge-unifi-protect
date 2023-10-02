@@ -69,7 +69,9 @@ The topics and messages that `homebridge-unifi-protect` publishes are:
 | `liveviews`           | `[{"name": "LiveviewName", "state": true},{"name": "AnotherLiveview", "state": false}]`. `state` can be `true` or `false`, indicating whether a liveview scene is active.
 | `motion`              | `true` when motion is detected. `false` when the motion event is reset.
 |                       |
-| <CODE>motion/smart/<I>object</I></CODE>            | `true` when a smart motion event is detected for *object*. `false` when the smart motion event is reset. Valid *object* types are currently: `person`, `vehicle`. If what you want to listen for is whether a motion event is sent to HomeKit, use the `motion` topic instead.</BR>
+| <CODE>motion/smart/<I>object</I></CODE>            | `true` when a smart motion event is detected for *object*. `false` when the smart motion event is reset. Valid *object* types are currently: `licensePlate`, `person`, `package` `vehicle`. If what you want to listen for is whether a motion event is sent to HomeKit, use the `motion` topic instead.
+|                       |
+| <CODE>motion/smart/<I>object</I>/metadata</CODE>   | `JSON` when a smart motion event such as a license plate is detected and Protect has metadata that may be useful associated with the detection event.  The JSON is the unfiltered metadata JSON as provided by UniFi Protect's telemetry for that event. Currently, this is only valid for `licensePlate` smart motion events.
 |                       |
 | `rtsp`                | `{"Name": "URL"}`. Represents a JSON containing all the valid RTSP URLs that can be used to stream from this camera. `Name` is the name assigned by UniFi Protect to the RTSP URL. `URL` represents the URL that can be used for streaming.
 |                       |

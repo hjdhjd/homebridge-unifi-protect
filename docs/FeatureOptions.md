@@ -94,7 +94,7 @@ Feature options provide a rich mechanism for tailoring your `homebridge-unifi-pr
 
 #### <A NAME="audio"></A>Audio feature options.
 
-These option(s) apply to: Protect cameras
+These option(s) apply to: , and Protect cameras
 
 | Option                                           | Description
 |--------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -107,28 +107,29 @@ These option(s) apply to: Protect cameras
 
 #### <A NAME="device"></A>Device feature options.
 
-These option(s) apply to: all Protect devices
+These option(s) apply to: , and all Protect devices
 
 | Option                                           | Description
 |--------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 | `Device`                                         | Make this device available in HomeKit. **(default: enabled)**.
+| `Device.SyncName`                                | Synchronize the UniFi Protect name of this device with HomeKit. Synchronization is one-way only, syncing the device name from UniFi Protect to HomeKit. **(default: disabled)**.
 | `Device.StatusLed`                               | Enable the status LED for this device in HomeKit. **(default: disabled)**. <BR>*Supported on Protect devices that have a status LED.*
 
 #### <A NAME="doorbell"></A>Doorbell feature options.
 
-These option(s) apply to: Protect cameras
+These option(s) apply to: , and Protect cameras
 
 | Option                                           | Description
 |--------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 | `Doorbell.Messages`                              | Enable the doorbell messages feature. **(default: enabled)**. <BR>*Supported on Protect devices that have a doorbell.*
 | `Doorbell.Messages.FromDoorbell`                 | Use messages saved to the Protect NVR as message switches. **(default: enabled)**. <BR>*Supported on Protect devices that have a doorbell.*
-| `Doorbell.PhysicalChime`                         | Add switch accessories to control the physical chimes attached to a Protect doorbell. **(default: disabled)**. <BR>*Supported on undefined.*
-| `Doorbell.PhysicalChime.Duration.Digital<I>.Value</I>`  | Chime duration, in milliseconds, of a digital physical chime attached to a Protect doorbell. **(default: 1000)**. <BR>*Supported on undefined.*
+| `Doorbell.PhysicalChime`                         | Add switch accessories to control the physical chimes attached to a Protect doorbell. **(default: disabled)**. <BR>*Supported on Protect devices that have a physical chime.*
+| `Doorbell.PhysicalChime.Duration.Digital<I>.Value</I>`  | Chime duration, in milliseconds, of a digital physical chime attached to a Protect doorbell. **(default: 1000)**. <BR>*Supported on Protect devices that have a physical chime.*
 | `Doorbell.Trigger`                               | Add a switch accessory to trigger doorbell ring events on a Protect camera or doorbell. **(default: disabled)**. <BR>*Supported on Protect cameras that have a motion sensor.*
 
 #### <A NAME="log"></A>Logging feature options.
 
-These option(s) apply to: Protect cameras, Protect lights, Protect sensors
+These option(s) apply to: Protect cameras, Protect lights, and Protect sensors
 
 | Option                                           | Description
 |--------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -138,7 +139,7 @@ These option(s) apply to: Protect cameras, Protect lights, Protect sensors
 
 #### <A NAME="motion"></A>Motion detection feature options.
 
-These option(s) apply to: Protect cameras, Protect lights, Protect sensors
+These option(s) apply to: Protect cameras, Protect lights, and Protect sensors
 
 | Option                                           | Description
 |--------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -149,23 +150,25 @@ These option(s) apply to: Protect cameras, Protect lights, Protect sensors
 | `Motion.OccupancySensor.Vehicle`                 | When using both the occupancy sensor and smart motion detection feature options, use UniFi Protect's vehicle detection to trigger occupancy. **(default: disabled)**. <BR>*Supported on Protect devices that support smart motion detection (e.g. G4-series cameras and better).*
 | `Motion.SmartDetect`                             | Use UniFi Protect smart motion detection for HomeKit motion events when on a supported device. **(default: disabled)**. <BR>*Supported on Protect devices that support smart motion detection (e.g. G4-series cameras and better).*
 | `Motion.SmartDetect.ObjectSensors`               | Add contact sensor accessories for each smart motion object type that UniFi Protect supports. **(default: disabled)**. <BR>*Supported on Protect devices that support smart motion detection (e.g. G4-series cameras and better).*
+| `Motion.SmartDetect.ObjectSensors.LicensePlate<I>.Value</I>`  | Add a contact sensor accessory that will match a specific license plate detected by UniFi Protect. You may specify multiple license plates by using hyphens to distinguish unique license plates (e.g. PLATE1-PLATE2-PLATE3). **(default: )**.
 | `Motion.Switch`                                  | Add a switch accessory to activate or deactivate motion detection in HomeKit. **(default: disabled)**. <BR>*Supported on Protect devices that have a motion sensor.*
 | `Motion.Trigger`                                 | Add a switch accessory to manually trigger a motion detection event in HomeKit. **(default: disabled)**. <BR>*Supported on Protect devices that have a motion sensor.*
 
 #### <A NAME="nvr"></A>NVR feature options.
 
-These option(s) apply to: Protect controllers
+These option(s) apply to: Protect cameras and Protect controllers
 
 | Option                                           | Description
 |--------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-| `Nvr.Service.Playlist<I>.Value</I>`              | Publish an M3U playlist of Protect cameras on the specified port of this Homebridge server that is suitable for use in apps (e.g. Channels DVR) that can make camera livestreams available through them. **(default: 10110)**.
-| `Nvr.Publish.Telemetry`                          | Publish all the realtime telemetry received from the Protect controller to MQTT. **(default: disabled)**.
-| `Nvr.Recording.Switch`                           | Add switch accessories to control the native recording capabilities of the UniFi Protect NVR. **(default: disabled)**.
-| `Nvr.SystemInfo`                                 | Add sensor accessories to display the Protect controller system information (currently only the temperature). **(default: disabled)**.
+| `Nvr.Service.Playlist<I>.Value</I>`              | Publish an M3U playlist of Protect cameras on the specified port of this Homebridge server that is suitable for use in apps (e.g. Channels DVR) that can make camera livestreams available through them. **(default: 10110)**. <BR>*Supported on Protect controllers.*
+| `Nvr.DelayDeviceRemoval<I>.Value</I>`            | Delay, in seconds, before removing devices that are no longer detected on the Protect controller. By default, devices are added and removed in real-time. **(default: 60)**. <BR>*Supported on Protect controllers.*
+| `Nvr.Publish.Telemetry`                          | Publish all the realtime telemetry received from the Protect controller to MQTT. **(default: disabled)**. <BR>*Supported on Protect controllers.*
+| `Nvr.Recording.Switch`                           | Add switch accessories to control the native recording capabilities of the UniFi Protect NVR. **(default: disabled)**. <BR>*Supported on Protect cameras.*
+| `Nvr.SystemInfo`                                 | Add sensor accessories to display the Protect controller system information (currently only the temperature). **(default: disabled)**. <BR>*Supported on Protect controllers.*
 
 #### <A NAME="securitysystem"></A>Security system feature options.
 
-These option(s) apply to: Protect controllers
+These option(s) apply to: Protect cameras and Protect controllers
 
 | Option                                           | Description
 |--------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -173,7 +176,7 @@ These option(s) apply to: Protect controllers
 
 #### <A NAME="video"></A>Video feature options.
 
-These option(s) apply to: Protect cameras
+These option(s) apply to: , and Protect cameras
 
 | Option                                           | Description
 |--------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -188,7 +191,7 @@ These option(s) apply to: Protect cameras
 
 #### <A NAME="video.hksv"></A>HomeKit Secure Video feature options.
 
-These option(s) apply to: Protect cameras
+These option(s) apply to: , and Protect cameras
 
 | Option                                           | Description
 |--------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
