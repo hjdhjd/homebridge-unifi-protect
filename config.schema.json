@@ -143,15 +143,15 @@
         }
       },
 
-      "ringDuration": {
+      "ringDelay": {
 
         "type": "integer",
-        "title": "Ring Event Duration (seconds)",
+        "title": "Doorbell Ring Delay (seconds)",
         "required": false,
-        "minimum": 3,
-        "maximum": 10,
-        "placeholder": "e.g. 3",
-        "description": "Duration of a single ring event. Default: 3."
+        "minimum": 0,
+        "maximum": 60,
+        "placeholder": "e.g. 5",
+        "description": "Delay between doorbell rings. Setting this to a non-zero value will prevent multiple rings of a doorbell over the specified duration.  Default: 0."
       },
 
       "verboseFfmpeg": {
@@ -159,7 +159,7 @@
         "type": "boolean",
         "title": "Verbose FFmpeg Logging",
         "required": false,
-        "description": "Enable additional logging for FFmpeg. This will create a lot of logging when video streams are running. Default: false."
+        "description": "Enable additional logging for FFmpeg. This will create additional logging when video streams are running. Default: false."
       },
 
       "videoEncoder": {
@@ -296,7 +296,7 @@
             "videoProcessor",
             "videoEncoder",
             "verboseFfmpeg",
-            "ringDuration"
+            "ringDelay"
           ]
         }
       ]
