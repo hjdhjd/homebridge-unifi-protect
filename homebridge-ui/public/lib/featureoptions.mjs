@@ -64,7 +64,8 @@ export class FeatureOptions {
 
     const optionRegex = new RegExp("^Enable\\." + featureOption + (!deviceMac ? "" : "\\." + deviceMac) + "\\.([^\\.]+)$", "gi");
 
-    return this.optionsList.filter(x => optionRegex.test(x)).length ? true : false;
+
+    return this.optionsList.some(x => optionRegex.test(x));
   }
 
   // Get the value of a value-centric feature option.

@@ -4,10 +4,8 @@
  */
 "use strict";
 
-import { ProtectFeatureOptions } from "./protect-featureoptions.mjs";
-
-// Keep a list of all the feature options and option groups.
-const featureOptions = new ProtectFeatureOptions();
+// Keep a list of all the feature options and option groups. We dynamically import our modules to avoid browser caches.
+const featureOptions = new (await import("./protect-featureoptions.mjs")).ProtectFeatureOptions();
 
 // Show the first run user experience if we don't have valid login credentials.
 function showFirstRun () {

@@ -160,4 +160,15 @@
     </li>
   </ul>
 </div>
-<script src="./ui.mjs" type="module"></script>
+<noscript>
+  <h2>A JavaScript-enabled web browser is required to use this webUI.</h2>
+</noscript>
+<script>
+  <!--
+  (async () => {
+
+    // We use dynamic imports because web browsers often attempt to cache modules and we always want to pull a fresh copy, in case they've been updated.
+    await import("./ui.mjs");
+  })();
+  // -->
+</script>

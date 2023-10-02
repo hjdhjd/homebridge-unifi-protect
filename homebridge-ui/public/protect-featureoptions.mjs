@@ -4,9 +4,8 @@
  */
 "use strict";
 
-import { FeatureOptions} from "./lib/featureoptions.mjs";
-
-export class ProtectFeatureOptions extends FeatureOptions {
+// Protect-specific customizations for my feature option framework. We import in this odd way to dodge browser caches.
+export class ProtectFeatureOptions extends (await import("./lib/featureoptions.mjs")).FeatureOptions {
 
   // The current plugin configuration.
   currentConfig;
@@ -370,7 +369,7 @@ export class ProtectFeatureOptions extends FeatureOptions {
     for(const category of ufpFeatures.categories) {
 
       // Only show feature option categories that are valid for this context.
-      if(ufpDevice && (ufpDevice.modelKey !== "nvr") && !category.validFor.some(x => (x === ufpDevice.modelKey) || x === "all")) {
+      if(ufpDevice && (ufpDevice.modelKey !== "nvr") && !category.modelKey.some(x => (x === ufpDevice.modelKey) || x === "all")) {
 
         continue;
       }
@@ -408,8 +407,11 @@ export class ProtectFeatureOptions extends FeatureOptions {
       for(const option of optionsDevice[category.name]) {
 
         // Only show feature options that are valid for this device.
-        if(ufpDevice && (ufpDevice.modelKey !== "nvr") && ((option.hasFeature && (!ufpDevice.featureFlags || !option.hasFeature.some(x => ufpDevice.featureFlags[x]))) ||
-          (option.hasProperty && !option.hasProperty.some(x => x in ufpDevice)))) {
+        if(ufpDevice && (ufpDevice.modelKey !== "nvr") && (
+          (option.hasFeature && (!ufpDevice.featureFlags || !option.hasFeature.some(x => ufpDevice.featureFlags[x]))) ||
+          (option.hasProperty && !option.hasProperty.some(x => x in ufpDevice)) ||
+          (option.modelKey && (option.modelKey !== "all") && !option.modelKey.includes(ufpDevice.modelKey)) ||
+          (option.hasSmartObjectType && ufpDevice.featureFlags?.smartDetectTypes && !option.hasSmartObjectType.some(x => ufpDevice.featureFlags.smartDetectTypes.includes(x))))) {
 
           continue;
         }
@@ -525,7 +527,10 @@ export class ProtectFeatureOptions extends FeatureOptions {
 
             if(checkbox.checked) {
 
-              newOptions.push("Enable." + checkbox.value + "." + inputValue.value);
+              if(inputValue.value.length) {
+
+                newOptions.push("Enable." + checkbox.value + "." + inputValue.value);
+              }
             } else if(checkbox.indeterminate) {
 
               // If we're in an indeterminate state, we need to traverse the tree to get the upstream value we're inheriting.

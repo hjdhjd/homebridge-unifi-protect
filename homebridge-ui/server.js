@@ -66,11 +66,18 @@ class PluginUiServer extends HomebridgePluginUiServer {
           error: (message, parameters = []) => {
 
             // Save the error to inform the user in the webUI.
-            this.errorInfo = util.format(message, ...parameters);
-            console.log(this.errorInfo);
+            if(!!parameters?.[Symbol.iterator]) {
+
+              this.errorInfo = util.format(message, ...parameters);
+            } else {
+
+              this.errorInfo = util.format(message, parameters);
+            }
+
+            console.error(this.errorInfo);
           },
           info: (message, parameters) => {},
-          warn: (message, parameters = []) => console.log(util.format(message, ...parameters))
+          warn: (message, parameters = []) => {}
         };
 
         // Connect to the Protect controller.
