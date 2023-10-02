@@ -23,8 +23,14 @@ export const PROTECT_CONTROLLER_REFRESH_INTERVAL = 120;
 // How often, in seconds, should we retry getting our bootstrap configuration from the Protect controller.
 export const PROTECT_CONTROLLER_RETRY_INTERVAL = 10;
 
-// Default duration, in milliseconds, of a physical digital chime attached to a Protect doorbell.
+// Default delay, in seconds, before removing Protect devices that no longer exist.
+export const PROTECT_DEVICE_REMOVAL_DELAY_INTERVAL = 60;
+
+// Default duration, in milliseconds, of a physical digital chime attached to a Protect doorbell. This value comes from UniFi Protect itself.
 export const PROTECT_DOORBELL_CHIME_DURATION_DIGITAL = 1000;
+
+// Default duration, in milliseconds, of the trigger switch for a Protect doorbell, primarily for automation purposes.
+export const PROTECT_DOORBELL_TRIGGER_DURATION = 5000;
 
 // FFmpeg afftdn audio filter defaults - this setting uses FFTs to reduce noise in an audio signal by the number of decibels below.
 export const PROTECT_FFMPEG_AUDIO_FILTER_FFTNR = 90;
@@ -70,9 +76,6 @@ export const PROTECT_MQTT_TOPIC = "unifi/protect";
 
 // Default duration, in seconds, of occupancy events.
 export const PROTECT_OCCUPANCY_DURATION = 300;
-
-// Default duration, in seconds, of ring events.
-export const PROTECT_RING_DURATION = 3;
 
 // Minimum required GPU memory on a Raspberry Pi for hardware acceleration.
 export const PROTECT_RPI_GPU_MINIMUM = 128;

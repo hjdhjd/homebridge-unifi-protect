@@ -2,8 +2,8 @@
  *
  * protect-options.ts: Feature option and type definitions for UniFi Protect.
  */
-import { PROTECT_DOORBELL_CHIME_DURATION_DIGITAL, PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_FFMPEG_AUDIO_FILTER_HIGHPASS, PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS,
-  PROTECT_M3U_PLAYLIST_PORT, PROTECT_MOTION_DURATION, PROTECT_OCCUPANCY_DURATION } from "./settings.js";
+import { PROTECT_DEVICE_REMOVAL_DELAY_INTERVAL, PROTECT_DOORBELL_CHIME_DURATION_DIGITAL, PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_FFMPEG_AUDIO_FILTER_HIGHPASS,
+  PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS, PROTECT_M3U_PLAYLIST_PORT, PROTECT_MOTION_DURATION, PROTECT_OCCUPANCY_DURATION } from "./settings.js";
 import { ProtectDeviceConfigTypes } from "./protect-types.js";
 import { ProtectNvrConfig } from "unifi-protect";
 
@@ -14,7 +14,7 @@ export interface ProtectOptions {
   debugAll: boolean,
   ffmpegOptions: string[],
   options: string[],
-  ringDuration: number,
+  ringDelay: number,
   verboseFfmpeg: boolean,
   videoEncoder: string,
   videoProcessor: string
@@ -40,15 +40,15 @@ export interface ProtectNvrOptions {
 // Feature option categories.
 export const featureOptionCategories = [
 
-  { description: "Audio feature options.", name: "Audio", validFor: [ "camera" ] },
-  { description: "Device feature options.", name: "Device", validFor: [ "all" ] },
-  { description: "Doorbell feature options.", name: "Doorbell", validFor: [ "camera" ] },
-  { description: "Logging feature options.", name: "Log", validFor: [ "camera", "light", "sensor" ] },
-  { description: "Motion detection feature options.", name: "Motion", validFor: [ "camera", "light", "sensor" ] },
-  { description: "NVR feature options.", name: "Nvr", validFor: [ "nvr" ] },
-  { description: "Security system feature options.", name: "SecuritySystem", validFor: [ "nvr" ] },
-  { description: "Video feature options.", name: "Video", validFor: [ "camera" ] },
-  { description: "HomeKit Secure Video feature options.", name: "Video.HKSV", validFor: [ "camera" ] }
+  { description: "Audio feature options.", modelKey: [ "camera" ], name: "Audio" },
+  { description: "Device feature options.", modelKey: [ "all" ], name: "Device" },
+  { description: "Doorbell feature options.", modelKey: [ "camera" ], name: "Doorbell" },
+  { description: "Logging feature options.", modelKey: [ "camera", "light", "sensor" ], name: "Log" },
+  { description: "Motion detection feature options.", modelKey: [ "camera", "light", "sensor" ], name: "Motion" },
+  { description: "NVR feature options.", modelKey: [ "camera", "nvr" ], name: "Nvr" },
+  { description: "Security system feature options.", modelKey: [ "camera", "nvr" ], name: "SecuritySystem" },
+  { description: "Video feature options.", modelKey: [ "camera" ], name: "Video" },
+  { description: "HomeKit Secure Video feature options.", modelKey: [ "camera" ], name: "Video.HKSV" }
 ];
 
 /* eslint-disable max-len */
@@ -70,6 +70,7 @@ export const featureOptions: { [index: string]: FeatureOption[] } = {
   "Device": [
 
     { default: true, description: "Make this device available in HomeKit.", name: "" },
+    { default: false, description: "Synchronize the UniFi Protect name of this device with HomeKit. Synchronization is one-way only, syncing the device name from UniFi Protect to HomeKit.",  name: "SyncName" },
     { default: false, description: "Enable the status LED for this device in HomeKit.", hasProperty: [ "ledSettings" ],  name: "StatusLed" }
   ],
 
@@ -101,6 +102,7 @@ export const featureOptions: { [index: string]: FeatureOption[] } = {
     { default: false, description: "When using both the occupancy sensor and smart motion detection feature options, use UniFi Protect's vehicle detection to trigger occupancy.", group: "OccupancySensor", hasFeature: [ "hasSmartDetect" ], name: "OccupancySensor.Vehicle" },
     { default: false, description: "Use UniFi Protect smart motion detection for HomeKit motion events when on a supported device.", hasFeature: [ "hasSmartDetect" ], name: "SmartDetect" },
     { default: false, description: "Add contact sensor accessories for each smart motion object type that UniFi Protect supports.", group: "SmartDetect", hasFeature: [ "hasSmartDetect" ], name: "SmartDetect.ObjectSensors" },
+    { default: false, defaultValue: "", description: "Add a contact sensor accessory that will match a specific license plate detected by UniFi Protect. You may specify multiple license plates by using hyphens to distinguish unique license plates (e.g. PLATE1-PLATE2-PLATE3).", group: "SmartDetect", hasSmartObjectType: [ "licensePlate" ], name: "SmartDetect.ObjectSensors.LicensePlate" },
     { default: false, description: "Add a switch accessory to activate or deactivate motion detection in HomeKit.", hasProperty: [ "isMotionDetected", "isPirMotionDetected" ], name: "Switch" },
     { default: false, description: "Add a switch accessory to manually trigger a motion detection event in HomeKit.", hasProperty: [ "isMotionDetected", "isPirMotionDetected" ], name: "Trigger" }
   ],
@@ -108,10 +110,11 @@ export const featureOptions: { [index: string]: FeatureOption[] } = {
   // NVR options.
   "Nvr": [
 
-    { default: false, defaultValue: PROTECT_M3U_PLAYLIST_PORT, description: "Publish an M3U playlist of Protect cameras on the specified port of this Homebridge server that is suitable for use in apps (e.g. Channels DVR) that can make camera livestreams available through them.", name: "Service.Playlist" },
-    { default: false, description: "Publish all the realtime telemetry received from the Protect controller to MQTT.", name: "Publish.Telemetry" },
-    { default: false, description: "Add switch accessories to control the native recording capabilities of the UniFi Protect NVR.", name: "Recording.Switch" },
-    { default: false, description: "Add sensor accessories to display the Protect controller system information (currently only the temperature).", name: "SystemInfo" }
+    { default: false, defaultValue: PROTECT_M3U_PLAYLIST_PORT, description: "Publish an M3U playlist of Protect cameras on the specified port of this Homebridge server that is suitable for use in apps (e.g. Channels DVR) that can make camera livestreams available through them.", modelKey: [ "nvr" ], name: "Service.Playlist" },
+    { default: false, defaultValue: PROTECT_DEVICE_REMOVAL_DELAY_INTERVAL, description: "Delay, in seconds, before removing devices that are no longer detected on the Protect controller. By default, devices are added and removed in real-time.", modelKey: [ "nvr" ], name: "DelayDeviceRemoval" },
+    { default: false, description: "Publish all the realtime telemetry received from the Protect controller to MQTT.", modelKey: [ "nvr" ], name: "Publish.Telemetry" },
+    { default: false, description: "Add switch accessories to control the native recording capabilities of the UniFi Protect NVR.", modelKey: [ "camera" ], name: "Recording.Switch" },
+    { default: false, description: "Add sensor accessories to display the Protect controller system information (currently only the temperature).", modelKey: [ "nvr" ], name: "SystemInfo" }
   ],
 
   // Security system options.
@@ -149,13 +152,15 @@ export const featureOptions: { [index: string]: FeatureOption[] } = {
 
 export interface FeatureOption {
 
-  default: boolean,           // Default feature option state.
-  defaultValue?: number,      // Default value for value-based feature options.
-  description: string,        // Description of the feature option.
-  group?: string,             // Feature option grouping for related options.
-  hasFeature?: string[],      // What hardware-specific features, if any, is this feature option dependent on.
-  hasProperty?: string[],     // What UFP JSON property, if any, is this feature option dependent on.
-  name: string                // Name of the feature option.
+  default: boolean,                   // Default feature option state.
+  defaultValue?: number | string,     // Default value for value-based feature options.
+  description: string,                // Description of the feature option.
+  group?: string,                     // Feature option grouping for related options.
+  hasFeature?: string[],              // What hardware-specific features, if any, is this feature option dependent on.
+  hasProperty?: string[],             // What UFP JSON property, if any, is this feature option dependent on.
+  hasSmartObjectType?: string[],      // What smart object detection capability, is any, is this feature option dependent on.
+  modelKey?: string[],              // Which Protect hardware is this feature option applicable to.
+  name: string                        // Name of the feature option.
 }
 
 // Utility function to let us know whether a feature option should be enabled or not, traversing the scope hierarchy.
@@ -243,7 +248,7 @@ export function getOptionValue(configOptions: string[], nvrUfp: ProtectNvrConfig
   const getValue = (checkOption: string, checkMac: string | undefined = undefined): string | undefined => {
 
     // This regular expression is a bit more intricate than you might think it should be due to the need to ensure we capture values at the very end of the option.
-    const optionRegex = new RegExp("^Enable\\." + checkOption + (!checkMac ? "" : "\\." + checkMac) + "\\.([^\\.]+)$", "gi");
+    const optionRegex = new RegExp("^Enable\\." + checkOption + (!checkMac ? "" : "\\." + checkMac) + "\\.(.+)$", "gi");
 
     // Get the option value, if we have one.
     for(const entry of configOptions) {

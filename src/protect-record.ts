@@ -97,12 +97,12 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
 
       this.isInitialized = true;
 
-      this.log.info("HomeKit Secure Video %sevent recording enabled: %s, %s kbps with %s",
+      this.log.info("HomeKit Secure Video %sevent recording enabled: %s, %s kbps %s",
         this.protectCamera.hints.hardwareTranscoding ? "hardware-accelerated " : "",
         this.rtspEntry?.name, this.recordingConfig?.videoCodec.parameters.bitRate.toLocaleString("en-US"),
         this.protectCamera.hints.timeshift ?
-          "a " + (this.timeshift.length / 1000).toString() + " second timeshift buffer." :
-          "no timeshift buffer. This will provide a suboptimal HKSV experience."
+          "(" + (this.timeshift.length / 1000).toString() + " second timeshift buffer)." :
+          "with no timeshift buffer. This will provide a suboptimal HKSV experience."
       );
 
       // Inform the user if there's a maximum event recording duration set.
@@ -270,7 +270,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     // Fire up the timeshift buffer. If we've got multiple lenses, we use the first channel and explicitly request the lens we want.
     if(!(await this.timeshift.start((this.rtspEntry.lens === undefined) ? this.rtspEntry.channel.id : 0, this.rtspEntry.lens))) {
 
-      this.log.error("%s.", timeshiftError);
+      this.log.error("%s: unable to connect to the livestream API on the Protect controller.", timeshiftError);
       return false;
     }
 

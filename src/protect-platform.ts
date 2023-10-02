@@ -3,7 +3,7 @@
  * protect-platform.ts: homebridge-unifi-protect platform class.
  */
 import { API, APIEvent, DynamicPlatformPlugin, Logging, PlatformAccessory, PlatformConfig } from "homebridge";
-import { PROTECT_FFMPEG_OPTIONS, PROTECT_MQTT_TOPIC, PROTECT_RING_DURATION } from "./settings.js";
+import { PROTECT_FFMPEG_OPTIONS, PROTECT_MQTT_TOPIC } from "./settings.js";
 import { ProtectNvrOptions, ProtectOptions, featureOptionCategories, featureOptions } from "./protect-options.js";
 import { FfmpegCodecs } from "./protect-ffmpeg-codecs.js";
 import { ProtectNvr } from "./protect-nvr.js";
@@ -20,9 +20,9 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
   public readonly api: API;
   public readonly codecSupport!: FfmpegCodecs;
   public readonly config!: ProtectOptions;
-  public readonly configOptions: string[];
   private readonly controllers: ProtectNvr[];
   private featureOptionDefaults: { [index: string]: boolean };
+  public readonly featureOptions: string[];
   public readonly log: Logging;
   public readonly rtpPorts: RtpPortAllocator;
   private _hostSystem: string;
@@ -33,9 +33,9 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
     this._hostSystem = "";
     this.accessories = [];
     this.api = api;
-    this.configOptions = [];
     this.controllers = [];
     this.featureOptionDefaults = {};
+    this.featureOptions = [];
     this.log = log;
     this.rtpPorts = new RtpPortAllocator();
     this.verboseFfmpeg = false;
@@ -62,7 +62,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
       debugAll: config.debug as boolean === true,
       ffmpegOptions: config.ffmpegOptions as string[] ?? PROTECT_FFMPEG_OPTIONS,
       options: config.options as string[],
-      ringDuration: config.ringDuration as number ?? PROTECT_RING_DURATION,
+      ringDelay: config.ringDelay as number ?? 0,
       verboseFfmpeg: config.verboseFfmpeg === true,
       videoEncoder: config.videoEncoder as string,
       videoProcessor: config.videoProcessor as string ?? ffmpegPath ?? "ffmpeg"
@@ -90,14 +90,8 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
 
       for(const featureOption of this.config.options) {
 
-        this.configOptions.push(featureOption.toLowerCase());
+        this.featureOptions.push(featureOption.toLowerCase());
       }
-    }
-
-    // Ring trigger duration. Make sure it's never less than 3 seconds so we can ensure automations work.
-    if(this.config.ringDuration < 3 ) {
-
-      this.config.ringDuration = 3;
     }
 
     // Loop through each configured NVR and instantiate it.
@@ -132,8 +126,8 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
     // Probe our FFmpeg capabilities.
     this.codecSupport = new FfmpegCodecs(this);
 
-    // Avoid a prospective race condition by waiting to configure our controllers until Homebridge is done loading all the cached accessories it knows about,
-    // and calling configureAccessory() on each.
+    // Avoid a prospective race condition by waiting to configure our controllers until Homebridge is done loading all the cached accessories it knows about, and calling
+    // configureAccessory() on each.
     // eslint-disable-next-line @typescript-eslint/no-misused-promises
     api.on(APIEvent.DID_FINISH_LAUNCHING, this.launchControllers.bind(this));
   }

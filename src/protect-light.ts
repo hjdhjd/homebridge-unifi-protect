@@ -64,7 +64,7 @@ export class ProtectLight extends ProtectDevice {
     // Add the service to the accessory, if needed.
     if(!lightService) {
 
-      lightService = new this.hap.Service.Lightbulb(this.accessory.displayName);
+      lightService = new this.hap.Service.Lightbulb(this.accessoryName);
 
       if(!lightService) {
 
@@ -76,55 +76,57 @@ export class ProtectLight extends ProtectDevice {
     }
 
     // Turn the light on or off.
-    lightService.getCharacteristic(this.hap.Characteristic.On)
-      ?.onGet(() => {
+    lightService.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => {
 
-        return this.ufp.isLightOn === true;
-      })
-      .onSet(async (value: CharacteristicValue) => {
+      return this.ufp.isLightOn === true;
+    });
 
-        const lightState = value === true;
-        const newDevice = await this.nvr.ufpApi.updateDevice(this.ufp, { lightOnSettings: { isLedForceOn: lightState } });
+    lightService.getCharacteristic(this.hap.Characteristic.On)?.onSet(async (value: CharacteristicValue) => {
 
-        if(!newDevice) {
+      const lightState = value === true;
+      const newDevice = await this.nvr.ufpApi.updateDevice(this.ufp, { lightOnSettings: { isLedForceOn: lightState } });
 
-          this.log.error("Unable to turn the light %s. Please ensure this username has the Administrator role in UniFi Protect.", lightState ? "on" : "off");
-          return;
-        }
+      if(!newDevice) {
 
-        // Set the context to our updated device configuration.
-        this.ufp = newDevice;
-      });
+        this.log.error("Unable to turn the light %s. Please ensure this username has the Administrator role in UniFi Protect.", lightState ? "on" : "off");
+        return;
+      }
+
+      // Set the context to our updated device configuration.
+      this.ufp = newDevice;
+    });
 
     // Adjust the brightness of the light.
-    lightService.getCharacteristic(this.hap.Characteristic.Brightness)
-      ?.onGet(() => {
+    lightService.getCharacteristic(this.hap.Characteristic.Brightness)?.onGet(() => {
 
-        // The Protect ledLevel settings goes from 1 - 6. HomeKit expects percentages, so we convert it like so.
-        return (this.ufp.lightDeviceSettings.ledLevel - 1) * 20;
-      })
-      .onSet(async (value: CharacteristicValue) => {
+      // The Protect ledLevel settings goes from 1 - 6. HomeKit expects percentages, so we convert it like so.
+      return (this.ufp.lightDeviceSettings.ledLevel - 1) * 20;
+    });
 
-        const brightness = Math.round(((value as number) / 20) + 1);
-        const newDevice = await this.nvr.ufpApi.updateDevice(this.ufp, { lightDeviceSettings: { ledLevel: brightness } });
+    lightService.getCharacteristic(this.hap.Characteristic.Brightness)?.onSet(async (value: CharacteristicValue) => {
 
-        if(!newDevice) {
+      const brightness = Math.round(((value as number) / 20) + 1);
+      const newDevice = await this.nvr.ufpApi.updateDevice(this.ufp, { lightDeviceSettings: { ledLevel: brightness } });
 
-          this.log.error("Unable to adjust the brightness to %s%. Please ensure this username has the Administrator role in UniFi Protect.", value);
-          return;
-        }
+      if(!newDevice) {
 
-        // Set the context to our updated device configuration.
-        this.ufp = newDevice;
+        this.log.error("Unable to adjust the brightness to %s%. Please ensure this username has the Administrator role in UniFi Protect.", value);
+        return;
+      }
 
-        // Make sure we properly reflect what brightness we're actually at, given the differences in setting granularity between Protect and HomeKit.
-        setTimeout(() => {
+      // Set the context to our updated device configuration.
+      this.ufp = newDevice;
 
-          lightService?.updateCharacteristic(this.hap.Characteristic.Brightness, (brightness - 1) * 20);
-        }, 50);
-      });
+      // Make sure we properly reflect what brightness we're actually at, given the differences in setting granularity between Protect and HomeKit.
+      setTimeout(() => {
+
+        lightService?.updateCharacteristic(this.hap.Characteristic.Brightness, (brightness - 1) * 20);
+      }, 50);
+    });
 
     // Initialize the light.
+    lightService.displayName = this.accessoryName;
+    lightService.updateCharacteristic(this.hap.Characteristic.Name, this.accessoryName);
     lightService.updateCharacteristic(this.hap.Characteristic.On, this.ufp.isLightOn);
     lightService.updateCharacteristic(this.hap.Characteristic.Brightness, (this.ufp.lightDeviceSettings.ledLevel - 1) * 20);
 
@@ -184,7 +186,7 @@ export class ProtectLight extends ProtectDevice {
     const payload = packet.payload as ProtectLightConfigPayload;
 
     // It's a motion event - process it accordingly.
-    if(payload.isPirMotionDetected && payload.lastMotion) {
+    if(payload.lastMotion) {
 
       this.nvr.events.motionEventHandler(this, payload.lastMotion);
     }

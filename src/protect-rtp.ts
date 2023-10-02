@@ -12,14 +12,13 @@ import { ProtectStreamingDelegate } from "./protect-stream.js";
 import { createSocket } from "node:dgram";
 
 /*
- * Here's the problem this class solves: FFmpeg doesn't support multiplexing RTP and RTCP data on a single UDP port (RFC 5761).
- * If it did, we wouldn't need this workaround for HomeKit compatibility, which does multiplex RTP and RTCP over a single UDP port.
+ * Here's the problem this class solves: FFmpeg doesn't support multiplexing RTP and RTCP data on a single UDP port (RFC 5761). If it did, we wouldn't need this
+ * workaround for HomeKit compatibility, which does multiplex RTP and RTCP over a single UDP port.
  *
  * This class inspects all packets coming in from inputPort and demultiplexes RTP and RTCP traffic to rtpPort and rtcpPort, respectively.
  *
- * Credit to @dgreif and @brandawg93 who graciously shared their code as a starting point, and their collaboration
- * in answering the questions needed to bring all this together. A special thank you to @Sunoo for the many hours of
- * discussion and brainstorming on this and other topics.
+ * Credit to @dgreif and @brandawg93 who graciously shared their code as a starting point, and their collaboration in answering the questions needed to bring all this
+ * together. A special thank you to @Sunoo for the many hours of discussion and brainstorming on this and other topics.
  */
 export class RtpDemuxer extends EventEmitter {
 
@@ -130,7 +129,10 @@ export class RtpDemuxer extends EventEmitter {
   }
 }
 
-// RTP port allocator class that keeps track of ports that are currently earmarked for use.
+/* RTP port allocator class that keeps track of UDP ports that are currently earmarked for use. We need this when allocating ports that we use for various network
+ * activities such as demuxing FFmpeg or opening up other sockets. Otherwise, we run a risk (especially in environment where there are many such requests) of allocating
+ * the same port multiple times and end up erroring out unceremoniously.
+ */
 export class RtpPortAllocator {
 
   private portsInUse: { [index: number]: boolean };

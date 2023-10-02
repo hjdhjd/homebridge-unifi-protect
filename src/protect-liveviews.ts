@@ -11,8 +11,6 @@ import { ProtectSecuritySystem } from "./protect-securitysystem.js";
 
 export class ProtectLiveviews extends ProtectBase {
 
-  // By design, we want to avoid configuring multiple liveview switches with the same name. Instead we combine all liveviews of the same name into
-  // a single switch. Maintain a list of the names we've configured for simplcity.
   private isConfigured: { [index: string]: boolean };
   private isMqttConfigured: boolean;
   private liveviews: ProtectNvrLiveviewConfig[];
@@ -153,8 +151,7 @@ export class ProtectLiveviews extends ProtectBase {
     // Initialize the regular expression here so we don't have to reinitialize it in each iteration below.
     const regexLiveview = /^Protect-((?!Away$|Off$|Home$|Night$).+)$/i;
 
-    // Check for any new plugin-specific liveviews. By design, we want to avoid configuring multiple liveview switches with the same name. Instead,
-    // we combine all liveviews of the same name into a single switch.
+    // Check for any new plugin-specific liveviews.
     for(const liveview of [...new Set(this.liveviews.map(x => x.name))]) {
 
       // Only match on views beginning with Protect- that are not reserved for the security system.
@@ -169,8 +166,7 @@ export class ProtectLiveviews extends ProtectBase {
       // Grab the name of our new switch for reference.
       const viewName = viewMatch[1];
 
-      // By design, we want to avoid configuring multiple liveview switches with the same name. Instead we combine all liveviews of the same name into
-      // a single switch. Maintain a list of the names we've configured for simplcity.
+      // By design, we want to avoid configuring multiple liveview switches with the same name. Instead we combine all liveviews of the same name into a single switch.
       if(this.isConfigured[viewName.toUpperCase()]) {
 
         continue;
@@ -231,10 +227,9 @@ export class ProtectLiveviews extends ProtectBase {
         .onGet(this.getSwitchState.bind(this, newAccessory.context.liveview as string))
         .onSet(this.setSwitchState.bind(this, newAccessory));
 
-      // Initialize the switch. We keep a saved liveview switch state because we want to account for edge cases where liveviews can disappear and
-      // we end up in a situation where motion detection is disabled without a way to enable it. By saving the switch state on the accessory, we
-      // can always initialize all motion-related accessories at startup as having motion enabled, and explicitly disable them here at startup when
-      // we restore state.
+      // Initialize the switch. We keep a saved liveview switch state because we want to account for edge cases where liveviews can disappear and we end up in a
+      // situation where motion detection is disabled without a way to enable it. By saving the switch state on the accessory, we can always initialize all
+      // motion-related accessories at startup as having motion enabled, and explicitly disable them here at startup when we restore state.
       switchService.updateCharacteristic(this.hap.Characteristic.On, newAccessory.context.liveviewState as boolean);
       this.setSwitchState(newAccessory, newAccessory.context.liveviewState as boolean);
       this.isConfigured[(newAccessory.context.liveview as string).toUpperCase()] = true;
@@ -336,9 +331,8 @@ export class ProtectLiveviews extends ProtectBase {
       return;
     }
 
-    // Get the complete list of cameras in the liveview we're interested in. This cryptic line grabs the list of liveviews
-    // that have the name we're interested in (turns out, you can define multiple liveviews in Protect with the same name...who knew!),
-    // and then create a single list containing all of the cameras found.
+    // Get the complete list of cameras in the liveview we're interested in. This cryptic line grabs the list of liveviews that have the name we're interested in (turns
+    // out, you can define multiple liveviews in Protect with the same name...who knew!), and then create a single list containing all of the cameras found.
     const targetCameraIds = this.getLiveviewCameras(liveviewSwitch.context.liveview as string);
 
     // Nothing configured for this view. We're done.
@@ -350,24 +344,24 @@ export class ProtectLiveviews extends ProtectBase {
     // Iterate through the cameras in this liveview.
     for(const targetCameraId of targetCameraIds) {
 
-      const device = this.nvr.deviceLookup(targetCameraId);
+      const protectDevice = this.nvr.deviceLookup(targetCameraId);
 
       // No camera found or we're already at the target state - we're done.
-      if(!device || (device.accessory.context.detectMotion === targetState)) {
+      if(!protectDevice || (protectDevice.accessory.context.detectMotion === targetState)) {
 
         continue;
       }
 
       // Update the motion sensor switch, if it exists.
-      device.accessory.getService(this.hap.Service.Switch)?.updateCharacteristic(this.hap.Characteristic.On, targetState);
+      protectDevice.accessory.getService(this.hap.Service.Switch)?.updateCharacteristic(this.hap.Characteristic.On, targetState);
 
-      // Set the motion detection state. We do this after setting any motion detection switch in order to ensure we fire events in the right order for the
-      // motion detection switch.
-      device.accessory.context.detectMotion = targetState as boolean;
+      // Set the motion detection state. We do this after setting any motion detection switch in order to ensure we fire events in the right order for the motion
+      // detection switch.
+      protectDevice.accessory.context.detectMotion = targetState as boolean;
 
       // Inform the user.
-      this.log.info("%s -> %s: Motion detection %s.", liveviewSwitch.context.liveview, device.accessory.displayName,
-        (device.accessory.context.detectMotion === true) ? "enabled" : "disabled");
+      this.log.info("%s -> %s: Motion detection %s.", liveviewSwitch.context.liveview, protectDevice.accessoryName,
+        (protectDevice.accessory.context.detectMotion === true) ? "enabled" : "disabled");
     }
 
     // Save our new state.

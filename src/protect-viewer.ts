@@ -69,8 +69,7 @@ export class ProtectViewer extends ProtectDevice {
     // Identify what needs to be added to HomeKit that isn't already there, and add them.
     this.addLiveviewSwitch(nvrLiveviewIds?.filter(x => !currentLiveviewSwitches.filter(liveviewSwitch => liveviewSwitch.subtype === x).length) ?? []);
 
-    // Finally, reflect the state of the liveview that's currently enabled.
-    // Loop through the list of services on our viewer accessory and sync the liveview switches.
+    // Finally, reflect the state of the liveview that's currently enabled. We loop through the list of services on our viewer accessory and sync the liveview switches.
     this.updateLiveviewSwitchState(configureHandlers);
 
     // Return a list of our available liveviews for this device.
@@ -125,7 +124,7 @@ export class ProtectViewer extends ProtectDevice {
     // Set the state to reflect Protect.
     switchService.updateCharacteristic(this.hap.Characteristic.On, switchService.subtype === this.ufp.liveview);
     switchService.updateCharacteristic(this.hap.Characteristic.ConfiguredName,
-      this.ufpApi.bootstrap?.liveviews?.find(x => x.id === switchService.subtype)?.name ?? this.accessory.displayName);
+      this.ufpApi.bootstrap?.liveviews?.find(x => x.id === switchService.subtype)?.name ?? this.accessoryName);
 
     return true;
   }

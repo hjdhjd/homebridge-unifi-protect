@@ -33,6 +33,7 @@ export interface ProtectHints {
   probesize: number,
   smartDetect: boolean,
   smartOccupancy: string[],
+  syncName: boolean,
   timeshift: boolean,
   transcode: boolean,
   transcodeHighLatency: boolean,
@@ -151,6 +152,7 @@ export abstract class ProtectDevice extends ProtectBase {
     this.hints.motionDuration = this.getFeatureNumber("Motion.Duration") ?? PROTECT_MOTION_DURATION;
     this.hints.occupancyDuration = this.getFeatureNumber("Motion.OccupancySensor.Duration") ?? PROTECT_OCCUPANCY_DURATION;
     this.hints.smartOccupancy = [];
+    this.hints.syncName = this.hasFeature("Device.SyncName");
 
     // Sanity check motion detection duration. Make sure it's never less than 2 seconds so we can actually alert the user.
     if(this.hints.motionDuration < 2 ) {
@@ -179,7 +181,13 @@ export abstract class ProtectDevice extends ProtectBase {
   }
 
   // Configure the device information details for HomeKit.
-  protected configureInfo(): boolean {
+  public configureInfo(): boolean {
+
+    // Sync the Protect name with HomeKit, if configured.
+    if(this.hints.syncName) {
+
+      this.accessoryName = this.ufp.name;
+    }
 
     return this.setInfo(this.accessory, this.ufp);
   }
@@ -220,7 +228,7 @@ export abstract class ProtectDevice extends ProtectBase {
     if(!motionService) {
 
       // We don't have it, add the motion sensor to the device.
-      motionService = new this.hap.Service.MotionSensor(this.accessory.displayName);
+      motionService = new this.hap.Service.MotionSensor(this.accessoryName);
 
       if(!motionService) {
 
@@ -239,6 +247,8 @@ export abstract class ProtectDevice extends ProtectBase {
     if(!isInitialized) {
 
       // Initialize the state of the motion sensor.
+      motionService.displayName = this.accessoryName;
+      motionService.updateCharacteristic(this.hap.Characteristic.Name, this.accessoryName);
       motionService.updateCharacteristic(this.hap.Characteristic.MotionDetected, false);
       motionService.updateCharacteristic(this.hap.Characteristic.StatusActive, this.isOnline);
 
@@ -281,7 +291,7 @@ export abstract class ProtectDevice extends ProtectBase {
 
     this.log.info("Enabling motion sensor switch.");
 
-    const switchName = this.accessory.displayName + " Motion Events";
+    const switchName = this.accessoryName + " Motion Events";
 
     // Add the switch to the camera, if needed.
     if(!switchService) {
@@ -343,7 +353,7 @@ export abstract class ProtectDevice extends ProtectBase {
       return false;
     }
 
-    const triggerName = this.accessory.displayName + " Motion Trigger";
+    const triggerName = this.accessoryName + " Motion Trigger";
 
     // Add the switch to the camera, if needed.
     if(!triggerService) {
@@ -455,7 +465,7 @@ export abstract class ProtectDevice extends ProtectBase {
     if(!occupancyService) {
 
       // We don't have it, add the occupancy sensor to the device.
-      occupancyService = new this.hap.Service.OccupancySensor(this.accessory.displayName);
+      occupancyService = new this.hap.Service.OccupancySensor(this.accessoryName);
 
       if(!occupancyService) {
 
@@ -508,19 +518,25 @@ export abstract class ProtectDevice extends ProtectBase {
   // Utility function to return a floating point configuration parameter on a device.
   public getFeatureFloat(option: string): number | undefined {
 
-    return getOptionFloat(getOptionValue(this.platform.configOptions, this.nvr.ufp, this.ufp, option));
+    return getOptionFloat(this.getFeatureValue(option));
   }
 
   // Utility function to return an integer configuration parameter on a device.
   public getFeatureNumber(option: string): number | undefined {
 
-    return getOptionNumber(getOptionValue(this.platform.configOptions, this.nvr.ufp, this.ufp, option));
+    return getOptionNumber(this.getFeatureValue(option));
+  }
+
+  // Utility function to return a configuration parameter on a device.
+  public getFeatureValue(option: string): string | undefined {
+
+    return getOptionValue(this.platform.featureOptions, this.nvr.ufp, this.ufp, option);
   }
 
   // Utility for checking feature options on a device.
   public hasFeature(option: string): boolean {
 
-    return isOptionEnabled(this.platform.configOptions, this.nvr.ufp, this.ufp, option, this.platform.featureOptionDefault(option));
+    return isOptionEnabled(this.platform.featureOptions, this.nvr.ufp, this.ufp, option, this.platform.featureOptionDefault(option));
   }
 
   // Utility function for reserved identifiers for switches.
@@ -541,9 +557,26 @@ export abstract class ProtectDevice extends ProtectBase {
     return this.ufp.mac;
   }
 
-  // Utility function to return the fully enumerated name of this camera.
+  // Utility function to return the fully enumerated name of this device.
   public get name(): string {
 
     return this.nvr.ufpApi.getFullName(this.ufp ?? null);
+  }
+
+  // Utility function to return the current accessory name of this device.
+  public get accessoryName(): string {
+
+    return (this.accessory.getService(this.hap.Service.AccessoryInformation)?.getCharacteristic(this.hap.Characteristic.Name).value as string) ??
+      (this.ufp?.name ?? "Unknown");
+  }
+
+  public set accessoryName(name: string) {
+
+    // Set all the internally managed names within Homebridge to the new accessory name.
+    this.accessory.displayName = name;
+    this.accessory._associatedHAPAccessory.displayName = name;
+
+    // Set all the HomeKit-visible names.
+    this.accessory.getService(this.hap.Service.AccessoryInformation)?.updateCharacteristic(this.hap.Characteristic.Name, name);
   }
 }

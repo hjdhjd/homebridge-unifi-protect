@@ -71,7 +71,7 @@ export class ProtectSensor extends ProtectDevice {
     if(!batteryService) {
 
       // We don't have it, add it to the sensor.
-      batteryService = new this.hap.Service.Battery(this.accessory.displayName);
+      batteryService = new this.hap.Service.Battery(this.accessoryName);
 
       if(!batteryService) {
 
@@ -92,6 +92,10 @@ export class ProtectSensor extends ProtectDevice {
 
       return this.ufp.batteryStatus?.isLow ?? false;
     });
+
+    // Initialize our name.
+    batteryService.displayName = this.accessoryName;
+    batteryService.updateCharacteristic(this.hap.Characteristic.Name, this.accessoryName);
 
     // Initialize the battery state.
     this.updateBatteryStatus();
@@ -182,10 +186,11 @@ export class ProtectSensor extends ProtectDevice {
       return false;
     }
 
+    const contactName = this.accessoryName + " Alarm Sound";
+
     // Add the service to the accessory, if needed.
     if(!contactService) {
 
-      const contactName = this.accessory.displayName + " Alarm Sound";
       contactService = new this.hap.Service.ContactSensor(contactName, ProtectReservedNames.CONTACT_SENSOR_ALARM_SOUND);
 
       if(!contactService) {
@@ -206,6 +211,11 @@ export class ProtectSensor extends ProtectDevice {
 
       return this.alarmDetected;
     });
+
+    // Initialize our name.
+    contactService.displayName = contactName;
+    contactService.updateCharacteristic(this.hap.Characteristic.Name, contactName);
+    contactService.updateCharacteristic(this.hap.Characteristic.ConfiguredName, contactName);
 
     // Update the sensor.
     contactService.updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.alarmDetected);
@@ -237,7 +247,7 @@ export class ProtectSensor extends ProtectDevice {
     // Add the service to the accessory, if needed.
     if(!lightService) {
 
-      lightService = new this.hap.Service.LightSensor(this.accessory.displayName);
+      lightService = new this.hap.Service.LightSensor(this.accessoryName);
 
       if(!lightService) {
 
@@ -253,13 +263,15 @@ export class ProtectSensor extends ProtectDevice {
     lightService.getCharacteristic(this.hap.Characteristic.CurrentAmbientLightLevel)?.onGet(() => {
 
       // The minimum value for ambient light in HomeKit is 0.0001. I have no idea why...but it is. Honor it.
-      const value = this.ambientLight;
-      return value >= 0.0001 ? value : 0.0001;
+      return this.ambientLight >= 0.0001 ? this.ambientLight : 0.0001;
     });
 
+    // Initialize our name.
+    lightService.displayName = this.accessoryName;
+    lightService.updateCharacteristic(this.hap.Characteristic.Name, this.accessoryName);
+
     // Update the sensor. The minimum value for ambient light in HomeKit is 0.0001. I have no idea why...but it is. Honor it.
-    const value = this.ambientLight;
-    lightService.updateCharacteristic(this.hap.Characteristic.CurrentAmbientLightLevel, value >= 0.0001 ? value : 0.0001);
+    lightService.updateCharacteristic(this.hap.Characteristic.CurrentAmbientLightLevel, this.ambientLight >= 0.0001 ? this.ambientLight : 0.0001);
 
     // Update the state characteristics.
     this.configureStateCharacteristics(lightService);
@@ -288,7 +300,7 @@ export class ProtectSensor extends ProtectDevice {
     // Add the service to the accessory, if needed.
     if(!contactService) {
 
-      contactService = new this.hap.Service.ContactSensor(this.accessory.displayName, ProtectReservedNames.CONTACT_SENSOR);
+      contactService = new this.hap.Service.ContactSensor(this.accessoryName, ProtectReservedNames.CONTACT_SENSOR);
 
       if(!contactService) {
 
@@ -305,6 +317,10 @@ export class ProtectSensor extends ProtectDevice {
 
       return this.contact;
     });
+
+    // Initialize our name.
+    contactService.displayName = this.accessoryName;
+    contactService.updateCharacteristic(this.hap.Characteristic.Name, this.accessoryName);
 
     // Update the sensor.
     contactService.updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.contact);
@@ -336,7 +352,7 @@ export class ProtectSensor extends ProtectDevice {
     // Add the service to the accessory, if needed.
     if(!humidityService) {
 
-      humidityService = new this.hap.Service.HumiditySensor(this.accessory.displayName);
+      humidityService = new this.hap.Service.HumiditySensor(this.accessoryName);
 
       if(!humidityService) {
 
@@ -351,13 +367,15 @@ export class ProtectSensor extends ProtectDevice {
     // Retrieve the current humidity when requested.
     humidityService.getCharacteristic(this.hap.Characteristic.CurrentRelativeHumidity)?.onGet(() => {
 
-      const value = this.humidity;
-      return value < 0 ? 0 : value;
+      return this.humidity < 0 ? 0 : this.humidity;
     });
 
+    // Initialize our name.
+    humidityService.displayName = this.accessoryName;
+    humidityService.updateCharacteristic(this.hap.Characteristic.Name, this.accessoryName);
+
     // Update the sensor.
-    const value = this.humidity;
-    humidityService.updateCharacteristic(this.hap.Characteristic.CurrentRelativeHumidity, value < 0 ? 0 : value);
+    humidityService.updateCharacteristic(this.hap.Characteristic.CurrentRelativeHumidity, this.humidity < 0 ? 0 : this.humidity);
 
     // Update the state characteristics.
     this.configureStateCharacteristics(humidityService);
@@ -386,7 +404,7 @@ export class ProtectSensor extends ProtectDevice {
     // Add the service to the accessory, if needed.
     if(!leakService) {
 
-      leakService = new this.hap.Service.LeakSensor(this.accessory.displayName);
+      leakService = new this.hap.Service.LeakSensor(this.accessoryName);
 
       if(!leakService) {
 
@@ -404,6 +422,10 @@ export class ProtectSensor extends ProtectDevice {
 
       return this.leakDetected;
     });
+
+    // Initialize our name.
+    leakService.displayName = this.accessoryName;
+    leakService.updateCharacteristic(this.hap.Characteristic.Name, this.accessoryName);
 
     // Update the sensor.
     leakService.updateCharacteristic(this.hap.Characteristic.LeakDetected, this.leakDetected);
@@ -435,7 +457,7 @@ export class ProtectSensor extends ProtectDevice {
     // Add the service to the accessory, if needed.
     if(!temperatureService) {
 
-      temperatureService = new this.hap.Service.TemperatureSensor(this.accessory.displayName);
+      temperatureService = new this.hap.Service.TemperatureSensor(this.accessoryName);
 
       if(!temperatureService) {
 
@@ -450,13 +472,15 @@ export class ProtectSensor extends ProtectDevice {
     // Retrieve the current temperature when requested.
     temperatureService.getCharacteristic(this.hap.Characteristic.CurrentTemperature)?.onGet(() => {
 
-      const value = this.temperature;
-      return value < 0 ? 0 : value;
+      return this.temperature < 0 ? 0 : this.temperature;
     });
 
+    // Initialize our name.
+    temperatureService.displayName = this.accessoryName;
+    temperatureService.updateCharacteristic(this.hap.Characteristic.Name, this.accessoryName);
+
     // Update the sensor.
-    const value = this.temperature;
-    temperatureService.updateCharacteristic(this.hap.Characteristic.CurrentTemperature, value < 0 ? 0 : value);
+    temperatureService.updateCharacteristic(this.hap.Characteristic.CurrentTemperature, this.temperature < 0 ? 0 : this.temperature);
 
     // Update the state characteristics.
     this.configureStateCharacteristics(temperatureService);
@@ -552,17 +576,14 @@ export class ProtectSensor extends ProtectDevice {
   // Get the current contact sensor information.
   private get contact(): boolean {
 
-    // Return true if we are open.
-    const value = this.ufp.isOpened;
-
     // Save the state change and publish to MQTT.
-    if(value !== this.lastContact) {
+    if(this.ufp.isOpened !== this.lastContact) {
 
-      this.lastContact = value;
-      this.nvr.mqtt?.publish(this.accessory, "contact", value.toString());
+      this.lastContact = this.ufp.isOpened;
+      this.nvr.mqtt?.publish(this.accessory, "contact", this.ufp.isOpened.toString());
     }
 
-    return value;
+    return this.ufp.isOpened;
   }
 
   // Get the current humidity information.
@@ -642,7 +663,7 @@ export class ProtectSensor extends ProtectDevice {
     const payload = packet.payload as ProtectSensorConfigPayload;
 
     // It's a motion event - process it accordingly.
-    if(payload.isMotionDetected && payload.motionDetectedAt) {
+    if(payload.motionDetectedAt) {
 
       this.nvr.events.motionEventHandler(this, payload.motionDetectedAt);
     }

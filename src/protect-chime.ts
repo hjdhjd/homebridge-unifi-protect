@@ -54,7 +54,7 @@ export class ProtectChime extends ProtectDevice {
     // Add the service to the accessory, if needed.
     if(!lightService) {
 
-      lightService = new this.hap.Service.Lightbulb(this.accessory.displayName);
+      lightService = new this.hap.Service.Lightbulb(this.accessoryName);
 
       if(!lightService) {
 
@@ -66,53 +66,55 @@ export class ProtectChime extends ProtectDevice {
     }
 
     // Turn the chime on or off.
-    lightService.getCharacteristic(this.hap.Characteristic.On)
-      ?.onGet(() => {
+    lightService.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => {
 
-        return this.ufp.volume > 0;
-      })
-      .onSet(async (value: CharacteristicValue) => {
+      return this.ufp.volume > 0;
+    });
 
-        // We really only want to act when the chime is turned off. Otherwise, it's handled by the brightness event.
-        if(value) {
+    lightService.getCharacteristic(this.hap.Characteristic.On)?.onSet(async (value: CharacteristicValue) => {
 
-          return;
-        }
+      // We really only want to act when the chime is turned off. Otherwise, it's handled by the brightness event.
+      if(value) {
 
-        const newDevice = await this.nvr.ufpApi.updateDevice(this.ufp, { volume: 0 });
+        return;
+      }
 
-        if(!newDevice) {
+      const newDevice = await this.nvr.ufpApi.updateDevice(this.ufp, { volume: 0 });
 
-          this.log.error("Unable to turn the volume off. Please ensure this username has the Administrator role in UniFi Protect.");
-          return;
-        }
+      if(!newDevice) {
 
-        // Set the context to our updated device configuration.
-        this.ufp = newDevice;
-      });
+        this.log.error("Unable to turn the volume off. Please ensure this username has the Administrator role in UniFi Protect.");
+        return;
+      }
+
+      // Set the context to our updated device configuration.
+      this.ufp = newDevice;
+    });
 
     // Adjust the volume of the chime by adjusting brightness of the light.
-    lightService.getCharacteristic(this.hap.Characteristic.Brightness)
-      ?.onGet(() => {
+    lightService.getCharacteristic(this.hap.Characteristic.Brightness)?.onGet(() => {
 
-        // Return the volume level of the chime.
-        return this.ufp.volume;
-      })
-      .onSet(async (value: CharacteristicValue) => {
+      // Return the volume level of the chime.
+      return this.ufp.volume;
+    });
 
-        const newDevice = await this.nvr.ufpApi.updateDevice(this.ufp, { volume: value as number });
+    lightService.getCharacteristic(this.hap.Characteristic.Brightness)?.onSet(async (value: CharacteristicValue) => {
 
-        if(!newDevice) {
+      const newDevice = await this.nvr.ufpApi.updateDevice(this.ufp, { volume: value as number });
 
-          this.log.error("Unable to adjust the volume to %s%. Please ensure this username has the Administrator role in UniFi Protect.", value);
-          return;
-        }
+      if(!newDevice) {
 
-        // Set the context to our updated device configuration.
-        this.ufp = newDevice;
-      });
+        this.log.error("Unable to adjust the volume to %s%. Please ensure this username has the Administrator role in UniFi Protect.", value);
+        return;
+      }
+
+      // Set the context to our updated device configuration.
+      this.ufp = newDevice;
+    });
 
     // Initialize the chime.
+    lightService.displayName = this.accessoryName;
+    lightService.updateCharacteristic(this.hap.Characteristic.Name, this.accessoryName);
     lightService.updateCharacteristic(this.hap.Characteristic.On, this.ufp.volume > 0);
     lightService.updateCharacteristic(this.hap.Characteristic.Brightness, this.ufp.volume);
 

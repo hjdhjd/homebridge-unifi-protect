@@ -29,6 +29,7 @@ export enum ProtectReservedNames {
 
   // Manage our contact sensor types.
   CONTACT_MOTION_SMARTDETECT = "ContactMotionSmartDetect",
+  CONTACT_MOTION_SMARTDETECT_LICENSE = "ContactMotionSmartDetectLicense",
   CONTACT_SENSOR = "ContactSensor",
   CONTACT_SENSOR_ALARM_SOUND = "ContactAlarmSound",
 

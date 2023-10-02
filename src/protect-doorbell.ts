@@ -188,7 +188,7 @@ export class ProtectDoorbell extends ProtectCamera {
     if(!packageCameraAccessory) {
 
       // We will use the NVR MAC address + ".NVRSystemInfo" to create our UUID. That should provide the guaranteed uniqueness we need.
-      packageCameraAccessory = new this.api.platformAccessory(this.accessory.displayName + " Package Camera", uuid);
+      packageCameraAccessory = new this.api.platformAccessory(this.accessoryName + " Package Camera", uuid);
 
       if(!packageCameraAccessory) {
 
@@ -232,7 +232,7 @@ export class ProtectDoorbell extends ProtectCamera {
         continue;
       }
 
-      const switchName = this.accessory.displayName + " Physical Chime " + chimeSetting.charAt(0).toUpperCase() + chimeSetting.slice(1);
+      const switchName = this.accessoryName + " Physical Chime " + chimeSetting.charAt(0).toUpperCase() + chimeSetting.slice(1);
 
       // Add the switch to the doorbell, if needed.
       if(!switchService) {
@@ -666,10 +666,10 @@ export class ProtectDoorbell extends ProtectCamera {
       this.packageCamera.ufp = Object.assign({}, this.ufp, { name: (this.ufp.name ?? this.ufp.marketName) + " Package Camera"}) as ProtectCameraConfig;
     }
 
-    // If we have a package camera that has HKSV enabled, we'll trigger it's motion sensor here. Why? HKSV requires a motion sensor attached to that
-    // camera accessory, and since package cameras are really a secondary camera on a device with a single motion sensor, we use that motion sensor to trigger
-    // the package camera's HKSV event recording.
-    if(payload.isMotionDetected && payload.lastMotion && this.packageCamera?.stream?.hksv?.isRecording) {
+    // If we have a package camera that has HKSV enabled, we'll trigger it's motion sensor here. Why? HKSV requires a motion sensor attached to that camera accessory,
+    // and since a package camera is actually a secondary camera on a device with a single motion sensor, we use that motion sensor to trigger the package camera's HKSV
+    // event recording.
+    if(payload.lastMotion && this.packageCamera?.stream?.hksv?.isRecording) {
 
       this.nvr.events.motionEventHandler(this.packageCamera, payload.lastMotion);
     }
