@@ -111,7 +111,7 @@ export const featureOptions: { [index: string]: FeatureOption[] } = {
   "Nvr": [
 
     { default: false, defaultValue: PROTECT_M3U_PLAYLIST_PORT, description: "Publish an M3U playlist of Protect cameras on the specified port of this Homebridge server that is suitable for use in apps (e.g. Channels DVR) that can make camera livestreams available through them.", modelKey: [ "nvr" ], name: "Service.Playlist" },
-    { default: false, defaultValue: PROTECT_DEVICE_REMOVAL_DELAY_INTERVAL, description: "Delay, in seconds, before removing devices that are no longer detected on the Protect controller. By default, devices are added and removed in real-time.", modelKey: [ "nvr" ], name: "DelayDeviceRemoval" },
+    { default: false, defaultValue: PROTECT_DEVICE_REMOVAL_DELAY_INTERVAL, description: "Delay, in seconds, before removing devices that are no longer detected on the Protect controller. By default, devices are added and removed in realtime.", modelKey: [ "nvr" ], name: "DelayDeviceRemoval" },
     { default: false, description: "Publish all the realtime telemetry received from the Protect controller to MQTT.", modelKey: [ "nvr" ], name: "Publish.Telemetry" },
     { default: false, description: "Add switch accessories to control the native recording capabilities of the UniFi Protect NVR.", modelKey: [ "camera" ], name: "Recording.Switch" },
     { default: false, description: "Add sensor accessories to display the Protect controller system information (currently only the temperature).", modelKey: [ "nvr" ], name: "SystemInfo" }

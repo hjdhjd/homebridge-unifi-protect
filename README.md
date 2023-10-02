@@ -20,7 +20,7 @@ This plugin attempts to bridge a gap in the UniFi Protect ecosystem by providing
 
 What does *just works* mean in practice? It means that this plugin will discover all your supported UniFi Protect devices and make them available in HomeKit. It supports all known UniFi Protect controller configurations (UniFi CloudKey Gen2+, UniFi Dream Machine Pro/SE, and UniFi Protect NVR).
 
-For the more technically inclined - this plugin has continued to pioneer the HomeKit user experience for UniFi Protect by being the ***first*** Homebridge plugin (and first third-party app, to my knowledge) to successfully reverse engineer the UniFi Protect real-time events API that was introduced with UniFi OS. This allows instantaneous, real-time capturing of events as they occur in the Protect ecosystem, allowing us to provide that same level of real-time sensor and camera feedback to HomeKit. Since reverse engineering the real-time events API, most of the major open source smart automation projects have benefited and also incorporated our work, improving the experience for everyone across smart home ecosystems.
+For the more technically inclined - this plugin has continued to pioneer the HomeKit user experience for UniFi Protect by being the ***first*** Homebridge plugin (and first third-party app, to my knowledge) to successfully reverse engineer the UniFi Protect realtime events API that was introduced with UniFi OS. This allows instantaneous, realtime capturing of events as they occur in the Protect ecosystem, allowing us to provide that same level of realtime sensor and camera feedback to HomeKit. Since reverse engineering the realtime events API, most of the major open source smart automation projects have benefited and also incorporated our work, improving the experience for everyone across smart home ecosystems.
 
 ### Features
 - ***Easy* configuration - all you need is your UniFi Protect controller IP address, username, and password to get started.** The defaults work quite well for the vast majority of users. When you want more, there are [additional options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md) you can play with, if you choose.
@@ -37,7 +37,7 @@ For the more technically inclined - this plugin has continued to pioneer the Hom
 
 - **Support for multiple controllers.** This plugin can support multiple UniFi Protect controllers. If you have more than one controller, it's easy to add them to this plugin, and integrate them seamlessly into HomeKit.
 
-- **Automatic *real-time* detection and configuration of all UniFi Protect devices.** By default - all of your supported UniFi Protect devices are made available in HomeKit without needing any further configuration on your part. Additionally, if you add or remove cameras or other devices to your UniFi Protect controller, this plugin will autodetect those configuration changes and add or remove those devices in HomeKit, seamlessly, *in real-time*. No need to restart Homebridge to see your new Protect devices added or removed.
+- **Automatic *realtime* detection and configuration of all UniFi Protect devices.** By default - all of your supported UniFi Protect devices are made available in HomeKit without needing any further configuration on your part. Additionally, if you add or remove cameras or other devices to your UniFi Protect controller, this plugin will autodetect those configuration changes and add or remove those devices in HomeKit, seamlessly, *in realtime*. No need to restart Homebridge to see your new Protect devices added or removed.
 
 - **A builtin webUI using the Homebridge webUI plugin framework allows you the ability to [customize the plugin to your needs](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md).** You can apply options globally, for all devices connected to a specific Protect controller, or for individual Protect devices in an intuitive way using the Homebridge HBUP webUI.
 
@@ -69,7 +69,7 @@ I hope to continue to work on this one to get AEC working for two-way audio. [Yo
   * [Liveview Scenes](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Liveviews.md): use the UniFi Protect liveviews feature (available in the UniFi Protect controller webUI) to create motion-detection scenes.
   * [MQTT](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/MQTT.md): how to configure MQTT support.
   * [Advanced Configuration](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/AdvancedOptions.md): complete list of configuration options available in this plugin.
-  * [Real-time API Documentation](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/ProtectAPI.md): documentation of how the Ubiquiti real-time updates API works and how to decode the binary protocol.
+  * [realtime API Documentation](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/ProtectAPI.md): documentation of how the Ubiquiti realtime updates API works and how to decode the binary protocol.
   * [Changelog](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Changelog.md): changes and release history of this plugin, starting with v3.0.
 
 ## Installation
