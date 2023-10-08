@@ -248,17 +248,14 @@ export class ProtectNvr {
   // Configure a default doorbell message on the Protect doorbell.
   private async configureDefaultDoorbellMessage(): Promise<boolean> {
 
-    // If we aren't an admin user, don't attempt to set the default doorbell message.
-    if(!this.ufpApi.isAdminUser) {
+    // If we haven't configured a default doorbell message or we aren't an admin user, don't attempt to set the default doorbell message.
+    if(!this.nvrOptions.defaultDoorbellMessage || !this.ufpApi.isAdminUser) {
 
       return false;
     }
 
-    // Set the default doorbell message to either what the user configured, or the Protect default.
-    const defaultMessage = this.nvrOptions.defaultDoorbellMessage ?? "WELCOME";
-
     // Set the default message.
-    const newUfp = await this.ufpApi.updateDevice(this.ufp, { doorbellSettings: { defaultMessageText: defaultMessage } });
+    const newUfp = await this.ufpApi.updateDevice(this.ufp, { doorbellSettings: { defaultMessageText: this.nvrOptions.defaultDoorbellMessage } });
 
     if(!newUfp) {
 
@@ -270,7 +267,7 @@ export class ProtectNvr {
     this.ufp = newUfp;
 
     // Inform the user.
-    this.log.info("Default doorbell message set to: %s.", defaultMessage);
+    this.log.info("Default doorbell message set to: %s.", this.nvrOptions.defaultDoorbellMessage);
 
     return true;
   }
