@@ -191,6 +191,7 @@ export class FfmpegOptions {
           } else {
 
             // Back to software encoding.
+            this.protectCamera.hints.hardwareDecoding = false;
             this.protectCamera.hints.hardwareTranscoding = false;
           }
 
@@ -308,7 +309,7 @@ export class FfmpegOptions {
           // -c:v h264_mmal          Select the Multimedia Abstraction Layer codec for hardware-accelerated H.264 processing.
           decoderOptions = [
 
-            "-c:v", "h264_mmal"
+            // "-c:v", "h264_mmal"
           ];
 
           break;

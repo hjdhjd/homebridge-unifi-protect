@@ -10,6 +10,7 @@ import { EventEmitter } from "node:events";
 import { ProtectCamera } from "./protect-camera.js";
 import { ProtectLogging } from "./protect-types.js";
 import { ProtectNvr } from "./protect-nvr.js";
+import { ProtectPlatform } from "./protect-platform.js";
 import { StreamRequestCallback } from "homebridge";
 import os from "node:os";
 import util from "node:util";
@@ -28,6 +29,7 @@ export class FfmpegProcess extends EventEmitter {
   protected isVerbose: boolean;
   protected readonly log: ProtectLogging;
   protected readonly nvr: ProtectNvr;
+  private readonly platform: ProtectPlatform;
   protected process: ChildProcessWithoutNullStreams | null;
   protected protectCamera: ProtectCamera;
   private stderrBuffer: string;
@@ -48,13 +50,14 @@ export class FfmpegProcess extends EventEmitter {
     this.isStarted = false;
     this.log = protectCamera.log;
     this.nvr = protectCamera.nvr;
+    this.platform = protectCamera.platform;
     this.process = null;
     this.protectCamera = protectCamera;
     this.stderrBuffer = "";
     this.stderrLog = [];
 
     // Toggle FFmpeg logging, if configured.
-    this.isVerbose = protectCamera.platform.verboseFfmpeg || protectCamera.stream.verboseFfmpeg;
+    this.isVerbose = this.platform.verboseFfmpeg || protectCamera.stream.verboseFfmpeg;
 
     // If we've specified a command line or a callback, let's save them.
     if(commandLineArgs) {
@@ -104,12 +107,14 @@ export class FfmpegProcess extends EventEmitter {
     }
 
     // Inform the user, if we've been asked to do so.
-    if(this.isLogging || this.isVerbose || this.protectCamera.platform.config.debugAll) {
+    if(this.isLogging || this.isVerbose || this.platform.config.debugAll) {
 
-      this.log.info("FFmpeg command: %s %s", this.protectCamera.platform.config.videoProcessor, this.commandLineArgs.join(" "));
+      this.log.info("FFmpeg command (version: %s): %s %s", this.platform.codecSupport.ffmpegVersion, this.platform.config.videoProcessor,
+        this.commandLineArgs.join(" "));
     } else {
 
-      this.log.debug("FFmpeg command: %s %s", this.protectCamera.platform.config.videoProcessor, this.commandLineArgs.join(" "));
+      this.log.debug("FFmpeg command (version: %s): %s %s", this.platform.codecSupport.ffmpegVersion, this.platform.config.videoProcessor,
+        this.commandLineArgs.join(" "));
     }
 
     this.isPrepared = true;
@@ -131,7 +136,7 @@ export class FfmpegProcess extends EventEmitter {
     }
 
     // Execute the command line based on what we've prepared.
-    this.process = spawn(this.protectCamera.platform.config.videoProcessor, this.commandLineArgs);
+    this.process = spawn(this.platform.config.videoProcessor, this.commandLineArgs);
 
     // Configure any post-spawn listeners and other plumbing.
     this.configureProcess(errorHandler);
@@ -208,7 +213,7 @@ export class FfmpegProcess extends EventEmitter {
         this.stderrLog.push(line);
 
         // Show it to the user if it's been requested.
-        if(this.isLogging || this.isVerbose || this.protectCamera.platform.config.debugAll) {
+        if(this.isLogging || this.isVerbose || this.platform.config.debugAll) {
 
           this.log.info(line);
         }
@@ -304,7 +309,8 @@ export class FfmpegProcess extends EventEmitter {
     this.log.error("FFmpeg process ended unexpectedly with %s%s%s.", (exitCode !== null) ? "an exit code of " + exitCode.toString() : "",
       ((exitCode !== null) && signal) ? " and " : "", signal ? "a signal received of " + signal : "");
 
-    this.log.error("FFmpeg command line that errored out was: %s %s", this.protectCamera.platform.config.videoProcessor, this.commandLineArgs.join(" "));
+    this.log.error("FFmpeg (%s) command that errored out was: %s %s", this.platform.codecSupport.ffmpegVersion, this.platform.config.videoProcessor,
+      this.commandLineArgs.join(" "));
     this.stderrLog.map(x => this.log.error(x));
   }
 
