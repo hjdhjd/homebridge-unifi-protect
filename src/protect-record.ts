@@ -326,7 +326,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
       if(!(await this.timeshift.startTransmitting())) {
 
         // Stop our FFmpeg process and our timeshift buffer.
-        this.ffmpegStream.stop();
+        this.ffmpegStream?.stop();
         this.timeshift.stop();
 
         // Ensure we cleanup.

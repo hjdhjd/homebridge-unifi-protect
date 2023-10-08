@@ -40,15 +40,6 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
     this.rtpPorts = new RtpPortAllocator();
     this.verboseFfmpeg = false;
 
-    // Build our list of default values for our feature options.
-    for(const category of featureOptionCategories) {
-
-      for(const options of featureOptions[category.name]) {
-
-        this.featureOptionDefaults[(category.name + (options.name.length ? "." + options.name : "")).toLowerCase()] = options.default;
-      }
-    }
-
     // We can't start without being configured.
     if(!config) {
 
@@ -83,6 +74,15 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
 
       this.verboseFfmpeg = true;
       this.log.info("Verbose logging of video streaming sessions enabled. Expect a lot of data.");
+    }
+
+    // Build our list of default values for our feature options.
+    for(const category of featureOptionCategories) {
+
+      for(const options of featureOptions[category.name]) {
+
+        this.featureOptionDefaults[(category.name + (options.name.length ? "." + options.name : "")).toLowerCase()] = options.default;
+      }
     }
 
     // If we have feature options, put them into their own array, lower-cased for future reference.

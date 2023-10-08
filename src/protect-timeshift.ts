@@ -56,21 +56,18 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
     // If the livestream API has closed, stop what we're doing.
     this.livestream.on("close", () => {
 
-      this.log.error("The Protect livestream API was closed unexpectedly by the Protect controller. " +
-        "This is typically due to a controller or camera restart and can be safely ignored. Will retry again shortly.");
-
+      this.log.error("The livestream API connection was unexpectedly closed by the Protect controller. " +
+        "This is typically due to device restarts or issues with Protect controller firmware versions, and can be safely ignored. Will retry again shortly.");
       this.stop();
     });
 
     // First, we need to listen for any segments sent by the UniFi Protect livestream in order to create our timeshift buffer.
     this.livestream.on("message", (segment: Buffer) => {
 
-      // Crucially, we don't want to keep any initialization segment (which is always composed of
-      // FTYP and MOOV boxes) in our timeshift buffer. The reason for this is that these boxes are
-      // special in the fMP4 world and must be transmitted at the beginning of any new fMP4 stream.
-      // So what do we do? The livestream saves the initialization segment for us, so all we need to
-      // do is ensure we don't include them in our timeshift buffer. There should only ever be a single
-      // initialization segment, so once we've seen one, we don't need to worry about it again.
+      // Crucially, we don't want to keep any initialization segment (which is always composed of FTYP and MOOV boxes) in our timeshift buffer. The reason for this is
+      // that these boxes are special in the fMP4 world and must be transmitted at the beginning of any new fMP4 stream. So what do we do? The livestream saves the
+      // initialization segment for us, so all we need to do is ensure we don't include them in our timeshift buffer. There should only ever be a single initialization
+      //segment, so once we've seen one, we don't need to worry about it again.
       if(!seenInitSegment && this.livestream.initSegment?.equals(segment)) {
 
         seenInitSegment = true;
