@@ -12,6 +12,7 @@ import util from "node:util";
 export class FfmpegCodecs {
 
   private _gpuMem: number;
+  private _ffmpegVersion: string;
   private readonly log: Logging;
   private readonly platform: ProtectPlatform;
   private readonly videoProcessor: string;
@@ -21,6 +22,7 @@ export class FfmpegCodecs {
   constructor(platform: ProtectPlatform) {
 
     this._gpuMem = 0;
+    this._ffmpegVersion = "";
     this.log = platform.log;
     this.platform = platform;
     this.videoProcessor = platform.config.videoProcessor;
@@ -45,7 +47,13 @@ export class FfmpegCodecs {
         break;
     }
 
-    // First things first - ensure we've got a working video processor before we do anything else.
+    // Capture the version information of FFmpeg.
+    if(!(await this.probeFfmpegVersion())) {
+
+      return false;
+    }
+
+    // Ensure we've got a working video processor before we do anything else.
     if(!(await this.probeVideoProcessorCodecs()) || !(await this.probeVideoProcessorHwAccel())) {
 
       return false;
@@ -86,10 +94,32 @@ export class FfmpegCodecs {
     return this._gpuMem;
   }
 
+  public get ffmpegVersion(): string {
+
+    return this._ffmpegVersion;
+  }
+
+  private async probeFfmpegVersion(): Promise<boolean> {
+
+    return this.probeCmd(this.videoProcessor, [ "-hide_banner", "-version" ], (stdout: string) => {
+
+      // A regular expression to parse out the version.
+      const versionRegex = /^ffmpeg version (.*) Copyright.*$/m;
+
+      // Parse out the version string.
+      const versionMatch = versionRegex.exec(stdout);
+
+      // If we have a version string, let's save it. Otherwise, we're blind.
+      this._ffmpegVersion = versionMatch ? versionMatch[1] : "unknown";
+
+      this.log.info("Using FFmpeg version: %s.", this.ffmpegVersion);
+    });
+  }
+
   // Probe our video processor's hardware acceleration capabilities.
   private async probeVideoProcessorHwAccel(): Promise<boolean> {
 
-    return this.probeCmd(this.videoProcessor, [ "-hide_banner", "-hwaccels" ], (stdout: string) => {
+    if(!(await this.probeCmd(this.videoProcessor, [ "-hide_banner", "-hwaccels" ], (stdout: string) => {
 
       // Iterate through each line, and a build a list of encoders.
       for(const accel of stdout.split(os.EOL)) {
@@ -109,8 +139,30 @@ export class FfmpegCodecs {
         // We've found a hardware acceleration method, let's add it.
         this.videoProcessorHwAccels[accel.toLowerCase()] = true;
       }
-    });
+    }))) {
+
+      return false;
+    }
+
+    // Let's test to ensure that just because we have a codec or capability available to us, it doesn't necessarily mean that the user has the hardware capabilities
+    // needed to use it, resulting in an FFmpeg error. We catch that here and prevent those capabilities from being exposed to HBUP unless both software and hardware
+    // capabilities enable it. This simple test, generates a one-second video that is processed by the requested codec. If it fails, we discard the codec.
+    for(const accel of Object.keys(this.videoProcessorHwAccels)) {
+
+      // eslint-disable-next-line no-await-in-loop
+      if(!(await this.probeCmd(this.videoProcessor, [
+
+        "-hide_banner", "-hwaccel", accel, "-v", "quiet", "-t", "1", "-f", "lavfi", "-i", "color=black:1920x1080", "-c:v", "libx264", "-f", "null", "-"
+      ], () => {}, true))) {
+
+        delete this.videoProcessorHwAccels[accel];
+        this.log.error("Hardware-accelerated decoding and encoding using %s will be unavailable: unable to successfully validate capabilities.", accel);
+      }
+    }
+
+    return true;
   }
+
 
   // Probe our video processor's encoding and decoding capabilities.
   private async probeVideoProcessorCodecs(): Promise<boolean> {
@@ -181,7 +233,7 @@ export class FfmpegCodecs {
   }
 
   // Utility to probe the capabilities of FFmpeg and the host platform.
-  private async probeCmd(command: string, commandLineArgs: string[], processOutput: (output: string) => void): Promise<boolean> {
+  private async probeCmd(command: string, commandLineArgs: string[], processOutput: (output: string) => void, quietRunErrors = false): Promise<boolean> {
 
     try {
 
@@ -215,6 +267,9 @@ export class FfmpegCodecs {
         if(execError.code === "ENOENT") {
 
           this.log.error("Unable to find '%s' in path: '%s'.", command, process.env.PATH);
+        } else if(quietRunErrors) {
+
+          return false;
         } else {
 
           this.log.error("Error running %s: %s", command, error.message);
