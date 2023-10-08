@@ -167,6 +167,11 @@ export abstract class ProtectDevice extends ProtectBase {
     }
 
     // Inform the user if we've opted for something other than the defaults.
+    if(this.hints.syncName) {
+
+      this.log.info("Syncing Protect device name to HomeKit.");
+    }
+
     if(this.hints.motionDuration !== PROTECT_MOTION_DURATION) {
 
       this.log.info("Motion event duration set to %s seconds", this.hints.motionDuration);
