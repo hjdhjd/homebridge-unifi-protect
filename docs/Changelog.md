@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 6.15.1 (2023-10-08)
+  * Improvement: more robust validation of hardware acceleration before enabling it. For users who are trying to use QSV - there's some known issues that'll be worked on in a future release of ffmpeg-for-homebridge to enable these capabilities more fully, bear with me.
+  * Housekeeping.
+
 ## 6.15.0 (2023-10-02)
   * New feature: sync Protect device names between HomeKit and Protect (available under device feature options in the HBUP webUI). Protect device name synchronization is one-way, from Protect to HomeKit, and is not realtime. Name synchronization with HomeKit will be delivered to HomeKit on plugin startup. In reality - name synchronization is a realtime activity in HBUP, but there seems to be an issue somewhere along the way that'll be resolved in either a future HBUP or Homebridge release. **This feature is off by default, but may become the default in a future release.**
   * New feature: license plate telemetry contact sensor support (available under motion feature options in the HBUP webUI). If you have an AI-series camera and have license plate detection enabled, you can now look for individual license plates and potentially execute specific automation scenarios (say in combination with [homebridge-myq](https://github.com/hjdhjd/homebridge-myq) and automatically open or close a garage door when detected). This works by using Protect's native detection of individual license plates - in my testing, it's imperfect but works the vast majority of the time in good lighting conditions. If you enable motion event logging, you'll see the license plate telemetry logged and, of course, there is MQTT support available as well. You must enable smart motion event detection in HBUP to use this feature - and of course, it's available in the webUI. One last thing: you can set detections for multiple license plates by hyphenating the license plates (PLATE1-PLATE2-PLATE3...) when enabling the feature option and you'll get a contact sensor for each plate.
