@@ -16,7 +16,7 @@ jobs:
       uses: actions/stale@v8
       with:
         days-before-close: 2
-        days-before-stale: 7
+        days-before-stale: 4
         exempt-issue-labels: 'discussion,help wanted,long running'
         exempt-pr-labels: 'awaiting-approval,work-in-progress'
         remove-stale-when-updated: true
