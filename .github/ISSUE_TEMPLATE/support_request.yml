@@ -1,0 +1,66 @@
+name: Support Request
+description: Report a bug or request help. Please read the documentation first, especially the Feature Options and Troubleshooting pages, before creating a support request.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before opening a support request, please ensure you have read the [documentation](https://github.com/hjdhjd/homebridge-unifi-protect#documentation), especially the [best practices](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/BestPractices.md) and [troubleshooting](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Troubleshooting.md) pages.
+  - type: input
+    id: homebridgeos
+    attributes:
+      label: Homebridge Platform and OS
+      description: What hardware and operating system are you running Homebridge on?
+      placeholder: e.g. macOS Sonoma
+    validations:
+      required: true
+  - type: input
+    id: homebridge
+    attributes:
+      label: Homebridge Version
+      description: Which version of Homebridge are you running on?
+      placeholder: e.g. v1.7.0
+    validations:
+      required: true
+  - type: input
+    id: node
+    attributes:
+      label: Node Version
+      description: Which version of Node are you running on?
+      placeholder: e.g. v18.0
+    validations:
+      required: true
+  - type: input
+    id: protect
+    attributes:
+      label: UniFi Protect Controller Version
+      description: Which version of the UniFi Protect Controller are you running on? **Note: beta/EA versions are completely unsupported by HBUP, and your request will be closed.**
+      placeholder: e.g. v2.9.33
+    validations:
+      required: true
+  - type: input
+    id: unifios
+    attributes:
+      label: UniFi OS Version
+      description: Which version of UniFi OS is your Protect controller running on?
+      placeholder: e.g. v3.1.16
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: Describe the problem
+      description: Please describe the issue you're encountering, and ensure you include steps to reproduce, as well as your HBUP JSON configuration and log entries, if appropriate.
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: HBUP JSON configuration
+      description: Please copy and paste your Homebridge HBUP JSON configuration. Ensure that you redact sensitive information like passwords. This will be automatically formatted into code, so no need for backticks.
+      render: json
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output
+      description: Please copy and paste any relevant Homebridge HBUP log output. This will be automatically formatted into code, so no need for backticks.
+      render: shell
