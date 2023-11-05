@@ -1,5 +1,5 @@
 name: Feature Request
-description: Suggest an idea for an enhancement to HBUP.
+description: Suggest an idea for an enhancement to HBUP. Please read the HBUP documentation first, including the feature options section, to verify what you're looking for isn't already implemented.
 labels: enhancement
 body:
   - type: markdown
