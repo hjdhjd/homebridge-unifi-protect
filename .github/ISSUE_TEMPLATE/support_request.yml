@@ -55,7 +55,7 @@ body:
   - type: textarea
     id: config
     attributes:
-      label: HBUP JSON configuration
+      label: Homebridge HBUP JSON configuration
       description: Please copy and paste your Homebridge HBUP JSON configuration. Ensure that you redact sensitive information like passwords. This will be automatically formatted into code, so no need for backticks.
       placeholder: Paste your HBUP configuration from Homebridge (gear icon in the Homebridge webUI next to HBUP, then select JSON config). Copy and paste it here.
       render: json
