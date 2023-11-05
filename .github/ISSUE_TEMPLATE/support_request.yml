@@ -1,10 +1,10 @@
 name: Support Request
-description: Report a bug or request help. Please [read the HBUP documentation](https://github.com/hjdhjd/homebridge-unifi-protect#documentation) first, including the troubleshooting and best practices sections, before creating a support request.
+description: Report a bug or request help. Please [read the HBUP documentation](https://github.com/hjdhjd/homebridge-unifi-protect#documentation) before creating a support request.
 body:
   - type: markdown
     attributes:
       value: |
-        ### Before opening a support request, please ensure you have read the [documentation](https://github.com/hjdhjd/homebridge-unifi-protect#documentation), especially the [best practices](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/BestPractices.md) and [troubleshooting](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Troubleshooting.md) pages.
+        ### Before opening a support request, please ensure you have read the [documentation](https://github.com/hjdhjd/homebridge-unifi-protect#documentation), especially the [best practices](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/BestPractices.md) and [troubleshooting](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Troubleshooting.md) pages. Questions and topics already addressed in the documentation, or in prior issue reports, will be closed without a response.
   - type: input
     id: homebridgeos
     attributes:
