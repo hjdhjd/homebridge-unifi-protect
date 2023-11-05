@@ -1,5 +1,5 @@
 name: Support Request
-description: Report a bug or request help. Please read the documentation first, especially the Feature Options and Troubleshooting pages, before creating a support request.
+description: Report a bug or request help. Please read the HBUP documentation first, including the troubleshooting and best practices sections, before creating a support request.
 body:
   - type: markdown
     attributes:
@@ -26,7 +26,7 @@ body:
     attributes:
       label: Node Version
       description: Which version of Node are you running on?
-      placeholder: e.g. v18.0
+      placeholder: e.g. v18.1.0
     validations:
       required: true
   - type: input
@@ -57,10 +57,16 @@ body:
     attributes:
       label: HBUP JSON configuration
       description: Please copy and paste your Homebridge HBUP JSON configuration. Ensure that you redact sensitive information like passwords. This will be automatically formatted into code, so no need for backticks.
+      placeholder: Paste your HBUP configuration from Homebridge (gear icon in the Homebridge webUI next to HBUP, then select JSON config). Copy and paste it here.
       render: json
+    validations:
+      required: true
   - type: textarea
     id: logs
     attributes:
       label: Relevant log output
       description: Please copy and paste any relevant Homebridge HBUP log output. This will be automatically formatted into code, so no need for backticks.
+      placeholder: Please paste the relevant log entries here.
       render: shell
+    validations:
+      required: true
