@@ -1,5 +1,5 @@
 name: Support Request
-description: Report a bug or request help. Please read the HBUP documentation first, including the troubleshooting and best practices sections, before creating a support request.
+description: Report a bug or request help. Please [read the HBUP documentation](https://github.com/hjdhjd/homebridge-unifi-protect#documentation) first, including the troubleshooting and best practices sections, before creating a support request.
 body:
   - type: markdown
     attributes:
