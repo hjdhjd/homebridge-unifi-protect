@@ -33,7 +33,7 @@ body:
     id: protect
     attributes:
       label: UniFi Protect Controller Version
-      description: Which version of the UniFi Protect Controller are you running on? **Note: beta/EA versions are completely unsupported by HBUP, and your request will be closed.**
+      description: "Which version of the UniFi Protect Controller are you running on? **Note: beta/EA versions are completely unsupported by HBUP, and your request will be closed.**"
       placeholder: e.g. v2.9.33
     validations:
       required: true
