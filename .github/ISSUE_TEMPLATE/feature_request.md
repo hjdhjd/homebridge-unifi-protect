@@ -1,5 +1,5 @@
 ---
-name: Feature Request
+name: HBUP Feature Request
 about: Suggest an idea for an enhancement.
 title: ''
 labels: enhancement

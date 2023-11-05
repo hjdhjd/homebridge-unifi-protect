@@ -1,0 +1,29 @@
+name: Feature Request
+description: Suggest an idea for an enhancement to HBUP.
+labels: enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ### Before opening a feature request, please ensure you have read the [documentation](https://github.com/hjdhjd/homebridge-unifi-protect#documentation), especially the [feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md) page to see if the feature you're looking for doesn't already exist.
+  - type: textarea
+    id: feature-request
+    attributes:
+      label: Describe the feature request
+      description: Please describe the feature you are requesting. If the feature request relates to a specific problem you are encountering, please describe the use case.
+    validations:
+      required: true
+  - type: textarea
+    id: proposed-solution
+    attributes:
+      label: Describe the proposed solution
+      description: Please describe the proposed solution to the problem or use case described above.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Describe alternatives you have considered to the enhancement
+      description: Please describe alternative approaches you've explored or considered to address the requested feature.
+    validations:
+      required: true
