@@ -85,5 +85,5 @@ body:
       label: Acknowledgment that you are only running UniFi OS and UniFi Protect releases from the Ubiquiti Official release channel
       description: By submitting this issue, you are acknowledging that you are only using the Ubiquiti Official release channels for UniFi Protect and UniFi OS and that you are **not** running early access or beta firmwares (or operating systems) from either Ubiquiti or Apple. **All issues relating to early access or beta firmwares will be closed without comment.** [Read the HBUP documentation for more](https://github.com/hjdhjd/homebridge-unifi-protect#things-to-be-aware-of).
       options:
-        - label: I acknowledge that I am not running any early access / beta firmwares or operating systems.
+        - label: I acknowledge that I am not running any early access, beta firmwares, or operating systems from either Ubiquiti or Apple.
           required: true
