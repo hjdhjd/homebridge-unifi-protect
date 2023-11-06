@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 6.16.0 (2023-11-05)
+  * Housekeeping.
+
 ## 6.15.1 (2023-10-08)
   * Improvement: more robust validation of hardware acceleration before enabling it. For users who are trying to use QSV - there's some known issues that'll be worked on in a future release of ffmpeg-for-homebridge to enable these capabilities more fully, bear with me.
   * Housekeeping.
