@@ -565,7 +565,7 @@ export abstract class ProtectDevice extends ProtectBase {
   // Utility function to return the fully enumerated name of this device.
   public get name(): string {
 
-    return this.nvr.ufpApi.getFullName(this.ufp ?? null);
+    return this.nvr.ufpApi.getFullName(this.ufp);
   }
 
   // Utility function to return the current accessory name of this device.

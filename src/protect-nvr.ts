@@ -67,10 +67,10 @@ export class ProtectNvr {
     // Configure our logging.
     this.log = {
 
-      debug: (message: string, ...parameters: unknown[]): void => this.platform.debug(util.format(this.name + ": " + message, ...parameters)),
-      error: (message: string, ...parameters: unknown[]): void => this.platform.log.error(util.format(this.name + ": " + message, ...parameters)),
-      info: (message: string, ...parameters: unknown[]): void => this.platform.log.info(util.format(this.name + ": " + message, ...parameters)),
-      warn: (message: string, ...parameters: unknown[]): void => this.platform.log.warn(util.format(this.name + ": " + message, ...parameters))
+      debug: (message: string, ...parameters: unknown[]): void => this.platform.debug(util.format((this.ufpApi?.name ?? this.name) + ": " + message, ...parameters)),
+      error: (message: string, ...parameters: unknown[]): void => this.platform.log.error(util.format((this.ufpApi?.name ?? this.name) + ": " + message, ...parameters)),
+      info: (message: string, ...parameters: unknown[]): void => this.platform.log.info(util.format((this.ufpApi?.name ?? this.name) + ": " + message, ...parameters)),
+      warn: (message: string, ...parameters: unknown[]): void => this.platform.log.warn(util.format((this.ufpApi?.name ?? this.name) + ": " + message, ...parameters))
     };
 
     // Validate our Protect address and login information.
@@ -131,9 +131,6 @@ export class ProtectNvr {
     // may not be fully available when we startup.
     await this.retry(() => this.ufpApi.login(this.nvrOptions.address, this.nvrOptions.username, this.nvrOptions.password), PROTECT_CONTROLLER_RETRY_INTERVAL * 1000);
 
-    // We successfully logged in.
-    this.log.info("Connected to the UniFi Protect API at %s.", this.config.address);
-
     // Now, let's get the bootstrap configuration from the Protect controller.
     await this.bootstrapNvr();
 
@@ -146,13 +143,16 @@ export class ProtectNvr {
     // Assign our name if the user hasn't explicitly specified a preference.
     this.name = this.nvrOptions.name ?? (this.ufp.name ?? this.ufp.marketName);
 
+    // We successfully logged in.
+    this.log.info("Connected to %s (UniFi Protect %s running on UniFi OS %s).", this.config.address, this.ufp.version, this.ufp.firmwareVersion);
+
     // Mark this NVR as enabled or disabled.
     this.isEnabled = this.hasFeature("Device");
 
     // If the Protect controller is disabled, we're done.
     if(!this.isEnabled) {
 
-      this.ufpApi.clearLoginCredentials();
+      this.ufpApi.logout();
       this.log.info("Disabling this UniFi Protect controller in HomeKit.");
 
       // Let's sleep for thirty seconds to give all the accessories a chance to load before disabling everything. Homebridge doesn't have a good mechanism to notify us
@@ -852,7 +852,7 @@ export class ProtectNvr {
 
     // Clear our login credentials and statistics.
     this.nvrHksvErrors = 0;
-    this.ufpApi.clearLoginCredentials();
+    this.ufpApi.reset();
 
     // Bootstrap the Protect NVR.
     await this.bootstrapNvr();
