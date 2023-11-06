@@ -7,6 +7,15 @@ body:
         ### Before opening a support request, please ensure you have read the [documentation](https://github.com/hjdhjd/homebridge-unifi-protect#documentation), especially the [best practices](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/BestPractices.md) and [troubleshooting](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Troubleshooting.md) pages. Questions and topics already addressed in the documentation, or in prior issue reports, will be closed without a response.
 
   - type: input
+    id: hbupversion
+    attributes:
+      label: Homebridge UniFi Protect Version
+      description: Which version of Homebridge UniFi Protect (HBUP) are you running on?
+      placeholder: e.g. v6.16.0
+    validations:
+      required: true
+
+  - type: input
     id: homebridgeos
     attributes:
       label: Homebridge Platform and OS
