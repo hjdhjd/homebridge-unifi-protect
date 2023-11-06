@@ -127,11 +127,11 @@ export const featureOptions: { [index: string]: FeatureOption[] } = {
   "Video": [
 
     { default: false, description: "Use hardware-accelerated transcoding when available (Apple Macs, Intel Quick Sync Video-enabled CPUs, Raspberry Pi 4).", name: "Transcode.Hardware" },
+    { default: false, description: "When streaming to local clients (e.g. at home), always transcode livestreams, instead of transmuxing them.", name: "Transcode" },
+    { default: true, description: "When streaming to high-latency clients (e.g. cellular connections), transcode livestreams instead of transmuxing them.", name: "Transcode.HighLatency" },
     { default: false, description: "When viewing livestreams, force the use of the high quality video stream from the Protect controller.", name: "Stream.Only.High" },
     { default: false, description: "When viewing livestreams, force the use of the medium quality video stream from the Protect controller.", name: "Stream.Only.Medium" },
     { default: false, description: "When viewing livestreams, force the use of the low quality video stream from the Protect controller.", name: "Stream.Only.Low" },
-    { default: false, description: "When streaming to local clients (e.g. at home), always transcode livestreams, instead of transmuxing them.", name: "Transcode" },
-    { default: true, description: "When streaming to high-latency clients (e.g. cellular connections), transcode livestreams instead of transmuxing them.", name: "Transcode.HighLatency" },
     { default: false, description: "Dynamically adjust the image quality of the camera directly on the UniFi Protect controller to accomodate HomeKit requests.", name: "DynamicBitrate" },
     { default: false, description: "Add a switch accessory to enable or disable dynamic bitrate support on the Protect controller.", name: "DynamicBitrate.Switch" }
   ],
@@ -202,6 +202,9 @@ export function isOptionEnabled(configOptions: string[], nvrUfp: ProtectNvrConfi
     return undefined;
   };
 
+  // Escape out our option to ensure we have no inadvertent issues in matching the regular expression.
+  option = option.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
   // Check to see if we have a device-level option first.
   if(device?.mac) {
 
@@ -248,7 +251,7 @@ export function getOptionValue(configOptions: string[], nvrUfp: ProtectNvrConfig
   const getValue = (checkOption: string, checkMac: string | undefined = undefined): string | undefined => {
 
     // This regular expression is a bit more intricate than you might think it should be due to the need to ensure we capture values at the very end of the option.
-    const optionRegex = new RegExp("^Enable\\." + checkOption + (!checkMac ? "" : "\\." + checkMac) + "\\.(.+)$", "gi");
+    const optionRegex = new RegExp("^Enable\\." + checkOption + (!checkMac ? "" : "\\." + checkMac) + "\\.([^\\.]+)$", "gi");
 
     // Get the option value, if we have one.
     for(const entry of configOptions) {
@@ -263,6 +266,9 @@ export function getOptionValue(configOptions: string[], nvrUfp: ProtectNvrConfig
 
     return undefined;
   };
+
+  // Escape out our option to ensure we have no inadvertent issues in matching the regular expression.
+  option = option.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
   // Check to see if we have a device-level value first.
   if(device?.mac) {
