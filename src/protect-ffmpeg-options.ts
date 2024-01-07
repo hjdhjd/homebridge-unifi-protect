@@ -352,6 +352,16 @@ export class FfmpegOptions {
       videoFilters.push("fps=fps=" + fps.toString());
     }
 
+    if (this.protectCamera.cropOptions.enabled) {
+      videoFilters.push([
+        "crop=" +
+        `w=iw*${this.protectCamera.cropOptions.width/100}`,
+        `h=ih*${this.protectCamera.cropOptions.height/100}`,
+        `x=iw*${this.protectCamera.cropOptions.x/100}`,
+        `y=ih*${this.protectCamera.cropOptions.y/100}`
+      ].join(":"));
+    }
+
     // scale=-2:min(ih\,height)    Scale the video to the size that's being requested while respecting aspect ratios and ensuring our final dimensions are
     //                             a power of two.
     videoFilters.push("scale=-2:min(ih\\," + height.toString() + ")");

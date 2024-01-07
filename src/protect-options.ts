@@ -37,6 +37,16 @@ export interface ProtectNvrOptions {
   password: string
 }
 
+export interface CropOptions {
+  enabled: boolean;
+
+  x: number; // Decimal percentage of left offset of crop
+  y: number; // Decimal percentage of height offset of crop
+
+  height: number; // Decimal percentage of height of crop
+  width: number; // Decimal percentage of width of crop
+}
+
 // Feature option categories.
 export const featureOptionCategories = [
 
@@ -133,7 +143,12 @@ export const featureOptions: { [index: string]: FeatureOption[] } = {
     { default: false, description: "When viewing livestreams, force the use of the medium quality video stream from the Protect controller.", name: "Stream.Only.Medium" },
     { default: false, description: "When viewing livestreams, force the use of the low quality video stream from the Protect controller.", name: "Stream.Only.Low" },
     { default: false, description: "Dynamically adjust the image quality of the camera directly on the UniFi Protect controller to accomodate HomeKit requests.", name: "DynamicBitrate" },
-    { default: false, description: "Add a switch accessory to enable or disable dynamic bitrate support on the Protect controller.", name: "DynamicBitrate.Switch" }
+    { default: false, description: "Add a switch accessory to enable or disable dynamic bitrate support on the Protect controller.", name: "DynamicBitrate.Switch" },
+    { default: false, description: "Crop streams and snapshots (note: this forces all streams to be transcoded).", name: "Crop"},
+    { default: false, defaultValue: 0, description: "Left crop position % (0-100)", group: "Crop", name: "Crop.X"},
+    { default: false, defaultValue: 0, description: "Top crop position % (0-100)", group: "Crop", name: "Crop.Y"},
+    { default: false, defaultValue: 100, description: "Crop Width % (0-100)", group: "Crop", name: "Crop.Width"},
+    { default: false, defaultValue: 100, description: "Crop Height % (0-100)", group: "Crop", name: "Crop.Height"}
   ],
 
   // HomeKit Secure Video options.

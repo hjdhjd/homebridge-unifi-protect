@@ -5,6 +5,7 @@
 import { CharacteristicValue, PlatformAccessory, Resolution } from "homebridge";
 import { PROTECT_HOMEKIT_IDR_INTERVAL, PROTECT_SNAPSHOT_CACHE_REFRESH_INTERVAL } from "./settings.js";
 import { ProtectCameraChannelConfig, ProtectCameraConfig, ProtectCameraConfigPayload, ProtectEventAdd, ProtectEventPacket } from "unifi-protect";
+import { CropOptions } from "./protect-options.js";
 import { ProtectDevice } from "./protect-device.js";
 import { ProtectNvr } from "./protect-nvr.js";
 import { ProtectReservedNames } from "./protect-types.js";
@@ -49,6 +50,16 @@ export class ProtectCamera extends ProtectDevice {
 
     this.configureHints();
     void this.configureDevice();
+  }
+
+  public get cropOptions(): CropOptions {
+    return {
+      enabled: this.hasFeature("Video.Crop"),
+      height: this.getFeatureNumber("Video.Crop.Height") ?? 100,
+      width: this.getFeatureNumber("Video.Crop.Width") ?? 100,
+      x: this.getFeatureNumber("Video.Crop.X") ?? 0,
+      y: this.getFeatureNumber("Video.Crop.Y") ?? 0
+    };
   }
 
   // Configure device-specific settings for this device.
