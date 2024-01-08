@@ -22,11 +22,7 @@ export interface ProtectDevice {
 // Device-specific options and settings.
 export interface ProtectHints {
 
-  cropEnabled: boolean;
-  cropHeight: number;
-  cropWidth: number;
-  cropX: number;
-  cropY: number;
+  crop: boolean;
   hardwareDecoding: boolean,
   hardwareTranscoding: boolean,
   ledStatus: boolean,

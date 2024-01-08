@@ -338,10 +338,10 @@ export class FfmpegOptions {
   public cropFilter(): string {
     return [
       "crop=" +
-      `w=iw*${this.protectCamera.hints.cropWidth/100}`,
-      `h=ih*${this.protectCamera.hints.cropHeight/100}`,
-      `x=iw*${this.protectCamera.hints.cropX/100}`,
-      `y=ih*${this.protectCamera.hints.cropY/100}`
+      `w=iw*${this.protectCamera.cropOptions.width/100}`,
+      `h=ih*${this.protectCamera.cropOptions.height/100}`,
+      `x=iw*${this.protectCamera.cropOptions.x/100}`,
+      `y=ih*${this.protectCamera.cropOptions.y/100}`
     ].join(":");
   }
 
@@ -363,7 +363,7 @@ export class FfmpegOptions {
       videoFilters.push("fps=fps=" + fps.toString());
     }
 
-    if (this.protectCamera.hints.cropEnabled) {
+    if (this.protectCamera.hints.crop) {
       videoFilters.push(this.cropFilter());
     }
 
