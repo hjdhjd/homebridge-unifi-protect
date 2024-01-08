@@ -78,7 +78,6 @@
     "@homebridge/plugin-ui-utils": "1.0.0",
     "ffmpeg-for-homebridge": "2.1.1",
     "mqtt": "5.1.4",
-    "sharp": "^0.33.1",
     "unifi-protect": "4.8.0",
     "ws": "8.14.2"
   },

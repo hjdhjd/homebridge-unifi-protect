@@ -10,6 +10,7 @@ import { API, AudioRecordingCodecType, AudioRecordingSamplerate, AudioStreamingC
 import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_HKSV_SEGMENT_LENGTH, PROTECT_HKSV_TIMESHIFT_BUFFER_MAXLENGTH, PROTECT_HOMEKIT_IDR_INTERVAL,
   PROTECT_SNAPSHOT_CACHE_MAXAGE } from "./settings.js";
 import { ProtectCamera, RtspEntry } from "./protect-camera.js";
+import { FfmpegExec } from "./protect-ffmpeg-exec.js";
 import { FfmpegOptions } from "./protect-ffmpeg-options.js";
 import { FfmpegStreamingProcess } from "./protect-ffmpeg-stream.js";
 import { ProtectLogging } from "./protect-types.js";
@@ -19,7 +20,6 @@ import { ProtectRecordingDelegate } from "./protect-record.js";
 import { RtpDemuxer } from "./protect-rtp.js";
 import WebSocket from "ws";
 import { once } from "node:events";
-import sharp from "sharp";
 
 type SessionInfo = {
   address: string; // Address of the HomeKit client.
@@ -203,23 +203,21 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     this.controller = new this.hap.CameraController(options);
   }
 
-  private async cropSnapshot(snapshot: Buffer): Promise<Buffer> {
-    let image = sharp(snapshot);
+  // Crop snapshot using ffmpeg.
+  private async cropSnapshot(snapshot: Buffer): Promise<Buffer|null> {
 
-    const metadata = await image.metadata();
-    if (!metadata.height || !metadata.width) {
-      throw new Error("failed to read height/width from image metadata");
-    }
+    // Crop snapshot using ffmpeg with crop filter
+    const ffmpeg = new FfmpegExec(this.protectCamera, [
+      "-i", "pipe:0",
+      "-vf", this.ffmpegOptions.cropFilter(),
+      "-f", "mjpeg",
+      "pipe:1"
+    ]);
 
-    // Crop
-    image = image.extract({
-      height: Math.round(metadata.height * (this.protectCamera.cropOptions.height/100)),
-      left: Math.round(metadata.width * (this.protectCamera.cropOptions.x/100)),
-      top: Math.round(metadata.height * (this.protectCamera.cropOptions.y/100)),
-      width: Math.round(metadata.height * (this.protectCamera.cropOptions.width/100))
-    });
+    const result = await ffmpeg.exec(snapshot);
 
-    return image.toBuffer();
+    // Return resized snapshot on success.
+    return result?.exitCode === 0 ? result.stdout : null;
   }
 
   // HomeKit image snapshot request handler.
@@ -946,10 +944,11 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     }
 
     if (this.protectCamera.cropOptions.enabled) {
-      try {
-        snapshot = await this.cropSnapshot(snapshot);
-      } catch (err) {
-        this.log.warn("failed to crop snapshot", err);
+      const cropped = await this.cropSnapshot(snapshot);
+      if (cropped !== null) {
+        snapshot = cropped;
+      } else {
+        this.log.warn("failed to crop snapshot");
       }
     }
 
