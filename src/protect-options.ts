@@ -37,16 +37,6 @@ export interface ProtectNvrOptions {
   password: string
 }
 
-export interface CropOptions {
-  enabled: boolean;
-
-  x: number; // Decimal percentage of left offset of crop
-  y: number; // Decimal percentage of height offset of crop
-
-  height: number; // Decimal percentage of height of crop
-  width: number; // Decimal percentage of width of crop
-}
-
 // Feature option categories.
 export const featureOptionCategories = [
 

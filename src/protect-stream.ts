@@ -410,7 +410,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     const isTranscoding =
       this.protectCamera.hints.transcode || ((request.audio.packet_time >= 60) && this.protectCamera.hints.transcodeHighLatency) ||
       // If cropping is enabled, we must always transcode the video in order to apply the crop filter.
-      this.protectCamera.cropOptions.enabled;
+      this.protectCamera.hints.cropEnabled;
 
     // Find the best RTSP stream based on what we're looking for.
     this.rtspEntry = this.protectCamera.findRtsp(
@@ -943,7 +943,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       return null;
     }
 
-    if (this.protectCamera.cropOptions.enabled) {
+    if (this.protectCamera.hints.cropEnabled) {
       const cropped = await this.cropSnapshot(snapshot);
       if (cropped !== null) {
         snapshot = cropped;

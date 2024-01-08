@@ -5,7 +5,6 @@
 import { CharacteristicValue, PlatformAccessory, Resolution } from "homebridge";
 import { PROTECT_HOMEKIT_IDR_INTERVAL, PROTECT_SNAPSHOT_CACHE_REFRESH_INTERVAL } from "./settings.js";
 import { ProtectCameraChannelConfig, ProtectCameraConfig, ProtectCameraConfigPayload, ProtectEventAdd, ProtectEventPacket } from "unifi-protect";
-import { CropOptions } from "./protect-options.js";
 import { ProtectDevice } from "./protect-device.js";
 import { ProtectNvr } from "./protect-nvr.js";
 import { ProtectReservedNames } from "./protect-types.js";
@@ -52,16 +51,6 @@ export class ProtectCamera extends ProtectDevice {
     void this.configureDevice();
   }
 
-  public get cropOptions(): CropOptions {
-    return {
-      enabled: this.hasFeature("Video.Crop"),
-      height: this.getFeatureNumber("Video.Crop.Height") ?? 100,
-      width: this.getFeatureNumber("Video.Crop.Width") ?? 100,
-      x: this.getFeatureNumber("Video.Crop.X") ?? 0,
-      y: this.getFeatureNumber("Video.Crop.Y") ?? 0
-    };
-  }
-
   // Configure device-specific settings for this device.
   protected configureHints(): boolean {
 
@@ -69,6 +58,11 @@ export class ProtectCamera extends ProtectDevice {
     super.configureHints();
 
     // Configure our device-class specific hints.
+    this.hints.cropEnabled = this.hasFeature("Video.Crop");
+    this.hints.cropHeight = this.getFeatureNumber("Video.Crop.Height") ?? 100;
+    this.hints.cropWidth = this.getFeatureNumber("Video.Crop.Width") ?? 100;
+    this.hints.cropX = this.getFeatureNumber("Video.Crop.X") ?? 0;
+    this.hints.cropY = this.getFeatureNumber("Video.Crop.Y") ?? 0;
     this.hints.hardwareDecoding = true;
     this.hints.hardwareTranscoding = this.hasFeature("Video.Transcode.Hardware");
     this.hints.ledStatus = this.ufp.featureFlags.hasLedStatus && this.hasFeature("Device.StatusLed");
