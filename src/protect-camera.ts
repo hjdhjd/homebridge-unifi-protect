@@ -54,10 +54,10 @@ export class ProtectCamera extends ProtectDevice {
 
   public get cropOptions(): CropOptions {
     return {
-      height: this.getFeatureNumber("Video.Crop.Height") ?? 100,
-      width: this.getFeatureNumber("Video.Crop.Width") ?? 100,
-      x: this.getFeatureNumber("Video.Crop.X") ?? 0,
-      y: this.getFeatureNumber("Video.Crop.Y") ?? 0
+      height: (this.getFeatureNumber("Video.Crop.Height") ?? 100) / 100,
+      width: (this.getFeatureNumber("Video.Crop.Width") ?? 100) / 100,
+      x: (this.getFeatureNumber("Video.Crop.X") ?? 0) / 100,
+      y: (this.getFeatureNumber("Video.Crop.Y") ?? 0) / 100
     };
   }
 
