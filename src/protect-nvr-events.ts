@@ -201,7 +201,6 @@ export class ProtectNvrEvents extends EventEmitter {
           }
 
           this.emit("addEvent." + packet.header.modelKey, packet);
-
           break;
 
         case "remove":
@@ -447,12 +446,9 @@ export class ProtectNvrEvents extends EventEmitter {
       return;
     }
 
-    // Trigger the doorbell. We delay this slightly to workaround what appears to be a race condition bug in HomeKit. Inelegant, but effective.
-    setImmediate(() => {
-
-      doorbellService.getCharacteristic(this.hap.Characteristic.ProgrammableSwitchEvent)
-        ?.sendEventNotification(this.hap.Characteristic.ProgrammableSwitchEvent.SINGLE_PRESS);
-    });
+    // Trigger the doorbell event in HomeKit.
+    doorbellService.getCharacteristic(this.hap.Characteristic.ProgrammableSwitchEvent)
+      ?.sendEventNotification(this.hap.Characteristic.ProgrammableSwitchEvent.SINGLE_PRESS);
 
     // Check to see if we have a doorbell trigger switch configured. If we do, update it.
     const triggerService = protectDevice.accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_DOORBELL_TRIGGER);
