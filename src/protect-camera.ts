@@ -556,7 +556,7 @@ export class ProtectCamera extends ProtectDevice {
     this.ufp = await this.nvr.ufpApi.enableRtsp(this.ufp) ?? this.ufp;
 
     // Figure out which camera channels are RTSP-enabled, and user-enabled.
-    let cameraChannels = this.ufp.channels.filter(x => x.isRtspEnabled && this.hasFeature("Video.Stream." + x.name));
+    let cameraChannels = this.ufp.channels.filter(x => x.isRtspEnabled && this.hasFeature("Video.Stream." + x.name, true));
 
     // Make sure we've got a HomeKit compatible IDR frame interval. If not, let's take care of that.
     let idrChannels = cameraChannels.filter(x => x.idrInterval !== PROTECT_HOMEKIT_IDR_INTERVAL);
@@ -708,7 +708,7 @@ export class ProtectCamera extends ProtectDevice {
     }
 
     // Inform users about our RTSP entry mapping, if we're debugging.
-    if(this.nvr.optionEnabled(this.ufp, "Debug.Video.Startup", false)) {
+    if(this.hasFeature("Debug.Video.Startup")) {
 
       for(const entry of this.rtspEntries) {
 
@@ -716,61 +716,19 @@ export class ProtectCamera extends ProtectDevice {
       }
     }
 
-    // Canary to ensure we stop once we find.
-    let onlyStreamFound = false;
-    let onlyRecordFound = false;
-
-    // Check for explicit RTSP profile preferences at the device level.
+    // Check for explicit RTSP profile preferences.
     for(const rtspProfile of [ "LOW", "MEDIUM", "HIGH" ]) {
 
       // Check to see if the user has requested a specific streaming profile for this camera.
-      if(this.nvr.optionEnabled(this.ufp, "Video.Stream.Only." + rtspProfile + "." + this.ufp.mac, false)) {
+      if(this.hasFeature("Video.Stream.Only." + rtspProfile)) {
 
         this.rtspQuality.StreamingDefault = rtspProfile;
-        onlyStreamFound = true;
       }
 
       // Check to see if the user has requested a specific recording profile for this camera.
-      if(this.nvr.optionEnabled(this.ufp, "Video.HKSV.Record.Only." + rtspProfile + "." + this.ufp.mac, false)) {
+      if(this.hasFeature("Video.HKSV.Record.Only." + rtspProfile)) {
 
         this.rtspQuality.RecordingDefault = rtspProfile;
-        onlyRecordFound = true;
-      }
-    }
-
-    // Check for explicit RTSP profile preferences at the controller level.
-    for(const rtspProfile of [ "LOW", "MEDIUM", "HIGH" ]) {
-
-      // Check to see if the user has requested a specific streaming profile for this camera.
-      if(!onlyStreamFound && this.nvr.optionEnabled(this.ufp, "Video.Stream.Only." + rtspProfile + "." + this.nvr.ufp.mac, false)) {
-
-        this.rtspQuality.StreamingDefault = rtspProfile;
-        onlyStreamFound = true;
-      }
-
-      // Check to see if the user has requested a specific recording profile for this camera.
-      if(!onlyRecordFound && this.nvr.optionEnabled(this.ufp, "Video.HKSV.Record.Only." + rtspProfile + "." + this.nvr.ufp.mac, false)) {
-
-        this.rtspQuality.RecordingDefault = rtspProfile;
-        onlyRecordFound = true;
-      }
-    }
-
-    // Check for explicit RTSP profile preferences globally.
-    for(const rtspProfile of [ "LOW", "MEDIUM", "HIGH" ]) {
-
-      // Check to see if the user has requested a specific streaming profile for this camera.
-      if(!onlyStreamFound && this.hasFeature("Video.Stream.Only." + rtspProfile)) {
-
-        this.rtspQuality.StreamingDefault = rtspProfile;
-        onlyStreamFound = true;
-      }
-
-      // Check to see if the user has requested a specific recording profile for this camera.
-      if(!onlyRecordFound && this.hasFeature("Video.HKSV.Record.Only." + rtspProfile)) {
-
-        this.rtspQuality.RecordingDefault = rtspProfile;
-        onlyRecordFound = true;
       }
     }
 

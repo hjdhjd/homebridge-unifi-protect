@@ -539,9 +539,9 @@ export abstract class ProtectDevice extends ProtectBase {
   }
 
   // Utility for checking feature options on a device.
-  public hasFeature(option: string): boolean {
+  public hasFeature(option: string, defaultReturnValue?: boolean): boolean {
 
-    return isOptionEnabled(this.platform.featureOptions, this.nvr.ufp, this.ufp, option, this.platform.featureOptionDefault(option));
+    return isOptionEnabled(this.platform.featureOptions, this.nvr.ufp, this.ufp, option, defaultReturnValue ?? this.platform.featureOptionDefault(option));
   }
 
   // Utility function for reserved identifiers for switches.

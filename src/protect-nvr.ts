@@ -390,7 +390,7 @@ export class ProtectNvr {
     }
 
     // Exclude or include certain devices based on configuration parameters.
-    if(!this.optionEnabled(device, "Device")) {
+    if(!this.hasFeature("Device", true, device)) {
 
       return null;
     }
@@ -897,15 +897,9 @@ export class ProtectNvr {
   }
 
   // Utility for checking feature options on the NVR.
-  public hasFeature(option: string): boolean {
+  public hasFeature(option: string, defaultReturnValue?: boolean, device: ProtectDeviceConfigTypes | ProtectNvrConfig | null = null): boolean {
 
-    return isOptionEnabled(this.platform.featureOptions, this.ufp, null, option, this.platform.featureOptionDefault(option));
-  }
-
-  // Utility function to let us know if a device or feature should be enabled or not.
-  public optionEnabled(device: ProtectDeviceConfigTypes | ProtectNvrConfig | null, option = "", defaultReturnValue = true): boolean {
-
-    return isOptionEnabled(this.platform.featureOptions, this.ufp, device, option, defaultReturnValue);
+    return isOptionEnabled(this.platform.featureOptions, this.ufp, device, option, defaultReturnValue ?? this.platform.featureOptionDefault(option));
   }
 
   // Emulate a sleep function.

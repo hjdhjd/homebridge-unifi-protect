@@ -90,7 +90,7 @@ export class ProtectCameraPackage extends ProtectCamera {
     }
 
     // Inform users about our RTSP entry mapping, if we're debugging.
-    if(this.nvr.optionEnabled(this.ufp, "Debug.Video.Startup", false)) {
+    if(this.hasFeature("Debug.Video.Startup")) {
 
       for(const entry of validResolutions) {
 

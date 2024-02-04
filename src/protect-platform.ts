@@ -212,10 +212,10 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
 
     const defaultValue = this.featureOptionDefaults[option.toLowerCase()];
 
-    // If it's unknown to us, assume it's true.
+    // If it's a feature that's unknown to us, assume it's false.
     if(defaultValue === undefined) {
 
-      return true;
+      return false;
     }
 
     return defaultValue;
