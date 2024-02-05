@@ -15,9 +15,9 @@ export class FfmpegCodecs {
   private _ffmpegVersion: string;
   private readonly log: Logging;
   private readonly platform: ProtectPlatform;
-  private readonly videoProcessor: string;
-  private readonly videoProcessorCodecs: { [index: string]: { decoders: string[], encoders: string[] } };
-  private readonly videoProcessorHwAccels: { [index: string]: boolean };
+  private readonly ffmpegExec: string;
+  private readonly ffmpegCodecs: { [index: string]: { decoders: string[], encoders: string[] } };
+  private readonly ffmpegHwAccels: { [index: string]: boolean };
 
   constructor(platform: ProtectPlatform) {
 
@@ -25,9 +25,9 @@ export class FfmpegCodecs {
     this._ffmpegVersion = "";
     this.log = platform.log;
     this.platform = platform;
-    this.videoProcessor = platform.config.videoProcessor;
-    this.videoProcessorCodecs = {};
-    this.videoProcessorHwAccels = {};
+    this.ffmpegExec = platform.config.videoProcessor;
+    this.ffmpegCodecs = {};
+    this.ffmpegHwAccels = {};
   }
 
   // Launch our configured controllers once all accessories have been loaded. Once we do, they will sustain themselves.
@@ -54,7 +54,7 @@ export class FfmpegCodecs {
     }
 
     // Ensure we've got a working video processor before we do anything else.
-    if(!(await this.probeVideoProcessorCodecs()) || !(await this.probeVideoProcessorHwAccel())) {
+    if(!(await this.probeFfmpegCodecs()) || !(await this.probeFfmpegHwAccel())) {
 
       return false;
     }
@@ -69,7 +69,7 @@ export class FfmpegCodecs {
     codec = codec.toLowerCase();
     decoder = decoder.toLowerCase();
 
-    return this.videoProcessorCodecs[codec]?.decoders.some(x => x === decoder);
+    return this.ffmpegCodecs[codec]?.decoders.some(x => x === decoder);
   }
 
   // Utility to determine whether or not a specific encoder is available to the video processor for a given format.
@@ -79,13 +79,13 @@ export class FfmpegCodecs {
     codec = codec.toLowerCase();
     encoder = encoder.toLowerCase();
 
-    return this.videoProcessorCodecs[codec]?.encoders.some(x => x === encoder);
+    return this.ffmpegCodecs[codec]?.encoders.some(x => x === encoder);
   }
 
   // Utility to determine whether or not a specific decoder is available to the video processor for a given format.
   public hasHwAccel(accel: string): boolean {
 
-    return this.videoProcessorHwAccels[accel.toLowerCase()] ? true : false;
+    return this.ffmpegHwAccels[accel.toLowerCase()] ? true : false;
   }
 
   // Utility that returns the amount of GPU memory available to us.
@@ -101,7 +101,7 @@ export class FfmpegCodecs {
 
   private async probeFfmpegVersion(): Promise<boolean> {
 
-    return this.probeCmd(this.videoProcessor, [ "-hide_banner", "-version" ], (stdout: string) => {
+    return this.probeCmd(this.ffmpegExec, [ "-hide_banner", "-version" ], (stdout: string) => {
 
       // A regular expression to parse out the version.
       const versionRegex = /^ffmpeg version (.*) Copyright.*$/m;
@@ -117,9 +117,9 @@ export class FfmpegCodecs {
   }
 
   // Probe our video processor's hardware acceleration capabilities.
-  private async probeVideoProcessorHwAccel(): Promise<boolean> {
+  private async probeFfmpegHwAccel(): Promise<boolean> {
 
-    if(!(await this.probeCmd(this.videoProcessor, [ "-hide_banner", "-hwaccels" ], (stdout: string) => {
+    if(!(await this.probeCmd(this.ffmpegExec, [ "-hide_banner", "-hwaccels" ], (stdout: string) => {
 
       // Iterate through each line, and a build a list of encoders.
       for(const accel of stdout.split(os.EOL)) {
@@ -137,7 +137,7 @@ export class FfmpegCodecs {
         }
 
         // We've found a hardware acceleration method, let's add it.
-        this.videoProcessorHwAccels[accel.toLowerCase()] = true;
+        this.ffmpegHwAccels[accel.toLowerCase()] = true;
       }
     }))) {
 
@@ -147,15 +147,15 @@ export class FfmpegCodecs {
     // Let's test to ensure that just because we have a codec or capability available to us, it doesn't necessarily mean that the user has the hardware capabilities
     // needed to use it, resulting in an FFmpeg error. We catch that here and prevent those capabilities from being exposed to HBUP unless both software and hardware
     // capabilities enable it. This simple test, generates a one-second video that is processed by the requested codec. If it fails, we discard the codec.
-    for(const accel of Object.keys(this.videoProcessorHwAccels)) {
+    for(const accel of Object.keys(this.ffmpegHwAccels)) {
 
       // eslint-disable-next-line no-await-in-loop
-      if(!(await this.probeCmd(this.videoProcessor, [
+      if(!(await this.probeCmd(this.ffmpegExec, [
 
         "-hide_banner", "-hwaccel", accel, "-v", "quiet", "-t", "1", "-f", "lavfi", "-i", "color=black:1920x1080", "-c:v", "libx264", "-f", "null", "-"
       ], () => {}, true))) {
 
-        delete this.videoProcessorHwAccels[accel];
+        delete this.ffmpegHwAccels[accel];
 
         if(this.platform.verboseFfmpeg) {
 
@@ -168,9 +168,9 @@ export class FfmpegCodecs {
   }
 
   // Probe our video processor's encoding and decoding capabilities.
-  private async probeVideoProcessorCodecs(): Promise<boolean> {
+  private async probeFfmpegCodecs(): Promise<boolean> {
 
-    return this.probeCmd(this.videoProcessor, [ "-hide_banner", "-codecs" ], (stdout: string) => {
+    return this.probeCmd(this.ffmpegExec, [ "-hide_banner", "-codecs" ], (stdout: string) => {
 
       // A regular expression to parse out the codec and it's supported decoders.
       const decodersRegex = /\S+\s+(\S+).+\(decoders: (.*?)\s*\)/;
@@ -190,20 +190,20 @@ export class FfmpegCodecs {
         // If we found decoders, add them to our list of supported decoders for this format.
         if(decodersMatch) {
 
-          this.videoProcessorCodecs[decodersMatch[1]] = { decoders: [], encoders: [] };
+          this.ffmpegCodecs[decodersMatch[1]] = { decoders: [], encoders: [] };
 
-          this.videoProcessorCodecs[decodersMatch[1]].decoders = decodersMatch[2].split(" ").map(x => x.toLowerCase());
+          this.ffmpegCodecs[decodersMatch[1]].decoders = decodersMatch[2].split(" ").map(x => x.toLowerCase());
         }
 
         // If we found decoders, add them to our list of supported decoders for this format.
         if(encodersMatch) {
 
-          if(!this.videoProcessorCodecs[encodersMatch[1]]) {
+          if(!this.ffmpegCodecs[encodersMatch[1]]) {
 
-            this.videoProcessorCodecs[encodersMatch[1]] = { decoders: [], encoders: [] };
+            this.ffmpegCodecs[encodersMatch[1]] = { decoders: [], encoders: [] };
           }
 
-          this.videoProcessorCodecs[encodersMatch[1]].encoders = encodersMatch[2].split(" ").map(x => x.toLowerCase());
+          this.ffmpegCodecs[encodersMatch[1]].encoders = encodersMatch[2].split(" ").map(x => x.toLowerCase());
         }
       }
     });
