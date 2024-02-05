@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 6.17.0 (2024-02-04)
+  * Improvement: add support for UniFi Protect-driven animal smart occupancy in the HBUP webUI.
+  * Housekeeping.
+
 ## 6.16.0 (2023-11-05)
   * Housekeeping.
 
