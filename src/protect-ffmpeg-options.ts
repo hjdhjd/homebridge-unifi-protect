@@ -334,6 +334,17 @@ export class FfmpegOptions {
     return decoderOptions;
   }
 
+  // Return ffmpeg crop filter option based on user-provided crop configuration.
+  public cropFilter(): string {
+    return [
+      "crop=" +
+      `w=iw*${this.protectCamera.cropOptions.width}`,
+      `h=ih*${this.protectCamera.cropOptions.height}`,
+      `x=iw*${this.protectCamera.cropOptions.x}`,
+      `y=ih*${this.protectCamera.cropOptions.y}`
+    ].join(":");
+  }
+
   // Utility function to provide our default encoder options.
   private defaultVideoEncoderOptions(width: number, height: number, fps: number, bitrate: number, profile: H264Profile, level: H264Level,
     idrInterval: number, inputFps: number, useSmartQuality = true): string[] {
@@ -350,6 +361,10 @@ export class FfmpegOptions {
     if(fps !== inputFps) {
 
       videoFilters.push("fps=fps=" + fps.toString());
+    }
+
+    if (this.protectCamera.hints.crop) {
+      videoFilters.push(this.cropFilter());
     }
 
     // scale=-2:min(ih\,height)    Scale the video to the size that's being requested while respecting aspect ratios and ensuring our final dimensions are

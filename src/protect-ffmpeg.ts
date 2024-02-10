@@ -236,7 +236,7 @@ export class FfmpegProcess extends EventEmitter {
       const logPrefix = "FFmpeg process ended ";
 
       // FFmpeg ended normally and our canary didn't need to enforce FFmpeg's extinction.
-      if(this.ffmpegTimeout && exitCode === 0) {
+      if(exitCode === 0) {
 
         this.log.debug(logPrefix + "(Normal).");
       } else if(((exitCode === null) || (exitCode === 255)) && this.process?.killed) {

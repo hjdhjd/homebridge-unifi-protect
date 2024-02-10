@@ -176,7 +176,7 @@ These option(s) apply to: Protect cameras and Protect controllers
 
 #### <A NAME="video"></A>Video feature options.
 
-These option(s) apply to: , and Protect cameras
+These option(s) apply to: Protect cameras
 
 | Option                                           | Description
 |--------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -188,10 +188,16 @@ These option(s) apply to: , and Protect cameras
 | `Video.Stream.Only.Low`                          | When viewing livestreams, force the use of the low quality video stream from the Protect controller. **(default: disabled)**.
 | `Video.DynamicBitrate`                           | Dynamically adjust the image quality of the camera directly on the UniFi Protect controller to accomodate HomeKit requests. **(default: disabled)**.
 | `Video.DynamicBitrate.Switch`                    | Add a switch accessory to enable or disable dynamic bitrate support on the Protect controller. **(default: disabled)**.
+| `Video.Crop`                                     | Whether to enabling cropping of the video stream and snapshots. Note that enabling this implicitly enables transcoding. **(default: disabled)**.
+| `Video.Crop.Height`                              | Height of the crop window, as a percentage of original image height (0-100). **(default: 100)**.
+| `Video.Crop.Width`                               | Width of the crop window, as a percentage of original image width (0-100). **(default: 100)**.
+| `Video.Crop.X`                                   | Left offset of the crop window, as a percentage of original image width (0-100). **(default: 0)**.
+| `Video.Crop.Y`                                   | Top offset of the crop window, as a percentage of original image height (0-100). **(default: 0)**.
+
 
 #### <A NAME="video.hksv"></A>HomeKit Secure Video feature options.
 
-These option(s) apply to: , and Protect cameras
+These option(s) apply to: Protect cameras
 
 | Option                                           | Description
 |--------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------

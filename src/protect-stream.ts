@@ -10,6 +10,7 @@ import { API, AudioRecordingCodecType, AudioRecordingSamplerate, AudioStreamingC
 import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_HKSV_SEGMENT_LENGTH, PROTECT_HKSV_TIMESHIFT_BUFFER_MAXLENGTH, PROTECT_HOMEKIT_IDR_INTERVAL,
   PROTECT_SNAPSHOT_CACHE_MAXAGE } from "./settings.js";
 import { ProtectCamera, RtspEntry } from "./protect-camera.js";
+import { FfmpegExec } from "./protect-ffmpeg-exec.js";
 import { FfmpegOptions } from "./protect-ffmpeg-options.js";
 import { FfmpegStreamingProcess } from "./protect-ffmpeg-stream.js";
 import { ProtectLogging } from "./protect-types.js";
@@ -202,6 +203,23 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     this.controller = new this.hap.CameraController(options);
   }
 
+  // Crop snapshot using ffmpeg.
+  private async cropSnapshot(snapshot: Buffer): Promise<Buffer|null> {
+
+    // Crop snapshot using ffmpeg with crop filter
+    const ffmpeg = new FfmpegExec(this.protectCamera, [
+      "-i", "pipe:0",
+      "-vf", this.ffmpegOptions.cropFilter(),
+      "-f", "mjpeg",
+      "pipe:1"
+    ]);
+
+    const result = await ffmpeg.exec(snapshot);
+
+    // Return resized snapshot on success.
+    return result?.exitCode === 0 ? result.stdout : null;
+  }
+
   // HomeKit image snapshot request handler.
   public async handleSnapshotRequest(request?: SnapshotRequest, callback?: SnapshotRequestCallback): Promise<void> {
 
@@ -389,7 +407,10 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     // How do we determine if we're a high latency connection? We look at the RTP packet time of the audio packet time for a hint. HomeKit uses values
     // of 20, 30, 40, and 60ms. We make an assumption, validated by lots of real-world testing, that when we see 60ms used by HomeKit, it's a
     // high latency connection and act accordingly.
-    const isTranscoding = this.protectCamera.hints.transcode || ((request.audio.packet_time >= 60) && this.protectCamera.hints.transcodeHighLatency);
+    const isTranscoding =
+      this.protectCamera.hints.transcode || ((request.audio.packet_time >= 60) && this.protectCamera.hints.transcodeHighLatency) ||
+      // If cropping is enabled, we must always transcode the video in order to apply the crop filter.
+      this.protectCamera.hints.crop;
 
     // Find the best RTSP stream based on what we're looking for.
     this.rtspEntry = this.protectCamera.findRtsp(
@@ -896,7 +917,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     }
 
     // Request the image from the controller. If we've specified a specific dimension, we pass that along in our snapshot request.
-    const snapshot = await this.nvr.ufpApi.getSnapshot(this.protectCamera.ufp, request ? request.width : undefined, request ? request.height : undefined,
+    let snapshot = await this.nvr.ufpApi.getSnapshot(this.protectCamera.ufp, request ? request.width : undefined, request ? request.height : undefined,
       undefined, "packageCamera" in this.protectCamera.accessory.context);
 
     if(!isLoggingErrors) {
@@ -920,6 +941,15 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       logError("Unable to retrieve a snapshot.");
 
       return null;
+    }
+
+    if (this.protectCamera.hints.crop) {
+      const cropped = await this.cropSnapshot(snapshot);
+      if (cropped !== null) {
+        snapshot = cropped;
+      } else {
+        this.log.warn("failed to crop snapshot");
+      }
     }
 
     // Cache the image before returning it.
