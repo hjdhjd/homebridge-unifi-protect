@@ -11,7 +11,7 @@ type ProcessResult = {
   exitCode: number | null;
   stderr: Buffer;
   stdout: Buffer;
-}
+};
 
 export class FfmpegExec extends FfmpegProcess {
 
@@ -47,11 +47,15 @@ export class FfmpegExec extends FfmpegProcess {
       this.process.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
       this.process.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
 
-      // Return when process is done. We prepend this listener to ensure we can properly cleanup after ourselves.
-      this.process.prependOnceListener("exit", (exitCode) => {
+      // We prepend this listener to ensure we can properly cleanup after ourselves.
+      this.process.prependOnceListener("exit", () => {
 
         // Trigger our process cleanup activities.
         this.stop();
+      });
+
+      // Return when process is done.
+      this.process.once("exit", (exitCode) => {
 
         // Return the output and results.
         resolve({
