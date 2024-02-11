@@ -584,8 +584,8 @@ export class ProtectCamera extends ProtectDevice {
     }
 
     // Inform the user.
-    this.log.info("Cropping the video stream to " + this.hints.cropOptions.width + "x" + this.hints.cropOptions.height + "% starting at " + this.hints.cropOptions.x +
-      "x" + this.hints.cropOptions.y + "%.");
+    this.log.info("Cropping the video stream to %sx%s% starting at %sx%s%.",
+      this.hints.cropOptions.width, this.hints.cropOptions.height, this.hints.cropOptions.x, this.hints.cropOptions.y);
 
     // Transform our percentages into decimal form for FFmpeg.
     this.hints.cropOptions.height /= 100;
