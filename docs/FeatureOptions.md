@@ -94,7 +94,7 @@ Feature options provide a rich mechanism for tailoring your `homebridge-unifi-pr
 
 #### <A NAME="audio"></A>Audio feature options.
 
-These option(s) apply to: , and Protect cameras
+These option(s) apply to: Protect cameras.
 
 | Option                                           | Description
 |--------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -107,7 +107,7 @@ These option(s) apply to: , and Protect cameras
 
 #### <A NAME="device"></A>Device feature options.
 
-These option(s) apply to: , and all Protect devices
+These option(s) apply to: all Protect device types.
 
 | Option                                           | Description
 |--------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -117,7 +117,7 @@ These option(s) apply to: , and all Protect devices
 
 #### <A NAME="doorbell"></A>Doorbell feature options.
 
-These option(s) apply to: , and Protect cameras
+These option(s) apply to: Protect cameras.
 
 | Option                                           | Description
 |--------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -129,7 +129,7 @@ These option(s) apply to: , and Protect cameras
 
 #### <A NAME="log"></A>Logging feature options.
 
-These option(s) apply to: Protect cameras, Protect lights, and Protect sensors
+These option(s) apply to: Protect cameras, Protect lights, and Protect sensors.
 
 | Option                                           | Description
 |--------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -139,13 +139,14 @@ These option(s) apply to: Protect cameras, Protect lights, and Protect sensors
 
 #### <A NAME="motion"></A>Motion detection feature options.
 
-These option(s) apply to: Protect cameras, Protect lights, and Protect sensors
+These option(s) apply to: Protect cameras, Protect lights, and Protect sensors.
 
 | Option                                           | Description
 |--------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 | `Motion.Duration<I>.Value</I>`                   | Duration, in seconds, of a single motion event, before allowing a new one. **(default: 10)**.
 | `Motion.OccupancySensor`                         | Add an occupancy sensor accessory using motion sensor activity to determine occupancy. By default, any motion will trigger occupancy. If the smart motion detection feature option is enabled, it will be used instead. **(default: disabled)**. <BR>*Supported on Protect devices that have a motion sensor.*
 | `Motion.OccupancySensor.Duration<I>.Value</I>`   | Duration, in seconds, to wait without receiving a motion event to determine when occupancy is no longer detected. **(default: 300)**.
+| `Motion.OccupancySensor.Animal`                  | When using both the occupancy sensor and smart motion detection feature options, use UniFi Protect's animal detection to trigger occupancy. **(default: disabled)**. <BR>*Supported on Protect devices that support smart motion detection (e.g. G4-series cameras and better).*
 | `Motion.OccupancySensor.Person`                  | When using both the occupancy sensor and smart motion detection feature options, use UniFi Protect's person detection to trigger occupancy. **(default: enabled)**. <BR>*Supported on Protect devices that support smart motion detection (e.g. G4-series cameras and better).*
 | `Motion.OccupancySensor.Vehicle`                 | When using both the occupancy sensor and smart motion detection feature options, use UniFi Protect's vehicle detection to trigger occupancy. **(default: disabled)**. <BR>*Supported on Protect devices that support smart motion detection (e.g. G4-series cameras and better).*
 | `Motion.SmartDetect`                             | Use UniFi Protect smart motion detection for HomeKit motion events when on a supported device. **(default: disabled)**. <BR>*Supported on Protect devices that support smart motion detection (e.g. G4-series cameras and better).*
@@ -156,7 +157,7 @@ These option(s) apply to: Protect cameras, Protect lights, and Protect sensors
 
 #### <A NAME="nvr"></A>NVR feature options.
 
-These option(s) apply to: Protect cameras and Protect controllers
+These option(s) apply to: Protect cameras and Protect controllers.
 
 | Option                                           | Description
 |--------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -168,7 +169,7 @@ These option(s) apply to: Protect cameras and Protect controllers
 
 #### <A NAME="securitysystem"></A>Security system feature options.
 
-These option(s) apply to: Protect cameras and Protect controllers
+These option(s) apply to: Protect cameras and Protect controllers.
 
 | Option                                           | Description
 |--------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -176,7 +177,7 @@ These option(s) apply to: Protect cameras and Protect controllers
 
 #### <A NAME="video"></A>Video feature options.
 
-These option(s) apply to: Protect cameras
+These option(s) apply to: Protect cameras.
 
 | Option                                           | Description
 |--------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -188,16 +189,15 @@ These option(s) apply to: Protect cameras
 | `Video.Stream.Only.Low`                          | When viewing livestreams, force the use of the low quality video stream from the Protect controller. **(default: disabled)**.
 | `Video.DynamicBitrate`                           | Dynamically adjust the image quality of the camera directly on the UniFi Protect controller to accomodate HomeKit requests. **(default: disabled)**.
 | `Video.DynamicBitrate.Switch`                    | Add a switch accessory to enable or disable dynamic bitrate support on the Protect controller. **(default: disabled)**.
-| `Video.Crop`                                     | Whether to enabling cropping of the video stream and snapshots. Note that enabling this implicitly enables transcoding. **(default: disabled)**.
-| `Video.Crop.Height`                              | Height of the crop window, as a percentage of original image height (0-100). **(default: 100)**.
-| `Video.Crop.Width`                               | Width of the crop window, as a percentage of original image width (0-100). **(default: 100)**.
-| `Video.Crop.X`                                   | Left offset of the crop window, as a percentage of original image width (0-100). **(default: 0)**.
-| `Video.Crop.Y`                                   | Top offset of the crop window, as a percentage of original image height (0-100). **(default: 0)**.
-
+| `Video.Crop`                                     | Crop the camera video stream. Enabling this option will also force transcoding of livestreams. **(default: disabled)**.
+| `Video.Crop.X<I>.Value</I>`                      | Left offset of the crop window, as a percentage of the original image width. **(default: 0)**.
+| `Video.Crop.Y<I>.Value</I>`                      | Top offset of the crop window, as a percentage of the original image height. **(default: 0)**.
+| `Video.Crop.Width<I>.Value</I>`                  | Width of the crop window, as a percentage of original image width. **(default: 100)**.
+| `Video.Crop.Height<I>.Value</I>`                 | Height of the crop window, as a percentage of original image height. **(default: 100)**.
 
 #### <A NAME="video.hksv"></A>HomeKit Secure Video feature options.
 
-These option(s) apply to: Protect cameras
+These option(s) apply to: Protect cameras.
 
 | Option                                           | Description
 |--------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
