@@ -89,7 +89,7 @@ export class ProtectNvrEvents extends EventEmitter {
   // Process Protect API update events.
   private ufpUpdates(packet: ProtectEventPacket): void {
 
-    let protectDevice;
+    let protectDevice: ProtectDevice | null;
 
     switch(packet.header.modelKey) {
 
@@ -103,17 +103,30 @@ export class ProtectNvrEvents extends EventEmitter {
         // Lookup the device.
         protectDevice = this.nvr.deviceLookup(packet.header.id);
 
+        // No device found, we're done.
+        if(!protectDevice) {
+
+          break;
+        }
+
         // Update our device state.
-        if(protectDevice) {
+        protectDevice.ufp = this.patchUfpConfigJson(protectDevice.ufp, packet.payload as Record<string, unknown>) as ProtectDeviceConfigTypes;
 
-          protectDevice.ufp = this.patchUfpConfigJson(protectDevice.ufp, packet.payload as Record<string, unknown>) as ProtectDeviceConfigTypes;
+        // Detect device availability changes.
+        if((packet.payload as Record<string, unknown>).state) {
 
-          // Sync names, if configured to do so.
-          if((packet.payload as Record<string, unknown>).name && protectDevice.hints.syncName) {
+          protectDevice.log.debug("State has changed to %s.", protectDevice.isOnline ? "online" : "offline");
 
-            protectDevice.log.info("Name change detected. A restart of Homebridge may be needed in order to complete name synchronization with HomeKit.");
-            protectDevice.configureInfo();
-          }
+          // If we have services on the accessory associated with the Protect device that have a StatusActive characteristic set, update our availability state.
+          protectDevice.accessory.services.filter(x => x.testCharacteristic(this.hap.Characteristic.StatusActive))
+            ?.map(x => x.updateCharacteristic(this.hap.Characteristic.StatusActive, protectDevice?.isOnline ?? true));
+        }
+
+        // Sync names, if configured to do so.
+        if((packet.payload as Record<string, unknown>).name && protectDevice.hints.syncName) {
+
+          protectDevice.log.info("Name change detected. A restart of Homebridge may be needed in order to complete name synchronization with HomeKit.");
+          protectDevice.configureInfo();
         }
 
         break;
