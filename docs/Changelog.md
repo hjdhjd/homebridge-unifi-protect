@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 6.18.0 (2024-02-11)
+  * New feature: Stream cropping. You can now selectively crop your Protect video stream feed in HBUP. This option will force transcoding on in all circumstances when viewing livestreams. My thanks to @dansimau for the initial PR that implemented this feature and contributed it to the community. This feature utilized the FFmpeg crop filter behind the scenes - you can read more about how cropping in FFmpeg works in the FFmpeg documentation to orient yourself if you're struggling with this feature at first. My recommendation: play with it and you'll eventually get a feel for the settings if they don't seem intuitive at first.
+  * Improvement: Protect device availability is now provided to HomeKit on a realtime basis. This should help folks more easily see when devices are disconnected from the Protect controller.
+  * Housekeeping.
+
 ## 6.17.0 (2024-02-04)
   * Improvement: add support for UniFi Protect-driven animal smart occupancy in the HBUP webUI.
   * Housekeeping.
