@@ -1,11 +1,10 @@
-/* Copyright(C) 2019-2023, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2019-2024, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * protect-camera.ts: Camera device class for UniFi Protect.
  */
 import { CharacteristicValue, PlatformAccessory, Resolution } from "homebridge";
 import { PROTECT_HOMEKIT_IDR_INTERVAL, PROTECT_SNAPSHOT_CACHE_REFRESH_INTERVAL } from "./settings.js";
 import { ProtectCameraChannelConfig, ProtectCameraConfig, ProtectCameraConfigPayload, ProtectEventAdd, ProtectEventPacket } from "unifi-protect";
-import { CropOptions } from "./protect-options.js";
 import { ProtectDevice } from "./protect-device.js";
 import { ProtectNvr } from "./protect-nvr.js";
 import { ProtectReservedNames } from "./protect-types.js";
@@ -52,22 +51,12 @@ export class ProtectCamera extends ProtectDevice {
     void this.configureDevice();
   }
 
-  public get cropOptions(): CropOptions {
-    return {
-      height: (this.getFeatureNumber("Video.Crop.Height") ?? 100) / 100,
-      width: (this.getFeatureNumber("Video.Crop.Width") ?? 100) / 100,
-      x: (this.getFeatureNumber("Video.Crop.X") ?? 0) / 100,
-      y: (this.getFeatureNumber("Video.Crop.Y") ?? 0) / 100
-    };
-  }
-
   // Configure device-specific settings for this device.
   protected configureHints(): boolean {
 
     // Configure our parent's hints.
     super.configureHints();
 
-    // Configure our device-class specific hints.
     this.hints.crop = this.hasFeature("Video.Crop");
     this.hints.hardwareDecoding = true;
     this.hints.hardwareTranscoding = this.hasFeature("Video.Transcode.Hardware");
@@ -161,6 +150,9 @@ export class ProtectCamera extends ProtectDevice {
 
     // Configure the occupancy sensor.
     this.configureOccupancySensor();
+
+    // Configure cropping.
+    this.configureCrop();
 
     // Configure HomeKit Secure Video suport.
     this.configureHksv();
@@ -548,6 +540,58 @@ export class ProtectCamera extends ProtectDevice {
         statusLedService.removeCharacteristic(statusLight);
       }
     }
+
+    return true;
+  }
+
+  // Configure cropping characteristics.
+  private configureCrop(): boolean {
+
+    // We haven't enabled cropping.
+    if(!this.hints.crop) {
+
+      return true;
+    }
+
+    // Set our cropping parameters.
+    this.hints.cropOptions = {
+
+      height: this.getFeatureNumber("Video.Crop.Height") ?? 100,
+      width: this.getFeatureNumber("Video.Crop.Width") ?? 100,
+      x: this.getFeatureNumber("Video.Crop.X") ?? 0,
+      y: this.getFeatureNumber("Video.Crop.Y") ?? 0
+    };
+
+    // Ensure we have sane values for our crop window.
+    if((this.hints.cropOptions.height < 0) || (this.hints.cropOptions.height > 100)) {
+
+      this.hints.cropOptions.height = 100;
+    }
+
+    if((this.hints.cropOptions.width < 0) || (this.hints.cropOptions.width > 100)) {
+
+      this.hints.cropOptions.width = 100;
+    }
+
+    if((this.hints.cropOptions.x < 0) || (this.hints.cropOptions.x > 100)) {
+
+      this.hints.cropOptions.x = 0;
+    }
+
+    if((this.hints.cropOptions.y < 0) || (this.hints.cropOptions.y > 100)) {
+
+      this.hints.cropOptions.y = 0;
+    }
+
+    // Inform the user.
+    this.log.info("Cropping the video stream to " + this.hints.cropOptions.width + "x" + this.hints.cropOptions.height + "% starting at " + this.hints.cropOptions.x +
+      "x" + this.hints.cropOptions.y + "%.");
+
+    // Transform our percentages into decimal form for FFmpeg.
+    this.hints.cropOptions.height /= 100;
+    this.hints.cropOptions.width /= 100;
+    this.hints.cropOptions.x /= 100;
+    this.hints.cropOptions.y /= 100;
 
     return true;
   }

@@ -1,4 +1,4 @@
-/* Copyright(C) 2017-2023, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2017-2024, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * protect-stream.ts: Homebridge camera streaming delegate implementation for Protect.
  *
@@ -203,21 +203,39 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     this.controller = new this.hap.CameraController(options);
   }
 
-  // Crop snapshot using ffmpeg.
+  // Image snapshot crop handler.
   private async cropSnapshot(snapshot: Buffer): Promise<Buffer|null> {
 
-    // Crop snapshot using ffmpeg with crop filter
+    // Crop the snapshot using the FFmpeg with crop filter. Options we use are:
+    //
+    // -hide_banner           Suppress printing the startup banner in FFmpeg.
+    // -nostats               Suppress printing progress reports while encoding in FFmpeg.
+    // -i pipe:0              Read input from standard input.
+    // -filter:v              Pass the crop filter options to FFmpeg.
+    // -f mjpeg               Specify that our input will be a JPEG file.
+    // pipe:1                 Output the cropped snapshot to standard output.
     const ffmpeg = new FfmpegExec(this.protectCamera, [
+
+      "-hide_banner",
+      "-nostats",
       "-i", "pipe:0",
-      "-vf", this.ffmpegOptions.cropFilter(),
+      "-filter:v", this.ffmpegOptions.cropFilter,
       "-f", "mjpeg",
       "pipe:1"
     ]);
 
-    const result = await ffmpeg.exec(snapshot);
+    // Retrieve the snapshot.
+    const ffmpegResult = await ffmpeg.exec(snapshot);
 
-    // Return resized snapshot on success.
-    return result?.exitCode === 0 ? result.stdout : null;
+    // Crop succeeded, we're done.
+    if(ffmpegResult?.exitCode === 0) {
+
+      return ffmpegResult.stdout;
+    }
+
+    // Something went wrong.
+    this.log.error("Unable to crop snapshot.");
+    return null;
   }
 
   // HomeKit image snapshot request handler.
@@ -400,17 +418,19 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       return;
     }
 
-    // Has the user explicitly configured transcoding, or are we a high latency session (e.g. cellular)? If we're high latency, we'll transcode
-    // by default unless the user has asked us not to. Why? It generally results in a speedier experience, at the expense of some stream quality
-    // (HomeKit tends to request far lower bitrates than Protect is capable of producing).
+    // We transcode based in the following circumstances:
     //
-    // How do we determine if we're a high latency connection? We look at the RTP packet time of the audio packet time for a hint. HomeKit uses values
-    // of 20, 30, 40, and 60ms. We make an assumption, validated by lots of real-world testing, that when we see 60ms used by HomeKit, it's a
-    // high latency connection and act accordingly.
-    const isTranscoding =
-      this.protectCamera.hints.transcode || ((request.audio.packet_time >= 60) && this.protectCamera.hints.transcodeHighLatency) ||
-      // If cropping is enabled, we must always transcode the video in order to apply the crop filter.
-      this.protectCamera.hints.crop;
+    //   1. The user has explicitly configured transcoding.
+    //   2. The user has configured cropping for the video stream.
+    //   3. We are on a high latency streaming session (e.g. cellular). If we're high latency, we'll transcode by default unless the user has asked us not to. Why? It
+    //      generally results in a speedier experience, at the expense of some stream quality (HomeKit tends to request far lower bitrates than Protect is capable of
+    //      producing).
+    //
+    // How do we determine if we're a high latency connection? We look at the RTP packet time of the audio packet time for a hint. HomeKit uses values of 20, 30, 40,
+    // and 60ms. We make an assumption, validated by lots of real-world testing, that when we see 60ms used by HomeKit, it's a high latency connection and act
+    // accordingly.
+    const isTranscoding = this.protectCamera.hints.transcode || this.protectCamera.hints.crop ||
+      ((request.audio.packet_time >= 60) && this.protectCamera.hints.transcodeHighLatency);
 
     // Find the best RTSP stream based on what we're looking for.
     this.rtspEntry = this.protectCamera.findRtsp(
@@ -925,8 +945,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       this.nvr.logApiErrors = savedLogState;
     }
 
-    // Occasional snapshot failures will happen. The controller isn't always able to generate them if it's already generating one,
-    // or it's requested too quickly after the last one.
+    // Occasional snapshot failures will happen. The controller isn't always able to generate them if one is already inflight or if it's too soon after the last one.
     if(!snapshot) {
 
       // See if we have an image cached that we can use instead.
@@ -943,13 +962,10 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       return null;
     }
 
-    if (this.protectCamera.hints.crop) {
-      const cropped = await this.cropSnapshot(snapshot);
-      if (cropped !== null) {
-        snapshot = cropped;
-      } else {
-        this.log.warn("failed to crop snapshot");
-      }
+    // Crop the snapshot, if we're configured to do so.
+    if(this.protectCamera.hints.crop) {
+
+      snapshot = await this.cropSnapshot(snapshot) ?? snapshot;
     }
 
     // Cache the image before returning it.

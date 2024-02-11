@@ -1,4 +1,4 @@
-/* Copyright(C) 2020-2023, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2020-2024, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * protect-options.ts: Feature option and type definitions for UniFi Protect.
  */
@@ -35,14 +35,6 @@ export interface ProtectNvrOptions {
   overrideAddress: string,
   username: string,
   password: string
-}
-
-export interface CropOptions {
-  x: number; // Decimal percentage of left offset of crop
-  y: number; // Decimal percentage of height offset of crop
-
-  height: number; // Decimal percentage of height of crop
-  width: number; // Decimal percentage of width of crop
 }
 
 // Feature option categories.
@@ -143,11 +135,11 @@ export const featureOptions: { [index: string]: FeatureOption[] } = {
     { default: false, description: "When viewing livestreams, force the use of the low quality video stream from the Protect controller.", name: "Stream.Only.Low" },
     { default: false, description: "Dynamically adjust the image quality of the camera directly on the UniFi Protect controller to accomodate HomeKit requests.", name: "DynamicBitrate" },
     { default: false, description: "Add a switch accessory to enable or disable dynamic bitrate support on the Protect controller.", name: "DynamicBitrate.Switch" },
-    { default: false, description: "Crop streams and snapshots (note: this forces all streams to be transcoded).", name: "Crop"},
-    { default: false, defaultValue: 0, description: "Left crop position % (0-100)", group: "Crop", name: "Crop.X"},
-    { default: false, defaultValue: 0, description: "Top crop position % (0-100)", group: "Crop", name: "Crop.Y"},
-    { default: false, defaultValue: 100, description: "Crop Width % (0-100)", group: "Crop", name: "Crop.Width"},
-    { default: false, defaultValue: 100, description: "Crop Height % (0-100)", group: "Crop", name: "Crop.Height"}
+    { default: false, description: "Crop the camera video stream. Enabling this option will enable transcoding and disable the timeshift buffer (if using HomeKit Secure Video).", name: "Crop"},
+    { default: false, defaultValue: 0, description: "Left offset of the crop window, as a percentage of the original image width.", group: "Crop", name: "Crop.X"},
+    { default: false, defaultValue: 0, description: "Top offset of the crop window, as a percentage of the original image height.", group: "Crop", name: "Crop.Y"},
+    { default: false, defaultValue: 100, description: "Width of the crop window, as a percentage of original image width.", group: "Crop", name: "Crop.Width"},
+    { default: false, defaultValue: 100, description: "Height of the crop window, as a percentage of original image height.", group: "Crop", name: "Crop.Height"}
   ],
 
   // HomeKit Secure Video options.

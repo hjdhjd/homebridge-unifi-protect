@@ -1,4 +1,4 @@
-/* Copyright(C) 2023, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2023-2024, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * protect-ffmpeg-options.ts: FFmpeg decoder and encoder options with hardware-accelerated codec support where available.
  */
@@ -334,14 +334,22 @@ export class FfmpegOptions {
     return decoderOptions;
   }
 
-  // Return ffmpeg crop filter option based on user-provided crop configuration.
-  public cropFilter(): string {
-    return [
-      "crop=" +
-      `w=iw*${this.protectCamera.cropOptions.width}`,
-      `h=ih*${this.protectCamera.cropOptions.height}`,
-      `x=iw*${this.protectCamera.cropOptions.x}`,
-      `y=ih*${this.protectCamera.cropOptions.y}`
+  // Return the FFmpeg crop filter options, if configured to do so.
+  public get cropFilter(): string {
+
+    // If we haven't enabled cropping, tell the crop filter to do nothing.
+    if(!this.protectCamera.hints.crop) {
+
+      return "crop=w=iw*100:h=ih*100:x=iw*0:y=ih*0";
+    }
+
+    // Generate our crop filter based on what the user has configured.
+    return "crop=" + [
+
+      "w=iw*" + this.protectCamera.hints.cropOptions.width.toString(),
+      "h=ih*" + this.protectCamera.hints.cropOptions.height.toString(),
+      "x=iw*" + this.protectCamera.hints.cropOptions.x.toString(),
+      "y=ih*" + this.protectCamera.hints.cropOptions.y.toString()
     ].join(":");
   }
 
@@ -361,10 +369,6 @@ export class FfmpegOptions {
     if(fps !== inputFps) {
 
       videoFilters.push("fps=fps=" + fps.toString());
-    }
-
-    if (this.protectCamera.hints.crop) {
-      videoFilters.push(this.cropFilter());
     }
 
     // scale=-2:min(ih\,height)    Scale the video to the size that's being requested while respecting aspect ratios and ensuring our final dimensions are
@@ -490,6 +494,12 @@ export class FfmpegOptions {
     // scale=-2:min(ih\,height)    Scale the video to the size that's being requested while respecting aspect ratios and ensuring our final dimensions are
     //                             a power of two.
     videoFilters.push("scale=-2:min(ih\\," + height.toString() + ")");
+
+    // Crop the stream, if the user has requested it.
+    if(this.protectCamera.hints.crop) {
+
+      videoFilters.push(this.cropFilter);
+    }
 
     switch(this.platform.hostSystem) {
 

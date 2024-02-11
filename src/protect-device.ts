@@ -1,4 +1,4 @@
-/* Copyright(C) 2017-2023, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2017-2024, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * protect-device.ts: Base class for all UniFi Protect devices.
  */
@@ -23,6 +23,13 @@ export interface ProtectDevice {
 export interface ProtectHints {
 
   crop: boolean;
+  cropOptions: {
+
+    height: number,
+    width: number,
+    x: number,
+    y: number
+  },
   hardwareDecoding: boolean,
   hardwareTranscoding: boolean,
   ledStatus: boolean,

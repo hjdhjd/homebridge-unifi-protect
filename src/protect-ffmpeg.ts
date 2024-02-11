@@ -1,4 +1,4 @@
-/* Copyright(C) 2017-2023, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2017-2024, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * protect-ffmpeg.ts: Base class to provide FFmpeg process control and capability introspection.
  *
@@ -236,7 +236,7 @@ export class FfmpegProcess extends EventEmitter {
       const logPrefix = "FFmpeg process ended ";
 
       // FFmpeg ended normally and our canary didn't need to enforce FFmpeg's extinction.
-      if(exitCode === 0) {
+      if(this.ffmpegTimeout && (exitCode === 0)) {
 
         this.log.debug(logPrefix + "(Normal).");
       } else if(((exitCode === null) || (exitCode === 255)) && this.process?.killed) {
