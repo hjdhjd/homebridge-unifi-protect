@@ -1,4 +1,4 @@
-/* Copyright(C) 2019-2023, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2019-2024, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * protect-camera-package.ts: Package camera device class for UniFi Protect.
  */

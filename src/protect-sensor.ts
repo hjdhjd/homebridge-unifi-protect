@@ -1,4 +1,4 @@
-/* Copyright(C) 2019-2023, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2019-2024, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * protect-sensor.ts: Sensor device class for UniFi Protect.
  */

@@ -1,4 +1,4 @@
-/* Copyright(C) 2023, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2023-2024, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * protect-chime.ts: Chime device class for UniFi Protect.
  */
