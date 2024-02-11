@@ -68,7 +68,7 @@ export class ProtectCamera extends ProtectDevice {
     this.hints.timeshift = this.hasFeature("Video.HKSV.TimeshiftBuffer");
     this.hints.transcode = this.hasFeature("Video.Transcode");
     this.hints.transcodeHighLatency = this.hasFeature("Video.Transcode.HighLatency");
-    this.hints.twoWayAudio = this.ufp.hasSpeaker && this.hasFeature("Audio") && this.hasFeature("Audio.TwoWay");
+    this.hints.twoWayAudio = this.ufp.featureFlags.hasSpeaker && this.hasFeature("Audio") && this.hasFeature("Audio.TwoWay");
 
     return true;
   }
