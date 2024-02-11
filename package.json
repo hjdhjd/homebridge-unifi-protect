@@ -82,11 +82,12 @@
     "ws": "8.16.0"
   },
   "devDependencies": {
-    "@types/node": "20.11.16",
+    "@stylistic/eslint-plugin": "1.6.1",
+    "@types/node": "20.11.17",
     "@types/readable-stream": "4.0.10",
     "@types/ws": "8.5.10",
-    "@typescript-eslint/eslint-plugin": "6.20.0",
-    "@typescript-eslint/parser": "6.20.0",
+    "@typescript-eslint/eslint-plugin": "6.21.0",
+    "@typescript-eslint/parser": "6.21.0",
     "eslint": "8.56.0",
     "homebridge": "1.7.0",
     "nodemon": "3.0.3",

@@ -51,7 +51,7 @@ export const featureOptionCategories = [
   { description: "HomeKit Secure Video feature options.", modelKey: [ "camera" ], name: "Video.HKSV" }
 ];
 
-/* eslint-disable max-len */
+/* eslint-disable @stylistic/max-len */
 // Individual feature options, broken out by category.
 export const featureOptions: { [index: string]: FeatureOption[] } = {
 
