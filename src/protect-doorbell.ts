@@ -137,6 +137,7 @@ export class ProtectDoorbell extends ProtectCamera {
           continue;
         }
 
+        switchService.addOptionalCharacteristic(this.hap.Characteristic.ConfiguredName);
         this.accessory.addService(switchService);
       }
 
@@ -146,7 +147,6 @@ export class ProtectDoorbell extends ProtectCamera {
       this.messageSwitches.push({ duration: duration, service: switchService, state: false, text: entry.text, type: entry.type }) - 1;
 
       // Configure the message switch.
-      switchService.addOptionalCharacteristic(this.hap.Characteristic.ConfiguredName);
       switchService.updateCharacteristic(this.hap.Characteristic.ConfiguredName, entry.text);
       switchService
         .getCharacteristic(this.hap.Characteristic.On)
@@ -245,6 +245,7 @@ export class ProtectDoorbell extends ProtectCamera {
           continue;
         }
 
+        switchService.addOptionalCharacteristic(this.hap.Characteristic.ConfiguredName);
         this.accessory.addService(switchService);
       }
 
@@ -302,7 +303,6 @@ export class ProtectDoorbell extends ProtectCamera {
       });
 
       // Initialize the physical chime switch state.
-      switchService.addOptionalCharacteristic(this.hap.Characteristic.ConfiguredName);
       switchService.updateCharacteristic(this.hap.Characteristic.ConfiguredName, switchName);
       switchService.updateCharacteristic(this.hap.Characteristic.On, this.ufp.chimeDuration === this.getPhysicalChimeDuration(physicalChimeType));
       switchesEnabled.push(chimeSetting);

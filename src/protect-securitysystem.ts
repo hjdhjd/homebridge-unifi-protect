@@ -246,6 +246,7 @@ export class ProtectSecuritySystem extends ProtectBase {
         return false;
       }
 
+      switchService.addOptionalCharacteristic(this.hap.Characteristic.ConfiguredName);
       this.accessory.addService(switchService);
     }
 
@@ -265,7 +266,6 @@ export class ProtectSecuritySystem extends ProtectBase {
       });
 
     // Initialize the value.
-    switchService.addOptionalCharacteristic(this.hap.Characteristic.ConfiguredName);
     switchService.updateCharacteristic(this.hap.Characteristic.ConfiguredName, switchName);
     switchService.updateCharacteristic(this.hap.Characteristic.On, this.isAlarmTriggered);
 

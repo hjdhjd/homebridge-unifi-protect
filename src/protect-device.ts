@@ -182,12 +182,12 @@ export abstract class ProtectDevice extends ProtectBase {
 
     if(this.hints.motionDuration !== PROTECT_MOTION_DURATION) {
 
-      this.log.info("Motion event duration set to %s seconds", this.hints.motionDuration);
+      this.log.info("Motion event duration set to %s seconds.", this.hints.motionDuration);
     }
 
     if(this.hints.occupancyDuration !== PROTECT_OCCUPANCY_DURATION) {
 
-      this.log.info("Occupancy event duration set to %s seconds", this.hints.occupancyDuration);
+      this.log.info("Occupancy event duration set to %s seconds.", this.hints.occupancyDuration);
     }
 
     return true;
@@ -317,6 +317,7 @@ export abstract class ProtectDevice extends ProtectBase {
         return false;
       }
 
+      switchService.addOptionalCharacteristic(this.hap.Characteristic.ConfiguredName);
       this.accessory.addService(switchService);
     }
 
@@ -342,7 +343,6 @@ export abstract class ProtectDevice extends ProtectBase {
       this.accessory.context.detectMotion = true;
     }
 
-    switchService.addOptionalCharacteristic(this.hap.Characteristic.ConfiguredName);
     switchService.updateCharacteristic(this.hap.Characteristic.ConfiguredName, switchName);
     switchService.updateCharacteristic(this.hap.Characteristic.On, this.accessory.context.detectMotion as boolean);
 
@@ -379,6 +379,7 @@ export abstract class ProtectDevice extends ProtectBase {
         return false;
       }
 
+      triggerService.addOptionalCharacteristic(this.hap.Characteristic.ConfiguredName);
       this.accessory.addService(triggerService);
     }
 
@@ -426,7 +427,6 @@ export abstract class ProtectDevice extends ProtectBase {
     });
 
     // Initialize the switch.
-    triggerService.addOptionalCharacteristic(this.hap.Characteristic.ConfiguredName);
     triggerService.updateCharacteristic(this.hap.Characteristic.ConfiguredName, triggerName);
     triggerService.updateCharacteristic(this.hap.Characteristic.On, false);
 
@@ -583,6 +583,7 @@ export abstract class ProtectDevice extends ProtectBase {
       (this.ufp?.name ?? "Unknown");
   }
 
+  // Utility function to set the current accessory name of this device.
   public set accessoryName(name: string) {
 
     // Set all the internally managed names within Homebridge to the new accessory name.

@@ -314,12 +314,13 @@ export class ProtectCamera extends ProtectDevice {
           return false;
         }
 
+        contactService.addOptionalCharacteristic(this.hap.Characteristic.ConfiguredName);
+
         // Finally, add it to the camera.
         this.accessory.addService(contactService);
       }
 
       // Initialize the sensor.
-      contactService.addOptionalCharacteristic(this.hap.Characteristic.ConfiguredName);
       contactService.updateCharacteristic(this.hap.Characteristic.ConfiguredName, name);
       contactService.updateCharacteristic(this.hap.Characteristic.ContactSensorState, false);
       return true;
@@ -424,6 +425,7 @@ export class ProtectCamera extends ProtectDevice {
         return false;
       }
 
+      triggerService.addOptionalCharacteristic(this.hap.Characteristic.ConfiguredName);
       this.accessory.addService(triggerService);
     }
 
@@ -454,7 +456,6 @@ export class ProtectCamera extends ProtectDevice {
     });
 
     // Initialize the switch.
-    triggerService.addOptionalCharacteristic(this.hap.Characteristic.ConfiguredName);
     triggerService.updateCharacteristic(this.hap.Characteristic.ConfiguredName, triggerName);
     triggerService.updateCharacteristic(this.hap.Characteristic.On, false);
 
@@ -880,6 +881,7 @@ export class ProtectCamera extends ProtectDevice {
         return false;
       }
 
+      switchService.addOptionalCharacteristic(this.hap.Characteristic.ConfiguredName);
       this.accessory.addService(switchService);
     }
 
@@ -900,7 +902,6 @@ export class ProtectCamera extends ProtectDevice {
     });
 
     // Initialize the switch.
-    switchService.addOptionalCharacteristic(this.hap.Characteristic.ConfiguredName);
     switchService.updateCharacteristic(this.hap.Characteristic.ConfiguredName, switchName);
     switchService.updateCharacteristic(this.hap.Characteristic.On, this.accessory.context.hksvRecording as boolean);
 
@@ -942,6 +943,7 @@ export class ProtectCamera extends ProtectDevice {
         return false;
       }
 
+      switchService.addOptionalCharacteristic(this.hap.Characteristic.ConfiguredName);
       this.accessory.addService(switchService);
     }
 
@@ -993,7 +995,6 @@ export class ProtectCamera extends ProtectDevice {
       });
 
     // Initialize the switch.
-    switchService.addOptionalCharacteristic(this.hap.Characteristic.ConfiguredName);
     switchService.updateCharacteristic(this.hap.Characteristic.ConfiguredName, switchName);
     switchService.updateCharacteristic(this.hap.Characteristic.On, this.accessory.context.dynamicBitrate as boolean);
 
@@ -1040,6 +1041,7 @@ export class ProtectCamera extends ProtectDevice {
           continue;
         }
 
+        switchService.addOptionalCharacteristic(this.hap.Characteristic.ConfiguredName);
         this.accessory.addService(switchService);
       }
 
@@ -1097,7 +1099,6 @@ export class ProtectCamera extends ProtectDevice {
       });
 
       // Initialize the recording switch state.
-      switchService.addOptionalCharacteristic(this.hap.Characteristic.ConfiguredName);
       switchService.updateCharacteristic(this.hap.Characteristic.ConfiguredName, switchName);
       switchService.updateCharacteristic(this.hap.Characteristic.On, this.ufp.recordingSettings.mode === ufpRecordingSetting);
       switchesEnabled.push(ufpRecordingSetting);
