@@ -1,6 +1,6 @@
 {
   "name": "homebridge-unifi-protect",
-  "version": "6.18.0",
+  "version": "6.18.1",
   "displayName": "Homebridge UniFi Protect",
   "description": "Homebridge UniFi Protect plugin providing complete HomeKit integration for the UniFi Protect ecosystem with full support for most features including autoconfiguration, motion detection, multiple controllers, and realtime updates.",
   "author": {
@@ -77,20 +77,20 @@
   "dependencies": {
     "@homebridge/plugin-ui-utils": "1.0.1",
     "ffmpeg-for-homebridge": "2.1.1",
-    "mqtt": "5.3.5",
+    "mqtt": "5.3.6",
     "unifi-protect": "4.8.0",
     "ws": "8.16.0"
   },
   "devDependencies": {
-    "@stylistic/eslint-plugin": "1.6.1",
-    "@types/node": "20.11.17",
+    "@stylistic/eslint-plugin": "1.6.3",
+    "@types/node": "20.11.24",
     "@types/readable-stream": "4.0.10",
     "@types/ws": "8.5.10",
-    "@typescript-eslint/eslint-plugin": "6.21.0",
-    "@typescript-eslint/parser": "6.21.0",
-    "eslint": "8.56.0",
+    "@typescript-eslint/eslint-plugin": "7.1.0",
+    "@typescript-eslint/parser": "7.1.0",
+    "eslint": "8.57.0",
     "homebridge": "1.7.0",
-    "nodemon": "3.0.3",
+    "nodemon": "3.1.0",
     "rimraf": "5.0.5",
     "typescript": "5.3.3"
   }
