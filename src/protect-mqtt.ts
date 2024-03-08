@@ -168,7 +168,7 @@ export class ProtectMqtt {
   }
 
   // Subscribe to a specific MQTT topic and publish a value on a get request.
-  public subscribeGet(accessory: PlatformAccessory, name: string, topic: string, type: string, getValue: () => string): void {
+  public subscribeGet(accessory: PlatformAccessory, topic: string, type: string, getValue: () => string): void {
 
     // Return the current status of a given sensor.
     this.nvr.mqtt?.subscribe(accessory, topic + "/get", (message: Buffer) => {
@@ -181,9 +181,24 @@ export class ProtectMqtt {
       }
 
       this.nvr.mqtt?.publish(accessory, topic, getValue());
-      this.log.info("%s: %s information published via MQTT.", name, type);
+      (this.nvr.configuredDevices[accessory.UUID]?.log ?? this.log).info("MQTT: %s status published.", type);
     });
   }
+
+  // Subscribe to a specific MQTT topic and set a value on a set request.
+  public subscribeSet(accessory: PlatformAccessory, topic: string, type: string, setValue: (value: string) => void): void {
+
+    // Return the current status of a given sensor.
+    this.nvr.mqtt?.subscribe(accessory, topic + "/set", (message: Buffer) => {
+
+      const value = message.toString().toLowerCase();
+
+      // Set our value and inform the user.
+      setValue(value);
+      (this.nvr.configuredDevices[accessory.UUID]?.log ?? this.log).info("MQTT: set message received for %s: %s.", type, value);
+    });
+  }
+
 
   // Unsubscribe to an MQTT topic.
   public unsubscribe(accessory: PlatformAccessory | string, topic: string): void {

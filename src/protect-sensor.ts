@@ -626,32 +626,32 @@ export class ProtectSensor extends ProtectDevice {
   // Configure MQTT capabilities for sensors.
   private configureMqtt(): void {
 
-    this.nvr.mqtt?.subscribeGet(this.accessory, this.name, "alarm", "Alarm detected", () => {
+    this.nvr.mqtt?.subscribeGet(this.accessory, "alarm", "Alarm detected", () => {
 
       return this.alarmDetected.toString();
     });
 
-    this.nvr.mqtt?.subscribeGet(this.accessory, this.name, "ambientlight", "Ambient light", () => {
+    this.nvr.mqtt?.subscribeGet(this.accessory, "ambientlight", "Ambient light", () => {
 
       return this.ambientLight.toString();
     });
 
-    this.nvr.mqtt?.subscribeGet(this.accessory, this.name, "contact", "Contact sensor", () => {
+    this.nvr.mqtt?.subscribeGet(this.accessory, "contact", "Contact sensor", () => {
 
       return this.contact.toString();
     });
 
-    this.nvr.mqtt?.subscribeGet(this.accessory, this.name, "humidity", "Humidity", () => {
+    this.nvr.mqtt?.subscribeGet(this.accessory, "humidity", "Humidity", () => {
 
       return this.humidity.toString();
     });
 
-    this.nvr.mqtt?.subscribeGet(this.accessory, this.name, "leak", "Leak detected", () => {
+    this.nvr.mqtt?.subscribeGet(this.accessory, "leak", "Leak detected", () => {
 
       return this.leakDetected.toString();
     });
 
-    this.nvr.mqtt?.subscribeGet(this.accessory, this.name, "temperature", "Temperature", () => {
+    this.nvr.mqtt?.subscribeGet(this.accessory, "temperature", "Temperature", () => {
 
       return this.temperature.toString();
     });

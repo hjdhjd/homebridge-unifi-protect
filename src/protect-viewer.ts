@@ -244,7 +244,7 @@ export class ProtectViewer extends ProtectDevice {
     });
 
     // Trigger a motion event in MQTT, if requested to do so.
-    this.nvr.mqtt?.subscribeGet(this.accessory, this.name, "liveview", "Liveview", () => {
+    this.nvr.mqtt?.subscribeGet(this.accessory, "liveview", "Liveview", () => {
 
       const liveview =  this.ufpApi.bootstrap?.liveviews?.find(x => x.id === this.ufp.liveview);
 
