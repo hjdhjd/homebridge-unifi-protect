@@ -188,7 +188,7 @@ export class ProtectLight extends ProtectDevice {
     // It's a motion event - process it accordingly.
     if(payload.lastMotion) {
 
-      this.nvr.events.motionEventHandler(this, payload.lastMotion);
+      this.nvr.events.motionEventHandler(this);
     }
 
     // It's a light power event - process it accordingly.

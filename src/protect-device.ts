@@ -77,7 +77,7 @@ export abstract class ProtectBase {
     };
   }
 
-  // Configure the device device information for HomeKit.
+  // Configure the device information for HomeKit.
   protected setInfo(accessory: PlatformAccessory, device: ProtectDeviceConfigTypes | ProtectNvrConfig): boolean {
 
     // If we don't have a device, we're done.
@@ -87,7 +87,7 @@ export abstract class ProtectBase {
     }
 
     // Update the manufacturer information for this device.
-    accessory.getService(this.hap.Service.AccessoryInformation)?.updateCharacteristic(this.hap.Characteristic.Manufacturer, "Ubiquiti Networks");
+    accessory.getService(this.hap.Service.AccessoryInformation)?.updateCharacteristic(this.hap.Characteristic.Manufacturer, "Ubiquiti Inc.");
 
     // Update the model information for this device.
     let deviceModel = device.type;
@@ -123,7 +123,7 @@ export abstract class ProtectBase {
     return true;
   }
 
-  // Utility function to return the fully enumerated name of this camera.
+  // Utility function to return the fully enumerated name of this device.
   public get name(): string {
 
     return this.nvr.ufpApi.name;
@@ -228,6 +228,7 @@ export abstract class ProtectDevice extends ProtectBase {
 
         this.accessory.removeService(motionService);
         this.nvr.mqtt?.unsubscribe(this.id, "motion/trigger");
+
         this.log.info("Disabling motion sensor.");
       }
 
@@ -246,6 +247,7 @@ export abstract class ProtectDevice extends ProtectBase {
       if(!motionService) {
 
         this.log.error("Unable to add motion sensor.");
+
         return false;
       }
 
@@ -295,8 +297,8 @@ export abstract class ProtectDevice extends ProtectBase {
         this.accessory.removeService(switchService);
       }
 
-      // If we disable the switch, make sure we fully reset it's state. Otherwise, we can end up in a situation (e.g. liveview switches) where we have
-      // disabled motion detection with no meaningful way to enable it again.
+      // If we disable the switch, make sure we fully reset it's state. Otherwise, we can end up in a situation (e.g. liveview switches) where we have disabled motion
+      // detection with no meaningful way to enable it again.
       this.accessory.context.detectMotion = true;
 
       return false;
@@ -314,6 +316,7 @@ export abstract class ProtectDevice extends ProtectBase {
       if(!switchService) {
 
         this.log.error("Unable to add motion sensor switch.");
+
         return false;
       }
 
@@ -322,20 +325,20 @@ export abstract class ProtectDevice extends ProtectBase {
     }
 
     // Activate or deactivate motion detection.
-    switchService.getCharacteristic(this.hap.Characteristic.On)
-      ?.onGet(() => {
+    switchService.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => {
 
-        return this.accessory.context.detectMotion === true;
-      })
-      .onSet((value: CharacteristicValue) => {
+      return this.accessory.context.detectMotion === true;
+    });
 
-        if(this.accessory.context.detectMotion !== value) {
+    switchService.getCharacteristic(this.hap.Characteristic.On)?.onSet((value: CharacteristicValue) => {
 
-          this.log.info("Motion detection %s.", (value === true) ? "enabled" : "disabled");
-        }
+      if(this.accessory.context.detectMotion !== value) {
 
-        this.accessory.context.detectMotion = value === true;
-      });
+        this.log.info("Motion detection %s.", (value === true) ? "enabled" : "disabled");
+      }
+
+      this.accessory.context.detectMotion = value === true;
+    });
 
     // Initialize the switch state.
     if(!("detectMotion" in this.accessory.context)) {
@@ -368,7 +371,7 @@ export abstract class ProtectDevice extends ProtectBase {
 
     const triggerName = this.accessoryName + " Motion Trigger";
 
-    // Add the switch to the camera, if needed.
+    // Add the switch to the device, if needed.
     if(!triggerService) {
 
       triggerService = new this.hap.Service.Switch(triggerName, ProtectReservedNames.SWITCH_MOTION_TRIGGER);
@@ -376,6 +379,7 @@ export abstract class ProtectDevice extends ProtectBase {
       if(!triggerService) {
 
         this.log.error("Unable to add motion sensor trigger.");
+
         return false;
       }
 
@@ -407,7 +411,7 @@ export abstract class ProtectDevice extends ProtectBase {
         } else {
 
           // Trigger the motion event.
-          this.nvr.events.motionEventHandler(this, Date.now());
+          this.nvr.events.motionEventHandler(this);
 
           // Inform the user.
           this.log.info("Motion event triggered.");
@@ -445,11 +449,12 @@ export abstract class ProtectDevice extends ProtectBase {
 
       // When we get the right message, we trigger the motion event.
       if(value?.toLowerCase() !== "true") {
+
         return;
       }
 
       // Trigger the motion event.
-      this.nvr.events.motionEventHandler(this, Date.now());
+      this.nvr.events.motionEventHandler(this);
       this.log.info("Motion event triggered via MQTT.");
     });
 
@@ -483,6 +488,7 @@ export abstract class ProtectDevice extends ProtectBase {
       if(!occupancyService) {
 
         this.log.error("Unable to add occupancy sensor.");
+
         return false;
       }
 
@@ -521,8 +527,7 @@ export abstract class ProtectDevice extends ProtectBase {
         }
       }
 
-      this.log.info("Enabling occupancy sensor%s.",
-        this.hints.smartDetect ? " using smart motion detection: " + this.hints.smartOccupancy.join(", ")  : "");
+      this.log.info("Enabling occupancy sensor%s.", this.hints.smartDetect ? " using smart motion detection: " + this.hints.smartOccupancy.join(", ")  : "");
     }
 
     return true;

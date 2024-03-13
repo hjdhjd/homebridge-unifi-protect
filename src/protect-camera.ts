@@ -220,7 +220,7 @@ export class ProtectCamera extends ProtectDevice {
       if(this.stream?.hksv?.isRecording || (!this.stream?.hksv?.isRecording &&
         (!this.ufp.featureFlags.smartDetectTypes.length || (this.ufp.featureFlags.smartDetectTypes.length && !this.hints.smartDetect)))) {
 
-        this.nvr.events.motionEventHandler(this, payload.lastMotion);
+        this.nvr.events.motionEventHandler(this);
       }
     }
 
@@ -254,7 +254,7 @@ export class ProtectCamera extends ProtectDevice {
     }
 
     // Process the motion event.
-    this.nvr.events.motionEventHandler(this, payload.start, payload.smartDetectTypes, ("metadata" in payload) ? payload.metadata : undefined);
+    this.nvr.events.motionEventHandler(this, payload.smartDetectTypes, ("metadata" in payload) ? payload.metadata : undefined);
   }
 
   // Configure discrete smart motion contact sensors for HomeKit.
@@ -630,7 +630,7 @@ export class ProtectCamera extends ProtectDevice {
     }
 
     // Set the camera and shapshot URLs.
-    const cameraUrl = "rtsps://" + (this.nvr.nvrOptions.overrideAddress ?? this.ufp.connectionHost) + ":" + this.nvr.ufp.ports.rtsps.toString() + "/";
+    const cameraUrl = "rtsps://" + (this.nvr.config.overrideAddress ?? this.ufp.connectionHost) + ":" + this.nvr.ufp.ports.rtsps.toString() + "/";
 
     // Filter out any package camera entries.
     cameraChannels = cameraChannels.filter(x => x.name !== "Package Camera");

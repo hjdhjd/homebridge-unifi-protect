@@ -31,10 +31,10 @@ jobs:
     # Execute the build activities.
     steps:
       - name: Checkout the repository.
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup the node ${{ matrix.node-version }} environment.
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
 
@@ -59,10 +59,10 @@ jobs:
     # Execute the build and publish activities.
     steps:
     - name: Checkout the repository.
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     - name: Setup the node environment.
-      uses: actions/setup-node@v3
+      uses: actions/setup-node@v4
       with:
 
         # Use the oldest node LTS version that we support.

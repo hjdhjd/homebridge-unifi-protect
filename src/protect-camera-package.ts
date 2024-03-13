@@ -135,7 +135,7 @@ export class ProtectCameraPackage extends ProtectCamera {
       lens: this.ufp.lenses.length ? this.ufp.lenses[0].id : undefined,
       name: this.getResolution([channel.width, channel.height, channel.fps]) + " (" + channel.name + ")",
       resolution: [ channel.width, channel.height, channel.fps ],
-      url:  "rtsps://" + this.nvr.nvrOptions.address + ":" + this.nvr.ufp.ports.rtsps.toString() + "/" + channel.rtspAlias + "?enableSrtp"
+      url:  "rtsps://" + this.nvr.config.address + ":" + this.nvr.ufp.ports.rtsps.toString() + "/" + channel.rtspAlias + "?enableSrtp"
     };
   }
 

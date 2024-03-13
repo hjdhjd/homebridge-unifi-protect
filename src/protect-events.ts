@@ -1,6 +1,6 @@
 /* Copyright(C) 2017-2024, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * protect-nvr-events.ts: NVR device class for UniFi Protect.
+ * protect-events.ts: Protect events class for UniFi Protect.
  */
 import { API, HAP, Service } from "homebridge";
 import { ProtectApi, ProtectEventAdd, ProtectEventMetadata, ProtectEventPacket, ProtectNvrConfig } from "unifi-protect";
@@ -12,7 +12,7 @@ import { ProtectDevice } from "./protect-device.js";
 import { ProtectNvr } from "./protect-nvr.js";
 import { ProtectPlatform } from "./protect-platform.js";
 
-export class ProtectNvrEvents extends EventEmitter {
+export class ProtectEvents extends EventEmitter {
 
   private api: API;
   private hap: HAP;
@@ -246,9 +246,9 @@ export class ProtectNvrEvents extends EventEmitter {
   }
 
   // Motion event processing from UniFi Protect.
-  public motionEventHandler(protectDevice: ProtectDevice, lastMotion: number, detectedObjects: string[] = [], metadata?: ProtectEventMetadata): void {
+  public motionEventHandler(protectDevice: ProtectDevice, detectedObjects: string[] = [], metadata?: ProtectEventMetadata): void {
 
-    if(!protectDevice || !lastMotion) {
+    if(!protectDevice) {
 
       return;
     }

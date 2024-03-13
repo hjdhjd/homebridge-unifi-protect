@@ -665,7 +665,7 @@ export class ProtectSensor extends ProtectDevice {
     // It's a motion event - process it accordingly.
     if(payload.motionDetectedAt) {
 
-      this.nvr.events.motionEventHandler(this, payload.motionDetectedAt);
+      this.nvr.events.motionEventHandler(this);
     }
 
     // Process it.

@@ -17,8 +17,8 @@ export class ProtectMqtt {
   private log: ProtectLogging;
   private mqtt: MqttClient | null;
   private nvr: ProtectNvr;
-  private ufpApi: ProtectApi;
   private subscriptions: { [index: string]: (cbBuffer: Buffer) => void };
+  private ufpApi: ProtectApi;
 
   constructor(nvr: ProtectNvr) {
 
@@ -27,10 +27,11 @@ export class ProtectMqtt {
     this.log = nvr.log;
     this.mqtt = null;
     this.nvr = nvr;
-    this.ufpApi = nvr.ufpApi;
     this.subscriptions = {};
+    this.ufpApi = nvr.ufpApi;
 
     if(!this.config.mqttUrl) {
+
       return;
     }
 
@@ -50,11 +51,14 @@ export class ProtectMqtt {
       if(error instanceof Error) {
 
         switch(error.message) {
+
           case "Missing protocol":
+
             this.log.error("MQTT Broker: Invalid URL provided: %s.", this.config.mqttUrl);
             break;
 
           default:
+
             this.log.error("MQTT Broker: Error: %s.", error.message);
             break;
         }
@@ -98,30 +102,36 @@ export class ProtectMqtt {
     this.mqtt.on("message", (topic: string, message: Buffer) => {
 
       if(this.subscriptions[topic]) {
+
         this.subscriptions[topic](message);
       }
     });
 
     // Notify the user when there's a connectivity error.
     this.mqtt.on("error", (error: Error) => {
+
       switch((error as NodeJS.ErrnoException).code) {
 
         case "ECONNREFUSED":
+
           this.log.error("MQTT Broker: Connection refused (url: %s). Will retry again in %s minute%s.", this.config.mqttUrl,
             PROTECT_MQTT_RECONNECT_INTERVAL / 60, PROTECT_MQTT_RECONNECT_INTERVAL / 60 > 1 ? "s": "");
           break;
 
         case "ECONNRESET":
+
           this.log.error("MQTT Broker: Connection reset (url: %s). Will retry again in %s minute%s.", this.config.mqttUrl,
             PROTECT_MQTT_RECONNECT_INTERVAL / 60, PROTECT_MQTT_RECONNECT_INTERVAL / 60 > 1 ? "s": "");
           break;
 
         case "ENOTFOUND":
+
           this.mqtt?.end(true);
           this.log.error("MQTT Broker: Hostname or IP address not found. (url: %s).", this.config.mqttUrl);
           break;
 
         default:
+
           this.log.error("MQTT Broker: %s (url: %s). Will retry again in %s minute%s.", error, this.config.mqttUrl,
             PROTECT_MQTT_RECONNECT_INTERVAL / 60, PROTECT_MQTT_RECONNECT_INTERVAL / 60 > 1 ? "s": "");
           break;
@@ -171,16 +181,17 @@ export class ProtectMqtt {
   public subscribeGet(accessory: PlatformAccessory, topic: string, type: string, getValue: () => string): void {
 
     // Return the current status of a given sensor.
-    this.nvr.mqtt?.subscribe(accessory, topic + "/get", (message: Buffer) => {
+    this.subscribe(accessory, topic + "/get", (message: Buffer) => {
 
       const value = message.toString().toLowerCase();
 
       // When we get the right message, we return the system information JSON.
       if(value !== "true") {
+
         return;
       }
 
-      this.nvr.mqtt?.publish(accessory, topic, getValue());
+      this.publish(accessory, topic, getValue());
       (this.nvr.configuredDevices[accessory.UUID]?.log ?? this.log).info("MQTT: %s status published.", type);
     });
   }
@@ -189,7 +200,7 @@ export class ProtectMqtt {
   public subscribeSet(accessory: PlatformAccessory, topic: string, type: string, setValue: (value: string) => void): void {
 
     // Return the current status of a given sensor.
-    this.nvr.mqtt?.subscribe(accessory, topic + "/set", (message: Buffer) => {
+    this.subscribe(accessory, topic + "/set", (message: Buffer) => {
 
       const value = message.toString().toLowerCase();
 
@@ -199,7 +210,6 @@ export class ProtectMqtt {
     });
   }
 
-
   // Unsubscribe to an MQTT topic.
   public unsubscribe(accessory: PlatformAccessory | string, topic: string): void {
 
@@ -207,6 +217,7 @@ export class ProtectMqtt {
 
     // No valid topic returned, we're done.
     if(!expandedTopic) {
+
       return;
     }
 

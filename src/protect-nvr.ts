@@ -12,10 +12,10 @@ import { ProtectCamera } from "./protect-camera.js";
 import { ProtectChime } from "./protect-chime.js";
 import { ProtectDevice } from "./protect-device.js";
 import { ProtectDoorbell } from "./protect-doorbell.js";
+import { ProtectEvents } from "./protect-events.js";
 import { ProtectLight } from "./protect-light.js";
 import { ProtectLiveviews } from "./protect-liveviews.js";
 import { ProtectMqtt } from "./protect-mqtt.js";
-import { ProtectNvrEvents } from "./protect-nvr-events.js";
 import { ProtectNvrSystemInfo } from "./protect-nvr-systeminfo.js";
 import { ProtectPlatform } from "./protect-platform.js";
 import { ProtectSensor } from "./protect-sensor.js";
@@ -29,7 +29,7 @@ export class ProtectNvr {
   public config: ProtectNvrOptions;
   private deviceRemovalQueue: { [index: string]: number };
   public readonly configuredDevices: { [index: string]: ProtectDevices };
-  public events!: ProtectNvrEvents;
+  public events!: ProtectEvents;
   private isEnabled: boolean;
   private hap: HAP;
   private liveviews: ProtectLiveviews | null;
@@ -38,7 +38,6 @@ export class ProtectNvr {
   public mqtt: ProtectMqtt | null;
   private name: string;
   public nvrHksvErrors: number;
-  public nvrOptions: ProtectNvrOptions;
   public platform: ProtectPlatform;
   public systemInfo: ProtectNvrSystemInfo | null;
   public ufp: ProtectNvrConfig;
@@ -58,7 +57,6 @@ export class ProtectNvr {
     this.mqtt = null;
     this.name = nvrOptions.name ?? nvrOptions.address;
     this.nvrHksvErrors = 0;
-    this.nvrOptions = nvrOptions;
     this.platform = platform;
     this.systemInfo = null;
     this.ufp = {} as ProtectNvrConfig;
@@ -129,7 +127,7 @@ export class ProtectNvr {
 
     // Attempt to login to the Protect controller, retrying at reasonable intervals. This accounts for cases where the Protect controller or the network connection
     // may not be fully available when we startup.
-    await this.retry(() => this.ufpApi.login(this.nvrOptions.address, this.nvrOptions.username, this.nvrOptions.password), PROTECT_CONTROLLER_RETRY_INTERVAL * 1000);
+    await this.retry(() => this.ufpApi.login(this.config.address, this.config.username, this.config.password), PROTECT_CONTROLLER_RETRY_INTERVAL * 1000);
 
     // Now, let's get the bootstrap configuration from the Protect controller.
     await this.bootstrapNvr();
@@ -141,7 +139,7 @@ export class ProtectNvr {
     this.ufp = bootstrap.nvr;
 
     // Assign our name if the user hasn't explicitly specified a preference.
-    this.name = this.nvrOptions.name ?? (this.ufp.name ?? this.ufp.marketName);
+    this.name = this.config.name ?? (this.ufp.name ?? this.ufp.marketName);
 
     // We successfully logged in.
     this.log.info("Connected to %s (UniFi Protect %s running on UniFi OS %s).", this.config.address, this.ufp.version, this.ufp.firmwareVersion);
@@ -165,8 +163,8 @@ export class ProtectNvr {
       return;
     }
 
-    // Initialize our UniFi Protect realtime event handler.
-    this.events = new ProtectNvrEvents(this);
+    // Initialize our UniFi Protect event handler.
+    this.events = new ProtectEvents(this);
 
     // Configure any NVR-specific settings.
     void this.configureNvr();
@@ -215,18 +213,25 @@ export class ProtectNvr {
     // Initialize our Protect controller device sync.
     syncUfpHomeKit();
 
+    // Bootstrap refresh loop.
+    const bootstrapRefresh = (): void => {
+
+      // Sleep until it's time to bootstrap again.
+      setTimeout(() => void this.bootstrapNvr(), PROTECT_CONTROLLER_REFRESH_INTERVAL * 1000);
+    };
+
     // Let's set a listener to wait for bootstrap events to occur so we can keep ourselves in sync with the Protect controller.
     this.ufpApi.on("bootstrap", () => {
 
       // Sync our device view.
       syncUfpHomeKit();
 
-      // Sleep until it's time to bootstrap again.
-      setTimeout(() => void this.bootstrapNvr(), PROTECT_CONTROLLER_REFRESH_INTERVAL * 1000);
+      // Refresh our bootstrap.
+      bootstrapRefresh();
     });
 
-    // Fire off the first round of regular bootstrap updates to ensure we stay in sync.
-    setTimeout(() => void this.bootstrapNvr(), PROTECT_CONTROLLER_REFRESH_INTERVAL * 1000);
+    // Kickoff our first round of bootstrap refreshes to ensure we stay in sync.
+    bootstrapRefresh();
   }
 
   // Configure NVR-specific settings.
@@ -249,13 +254,13 @@ export class ProtectNvr {
   private async configureDefaultDoorbellMessage(): Promise<boolean> {
 
     // If we haven't configured a default doorbell message or we aren't an admin user, don't attempt to set the default doorbell message.
-    if(!this.nvrOptions.defaultDoorbellMessage || !this.ufpApi.isAdminUser) {
+    if(!this.config.defaultDoorbellMessage || !this.ufpApi.isAdminUser) {
 
       return false;
     }
 
     // Set the default message.
-    const newUfp = await this.ufpApi.updateDevice(this.ufp, { doorbellSettings: { defaultMessageText: this.nvrOptions.defaultDoorbellMessage } });
+    const newUfp = await this.ufpApi.updateDevice(this.ufp, { doorbellSettings: { defaultMessageText: this.config.defaultDoorbellMessage } });
 
     if(!newUfp) {
 
@@ -267,7 +272,7 @@ export class ProtectNvr {
     this.ufp = newUfp;
 
     // Inform the user.
-    this.log.info("Default doorbell message set to: %s.", this.nvrOptions.defaultDoorbellMessage);
+    this.log.info("Default doorbell message set to: %s.", this.config.defaultDoorbellMessage);
 
     return true;
   }
@@ -276,6 +281,7 @@ export class ProtectNvr {
   private addProtectDevice(accessory: PlatformAccessory, device: ProtectDeviceConfigTypes): boolean {
 
     if(!accessory || !device) {
+
       return false;
     }
 
@@ -334,7 +340,7 @@ export class ProtectNvr {
 
       default:
 
-        this.log.error("Unknown device class `%s` detected for ``%s``", device.modelKey, device.name ?? device.marketName);
+        this.log.error("Unknown device class %s detected for %s.", device.modelKey, device.name ?? device.marketName);
 
         return false;
     }
@@ -618,6 +624,7 @@ export class ProtectNvr {
           break;
 
         default:
+
           break;
       }
 
@@ -716,7 +723,7 @@ export class ProtectNvr {
     // Cleanup our event handlers.
     protectDevice.cleanup();
 
-    // Unregister the accessory and delete it's remnants from HomeKit and the plugin.
+    // Finally, remove it from our list of configured devices and HomeKit.
     delete this.configuredDevices[protectDevice.accessory.UUID];
     this.removeHomeKitAccessories(deletingAccessories);
   }
@@ -730,7 +737,7 @@ export class ProtectNvr {
       return;
     }
 
-    // Unregister the accessories from Homebridge and HomeKit.
+    // Unregister the accessories from HomeKit.
     this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, deletingAccessories);
 
     // Update our internal list of all the accessories we know about.
@@ -879,7 +886,7 @@ export class ProtectNvr {
   public deviceLookup(deviceId: string): ProtectDevices | null {
 
     // Find the device.
-    const foundDevice = Object.keys(this.configuredDevices).find(x => (this.configuredDevices[x].ufp).id === deviceId);
+    const foundDevice = Object.keys(this.configuredDevices).find(x => this.configuredDevices[x].ufp.id === deviceId);
 
     return foundDevice ? this.configuredDevices[foundDevice] : null;
   }

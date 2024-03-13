@@ -671,7 +671,7 @@ export class ProtectDoorbell extends ProtectCamera {
     // event recording.
     if(payload.lastMotion && this.packageCamera?.stream?.hksv?.isRecording) {
 
-      this.nvr.events.motionEventHandler(this.packageCamera, payload.lastMotion);
+      this.nvr.events.motionEventHandler(this.packageCamera);
     }
 
     // Process LCD message events.
