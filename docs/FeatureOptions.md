@@ -112,6 +112,7 @@ These option(s) apply to: all Protect device types.
 | Option                                           | Description
 |--------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 | `Device`                                         | Make this device available in HomeKit. **(default: enabled)**.
+| `Device.Standalone`                              | Make this a standalone device in HomeKit that will need to be added to HomeKit through the Home app. **(default: disabled)**.
 | `Device.SyncName`                                | Synchronize the UniFi Protect name of this device with HomeKit. Synchronization is one-way only, syncing the device name from UniFi Protect to HomeKit. **(default: disabled)**.
 | `Device.StatusLed`                               | Enable the status LED for this device in HomeKit. **(default: disabled)**. <BR>*Supported on Protect devices that have a status LED.*
 
@@ -207,3 +208,4 @@ These option(s) apply to: Protect cameras.
 | `Video.HKSV.Record.Only.Medium`                  | When recording HomeKit Secure Video events, force the use of the medium quality video stream from the Protect controller. **(default: disabled)**.
 | `Video.HKSV.Record.Only.Low`                     | When recording HomeKit Secure Video events, force the use of the low quality video stream from the Protect controller. **(default: disabled)**.
 | `Video.HKSV.TimeshiftBuffer`                     | Enable the timeshift buffer for HomeKit Secure Video. **(default: enabled)**.
+

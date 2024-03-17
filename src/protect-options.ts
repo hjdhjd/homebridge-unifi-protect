@@ -70,6 +70,7 @@ export const featureOptions: { [index: string]: FeatureOption[] } = {
   "Device": [
 
     { default: true, description: "Make this device available in HomeKit.", name: "" },
+    { default: false, description: "Make this a standalone device in HomeKit that will need to be added to HomeKit through the Home app.",  name: "Standalone" },
     { default: false, description: "Synchronize the UniFi Protect name of this device with HomeKit. Synchronization is one-way only, syncing the device name from UniFi Protect to HomeKit.",  name: "SyncName" },
     { default: false, description: "Enable the status LED for this device in HomeKit.", hasProperty: [ "ledSettings" ],  name: "StatusLed" }
   ],

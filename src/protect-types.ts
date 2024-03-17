@@ -20,7 +20,8 @@ export interface ProtectLogging {
   warn: (message: string, ...parameters: unknown[]) => void
 }
 
-// Some type aliases to signify what we device types we support.
+// Protect device categories that we support.
+export const ProtectDeviceCategories = [ "camera", "chime", "light", "sensor", "viewer" ];
 export type ProtectDeviceConfigTypes = ProtectCameraConfig | ProtectChimeConfig | ProtectLightConfig | ProtectSensorConfig | ProtectViewerConfig;
 export type ProtectDevices = ProtectCamera | ProtectChime | ProtectDoorbell | ProtectLight | ProtectSensor | ProtectViewer;
 

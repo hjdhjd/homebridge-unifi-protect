@@ -6,7 +6,7 @@ import { API, APIEvent, HAP, PlatformAccessory } from "homebridge";
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_CONTROLLER_REFRESH_INTERVAL, PROTECT_CONTROLLER_RETRY_INTERVAL, PROTECT_M3U_PLAYLIST_PORT } from "./settings.js";
 import { ProtectApi, ProtectCameraConfig, ProtectChimeConfig, ProtectLightConfig, ProtectNvrBootstrap, ProtectNvrConfig, ProtectSensorConfig,
   ProtectViewerConfig } from "unifi-protect";
-import { ProtectDeviceConfigTypes, ProtectDevices, ProtectLogging } from "./protect-types.js";
+import { ProtectDeviceCategories, ProtectDeviceConfigTypes, ProtectDevices, ProtectLogging } from "./protect-types.js";
 import { ProtectNvrOptions, getOptionFloat, getOptionNumber, getOptionValue, isOptionEnabled } from "./protect-options.js";
 import { ProtectCamera } from "./protect-camera.js";
 import { ProtectChime } from "./protect-chime.js";
@@ -30,7 +30,6 @@ export class ProtectNvr {
   private deviceRemovalQueue: { [index: string]: number };
   public readonly configuredDevices: { [index: string]: ProtectDevices };
   public events!: ProtectEvents;
-  private isEnabled: boolean;
   private hap: HAP;
   private liveviews: ProtectLiveviews | null;
   public logApiErrors: boolean;
@@ -50,7 +49,6 @@ export class ProtectNvr {
     this.config = nvrOptions;
     this.configuredDevices = {};
     this.deviceRemovalQueue = {};
-    this.isEnabled = false;
     this.hap = this.api.hap;
     this.liveviews = null;
     this.logApiErrors = true;
@@ -144,11 +142,8 @@ export class ProtectNvr {
     // We successfully logged in.
     this.log.info("Connected to %s (UniFi Protect %s running on UniFi OS %s).", this.config.address, this.ufp.version, this.ufp.firmwareVersion);
 
-    // Mark this NVR as enabled or disabled.
-    this.isEnabled = this.hasFeature("Device");
-
-    // If the Protect controller is disabled, we're done.
-    if(!this.isEnabled) {
+    // Now that we know the NVR configuration, check to see if this Protect controller is disabled.
+    if(!this.hasFeature("Device")) {
 
       this.ufpApi.logout();
       this.log.info("Disabling this UniFi Protect controller in HomeKit.");
@@ -346,18 +341,6 @@ export class ProtectNvr {
     }
   }
 
-  // Discover UniFi Protect devices that may have been added to the NVR since we last checked.
-  private discoverDevices(devices: ProtectDeviceConfigTypes[]): boolean {
-
-    // Iterate through the list of cameras that Protect has returned and sync them with what we show HomeKit.
-    for(const device of devices) {
-
-      this.addHomeKitDevice(device);
-    }
-
-    return true;
-  }
-
   // Add a newly detected Protect device to HomeKit.
   public addHomeKitDevice(device: ProtectDeviceConfigTypes): ProtectDevice | null {
 
@@ -368,35 +351,23 @@ export class ProtectNvr {
     }
 
     // We only support certain devices.
-    switch(device.modelKey) {
+    if(!ProtectDeviceCategories.includes(device.modelKey)) {
 
-      case "camera":
-      case "chime":
-      case "light":
-      case "sensor":
-      case "viewer":
+      // If we've already informed the user about this one, we're done.
+      if(this.unsupportedDevices[device.mac]) {
 
-        break;
-
-      default:
-
-        // If we've already informed the user about this one, we're done.
-        if(this.unsupportedDevices[device.mac]) {
-
-          return null;
-        }
-
-        // Notify the user we see this device, but we aren't adding it to HomeKit.
-        this.unsupportedDevices[device.mac] = true;
-
-        this.log.info("UniFi Protect device type '%s' is not currently supported, ignoring: %s.", device.modelKey, this.ufpApi.getDeviceName(device));
         return null;
+      }
 
-        break;
+      // Notify the user we see this device, but we aren't adding it to HomeKit.
+      this.unsupportedDevices[device.mac] = true;
+
+      this.log.info("UniFi Protect device type %s is not currently supported, ignoring: %s.", device.modelKey, this.ufpApi.getDeviceName(device));
+      return null;
     }
 
-    // Exclude or include certain devices based on configuration parameters.
-    if(!this.hasFeature("Device", true, device)) {
+    // Enable or disable certain devices based on configuration parameters.
+    if(!this.hasFeature("Device", device)) {
 
       return null;
     }
@@ -411,10 +382,17 @@ export class ProtectNvr {
 
       accessory = new this.api.platformAccessory(device.name ?? device.marketName, uuid);
 
-      this.log.info("%s: Adding %s to HomeKit.", this.ufpApi.getFullName(device), device.modelKey);
+      this.log.info("%s: Adding %s to HomeKit%s.", this.ufpApi.getFullName(device), device.modelKey,
+        this.hasFeature("Device.Standalone", device) ? " as a standalone device" : "");
 
       // Register this accessory with homebridge and add it to the accessory array so we can track it.
-      this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
+      if(this.hasFeature("Device.Standalone", device)) {
+
+        this.api.publishExternalAccessories(PLUGIN_NAME, [accessory]);
+      } else {
+
+        this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
+      }
       this.platform.accessories.push(accessory);
       this.api.updatePlatformAccessories(this.platform.accessories);
     }
@@ -442,30 +420,9 @@ export class ProtectNvr {
       return false;
     }
 
-    if(this.ufpApi.bootstrap.cameras && !this.discoverDevices(this.ufpApi.bootstrap.cameras)) {
-
-      this.log.error("Error discovering camera devices.");
-    }
-
-    if(this.ufpApi.bootstrap.chimes && !this.discoverDevices(this.ufpApi.bootstrap.chimes)) {
-
-      this.log.error("Error discovering chime devices.");
-    }
-
-    if(this.ufpApi.bootstrap.lights && !this.discoverDevices(this.ufpApi.bootstrap.lights)) {
-
-      this.log.error("Error discovering light devices.");
-    }
-
-    if(this.ufpApi.bootstrap.sensors && !this.discoverDevices(this.ufpApi.bootstrap.sensors)) {
-
-      this.log.error("Error discovering sensor devices.");
-    }
-
-    if(this.ufpApi.bootstrap.viewers && !this.discoverDevices(this.ufpApi.bootstrap.viewers)) {
-
-      this.log.error("Error discovering viewer devices.");
-    }
+    // Iterate through the list of device categories we know about and add them to HomeKit.
+    ProtectDeviceCategories.map(category => this.ufpApi.bootstrap && this.ufpApi.bootstrap[category + "s"] &&
+      ((this.ufpApi.bootstrap[category + "s"] as ProtectDeviceConfigTypes[]) ?? []).map(device => this.addHomeKitDevice(device)));
 
     // Remove Protect devices that are no longer found on this Protect NVR, but we still have in HomeKit.
     this.cleanupDevices();
@@ -487,7 +444,9 @@ export class ProtectNvr {
   // Cleanup removed Protect devices from HomeKit.
   private cleanupDevices(): void {
 
-    for(const accessory of this.platform.accessories) {
+    const delayInterval = this.getFeatureNumber("Nvr.DelayDeviceRemoval");
+
+    for(const accessory of this.platform.accessories.filter(x => x.context.nvr === this.ufp.mac)) {
 
       const protectDevice = this.configuredDevices[accessory.UUID];
 
@@ -502,8 +461,8 @@ export class ProtectNvr {
           continue;
         }
 
-        // We only store MAC addresses on devices that exist on the Protect controller. Any other accessories created are ones we created ourselves
-        // and are managed elsewhere.
+        // We only store MAC addresses on devices that exist on the Protect controller. Any other accessories created are ones we created ourselves and are managed
+        // elsewhere.
         if(!("mac" in accessory.context)) {
 
           // If it's not a package camera, we're done.
@@ -526,8 +485,6 @@ export class ProtectNvr {
 
         // For certain use cases, we may want to defer removal of a Protect device (e.g. in stacked NVR configurations) where Protect may lose track of devices for a
         // brief period of time. This prevents a potential back-and-forth where devices are removed momentarily only to be readded later.
-        const delayInterval = this.getFeatureNumber("Nvr.DelayDeviceRemoval");
-
         if((delayInterval !== undefined) && (delayInterval > 0)) {
 
           // Have we seen this device queued for removal previously? If not, let's add it to the queue and come back after our specified delay.
@@ -535,6 +492,7 @@ export class ProtectNvr {
 
             this.deviceRemovalQueue[accessory.UUID] = Date.now();
             this.log.info("%s: Delaying device removal for at least %s second%s.", accessory.displayName, delayInterval, delayInterval > 1 ? "s" : "");
+
             continue;
           }
 
@@ -548,84 +506,38 @@ export class ProtectNvr {
           delete this.deviceRemovalQueue[accessory.UUID];
         }
 
-        this.log.info("%s: Removing device from HomeKit.", accessory.displayName);
+        this.log.info("%s: Removing device from HomeKit.%s", accessory.displayName,
+          accessory._associatedHAPAccessory.bridged ? "" : " You will need to manually delete the device in the Home app to complete the removal.");
 
-        // Unregister the accessory and delete it's remnants from HomeKit.
-        this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [ accessory ]);
+        // Unregister the accessory and delete it's remnants from HomeKit. We can only unregister bridged accessories - standalone acceossories are managed directly by
+        // users in the Home app.
+        if(accessory._associatedHAPAccessory.bridged) {
+
+          this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [ accessory ]);
+        }
+
         this.platform.accessories.splice(this.platform.accessories.indexOf(accessory), 1);
         this.api.updatePlatformAccessories(this.platform.accessories);
 
         continue;
       }
 
-      // If we don't have the Protect bootstrap JSON available, we're done. We need to know what's on the Protect controller in order to determine what
-      // to do with the accessories we know about.
+      // If we don't have the Protect bootstrap JSON available, we're done. We need to know what's on the Protect controller in order to determine what to do with the
+      // accessories we know about.
       if(!this.ufpApi.bootstrap) {
 
         continue;
       }
 
-      // Check to see if the device still exists on the Protect controller and the user has not chosen to hide it.
-      switch(protectDevice.ufp.modelKey) {
+      // Check to see if the device still exists on the Protect controller and the user has not chosen to hide it, or the user has chosen to make this a standalone
+      // accessory rather than a bridged one.
+      if((this.ufpApi.bootstrap[protectDevice.ufp.modelKey + "s"] as ProtectDeviceConfigTypes[])?.some(x => x.mac === protectDevice.ufp.mac) &&
+        protectDevice.hints.enabled && ((accessory._associatedHAPAccessory.bridged && !protectDevice.hints.standalone) ||
+         (!accessory._associatedHAPAccessory.bridged && protectDevice.hints.standalone))) {
 
-        case "camera":
-
-          if(this.ufpApi.bootstrap.cameras.some((x: ProtectCameraConfig) => x.mac === protectDevice.ufp.mac) && protectDevice.hasFeature("Device")) {
-
-            // In case we have previously queued a device for deletion, let's remove it from the queue since it's reappeared.
-            delete this.deviceRemovalQueue[protectDevice.accessory.UUID];
-            continue;
-          }
-
-          break;
-
-        case "chime":
-
-          if(this.ufpApi.bootstrap.chimes.some((x: ProtectChimeConfig) => x.mac === protectDevice.ufp.mac) && protectDevice.hasFeature("Device")) {
-
-            // In case we have previously queued a device for deletion, let's remove it from the queue since it's reappeared.
-            delete this.deviceRemovalQueue[protectDevice.accessory.UUID];
-            continue;
-          }
-
-          break;
-
-        case "light":
-
-          if(this.ufpApi.bootstrap.lights.some((x: ProtectLightConfig) => x.mac === protectDevice.ufp.mac) && protectDevice.hasFeature("Device")) {
-
-            // In case we have previously queued a device for deletion, let's remove it from the queue since it's reappeared.
-            delete this.deviceRemovalQueue[protectDevice.accessory.UUID];
-            continue;
-          }
-
-          break;
-
-        case "sensor":
-
-          if(this.ufpApi.bootstrap.sensors.some((x: ProtectSensorConfig) => x.mac === protectDevice.ufp.mac) && protectDevice.hasFeature("Device")) {
-
-            // In case we have previously queued a device for deletion, let's remove it from the queue since it's reappeared.
-            delete this.deviceRemovalQueue[protectDevice.accessory.UUID];
-            continue;
-          }
-
-          break;
-
-        case "viewer":
-
-          if(this.ufpApi.bootstrap.viewers.some((x: ProtectViewerConfig) => x.mac === protectDevice.ufp.mac) && protectDevice.hasFeature("Device")) {
-
-            // In case we have previously queued a device for deletion, let's remove it from the queue since it's reappeared.
-            delete this.deviceRemovalQueue[protectDevice.accessory.UUID];
-            continue;
-          }
-
-          break;
-
-        default:
-
-          break;
+        // In case we have previously queued a device for deletion, let's remove it from the queue since it's reappeared.
+        delete this.deviceRemovalQueue[protectDevice.accessory.UUID];
+        continue;
       }
 
       // Process the device removal.
@@ -672,8 +584,8 @@ export class ProtectNvr {
       return;
     }
 
-    // For certain use cases, we may want to defer removal of a Protect device (e.g. in stacked NVR configurations) where Protect may lose track of devices for a
-    // brief period of time. This prevents a potential back-and-forth where devices are removed momentarily only to be readded later.
+    // For certain use cases, we may want to defer removal of a Protect device (e.g. in stacked NVR configurations) where Protect may lose track of devices for a brief
+    // period of time. This prevents a potential back-and-forth where devices are removed momentarily only to be readded later.
     const delayInterval = this.getFeatureNumber("Nvr.DelayDeviceRemoval");
 
     if((delayInterval !== undefined) && (delayInterval > 0)) {
@@ -682,6 +594,7 @@ export class ProtectNvr {
       if(!this.deviceRemovalQueue[protectDevice.accessory.UUID]) {
 
         this.deviceRemovalQueue[protectDevice.accessory.UUID] = Date.now();
+
         this.log.info("%s: Delaying device removal for %s second%s.",
           protectDevice.ufp.name ? this.ufpApi.getDeviceName(protectDevice.ufp) : protectDevice.accessoryName,
           delayInterval, delayInterval > 1 ? "s" : "");
@@ -700,9 +613,13 @@ export class ProtectNvr {
     }
 
     // Remove this device.
-    this.log.info("%s: Removing %s from HomeKit.",
+    this.log.info("%s: Removing %s from HomeKit.%s",
       protectDevice.ufp.name ? this.ufpApi.getDeviceName(protectDevice.ufp) : protectDevice.accessoryName,
-      protectDevice.ufp.modelKey ? protectDevice.ufp.modelKey : "device");
+      protectDevice.ufp.modelKey ? protectDevice.ufp.modelKey : "device",
+      protectDevice.accessory._associatedHAPAccessory.bridged ? "" : " You will need to manually delete the device in the Home app to complete the removal.");
+
+    // Keep track of whether this was a standalone accessory or not to deal with the special case of a user transitioning between bridged and standalone devices.
+    const isStandalone = !protectDevice.accessory._associatedHAPAccessory.bridged;
 
     const deletingAccessories = [ protectDevice.accessory ];
 
@@ -726,6 +643,12 @@ export class ProtectNvr {
     // Finally, remove it from our list of configured devices and HomeKit.
     delete this.configuredDevices[protectDevice.accessory.UUID];
     this.removeHomeKitAccessories(deletingAccessories);
+
+    // Add it back to HomeKit if we're really just transitioning between bridged and standalone devices.
+    if(protectDevice.hints.enabled && ((isStandalone && !protectDevice.hints.standalone) || (!isStandalone && protectDevice.hints.standalone))) {
+
+      this.addHomeKitDevice(protectDevice.ufp);
+    }
   }
 
   // Remove accessories from HomeKit and Homebridge.
@@ -737,11 +660,14 @@ export class ProtectNvr {
       return;
     }
 
-    // Unregister the accessories from HomeKit.
-    this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, deletingAccessories);
-
     // Update our internal list of all the accessories we know about.
     for(const accessory of deletingAccessories) {
+
+      // Unregister the accessory from HomeKit if we have a bridged accessory. Unbridged accessories are managed directly by users in the Home app.
+      if(accessory._associatedHAPAccessory.bridged) {
+
+        this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [ accessory ]);
+      }
 
       this.platform.accessories.splice(this.platform.accessories.indexOf(accessory), 1);
     }
@@ -904,9 +830,9 @@ export class ProtectNvr {
   }
 
   // Utility for checking feature options on the NVR.
-  public hasFeature(option: string, defaultReturnValue?: boolean, device: ProtectDeviceConfigTypes | ProtectNvrConfig | null = null): boolean {
+  public hasFeature(option: string, device: ProtectDeviceConfigTypes | ProtectNvrConfig | null = null): boolean {
 
-    return isOptionEnabled(this.platform.featureOptions, this.ufp, device, option, defaultReturnValue ?? this.platform.featureOptionDefault(option));
+    return isOptionEnabled(this.platform.featureOptions, this.ufp, device, option, this.platform.featureOptionDefault(option));
   }
 
   // Emulate a sleep function.

@@ -30,6 +30,7 @@ export interface ProtectHints {
     x: number,
     y: number
   },
+  enabled: boolean,
   hardwareDecoding: boolean,
   hardwareTranscoding: boolean,
   ledStatus: boolean,
@@ -41,6 +42,7 @@ export interface ProtectHints {
   probesize: number,
   smartDetect: boolean,
   smartOccupancy: string[],
+  standalone: boolean,
   syncName: boolean,
   timeshift: boolean,
   transcode: boolean,
@@ -156,10 +158,12 @@ export abstract class ProtectDevice extends ProtectBase {
   // Configure device-specific settings.
   protected configureHints(): boolean {
 
+    this.hints.enabled = this.hasFeature("Device");
     this.hints.logMotion = this.hasFeature("Log.Motion");
     this.hints.motionDuration = this.getFeatureNumber("Motion.Duration") ?? PROTECT_MOTION_DURATION;
     this.hints.occupancyDuration = this.getFeatureNumber("Motion.OccupancySensor.Duration") ?? PROTECT_OCCUPANCY_DURATION;
     this.hints.smartOccupancy = [];
+    this.hints.standalone = this.hasFeature("Device.Standalone");
     this.hints.syncName = this.hasFeature("Device.SyncName");
 
     // Sanity check motion detection duration. Make sure it's never less than 2 seconds so we can actually alert the user.
