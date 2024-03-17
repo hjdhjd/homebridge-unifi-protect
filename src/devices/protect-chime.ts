@@ -5,7 +5,7 @@
 import { CharacteristicValue, PlatformAccessory } from "homebridge";
 import { ProtectChimeConfig, ProtectChimeConfigPayload, ProtectEventPacket } from "unifi-protect";
 import { ProtectDevice } from "./protect-device.js";
-import { ProtectNvr } from "./protect-nvr.js";
+import { ProtectNvr } from "../protect-nvr.js";
 
 export class ProtectChime extends ProtectDevice {
 

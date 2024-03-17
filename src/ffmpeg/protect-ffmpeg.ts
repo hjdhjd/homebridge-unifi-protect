@@ -7,10 +7,10 @@
 import { ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { Readable, Writable } from "node:stream";
 import { EventEmitter } from "node:events";
-import { ProtectCamera } from "./protect-camera.js";
-import { ProtectLogging } from "./protect-types.js";
-import { ProtectNvr } from "./protect-nvr.js";
-import { ProtectPlatform } from "./protect-platform.js";
+import { ProtectCamera } from "../devices/index.js";
+import { ProtectLogging } from "../protect-types.js";
+import { ProtectNvr } from "../protect-nvr.js";
+import { ProtectPlatform } from "../protect-platform.js";
 import { StreamRequestCallback } from "homebridge";
 import os from "node:os";
 import util from "node:util";

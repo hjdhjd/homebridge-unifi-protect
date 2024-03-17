@@ -3,7 +3,7 @@
  * protect-camera-package.ts: Package camera device class for UniFi Protect.
  */
 import { ProtectCamera, RtspEntry } from "./protect-camera.js";
-import { ProtectStreamingDelegate } from "./protect-stream.js";
+import { ProtectStreamingDelegate } from "../protect-stream.js";
 import { Resolution } from "homebridge";
 
 // Package camera class. To avoid circular dependencies, this has to be declared in the same file as ProtectCamera, given the ProtectCamera class references it.
@@ -104,9 +104,6 @@ export class ProtectCameraPackage extends ProtectCamera {
 
     // Fire up the controller and inform HomeKit about it.
     this.accessory.configureController(this.stream.controller);
-
-    // Periodically refresh our snapshot cache.
-    void this.configureSnapshotUpdates();
 
     // We're done.
     return Promise.resolve(true);

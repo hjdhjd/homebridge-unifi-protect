@@ -3,7 +3,7 @@
  * protect-ffmpeg-codecs.ts: probe FFmpeg capabilities and codecs.
  */
 import { Logging } from "homebridge";
-import { ProtectPlatform } from "./protect-platform.js";
+import { ProtectPlatform } from "../protect-platform.js";
 import { execFile } from "node:child_process";
 import os from "node:os";
 import process from "node:process";

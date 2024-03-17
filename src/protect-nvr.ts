@@ -6,20 +6,13 @@ import { API, APIEvent, HAP, PlatformAccessory } from "homebridge";
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_CONTROLLER_REFRESH_INTERVAL, PROTECT_CONTROLLER_RETRY_INTERVAL, PROTECT_M3U_PLAYLIST_PORT } from "./settings.js";
 import { ProtectApi, ProtectCameraConfig, ProtectChimeConfig, ProtectLightConfig, ProtectNvrBootstrap, ProtectNvrConfig, ProtectSensorConfig,
   ProtectViewerConfig } from "unifi-protect";
+import { ProtectCamera, ProtectChime, ProtectDevice, ProtectDoorbell, ProtectLight, ProtectLiveviews, ProtectNvrSystemInfo, ProtectSensor,
+  ProtectViewer } from "./devices/index.js";
 import { ProtectDeviceCategories, ProtectDeviceConfigTypes, ProtectDevices, ProtectLogging } from "./protect-types.js";
 import { ProtectNvrOptions, getOptionFloat, getOptionNumber, getOptionValue, isOptionEnabled } from "./protect-options.js";
-import { ProtectCamera } from "./protect-camera.js";
-import { ProtectChime } from "./protect-chime.js";
-import { ProtectDevice } from "./protect-device.js";
-import { ProtectDoorbell } from "./protect-doorbell.js";
 import { ProtectEvents } from "./protect-events.js";
-import { ProtectLight } from "./protect-light.js";
-import { ProtectLiveviews } from "./protect-liveviews.js";
 import { ProtectMqtt } from "./protect-mqtt.js";
-import { ProtectNvrSystemInfo } from "./protect-nvr-systeminfo.js";
 import { ProtectPlatform } from "./protect-platform.js";
-import { ProtectSensor } from "./protect-sensor.js";
-import { ProtectViewer } from "./protect-viewer.js";
 import http from "node:http";
 import util from "node:util";
 

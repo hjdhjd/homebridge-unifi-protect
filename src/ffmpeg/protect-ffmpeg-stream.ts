@@ -5,7 +5,7 @@
  */
 import { ChildProcessWithoutNullStreams } from "child_process";
 import { FfmpegProcess } from "./protect-ffmpeg.js";
-import { ProtectStreamingDelegate } from "./protect-stream.js";
+import { ProtectStreamingDelegate } from "../protect-stream.js";
 import { StreamRequestCallback } from "homebridge";
 import { createSocket } from "node:dgram";
 

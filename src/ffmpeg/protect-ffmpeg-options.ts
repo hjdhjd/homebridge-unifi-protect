@@ -3,10 +3,10 @@
  * protect-ffmpeg-options.ts: FFmpeg decoder and encoder options with hardware-accelerated codec support where available.
  */
 import { H264Level, H264Profile } from "homebridge";
-import { PROTECT_HOMEKIT_STREAMING_HEADROOM, PROTECT_RPI_GPU_MINIMUM } from "./settings.js";
-import { ProtectCamera } from "./protect-camera.js";
-import { ProtectLogging } from "./protect-types.js";
-import { ProtectPlatform } from "./protect-platform.js";
+import { PROTECT_HOMEKIT_STREAMING_HEADROOM, PROTECT_RPI_GPU_MINIMUM } from "../settings.js";
+import { ProtectCamera } from "../devices/index.js";
+import { ProtectLogging } from "../protect-types.js";
+import { ProtectPlatform } from "../protect-platform.js";
 
 export class FfmpegOptions {
 

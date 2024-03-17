@@ -3,7 +3,7 @@
  * protect-ffmpeg-record.ts: Provide FFmpeg process control to support HomeKit Secure Video.
  *
  */
-import { ProtectCamera, RtspEntry } from "./protect-camera.js";
+import { ProtectCamera, RtspEntry } from "../devices/index.js";
 import { CameraRecordingConfiguration } from "homebridge";
 import { FfmpegProcess } from "./protect-ffmpeg.js";
 import { once } from "node:events";
@@ -28,6 +28,7 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
 
     // -hide_banner     Suppress printing the startup banner in FFmpeg.
     // -nostats         Suppress printing progress reports while encoding in FFmpeg.
+    // -fflags flags    Set the format flags to generate a presentation timestamp if it's missing and discard any corrupt packets rather than exit.
     this.commandLineArgs = [
 
       "-hide_banner",
@@ -40,9 +41,8 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
 
       // Configure our video parameters for our input:
       //
-      // -fflags flags               Set the format flags to generate a presentation timestamp if it's missing and discard any corrupt packets rather than exit.
-      // -r fps                      Set the input frame rate for the video stream.
       // -f mp4                      Tell ffmpeg that it should expect an MP4-encoded input stream.
+      // -r fps                      Set the input frame rate for the video stream.
       // -i pipe:0                   Use standard input to get video data.
       this.commandLineArgs.push(
 
@@ -60,7 +60,7 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
       // -max_delay 500000           Set an upper limit on how much time FFmpeg can take in demuxing packets.
       // -r fps                      Set the input frame rate for the video stream.
       // -rtsp_transport tcp         Tell the RTSP stream handler that we're looking for a TCP connection.
-      // -i this.rtspEntry.url       RTSPS URL to get our input stream from.
+      // -i rtspEntry.url            RTSPS URL to get our input stream from.
       this.commandLineArgs.push(
 
         ...this.protectCamera.stream.ffmpegOptions.videoDecoder,
@@ -251,6 +251,12 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
 
   // Log errors.
   protected logFfmpegError(exitCode: number, signal: NodeJS.Signals): void {
+
+    // If we're ignoring errors, we're done.
+    if(!this.isLoggingErrors) {
+
+      return;
+    }
 
     // Known HKSV-related errors due to occasional inconsistencies in the Protect livestream API.
     const ffmpegKnownHksvError = new RegExp(

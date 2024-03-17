@@ -5,7 +5,7 @@
 import { API, APIEvent, DynamicPlatformPlugin, Logging, PlatformAccessory, PlatformConfig } from "homebridge";
 import { PROTECT_FFMPEG_OPTIONS, PROTECT_MQTT_TOPIC } from "./settings.js";
 import { ProtectNvrOptions, ProtectOptions, featureOptionCategories, featureOptions } from "./protect-options.js";
-import { FfmpegCodecs } from "./protect-ffmpeg-codecs.js";
+import { FfmpegCodecs } from "./ffmpeg/index.js";
 import { ProtectNvr } from "./protect-nvr.js";
 import { RtpPortAllocator } from "./protect-rtp.js";
 import ffmpegPath from "ffmpeg-for-homebridge";

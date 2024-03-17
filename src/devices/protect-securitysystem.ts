@@ -4,8 +4,8 @@
  */
 import { CharacteristicValue, PlatformAccessory } from "homebridge";
 import { ProtectBase } from "./protect-device.js";
-import { ProtectNvr } from "./protect-nvr.js";
-import { ProtectReservedNames } from "./protect-types.js";
+import { ProtectNvr } from "../protect-nvr.js";
+import { ProtectReservedNames } from "../protect-types.js";
 
 export class ProtectSecuritySystem extends ProtectBase {
 

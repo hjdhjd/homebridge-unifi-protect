@@ -3,12 +3,12 @@
  * protect-camera.ts: Camera device class for UniFi Protect.
  */
 import { CharacteristicValue, PlatformAccessory, Resolution } from "homebridge";
-import { PROTECT_HOMEKIT_IDR_INTERVAL, PROTECT_SNAPSHOT_CACHE_REFRESH_INTERVAL } from "./settings.js";
 import { ProtectCameraChannelConfig, ProtectCameraConfig, ProtectCameraConfigPayload, ProtectEventAdd, ProtectEventPacket } from "unifi-protect";
+import { PROTECT_HOMEKIT_IDR_INTERVAL } from "../settings.js";
 import { ProtectDevice } from "./protect-device.js";
-import { ProtectNvr } from "./protect-nvr.js";
-import { ProtectReservedNames } from "./protect-types.js";
-import { ProtectStreamingDelegate } from "./protect-stream.js";
+import { ProtectNvr } from "../protect-nvr.js";
+import { ProtectReservedNames } from "../protect-types.js";
+import { ProtectStreamingDelegate } from "../protect-stream.js";
 
 export interface RtspEntry {
 
@@ -160,9 +160,6 @@ export class ProtectCamera extends ProtectDevice {
 
     // Configure our video stream.
     await this.configureVideoStream();
-
-    // Configure our snapshot updates.
-    void this.configureSnapshotUpdates();
 
     // Configure our camera details.
     this.configureCameraDetails();
@@ -808,26 +805,6 @@ export class ProtectCamera extends ProtectDevice {
     // Fire up the controller and inform HomeKit about it.
     this.accessory.configureController(this.stream.controller);
     this.isVideoConfigured = true;
-
-    return true;
-  }
-
-  // Configure a periodic refresh of our snapshot images.
-  protected configureSnapshotUpdates(): boolean {
-
-    // Set an ongoing refresh interval for our snapshot cache.
-    const interval = setInterval(() => {
-
-      // If we've removed the device, make sure we stop refreshing.
-      if(this.isDeleted) {
-
-        clearInterval(interval);
-        return;
-      }
-
-      // Refresh our snapshot cache.
-      void this.stream?.getSnapshot(undefined, false);
-    }, PROTECT_SNAPSHOT_CACHE_REFRESH_INTERVAL * 1000);
 
     return true;
   }

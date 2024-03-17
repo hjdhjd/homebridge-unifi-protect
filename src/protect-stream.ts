@@ -7,16 +7,14 @@
 import { API, AudioRecordingCodecType, AudioRecordingSamplerate, AudioStreamingCodecType, AudioStreamingSamplerate, CameraController,
   CameraControllerOptions, CameraStreamingDelegate, H264Level, H264Profile, HAP, MediaContainerType, PrepareStreamCallback, PrepareStreamRequest, PrepareStreamResponse,
   SRTPCryptoSuites, SnapshotRequest, SnapshotRequestCallback, StartStreamRequest, StreamRequestCallback, StreamRequestTypes, StreamingRequest } from "homebridge";
-import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_HKSV_SEGMENT_LENGTH, PROTECT_HKSV_TIMESHIFT_BUFFER_MAXLENGTH, PROTECT_HOMEKIT_IDR_INTERVAL,
-  PROTECT_SNAPSHOT_CACHE_MAXAGE } from "./settings.js";
-import { ProtectCamera, RtspEntry } from "./protect-camera.js";
-import { FfmpegExec } from "./protect-ffmpeg-exec.js";
-import { FfmpegOptions } from "./protect-ffmpeg-options.js";
-import { FfmpegStreamingProcess } from "./protect-ffmpeg-stream.js";
+import { FfmpegOptions, FfmpegStreamingProcess } from "./ffmpeg/index.js";
+import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_HKSV_SEGMENT_LENGTH, PROTECT_HKSV_TIMESHIFT_BUFFER_MAXLENGTH, PROTECT_HOMEKIT_IDR_INTERVAL } from "./settings.js";
+import { ProtectCamera, RtspEntry } from "./devices/index.js";
 import { ProtectLogging } from "./protect-types.js";
 import { ProtectNvr } from "./protect-nvr.js";
 import { ProtectPlatform } from "./protect-platform.js";
 import { ProtectRecordingDelegate } from "./protect-record.js";
+import { ProtectSnapshot } from "./protect-snapshot.js";
 import { RtpDemuxer } from "./protect-rtp.js";
 import WebSocket from "ws";
 import { once } from "node:events";
@@ -62,7 +60,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   private probesizeOverrideTimeout?: NodeJS.Timeout;
   private rtspEntry: RtspEntry | null;
   private savedBitrate: number;
-  private snapshotCache: { [index: string]: { image: Buffer, time: number } };
+  private snapshot: ProtectSnapshot;
   public verboseFfmpeg: boolean;
 
   // Create an instance of a HomeKit streaming delegate.
@@ -81,7 +79,6 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     this.probesizeOverrideCount = 0;
     this.rtspEntry = null;
     this.savedBitrate = 0;
-    this.snapshotCache = {};
     this.verboseFfmpeg = false;
 
     // Configure our hardware acceleration support.
@@ -92,6 +89,9 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
       this.hksv = new ProtectRecordingDelegate(protectCamera);
     }
+
+    // Configure our snapshot handler.
+    this.snapshot = new ProtectSnapshot(protectCamera);
 
     // Setup for our camera controller.
     const options: CameraControllerOptions = {
@@ -203,45 +203,10 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     this.controller = new this.hap.CameraController(options);
   }
 
-  // Image snapshot crop handler.
-  private async cropSnapshot(snapshot: Buffer): Promise<Buffer|null> {
-
-    // Crop the snapshot using the FFmpeg with crop filter. Options we use are:
-    //
-    // -hide_banner           Suppress printing the startup banner in FFmpeg.
-    // -nostats               Suppress printing progress reports while encoding in FFmpeg.
-    // -i pipe:0              Read input from standard input.
-    // -filter:v              Pass the crop filter options to FFmpeg.
-    // -f mjpeg               Specify that our input will be a JPEG file.
-    // pipe:1                 Output the cropped snapshot to standard output.
-    const ffmpeg = new FfmpegExec(this.protectCamera, [
-
-      "-hide_banner",
-      "-nostats",
-      "-i", "pipe:0",
-      "-filter:v", this.ffmpegOptions.cropFilter,
-      "-f", "mjpeg",
-      "pipe:1"
-    ]);
-
-    // Retrieve the snapshot.
-    const ffmpegResult = await ffmpeg.exec(snapshot);
-
-    // Crop succeeded, we're done.
-    if(ffmpegResult?.exitCode === 0) {
-
-      return ffmpegResult.stdout;
-    }
-
-    // Something went wrong.
-    this.log.error("Unable to crop snapshot.");
-    return null;
-  }
-
   // HomeKit image snapshot request handler.
   public async handleSnapshotRequest(request?: SnapshotRequest, callback?: SnapshotRequestCallback): Promise<void> {
 
-    const snapshot = await this.getSnapshot(request);
+    const snapshot = await this.snapshot.getSnapshot(request);
 
     // No snapshot was returned - we're done here.
     if(!snapshot) {
@@ -894,83 +859,6 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
         callback();
         break;
     }
-  }
-
-  // Retrieve a cached snapshot, if available.
-  private getCachedSnapshot(cameraMac: string): Buffer | null {
-
-    // If we have an image from the last few seconds, we can use it. Otherwise, we're done.
-    if(!this.snapshotCache[cameraMac] || ((Date.now() - this.snapshotCache[cameraMac].time) > (PROTECT_SNAPSHOT_CACHE_MAXAGE * 1000))) {
-
-      delete this.snapshotCache[cameraMac];
-      return null;
-    }
-
-    return this.snapshotCache[cameraMac].image;
-  }
-
-  // Take a snapshot.
-  public async getSnapshot(request?: SnapshotRequest, isLoggingErrors = true): Promise<Buffer | null> {
-
-    const logError = (message: string, ...parameters: unknown[]): void => {
-
-      // We don't need to log errors for snapshot cache refreshes.
-      if(isLoggingErrors) {
-
-        this.log.error(message, ...parameters);
-      }
-    };
-
-    // If we aren't connected, we're done.
-    if(!this.protectCamera.isOnline) {
-
-      logError("Unable to retrieve a snapshot: the camera is offline or unavailable.");
-      return null;
-    }
-
-    // Don't log the inevitable API errors related to response delays from the Protect controller.
-    const savedLogState = this.nvr.logApiErrors;
-
-    if(!isLoggingErrors) {
-
-      this.nvr.logApiErrors = false;
-    }
-
-    // Request the image from the controller. If we've specified a specific dimension, we pass that along in our snapshot request.
-    let snapshot = await this.nvr.ufpApi.getSnapshot(this.protectCamera.ufp, request ? request.width : undefined, request ? request.height : undefined,
-      undefined, "packageCamera" in this.protectCamera.accessory.context);
-
-    if(!isLoggingErrors) {
-
-      this.nvr.logApiErrors = savedLogState;
-    }
-
-    // Occasional snapshot failures will happen. The controller isn't always able to generate them if one is already inflight or if it's too soon after the last one.
-    if(!snapshot) {
-
-      // See if we have an image cached that we can use instead.
-      const cachedSnapshot = this.getCachedSnapshot(this.protectCamera.ufp.mac);
-
-      if(cachedSnapshot) {
-
-        logError("Unable to retrieve a snapshot. Using the most recent cached snapshot instead.");
-        return cachedSnapshot;
-      }
-
-      logError("Unable to retrieve a snapshot.");
-
-      return null;
-    }
-
-    // Crop the snapshot, if we're configured to do so.
-    if(this.protectCamera.hints.crop) {
-
-      snapshot = await this.cropSnapshot(snapshot) ?? snapshot;
-    }
-
-    // Cache the image before returning it.
-    this.snapshotCache[this.protectCamera.ufp.mac] = { image: snapshot, time: Date.now() };
-    return this.snapshotCache[this.protectCamera.ufp.mac].image;
   }
 
   // Close a video stream.

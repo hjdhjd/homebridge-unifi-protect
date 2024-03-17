@@ -2,11 +2,11 @@
  *
  * protect-nvr-systeminfo.ts: NVR System Information device class for UniFi Protect.
  */
-import { PLATFORM_NAME, PLUGIN_NAME } from "./settings.js";
+import { PLATFORM_NAME, PLUGIN_NAME } from "../settings.js";
 import { PlatformAccessory } from "homebridge";
 import { ProtectBase } from "./protect-device.js";
 import { ProtectEventPacket } from "unifi-protect";
-import { ProtectNvr } from "./protect-nvr.js";
+import { ProtectNvr } from "../protect-nvr.js";
 
 export class ProtectNvrSystemInfo extends ProtectBase {
 

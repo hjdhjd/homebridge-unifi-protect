@@ -3,13 +3,8 @@
  * protect-types.ts: Interface and type definitions for UniFi Protect.
  */
 
+import { ProtectCamera, ProtectChime, ProtectDoorbell, ProtectLight, ProtectSensor, ProtectViewer } from "./devices/index.js";
 import { ProtectCameraConfig, ProtectChimeConfig, ProtectLightConfig, ProtectSensorConfig, ProtectViewerConfig } from "unifi-protect";
-import { ProtectCamera } from "./protect-camera.js";
-import { ProtectChime } from "./protect-chime.js";
-import { ProtectDoorbell } from "./protect-doorbell.js";
-import { ProtectLight } from "./protect-light.js";
-import { ProtectSensor } from "./protect-sensor.js";
-import { ProtectViewer } from "./protect-viewer.js";
 
 // Define Protect logging conventions.
 export interface ProtectLogging {

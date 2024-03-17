@@ -4,11 +4,10 @@
  */
 import { API, HAP, Service } from "homebridge";
 import { ProtectApi, ProtectEventAdd, ProtectEventMetadata, ProtectEventPacket, ProtectNvrConfig } from "unifi-protect";
+import { ProtectCamera, ProtectDevice } from "./devices/index.js";
 import { ProtectDeviceConfigTypes, ProtectLogging, ProtectReservedNames } from "./protect-types.js";
 import { EventEmitter } from "node:events";
 import { PROTECT_DOORBELL_TRIGGER_DURATION } from "./settings.js";
-import { ProtectCamera } from "./protect-camera.js";
-import { ProtectDevice } from "./protect-device.js";
 import { ProtectNvr } from "./protect-nvr.js";
 import { ProtectPlatform } from "./protect-platform.js";
 

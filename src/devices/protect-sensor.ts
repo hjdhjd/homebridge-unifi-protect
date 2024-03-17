@@ -5,8 +5,8 @@
 import { PlatformAccessory, Service } from "homebridge";
 import { ProtectEventPacket, ProtectSensorConfig, ProtectSensorConfigPayload } from "unifi-protect";
 import { ProtectDevice } from "./protect-device.js";
-import { ProtectNvr } from "./protect-nvr.js";
-import { ProtectReservedNames } from "./protect-types.js";
+import { ProtectNvr } from "../protect-nvr.js";
+import { ProtectReservedNames } from "../protect-types.js";
 
 export class ProtectSensor extends ProtectDevice {
 

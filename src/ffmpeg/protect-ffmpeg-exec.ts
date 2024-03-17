@@ -4,7 +4,7 @@
  *
  */
 import { FfmpegProcess } from "./protect-ffmpeg.js";
-import { ProtectCamera } from "./protect-camera.js";
+import { ProtectCamera } from "../devices/index.js";
 
 type ProcessResult = {
 
@@ -15,10 +15,15 @@ type ProcessResult = {
 
 export class FfmpegExec extends FfmpegProcess {
 
-  constructor(protectCamera: ProtectCamera, commandLineArgs?: string[]) {
+  private isLoggingErrors: boolean;
+
+  constructor(protectCamera: ProtectCamera, commandLineArgs?: string[], logErrors = true) {
 
     // Initialize our parent.
     super(protectCamera, commandLineArgs);
+
+    // We want to log errors when they occur.
+    this.isLoggingErrors = logErrors;
   }
 
   // Run the FFmpeg process and return the result.
@@ -67,4 +72,18 @@ export class FfmpegExec extends FfmpegProcess {
       });
     });
   }
+
+  // Log errors.
+  protected logFfmpegError(exitCode: number, signal: NodeJS.Signals): void {
+
+    // If we're ignoring errors, we're done.
+    if(!this.isLoggingErrors) {
+
+      return;
+    }
+
+    // Otherwise, revert to our default logging in our parent.
+    super.logFfmpegError(exitCode, signal);
+  }
+
 }
