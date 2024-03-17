@@ -2,11 +2,16 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 6.19.0 (2024-03-17)
+  * New feature: add support for optionally choosing to make Protect devices standalone in HomeKit. If you choose to do so, you'll have to manually manage the individual Protect devices in HomeKit. I would not recommend using this feature for most people.
+  * Improvement: snapshots have been rethought and optimized, and image quality has been significantly improved. In recent Protect controller firmware releases, the Protect API no longer produces high-quality snapshots and the performance of the Protect controller has been inconsistent at best. With this release, snapshots are now first driven from the timeshift buffer, for those that have enabled HKSV and timeshifting. If that's not available or unusable, HBUP will snapshot the RTSP stream to the controller before trying the Protect API as a final fallback.
+  * Housekeeping.
+
 ## 6.18.1 (2024-03-01)
   * Housekeeping.
 
 ## 6.18.0 (2024-02-11)
-  * New feature: Stream cropping. You can now selectively crop your Protect video stream feed in HBUP. This option will force transcoding on in all circumstances when viewing livestreams. My thanks to @dansimau for the initial PR that implemented this feature and contributed it to the community. This feature utilized the FFmpeg crop filter behind the scenes - you can read more about how cropping in FFmpeg works in the FFmpeg documentation to orient yourself if you're struggling with this feature at first. My recommendation: play with it and you'll eventually get a feel for the settings if they don't seem intuitive at first.
+  * New feature: stream cropping. You can now selectively crop your Protect video stream feed in HBUP. This option will force transcoding on in all circumstances when viewing livestreams. My thanks to @dansimau for the initial PR that implemented this feature and contributed it to the community. This feature utilized the FFmpeg crop filter behind the scenes - you can read more about how cropping in FFmpeg works in the FFmpeg documentation to orient yourself if you're struggling with this feature at first. My recommendation: play with it and you'll eventually get a feel for the settings if they don't seem intuitive at first.
   * Improvement: Protect device availability is now provided to HomeKit on a realtime basis. This should help folks more easily see when devices are disconnected from the Protect controller.
   * Housekeeping.
 
