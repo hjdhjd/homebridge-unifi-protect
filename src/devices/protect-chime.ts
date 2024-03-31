@@ -4,11 +4,14 @@
  */
 import { CharacteristicValue, PlatformAccessory } from "homebridge";
 import { ProtectChimeConfig, ProtectChimeConfigPayload, ProtectEventPacket } from "unifi-protect";
+import { ProtectReservedNames, toCamelCase } from "../protect-types.js";
+import { PROTECT_DOORBELL_CHIME_SPEAKER_DURATION } from "../settings.js";
 import { ProtectDevice } from "./protect-device.js";
 import { ProtectNvr } from "../protect-nvr.js";
 
 export class ProtectChime extends ProtectDevice {
 
+  private readonly eventTimers: { [index: string]: NodeJS.Timeout };
   public ufp: ProtectChimeConfig;
 
   // Create an instance.
@@ -16,6 +19,7 @@ export class ProtectChime extends ProtectDevice {
 
     super(nvr, accessory);
 
+    this.eventTimers = {};
     this.ufp = device;
 
     this.configureHints();
@@ -36,6 +40,10 @@ export class ProtectChime extends ProtectDevice {
     // Configure the chime as a light. We don't have volume accessories, so a dimmer is the best we can currently do within the constraints of HomeKit.
     this.configureLightbulb();
 
+    // Configure the speakers on the chime.
+    this.configureChimeSwitch("chime", "play-speaker", ProtectReservedNames.SWITCH_DOORBELL_CHIME_SPEAKER);
+    this.configureChimeSwitch("buzzer", "play-buzzer", ProtectReservedNames.SWITCH_DOORBELL_CHIME_BUZZER);
+
     // Configure MQTT services.
     this.configureMqtt();
 
@@ -48,30 +56,23 @@ export class ProtectChime extends ProtectDevice {
   // Configure the light for HomeKit.
   private configureLightbulb(): boolean {
 
-    // Find the service, if it exists.
-    let lightService = this.accessory.getService(this.hap.Service.Lightbulb);
+    // Acquire the service.
+    const service = this.acquireService(this.hap.Service.Lightbulb);
 
-    // Add the service to the accessory, if needed.
-    if(!lightService) {
+    if(!service) {
 
-      lightService = new this.hap.Service.Lightbulb(this.accessoryName);
+      this.log.error("Unable to add chime.");
 
-      if(!lightService) {
-
-        this.log.error("Unable to add chime.");
-        return false;
-      }
-
-      this.accessory.addService(lightService);
+      return false;
     }
 
     // Turn the chime on or off.
-    lightService.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => {
+    service.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => {
 
       return this.ufp.volume > 0;
     });
 
-    lightService.getCharacteristic(this.hap.Characteristic.On)?.onSet(async (value: CharacteristicValue) => {
+    service.getCharacteristic(this.hap.Characteristic.On)?.onSet(async (value: CharacteristicValue) => {
 
       // We really only want to act when the chime is turned off. Otherwise, it's handled by the brightness event.
       if(value) {
@@ -92,13 +93,13 @@ export class ProtectChime extends ProtectDevice {
     });
 
     // Adjust the volume of the chime by adjusting brightness of the light.
-    lightService.getCharacteristic(this.hap.Characteristic.Brightness)?.onGet(() => {
+    service.getCharacteristic(this.hap.Characteristic.Brightness)?.onGet(() => {
 
       // Return the volume level of the chime.
       return this.ufp.volume;
     });
 
-    lightService.getCharacteristic(this.hap.Characteristic.Brightness)?.onSet(async (value: CharacteristicValue) => {
+    service.getCharacteristic(this.hap.Characteristic.Brightness)?.onSet(async (value: CharacteristicValue) => {
 
       const newDevice = await this.nvr.ufpApi.updateDevice(this.ufp, { volume: value as number });
 
@@ -110,13 +111,100 @@ export class ProtectChime extends ProtectDevice {
 
       // Set the context to our updated device configuration.
       this.ufp = newDevice;
+      this.publish("chime", this.ufp.volume.toString());
     });
 
     // Initialize the chime.
-    lightService.displayName = this.accessoryName;
-    lightService.updateCharacteristic(this.hap.Characteristic.Name, this.accessoryName);
-    lightService.updateCharacteristic(this.hap.Characteristic.On, this.ufp.volume > 0);
-    lightService.updateCharacteristic(this.hap.Characteristic.Brightness, this.ufp.volume);
+    service.updateCharacteristic(this.hap.Characteristic.On, this.ufp.volume > 0);
+    service.updateCharacteristic(this.hap.Characteristic.Brightness, this.ufp.volume);
+
+    return true;
+  }
+
+  // Configure chime speaker switches for HomeKit.
+  private configureChimeSwitch(name: string, endpoint: string, subtype: string): boolean {
+
+    // Acquire the service.
+    const service = this.acquireService(this.hap.Service.Switch, this.accessoryName + " " + toCamelCase(name), subtype);
+
+    if(!service) {
+
+      this.log.error("Unable to add " + name + " switch.");
+
+      return false;
+    }
+
+    // Turn the speaker on or off.
+    service.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => {
+
+      return !!this.eventTimers[endpoint];
+    });
+
+    service.getCharacteristic(this.hap.Characteristic.On)?.onSet(async (value: CharacteristicValue) => {
+
+      // We only want to do something if we're being activated and we don't have an active speaker event inflight. Turning off the switch would really be a meaningless
+      // state given you can't undo the play command to the chime.
+      if(!value) {
+
+        setTimeout(() => {
+
+          service.updateCharacteristic(this.hap.Characteristic.On, !!this.eventTimers[endpoint]);
+        }, 50);
+
+        return;
+      }
+
+      // Play the tone.
+      if(!(await this.playTone(name, endpoint))) {
+
+        this.log.error("Unable to play " + name + ".");
+
+        setTimeout(() => {
+
+          service.updateCharacteristic(this.hap.Characteristic.On, !!this.eventTimers[endpoint]);
+        }, 50);
+      }
+
+      this.eventTimers[endpoint] = setTimeout(() => {
+
+        delete this.eventTimers[endpoint];
+        service.updateCharacteristic(this.hap.Characteristic.On, !!this.eventTimers[endpoint]);
+      }, PROTECT_DOORBELL_CHIME_SPEAKER_DURATION);
+
+
+      // Inform the user.
+      this.log.info("Playing %s.", name);
+    });
+
+    // Initialize the switch.
+    service.updateCharacteristic(this.hap.Characteristic.On, false);
+
+    return true;
+  }
+
+  // Play the specified tone on the chime.
+  private async playTone(name: string, endpoint: string): Promise<boolean> {
+
+    if(!endpoint) {
+
+      return false;
+    }
+
+    // Execute teh action on the chime.
+    const response = await this.nvr.ufpApi.retrieve(this.nvr.ufpApi.getApiEndpoint(this.ufp.modelKey) + "/" + this.ufp.id + "/" + endpoint, {
+
+      body: JSON.stringify({}),
+      method: "POST"
+    });
+
+    // Something went wrong.
+    if(!response?.ok) {
+
+      return false;
+    }
+
+    // Publish what we're playing.
+    this.publish("tone", name);
 
     return true;
   }
@@ -124,16 +212,15 @@ export class ProtectChime extends ProtectDevice {
   // Configure MQTT capabilities of this chime.
   private configureMqtt(): boolean {
 
-    const lightService = this.accessory.getService(this.hap.Service.Lightbulb);
+    // Get and set the chime volume.
+    this.subscribeGet("chime", "chime volume", (): string => {
 
-    if(!lightService) {
-      return false;
-    }
+      return this.ufp.volume.toString();
+    });
 
-    // Trigger a motion event in MQTT, if requested to do so.
-    this.nvr.mqtt?.subscribe(this.accessory, "chime", (message: Buffer) => {
+    this.subscribeSet("chime", "chime volume", (value: string) => {
 
-      const volume = parseInt(message.toString());
+      const volume = parseInt(value.toString());
 
       // Unknown message - ignore it.
       if(isNaN(volume) || (volume < 0) || (volume > 100)) {
@@ -141,9 +228,31 @@ export class ProtectChime extends ProtectDevice {
         return;
       }
 
-      lightService.getCharacteristic(this.hap.Characteristic.Brightness)?.setValue(volume);
-      lightService.getCharacteristic(this.hap.Characteristic.On)?.setValue(volume > 0);
-      this.log.info("Chime volume set to %s% via MQTT.", volume);
+      // We explicitly want to trigger our set event handler, which will complete this action.
+      this.accessory.getService(this.hap.Service.Lightbulb)?.getCharacteristic(this.hap.Characteristic.Brightness)?.setValue(volume);
+      this.accessory.getService(this.hap.Service.Lightbulb)?.getCharacteristic(this.hap.Characteristic.On)?.setValue(volume > 0);
+    });
+
+    // Play a tone on the chime.
+    this.subscribeSet("tone", "chime tone", (value: string) => {
+
+      switch(value) {
+
+        case "chime":
+
+          void this.playTone("chime", "play-speaker");
+          break;
+
+        case "buzzer":
+
+          void this.playTone("buzzer", "play-buzzer");
+          break;
+
+        default:
+
+          this.log.error("Unknown chime tone.");
+          break;
+      }
     });
 
     return true;
@@ -160,6 +269,7 @@ export class ProtectChime extends ProtectDevice {
       // Update our volume setting.
       this.accessory.getService(this.hap.Service.Lightbulb)?.updateCharacteristic(this.hap.Characteristic.Brightness, payload.volume as number);
       this.accessory.getService(this.hap.Service.Lightbulb)?.updateCharacteristic(this.hap.Characteristic.On, (payload.volume as number) > 0);
+      this.publish("chime", (payload.volume ?? 0).toString());
     }
   }
 }
