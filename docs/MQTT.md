@@ -22,7 +22,7 @@
 
 I've provided MQTT support for those that are interested - I'm genuinely curious, if not a bit skeptical, at how many people actually want to use this capability. MQTT has a lot of nerd-credibility, and it was a fun side project to mess around with. :smile:
 
-`homebridge-unifi-protect` will publish MQTT events if you've configured a broker in the controller-specific settings. The plugin supports a rich set of capabilities over MQTT. This includes:
+`homebridge-unifi-protect` will publish MQTT events if you've configured a broker in the controller-specific settings. The plugin supports a rich set of capabilities over MQTT allowing you to observe or interact with every UniFi Protect device category. This includes:
 
   * Camera-specific RTSP information.
   * Doorbell message events. See [doorbell message events](#doorbell-messages) for additional details.
@@ -30,6 +30,7 @@ I've provided MQTT support for those that are interested - I'm genuinely curious
   * Liveview-related events, including the security system accessory and security alarm.
   * Motion events.
   * Snapshot events, including publishing the actual images over MQTT.
+  * And many more, documented below.
 
 ### How to configure and use this feature
 
@@ -42,7 +43,7 @@ You configure MQTT settings within a `controller` configuration block. The setti
 | `mqttUrl`             | The URL of your MQTT broker. **This must be in URL form**, e.g.: `mqtt://user:password@1.2.3.4`.
 | `mqttTopic`           | The base topic to publish to. The default is: `unifi/protect`.
 
-To reemphasize the above: **mqttUrl** must be a valid URL. Simply entering in a hostname without specifying it in URL form will result in an error. The URL can use any of these protocols: `mqtt`, `mqtts`, `tcp`, `tls`, `ws`, `wss`.
+To reemphasize the above: **mqttUrl** must be a valid URL. Simply entering in a hostname without specifying it in URL form will result in an error. The URL can use any of these protocols: `mqtt`, `mqtts`, `tcp`, `tls`, `ws`, `wss`. HBUP supports self-signed TLS certificates when connecting to an MQTT broker, if you choose to do so.
 
 When events are published, by default, the topics look like:
 
@@ -51,7 +52,7 @@ unifi/protect/1234567890AB/motion
 unifi/protect/ABCDEF123456/doorbell
 ```
 
-In the above example, `1234567890AB` and `ABCDEF123456` are the MAC addresses of your cameras or doorbells. We use MAC addresses as an easy way to guarantee unique identifiers that won't change. `homebridge-unifi-protect` provides you information about your cameras and their respective MAC addresses in the homebridge log on startup. Additionally, you can use the UniFi Protect app or webUI to lookup what the MAC addresses are of your cameras, should you need to do so.
+In the above example, `1234567890AB` and `ABCDEF123456` are the MAC addresses of your cameras. We use MAC addresses as an easy way to guarantee unique identifiers that won't change. `homebridge-unifi-protect` provides you information about your cameras and their respective MAC addresses in the homebridge log on startup. Additionally, you can use the UniFi Protect app or webUI to lookup what the MAC addresses are of your cameras, should you need to do so.
 
 ### <A NAME="publish"></A>Topics Published
 The topics and messages that `homebridge-unifi-protect` publishes are:
@@ -67,7 +68,7 @@ The topics and messages that `homebridge-unifi-protect` publishes are:
 | `leak`                | Sensor              | `true` or `false` when a UniFi Protect sensor detects a leak.
 | `light`               | Light               | `true` or `false` when a UniFi Protect light is on or off.
 | `light/brightness`    | Light               | A number between 0 and 100 that represents the current brightness as a percentage.
-| `liveview`            | Viewer              | The current liveview being displayed on a Protect viewer.
+| `liveview`            | Viewport            | The current liveview being displayed on a UniFi Protect Viewport.
 | `liveviews`           | Camera              | `[{"name": "LiveviewName", "state": true},{"name": "AnotherLiveview", "state": false}]`. `state` can be `true` or `false`, indicating whether a liveview scene is active.
 | `message`             | Doorbell            | `{"message":"Some Message","duration":60}`. See [Doorbell Messages](#doorbell-messages) for additional documentation.
 | `motion`              | Multiple            | `true` when motion is detected. `false` when the motion event is reset.
@@ -101,19 +102,19 @@ The topics that `homebridge-unifi-protect` subscribes to are:
 | `light/set`             | Light               | `true` or `false` to turn on or off a UniFi Protect light.
 | `light/brightness/get`  | Light               | `true` will trigger a publish event of the light brightness level, as a percentage, for a UniFi Protect light.
 | `light/brightness/set`  | Light               | A number between 0 and 100 that will set the volume level of a UniFi Protect light.
-| `liveview/get`          | Viewer              | `true` will request that the plugin publish the current liveview being displayed on a Protect viewer.
-| `liveview/set `         | Viewer              | The name of a liveview to be set as the currently displayed liveview on a Protect viewer.
+| `liveview/get`          | Viewport            | `true` will request that the plugin publish the current liveview being displayed on a UniFi Protect Viewport.
+| `liveview/set `         | Viewport            | The name of a liveview to be set as the currently displayed liveview on a Protect viewer.
 | `liveviews/get`         | Camera              | `true` will trigger a publish event of all liveviews to the `liveviews` topic.
 | `liveviews/set `        | Camera              | A JSON-compatible array in the format `[{"name": "view1", "state": true }, ...]` This will activate or deactivate one of more liveviews, depending on the respective state.
 | `message/get`           | Doorbell            | `true` will trigger a publish event of the current message JSON for the doorbell. See [Doorbell Messages](#doorbell-messages) for additional documentation.
 | `message/set`           | Doorbell            | A JSON in the format `{"message":"Some Message","duration":60}`. See [Doorbell Messages](#doorbell-messages) for additional documentation.
 | `motion/get`            | Multiple            | `true` will trigger a publish event of the motion sensor state.
-| `motion/set`            | Multiple            | `true` will trigger a motion event on the camera or doorbell.
+| `motion/set`            | Multiple            | `true` will trigger a motion event on the motion sensor.
 | `occupancy/get`         | Multiple            | `true` will trigger a publish event of the occupancy sensor state.
 | `rtsp/get`              | Camera              | `true` will request that the plugin publish a message to the `rtsp` topic containing a JSON of RTSP URLs for the camera or doorbell.
-| `securitysystem/get`    | Camera              | `true` will request that the plugin publish the current state of the security system to the `securitysystem` topic.
+| `securitysystem/get`    | Camera              | `true` will trigger a publish event of the current state of the security system accessory.
 | `securitysystem/set`    | Camera              | One of `AlarmOff`, `AlarmOn`, `Away`, `Home`, `Night`, `Off`. This will set the respective state on the security system accessory.
-| `snapshot/set`          | Camera              | `true` will trigger the camera or doorbell to generate a snapshot.
+| `snapshot/set`          | Camera              | `true` will trigger the camera to generate a snapshot.
 | `temperature/get`       | Sensor              | `true` will trigger a publish event of the temperature, in Celsius, for a UniFi Protect sensor.
 | `tone/set`              | Chime               | A value of either `buzzer` or `chime` will play the selected tone on a UniFi Protect chime.
 
@@ -145,8 +146,8 @@ The accepted values for `duration` are:
 
 `homebridge-unifi-protect` subscribes to messages sent to the topic `message/get`. If you publish an MQTT message containing `true` to the `message/get` topic, a message will be published to the `message` topic containing the current doorbell message and remaining duration in the JSON message format above.
 
-### Some Fun Facts
+### Additional Notes
   * MQTT support is disabled by default. It's enabled when an MQTT broker is specified in the configuration.
   * MQTT is configured per-controller. This allows you to have different MQTT brokers for different Protect controllers, if needed.
-  * If connectivity to the broker is lost, it will perpetually retry to connect in one-minute intervals.
-  * If a bad URL is provided, MQTT support will not be enabled.
+  * If connectivity to the broker is lost, HBUP will perpetually retry to connect in one-minute intervals.
+  * If an invalid URL is provided, MQTT support will not be enabled.
