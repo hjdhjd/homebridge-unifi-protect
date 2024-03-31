@@ -6,7 +6,7 @@ on:
   issues:
     types: [reopened]
   schedule:
-  - cron: "*/60 * * * *"
+  - cron: "0 * * * *"
 
 jobs:
   stale:
