@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 6.20.0 (2024-03-30)
+  * New feature: UniFi chime devices now expose two additional switches, allowing you to trigger the chime speaker with either the default tone or the buzzer tone. Buzzer tone you say, what's that? Give it a try.
+  * New feature: The new high quality (and performance) snapshot capabilities can now be controlled through a feature option. The option is enabled by default, but can be disabled if you prefer. Why might you want to disable it? In certain performance-constrained environments (e.g. Pi), snapshots may take longer to generate than HomeKit allows for when the CPU is under heavier load.
+  * Change: HomeKit Secure Video events are no longer logged by default. You can enable HKSV event logging using the appropriate feature option through the webUI.
+  * Breaking changes for MQTT users: MQTT capabilities have been standardized - see the [MQTT documentation](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/MQTT.md) for details. The changes are focused on streamlining how you can query HBUP, and how information is published. In addition, all the MQTT capabilities are now documented. A few items weren't previously.
+  * Housekeeping, spring cleaning, and a few refinements throughout.
+
 ## 6.19.0 (2024-03-17)
   * New feature: add support for optionally choosing to make Protect devices standalone in HomeKit. If you choose to do so, you'll have to manually manage the individual Protect devices in HomeKit. I would not recommend using this feature for most people.
   * Improvement: snapshots have been rethought and optimized, and image quality has been significantly improved. In recent Protect controller firmware releases, the Protect API no longer produces high-quality snapshots and the performance of the Protect controller has been inconsistent at best. With this release, snapshots are now first driven from the timeshift buffer, for those that have enabled HKSV and timeshifting. If that's not available or unusable, HBUP will snapshot the RTSP stream to the controller before trying the Protect API as a final fallback.
