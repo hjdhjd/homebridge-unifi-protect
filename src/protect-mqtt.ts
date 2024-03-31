@@ -178,7 +178,7 @@ export class ProtectMqtt {
   }
 
   // Subscribe to a specific MQTT topic and publish a value on a get request.
-  public subscribeGet(accessory: PlatformAccessory, topic: string, type: string, getValue: () => string): void {
+  public subscribeGet(accessory: PlatformAccessory | string, topic: string, type: string, getValue: () => string): void {
 
     // Return the current status of a given sensor.
     this.subscribe(accessory, topic + "/get", (message: Buffer) => {
@@ -192,21 +192,42 @@ export class ProtectMqtt {
       }
 
       this.publish(accessory, topic, getValue());
-      (this.nvr.configuredDevices[accessory.UUID]?.log ?? this.log).info("MQTT: %s status published.", type);
+      ((typeof accessory === "string") ? this.log : (this.nvr.configuredDevices[accessory.UUID]?.log ?? this.log)).info("MQTT: %s status published.", type);
     });
   }
 
   // Subscribe to a specific MQTT topic and set a value on a set request.
-  public subscribeSet(accessory: PlatformAccessory, topic: string, type: string, setValue: (value: string) => void): void {
+  public subscribeSet(accessory: PlatformAccessory | string, topic: string, type: string, setValue: (value: string, rawValue: string) => Promise<void> | void): void {
 
     // Return the current status of a given sensor.
     this.subscribe(accessory, topic + "/set", (message: Buffer) => {
 
       const value = message.toString().toLowerCase();
 
+      const logResult = (): void => {
+
+        ((typeof accessory === "string") ? this.log : (this.nvr.configuredDevices[accessory.UUID]?.log ?? this.log))
+          .info("MQTT: set message received for %s: %s.", type, value);
+      };
+
       // Set our value and inform the user.
-      setValue(value);
-      (this.nvr.configuredDevices[accessory.UUID]?.log ?? this.log).info("MQTT: set message received for %s: %s.", type, value);
+      const result = setValue(value, message.toString());
+
+      if(result && typeof result.then === "function") {
+
+        result.then(() => {
+
+          logResult();
+        }).catch(error => {
+
+          ((typeof accessory === "string") ? this.log : (this.nvr.configuredDevices[accessory.UUID]?.log ?? this.log))
+            .error("MQTT: error seting message received for %s: %s. %s", type, value, error);
+        });
+
+        return;
+      }
+
+      logResult();
     });
   }
 
@@ -242,6 +263,7 @@ export class ProtectMqtt {
       mac = accessory.context.mac as string;
     }
 
+    // Return our fully expanded topic string.
     return this.config.mqttTopic + "/" + mac + "/" + topic;
   }
 }

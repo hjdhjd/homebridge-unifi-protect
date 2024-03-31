@@ -5,10 +5,10 @@
 import { CharacteristicValue, PlatformAccessory, Service } from "homebridge";
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_DOORBELL_CHIME_DURATION_DIGITAL } from "../settings.js";
 import { ProtectCameraConfig, ProtectCameraConfigPayload, ProtectCameraLcdMessagePayload, ProtectEventPacket, ProtectNvrConfigPayload } from "unifi-protect";
+import { ProtectReservedNames, toCamelCase } from "../protect-types.js";
 import { ProtectCamera } from "./protect-camera.js";
 import { ProtectCameraPackage } from "./protect-camera-package.js";
 import { ProtectNvr } from "../protect-nvr.js";
-import { ProtectReservedNames } from "../protect-types.js";
 
 // A doorbell message entry.
 interface MessageInterface {
@@ -122,36 +122,25 @@ export class ProtectDoorbell extends ProtectCamera {
 
       this.log.info("Enabled doorbell message switch%s: %s.", entry.duration ? " (" + (entry.duration / 1000).toString() + " seconds)" : "", entry.text);
 
-      // Use the message switch, if it already exists.
-      let switchService = this.accessory.getServiceById(this.hap.Service.Switch, entry.type + "." + entry.text);
+      // Acquire the service. Each message cannot exceed 30 characters, but given that HomeKit allows for strings to be up to 64 characters long, this should be fine.
+      const service = this.acquireService(this.hap.Service.Switch, entry.text, entry.type + "." + entry.text);
 
-      // It's a new message, let's create the service for it. Each message cannot exceed 30 characters, but
-      // given that HomeKit allows for strings to be up to 64 characters long, this should be fine.
-      if(!switchService) {
+      // Fail gracefully.
+      if(!service) {
 
-        switchService = new this.hap.Service.Switch(entry.text, entry.type + "." + entry.text);
+        this.log.error("Unable to add doorbell message switch: %s.", entry.text);
 
-        if(!switchService) {
-
-          this.log.error("Unable to add doorbell message switch: %s.", entry.text);
-          continue;
-        }
-
-        switchService.addOptionalCharacteristic(this.hap.Characteristic.ConfiguredName);
-        this.accessory.addService(switchService);
+        return false;
       }
 
       const duration = "duration" in entry ? entry.duration : this.defaultMessageDuration;
 
       // Save the message switch in the list we maintain.
-      this.messageSwitches.push({ duration: duration, service: switchService, state: false, text: entry.text, type: entry.type }) - 1;
+      this.messageSwitches.push({ duration: duration, service: service, state: false, text: entry.text, type: entry.type }) - 1;
 
       // Configure the message switch.
-      switchService.updateCharacteristic(this.hap.Characteristic.ConfiguredName, entry.text);
-      switchService
-        .getCharacteristic(this.hap.Characteristic.On)
-        ?.onGet(this.getSwitchState.bind(this, this.messageSwitches[this.messageSwitches.length - 1]))
-        .onSet(this.setSwitchState.bind(this, this.messageSwitches[this.messageSwitches.length - 1]));
+      service.getCharacteristic(this.hap.Characteristic.On)?.onGet(this.getSwitchState.bind(this, this.messageSwitches[this.messageSwitches.length - 1]));
+      service.getCharacteristic(this.hap.Characteristic.On)?.onSet(this.setSwitchState.bind(this, this.messageSwitches[this.messageSwitches.length - 1]));
     }
 
     // Update the message switch state in HomeKit.
@@ -218,55 +207,46 @@ export class ProtectDoorbell extends ProtectCamera {
 
       const chimeSetting = physicalChimeType.slice(physicalChimeType.lastIndexOf(".") + 1);
 
-      // Find the switch service, if it exists.
-      let switchService = this.accessory.getServiceById(this.hap.Service.Switch, physicalChimeType);
+      // Validate whether we should have this service enabled.
+      if(!this.validService(this.hap.Service.Switch, () => {
 
-      // If we don't have the physical capabilities or the feature option enabled, disable the switch and we're done.
-      if(!this.ufp.featureFlags.hasChime || !this.hasFeature("Doorbell.PhysicalChime")) {
+        // If we don't have the physical capabilities or the feature option enabled, disable the switch and we're done.
+        if(!this.ufp.featureFlags.hasChime || !this.hasFeature("Doorbell.PhysicalChime")) {
 
-        if(switchService) {
-
-          this.accessory.removeService(switchService);
+          return false;
         }
+
+        return true;
+      }, physicalChimeType)) {
 
         continue;
       }
 
-      const switchName = this.accessoryName + " Physical Chime " + chimeSetting.charAt(0).toUpperCase() + chimeSetting.slice(1);
+      // Acquire the service.
+      const service = this.acquireService(this.hap.Service.Switch, this.accessoryName + " Physical Chime " + toCamelCase(chimeSetting), physicalChimeType);
 
-      // Add the switch to the doorbell, if needed.
-      if(!switchService) {
+      // Fail gracefully.
+      if(!service) {
 
-        switchService = new this.hap.Service.Switch(switchName, physicalChimeType);
+        this.log.error("Unable to add physical chime switch: %s.", chimeSetting);
 
-        if(!switchService) {
-
-          this.log.error("Unable to add the physical chime switches.");
-          continue;
-        }
-
-        switchService.addOptionalCharacteristic(this.hap.Characteristic.ConfiguredName);
-        this.accessory.addService(switchService);
+        continue;
       }
 
       // Get the current status of the physical chime mode on the doorbell.
-      switchService.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => {
+      service.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => {
 
         return this.ufp.chimeDuration === this.getPhysicalChimeDuration(physicalChimeType);
       });
 
       // Activate the appropriate physical chime mode on the doorbell.
-      switchService.getCharacteristic(this.hap.Characteristic.On)?.onSet(async (value: CharacteristicValue) => {
+      service.getCharacteristic(this.hap.Characteristic.On)?.onSet(async (value: CharacteristicValue) => {
 
-        // We only want to do something if we're being activated. Turning off the switch would really be an undefined state given that
-        // there are three different settings one can choose from. Instead, we do nothing and leave it to the user to choose what state
-        // they really want to set.
+        // We only want to do something if we're being activated. Turning off the switch would really be an undefined state given that there are three different settings
+        // one can choose from. Instead, we do nothing and leave it to the user to choose what state they really want to set.
         if(!value) {
 
-          setTimeout(() => {
-
-            this.updateDevice();
-          }, 50);
+          setTimeout(() => this.updateDevice(), 50);
 
           return;
         }
@@ -284,9 +264,8 @@ export class ProtectDoorbell extends ProtectCamera {
         this.ufp = newDevice;
 
         // Update all the other physical chime switches.
-        for(const otherChimeSwitch of
-          [ ProtectReservedNames.SWITCH_DOORBELL_CHIME_NONE, ProtectReservedNames.SWITCH_DOORBELL_CHIME_MECHANICAL,
-            ProtectReservedNames.SWITCH_DOORBELL_CHIME_DIGITAL ]) {
+        for(const otherChimeSwitch of[ ProtectReservedNames.SWITCH_DOORBELL_CHIME_NONE, ProtectReservedNames.SWITCH_DOORBELL_CHIME_MECHANICAL,
+          ProtectReservedNames.SWITCH_DOORBELL_CHIME_DIGITAL ]) {
 
           // Don't update ourselves a second time.
           if(physicalChimeType === otherChimeSwitch) {
@@ -303,8 +282,7 @@ export class ProtectDoorbell extends ProtectCamera {
       });
 
       // Initialize the physical chime switch state.
-      switchService.updateCharacteristic(this.hap.Characteristic.ConfiguredName, switchName);
-      switchService.updateCharacteristic(this.hap.Characteristic.On, this.ufp.chimeDuration === this.getPhysicalChimeDuration(physicalChimeType));
+      service.updateCharacteristic(this.hap.Characteristic.On, this.ufp.chimeDuration === this.getPhysicalChimeDuration(physicalChimeType));
       switchesEnabled.push(chimeSetting);
     }
 
@@ -324,23 +302,13 @@ export class ProtectDoorbell extends ProtectCamera {
     super.configureMqtt();
 
     // Get the current message on the doorbell.
-    this.nvr.mqtt?.subscribe(this.accessory, "message/get", (message: Buffer) => {
+    this.subscribeGet("message", "doorbell message", (): string => {
 
-      const value = message.toString();
-
-      // When we get the right message, we return the current message set on the doorbell.
-      if(value?.toLowerCase() !== "true") {
-
-        return;
-      }
-
-      const doorbellMessage = this.ufp.lcdMessage?.text ?? "";
-      const doorbellDuration = (("resetAt" in this.ufp.lcdMessage) && this.ufp.lcdMessage.resetAt !== null) ?
+      const doorbellDuration = (("resetAt" in this.ufp.lcdMessage) && (this.ufp.lcdMessage.resetAt !== null)) ?
         Math.round((this.ufp.lcdMessage.resetAt - Date.now()) / 1000) : 0;
 
-      // Publish the current message.
-      this.nvr.mqtt?.publish(this.accessory, "message", JSON.stringify({ duration: doorbellDuration, message: doorbellMessage }));
-      this.log.info("Doorbell message information published via MQTT.");
+      // Return the current message.
+      return JSON.stringify({ duration: doorbellDuration, message: this.ufp.lcdMessage?.text ?? "" });
     });
 
     // We support the ability to set the doorbell message like so:
@@ -350,7 +318,7 @@ export class ProtectDoorbell extends ProtectCamera {
     // If duration is omitted, we assume the default duration.
     // If duration is 0, we assume it's not expiring.
     // If the message is blank, we assume we're resetting the doorbell message.
-    this.nvr.mqtt?.subscribe(this.accessory, "message/set", (message: Buffer) => {
+    this.subscribeSet("message", "doorbell message", (value: string, rawValue: string) => {
 
       interface mqttMessageJSON {
 
@@ -358,59 +326,47 @@ export class ProtectDoorbell extends ProtectCamera {
         duration: number
       }
 
-      let incomingPayload;
-      let outboundPayload;
+      let inboundPayload;
 
       // Catch any errors in parsing what we get over MQTT.
       try {
 
-        incomingPayload = JSON.parse(message.toString()) as mqttMessageJSON;
-
-        // Sanity check what comes in from MQTT to make sure it's what we want.
-        if(!(incomingPayload instanceof Object)) {
-
-          throw new Error("The JSON object is not in the expected format");
-        }
+        inboundPayload = JSON.parse(rawValue) as mqttMessageJSON;
       } catch(error) {
 
-        if(error instanceof SyntaxError) {
-
-          this.log.error("Unable to process MQTT message: \"%s\". Error: %s.", message.toString(), error.message);
-        } else {
-
-          this.log.error("Unknown error has occurred: %s.", error);
-        }
+        this.log.error("Unable to process MQTT message: \"%s\". Invalid JSON.", rawValue);
 
         // Errors mean that we're done now.
         return;
       }
 
-      // At a minimum, make sure a message was specified. If we have specified duration, make sure it's a number.
-      // Our NaN test may seem strange - that's because NaN is the only JavaScript value that is treated as unequal
-      // to itself. Meaning, you can always test if a value is NaN by checking it for equality to itself. Weird huh?
-      if(!("message" in incomingPayload) || (("duration" in incomingPayload) && (incomingPayload.duration !== incomingPayload.duration))) {
+      // At a minimum, make sure a message was specified. If we have specified duration, make sure it's a number. Our NaN test may seem strange - that's because NaN is
+      // the only JavaScript value that is treated as unequal to itself. Meaning, you can always test if a value is NaN by checking it for equality to itself. Weird huh?
+      if(!inboundPayload || !("message" in inboundPayload) || (("duration" in inboundPayload) && (inboundPayload.duration !== inboundPayload.duration))) {
 
-        this.log.error("Unable to process MQTT message: \"%s\".", incomingPayload);
+        this.log.error("Unable to process MQTT message: \"%s\".", inboundPayload);
         return;
       }
 
       // If no duration specified, or a negative duration, we assume the default duration.
-      if(!("duration" in incomingPayload) || (("duration" in incomingPayload) && (incomingPayload.duration < 0))) {
+      if(!("duration" in inboundPayload) || (("duration" in inboundPayload) && (inboundPayload.duration < 0))) {
 
-        incomingPayload.duration = this.defaultMessageDuration;
+        inboundPayload.duration = this.defaultMessageDuration;
       } else {
 
-        incomingPayload.duration = incomingPayload.duration * 1000;
+        inboundPayload.duration = inboundPayload.duration * 1000;
       }
 
+      let outboundPayload;
+
       // No message defined...we assume we're resetting the message.
-      if(!incomingPayload.message.length) {
+      if(!inboundPayload.message.length) {
 
         outboundPayload = { resetAt: 0 };
         this.log.info("Received MQTT doorbell message reset.");
       } else {
 
-        outboundPayload = { duration: incomingPayload.duration, text: incomingPayload.message, type: "CUSTOM_MESSAGE" };
+        outboundPayload = { duration: inboundPayload.duration, text: inboundPayload.message, type: "CUSTOM_MESSAGE" };
         this.log.info("Received MQTT doorbell message%s: %s.",
           outboundPayload.duration ? " (" + (outboundPayload.duration / 1000).toString() + " seconds)" : "",
           outboundPayload.text);
@@ -606,7 +562,7 @@ export class ProtectDoorbell extends ProtectCamera {
         lcdMessage.resetAt !== null ? " (" + Math.round(((lcdMessage.resetAt ?? 0) - Date.now()) / 1000).toString() + " seconds)" : "", lcdMessage.text);
 
       // Publish to MQTT, if the user has configured it.
-      this.nvr.mqtt?.publish(this.accessory, "message", JSON.stringify({ duration: lcdEntry.duration / 1000, message: lcdEntry.text }));
+      this.publish("message", JSON.stringify({ duration: lcdEntry.duration / 1000, message: lcdEntry.text }));
     }
   }
 

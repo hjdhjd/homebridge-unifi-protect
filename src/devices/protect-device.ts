@@ -2,7 +2,7 @@
  *
  * protect-device.ts: Base class for all UniFi Protect devices.
  */
-import { API, CharacteristicValue, HAP, PlatformAccessory } from "homebridge";
+import { API, CharacteristicValue, HAP, PlatformAccessory, Service, WithUUID } from "homebridge";
 import { PROTECT_MOTION_DURATION, PROTECT_OCCUPANCY_DURATION} from "../settings.js";
 import { ProtectApi, ProtectCameraConfig, ProtectEventPacket, ProtectNvrConfig } from "unifi-protect";
 import { ProtectDeviceConfigTypes, ProtectLogging, ProtectReservedNames } from "../protect-types.js";
@@ -33,6 +33,7 @@ export interface ProtectHints {
   enabled: boolean,
   hardwareDecoding: boolean,
   hardwareTranscoding: boolean,
+  highResSnapshots: boolean,
   ledStatus: boolean,
   logDoorbell: boolean,
   logHksv: boolean,
@@ -155,6 +156,86 @@ export abstract class ProtectDevice extends ProtectBase {
     }
   }
 
+  // Retrieve an existing service from an accessory, creating it if necessary.
+  protected acquireService(serviceType: WithUUID<typeof Service>, name = this.accessoryName, subtype?: string, onServiceCreate?: () => void): Service | null {
+
+    // Services that need the ConfiguredName characteristic added and maintained.
+    const configuredNameServices = [ this.hap.Service.ContactSensor, this.hap.Service.Lightbulb, this.hap.Service.MotionSensor, this.hap.Service.OccupancySensor,
+      this.hap.Service.Switch ];
+
+    // Services that need the Name characteristic maintained.
+    const nameServices = [ this.hap.Service.Battery, this.hap.Service.ContactSensor, this.hap.Service.HumiditySensor, this.hap.Service.LeakSensor,
+      this.hap.Service.Lightbulb, this.hap.Service.LightSensor, this.hap.Service.MotionSensor, this.hap.Service.TemperatureSensor ];
+
+    // Find the service, if it exists.
+    let service = subtype ? this.accessory.getServiceById(serviceType, subtype) : this.accessory.getService(serviceType);
+
+    // Add the service to the accessory, if needed.
+    if(!service) {
+
+      // @ts-expect-error TypeScript tries to associate this with an overloaded version of the addService method. However, Homebridge/HAP-NodeJS isn't exporting
+      // a version of the method that implements the unexposed interface that's been defined for each service class (e.g. Lightbulb). The constructor on the
+      // service-type-specific version of the service takes the following arguments: constructor(displayName?: string, subtype?: string). We're safe, but because
+      // the type definitions are missing, we need to override it here.
+      service = new serviceType(name, subtype);
+
+      if(!service) {
+
+        return null;
+      }
+
+      this.accessory.addService(service);
+
+      if(onServiceCreate) {
+
+        onServiceCreate();
+      }
+    }
+
+    // Update our name.
+    service.displayName = name;
+
+    if(configuredNameServices.includes(serviceType)) {
+
+      // Add the characteristic if we don't already have it. We do this here instead of at service creation to ensure we catch legacy situations where we may have
+      // already created the service previously without adding the optional characteristics we want.
+      if(!service.optionalCharacteristics.some(x => (x.UUID === this.hap.Characteristic.ConfiguredName.UUID))) {
+
+        service.addOptionalCharacteristic(this.hap.Characteristic.ConfiguredName);
+      }
+
+      service.updateCharacteristic(this.hap.Characteristic.ConfiguredName, name);
+    }
+
+    if(nameServices.includes(serviceType)) {
+
+      service.updateCharacteristic(this.hap.Characteristic.Name, name);
+    }
+
+    return service;
+  }
+
+  // Validate whether a service should exist, removing it if necessary.
+  protected validService(serviceType: WithUUID<typeof Service>, validate: () => boolean, subtype?: string): boolean {
+
+    // Find the switch service, if it exists.
+    const service = subtype ? this.accessory.getServiceById(serviceType, subtype) : this.accessory.getService(serviceType);
+
+    // Validate whether we should have the service. If not, remove it.
+    if(!validate()) {
+
+      if(service) {
+
+        this.accessory.removeService(service);
+      }
+
+      return false;
+    }
+
+    // We have a valid service.
+    return true;
+  }
+
   // Configure device-specific settings.
   protected configureHints(): boolean {
 
@@ -219,46 +300,58 @@ export abstract class ProtectDevice extends ProtectBase {
     }
   }
 
+  // Utility to ease publishing of MQTT events.
+  protected publish(topic: string, message: string): void {
+
+    this.nvr.mqtt?.publish(this.accessory, topic, message);
+  }
+
+  // Configure our MQTT get subscriptions.
+  protected subscribeGet(topic: string, type: string, getValue: () => string): void {
+
+    this.nvr.mqtt?.subscribeGet(this.accessory, topic, type, getValue);
+  }
+
+  // Configure our MQTT set subscriptions.
+  protected subscribeSet(topic: string, type: string, setValue: (value: string, rawValue: string) => Promise<void> | void): void {
+
+    this.nvr.mqtt?.subscribeSet(this.accessory, topic, type, setValue);
+  }
+
   // Configure the Protect motion sensor for HomeKit.
   protected configureMotionSensor(isEnabled = true, isInitialized = false): boolean {
 
-    // Find the motion sensor service, if it exists.
-    let motionService = this.accessory.getService(this.hap.Service.MotionSensor);
+    // Validate whether we should have this service enabled.
+    if(!this.validService(this.hap.Service.MotionSensor, () => {
 
-    // Have we disabled the motion sensor?
-    if(!isEnabled) {
+      // Have we disabled the motion sensor?
+      if(!isEnabled) {
 
-      if(motionService) {
-
-        this.accessory.removeService(motionService);
-        this.nvr.mqtt?.unsubscribe(this.id, "motion/trigger");
-
-        this.log.info("Disabling motion sensor.");
-      }
-
-      this.configureMotionSwitch(isEnabled);
-      this.configureMotionTrigger(isEnabled);
-
-      return false;
-    }
-
-    // We don't have a motion sensor, let's add it to the device.
-    if(!motionService) {
-
-      // We don't have it, add the motion sensor to the device.
-      motionService = new this.hap.Service.MotionSensor(this.accessoryName);
-
-      if(!motionService) {
-
-        this.log.error("Unable to add motion sensor.");
+        this.nvr.mqtt?.unsubscribe(this.accessory, "motion/get");
+        this.nvr.mqtt?.unsubscribe(this.accessory, "motion/set");
+        this.configureMotionSwitch(isEnabled);
+        this.configureMotionTrigger(isEnabled);
 
         return false;
       }
 
-      this.accessory.addService(motionService);
-      isInitialized = false;
+      return true;
+    })) {
 
-      this.log.info("Enabling motion sensor.");
+      return false;
+    }
+
+    // Acquire the service.
+    const service = this.acquireService(this.hap.Service.MotionSensor, undefined, undefined, () => {
+
+      isInitialized = false;
+    });
+
+    if(!service) {
+
+      this.log.error("Unable to add motion sensor.");
+
+      return false;
     }
 
     // Have we previously initialized this sensor? We assume not by default, but this allows for scenarios where you may be dynamically reconfiguring a sensor at
@@ -266,18 +359,31 @@ export abstract class ProtectDevice extends ProtectBase {
     if(!isInitialized) {
 
       // Initialize the state of the motion sensor.
-      motionService.displayName = this.accessoryName;
-      motionService.updateCharacteristic(this.hap.Characteristic.Name, this.accessoryName);
-      motionService.updateCharacteristic(this.hap.Characteristic.MotionDetected, false);
-      motionService.updateCharacteristic(this.hap.Characteristic.StatusActive, this.isOnline);
+      service.updateCharacteristic(this.hap.Characteristic.MotionDetected, false);
+      service.updateCharacteristic(this.hap.Characteristic.StatusActive, this.isOnline);
 
-      motionService.getCharacteristic(this.hap.Characteristic.StatusActive).onGet(() => {
+      service.getCharacteristic(this.hap.Characteristic.StatusActive).onGet(() => {
 
         return this.isOnline;
       });
 
       // Configure our MQTT support.
-      this.configureMqttMotionTrigger();
+      this.subscribeGet("motion", "motion", () => {
+
+        return service.getCharacteristic(this.hap.Characteristic.MotionDetected).value === true ? "true" : "false";
+      });
+
+      this.subscribeSet("motion", "motion event trigger", (value: string) => {
+
+        // When we get the right message, we trigger the motion event.
+        if(value !== "true") {
+
+          return;
+        }
+
+        // Trigger the motion event.
+        this.nvr.events.motionEventHandler(this);
+      });
 
       // Configure any motion switches or triggers the user may have enabled or disabled.
       this.configureMotionSwitch(isEnabled);
@@ -290,16 +396,17 @@ export abstract class ProtectDevice extends ProtectBase {
   // Configure a switch to easily activate or deactivate motion sensor detection for HomeKit.
   private configureMotionSwitch(isEnabled = true): boolean {
 
-    // Find the switch service, if it exists.
-    let switchService = this.accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_MOTION_SENSOR);
+    // Validate whether we should have this service enabled.
+    if(!this.validService(this.hap.Service.Switch, () => {
 
-    // Motion switches are disabled by default unless the user enables them.
-    if(!isEnabled || !this.hasFeature("Motion.Switch")) {
+      // Motion switches are disabled by default unless the user enables them.
+      if(!isEnabled || !this.hasFeature("Motion.Switch")) {
 
-      if(switchService) {
-
-        this.accessory.removeService(switchService);
+        return false;
       }
+
+      return true;
+    }, ProtectReservedNames.SWITCH_MOTION_SENSOR)) {
 
       // If we disable the switch, make sure we fully reset it's state. Otherwise, we can end up in a situation (e.g. liveview switches) where we have disabled motion
       // detection with no meaningful way to enable it again.
@@ -308,33 +415,24 @@ export abstract class ProtectDevice extends ProtectBase {
       return false;
     }
 
-    this.log.info("Enabling motion sensor switch.");
+    // Acquire the service.
+    const service = this.acquireService(this.hap.Service.Switch, this.accessoryName + " Motion Events", ProtectReservedNames.SWITCH_MOTION_SENSOR);
 
-    const switchName = this.accessoryName + " Motion Events";
+    // Fail gracefully.
+    if(!service) {
 
-    // Add the switch to the camera, if needed.
-    if(!switchService) {
+      this.log.error("Unable to add motion sensor switch.");
 
-      switchService = new this.hap.Service.Switch(switchName, ProtectReservedNames.SWITCH_MOTION_SENSOR);
-
-      if(!switchService) {
-
-        this.log.error("Unable to add motion sensor switch.");
-
-        return false;
-      }
-
-      switchService.addOptionalCharacteristic(this.hap.Characteristic.ConfiguredName);
-      this.accessory.addService(switchService);
+      return false;
     }
 
     // Activate or deactivate motion detection.
-    switchService.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => {
+    service.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => {
 
       return this.accessory.context.detectMotion === true;
     });
 
-    switchService.getCharacteristic(this.hap.Characteristic.On)?.onSet((value: CharacteristicValue) => {
+    service.getCharacteristic(this.hap.Characteristic.On)?.onSet((value: CharacteristicValue) => {
 
       if(this.accessory.context.detectMotion !== value) {
 
@@ -350,8 +448,9 @@ export abstract class ProtectDevice extends ProtectBase {
       this.accessory.context.detectMotion = true;
     }
 
-    switchService.updateCharacteristic(this.hap.Characteristic.ConfiguredName, switchName);
-    switchService.updateCharacteristic(this.hap.Characteristic.On, this.accessory.context.detectMotion as boolean);
+    service.updateCharacteristic(this.hap.Characteristic.On, this.accessory.context.detectMotion as boolean);
+
+    this.log.info("Enabling motion sensor switch.");
 
     return true;
   }
@@ -359,36 +458,30 @@ export abstract class ProtectDevice extends ProtectBase {
   // Configure a switch to manually trigger a motion sensor event for HomeKit.
   private configureMotionTrigger(isEnabled = true): boolean {
 
-    // Find the switch service, if it exists.
-    let triggerService = this.accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_MOTION_TRIGGER);
+    // Validate whether we should have this service enabled.
+    if(!this.validService(this.hap.Service.Switch, () => {
 
-    // Motion triggers are disabled by default and primarily exist for automation purposes.
-    if(!isEnabled || !this.hasFeature("Motion.Trigger")) {
-
-      if(triggerService) {
-
-        this.accessory.removeService(triggerService);
-      }
-
-      return false;
-    }
-
-    const triggerName = this.accessoryName + " Motion Trigger";
-
-    // Add the switch to the device, if needed.
-    if(!triggerService) {
-
-      triggerService = new this.hap.Service.Switch(triggerName, ProtectReservedNames.SWITCH_MOTION_TRIGGER);
-
-      if(!triggerService) {
-
-        this.log.error("Unable to add motion sensor trigger.");
+      // Motion triggers are disabled by default and primarily exist for automation purposes.
+      if(!isEnabled || !this.hasFeature("Motion.Trigger")) {
 
         return false;
       }
 
-      triggerService.addOptionalCharacteristic(this.hap.Characteristic.ConfiguredName);
-      this.accessory.addService(triggerService);
+      return true;
+    }, ProtectReservedNames.SWITCH_MOTION_TRIGGER)) {
+
+      return false;
+    }
+
+    // Acquire the service.
+    const triggerService = this.acquireService(this.hap.Service.Switch, this.accessoryName + " Motion Trigger", ProtectReservedNames.SWITCH_MOTION_TRIGGER);
+
+    // Fail gracefully.
+    if(!triggerService) {
+
+      this.log.error("Unable to add motion sensor trigger.");
+
+      return false;
     }
 
     const motionService = this.accessory.getService(this.hap.Service.MotionSensor);
@@ -435,7 +528,6 @@ export abstract class ProtectDevice extends ProtectBase {
     });
 
     // Initialize the switch.
-    triggerService.updateCharacteristic(this.hap.Characteristic.ConfiguredName, triggerName);
     triggerService.updateCharacteristic(this.hap.Characteristic.On, false);
 
     this.log.info("Enabling motion sensor automation trigger.");
@@ -443,60 +535,34 @@ export abstract class ProtectDevice extends ProtectBase {
     return true;
   }
 
-  // Configure MQTT motion triggers.
-  private configureMqttMotionTrigger(): boolean {
-
-    // Trigger a motion event in MQTT, if requested to do so.
-    this.nvr.mqtt?.subscribe(this.id, "motion/trigger", (message: Buffer) => {
-
-      const value = message.toString();
-
-      // When we get the right message, we trigger the motion event.
-      if(value?.toLowerCase() !== "true") {
-
-        return;
-      }
-
-      // Trigger the motion event.
-      this.nvr.events.motionEventHandler(this);
-      this.log.info("Motion event triggered via MQTT.");
-    });
-
-    return true;
-  }
-
   // Configure the Protect occupancy sensor for HomeKit.
   protected configureOccupancySensor(isEnabled = true, isInitialized = false): boolean {
 
-    // Find the occupancy sensor service, if it exists.
-    let occupancyService = this.accessory.getService(this.hap.Service.OccupancySensor);
+    // Validate whether we should have this service enabled.
+    if(!this.validService(this.hap.Service.OccupancySensor, () => {
 
-    // Occupancy sensors are disabled by default and primarily exist for automation purposes.
-    if(!isEnabled || !this.hasFeature("Motion.OccupancySensor")) {
+      // Occupancy sensors are disabled by default and primarily exist for automation purposes.
+      if(!isEnabled || !this.hasFeature("Motion.OccupancySensor")) {
 
-      if(occupancyService) {
-
-        this.accessory.removeService(occupancyService);
-        this.log.info("Disabling occupancy sensor.");
-      }
-
-      return false;
-    }
-
-    // We don't have an occupancy sensor, let's add it to the device.
-    if(!occupancyService) {
-
-      // We don't have it, add the occupancy sensor to the device.
-      occupancyService = new this.hap.Service.OccupancySensor(this.accessoryName);
-
-      if(!occupancyService) {
-
-        this.log.error("Unable to add occupancy sensor.");
+        this.nvr.mqtt?.unsubscribe(this.accessory, "occupancy/get");
 
         return false;
       }
 
-      this.accessory.addService(occupancyService);
+      return true;
+    })) {
+
+      return false;
+    }
+
+    // Acquire the service.
+    const service = this.acquireService(this.hap.Service.OccupancySensor);
+
+    if(!service) {
+
+      this.log.error("Unable to add occupancy sensor.");
+
+      return false;
     }
 
     // Have we previously initialized this sensor? We assume not by default, but this allows for scenarios where you may be dynamically reconfiguring a sensor at
@@ -504,10 +570,10 @@ export abstract class ProtectDevice extends ProtectBase {
     if(!isInitialized) {
 
       // Initialize the state of the occupancy sensor.
-      occupancyService.updateCharacteristic(this.hap.Characteristic.OccupancyDetected, false);
-      occupancyService.updateCharacteristic(this.hap.Characteristic.StatusActive, this.isOnline);
+      service.updateCharacteristic(this.hap.Characteristic.OccupancyDetected, false);
+      service.updateCharacteristic(this.hap.Characteristic.StatusActive, this.isOnline);
 
-      occupancyService.getCharacteristic(this.hap.Characteristic.StatusActive).onGet(() => {
+      service.getCharacteristic(this.hap.Characteristic.StatusActive).onGet(() => {
 
         return this.isOnline;
       });
@@ -530,6 +596,12 @@ export abstract class ProtectDevice extends ProtectBase {
           this.hints.smartOccupancy.push("no smart motion detection object type configured");
         }
       }
+
+      // Configure our MQTT support.
+      this.subscribeGet("occupancy", "occupancy", () => {
+
+        return service.getCharacteristic(this.hap.Characteristic.OccupancyDetected).value === true ? "true" : "false";
+      });
 
       this.log.info("Enabling occupancy sensor%s.", this.hints.smartDetect ? " using smart motion detection: " + this.hints.smartOccupancy.join(", ")  : "");
     }
@@ -582,7 +654,7 @@ export abstract class ProtectDevice extends ProtectBase {
   // Utility function to return the fully enumerated name of this device.
   public get name(): string {
 
-    return this.nvr.ufpApi.getFullName(this.ufp);
+    return this.nvr.ufpApi.getDeviceName(this.ufp);
   }
 
   // Utility function to return the current accessory name of this device.

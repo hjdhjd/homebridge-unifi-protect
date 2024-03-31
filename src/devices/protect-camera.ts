@@ -4,10 +4,10 @@
  */
 import { CharacteristicValue, PlatformAccessory, Resolution } from "homebridge";
 import { ProtectCameraChannelConfig, ProtectCameraConfig, ProtectCameraConfigPayload, ProtectEventAdd, ProtectEventPacket } from "unifi-protect";
+import { ProtectReservedNames, toCamelCase } from "../protect-types.js";
 import { PROTECT_HOMEKIT_IDR_INTERVAL } from "../settings.js";
 import { ProtectDevice } from "./protect-device.js";
 import { ProtectNvr } from "../protect-nvr.js";
-import { ProtectReservedNames } from "../protect-types.js";
 import { ProtectStreamingDelegate } from "../protect-stream.js";
 
 export interface RtspEntry {
@@ -23,9 +23,7 @@ export class ProtectCamera extends ProtectDevice {
 
   public hasHksv: boolean;
   private isDeleted: boolean;
-  private isDoorbellConfigured: boolean;
   public isRinging: boolean;
-  private isVideoConfigured: boolean;
   public detectLicensePlate: string[];
   private rtspEntries: RtspEntry[];
   private rtspQuality: { [index: string]: string };
@@ -37,11 +35,9 @@ export class ProtectCamera extends ProtectDevice {
 
     super(nvr, accessory);
 
-    this.isDoorbellConfigured = false;
     this.hasHksv = false;
     this.isDeleted = false;
     this.isRinging = false;
-    this.isVideoConfigured = false;
     this.detectLicensePlate = [];
     this.rtspEntries = [];
     this.rtspQuality = {};
@@ -60,6 +56,7 @@ export class ProtectCamera extends ProtectDevice {
     this.hints.crop = this.hasFeature("Video.Crop");
     this.hints.hardwareDecoding = true;
     this.hints.hardwareTranscoding = this.hasFeature("Video.Transcode.Hardware");
+    this.hints.highResSnapshots = this.hasFeature("Video.HighResSnapshots");
     this.hints.ledStatus = this.ufp.featureFlags.hasLedStatus && this.hasFeature("Device.StatusLed");
     this.hints.logDoorbell = this.hasFeature("Log.Doorbell");
     this.hints.logHksv = this.hasFeature("Log.HKSV");
@@ -76,38 +73,14 @@ export class ProtectCamera extends ProtectDevice {
   // Configure a camera accessory for HomeKit.
   protected async configureDevice(): Promise<boolean> {
 
-    // Default to enabling motion detection.
-    let detectMotion = true;
-
-    // Save the motion detection switch state before we wipeout the context.
-    if("detectMotion" in this.accessory.context) {
-
-      detectMotion = this.accessory.context.detectMotion as boolean;
-    }
-
-    // Default to disabling the dynamic bitrate setting.
-    let dynamicBitrate = false;
-
-    // Save the dynamic bitrate switch state before we wipeout the context.
-    if("dynamicBitrate" in this.accessory.context) {
-
-      dynamicBitrate = this.accessory.context.dynamicBitrate as boolean;
-    }
-
-    // Default to enabling HKSV recording.
-    let hksvRecording = true;
-
-    // Save the HKSV recording switch state before we wipeout the context.
-    if("hksvRecording" in this.accessory.context) {
-
-      hksvRecording = this.accessory.context.hksvRecording as boolean;
-    }
+    // Save our context for reference before we recreate it.
+    const savedContext = this.accessory.context;
 
     // Clean out the context object in case it's been polluted somehow.
     this.accessory.context = {};
-    this.accessory.context.detectMotion = detectMotion;
-    this.accessory.context.dynamicBitrate = dynamicBitrate;
-    this.accessory.context.hksvRecording = hksvRecording;
+    this.accessory.context.detectMotion = savedContext.detectMotion as boolean ?? true;
+    this.accessory.context.dynamicBitrate = savedContext.dynamicBitrate as boolean ?? false;
+    this.accessory.context.hksvRecording = savedContext.hksvRecording as boolean ?? true;
     this.accessory.context.mac = this.ufp.mac;
     this.accessory.context.nvr = this.nvr.ufp.mac;
 
@@ -296,30 +269,20 @@ export class ProtectCamera extends ProtectDevice {
     // A utility for us to add contact sensors.
     const addSmartDetectContactSensor = (name: string, serviceId: string, errorMessage: string): boolean => {
 
-      // See if we already have this contact sensor configured.
-      let contactService = this.accessory.getServiceById(this.hap.Service.ContactSensor, serviceId);
+      // Acquire the service.
+      const service = this.acquireService(this.hap.Service.ContactSensor, name, serviceId);
 
-      // If not, let's add it.
-      if(!contactService) {
+      // Fail gracefully.
+      if(!service) {
 
-        contactService = new this.hap.Service.ContactSensor(name, serviceId);
+        this.log.error(errorMessage);
 
-        // Something went wrong, we're done here.
-        if(!contactService) {
-
-          this.log.error(errorMessage);
-          return false;
-        }
-
-        contactService.addOptionalCharacteristic(this.hap.Characteristic.ConfiguredName);
-
-        // Finally, add it to the camera.
-        this.accessory.addService(contactService);
+        return false;
       }
 
       // Initialize the sensor.
-      contactService.updateCharacteristic(this.hap.Characteristic.ConfiguredName, name);
-      contactService.updateCharacteristic(this.hap.Characteristic.ContactSensorState, false);
+      service.updateCharacteristic(this.hap.Characteristic.ContactSensorState, false);
+
       return true;
     };
 
@@ -330,7 +293,7 @@ export class ProtectCamera extends ProtectDevice {
 
       for(const smartDetectType of this.ufp.featureFlags.smartDetectTypes) {
 
-        if(addSmartDetectContactSensor(this.accessoryName + " " + smartDetectType.charAt(0).toUpperCase() + smartDetectType.slice(1),
+        if(addSmartDetectContactSensor(this.accessoryName + " " + toCamelCase(smartDetectType),
           ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + "." + smartDetectType, "Unable to add smart motion contact sensor for " + smartDetectType + " detection.")) {
 
           enabledContactSensors.push(smartDetectType);
@@ -368,22 +331,22 @@ export class ProtectCamera extends ProtectDevice {
   // Configure a switch to manually trigger a doorbell ring event for HomeKit.
   private configureDoorbellTrigger(): boolean {
 
-    // Find the switch service, if it exists.
-    let triggerService = this.accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_DOORBELL_TRIGGER);
-
     // See if we have a doorbell service configured.
     let doorbellService = this.accessory.getService(this.hap.Service.Doorbell);
 
-    // Doorbell switches are disabled by default and primarily exist for automation purposes.
-    if(!this.hasFeature("Doorbell.Trigger")) {
+    // Validate whether we should have this service enabled.
+    if(!this.validService(this.hap.Service.Switch, () => {
 
-      if(triggerService) {
+      // Doorbell switches are disabled by default and primarily exist for automation purposes.
+      if(!this.hasFeature("Doorbell.Trigger")) {
 
-        this.accessory.removeService(triggerService);
+        return false;
       }
 
-      // Since we aren't enabling the doorbell trigger on this camera, remove the doorbell service if the camera
-      // isn't actually doorbell-capable hardware.
+      return true;
+    }, ProtectReservedNames.SWITCH_DOORBELL_TRIGGER)) {
+
+      // Since we aren't enabling the doorbell trigger on this camera, remove the doorbell service if the camera isn't actually doorbell-capable hardware.
       if(!this.ufp.featureFlags.isDoorbell && doorbellService) {
 
         this.accessory.removeService(doorbellService);
@@ -409,21 +372,15 @@ export class ProtectCamera extends ProtectDevice {
       }
     }
 
-    const triggerName = this.accessoryName + " Doorbell Trigger";
-
     // Add the switch to the camera, if needed.
+    const triggerService = this.acquireService(this.hap.Service.Switch, this.accessoryName + " Doorbell Trigger", ProtectReservedNames.SWITCH_DOORBELL_TRIGGER);
+
+    // Fail gracefully.
     if(!triggerService) {
 
-      triggerService = new this.hap.Service.Switch(triggerName, ProtectReservedNames.SWITCH_DOORBELL_TRIGGER);
+      this.log.error("Unable to add the doorbell trigger.");
 
-      if(!triggerService) {
-
-        this.log.error("Unable to add the doorbell trigger.");
-        return false;
-      }
-
-      triggerService.addOptionalCharacteristic(this.hap.Characteristic.ConfiguredName);
-      this.accessory.addService(triggerService);
+      return false;
     }
 
     // Trigger the doorbell.
@@ -453,7 +410,6 @@ export class ProtectCamera extends ProtectDevice {
     });
 
     // Initialize the switch.
-    triggerService.updateCharacteristic(this.hap.Characteristic.ConfiguredName, triggerName);
     triggerService.updateCharacteristic(this.hap.Characteristic.On, false);
 
     this.log.info("Enabling doorbell automation trigger.");
@@ -464,32 +420,20 @@ export class ProtectCamera extends ProtectDevice {
   // Configure the doorbell service for HomeKit.
   protected configureVideoDoorbell(): boolean {
 
-    // Only configure the doorbell service if we haven't configured it before.
-    if(this.isDoorbellConfigured) {
+    // Acquire the service.
+    const service = this.acquireService(this.hap.Service.Doorbell);
 
-      return true;
+    // Fail gracefully.
+    if(!service) {
+
+      this.log.error("Unable to add doorbell.");
+
+      return false;
     }
 
-    // Find the doorbell service, if it exists.
-    let doorbellService = this.accessory.getService(this.hap.Service.Doorbell);
+    // Add the doorbell service to this Protect doorbell. HomeKit requires the doorbell service to be marked as the primary service on the accessory.
+    service.setPrimaryService(true);
 
-    // Add the doorbell service to this Protect doorbell. HomeKit requires the doorbell service to be
-    // marked as the primary service on the accessory.
-    if(!doorbellService) {
-
-      doorbellService = new this.hap.Service.Doorbell(this.accessoryName);
-
-      if(!doorbellService) {
-
-        this.log.error("Unable to add doorbell.");
-        return false;
-      }
-
-      this.accessory.addService(doorbellService);
-    }
-
-    doorbellService.setPrimaryService(true);
-    this.isDoorbellConfigured = true;
     return true;
   }
 
@@ -612,24 +556,19 @@ export class ProtectCamera extends ProtectDevice {
     let cameraChannels = this.ufp.channels.filter(x => x.isRtspEnabled && this.hasFeature("Video.Stream." + x.name, true));
 
     // Make sure we've got a HomeKit compatible IDR frame interval. If not, let's take care of that.
-    let idrChannels = cameraChannels.filter(x => x.idrInterval !== PROTECT_HOMEKIT_IDR_INTERVAL);
+    const idrChannels = cameraChannels.filter(x => x.idrInterval !== PROTECT_HOMEKIT_IDR_INTERVAL);
 
     if(idrChannels.length) {
 
-      // Edit the channel map.
-      idrChannels = idrChannels.map(x => {
-
-        x.idrInterval = PROTECT_HOMEKIT_IDR_INTERVAL;
-        return x;
-      });
-
-      this.ufp = await this.nvr.ufpApi.updateDevice(this.ufp, { channels: idrChannels }) ?? this.ufp;
+      // Edit the channel map and update the Protect controller.
+      this.ufp = await this.nvr.ufpApi.updateDevice(this.ufp, { channels: idrChannels.map(x => Object.assign(x, { idrInterval: PROTECT_HOMEKIT_IDR_INTERVAL })) }) ??
+        this.ufp;
     }
 
     // Set the camera and shapshot URLs.
     const cameraUrl = "rtsps://" + (this.nvr.config.overrideAddress ?? this.ufp.connectionHost) + ":" + this.nvr.ufp.ports.rtsps.toString() + "/";
 
-    // Filter out any package camera entries.
+    // Filter out any package camera entries. We deal with those independently in the package camera class.
     cameraChannels = cameraChannels.filter(x => x.name !== "Package Camera");
 
     // No RTSP streams are available that meet our criteria - we're done.
@@ -754,8 +693,8 @@ export class ProtectCamera extends ProtectDevice {
     // Publish our updated list of supported resolutions and their URLs.
     this.rtspEntries = rtspEntries;
 
-    // If we're already configured, we're done here.
-    if(this.isVideoConfigured) {
+    // If we've already configured the HomeKit video streaming delegate, we're done here.
+    if(this.stream) {
 
       return true;
     }
@@ -788,15 +727,19 @@ export class ProtectCamera extends ProtectDevice {
     // Inform the user if we've set a streaming default.
     if(this.rtspQuality.StreamingDefault) {
 
-      this.log.info("Video streaming configured to use only: %s.",
-        this.rtspQuality.StreamingDefault.charAt(0) + this.rtspQuality.StreamingDefault.slice(1).toLowerCase());
+      this.log.info("Video streaming configured to use only: %s.", toCamelCase(this.rtspQuality.StreamingDefault));
+    }
+
+    // Inform the user if they've selected the legacy snapshot API.
+    if(!this.hints.highResSnapshots) {
+
+      this.log.info("Disabling the use of higher quality snapshots.");
     }
 
     // Inform the user if we've set a recording default.
     if(this.rtspQuality.RecordingDefault) {
 
-      this.log.info("HomeKit Secure Video event recording configured to use only: %s.",
-        this.rtspQuality.RecordingDefault.charAt(0) + this.rtspQuality.RecordingDefault.slice(1).toLowerCase());
+      this.log.info("HomeKit Secure Video event recording configured to use only: %s.", toCamelCase(this.rtspQuality.RecordingDefault));
     }
 
     // Configure the video stream with our resolutions.
@@ -804,7 +747,6 @@ export class ProtectCamera extends ProtectDevice {
 
     // Fire up the controller and inform HomeKit about it.
     this.accessory.configureController(this.stream.controller);
-    this.isVideoConfigured = true;
 
     return true;
   }
@@ -828,16 +770,17 @@ export class ProtectCamera extends ProtectDevice {
   // Configure a switch to manually enable or disable HKSV recording for a camera.
   private configureHksvRecordingSwitch(): boolean {
 
-    // Find the switch service, if it exists.
-    let switchService = this.accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_HKSV_RECORDING);
+    // Validate whether we should have this service enabled.
+    if(!this.validService(this.hap.Service.Switch, () => {
 
-    // If we don't have HKSV or the HKSV recording switch enabled, disable it and we're done.
-    if(!this.hasFeature("Video.HKSV.Recording.Switch")) {
+      // If we don't have HKSV or the HKSV recording switch enabled, disable it and we're done.
+      if(!this.hasFeature("Video.HKSV.Recording.Switch")) {
 
-      if(switchService) {
-
-        this.accessory.removeService(switchService);
+        return false;
       }
+
+      return true;
+    }, ProtectReservedNames.SWITCH_HKSV_RECORDING)) {
 
       // We want to default this back to recording whenever we disable the recording switch.
       this.accessory.context.hksvRecording = true;
@@ -845,44 +788,37 @@ export class ProtectCamera extends ProtectDevice {
       return false;
     }
 
-    const switchName = this.accessoryName + " HKSV Recording";
+    // Acquire the service.
+    const service = this.acquireService(this.hap.Service.Switch, this.accessoryName + " HKSV Recording", ProtectReservedNames.SWITCH_HKSV_RECORDING);
 
-    // Add the switch to the camera, if needed.
-    if(!switchService) {
+    // Fail gracefully.
+    if(!service) {
 
-      switchService = new this.hap.Service.Switch(switchName, ProtectReservedNames.SWITCH_HKSV_RECORDING);
+      this.log.error("Unable to add HKSV recording switch.");
 
-      if(!switchService) {
-
-        this.log.error("Unable to add the HomeKit Secure Video recording switch.");
-        return false;
-      }
-
-      switchService.addOptionalCharacteristic(this.hap.Characteristic.ConfiguredName);
-      this.accessory.addService(switchService);
+      return false;
     }
 
     // Activate or deactivate HKSV recording.
-    switchService.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => {
+    service.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => {
 
-      return this.accessory.context.hksvRecording as boolean;
+      return this.accessory.context.hksvRecording as boolean ?? true;
     });
 
-    switchService.getCharacteristic(this.hap.Characteristic.On)?.onSet((value: CharacteristicValue) => {
+    service.getCharacteristic(this.hap.Characteristic.On)?.onSet((value: CharacteristicValue) => {
 
       if(this.accessory.context.hksvRecording !== value) {
 
-        this.log.info("HomeKit Secure Video event recording has been %s.", value === true ? "enabled" : "disabled");
+        this.log.info("HKSV event recording has been %s.", value === true ? "enabled" : "disabled");
       }
 
       this.accessory.context.hksvRecording = value === true;
     });
 
     // Initialize the switch.
-    switchService.updateCharacteristic(this.hap.Characteristic.ConfiguredName, switchName);
-    switchService.updateCharacteristic(this.hap.Characteristic.On, this.accessory.context.hksvRecording as boolean);
+    service.updateCharacteristic(this.hap.Characteristic.On, this.accessory.context.hksvRecording as boolean);
 
-    this.log.info("Enabling HomeKit Secure Video recording switch.");
+    this.log.info("Enabling HKSV recording switch.");
 
     return true;
   }
@@ -890,16 +826,17 @@ export class ProtectCamera extends ProtectDevice {
   // Configure a switch to manually enable or disable dynamic bitrate capabilities for a camera.
   private configureDynamicBitrateSwitch(): boolean {
 
-    // Find the switch service, if it exists.
-    let switchService = this.accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_DYNAMIC_BITRATE);
+    // Validate whether we should have this service enabled.
+    if(!this.validService(this.hap.Service.Switch, () => {
 
-    // If we don't want a dynamic bitrate switch, disable it and we're done.
-    if(!this.hasFeature("Video.DynamicBitrate.Switch")) {
+      // If we don't want a dynamic bitrate switch, disable it and we're done.
+      if(!this.hasFeature("Video.DynamicBitrate.Switch")) {
 
-      if(switchService) {
-
-        this.accessory.removeService(switchService);
+        return false;
       }
+
+      return true;
+    }, ProtectReservedNames.SWITCH_DYNAMIC_BITRATE)) {
 
       // We want to default this back to off by default whenever we disable the dynamic bitrate switch.
       this.accessory.context.dynamicBitrate = false;
@@ -907,73 +844,60 @@ export class ProtectCamera extends ProtectDevice {
       return false;
     }
 
-    const switchName = this.accessoryName + " Dynamic Bitrate";
+    // Acquire the service.
+    const service = this.acquireService(this.hap.Service.Switch, this.accessoryName + " Dynamic Bitrate", ProtectReservedNames.SWITCH_DYNAMIC_BITRATE);
 
-    // Add the switch to the camera, if needed.
-    if(!switchService) {
+    // Fail gracefully.
+    if(!service) {
 
-      switchService = new this.hap.Service.Switch(switchName, ProtectReservedNames.SWITCH_DYNAMIC_BITRATE);
+      this.log.error("Unable to add dynamic bitrate switch.");
 
-      if(!switchService) {
-
-        this.log.error("Unable to add the dynamic bitrate switch.");
-        return false;
-      }
-
-      switchService.addOptionalCharacteristic(this.hap.Characteristic.ConfiguredName);
-      this.accessory.addService(switchService);
+      return false;
     }
 
     // Activate or deactivate dynamic bitrate for this device.
-    switchService
-      .getCharacteristic(this.hap.Characteristic.On)
-      ?.onGet(() => {
+    service.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => {
 
-        return this.accessory.context.dynamicBitrate as boolean;
-      })
-      .onSet(async (value: CharacteristicValue) => {
+      return this.accessory.context.dynamicBitrate as boolean ?? false;
+    });
 
-        if(this.accessory.context.dynamicBitrate === value) {
+    service.getCharacteristic(this.hap.Characteristic.On)?.onSet(async (value: CharacteristicValue) => {
 
-          return;
-        }
+      if(this.accessory.context.dynamicBitrate === value) {
 
-        // We're enabling dynamic bitrate for this device.
-        if(value) {
+        return;
+      }
 
-          this.accessory.context.dynamicBitrate = true;
-          this.log.info("Dynamic streaming bitrate adjustment on the UniFi Protect controller enabled.");
-          return;
-        }
+      // We're enabling dynamic bitrate for this device.
+      if(value) {
 
-        // We're disabling dynamic bitrate for this device.
-        const updatedChannels = this.ufp.channels;
+        this.accessory.context.dynamicBitrate = true;
+        this.log.info("Dynamic streaming bitrate adjustment on the UniFi Protect controller enabled.");
 
-        // Update the channels JSON.
-        for(const channel of updatedChannels) {
+        return;
+      }
 
-          channel.bitrate = channel.maxBitrate;
-        }
+      // We're disabling dynamic bitrate for this device. Update the channels JSON to revert to the maximum bitrate we can.
+      const updatedChannels = this.ufp.channels.map(channel => ({ ...channel, bitrate: channel.maxBitrate }));
 
-        // Send the channels JSON to Protect.
-        const newDevice = await this.nvr.ufpApi.updateDevice(this.ufp, { channels: updatedChannels });
+      // Send the channels JSON to Protect.
+      const newDevice = await this.nvr.ufpApi.updateDevice(this.ufp, { channels: updatedChannels });
 
-        // We failed.
-        if(!newDevice) {
+      // We failed.
+      if(!newDevice) {
 
-          this.log.error("Unable to set the streaming bitrate to %s.", value);
-        } else {
+        this.log.error("Unable to set the streaming bitrate to %s.", value);
+      } else {
 
-          this.ufp = newDevice;
-        }
+        this.ufp = newDevice;
+      }
 
-        this.accessory.context.dynamicBitrate = false;
-        this.log.info("Dynamic streaming bitrate adjustment on the UniFi Protect controller disabled.");
-      });
+      this.accessory.context.dynamicBitrate = false;
+      this.log.info("Dynamic streaming bitrate adjustment on the UniFi Protect controller disabled.");
+    });
 
     // Initialize the switch.
-    switchService.updateCharacteristic(this.hap.Characteristic.ConfiguredName, switchName);
-    switchService.updateCharacteristic(this.hap.Characteristic.On, this.accessory.context.dynamicBitrate as boolean);
+    service.updateCharacteristic(this.hap.Characteristic.On, this.accessory.context.dynamicBitrate as boolean);
 
     this.log.info("Enabling the dynamic streaming bitrate adjustment switch.");
 
@@ -991,44 +915,41 @@ export class ProtectCamera extends ProtectDevice {
 
       const ufpRecordingSetting = ufpRecordingSwitchType.slice(ufpRecordingSwitchType.lastIndexOf(".") + 1);
 
-      // Find the switch service, if it exists.
-      let switchService = this.accessory.getServiceById(this.hap.Service.Switch, ufpRecordingSwitchType);
+      // Validate whether we should have this service enabled.
+      if(!this.validService(this.hap.Service.Switch, () => {
 
-      // If we don't have the feature option enabled, disable the switch and we're done.
-      if(!this.hasFeature("Nvr.Recording.Switch")) {
+        // If we don't have the feature option enabled, disable the switch and we're done.
+        if(!this.hasFeature("Nvr.Recording.Switch")) {
 
-        if(switchService) {
-
-          this.accessory.removeService(switchService);
+          return false;
         }
+
+        return true;
+      }, ufpRecordingSwitchType)) {
 
         continue;
       }
 
-      const switchName = this.accessoryName + " UFP Recording " + ufpRecordingSetting.charAt(0).toUpperCase() + ufpRecordingSetting.slice(1);
+      const switchName = this.accessoryName + " UFP Recording " + toCamelCase(ufpRecordingSetting);
 
-      // Add the switch to the camera, if needed.
-      if(!switchService) {
+      // Acquire the service.
+      const service = this.acquireService(this.hap.Service.Switch, switchName, ufpRecordingSwitchType);
 
-        switchService = new this.hap.Service.Switch(switchName, ufpRecordingSwitchType);
+      // Fail gracefully.
+      if(!service) {
 
-        if(!switchService) {
+        this.log.error("Unable to add UniFi Protect recording switches.");
 
-          this.log.error("Unable to add the UniFi Protect recording switches.");
-          continue;
-        }
-
-        switchService.addOptionalCharacteristic(this.hap.Characteristic.ConfiguredName);
-        this.accessory.addService(switchService);
+        continue;
       }
 
       // Activate or deactivate the appropriate recording mode on the Protect controller.
-      switchService.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => {
+      service.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => {
 
         return this.ufp.recordingSettings.mode === ufpRecordingSetting;
       });
 
-      switchService.getCharacteristic(this.hap.Characteristic.On)?.onSet(async (value: CharacteristicValue) => {
+      service.getCharacteristic(this.hap.Characteristic.On)?.onSet(async (value: CharacteristicValue) => {
 
         // We only want to do something if we're being activated. Turning off the switch would really be an undefined state given that there are three different
         // settings one can choose from. Instead, we do nothing and leave it to the user to choose what state they really want to set.
@@ -1051,6 +972,7 @@ export class ProtectCamera extends ProtectDevice {
         if(!newDevice) {
 
           this.log.error("Unable to set the UniFi Protect recording mode to %s.", ufpRecordingSetting);
+
           return false;
         }
 
@@ -1076,8 +998,7 @@ export class ProtectCamera extends ProtectDevice {
       });
 
       // Initialize the recording switch state.
-      switchService.updateCharacteristic(this.hap.Characteristic.ConfiguredName, switchName);
-      switchService.updateCharacteristic(this.hap.Characteristic.On, this.ufp.recordingSettings.mode === ufpRecordingSetting);
+      service.updateCharacteristic(this.hap.Characteristic.On, this.ufp.recordingSettings.mode === ufpRecordingSetting);
       switchesEnabled.push(ufpRecordingSetting);
     }
 
@@ -1093,64 +1014,38 @@ export class ProtectCamera extends ProtectDevice {
   protected configureMqtt(): boolean {
 
     // Return the RTSP URLs when requested.
-    this.nvr.mqtt?.subscribe(this.accessory, "rtsp/get", (message: Buffer) => {
+    this.subscribeGet("rtsp", "RTSP information", (): string => {
 
-      const value = message.toString();
-
-      // When we get the right message, we trigger the snapshot request.
-      if(value?.toLowerCase() !== "true") {
-
-        return;
-      }
-
-      const urlInfo: { [index: string]: string } = {};
-
-      // Grab all the available RTSP channels.
-      for(const channel of this.ufp.channels) {
-
-        if(!channel.isRtspEnabled) {
-
-          continue;
-        }
-
-        urlInfo[channel.name] = "rtsps://" + this.nvr.ufp.host + ":" + this.nvr.ufp.ports.rtsp.toString() + "/" + channel.rtspAlias + "?enableSrtp";
-      }
-
-      this.nvr.mqtt?.publish(this.accessory, "rtsp", JSON.stringify(urlInfo));
-      this.log.info("RTSP information published via MQTT.");
+      // Grab all the available RTSP channels and return them as a JSON.
+      return JSON.stringify(Object.assign({}, ...this.ufp.channels.filter(channel => channel.isRtspEnabled)
+        .map(channel => ({ [channel.name]: "rtsps://" + this.nvr.ufp.host + ":" + this.nvr.ufp.ports.rtsp + "/" + channel.rtspAlias + "?enableSrtp" }))));
     });
 
     // Trigger snapshots when requested.
-    this.nvr.mqtt?.subscribe(this.accessory, "snapshot/trigger", (message: Buffer) => {
-
-      const value = message.toString();
+    this.subscribeSet("snapshot", "snapshot trigger", (value: string) => {
 
       // When we get the right message, we trigger the snapshot request.
-      if(value?.toLowerCase() !== "true") {
+      if(value !== "true") {
 
         return;
       }
 
       void this.stream?.handleSnapshotRequest();
-      this.log.info("Snapshot triggered via MQTT.");
     });
 
     // Enable doorbell-specific MQTT capabilities only when we have a Protect doorbell or a doorbell trigger enabled.
     if(this.ufp.featureFlags.isDoorbell || this.hasFeature("Doorbell.Trigger")) {
 
       // Trigger doorbell when requested.
-      this.nvr.mqtt?.subscribe(this.accessory, "doorbell/trigger", (message: Buffer) => {
-
-        const value = message.toString();
+      this.subscribeSet("doorbell", "doorbell ring trigger", (value: string) => {
 
         // When we get the right message, we trigger the doorbell request.
-        if(value?.toLowerCase() !== "true") {
+        if(value !== "true") {
 
           return;
         }
 
         this.nvr.events.doorbellEventHandler(this, Date.now());
-        this.log.info("Doorbell ring event triggered via MQTT.");
       });
     }
 
@@ -1200,9 +1095,8 @@ export class ProtectCamera extends ProtectDevice {
   // Set the bitrate for a specific camera channel.
   public async setBitrate(channelId: number, value: number): Promise<boolean> {
 
-    // If we've disabled the ability to set the bitrate dynamically, silently fail. We prioritize switches over the global
-    // setting here, in case the user enabled both, using the principle that the most specific setting always wins. If the
-    // user has both the global setting and the switch enabled, the switch setting will take precedence.
+    // If we've disabled the ability to set the bitrate dynamically, silently fail. We prioritize switches over the global setting here, in case the user enabled both,
+    // using the principle that the most specific setting always wins. If the user has both the global setting and the switch enabled, the switch will take precedence.
     if((!this.accessory.context.dynamicBitrate && !this.hasFeature("Video.DynamicBitrate")) ||
       (!this.accessory.context.dynamicBitrate && this.hasFeature("Video.DynamicBitrate") && this.hasFeature("Video.DynamicBitrate.Switch"))) {
 

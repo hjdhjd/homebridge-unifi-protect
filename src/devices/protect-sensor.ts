@@ -10,6 +10,7 @@ import { ProtectReservedNames } from "../protect-types.js";
 
 export class ProtectSensor extends ProtectDevice {
 
+  private enabledSensors: string[];
   private lastAlarm!: boolean;
   private lastContact!: boolean;
   private lastLeak!: boolean;
@@ -20,6 +21,7 @@ export class ProtectSensor extends ProtectDevice {
 
     super(nvr, accessory);
 
+    this.enabledSensors = [];
     this.ufp = device;
 
     this.configureHints();
@@ -41,7 +43,7 @@ export class ProtectSensor extends ProtectDevice {
     this.configureBatteryService();
 
     // Configure the sensor services that have been enabled.
-    const enabledSensors = this.updateDevice(false);
+    this.updateDevice(false);
 
     // Configure MQTT services.
     this.configureMqtt();
@@ -49,53 +51,33 @@ export class ProtectSensor extends ProtectDevice {
     // Listen for events.
     this.nvr.events.on("updateEvent." + this.ufp.id, this.listeners["updateEvent." + this.ufp.id] = this.eventHandler.bind(this));
 
-    // Inform the user what we're enabling on startup.
-    if(enabledSensors.length) {
-
-      this.log.info("Enabled sensor%s: %s.", enabledSensors.length > 1 ? "s" : "", enabledSensors.join(", "));
-    } else {
-
-      this.log.info("No sensors enabled.");
-    }
-
     return true;
   }
 
   // Update battery status information for HomeKit.
   private configureBatteryService(): boolean {
 
-    // Find the battery service, if it exists.
-    let batteryService = this.accessory.getService(this.hap.Service.Battery);
+    // Acquire the service.
+    const service = this.acquireService(this.hap.Service.Battery);
 
-    // We don't have the battery service, let's add it to the sensor.
-    if(!batteryService) {
+    // Fail gracefully.
+    if(!service) {
 
-      // We don't have it, add it to the sensor.
-      batteryService = new this.hap.Service.Battery(this.accessoryName);
+      this.log.error("Unable to add the battery service.");
 
-      if(!batteryService) {
-
-        this.log.error("Unable to add the battery service.");
-        return false;
-      }
-
-      this.accessory.addService(batteryService);
+      return false;
     }
 
     // Retrieve the current battery status when requested.
-    batteryService.getCharacteristic(this.hap.Characteristic.StatusLowBattery)?.onGet(() => {
+    service.getCharacteristic(this.hap.Characteristic.StatusLowBattery)?.onGet(() => {
 
       return this.ufp.batteryStatus?.percentage ?? 0;
     });
 
-    batteryService.getCharacteristic(this.hap.Characteristic.StatusLowBattery)?.onGet(() => {
+    service.getCharacteristic(this.hap.Characteristic.StatusLowBattery)?.onGet(() => {
 
       return this.ufp.batteryStatus?.isLow ?? false;
     });
-
-    // Initialize our name.
-    batteryService.displayName = this.accessoryName;
-    batteryService.updateCharacteristic(this.hap.Characteristic.Name, this.accessoryName);
 
     // Initialize the battery state.
     this.updateBatteryStatus();
@@ -104,9 +86,9 @@ export class ProtectSensor extends ProtectDevice {
   }
 
   // Update accessory services and characteristics.
-  public updateDevice(isInitialized = true): string[] {
+  private updateDevice(isInitialized = true): void {
 
-    const enabledSensors: string[] = [];
+    const currentEnabledSensors: string[] = [];
 
     // Update the battery status for the accessory.
     this.updateBatteryStatus();
@@ -114,31 +96,31 @@ export class ProtectSensor extends ProtectDevice {
     // Configure the alarm sound sensor.
     if(this.configureAlarmSoundSensor()) {
 
-      enabledSensors.push("alarm sound");
+      currentEnabledSensors.push("alarm sound");
     }
 
     // Configure the ambient light sensor.
     if(this.configureAmbientLightSensor()) {
 
-      enabledSensors.push("ambient light");
+      currentEnabledSensors.push("ambient light");
     }
 
     // Configure the contact sensor.
     if(this.configureContactSensor()) {
 
-      enabledSensors.push("contact");
+      currentEnabledSensors.push("contact");
     }
 
     // Configure the humidity sensor.
     if(this.configureHumiditySensor()) {
 
-      enabledSensors.push("humidity");
+      currentEnabledSensors.push("humidity");
     }
 
     // Configure the alarm sound sensor.
     if(this.configureLeakSensor()) {
 
-      enabledSensors.push("leak");
+      currentEnabledSensors.push("leak");
     }
 
     // Configure the motion sensor.
@@ -153,7 +135,7 @@ export class ProtectSensor extends ProtectDevice {
         this.configureStateCharacteristics(motionService);
       }
 
-      enabledSensors.push("motion sensor");
+      currentEnabledSensors.push("motion sensor");
     }
 
     // Configure the occupancy sensor.
@@ -162,66 +144,65 @@ export class ProtectSensor extends ProtectDevice {
     // Configure the temperature sensor.
     if(this.configureTemperatureSensor()) {
 
-      enabledSensors.push("temperature");
+      currentEnabledSensors.push("temperature");
     }
 
-    return enabledSensors;
+    // Inform the user if we've had a change.
+    if(this.enabledSensors.join(" ") !== currentEnabledSensors.join(" ")) {
+
+      this.enabledSensors = currentEnabledSensors;
+
+      // Inform the user what we're enabling on startup.
+      if(this.enabledSensors.length) {
+
+        this.log.info("Enabled sensor%s: %s.", this.enabledSensors.length > 1 ? "s" : "", this.enabledSensors.join(", "));
+      } else {
+
+        this.log.info("No sensors enabled.");
+      }
+    }
   }
 
   // Configure the alarm sound sensor for HomeKit.
   private configureAlarmSoundSensor(): boolean {
 
-    // Find the service, if it exists.
-    let contactService = this.accessory.getServiceById(this.hap.Service.ContactSensor, ProtectReservedNames.CONTACT_SENSOR_ALARM_SOUND);
+    // Validate whether we should have this service enabled.
+    if(!this.validService(this.hap.Service.ContactSensor, () => {
 
-    // Have we disabled the alarm sound sensor?
-    if(!this.ufp.alarmSettings?.isEnabled) {
+      // Have we disabled the sensor?
+      if(!this.ufp.alarmSettings?.isEnabled) {
 
-      if(contactService) {
-
-        this.accessory.removeService(contactService);
-        this.log.info("Disabling alarm sound contact sensor.");
+        return false;
       }
+
+      return true;
+    }, ProtectReservedNames.CONTACT_SENSOR_ALARM_SOUND)) {
 
       return false;
     }
 
-    const contactName = this.accessoryName + " Alarm Sound";
+    // Acquire the service.
+    const service = this.acquireService(this.hap.Service.ContactSensor, this.accessoryName + " Alarm Sound", ProtectReservedNames.CONTACT_SENSOR_ALARM_SOUND);
 
-    // Add the service to the accessory, if needed.
-    if(!contactService) {
+    // Fail gracefully.
+    if(!service) {
 
-      contactService = new this.hap.Service.ContactSensor(contactName, ProtectReservedNames.CONTACT_SENSOR_ALARM_SOUND);
+      this.log.error("Unable to add alarm sound contact sensor.");
 
-      if(!contactService) {
-
-        this.log.error("Unable to add alarm sound contact sensor.");
-        return false;
-      }
-
-      contactService.addOptionalCharacteristic(this.hap.Characteristic.ConfiguredName);
-      contactService.updateCharacteristic(this.hap.Characteristic.ConfiguredName, contactName);
-      this.accessory.addService(contactService);
-
-      this.log.info("Enabling alarm sound contact sensor.");
+      return false;
     }
 
     // Retrieve the current contact sensor state when requested.
-    contactService.getCharacteristic(this.hap.Characteristic.ContactSensorState)?.onGet(() => {
+    service.getCharacteristic(this.hap.Characteristic.ContactSensorState)?.onGet(() => {
 
       return this.alarmDetected;
     });
 
-    // Initialize our name.
-    contactService.displayName = contactName;
-    contactService.updateCharacteristic(this.hap.Characteristic.Name, contactName);
-    contactService.updateCharacteristic(this.hap.Characteristic.ConfiguredName, contactName);
-
     // Update the sensor.
-    contactService.updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.alarmDetected);
+    service.updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.alarmDetected);
 
     // Update the state characteristics.
-    this.configureStateCharacteristics(contactService);
+    this.configureStateCharacteristics(service);
 
     return true;
   }
@@ -229,52 +210,44 @@ export class ProtectSensor extends ProtectDevice {
   // Configure the ambient light sensor for HomeKit.
   private configureAmbientLightSensor(): boolean {
 
-    // Find the service, if it exists.
-    let lightService = this.accessory.getService(this.hap.Service.LightSensor);
+    // Validate whether we should have this service enabled.
+    if(!this.validService(this.hap.Service.LightSensor, () => {
 
-    // Have we disabled the light sensor?
-    if(!this.ufp.lightSettings?.isEnabled) {
+      // Have we disabled the sensor?
+      if(!this.ufp.lightSettings?.isEnabled) {
 
-      if(lightService) {
-
-        this.accessory.removeService(lightService);
-        this.log.info("Disabling ambient light sensor.");
+        return false;
       }
+
+      return true;
+    })) {
 
       return false;
     }
 
-    // Add the service to the accessory, if needed.
-    if(!lightService) {
+    // Acquire the service.
+    const service = this.acquireService(this.hap.Service.LightSensor);
 
-      lightService = new this.hap.Service.LightSensor(this.accessoryName);
+    // Fail gracefully.
+    if(!service) {
 
-      if(!lightService) {
+      this.log.error("Unable to add ambient light sensor.");
 
-        this.log.error("Unable to add ambient light sensor.");
-        return false;
-      }
-
-      this.accessory.addService(lightService);
-      this.log.info("Enabling ambient light sensor.");
+      return false;
     }
 
     // Retrieve the current light level when requested.
-    lightService.getCharacteristic(this.hap.Characteristic.CurrentAmbientLightLevel)?.onGet(() => {
+    service.getCharacteristic(this.hap.Characteristic.CurrentAmbientLightLevel)?.onGet(() => {
 
       // The minimum value for ambient light in HomeKit is 0.0001. I have no idea why...but it is. Honor it.
       return this.ambientLight >= 0.0001 ? this.ambientLight : 0.0001;
     });
 
-    // Initialize our name.
-    lightService.displayName = this.accessoryName;
-    lightService.updateCharacteristic(this.hap.Characteristic.Name, this.accessoryName);
-
     // Update the sensor. The minimum value for ambient light in HomeKit is 0.0001. I have no idea why...but it is. Honor it.
-    lightService.updateCharacteristic(this.hap.Characteristic.CurrentAmbientLightLevel, this.ambientLight >= 0.0001 ? this.ambientLight : 0.0001);
+    service.updateCharacteristic(this.hap.Characteristic.CurrentAmbientLightLevel, this.ambientLight >= 0.0001 ? this.ambientLight : 0.0001);
 
     // Update the state characteristics.
-    this.configureStateCharacteristics(lightService);
+    this.configureStateCharacteristics(service);
 
     return true;
   }
@@ -282,51 +255,43 @@ export class ProtectSensor extends ProtectDevice {
   // Configure the contact sensor for HomeKit.
   private configureContactSensor(): boolean {
 
-    // Find the service, if it exists.
-    let contactService = this.accessory.getServiceById(this.hap.Service.ContactSensor, ProtectReservedNames.CONTACT_SENSOR);
+    // Validate whether we should have this service enabled.
+    if(!this.validService(this.hap.Service.ContactSensor, () => {
 
-    // Have we disabled the sensor or are we configured as a leak sensor?
-    if(!this.ufp.mountType || (this.ufp.mountType === "leak") || (this.ufp.mountType === "none")) {
+      // Have we disabled the sensor or are we configured as a leak sensor?
+      if(!this.ufp.mountType || (this.ufp.mountType === "leak") || (this.ufp.mountType === "none")) {
 
-      if(contactService) {
-
-        this.accessory.removeService(contactService);
-        this.log.info("Disabling contact sensor.");
+        return false;
       }
+
+      return true;
+    }, ProtectReservedNames.CONTACT_SENSOR)) {
 
       return false;
     }
 
-    // Add the service to the accessory, if needed.
-    if(!contactService) {
+    // Acquire the service.
+    const service = this.acquireService(this.hap.Service.ContactSensor, undefined, ProtectReservedNames.CONTACT_SENSOR);
 
-      contactService = new this.hap.Service.ContactSensor(this.accessoryName, ProtectReservedNames.CONTACT_SENSOR);
+    // Fail gracefully.
+    if(!service) {
 
-      if(!contactService) {
+      this.log.error("Unable to add contact sensor.");
 
-        this.log.error("Unable to add contact sensor.");
-        return false;
-      }
-
-      this.accessory.addService(contactService);
-      this.log.info("Enabling contact sensor.");
+      return false;
     }
 
     // Retrieve the current contact sensor state when requested.
-    contactService.getCharacteristic(this.hap.Characteristic.ContactSensorState)?.onGet(() => {
+    service.getCharacteristic(this.hap.Characteristic.ContactSensorState)?.onGet(() => {
 
       return this.contact;
     });
 
-    // Initialize our name.
-    contactService.displayName = this.accessoryName;
-    contactService.updateCharacteristic(this.hap.Characteristic.Name, this.accessoryName);
-
     // Update the sensor.
-    contactService.updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.contact);
+    service.updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.contact);
 
     // Update the state characteristics.
-    this.configureStateCharacteristics(contactService);
+    this.configureStateCharacteristics(service);
 
     return true;
   }
@@ -334,51 +299,43 @@ export class ProtectSensor extends ProtectDevice {
   // Configure the humidity sensor for HomeKit.
   private configureHumiditySensor(): boolean {
 
-    // Find the service, if it exists.
-    let humidityService = this.accessory.getService(this.hap.Service.HumiditySensor);
+    // Validate whether we should have this service enabled.
+    if(!this.validService(this.hap.Service.HumiditySensor, () => {
 
-    // Have we disabled the sensor?
-    if(!this.ufp.humiditySettings?.isEnabled) {
+      // Have we disabled the sensor?
+      if(!this.ufp.humiditySettings?.isEnabled) {
 
-      if(humidityService) {
-
-        this.accessory.removeService(humidityService);
-        this.log.info("Disabling humidity sensor.");
+        return false;
       }
+
+      return true;
+    })) {
 
       return false;
     }
 
-    // Add the service to the accessory, if needed.
-    if(!humidityService) {
+    // Acquire the service.
+    const service = this.acquireService(this.hap.Service.HumiditySensor);
 
-      humidityService = new this.hap.Service.HumiditySensor(this.accessoryName);
+    // Fail gracefully.
+    if(!service) {
 
-      if(!humidityService) {
+      this.log.error("Unable to add humidity sensor.");
 
-        this.log.error("Unable to add humidity sensor.");
-        return false;
-      }
-
-      this.accessory.addService(humidityService);
-      this.log.info("Enabling humidity sensor.");
+      return false;
     }
 
     // Retrieve the current humidity when requested.
-    humidityService.getCharacteristic(this.hap.Characteristic.CurrentRelativeHumidity)?.onGet(() => {
+    service.getCharacteristic(this.hap.Characteristic.CurrentRelativeHumidity)?.onGet(() => {
 
       return this.humidity < 0 ? 0 : this.humidity;
     });
 
-    // Initialize our name.
-    humidityService.displayName = this.accessoryName;
-    humidityService.updateCharacteristic(this.hap.Characteristic.Name, this.accessoryName);
-
     // Update the sensor.
-    humidityService.updateCharacteristic(this.hap.Characteristic.CurrentRelativeHumidity, this.humidity < 0 ? 0 : this.humidity);
+    service.updateCharacteristic(this.hap.Characteristic.CurrentRelativeHumidity, this.humidity < 0 ? 0 : this.humidity);
 
     // Update the state characteristics.
-    this.configureStateCharacteristics(humidityService);
+    this.configureStateCharacteristics(service);
 
     return true;
   }
@@ -386,52 +343,43 @@ export class ProtectSensor extends ProtectDevice {
   // Configure the leak sensor for HomeKit.
   private configureLeakSensor(): boolean {
 
-    // Find the service, if it exists.
-    let leakService = this.accessory.getService(this.hap.Service.LeakSensor);
+    // Validate whether we should have this service enabled.
+    if(!this.validService(this.hap.Service.LeakSensor, () => {
 
-    // Have we disabled the leak sensor?
-    if(this.ufp.mountType !== "leak") {
+      // Have we disabled the leak sensor?
+      if(this.ufp.mountType !== "leak") {
 
-      if(leakService) {
-
-        this.accessory.removeService(leakService);
-        this.log.info("Disabling leak sensor.");
+        return false;
       }
+
+      return true;
+    })) {
 
       return false;
     }
 
-    // Add the service to the accessory, if needed.
-    if(!leakService) {
+    // Acquire the service.
+    const service = this.acquireService(this.hap.Service.LeakSensor);
 
-      leakService = new this.hap.Service.LeakSensor(this.accessoryName);
+    // Fail gracefully.
+    if(!service) {
 
-      if(!leakService) {
+      this.log.error("Unable to add leak sensor.");
 
-        this.log.error("Unable to add leak sensor.");
-        return false;
-      }
-
-      this.accessory.addService(leakService);
-
-      this.log.info("Enabling leak sensor.");
+      return false;
     }
 
     // Retrieve the current contact sensor state when requested.
-    leakService.getCharacteristic(this.hap.Characteristic.LeakDetected)?.onGet(() => {
+    service.getCharacteristic(this.hap.Characteristic.LeakDetected)?.onGet(() => {
 
       return this.leakDetected;
     });
 
-    // Initialize our name.
-    leakService.displayName = this.accessoryName;
-    leakService.updateCharacteristic(this.hap.Characteristic.Name, this.accessoryName);
-
     // Update the sensor.
-    leakService.updateCharacteristic(this.hap.Characteristic.LeakDetected, this.leakDetected);
+    service.updateCharacteristic(this.hap.Characteristic.LeakDetected, this.leakDetected);
 
     // Update the state characteristics.
-    this.configureStateCharacteristics(leakService);
+    this.configureStateCharacteristics(service);
 
     return true;
   }
@@ -439,51 +387,43 @@ export class ProtectSensor extends ProtectDevice {
   // Configure the temperature sensor for HomeKit.
   private configureTemperatureSensor(): boolean {
 
-    // Find the service, if it exists.
-    let temperatureService = this.accessory.getService(this.hap.Service.TemperatureSensor);
+    // Validate whether we should have this service enabled.
+    if(!this.validService(this.hap.Service.TemperatureSensor, () => {
 
-    // Have we disabled the temperature sensor?
-    if(!this.ufp.temperatureSettings?.isEnabled) {
+      // Have we disabled the sensor?
+      if(!this.ufp.temperatureSettings?.isEnabled) {
 
-      if(temperatureService) {
-
-        this.accessory.removeService(temperatureService);
-        this.log.info("Disabling temperature sensor.");
+        return false;
       }
+
+      return true;
+    })) {
 
       return false;
     }
 
-    // Add the service to the accessory, if needed.
-    if(!temperatureService) {
+    // Acquire the service.
+    const service = this.acquireService(this.hap.Service.TemperatureSensor);
 
-      temperatureService = new this.hap.Service.TemperatureSensor(this.accessoryName);
+    // Fail gracefully.
+    if(!service) {
 
-      if(!temperatureService) {
+      this.log.error("Unable to add humidity sensor.");
 
-        this.log.error("Unable to add temperature sensor.");
-        return false;
-      }
-
-      this.accessory.addService(temperatureService);
-      this.log.info("Enabling temperature sensor.");
+      return false;
     }
 
     // Retrieve the current temperature when requested.
-    temperatureService.getCharacteristic(this.hap.Characteristic.CurrentTemperature)?.onGet(() => {
+    service.getCharacteristic(this.hap.Characteristic.CurrentTemperature)?.onGet(() => {
 
       return this.temperature < 0 ? 0 : this.temperature;
     });
 
-    // Initialize our name.
-    temperatureService.displayName = this.accessoryName;
-    temperatureService.updateCharacteristic(this.hap.Characteristic.Name, this.accessoryName);
-
     // Update the sensor.
-    temperatureService.updateCharacteristic(this.hap.Characteristic.CurrentTemperature, this.temperature < 0 ? 0 : this.temperature);
+    service.updateCharacteristic(this.hap.Characteristic.CurrentTemperature, this.temperature < 0 ? 0 : this.temperature);
 
     // Update the state characteristics.
-    this.configureStateCharacteristics(temperatureService);
+    this.configureStateCharacteristics(service);
 
     return true;
   }
@@ -509,15 +449,9 @@ export class ProtectSensor extends ProtectDevice {
     // Find the battery service, if it exists.
     const batteryService = this.accessory.getService(this.hap.Service.Battery);
 
-    // We don't have the battery service, we're done.
-    if(!batteryService) {
-
-      return false;
-    }
-
     // Update the battery status.
-    batteryService.updateCharacteristic(this.hap.Characteristic.BatteryLevel, this.ufp.batteryStatus?.percentage ?? 0);
-    batteryService.updateCharacteristic(this.hap.Characteristic.StatusLowBattery, this.ufp.batteryStatus?.isLow);
+    batteryService?.updateCharacteristic(this.hap.Characteristic.BatteryLevel, this.ufp.batteryStatus?.percentage ?? 0);
+    batteryService?.updateCharacteristic(this.hap.Characteristic.StatusLowBattery, this.ufp.batteryStatus?.isLow);
 
     return true;
   }
@@ -559,7 +493,7 @@ export class ProtectSensor extends ProtectDevice {
     if(value !== this.lastAlarm) {
 
       this.lastAlarm = value;
-      this.nvr.mqtt?.publish(this.accessory, "alarm", value.toString());
+      this.publish("alarm", value.toString());
 
       this.log.info("Alarm %sdetected.", value ? "" : "no longer ");
     }
@@ -580,7 +514,7 @@ export class ProtectSensor extends ProtectDevice {
     if(this.ufp.isOpened !== this.lastContact) {
 
       this.lastContact = this.ufp.isOpened;
-      this.nvr.mqtt?.publish(this.accessory, "contact", this.ufp.isOpened.toString());
+      this.publish("contact", this.ufp.isOpened.toString());
     }
 
     return this.ufp.isOpened;
@@ -609,7 +543,7 @@ export class ProtectSensor extends ProtectDevice {
     if(value !== this.lastLeak) {
 
       this.lastLeak = value;
-      this.nvr.mqtt?.publish(this.accessory, "leak", value.toString());
+      this.publish("leak", value.toString());
 
       this.log.info("Leak %sdetected.", value ? "" : "no longer ");
     }
@@ -626,32 +560,32 @@ export class ProtectSensor extends ProtectDevice {
   // Configure MQTT capabilities for sensors.
   private configureMqtt(): void {
 
-    this.nvr.mqtt?.subscribeGet(this.accessory, "alarm", "Alarm detected", () => {
+    this.subscribeGet("alarm", "alarm detected", () => {
 
       return this.alarmDetected.toString();
     });
 
-    this.nvr.mqtt?.subscribeGet(this.accessory, "ambientlight", "Ambient light", () => {
+    this.subscribeGet("ambientlight", "ambient light", () => {
 
       return this.ambientLight.toString();
     });
 
-    this.nvr.mqtt?.subscribeGet(this.accessory, "contact", "Contact sensor", () => {
+    this.subscribeGet("contact", "contact sensor", () => {
 
       return this.contact.toString();
     });
 
-    this.nvr.mqtt?.subscribeGet(this.accessory, "humidity", "Humidity", () => {
+    this.subscribeGet("humidity", "humidity", () => {
 
       return this.humidity.toString();
     });
 
-    this.nvr.mqtt?.subscribeGet(this.accessory, "leak", "Leak detected", () => {
+    this.subscribeGet("leak", "leak detected", () => {
 
       return this.leakDetected.toString();
     });
 
-    this.nvr.mqtt?.subscribeGet(this.accessory, "temperature", "Temperature", () => {
+    this.subscribeGet("temperature", "temperature", () => {
 
       return this.temperature.toString();
     });

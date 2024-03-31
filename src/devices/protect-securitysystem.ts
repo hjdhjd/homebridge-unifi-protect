@@ -76,75 +76,80 @@ export class ProtectSecuritySystem extends ProtectBase {
   private configureMqtt(): boolean {
 
     // Get the current status of the security system.
-    this.nvr.mqtt?.subscribe(this.accessory, "securitysystem/get", (message: Buffer) => {
+    this.nvr.mqtt?.subscribeGet(this.accessory, "securitysystem", "security system state", () => {
 
-      const value = message.toString().toLowerCase();
-
-      // When we get the right message, we return the state of the security system.
-      if(value !== "true") {
-        return;
-      }
-
-      // Publish the current status of the security system.
-      this.publishSecurityState();
-      this.log.info("Security system status published via MQTT.");
+      return this.currentSecuritySystemState;
     });
 
     // Set the security system state.
-    this.nvr.mqtt?.subscribe(this.accessory, "securitysystem/set", (message: Buffer) => {
+    this.nvr.mqtt?.subscribeSet(this.accessory, "securitysystem", "security system state", (value: string) => {
 
       const SecuritySystemCurrentState = this.hap.Characteristic.SecuritySystemCurrentState;
       const SecuritySystemTargetState = this.hap.Characteristic.SecuritySystemTargetState;
-      const value = message.toString().toLowerCase();
 
       let alarmState!: boolean;
       let targetState: CharacteristicValue;
 
       // Map the request to our security states.
       switch(value) {
+
         case "home":
+
           targetState = SecuritySystemTargetState.STAY_ARM;
+
           break;
 
         case "away":
+
           targetState = SecuritySystemTargetState.AWAY_ARM;
+
           break;
 
         case "night":
+
           targetState = SecuritySystemTargetState.NIGHT_ARM;
+
           break;
 
         case "alarmoff":
+
           targetState = SecuritySystemCurrentState.ALARM_TRIGGERED;
           alarmState = false;
+
           break;
 
         case "alarmon":
+
           targetState = SecuritySystemCurrentState.ALARM_TRIGGERED;
           alarmState = true;
+
           break;
 
         case "off":
+
           targetState = SecuritySystemTargetState.DISARM;
+
           break;
 
         default:
+
           // The user sent a bad value. Ignore it and we're done.
-          this.log.error("Unable to process MQTT security system setting: %s.", message.toString());
+          this.log.error("Unable to process MQTT security system setting: %s.", value);
+
           return;
       }
 
       // The security alarm gets handled differently than the other state settings.
       if(targetState === SecuritySystemCurrentState.ALARM_TRIGGERED) {
+
         this.setSecurityAlarm(alarmState);
-        this.log.info("Security alarm %s via MQTT.", alarmState ? "triggered" : "reset");
+
         return;
       }
 
       // Set the security state, and we're done.
       this.accessory.getService(this.hap.Service.SecuritySystem)?.updateCharacteristic(SecuritySystemTargetState, targetState);
       this.setSecurityState(targetState);
-      this.log.info("Security system state set via MQTT: %s.", value.charAt(0).toUpperCase() + value.slice(1));
     });
 
     return true;
@@ -154,20 +159,21 @@ export class ProtectSecuritySystem extends ProtectBase {
   private configureSecuritySystem(): boolean {
 
     // Find any existing security system service.
-    let securityService = this.accessory.getService(this.hap.Service.SecuritySystem);
+    let service = this.accessory.getService(this.hap.Service.SecuritySystem);
 
     // Add the security system service, if needed.
-    if(!securityService) {
+    if(!service) {
 
-      securityService = new this.hap.Service.SecuritySystem(this.accessory.displayName);
+      service = new this.hap.Service.SecuritySystem(this.accessory.displayName);
 
-      if(!securityService) {
+      if(!service) {
 
         this.log.error("Unable to add security system.");
+
         return false;
       }
 
-      this.accessory.addService(securityService);
+      this.accessory.addService(service);
     }
 
     const SecuritySystemCurrentState = this.hap.Characteristic.SecuritySystemCurrentState;
@@ -180,28 +186,35 @@ export class ProtectSecuritySystem extends ProtectBase {
       case SecuritySystemCurrentState.STAY_ARM:
 
         targetSecurityState = SecuritySystemTargetState.STAY_ARM;
+
         break;
 
       case SecuritySystemCurrentState.AWAY_ARM:
 
         targetSecurityState = SecuritySystemTargetState.AWAY_ARM;
+
         break;
 
       case SecuritySystemCurrentState.NIGHT_ARM:
 
         targetSecurityState = SecuritySystemTargetState.NIGHT_ARM;
+
         break;
 
       case SecuritySystemCurrentState.DISARMED:
       default:
 
         targetSecurityState = SecuritySystemTargetState.DISARM;
+
         break;
     }
 
     // Handlers to get our current state, and initialize on startup.
-    securityService.updateCharacteristic(SecuritySystemCurrentState, this.accessory.context.securityState as CharacteristicValue)
-      .getCharacteristic(SecuritySystemCurrentState)?.onGet(this.getSecurityState.bind(this));
+    service.updateCharacteristic(SecuritySystemCurrentState, this.accessory.context.securityState as CharacteristicValue)
+      .getCharacteristic(SecuritySystemCurrentState)?.onGet(() => {
+
+        return this.isAlarmTriggered ? this.hap.Characteristic.SecuritySystemCurrentState.ALARM_TRIGGERED : (this.accessory.context.securityState as CharacteristicValue);
+      });
 
     // Handlers for triggering a change in the security system state.
     this.accessory.getService(this.hap.Service.SecuritySystem)?.getCharacteristic(SecuritySystemTargetState).onSet(this.setSecurityState.bind(this));
@@ -312,48 +325,19 @@ export class ProtectSecuritySystem extends ProtectBase {
     return true;
   }
 
-  // Publish the security system state to MQTT.
-  private publishSecurityState(): void {
+  // Utility to translate security system states.
+  private get currentSecuritySystemState(): string {
 
-    const SecuritySystemCurrentState = this.hap.Characteristic.SecuritySystemCurrentState;
-    let state;
+    const securitySystemCurrentState: { [index: number]: string } = {
 
-    switch(this.accessory.context.securityState) {
+      [this.hap.Characteristic.SecuritySystemCurrentState.ALARM_TRIGGERED]: "Alarm",
+      [this.hap.Characteristic.SecuritySystemCurrentState.AWAY_ARM]: "Away",
+      [this.hap.Characteristic.SecuritySystemCurrentState.DISARMED]: "Off",
+      [this.hap.Characteristic.SecuritySystemCurrentState.NIGHT_ARM]: "Night",
+      [this.hap.Characteristic.SecuritySystemCurrentState.STAY_ARM]: "Home"
+    };
 
-      case SecuritySystemCurrentState.STAY_ARM:
-
-        state = "Home";
-        break;
-
-      case SecuritySystemCurrentState.AWAY_ARM:
-
-        state = "Away";
-        break;
-
-      case SecuritySystemCurrentState.NIGHT_ARM:
-
-        state = "Night";
-        break;
-
-      case SecuritySystemCurrentState.ALARM_TRIGGERED:
-
-        state = "Alarm";
-        break;
-
-      case SecuritySystemCurrentState.DISARMED:
-      default:
-
-        state = "Off";
-        break;
-    }
-
-    this.nvr.mqtt?.publish(this.accessory, "securitysystem", this.isAlarmTriggered ? "Alarm" : state);
-  }
-
-  // Get the current security system state.
-  private getSecurityState(): CharacteristicValue {
-
-    return this.isAlarmTriggered ? this.hap.Characteristic.SecuritySystemCurrentState.ALARM_TRIGGERED : (this.accessory.context.securityState as CharacteristicValue);
+    return this.isAlarmTriggered ? "Alarm" : securitySystemCurrentState[this.accessory.context.securityState as number] ?? "Off";
   }
 
   // Change the security system state, and enable or disable motion detection accordingly.
@@ -371,9 +355,8 @@ export class ProtectSecuritySystem extends ProtectBase {
       return;
     }
 
-    // We have three different states which can be triggered (aside from disarming).
-    // Those states are home, away, and night. We use this as a convenient way to easily enable or disable motion detection
-    // on a Protect controller and effectively give us scene-type functionality in a nice way.
+    // We have three different states which can be triggered (aside from disarming). Those states are home, away, and night. We use this as a convenient way to easily
+    // enable or disable motion detection on a Protect controller and effectively give us scene-type functionality in a nice way.
     switch(value) {
 
       case SecuritySystemTargetState.STAY_ARM:
@@ -406,9 +389,8 @@ export class ProtectSecuritySystem extends ProtectBase {
         break;
     }
 
-    // Get the complete list of cameras in the liveview we're interested in. This cryptic line grabs the list
-    // of liveviews that have the name we're interested in (turns out, you can define multiple liveviews in Protect
-    // with the same name...who knew!), and then create a single list containing all of the cameras found.
+    // Get the complete list of cameras in the liveview we're interested in. This cryptic line grabs the list of liveviews that have the name we're interested in (turns
+    // out, you can define multiple liveviews in Protect with the same name...who knew!), and then create a single list containing all of the cameras found.
     const targetCameraIds = liveviews.filter(view => view.name.toLowerCase() === viewScene).map(view => view.slots.map(slots => slots.cameras)).flat(2);
 
     // We don't have a liveview for this state and we aren't disarming - update state for the user and we're done.
@@ -437,8 +419,8 @@ export class ProtectSecuritySystem extends ProtectBase {
 
       let targetState = false;
 
-      // If we're disarming, then all Protect cameras will disable motion detection in HomeKit. Otherwise,
-      // check to see if this is one of the cameras we want to turn on motion detection for.
+      // If we're disarming, then all Protect cameras will disable motion detection in HomeKit. Otherwise, check to see if this is one of the cameras we want to turn on
+      // motion detection for.
       if(((newState !== SecuritySystemCurrentState.DISARMED) ||
         ((newState === SecuritySystemCurrentState.DISARMED) && targetCameraIds.length)) && targetCameraIds.some(thisCameraId => thisCameraId === targetUfp?.id)) {
 
@@ -476,7 +458,7 @@ export class ProtectSecuritySystem extends ProtectBase {
     }
 
     // Publish to MQTT, if configured.
-    this.publishSecurityState();
+    this.nvr.mqtt?.publish(this.accessory, "securitysystem", this.currentSecuritySystemState);
   }
 
   // Set the security alarm.
@@ -499,6 +481,6 @@ export class ProtectSecuritySystem extends ProtectBase {
     this.accessory.getService(this.hap.Service.Switch)?.updateCharacteristic(this.hap.Characteristic.On, this.isAlarmTriggered);
 
     // Publish to MQTT, if configured.
-    this.publishSecurityState();
+    this.nvr.mqtt?.publish(this.accessory, "securitysystem", this.currentSecuritySystemState);
   }
 }

@@ -58,30 +58,24 @@ export class ProtectLight extends ProtectDevice {
   // Configure the light for HomeKit.
   private configureLightbulb(): boolean {
 
-    // Find the service, if it exists.
-    let lightService = this.accessory.getService(this.hap.Service.Lightbulb);
+    // Acquire the service.
+    const service = this.acquireService(this.hap.Service.Lightbulb);
 
-    // Add the service to the accessory, if needed.
-    if(!lightService) {
+    // Add the switch to the device, if needed.
+    if(!service) {
 
-      lightService = new this.hap.Service.Lightbulb(this.accessoryName);
+      this.log.error("Unable to add light.");
 
-      if(!lightService) {
-
-        this.log.error("Unable to add light.");
-        return false;
-      }
-
-      this.accessory.addService(lightService);
+      return false;
     }
 
     // Turn the light on or off.
-    lightService.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => {
+    service.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => {
 
       return this.ufp.isLightOn === true;
     });
 
-    lightService.getCharacteristic(this.hap.Characteristic.On)?.onSet(async (value: CharacteristicValue) => {
+    service.getCharacteristic(this.hap.Characteristic.On)?.onSet(async (value: CharacteristicValue) => {
 
       const lightState = value === true;
       const newDevice = await this.nvr.ufpApi.updateDevice(this.ufp, { lightOnSettings: { isLedForceOn: lightState } });
@@ -89,21 +83,25 @@ export class ProtectLight extends ProtectDevice {
       if(!newDevice) {
 
         this.log.error("Unable to turn the light %s. Please ensure this username has the Administrator role in UniFi Protect.", lightState ? "on" : "off");
+
         return;
       }
 
       // Set the context to our updated device configuration.
       this.ufp = newDevice;
+
+      // Publish our state.
+      this.publish("light", lightState ? "true" : "false");
     });
 
     // Adjust the brightness of the light.
-    lightService.getCharacteristic(this.hap.Characteristic.Brightness)?.onGet(() => {
+    service.getCharacteristic(this.hap.Characteristic.Brightness)?.onGet(() => {
 
       // The Protect ledLevel settings goes from 1 - 6. HomeKit expects percentages, so we convert it like so.
       return (this.ufp.lightDeviceSettings.ledLevel - 1) * 20;
     });
 
-    lightService.getCharacteristic(this.hap.Characteristic.Brightness)?.onSet(async (value: CharacteristicValue) => {
+    service.getCharacteristic(this.hap.Characteristic.Brightness)?.onSet(async (value: CharacteristicValue) => {
 
       const brightness = Math.round(((value as number) / 20) + 1);
       const newDevice = await this.nvr.ufpApi.updateDevice(this.ufp, { lightDeviceSettings: { ledLevel: brightness } });
@@ -120,15 +118,16 @@ export class ProtectLight extends ProtectDevice {
       // Make sure we properly reflect what brightness we're actually at, given the differences in setting granularity between Protect and HomeKit.
       setTimeout(() => {
 
-        lightService?.updateCharacteristic(this.hap.Characteristic.Brightness, (brightness - 1) * 20);
+        service?.updateCharacteristic(this.hap.Characteristic.Brightness, (brightness - 1) * 20);
       }, 50);
+
+      // Publish our state.
+      this.publish("light/brightness", ((brightness - 1) * 20).toString());
     });
 
     // Initialize the light.
-    lightService.displayName = this.accessoryName;
-    lightService.updateCharacteristic(this.hap.Characteristic.Name, this.accessoryName);
-    lightService.updateCharacteristic(this.hap.Characteristic.On, this.ufp.isLightOn);
-    lightService.updateCharacteristic(this.hap.Characteristic.Brightness, (this.ufp.lightDeviceSettings.ledLevel - 1) * 20);
+    service.updateCharacteristic(this.hap.Characteristic.On, this.ufp.isLightOn);
+    service.updateCharacteristic(this.hap.Characteristic.Brightness, (this.ufp.lightDeviceSettings.ledLevel - 1) * 20);
 
     return true;
   }
@@ -136,45 +135,34 @@ export class ProtectLight extends ProtectDevice {
   // Configure MQTT capabilities of this light.
   private configureMqtt(): boolean {
 
-    const lightService = this.accessory.getService(this.hap.Service.Lightbulb);
+    // Get the light state.
+    this.subscribeGet("light", "light status", () => {
 
-    if(!lightService) {
+      return (this.ufp.isLightOn === true).toString();
+    });
 
-      return false;
-    }
+    this.subscribeGet("light/brightness", "light brightness", () => {
 
-    // Trigger a motion event in MQTT, if requested to do so.
-    this.nvr.mqtt?.subscribe(this.accessory, "light", (message: Buffer) => {
+      return ((this.ufp.lightDeviceSettings.ledLevel - 1) * 20).toString();
+    });
 
-      const value = message.toString();
+    // Control the light.
+    this.subscribeSet("light", "light", (value: string) => {
+
+      this.accessory.getService(this.hap.Service.Lightbulb)?.getCharacteristic(this.hap.Characteristic.On)?.setValue(value === "true");
+    });
+
+    this.subscribeSet("light/brightness", "light brightness", (value: string) => {
+
       const brightness = parseInt(value);
 
-      switch(value?.toLowerCase()) {
+      // Unknown message - ignore it.
+      if(isNaN(brightness) || (brightness < 0) || (brightness > 100)) {
 
-        case "off":
-
-          lightService.getCharacteristic(this.hap.Characteristic.On)?.setValue(false);
-          this.log.info("Light turned off via MQTT.");
-          break;
-
-        case "on":
-
-          lightService.getCharacteristic(this.hap.Characteristic.On)?.setValue(true);
-          this.log.info("Light turned on via MQTT.");
-          break;
-
-        default:
-
-          // Unknown message - ignore it.
-          if(isNaN(brightness) || (brightness < 0) || (brightness > 100)) {
-            return;
-          }
-
-          lightService.getCharacteristic(this.hap.Characteristic.Brightness)?.setValue(brightness);
-          this.log.info("Light set to %s% via MQTT.", brightness);
-
-          break;
+        return;
       }
+
+      this.accessory.getService(this.hap.Service.Lightbulb)?.getCharacteristic(this.hap.Characteristic.Brightness)?.setValue(brightness);
     });
 
     return true;

@@ -226,17 +226,9 @@ export class ProtectNvrSystemInfo extends ProtectBase {
   private configureMqtt(): void {
 
     // Return the current status of all sensors.
-    this.nvr.mqtt?.subscribe(this.nvr.ufp.mac, "systeminfo/get", (message: Buffer) => {
+    this.nvr.mqtt?.subscribeGet(this.nvr.ufp.mac, "systeminfo", "system information", () => {
 
-      const value = message.toString().toLowerCase();
-
-      // When we get the right message, we return the system information JSON.
-      if(value !== "true") {
-        return;
-      }
-
-      this.nvr.mqtt?.publish(this.nvr.ufp.mac ?? "", "systeminfo", JSON.stringify(this.nvr.ufp.systemInfo));
-      this.log.info("System information published via MQTT.");
+      return JSON.stringify(this.nvr.ufp.systemInfo);
     });
   }
 }

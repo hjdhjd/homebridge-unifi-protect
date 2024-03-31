@@ -6,6 +6,12 @@
 import { ProtectCamera, ProtectChime, ProtectDoorbell, ProtectLight, ProtectSensor, ProtectViewer } from "./devices/index.js";
 import { ProtectCameraConfig, ProtectChimeConfig, ProtectLightConfig, ProtectSensorConfig, ProtectViewerConfig } from "unifi-protect";
 
+// Useful utilities.
+export function toCamelCase(input: string): string {
+
+  return input.replace(/(^\w|\s+\w)/g, match => match.toUpperCase());
+}
+
 // Define Protect logging conventions.
 export interface ProtectLogging {
 
@@ -30,9 +36,11 @@ export enum ProtectReservedNames {
   CONTACT_SENSOR_ALARM_SOUND = "ContactAlarmSound",
 
   // Manage our switch types.
+  SWITCH_DOORBELL_CHIME_BUZZER = "DoorbellChime.buzzer",
   SWITCH_DOORBELL_CHIME_DIGITAL = "DoorbellChime.digital",
   SWITCH_DOORBELL_CHIME_MECHANICAL = "DoorbellChime.mechanical",
   SWITCH_DOORBELL_CHIME_NONE = "DoorbellChime.none",
+  SWITCH_DOORBELL_CHIME_SPEAKER = "DoorbellChime.speaker",
   SWITCH_DOORBELL_TRIGGER = "DoorbellTrigger",
   SWITCH_DYNAMIC_BITRATE = "DynamicBitrate",
   SWITCH_HKSV_RECORDING = "HKSVRecordingSwitch",

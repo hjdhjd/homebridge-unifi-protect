@@ -101,6 +101,12 @@ export class ProtectSnapshot {
   // Snapshots using the timeshift buffer as the source.
   private async snapFromTimeshift(request?: SnapshotRequest): Promise<Buffer | null> {
 
+    // If we aren't generating high resolution snapshots, we're done.
+    if(!this.protectCamera.hints.highResSnapshots) {
+
+      return null;
+    }
+
     const buffer = this.protectCamera.stream.hksv?.getTimeshiftBuffer();
 
     if(!buffer) {
@@ -125,6 +131,12 @@ export class ProtectSnapshot {
 
   // Snapshots using the Protect RTSP endpoints as the source.
   private async snapFromRtsp(request?: SnapshotRequest): Promise<Buffer | null> {
+
+    // If we aren't generating high resolution snapshots, we're done.
+    if(!this.protectCamera.hints.highResSnapshots) {
+
+      return null;
+    }
 
     // Grab the highest quality stream we have available.
     const rtspEntry = this.protectCamera.findRtsp(3840, 2160);

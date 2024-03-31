@@ -116,14 +116,10 @@ export class ProtectViewer extends ProtectDevice {
 
         return this.setLiveviewSwitchState(switchService, value);
       });
-
-      switchService.addOptionalCharacteristic(this.hap.Characteristic.ConfiguredName);
     }
 
     // Set the state to reflect Protect.
     switchService.updateCharacteristic(this.hap.Characteristic.On, switchService.subtype === this.ufp.liveview);
-    switchService.updateCharacteristic(this.hap.Characteristic.ConfiguredName,
-      this.ufpApi.bootstrap?.liveviews?.find(x => x.id === switchService.subtype)?.name ?? this.accessoryName);
 
     return true;
   }
@@ -177,17 +173,18 @@ export class ProtectViewer extends ProtectDevice {
       // Retrieve the name assigned to this liveview.
       const liveviewName = this.ufpApi.bootstrap?.liveviews?.find(x => x.id === liveviewId)?.name;
 
-      // Grab the switch service associated with this liveview.
-      const switchService = new this.hap.Service.Switch(liveviewName, liveviewId);
+      // Acquire the service.
+      const service = this.acquireService(this.hap.Service.Switch, liveviewName, liveviewId);
 
-      if(!switchService) {
+      // Fail gracefully.
+      if(!service) {
 
-        this.log.error("Unable to add liveview switch for %s.", liveviewName);
-        continue;
+        this.log.error("Unable to add liveview switch: %s.", liveviewName);
+
+        return false;
       }
 
-      this.accessory.addService(switchService);
-      this.configureLiveviewSwitch(switchService);
+      this.configureLiveviewSwitch(service);
     }
 
     return true;
@@ -205,7 +202,7 @@ export class ProtectViewer extends ProtectDevice {
     // Publish an MQTT event.
     if(liveview) {
 
-      this.nvr.mqtt?.publish(this.accessory, "liveview", liveview.name);
+      this.publish("liveview", liveview.name);
     }
 
     return newDevice;
@@ -215,40 +212,34 @@ export class ProtectViewer extends ProtectDevice {
   private configureMqtt(): boolean {
 
     // Trigger a motion event in MQTT, if requested to do so.
-    this.nvr.mqtt?.subscribe(this.accessory, "liveview/set", (message: Buffer) => {
+    this.subscribeGet("liveview", "liveview", () => {
 
-      const value = message.toString().toLowerCase();
+      return this.ufpApi.bootstrap?.liveviews?.find(x => x.id === this.ufp.liveview)?.name ?? "None";
+    });
+
+    // Trigger a motion event in MQTT, if requested to do so.
+    this.subscribeSet("liveview", "liveview", async (value: string) => {
 
       const liveview = this.ufpApi.bootstrap?.liveviews?.find(x => x.name.toLowerCase() === value);
 
       if(!liveview) {
-        this.log.error("Unable to locate a liveview named %s.", message.toString());
+
+        this.log.error("Unable to locate a liveview named %s.", value);
+
         return;
       }
 
-      (async (): Promise<void> => {
+      const newDevice = await this.setViewer(liveview.id);
 
-        const newDevice = await this.setViewer(liveview.id);
+      if(!newDevice) {
 
-        if(newDevice) {
+        this.log.error("Unable to set liveview via MQTT to %s.", value);
 
-          this.ufp = newDevice;
-          this.log.info("Liveview set via MQTT to %s.", liveview.name);
+        return;
+      }
 
-        } else {
-
-          this.log.error("Unable to set liveview via MQTT to %s.", message.toString());
-        }
-
-      })();
-    });
-
-    // Trigger a motion event in MQTT, if requested to do so.
-    this.nvr.mqtt?.subscribeGet(this.accessory, "liveview", "Liveview", () => {
-
-      const liveview =  this.ufpApi.bootstrap?.liveviews?.find(x => x.id === this.ufp.liveview);
-
-      return liveview?.name ?? "None";
+      this.ufp = newDevice;
+      this.log.info("Liveview set via MQTT to %s.", liveview.name);
     });
 
     return true;

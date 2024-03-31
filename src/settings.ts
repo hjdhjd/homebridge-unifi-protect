@@ -20,6 +20,9 @@ export const PROTECT_DEVICE_REMOVAL_DELAY_INTERVAL = 60;
 // Default duration, in milliseconds, of a physical digital chime attached to a Protect doorbell. This value comes from UniFi Protect itself.
 export const PROTECT_DOORBELL_CHIME_DURATION_DIGITAL = 1000;
 
+// Default duration, in milliseconds, to wait before allowing another trigger of the buzzer or speaker on the chime.
+export const PROTECT_DOORBELL_CHIME_SPEAKER_DURATION = 3500;
+
 // Default duration, in milliseconds, of the trigger switch for a Protect doorbell, primarily for automation purposes.
 export const PROTECT_DOORBELL_TRIGGER_DURATION = 5000;
 

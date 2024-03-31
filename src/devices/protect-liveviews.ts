@@ -250,26 +250,17 @@ export class ProtectLiveviews extends ProtectBase {
     this.isMqttConfigured = true;
 
     // Return the current status of all the liveviews.
-    this.nvr.mqtt?.subscribe(this.nvr.ufp.mac, "liveviews/get", (message: Buffer) => {
-
-      const value = message.toString().toLowerCase();
-
-      // When we get the right message, we return the list of liveviews.
-      if(value !== "true") {
-
-        return;
-      }
+    this.nvr.mqtt?.subscribeGet(this.nvr.ufp.mac, "liveviews", "liveview scenes", () => {
 
       // Get the list of liveviews.
       const liveviews = this.platform.accessories.filter(x => "liveview" in x.context).map(x =>
         ({ name: x.context.liveview as string, state: x.getService(this.hap.Service.Switch)?.getCharacteristic(this.hap.Characteristic.On).value }));
 
-      this.nvr.mqtt?.publish(this.nvr.ufp.mac ?? "", "liveviews", JSON.stringify(liveviews));
-      this.log.info("Liveview scenes list published via MQTT.");
+      return JSON.stringify(liveviews);
     });
 
     // Set the status of one or more liveviews.
-    this.nvr.mqtt?.subscribe(this.nvr.ufp.mac, "liveviews/set", (message: Buffer) => {
+    this.nvr.mqtt?.subscribeSet(this.nvr.ufp.mac, "liveviews", "liveview scenes", (value: string, rawValue: string) => {
 
       interface mqttLiveviewJSON {
 
@@ -282,24 +273,19 @@ export class ProtectLiveviews extends ProtectBase {
       // Catch any errors in parsing what we get over MQTT.
       try {
 
-        incomingPayload = JSON.parse(message.toString()) as mqttLiveviewJSON[];
-
-        // Sanity check what comes in from MQTT to make sure it's what we want.
-        if(!(incomingPayload instanceof Array)) {
-
-          throw new Error("The JSON object is not in the expected format");
-        }
+        incomingPayload = JSON.parse(rawValue.toString()) as mqttLiveviewJSON[];
       } catch(error) {
 
-        if(error instanceof SyntaxError) {
-
-          this.log.error("Unable to process MQTT liveview setting: \"%s\". Error: %s.", message.toString(), error.message);
-        } else {
-
-          this.log.error("Unknown error has occurred: %s.", error);
-        }
+        this.log.error("Unable to process MQTT message: \"%s\". Invalid JSON.", rawValue);
 
         // Errors mean that we're done now.
+        return;
+      }
+
+      // Sanity check.
+      if(!incomingPayload || !incomingPayload.length) {
+
+        this.log.error("Unable to process MQTT message: \"%s\".", incomingPayload);
         return;
       }
 

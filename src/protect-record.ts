@@ -97,12 +97,12 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
 
       this.isInitialized = true;
 
-      this.log.info("HKSV %sevent recording enabled: %s, %s kbps %s",
+      this.log.info("HKSV: %s%s, %s kbps %s.",
         this.protectCamera.hints.hardwareTranscoding ? "hardware-accelerated " : "",
         this.rtspEntry?.name, this.recordingConfig?.videoCodec.parameters.bitRate.toLocaleString("en-US"),
         this.protectCamera.hints.timeshift ?
-          "(" + (this.timeshift.length / 1000).toString() + " second timeshift buffer)." :
-          "with no timeshift buffer. This will provide a suboptimal HKSV experience."
+          "(" + (this.timeshift.length / 1000).toString() + " second timeshift buffer)" :
+          "with no timeshift buffer. This will provide a suboptimal HKSV experience"
       );
 
       // Inform the user if there's a maximum event recording duration set.
@@ -415,6 +415,11 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
 
       let recordedTime = "";
 
+      // Calculate the time elements.
+      const hours = Math.floor(recordedSeconds / 3600);
+      const minutes = Math.floor((recordedSeconds % 3600)/ 60);
+      const seconds = Math.floor((recordedSeconds % 3600) % 60);
+
       // Create a nicely formatted string for end users. Yes, the author recognizes this isn't essential, but it does bring a smile to their face.
       if(recordedSeconds < 1) {
 
@@ -423,11 +428,6 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
 
         recordedTime = Math.round(recordedSeconds).toString();
       } else {
-
-        // Calculate the time elements.
-        const hours = Math.floor(recordedSeconds / 3600);
-        const minutes = Math.floor((recordedSeconds % 3600)/ 60);
-        const seconds = Math.floor((recordedSeconds % 3600) % 60);
 
         // Build the string.
         if(hours > 9) {
@@ -460,23 +460,28 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
       switch(recordedTime.split(":").length - 1) {
 
         case 1:
+
           timeUnit = "minute";
+
           break;
 
         case 2:
+
           timeUnit = "hour";
+
           break;
 
         default:
 
           timeUnit = "second";
+
           break;
       }
 
       // Inform the user if they've enabled logging. We log HKSV events by default, for now.
       if(this.protectCamera.hints.logHksv || this.protectCamera.hints.logMotion) {
 
-        this.log.info("HKSV recorded %s %s %s motion event.", this.timeshiftedSegments ? "a" : "an approximately", recordedTime, timeUnit);
+        this.log.info("HKSV: %s%s %s event.", this.timeshiftedSegments ? "" : "(approximately) ", recordedTime, timeUnit);
       }
 
       // Once we've got a successful event, let's reset our error count.
