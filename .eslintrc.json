@@ -13,6 +13,7 @@
     "sourceType": "module"
   },
   "plugins": [ "@stylistic" ],
+  "root": true,
   "rules": {
     "camelcase": [ "warn" ],
     "curly": [ "warn", "all" ],
