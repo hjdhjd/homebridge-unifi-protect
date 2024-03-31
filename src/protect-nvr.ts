@@ -375,7 +375,7 @@ export class ProtectNvr {
 
       accessory = new this.api.platformAccessory(device.name ?? device.marketName, uuid);
 
-      this.log.info("%s: Adding %s to HomeKit%s.", this.ufpApi.getFullName(device), device.modelKey,
+      this.log.info("%s: Adding %s to HomeKit%s.", this.ufpApi.getDeviceName(device), device.modelKey,
         this.hasFeature("Device.Standalone", device) ? " as a standalone device" : "");
 
       // Register this accessory with homebridge and add it to the accessory array so we can track it.
@@ -499,7 +499,11 @@ export class ProtectNvr {
           delete this.deviceRemovalQueue[accessory.UUID];
         }
 
-        this.log.info("%s: Removing device from HomeKit.%s", accessory.displayName,
+        // See if we can pull the device's configuration details from the controller.
+        const device = ProtectDeviceCategories.map(category => this.ufpApi.bootstrap && this.ufpApi.bootstrap[category + "s"] &&
+          ((this.ufpApi.bootstrap[category + "s"] as ProtectDeviceConfigTypes[]) ?? []).find(x => x.mac === accessory.context.mac)).reduce((acc, x) => x ?? acc, null);
+
+        this.log.info("%s: Removing %s from HomeKit.%s", device ? this.ufpApi.getDeviceName(device) : accessory.displayName, device ? device.modelKey : "device",
           accessory._associatedHAPAccessory.bridged ? "" : " You will need to manually delete the device in the Home app to complete the removal.");
 
         // Unregister the accessory and delete it's remnants from HomeKit. We can only unregister bridged accessories - standalone acceossories are managed directly by
