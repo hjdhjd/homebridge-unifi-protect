@@ -135,7 +135,7 @@ These option(s) apply to: Protect cameras, Protect lights, and Protect sensors.
 | Option                                           | Description
 |--------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 | `Log.Doorbell`                                   | Log doorbell ring events in Homebridge. **(default: enabled)**. <BR>*Supported on Protect cameras that have a motion sensor.*
-| `Log.HKSV`                                       | Log HomeKit Secure Video recording events in Homebridge. **(default: enabled)**. <BR>*Supported on Protect cameras that have a motion sensor.*
+| `Log.HKSV`                                       | Log HomeKit Secure Video recording events in Homebridge. **(default: disabled)**. <BR>*Supported on Protect cameras that have a motion sensor.*
 | `Log.Motion`                                     | Log motion events in Homebridge. **(default: disabled)**. <BR>*Supported on Protect devices that have a motion sensor.*
 
 #### <A NAME="motion"></A>Motion detection feature options.
@@ -195,6 +195,7 @@ These option(s) apply to: Protect cameras.
 | `Video.Crop.Y<I>.Value</I>`                      | Top offset of the crop window, as a percentage of the original image height. **(default: 0)**.
 | `Video.Crop.Width<I>.Value</I>`                  | Width of the crop window, as a percentage of original image width. **(default: 100)**.
 | `Video.Crop.Height<I>.Value</I>`                 | Height of the crop window, as a percentage of original image height. **(default: 100)**.
+| `Video.HighResSnapshots`                         | Enable higher quality snapshots using the timeshift buffer or the livestream. **(default: enabled)**.
 
 #### <A NAME="video.hksv"></A>HomeKit Secure Video feature options.
 
@@ -202,10 +203,10 @@ These option(s) apply to: Protect cameras.
 
 | Option                                           | Description
 |--------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-| `Video.HKSV.Recording.MaxDuration<I>.Value</I>`  | Maximum HomeKit Secure Video event duration, in seconds. **(default: 0)**.
+| `Video.HKSV.TimeshiftBuffer`                     | Enable the timeshift buffer for HomeKit Secure Video. **(default: enabled)**.
 | `Video.HKSV.Recording.Switch`                    | Add a switch accessory to enable or disable HKSV event recording. **(default: disabled)**.
+| `Video.HKSV.Recording.MaxDuration<I>.Value</I>`  | Maximum HomeKit Secure Video event duration, in seconds. **(default: 0)**.
 | `Video.HKSV.Record.Only.High`                    | When recording HomeKit Secure Video events, force the use of the high quality video stream from the Protect controller. **(default: disabled)**.
 | `Video.HKSV.Record.Only.Medium`                  | When recording HomeKit Secure Video events, force the use of the medium quality video stream from the Protect controller. **(default: disabled)**.
 | `Video.HKSV.Record.Only.Low`                     | When recording HomeKit Secure Video events, force the use of the low quality video stream from the Protect controller. **(default: disabled)**.
-| `Video.HKSV.TimeshiftBuffer`                     | Enable the timeshift buffer for HomeKit Secure Video. **(default: enabled)**.
 
