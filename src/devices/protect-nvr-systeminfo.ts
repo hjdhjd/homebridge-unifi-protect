@@ -129,7 +129,7 @@ export class ProtectNvrSystemInfo extends ProtectBase {
 
     if(this.eventListener) {
 
-      this.nvr.events.removeListener("updateEvent." + this.nvr.ufp.id, this.eventListener);
+      this.nvr.events.off("updateEvent." + this.nvr.ufp.id, this.eventListener);
       this.eventListener = null;
     }
   }

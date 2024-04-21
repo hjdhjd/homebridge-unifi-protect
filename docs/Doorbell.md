@@ -17,7 +17,7 @@
 `homebridge-unifi-protect` is a [Homebridge](https://homebridge.io) plugin that provides HomeKit support to the [UniFi Protect](https://ui.com/camera-security) device ecosystem. [UniFi Protect](https://ui.com/camera-security) is [Ubiquiti's](https://www.ui.com) video security platform, with rich camera, doorbell, and NVR controller hardware options for you to choose from, as well as an app which you can use to view, configure and manage your video camera and doorbells.
 
 ### Doorbell Support
-If you're reading this, chances are you own, or would like to own, a UniFi Protect doorbell. Currently, Ubiquiti sells one doorbell - the [UniFi Protect G4 Doorbell](https://store.ui.com/collections/unifi-protect-cameras/products/uvc-g4-doorbell), and it's quite a nice device. You can read all about the features and specs elsewhere, but for our purposes, I'm going to focus on talking about the handful of features that are most relevant for [HomeKit](https://www.apple.com/ios/home/) users in particular:
+If you're reading this, chances are you own, or would like to own, a [UniFi Protect doorbell](https://store.ui.com/us/en?category=cameras-doorbells). HBUP supports the following features for Protect doorbells:
 
   * Two-way Audio Support
     * `homebridge-unifi-protect` supports two-way audio, and it works well with one notable caveat: a lack of acoustic echo cancelation, or AEC.
@@ -26,35 +26,36 @@ If you're reading this, chances are you own, or would like to own, a UniFi Prote
     * `homebridge-unifi-protect` fully supports doorbell ring notifications. When you ring the doorbell, you'll get a notification on your iOS/macOS devices, including a snapshot of whose at the door. These snapshots tied to notifications are often called *rich notifications*.
 
   * Doorbell Camera and Motion Detection Support
-    * Since the G4 Doorbell is essentially a camera as far as UniFi Protect goes, `homebridge-unifi-protect` supports all the same features as other UniFi Protect cameras, including motion detection and blazing fast and responsive video streaming.
+    * Since the Protect doorbells are essentially a camera as far as UniFi Protect goes, `homebridge-unifi-protect` supports all the same features as other UniFi Protect cameras, including motion detection and blazing fast and responsive video streaming.
+
+  * Package Camera Support
+    * For UniFi Protect doorbells that have package cameras, HBUP supports those as well, making them available to you in HomeKit - including full support for HomeKit Secure Video for package cameras.
 
   * Doorbell Messages
-    * An interesting and novel feature of the G4 Doorbell is that it has it's own LCD screen. You can choose to set a message on this screen for people to see. Messages can be set indefinitely, selected from a preexisting list after the doorbell is rung, or you can type in a message in realtime at any point. `homebridge-unifi-protect` has full support for setting messages on your doorbell.
+    * Some UniFi Protect doorbells feature an LCD screen that can display messages for people at the doorbell to see. Messages can be set indefinitely, selected from a preexisting list after the doorbell is rung, or you can type in a message in realtime at any point. `homebridge-unifi-protect` has full support for setting messages on your doorbell, including automation capabilities should you choose to use them.
 
 ### <A NAME="doorbell-twoway"></A>Two-way Audio
   * Protect cameras and doorbells that support two-way audio are *full-duplex*, meaning they transmit and receive audio simultaneously. This creates a problem - without using some method to eliminate your own voice from what gets picked up by the speaker, ***you will inevitably hear your own voice back whenever you use the microphone in the Home app***, however the person standing in front of the doorbell will hear things normally.
 
   * Unfortunately, AEC is not a solved problem in the open source community quite yet, though there are great commercial options. There are a couple of glimmers of hope: Protect cameras appear to actually support AEC, though there doesn't appear to be a straightforward way to access this capability at the moment. The second is that, things *do* work quite well, aside from the unfortunate challenge around AEC for the person using the Home app.
 
-  * Two-way audio is enabled by default. You can disable it, through the `Audio.TwoWay` [feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md).
+  * Two-way audio is enabled by default. You can disable it, through the two-way audio feature option under the Audio section of the HBUP feature options webUI.
 
   * Finally, since someone will inevitably ask: Ring and Nest-Cam (terrific plugins by terrific developers) - don't have this problem because Ring and Nest send all audio back to Ring and Nest's servers where audio is processed and dealt with, including AEC.
 
 ### <A NAME="doorbell-ring"></A>Doorbell Rings
 
-[HomeKit](https://www.apple.com/ios/home/) is a great home automation platform in many ways. Where there are gaps in HomeKit support, plugins like this one help to fill it by providing HomeKit support for devices without native HomeKit support. Every so often, however, you run into something that really is a limitation of the HomeKit platform that you need to work around. Doorbell ring automation is one of those things.
+[HomeKit](https://www.apple.com/home-app/) is a great home automation platform in many ways. Where there are gaps in HomeKit support, plugins like this one help to fill it by providing HomeKit support for devices without native HomeKit support. Every so often, however, you run into something that really is a limitation of the HomeKit platform that you need to work around. Doorbell ring automation is one of those things.
 
-This plugin supports HomeKit's native video doorbell and doorbell ring functionality. What HomeKit lacks though is a way to trigger an automation when a ring occurs. There's currently no way to say something like *when the doorbell rings, and it's nighttime, turn on the front porch lights*. It's impossible to tell if this is an oversight or intentional on Apple's part. Until Apple chooses to provide that capability, what can we do?
+This plugin supports HomeKit's native video doorbell and doorbell ring functionality. What HomeKit lacks though is a way to trigger an automation when a ring occurs. There's currently no way to say something like *when the doorbell rings, and it's nighttime, turn on the front porch lights*. Until Apple chooses to provide that capability, what can we do?
 
 Enter automation support for doorbell ring events in this plugin. If you choose to enable support for doorbell ring automation, you can create HomeKit automations based on doorbell ring events. Here's how it works:
 
-  * Enable the `Doorbell.Trigger` feature option in the plugin configuration. See the [Feature Options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md#doorbell) documentation for more information on feature options.
+  * Enable the doorbell trigger feature option under the Doorbell section of the HBUP feature options webUI.
 
-  * This will create a contact sensor service on the doorbell. Whenever the doorbell rings, the contact sensor will be triggered and set to the *open* state for two seconds, before resetting to the *closed* state again.
+  * This will create a switch service on the doorbell. Whenever the doorbell rings, the switch will turn on for a few seconds before resetting to the *off* state again.
 
-  * You can create automations in HomeKit based on this by using the contact sensor as a proxy for the doorbell ring.
-
-  * ***This feature is disabled by default***. At it's core this feature is a workaround for a limitation in HomeKit for a narrow, but very real, use case. I've chosen to err on the side of keeping things as clean as possible when it comes to exposing services within the plugin, while providing more sophisticated functionality like this feature to those who want it.
+  * You can create automations in HomeKit based on this by using the switch as a proxy for the doorbell ring. Turning on the switch will trigger a doorbell ring event.
 
 ### <A NAME="doorbell-messages"></A>Doorbell Messages
 
@@ -62,16 +63,16 @@ Before we get to configuring this feature in HomeKit, let's discuss what this fe
 
 #### How Doorbell Messages Work In UniFi Protect
 
-The messages feature in the G4 Doorbell is essentially an LCD display on the doorbell that users can configure. The LCD display actually remains off until it detects motion, at which point it will display *WELCOME* or whatever message may have been placed there indefinitely by the user. Users can set a message at any time on the doorbell.
+The messages feature in some UniFi Protect doorbells are essentially an LCD display on the doorbell that users can configure. The LCD display actually remains off until it detects motion, at which point it will display *WELCOME* or whatever message may have been placed there indefinitely by the user. Users can set a message at any time on the doorbell.
 
 UniFi Protect has a couple of default messages built in, specifically:
 
   * Do not disturb
   * Leave package at door
 
-These messages are always available to you in the UniFi Protect app and they can't be deleted or hidden. In addition to those, you can type in any message you'd like, using the UniFi Protect app, up to a limit of 30 characters. Additionally, you can choose to save any message you create, making it easy to quickly select it from a list the next time you're in the app.
+These messages are always available to you in the UniFi Protect app and they can't be deleted or hidden. In addition to those, you can type in any message you'd like, using the UniFi Protect app, up to a limit of 30 characters. You can choose to save any message you create, making it easy to quickly select it from a list the next time you're in the app.
 
-When you select a message to be displayed, you can also set a duration on that message. The message duration tells UniFi Protect how long to leave the message on the screen before returning to the default message *WELCOME*. By default, when a message is selected, it remains visible for 60 seconds. You can set a message to remain in place indefinitely, or at various preconfigured durations within the UniFi Protect app.
+When you select a message to be displayed, you can also set a duration for that message. The message duration tells UniFi Protect how long to leave the message on the screen before returning to the default message *WELCOME*. By default, when a message is selected, it remains visible for 60 seconds. You can also configure messages using the UniFi Protect app.
 
 #### How Doorbell Messages Work In `homebridge-unifi-protect`
 
@@ -89,7 +90,7 @@ Here's how it works:
 
     * This approach provides you the most customization, but it comes at the expense of needing to reboot Homebridge whenever you want to make changes. In practice, I don't find this to be much of an issue when you combine this with the previous option. The combination allows you to use the flexibility provided in configuring messages through Homebridge, with the convenience of more ad hoc messages that you may need on a temporary basis.
 
-    * Messages configured within Homebridge (either through editing your `config.json` or using the Homebridge webUI), can have duration information associated with them. **You can choose to display a message indefinitely, or for any amount of time you choose, without restriction.**
+    * Messages configured within the HBUP webUI can have duration information associated with them. **You can choose to display a message indefinitely, or for any amount of time you choose, without restriction.**
 
   * All configured messages - those that come from UniFi Protect and those that you configure in Homebridge - will be made available as individual switches on the doorbell accessory in the Home app. You can set or clear a given message by activating or deactivating the associated switch in the Home app.
 
@@ -97,62 +98,14 @@ Here's how it works:
 
   * When someone rings the doorbell, you'll receive a rich notification. If you swipe down on that notification, you'll see a complete list of all the message switches associated with the doorbell. While two-way audio isn't available through HomeKit, you *can* select any of the preset messages you've configured to communicate with the person who rang the doorbell.
 
-
 #### Configuring the Doorbell Messages Feature
 
-Doorbell messages can be configured using the [Homebridge webUI](https://github.com/homebridge/homebridge-config-ui-x), and I would encourage you to use that as the primary configuration method for this plugin - it contains additional validation checking (e.g. character length) to ensure the configuration is always valid.
+Doorbell messages can be configured using the HBUP webUI:
 
-For those of the command-line persuasion, you can see what an example `config.json` looks like when configured with doorbell messages:
+  * Go to the **Settings** tab, then select **UniFi Protect Controllers** and then **Doorbell Message Presets**.
+  * You can configure a default doorbell message as well as an unlimited number of additional messages to be made available as message switches within HomeKit.
 
-```js
-{
-  "platform": "UniFi Protect",
-
-  "options": [
-    "Disable.Doorbell.Messages.FromDoorbell"
-  ],
-
-  "controllers": [
-    {
-      "name": "My UniFi Protect Controller",
-      "address": "1.2.3.4",
-      "username": "some-homebridge-user",
-      "password": "some-password",
-      "doorbellMessages": [
-        {
-           "message": "Be right there.",
-           "duration": 90
-        }
-      ]
-    }
-  ]
-}
-```
-
-| doorbellMessages    | Description
-|---------------------|----------------------------------
-| `message`           | The message text to display on the doorbell.
-| `duration`          | The duration, in seconds, that you want to display the message for on the doorbell. If not specified, it defaults to the UniFi Protect default, 60 seconds. If set to 0, the message will display indefinitely.
-
-There are also two feature options that you can use to either disable the messages feature entirely, or, to tell `homebridge-unifi-protect` to only display the messages you've configured within Homebridge in HomeKit:
-
-| Feature Options        | Description
-|-----------------------|----------------------------------
-| `Enable.Doorbell.Messages`                             | Enable the doorbell messages feature on UniFi Protect doorbells. *(Default)*
-| `Disable.Doorbell.Messages`                            | Disable the doorbell messages feature on UniFi Protect doorbells.
-|                                               |
-| `Enable.Doorbell.Messages.FromDoorbell`                | Allow messages saved on the UniFi Protect doorbell to appear as switches in HomeKit. *(Default)*
-| `Disable.Doorbell.Messages.FromDoorbell`               | Prevent messages saved on the UniFi Protect doorbell from appearing as switches in HomeKit.
-
-To learn more about feature options and how to use them, see the [Feature Options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md) page.
-
-#### MQTT Support
-[MQTT support](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/MQTT.md) is available for doorbells. In addition to all the MQTT functionality that is supported for all UniFi Protect cameras, there are two doorbell-specific MQTT actions that are supported:
-
-  * When the doorbell is rung, a message will be published to MQTT.
-  * You can set Doorbell messages through MQTT. This provides a more rich experience by allowing you to set any arbitrary message on a dynamic basis.
-
-To learn more about the MQTT support provided by this plugin, see the [MQTT](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/MQTT.md) page.
+To configure the behavior of this feature, see the HBUP feature options webUI, under the Doorbell feature options section.
 
 ### Some Fun Facts
   * There is a 30 character limit to what can be displayed on the LCD.

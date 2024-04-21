@@ -28,59 +28,10 @@ The priority given to these options works in the following order, from highest t
 
 All feature options can be set at any scope level, or at multiple scope levels. If an option isn't applicable to a particular category of device, it is ignored. For example, if you have two doorbells in your environment, and want to enable the same feature options on both, you can enable the doorbell-related feature options globally rather than specifying them for each individual doorbell. If you want to override a global feature option you've set, you can override the global feature option for the individual doorbell in this example.
 
-**Note: it's strongly recommended that you use the Homebridge webUI](https://github.com/homebridge/homebridge-config-ui-x) to configure this plugin - it's easier to use for most people, and will ensure you always have a valid configuration.**
-
-#### Specifying Scope
-There are two types of scope specifiers that you can use with feature options - MAC addresses.
-
-Scoping rules:
-
-  * If you don't use a scoping specifier, feature options will be applied globally for all devices.
-  * To use a device or controller-specific feature option, append the option with `.MAC`, where `MAC` is the MAC address of either a UniFi Protect controller or a camera.
-
-`homebridge-unifi-protect` will log all devices it discovers on startup, including MAC addresses, which you can use to tailor the feature options you'd like to enable or disable on a per-device basis.
-
-### Getting Started
-Before using these features, you should understand how feature options propagate to controllers and the devices attached to them. If you choose to disable a controller from being available to HomeKit, you will also disable all the cameras attached to that controller. If you've disabled a controller, you can selectively enable a single device associated with that controller by explicitly using the `Enable.` Feature Option with that device's MAC address. This provides you a lot of richness in how you enable or disable devices for HomeKit use.
-
-The `options` setting is an array of strings used to customize Feature Options in your `config.json`. I would encourage most users, however, to use the [Homebridge webUI](https://github.com/homebridge/homebridge-config-ui-x), to configure Feature Options as well as other options in this plugin. It contains additional validation checking of parameters to ensure the configuration is always valid.
-
-#### Example Configuration
-An example `options` setting might look like this in your config.json:
-
-```js
-"platforms": [
-  {
-    "platform": "UniFi Protect",
-
-    "options": [
-      "Disable.Video.Transcode",
-      "Enable.Video.Transcode.AAAAAAAAAAAA"
-    ],
-
-    "controllers": [
-      {
-        "address": "1.2.3.4",
-        "username": "some-unifi-protect-user (or create a new one just for homebridge)",
-        "password": "some-password"
-      }
-    ]
-  }
-]
-```
-In this example:
-
-| Device MAC Address    | Description
-|-----------------------|------------------
-| AAAAAAAAAAAA          | A UVC G3 Flex that is managed by a UniFi Protect controller.
-
-* The first line `Disable.Video.Transcode` disables transcoding on all UniFi Protect devices that appear in HomeKit.
-* The second line, overrides the first and enables transcoding on the G3 Flex. Specifying device-specific options always overrides global settings.
-
 ### <A NAME="reference"></A>Feature Options Reference
 Feature options provide a rich mechanism for tailoring your `homebridge-unifi-protect` experience. The reference below is divided into functional category groups:
 
-**Note: it's strongly recommended that you use the Homebridge webUI](https://github.com/homebridge/homebridge-config-ui-x) to configure this plugin - it's easier to use for most people, and will ensure you always have a valid configuration.**
+**Note: it's strongly recommended that you use the HBUP webUI to configure this plugin and use the below as a guide to the capabilities you have available to you in HBUP.**
 
  * [Audio](#audio): Audio feature options.
  * [Device](#device): Device feature options.
@@ -148,6 +99,9 @@ These option(s) apply to: Protect cameras, Protect lights, and Protect sensors.
 | `Motion.OccupancySensor`                         | Add an occupancy sensor accessory using motion sensor activity to determine occupancy. By default, any motion will trigger occupancy. If the smart motion detection feature option is enabled, it will be used instead. **(default: disabled)**. <BR>*Supported on Protect devices that have a motion sensor.*
 | `Motion.OccupancySensor.Duration<I>.Value</I>`   | Duration, in seconds, to wait without receiving a motion event to determine when occupancy is no longer detected. **(default: 300)**.
 | `Motion.OccupancySensor.Animal`                  | When using both the occupancy sensor and smart motion detection feature options, use UniFi Protect's animal detection to trigger occupancy. **(default: disabled)**. <BR>*Supported on Protect devices that support smart motion detection (e.g. G4-series cameras and better).*
+| `Motion.OccupancySensor.Face`                    | When using both the occupancy sensor and smart motion detection feature options, use UniFi Protect's face detection to trigger occupancy. **(default: disabled)**. <BR>*Supported on Protect devices that support smart motion detection (e.g. G4-series cameras and better).*
+| `Motion.OccupancySensor.LicensePlate`            | When using both the occupancy sensor and smart motion detection feature options, use UniFi Protect's license plate detection to trigger occupancy. **(default: disabled)**. <BR>*Supported on Protect devices that support smart motion detection (e.g. G4-series cameras and better).*
+| `Motion.OccupancySensor.Package`                 | When using both the occupancy sensor and smart motion detection feature options, use UniFi Protect's package detection to trigger occupancy. **(default: disabled)**. <BR>*Supported on Protect devices that support smart motion detection (e.g. G4-series cameras and better).*
 | `Motion.OccupancySensor.Person`                  | When using both the occupancy sensor and smart motion detection feature options, use UniFi Protect's person detection to trigger occupancy. **(default: enabled)**. <BR>*Supported on Protect devices that support smart motion detection (e.g. G4-series cameras and better).*
 | `Motion.OccupancySensor.Vehicle`                 | When using both the occupancy sensor and smart motion detection feature options, use UniFi Protect's vehicle detection to trigger occupancy. **(default: disabled)**. <BR>*Supported on Protect devices that support smart motion detection (e.g. G4-series cameras and better).*
 | `Motion.SmartDetect`                             | Use UniFi Protect smart motion detection for HomeKit motion events when on a supported device. **(default: disabled)**. <BR>*Supported on Protect devices that support smart motion detection (e.g. G4-series cameras and better).*

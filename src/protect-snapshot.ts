@@ -139,7 +139,7 @@ export class ProtectSnapshot {
     }
 
     // Grab the highest quality stream we have available.
-    const rtspEntry = this.protectCamera.findRtsp(3840, 2160);
+    const rtspEntry = this.protectCamera.findRtsp(3840, 2160, { biasHigher: true });
 
     if(!rtspEntry) {
 
@@ -151,6 +151,8 @@ export class ProtectSnapshot {
     // -probesize amount    How many bytes should be analyzed for stream information. We default to to analyze time should be spent analyzing
     //                      the input stream.
     // -max_delay 500000    Set an upper limit on how much time FFmpeg can take in demuxing packets.
+    // -flags low_delay     Tell FFmpeg to optimize for low delay / realtime decoding.
+    // -avioflags direct    Tell FFmpeg to minimize buffering to reduce latency for more realtime processing.
     // -r fps               Set the input frame rate for the video stream.
     // -rtsp_transport tcp  Tell the RTSP stream handler that we're looking for a TCP connection.
     // -i rtspEntry.url     RTSPS URL to get our input stream from.
@@ -158,6 +160,8 @@ export class ProtectSnapshot {
       ...this.protectCamera.stream.ffmpegOptions.videoDecoder,
       "-probesize", this.protectCamera.stream.probesize.toString(),
       "-max_delay", "500000",
+      "-flags", "low_delay",
+      "-avioflags", "direct",
       "-r", rtspEntry.channel.fps.toString(),
       "-rtsp_transport", "tcp",
       "-i", rtspEntry.url

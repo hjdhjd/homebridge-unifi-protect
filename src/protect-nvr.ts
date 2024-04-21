@@ -8,8 +8,8 @@ import { ProtectApi, ProtectCameraConfig, ProtectChimeConfig, ProtectLightConfig
   ProtectViewerConfig } from "unifi-protect";
 import { ProtectCamera, ProtectChime, ProtectDevice, ProtectDoorbell, ProtectLight, ProtectLiveviews, ProtectNvrSystemInfo, ProtectSensor,
   ProtectViewer } from "./devices/index.js";
-import { ProtectDeviceCategories, ProtectDeviceConfigTypes, ProtectDevices, ProtectLogging } from "./protect-types.js";
-import { ProtectNvrOptions, getOptionFloat, getOptionNumber, getOptionValue, isOptionEnabled } from "./protect-options.js";
+import { ProtectDeviceCategories, ProtectDeviceConfigTypes, ProtectDeviceTypes, ProtectDevices, ProtectLogging } from "./protect-types.js";
+import { ProtectNvrOptions, getOptionFloat, getOptionNumber, getOptionScope, getOptionValue, isOptionEnabled } from "./protect-options.js";
 import { ProtectEvents } from "./protect-events.js";
 import { ProtectMqtt } from "./protect-mqtt.js";
 import { ProtectPlatform } from "./protect-platform.js";
@@ -23,6 +23,7 @@ export class ProtectNvr {
   private deviceRemovalQueue: { [index: string]: number };
   public readonly configuredDevices: { [index: string]: ProtectDevices };
   public events!: ProtectEvents;
+  private featureLog: { [index: string]: boolean };
   private hap: HAP;
   private liveviews: ProtectLiveviews | null;
   public logApiErrors: boolean;
@@ -42,6 +43,7 @@ export class ProtectNvr {
     this.config = nvrOptions;
     this.configuredDevices = {};
     this.deviceRemovalQueue = {};
+    this.featureLog = {};
     this.hap = this.api.hap;
     this.liveviews = null;
     this.logApiErrors = true;
@@ -70,13 +72,10 @@ export class ProtectNvr {
     // Make sure we cleanup any remaining streaming sessions on shutdown.
     this.api.on(APIEvent.SHUTDOWN, () => {
 
-      for(const protectDevice of Object.values(this.configuredDevices)) {
+      for(const protectCamera of this.devices("camera")) {
 
-        if(("ufp" in protectDevice) && (protectDevice.ufp.modelKey === "camera")) {
-
-          protectDevice.log.debug("Shutting down all video stream processes.");
-          void (protectDevice as ProtectCamera).stream?.shutdown();
-        }
+        protectCamera.log.debug("Shutting down all video stream processes.");
+        void protectCamera.stream?.shutdown();
       }
     });
   }
@@ -424,12 +423,10 @@ export class ProtectNvr {
     this.liveviews?.configureLiveviews();
 
     // Update our viewer accessories.
-    Object.keys(this.configuredDevices).filter(x => this.configuredDevices[x].ufp.modelKey === "viewer")
-      .map(x => (this.configuredDevices[x] as ProtectViewer).updateDevice());
+    this.devices("viewer").map(x => x.updateDevice());
 
-    // Sync our names.
-    Object.keys(this.configuredDevices).filter(x => ("hints" in this.configuredDevices[x]) && (this.configuredDevices[x] as ProtectDevice).hints.syncName)
-      .map(x => ((this.configuredDevices[x] as ProtectDevice).accessoryName = (this.configuredDevices[x] as ProtectDevice).ufp.name));
+    // Update our device information.
+    this.devicelist.map(x => x.configureInfo());
 
     return true;
   }
@@ -777,10 +774,13 @@ export class ProtectNvr {
     server.listen(port);
   }
 
-  // Reauthenticate with the NVR and reset any HKSV timeshift buffers, as needed.
+  // Reauthenticate with the NVR and reset any HKSV-enabled devices, as needed.
   public async resetNvrConnection(): Promise<void> {
 
-    // Clear our login credentials and statistics.
+    // Reset our HKSV-enabled devices.
+    await Promise.all(this.devices("camera").filter(x => x.hasHksv).map(x => x.stream.hksv?.reset()));
+
+    // Clear our login credentials and error statistics.
     this.nvrHksvErrors = 0;
     this.ufpApi.reset();
 
@@ -788,21 +788,28 @@ export class ProtectNvr {
     await this.bootstrapNvr();
 
     // Inform all HKSV-enabled devices that are using a timeshift buffer to reset.
-    for(const accessory of this.platform.accessories) {
+    for(const protectCamera of this.devices("camera").filter(x => x.hasHksv)) {
 
-      // Retrieve the HBUP object for this device.
-      const protectDevice = this.configuredDevices[accessory.UUID] as ProtectCamera;
-
-      // Ensure it's a camera device and that we have HKSV as well as timeshifting enabled.
-      if((protectDevice?.ufp?.modelKey !== "camera") || !protectDevice.hasHksv || !protectDevice.hints.timeshift) {
-
-        continue;
-      }
-
-      // Restart the timeshift buffer.
+      // Restart the timeshift buffer, if configured.
       // eslint-disable-next-line no-await-in-loop
-      await protectDevice.stream.hksv?.restartTimeshifting();
+      await protectCamera.stream.hksv?.restartTimeshifting();
+
+      // Put in a short delay between cameras, to alleviate potentially impacts to the Protect controller.
+      // eslint-disable-next-line no-await-in-loop
+      await this.sleep(1500);
     }
+  }
+
+  // Return all configured devices.
+  private get devicelist(): ProtectDevices[] {
+
+    return Object.values(this.configuredDevices);
+  }
+
+  // Return all devices of a particular modelKey.
+  private devices<T extends keyof ProtectDeviceTypes>(model?: T): ProtectDeviceTypes[T][] {
+
+    return Object.values(this.configuredDevices).filter(x => x.ufp?.modelKey === model) as ProtectDeviceTypes[T][];
   }
 
   // Lookup a device by it's identifier and return it if it exists.
@@ -826,10 +833,32 @@ export class ProtectNvr {
     return getOptionNumber(getOptionValue(this.platform.featureOptions, this.ufp, null, option));
   }
 
+  // Utility for checking the scope of feature options on the NVR.
+  public isNvrFeature(option: string, device: ProtectDeviceConfigTypes | ProtectNvrConfig | null = null): boolean {
+
+    return ["global", "nvr"].includes(getOptionScope(this.platform.featureOptions, this.ufp, device, option, this.platform.featureOptionDefault(option)));
+  }
+
   // Utility for checking feature options on the NVR.
   public hasFeature(option: string, device: ProtectDeviceConfigTypes | ProtectNvrConfig | null = null): boolean {
 
     return isOptionEnabled(this.platform.featureOptions, this.ufp, device, option, this.platform.featureOptionDefault(option));
+  }
+
+  // Utility for logging feature option availability on the NVR.
+  public logFeature(option: string, message: string): void {
+
+    option = option.toLowerCase();
+
+    // Only log something if we haven't already informed the user about it previously and it's scoped to the NVR or globally.
+    if(this.featureLog[option] || !this.isNvrFeature(option)) {
+
+      return;
+    }
+
+    this.featureLog[option] = true;
+
+    this.log.info(message);
   }
 
   // Emulate a sleep function.

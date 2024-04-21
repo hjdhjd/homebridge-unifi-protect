@@ -205,8 +205,7 @@ export class ProtectCamera extends ProtectDevice {
     //   - name change.
     //   - camera status light.
     //   - camera recording settings.
-    if(payload.state || payload.name || (payload.ledSettings && ("isEnabled" in payload.ledSettings)) ||
-      (payload.recordingSettings && ("mode" in payload.recordingSettings))) {
+    if(payload.state || payload.name || payload.ledSettings?.isEnabled || payload.recordingSettings?.mode) {
 
       this.updateDevice();
     }
@@ -218,13 +217,13 @@ export class ProtectCamera extends ProtectDevice {
     const payload = packet.payload as ProtectEventAdd;
 
     // We're only interested in smart motion detection events.
-    if((packet.header.modelKey !== "event") || ((payload.type !== "smartDetectZone") && (payload.type !== "smartDetectLine")) || !payload.smartDetectTypes.length) {
+    if((packet.header.modelKey !== "event") || !["smartDetectLine", "smartDetectZone"].includes(payload.type) || !payload.smartDetectTypes.length) {
 
       return;
     }
 
     // Process the motion event.
-    this.nvr.events.motionEventHandler(this, payload.smartDetectTypes, ("metadata" in payload) ? payload.metadata : undefined);
+    this.nvr.events.motionEventHandler(this, payload.smartDetectTypes, payload.metadata);
   }
 
   // Configure discrete smart motion contact sensors for HomeKit.
@@ -640,7 +639,7 @@ export class ProtectCamera extends ProtectDevice {
       }
 
       // Find the closest RTSP match for this resolution.
-      const foundRtsp = this.findRtsp(entry[0], entry[1], rtspEntries);
+      const foundRtsp = this.findRtsp(entry[0], entry[1], { rtspEntries: rtspEntries });
 
       if(!foundRtsp) {
 
@@ -660,9 +659,9 @@ export class ProtectCamera extends ProtectDevice {
       rtspEntries.sort(this.sortByResolutions.bind(this));
     }
 
-    // Ensure we've got at least one entry that can be used for HomeKit Secure Video. Some Protect cameras (e.g. G3 Flex) don't have a native frame rate that
-    // maps to HomeKit's specific requirements for event recording, so we ensure there's at least one. This doesn't directly affect which stream is used to
-    // actually record something, but it does determine whether HomeKit even attempts to use the camera for HomeKit Secure Video.
+    // Ensure we've got at least one entry that can be used for HomeKit Secure Video. Some Protect cameras (e.g. G3 Flex) don't have a native frame rate that maps to
+    // HomeKit's specific requirements for event recording, so we ensure there's at least one. This doesn't directly affect which stream is used to actually record
+    // something, but it does determine whether HomeKit even attempts to use the camera for HomeKit Secure Video.
     if(![15, 24, 30].includes(rtspEntries[0].resolution[2])) {
 
       // Iterate through the list of RTSP entries we're providing to HomeKit and ensure we have at least one that will meet HomeKit's requirements for frame rate.
@@ -727,7 +726,7 @@ export class ProtectCamera extends ProtectDevice {
     // Inform the user if we've set a streaming default.
     if(this.rtspQuality.StreamingDefault) {
 
-      this.log.info("Video streaming configured to use only: %s.", toCamelCase(this.rtspQuality.StreamingDefault));
+      this.log.info("Video streaming configured to use only: %s.", toCamelCase(this.rtspQuality.StreamingDefault.toLowerCase()));
     }
 
     // Inform the user if they've selected the legacy snapshot API.
@@ -739,7 +738,7 @@ export class ProtectCamera extends ProtectDevice {
     // Inform the user if we've set a recording default.
     if(this.rtspQuality.RecordingDefault) {
 
-      this.log.info("HomeKit Secure Video event recording configured to use only: %s.", toCamelCase(this.rtspQuality.RecordingDefault));
+      this.log.info("HomeKit Secure Video event recording configured to use only: %s.", toCamelCase(this.rtspQuality.RecordingDefault.toLowerCase()));
     }
 
     // Configure the video stream with our resolutions.
@@ -1137,7 +1136,9 @@ export class ProtectCamera extends ProtectDevice {
   }
 
   // Find an RTSP configuration for a given target resolution.
-  private findRtspEntry(width: number, height: number, rtspEntries: RtspEntry[], defaultStream = this.rtspQuality.StreamingDefault): RtspEntry | null {
+  private findRtspEntry(width: number, height: number, options?: { biasHigher?: boolean, default?: string, rtspEntries?: RtspEntry[] }): RtspEntry | null {
+
+    const rtspEntries = options?.rtspEntries ?? this.rtspEntries;
 
     // No RTSP entries to choose from, we're done.
     if(!rtspEntries || !rtspEntries.length) {
@@ -1146,54 +1147,55 @@ export class ProtectCamera extends ProtectDevice {
     }
 
     // Second, we check to see if we've set an explicit preference for stream quality.
-    if(defaultStream) {
+    if(options?.default) {
 
-      defaultStream = defaultStream.toUpperCase();
+      options.default = options.default.toUpperCase();
 
-      return rtspEntries.find(x => x.channel.name.toUpperCase() === defaultStream) ?? null;
+      return rtspEntries.find(x => x.channel.name.toUpperCase() === options.default) ?? null;
     }
 
     // See if we have a match for our desired resolution on the camera. We ignore FPS - HomeKit clients seem to be able to handle it just fine.
-    const exactRtsp = rtspEntries.find(x => (x.resolution[0] === width) && (x.resolution[1] === height));
+    const exactRtsp = rtspEntries.find(x => (x.channel.width === width) && (x.channel.height === height));
 
     if(exactRtsp) {
 
       return exactRtsp;
     }
 
-    // No match found, let's see what we have that's closest. We try to be a bit smart about how we select our stream - if it's an HD quality stream request (720p+),
-    // we want to try to return something that's HD quality before looking for something lower resolution.
-    if((width >= 1280) && (height >= 720)) {
+    // If we haven't found an exact match, by default, we bias ourselves to the next lower resolution we find or the lowest resolution we have available as a backstop.
+    if(!options?.biasHigher) {
 
-      const entry = rtspEntries.find(x => x.resolution[0] >= 1280);
-
-      if(entry) {
-
-        return entry;
-      }
+      return rtspEntries.find(x => x.channel.width < width) ?? rtspEntries[rtspEntries.length - 1];
     }
 
-    // If we didn't request an HD resolution, or we couldn't find anything HD to use, we try to find the highest resolution we can find that's at least our requested
-    // width or larger. If we can't find anything that matches, we return the lowest resolution we have available.
-    return rtspEntries.filter(x => x.resolution[0] >= width)?.pop() ?? rtspEntries[rtspEntries.length - 1];
+    // If we're biasing ourselves toward higher resolutions (primarily used when transcoding so we start with a higher quality input), we look for the first entry that's
+    // larger than our requested width and if not found, we return the highest resolution we have available.
+    return rtspEntries.filter(x => x.channel.width > width).pop() ?? rtspEntries[0];
   }
 
   // Find a streaming RTSP configuration for a given target resolution.
-  public findRtsp(width: number, height: number, rtspEntries = this.rtspEntries, constrainPixels = 0): RtspEntry | null {
+  public findRtsp(width: number, height: number, options?: { biasHigher?: boolean, maxPixels?: number, rtspEntries?: RtspEntry[] }): RtspEntry | null {
+
+    // Create our options JSON if needed.
+    options = options ?? {};
+
+    // See if we've been given RTSP entries or whether we should default to our own.
+    options.rtspEntries = options.rtspEntries ?? this.rtspEntries;
 
     // If we've imposed a constraint on the maximum dimensions of what we want due to a hardware limitation, filter out those entries.
-    if(constrainPixels) {
+    if(options.maxPixels !== undefined) {
 
-      rtspEntries = rtspEntries.filter(x => (x.channel.width * x.channel.height) <= constrainPixels);
+      options.rtspEntries = options.rtspEntries.filter(x => (x.channel.width * x.channel.height) <= (options.maxPixels ?? Infinity));
     }
 
-    return this.findRtspEntry(width, height, rtspEntries);
+    // Return the entry.
+    return this.findRtspEntry(width, height, options);
   }
 
   // Find a recording RTSP configuration for a given target resolution.
-  public findRecordingRtsp(width: number, height: number, rtspEntries = this.rtspEntries): RtspEntry | null {
+  public findRecordingRtsp(width: number, height: number): RtspEntry | null {
 
-    return this.findRtspEntry(width, height, rtspEntries, this.rtspQuality.RecordingDefault ?? this.stream.ffmpegOptions.recordingDefaultChannel);
+    return this.findRtspEntry(width, height, { biasHigher: true, default: this.rtspQuality.RecordingDefault ?? this.stream.ffmpegOptions.recordingDefaultChannel });
   }
 
   // Utility function for sorting by resolution.

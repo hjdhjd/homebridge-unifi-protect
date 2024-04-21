@@ -22,7 +22,7 @@ export class ProtectCameraPackage extends ProtectCamera {
 
       this.hints.timeshift = parentCamera.hints.timeshift;
       this.hints.hardwareDecoding = parentCamera.hints.hardwareDecoding;
-      this.hints.hardwareTranscoding = parentCamera.hints.hardwareTranscoding;
+      this.hints.hardwareTranscoding = false;
       this.hints.logHksv = parentCamera.hints.logHksv;
     }
 

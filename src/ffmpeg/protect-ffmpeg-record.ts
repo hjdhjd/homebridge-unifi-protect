@@ -87,10 +87,17 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
     this.commandLineArgs.push(
 
       "-map", "0:v:0",
-      ...this.protectCamera.stream.ffmpegOptions.recordEncoder(recordingConfig.videoCodec.resolution[0], recordingConfig.videoCodec.resolution[1],
-        recordingConfig.videoCodec.resolution[2], recordingConfig.videoCodec.parameters.bitRate,
-        recordingConfig.videoCodec.parameters.profile, recordingConfig.videoCodec.parameters.level,
-        recordingConfig.videoCodec.parameters.iFrameInterval / 1000, rtspEntry.channel.fps),
+      ...this.protectCamera.stream.ffmpegOptions.recordEncoder({
+
+        bitrate: recordingConfig.videoCodec.parameters.bitRate,
+        fps: recordingConfig.videoCodec.resolution[2],
+        height: recordingConfig.videoCodec.resolution[1],
+        idrInterval: recordingConfig.videoCodec.parameters.iFrameInterval / 1000,
+        inputFps: rtspEntry.channel.fps,
+        level: recordingConfig.videoCodec.parameters.level,
+        profile: recordingConfig.videoCodec.parameters.profile,
+        width: recordingConfig.videoCodec.resolution[0]
+      }),
       "-reset_timestamps", "1",
       "-movflags", "frag_keyframe+empty_moov+default_base_moof"
     );
@@ -218,7 +225,7 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
     // Make sure we cleanup our listeners when we're done.
     this.process?.once("exit", () => {
 
-      this.process?.stdout?.removeListener("data", dataListener);
+      this.process?.stdout?.off("data", dataListener);
     });
   }
 

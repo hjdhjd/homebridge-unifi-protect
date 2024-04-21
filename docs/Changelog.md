@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+
+## 6.21.0 (2024-04-21)
+  * Improvement: even faster startup times for livestreams.
+  * Improvement: I've adjusted the defaults when transmuxing to better align to HomeKit expectations and certain Apple quirks. This should particularly result in improvements to the default experience on tvOS.
+  * Improvement: more robust handling of misbehaving Protect controllers. HBUP will more assertively disconnect and reconnect from the Protect controller when too many transcoding errors are encountered.
+  * Improvement: additional smart object detection options are now available through the HBUP webUI.
+  * Improvement: documentation updates.
+  * Fix: events from Protect sensors are once more published to MQTT immediately.
+  * Housekeeping.
+
 ## 6.20.0 (2024-03-30)
   * New feature: UniFi chime devices now expose two additional switches, allowing you to trigger the chime speaker with either the default tone or the buzzer tone. Buzzer tone you say, what's that? Give it a try.
   * New feature: The new high quality (and performance) snapshot capabilities can now be controlled through a feature option. The option is enabled by default, but can be disabled if you prefer. Why might you want to disable it? In certain performance-constrained environments (e.g. Pi), snapshots may take longer to generate than HomeKit allows for when the CPU is under heavier load.

@@ -21,6 +21,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
   private _isRecording: boolean;
   private readonly accessory: PlatformAccessory;
   private readonly api: API;
+  public errors: number;
   private readonly hap: HAP;
   private ffmpegStream: FfmpegRecordingProcess | null;
   private isInitialized: boolean;
@@ -31,10 +32,10 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
   private readonly protectCamera: ProtectCamera;
   private recordingConfig: CameraRecordingConfiguration | undefined;
   public rtspEntry: RtspEntry | null;
-  private transmittedSegments: number;
   private readonly timeshift: ProtectTimeshiftBuffer;
   private timeshiftedSegments: number;
   private transmitListener: ((segment: Buffer) => void) | null;
+  private transmittedSegments: number;
 
   // Create an instance of the HKSV recording delegate.
   constructor(protectCamera: ProtectCamera) {
@@ -42,6 +43,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     this._isRecording = false;
     this.accessory = protectCamera.accessory;
     this.api = protectCamera.api;
+    this.errors = 0;
     this.hap = protectCamera.api.hap;
     this.ffmpegStream = null;
     this.isInitialized = false;
@@ -289,7 +291,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     // If there's a prior instance of our transmit handler, clean it up.
     if(this.transmitListener) {
 
-      this.timeshift.removeListener("segment", this.transmitListener);
+      this.timeshift.off("segment", this.transmitListener);
       this.transmitListener = null;
     }
 
@@ -394,7 +396,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
 
     if(this.transmitListener) {
 
-      this.timeshift.removeListener("segment", this.transmitListener);
+      this.timeshift.off("segment", this.transmitListener);
       this.transmitListener = null;
     }
 
@@ -485,6 +487,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
       }
 
       // Once we've got a successful event, let's reset our error count.
+      this.errors = 0;
       this.nvr.nvrHksvErrors = 0;
     }
 
@@ -519,11 +522,11 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
       this.log.error("HKSV recording event ended early: %s", reasonDescription);
 
       // If we have HKSV event recording enabled and we've had too many errors, something is likely going on with the Protect controller. Let's reset our connection.
-      if(this.accessory.context.hksvRecording && (++this.nvr.nvrHksvErrors >= PROTECT_HKSV_MAX_EVENT_ERRORS)) {
+      if(this.accessory.context.hksvRecording && ((++this.errors >= PROTECT_HKSV_MAX_EVENT_ERRORS) || (++this.nvr.nvrHksvErrors >= PROTECT_HKSV_MAX_EVENT_ERRORS))) {
 
-        this.nvr.log.error("Reconnecting to the Protect controller after %s consecutive HomeKit Secure Video event recording errors. " +
+        this.nvr.log.error("Reconnecting to the Protect controller after multiple consecutive HomeKit Secure Video event recording errors. " +
           "These issues typically occur when the controller is exhibiting unusual behavior and resetting the connection to the controller can address the issue. " +
-          "If these issues persist, you might want to consider restarting the Protect controller.", this.nvr.nvrHksvErrors);
+          "If these issues persist, you might want to consider restarting the Protect controller.");
 
         await this.nvr.resetNvrConnection();
         return;
@@ -543,11 +546,27 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     }
   }
 
-  // Restart timeshifting for a camera.
+  // Restart timeshifting for this camera.
   public async restartTimeshifting(): Promise<void> {
 
     this.timeshift.stop();
     await this.configureTimeshifting();
+  }
+
+  // Reset timeshifting and error statistics.
+  public async reset(): Promise<void> {
+
+    // Stop transmitting if we are currently doing so.
+    if(this.isTransmitting) {
+
+      await this.stopTransmitting();
+    }
+
+    // Stop our timeshift buffer, if we have one.
+    this.timeshift.stop();
+
+    // Reset our statistics.
+    this.errors = 0;
   }
 
   // Return an MP4 stream from the timeshift buffer of the most recent specified duration, in milliseconds.

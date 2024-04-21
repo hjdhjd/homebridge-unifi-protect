@@ -204,6 +204,9 @@ export class ProtectSensor extends ProtectDevice {
     // Update the state characteristics.
     this.configureStateCharacteristics(service);
 
+    // Publish the state.
+    this.publish("alarm", this.alarmDetected.toString());
+
     return true;
   }
 
@@ -249,6 +252,9 @@ export class ProtectSensor extends ProtectDevice {
     // Update the state characteristics.
     this.configureStateCharacteristics(service);
 
+    // Publish the state.
+    this.publish("ambientlight", this.ambientLight.toString());
+
     return true;
   }
 
@@ -292,6 +298,9 @@ export class ProtectSensor extends ProtectDevice {
 
     // Update the state characteristics.
     this.configureStateCharacteristics(service);
+
+    // Publish the state.
+    this.publish("contact", this.contact.toString());
 
     return true;
   }
@@ -337,6 +346,9 @@ export class ProtectSensor extends ProtectDevice {
     // Update the state characteristics.
     this.configureStateCharacteristics(service);
 
+    // Publish the state.
+    this.publish("humidity", this.humidity.toString());
+
     return true;
   }
 
@@ -380,6 +392,9 @@ export class ProtectSensor extends ProtectDevice {
 
     // Update the state characteristics.
     this.configureStateCharacteristics(service);
+
+    // Publish the state.
+    this.publish("leak", this.leakDetected.toString());
 
     return true;
   }
@@ -425,20 +440,8 @@ export class ProtectSensor extends ProtectDevice {
     // Update the state characteristics.
     this.configureStateCharacteristics(service);
 
-    return true;
-  }
-
-  // Configure the active connection status in HomeKit.
-  private configureActiveStatus(service: Service): boolean {
-
-    // Retrieve the current connection status when requested.
-    service.getCharacteristic(this.hap.Characteristic.StatusActive)?.onGet(() => {
-
-      return this.isOnline;
-    });
-
-    // Update the current connection status.
-    service.updateCharacteristic(this.hap.Characteristic.StatusActive, this.isOnline);
+    // Publish the state.
+    this.publish("temperature", this.temperature.toString());
 
     return true;
   }
@@ -456,8 +459,17 @@ export class ProtectSensor extends ProtectDevice {
     return true;
   }
 
-  // Configure the tamper status in HomeKit.
-  private configureTamperedStatus(service: Service): boolean {
+  // Configure the additional state characteristics in HomeKit.
+  private configureStateCharacteristics(service: Service): boolean {
+
+    // Retrieve the current connection status when requested.
+    service.getCharacteristic(this.hap.Characteristic.StatusActive)?.onGet(() => {
+
+      return this.isOnline;
+    });
+
+    // Update the current connection status.
+    service.updateCharacteristic(this.hap.Characteristic.StatusActive, this.isOnline);
 
     // Retrieve the current tamper status when requested.
     service.getCharacteristic(this.hap.Characteristic.StatusTampered)?.onGet(() => {
@@ -467,18 +479,6 @@ export class ProtectSensor extends ProtectDevice {
 
     // Update the tamper status.
     service.updateCharacteristic(this.hap.Characteristic.StatusTampered, this.ufp.tamperingDetectedAt !== null);
-
-    return true;
-  }
-
-  // Configure the additional state characteristics in HomeKit.
-  private configureStateCharacteristics(service: Service): boolean {
-
-    // Update the active connection status.
-    this.configureActiveStatus(service);
-
-    // Update the tamper status.
-    this.configureTamperedStatus(service);
 
     return true;
   }
@@ -493,7 +493,6 @@ export class ProtectSensor extends ProtectDevice {
     if(value !== this.lastAlarm) {
 
       this.lastAlarm = value;
-      this.publish("alarm", value.toString());
 
       this.log.info("Alarm %sdetected.", value ? "" : "no longer ");
     }
@@ -514,7 +513,6 @@ export class ProtectSensor extends ProtectDevice {
     if(this.ufp.isOpened !== this.lastContact) {
 
       this.lastContact = this.ufp.isOpened;
-      this.publish("contact", this.ufp.isOpened.toString());
     }
 
     return this.ufp.isOpened;
@@ -543,7 +541,6 @@ export class ProtectSensor extends ProtectDevice {
     if(value !== this.lastLeak) {
 
       this.lastLeak = value;
-      this.publish("leak", value.toString());
 
       this.log.info("Leak %sdetected.", value ? "" : "no longer ");
     }

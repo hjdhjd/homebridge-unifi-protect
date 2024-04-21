@@ -68,8 +68,8 @@ export class FfmpegStreamingProcess extends FfmpegProcess {
         clearTimeout(this.streamTimeout);
       }
 
-      socket.removeListener("error", errorListener);
-      socket.removeListener("message", messageListener);
+      socket.off("error", errorListener);
+      socket.off("message", messageListener);
     });
 
     // Handle potential network errors.

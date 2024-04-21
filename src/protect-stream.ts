@@ -245,7 +245,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       }
 
       // Retrieve the ports we're looking for.
-      const assignedPort = await this.platform.rtpPorts.reservePort(ipFamily, portCount);
+      const assignedPort = await this.platform.rtpPorts.reserve(ipFamily, portCount);
 
       // We didn't get the ports we requested.
       if(assignedPort === -1) {
@@ -398,12 +398,17 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       ((request.audio.packet_time >= 60) && this.protectCamera.hints.transcodeHighLatency);
 
     // Find the best RTSP stream based on what we're looking for.
-    this.rtspEntry = this.protectCamera.findRtsp(
-      (isTranscoding && this.protectCamera.hints.hardwareTranscoding) ? 3840 : request.video.width,
-      (isTranscoding && this.protectCamera.hints.hardwareTranscoding) ? 2160 : request.video.height,
-      undefined,
-      isTranscoding ? this.ffmpegOptions.hostSystemMaxPixels : 0
-    );
+    if(isTranscoding) {
+
+      this.rtspEntry = this.protectCamera.findRtsp(
+        (this.protectCamera.hints.hardwareTranscoding) ? 3840 : request.video.width,
+        (this.protectCamera.hints.hardwareTranscoding) ? 2160 : request.video.height,
+        { biasHigher: true, maxPixels: this.ffmpegOptions.hostSystemMaxPixels }
+      );
+    } else {
+
+      this.rtspEntry = this.protectCamera.findRtsp(request.video.width, request.video.height);
+    }
 
     if(!this.rtspEntry) {
 
@@ -459,6 +464,8 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     // -fflags flags                    Set format flags to discard any corrupt packets rather than exit.
     // -probesize number                How many bytes should be analyzed for stream information.
     // -max_delay 500000                Set an upper limit on how much time FFmpeg can take in demuxing packets, in microseconds.
+    // -flags low_delay                 Tell FFmpeg to optimize for low delay / realtime decoding.
+    // -avioflags direct                Tell FFmpeg to minimize buffering to reduce latency for more realtime processing.
     // -r fps                           Set the input frame rate for the video stream.
     // -rtsp_transport tcp              Tell the RTSP stream handler that we're looking for a TCP connection.
     // -i this.rtspEntry.url            RTSPS URL to get our input stream from.
@@ -476,6 +483,8 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       ...this.ffmpegOptions.videoDecoder,
       "-probesize", this.probesize.toString(),
       "-max_delay", "500000",
+      "-flags", "low_delay",
+      "-avioflags", "direct",
       "-r", this.rtspEntry.channel.fps.toString(),
       "-rtsp_transport", "tcp",
       "-i", this.rtspEntry.url,
@@ -493,8 +502,17 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     if(isTranscoding) {
 
       // Configure our video parameters for transcoding.
-      ffmpegArgs.push(...this.ffmpegOptions.streamEncoder(request.video.width, request.video.height, this.rtspEntry.channel.fps, request.video.max_bit_rate,
-        request.video.profile, request.video.level, PROTECT_HOMEKIT_IDR_INTERVAL, this.rtspEntry.channel.fps));
+      ffmpegArgs.push(...this.ffmpegOptions.streamEncoder({
+
+        bitrate: request.video.max_bit_rate,
+        fps: this.rtspEntry.channel.fps,
+        height: request.video.height,
+        idrInterval: PROTECT_HOMEKIT_IDR_INTERVAL,
+        inputFps: this.rtspEntry.channel.fps,
+        level: request.video.level,
+        profile: request.video.profile,
+        width: request.video.width
+      }));
     } else {
 
       // Configure our video parameters for just copying the input stream from Protect - it tends to be quite solid in most cases:
@@ -766,7 +784,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
         // Cleanup after ourselves on close.
         ws?.once("close", () => {
 
-          ws?.removeListener("open", openListener);
+          ws?.off("open", openListener);
         });
       }
 
@@ -819,7 +837,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
           ws?.terminate();
         }
 
-        ffmpegReturnAudio.stdout?.removeListener("data", dataListener);
+        ffmpegReturnAudio.stdout?.off("data", dataListener);
       });
     } catch(error) {
 
@@ -840,7 +858,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       case StreamRequestTypes.RECONFIGURE:
 
         // Once FFmpeg is updated to support this, we'll enable this one.
-        this.log.info("Streaming parameters adjustment requested by HomeKit: %sx%s, %s fps, %s kbps.",
+        this.log.debug("Streaming parameters adjustment requested by HomeKit: %sx%s, %s fps, %s kbps.",
           request.video.width, request.video.height, request.video.fps, request.video.max_bit_rate.toLocaleString("en-US"));
 
         // Set the desired bitrate in Protect.
@@ -880,14 +898,14 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
         this.log.info("Stopped video streaming session.");
 
         // Release our port reservations.
-        this.ongoingSessions[sessionId].rtpPortReservations.map(x => this.platform.rtpPorts.freePort(x));
+        this.ongoingSessions[sessionId].rtpPortReservations.map(x => this.platform.rtpPorts.cancel(x));
       }
 
       // On the off chance we were signaled to prepare to start streaming, but never actually started streaming, cleanup after ourselves.
       if(this.pendingSessions[sessionId]) {
 
         // Release our port reservations.
-        this.pendingSessions[sessionId].rtpPortReservations.map(x => this.platform.rtpPorts.freePort(x));
+        this.pendingSessions[sessionId].rtpPortReservations.map(x => this.platform.rtpPorts.cancel(x));
       }
 
       // Delete the entries.

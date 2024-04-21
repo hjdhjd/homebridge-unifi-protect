@@ -100,6 +100,9 @@ export const featureOptions: { [index: string]: FeatureOption[] } = {
     { default: false, description: "Add an occupancy sensor accessory using motion sensor activity to determine occupancy. By default, any motion will trigger occupancy. If the smart motion detection feature option is enabled, it will be used instead.", hasProperty: [ "isMotionDetected", "isPirMotionDetected" ], name: "OccupancySensor" },
     { default: false, defaultValue: PROTECT_OCCUPANCY_DURATION, description: "Duration, in seconds, to wait without receiving a motion event to determine when occupancy is no longer detected.", group: "OccupancySensor", name: "OccupancySensor.Duration" },
     { default: false, description: "When using both the occupancy sensor and smart motion detection feature options, use UniFi Protect's animal detection to trigger occupancy.", group: "OccupancySensor", hasFeature: [ "hasSmartDetect" ], name: "OccupancySensor.Animal" },
+    { default: false, description: "When using both the occupancy sensor and smart motion detection feature options, use UniFi Protect's face detection to trigger occupancy.", group: "OccupancySensor", hasFeature: [ "hasSmartDetect" ], name: "OccupancySensor.Face" },
+    { default: false, description: "When using both the occupancy sensor and smart motion detection feature options, use UniFi Protect's license plate detection to trigger occupancy.", group: "OccupancySensor", hasFeature: [ "hasSmartDetect" ], name: "OccupancySensor.LicensePlate" },
+    { default: false, description: "When using both the occupancy sensor and smart motion detection feature options, use UniFi Protect's package detection to trigger occupancy.", group: "OccupancySensor", hasFeature: [ "hasSmartDetect" ], name: "OccupancySensor.Package" },
     { default: true, description: "When using both the occupancy sensor and smart motion detection feature options, use UniFi Protect's person detection to trigger occupancy.", group: "OccupancySensor", hasFeature: [ "hasSmartDetect" ], name: "OccupancySensor.Person" },
     { default: false, description: "When using both the occupancy sensor and smart motion detection feature options, use UniFi Protect's vehicle detection to trigger occupancy.", group: "OccupancySensor", hasFeature: [ "hasSmartDetect" ], name: "OccupancySensor.Vehicle" },
     { default: false, description: "Use UniFi Protect smart motion detection for HomeKit motion events when on a supported device.", hasFeature: [ "hasSmartDetect" ], name: "SmartDetect" },
@@ -171,9 +174,22 @@ export interface FeatureOption {
   name: string                        // Name of the feature option.
 }
 
-// Utility function to let us know whether a feature option should be enabled or not, traversing the scope hierarchy.
-export function isOptionEnabled(configOptions: string[], nvrUfp: ProtectNvrConfig | null, device: ProtectDeviceConfigTypes | ProtectNvrConfig | null, option = "",
-  defaultReturnValue = true): boolean {
+// Define the scope hierarchy for HBUP options.
+type OptionScope = "device" | "global" | "nvr";
+
+// Option information JSON definition.
+interface OptionInfo {
+
+  scope: OptionScope,
+  value: boolean
+}
+
+// Configuration types we accept at the controller and device levels for our feature options.
+type OptionNvrConfig = ProtectNvrConfig | null;
+type OptionDeviceConfig = OptionNvrConfig | ProtectDeviceConfigTypes;
+
+// Utility function to return the setting of a particular option and it's position in the scoping hierarchy.
+function getOptionInfo(configOptions: string[], nvrUfp: OptionNvrConfig, device: OptionDeviceConfig, option = "", defaultReturnValue = true): OptionInfo {
 
   // There are a couple of ways to enable and disable options. The rules of the road are:
   //
@@ -188,7 +204,7 @@ export function isOptionEnabled(configOptions: string[], nvrUfp: ProtectNvrConfi
   // Nothing configured - we assume the default return value.
   if(!configOptions.length) {
 
-    return defaultReturnValue;
+    return { scope: "global", value: defaultReturnValue };
   }
 
   const isOptionSet = (checkOption: string, checkMac: string | undefined = undefined): boolean | undefined => {
@@ -220,7 +236,7 @@ export function isOptionEnabled(configOptions: string[], nvrUfp: ProtectNvrConfi
 
     if(value !== undefined) {
 
-      return value;
+      return { scope: "device", value: value };
     }
   }
 
@@ -231,7 +247,7 @@ export function isOptionEnabled(configOptions: string[], nvrUfp: ProtectNvrConfi
 
     if(value !== undefined) {
 
-      return value;
+      return { scope: "nvr", value: value };
     }
   }
 
@@ -240,15 +256,27 @@ export function isOptionEnabled(configOptions: string[], nvrUfp: ProtectNvrConfi
 
   if(value !== undefined) {
 
-    return value;
+    return { scope: "global", value: value };
   }
 
   // The option hasn't been set at any scope, return our default value.
-  return defaultReturnValue;
+  return { scope: "global", value: defaultReturnValue };
+}
+
+// Utility function to let us know whether a feature option should be enabled or not, traversing the scope hierarchy.
+export function isOptionEnabled(configOptions: string[], nvrUfp: OptionNvrConfig, device: OptionDeviceConfig, option = "", defaultReturnValue = true): boolean {
+
+  return getOptionInfo(configOptions, nvrUfp, device, option, defaultReturnValue).value;
+}
+
+// Utility function to let us know where an option is within the scope heirarchy.
+export function getOptionScope(configOptions: string[], nvrUfp: OptionNvrConfig, device: OptionDeviceConfig, option = "", defaultReturnValue = true): OptionScope {
+
+  return getOptionInfo(configOptions, nvrUfp, device, option, defaultReturnValue).scope;
 }
 
 // Utility function to return a value-based feature option for a Protect device.
-export function getOptionValue(configOptions: string[], nvrUfp: ProtectNvrConfig | null, device: ProtectDeviceConfigTypes | null, option: string): string | undefined {
+export function getOptionValue(configOptions: string[], nvrUfp: OptionNvrConfig, device: OptionDeviceConfig, option: string): string | undefined {
 
   // Nothing configured - we assume there's nothing.
   if(!configOptions.length || !option) {

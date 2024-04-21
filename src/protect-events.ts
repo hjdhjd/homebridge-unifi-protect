@@ -53,36 +53,43 @@ export class ProtectEvents extends EventEmitter {
     this.configureEvents();
   }
 
-  // Thanks to https://stackoverflow.com/a/48218209 for the foundation for this one. Merge Protect JSON update payloads into the Protect configuration JSON for a device
-  // while dealing with deep objects.
+  // Merge Protect JSON update payloads into the Protect configuration JSON for a device while dealing with deep objects. Protect has specific quirks in how it deals
+  // with object merges and we've accounted for those in this deep merge / deep patch utility.
   //
-  // @param {...object} objects - Objects to merge
-  // @returns {object} - New object with merged key/values
+  // Thanks to https://stackoverflow.com/a/48218209 for the foundation for this one in thinking about how to do deep object merges in JavaScript.
   private patchUfpConfigJson(...objects: Record<string, unknown>[]): Record<string, unknown> {
 
-    const isObject = (x: unknown): boolean => (x && (typeof(x) === "object")) as boolean;
+    const result: Record<string, unknown> = {};
 
-    return objects.reduce((prev, obj) => {
+    // Utility to validate if a value is an object, excluding arrays.
+    const isObject = (value: unknown): value is Record<string, unknown> => (typeof value === "object") && !Array.isArray(value) && (value !== null);
 
-      for(const key of Object.keys(obj)) {
+    // Process each object in the input array
+    for(const object of objects) {
 
-        const pVal = prev[key];
-        const oVal = obj[key];
+      // Iterate through the keys that belong to this object while explicitly filter out any keys that are inherited. This could ostensibly be done using reduce, but we
+      // take a more performance-conscious view of things here given that this code will be called quite frequently due to the number of Protect events we typically
+      // process.
+      for(const key of Object.keys(object).filter(key => Object.hasOwn(object, key))) {
 
-        if(Array.isArray(pVal) && Array.isArray(oVal)) {
+        // Initialize.
+        const existingValue = result[key];
+        const newValue = object[key];
 
-          prev[key] = oVal;
-        } else if(isObject(pVal) && isObject(oVal)) {
+        // Check if both the existing value and the new value are non-array, non-null, objects, in which case we recurse to do a deep merge of the objects.
+        if(isObject(existingValue) && isObject(newValue)) {
 
-          prev[key] = this.patchUfpConfigJson(pVal as Record<string, unknown>, oVal as Record<string, unknown>);
-        } else {
-
-          prev[key] = oVal;
+          result[key] = this.patchUfpConfigJson(existingValue, newValue);
+          continue;
         }
-      }
 
-      return prev;
-    }, {});
+        // Otherwise, let's directly assign the new value.
+        result[key] = newValue;
+      }
+    }
+
+    // We're done.
+    return result;
   }
 
   // Process Protect API update events.
@@ -298,7 +305,7 @@ export class ProtectEvents extends EventEmitter {
       let logMessage = "";
 
       // If we have license plate telemetry, let's inform the user if we're logging for motion events.
-      if(metadata && ("licensePlate" in metadata) && detectedObjects.includes("licensePlate") && ("name" in metadata.licensePlate)) {
+      if(metadata?.licensePlate && detectedObjects.includes("licensePlate") && metadata.licensePlate.name) {
 
         logMessage = " (license plate: " + metadata.licensePlate.name + ", " + metadata.licensePlate.confidenceLevel + "% confidence)";
       }

@@ -16,9 +16,9 @@
 
 `homebridge-unifi-protect` is a [Homebridge](https://homebridge.io) plugin that provides HomeKit support to the [UniFi Protect](https://ui.com/camera-security) device ecosystem. [UniFi Protect](https://ui.com/camera-security) is [Ubiquiti's](https://www.ui.com) video security platform, with rich camera, doorbell, and NVR controller hardware options for you to choose from, as well as an app which you can use to view, configure and manage your video camera and doorbells.
 
-### Advanced Configuration (Optional)
+### Configuration Reference
 
-This step is not required. The defaults should work well for almost everyone, but for those that prefer to tweak additional settings, this is the complete list of settings available.
+This is a complete reference of the HBUP settings JSON. The defaults should work well for almost everyone and configuration of this plugin should be done exclusively within the HBUP webUI and not manually editing JSONs which can be error-prone and lead to undesired behavior.
 
 ```js
 "platforms": [
@@ -46,7 +46,6 @@ This step is not required. The defaults should work well for almost everyone, bu
              "duration": 90
           }
         ],
-        "refreshInterval": 5,
         "mqttUrl": "mqtt://test.mosquitto.org",
         "mqttTopic": "unifi/protect"
       }
@@ -65,7 +64,6 @@ This step is not required. The defaults should work well for almost everyone, bu
 | doorbellMessages       | Configure [doorbell messages](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Doorbell.md) for your UniFi Protect controller. | [] | No |
 | videoProcessor         | Specify path of ffmpeg or avconv.                       | "ffmpeg"                                                                              | No       |
 | ffmpegOptions          | Additional parameters to pass ffmpeg to render video.   |                                                                                       | No       |
-| refreshInterval        | Interval, in seconds, to check UniFi Protect for new or removed devices. | 10                                                                   | No       |
 | options                | Configure plugin [feature options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md).   | []                 | No       |
 | name                   | Controller name to use for homebridge logging purposes. | UniFi Protect controller name                                                         | No       |
 | mqttUrl                | The URL of your MQTT broker. **This must be in URL form**, e.g.: `mqtt://user:password@1.2.3.4`. |                                              | No       |

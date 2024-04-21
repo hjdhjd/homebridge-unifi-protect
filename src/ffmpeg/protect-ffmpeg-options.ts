@@ -8,6 +8,19 @@ import { ProtectCamera } from "../devices/index.js";
 import { ProtectLogging } from "../protect-types.js";
 import { ProtectPlatform } from "../protect-platform.js";
 
+interface EncoderOptions {
+
+  bitrate: number,
+  fps: number,
+  height: number,
+  idrInterval: number,
+  inputFps: number,
+  level: H264Level,
+  profile: H264Profile,
+  useSmartQuality?: boolean,
+  width: number
+}
+
 export class FfmpegOptions {
 
   private readonly hwPixelFormat: string[];
@@ -202,7 +215,15 @@ export class FfmpegOptions {
     // Inform the user.
     if(this.protectCamera.hints.hardwareDecoding || this.protectCamera.hints.hardwareTranscoding) {
 
-      this.log.info("Hardware-accelerated %s enabled%s.", accelCategories(), logMessage.length ? ": " + logMessage : "");
+      this.protectCamera.logFeature("Video.Transcode.Hardware",
+        "Hardware-accelerated " + accelCategories() + " enabled" + (logMessage.length ? ": " + logMessage : "") + ".");
+    }
+
+    // Encourage users to enable hardware accelerated transcoding on macOS.
+    if(!this.protectCamera.hints.hardwareTranscoding && !this.protectCamera.accessory.context.packageCamera && this.platform.hostSystem.startsWith("macOS.")) {
+
+      this.log.warn("macOS detected: consider enabling hardware acceleration (located under the video feature options section in the HBUP webUI) for even better " +
+        "performance and an improved user experience.");
     }
 
     return this.protectCamera.hints.hardwareTranscoding;
@@ -354,10 +375,15 @@ export class FfmpegOptions {
   }
 
   // Utility function to provide our default encoder options.
-  private defaultVideoEncoderOptions(width: number, height: number, fps: number, bitrate: number, profile: H264Profile, level: H264Level,
-    idrInterval: number, inputFps: number, useSmartQuality = true): string[] {
+  private defaultVideoEncoderOptions(options: EncoderOptions): string[] {
 
     const videoFilters = [];
+
+    // Default smart quality to true.
+    if(options.useSmartQuality === undefined) {
+
+      options.useSmartQuality = true;
+    }
 
     // Set our FFmpeg video filter options:
     //
@@ -366,14 +392,14 @@ export class FfmpegOptions {
 
     // fps=fps=                    Use the fps filter to provide the frame rate requested by HomeKit. This has better performance characteristics for Protect
     //                             rather than using "-r". We only need to apply this filter if our input and output frame rates aren't already identical.
-    if(fps !== inputFps) {
+    if(options.fps !== options.inputFps) {
 
-      videoFilters.push("fps=fps=" + fps.toString());
+      videoFilters.push("fps=fps=" + options.fps.toString());
     }
 
     // scale=-2:min(ih\,height)    Scale the video to the size that's being requested while respecting aspect ratios and ensuring our final dimensions are
     //                             a power of two.
-    videoFilters.push("scale=-2:min(ih\\," + height.toString() + ")");
+    videoFilters.push("scale=-2:min(ih\\," + options.height.toString() + ")");
 
     // Default to the tried-and-true libx264. We use the following options by default:
     //
@@ -395,20 +421,20 @@ export class FfmpegOptions {
       // If the user has specified a video encoder, let's use it instead.
       "-c:v", this.platform.config.videoEncoder ?? "libx264",
       "-preset", "veryfast",
-      "-profile:v", this.getH264Profile(profile),
-      "-level:v", this.getH264Level(level),
+      "-profile:v", this.getH264Profile(options.profile),
+      "-level:v", this.getH264Level(options.level),
       "-noautoscale",
       "-bf", "0",
       "-filter:v", videoFilters.join(", "),
-      "-g:v", (fps * idrInterval).toString(),
-      "-bufsize", (2 * bitrate).toString() + "k",
-      "-maxrate", (bitrate + (useSmartQuality ? PROTECT_HOMEKIT_STREAMING_HEADROOM : 0)).toString() + "k"
+      "-g:v", (options.fps * options.idrInterval).toString(),
+      "-bufsize", (2 * options.bitrate).toString() + "k",
+      "-maxrate", (options.bitrate + (options.useSmartQuality ? PROTECT_HOMEKIT_STREAMING_HEADROOM : 0)).toString() + "k"
     ];
 
     // Using libx264's constant rate factor mode produces generally better results across the board. We use a capped CRF approach, allowing libx264 to
     // make intelligent choices about how to adjust bitrate to achieve a certain quality level depending on the complexity of the scene being encoded, but
     // constraining it to a maximum bitrate to stay within the bandwidth constraints HomeKit is requesting.
-    if(useSmartQuality) {
+    if(options.useSmartQuality) {
 
       // -crf 20                     Use a constant rate factor of 20, to allow libx264 the ability to vary bitrates to achieve the visual quality we
       //                             want, constrained by our maximum bitrate.
@@ -420,15 +446,17 @@ export class FfmpegOptions {
       // HKSV typically requests bitrates of around 2000kbps, which results in a reasonably high quality recording, as opposed to the typical 2-300kbps
       // that livestreaming from the Home app itself generates. Those lower bitrates in livestreaming really benefit from the magic that using a good CRF value
       // can produce in libx264.
-      encoderOptions.push("-b:v", bitrate.toString() + "k");
+      encoderOptions.push("-b:v", options.bitrate.toString() + "k");
     }
 
     return encoderOptions;
   }
 
   // Return the video encoder options to use for HKSV.
-  public recordEncoder(width: number, height: number, fps: number, bitrate: number, profile: H264Profile, level: H264Level,
-    idrInterval: number, inputFps: number): string[] {
+  public recordEncoder(options: EncoderOptions): string[] {
+
+    // We always disable smart quality when recording due to HomeKit's strict requirements here.
+    options.useSmartQuality = false;
 
     // Generaly, we default to using the same encoding options we use to transcode livestreams, unless we have platform-specific quirks we need to address,
     // such as where we can have hardware-accelerated transcoded livestreaming, but not hardware-accelerated HKSV event recording. The other noteworthy
@@ -440,19 +468,24 @@ export class FfmpegOptions {
 
         // Raspberry Pi struggles with hardware-accelerated HKSV event recording due to issues in the FFmpeg codec driver, currently. We hope this improves
         // over time and can offer it to Pi users, or develop a workaround. For now, we default to libx264.
-        return this.defaultVideoEncoderOptions(width, height, fps, bitrate, profile, level, idrInterval, inputFps, false);
+        return this.defaultVideoEncoderOptions(options);
         break;
 
       default:
 
         // By default, we use the same options for HKSV and streaming.
-        return this.streamEncoder(width, height, fps, bitrate, profile, level, idrInterval, inputFps, false);
+        return this.streamEncoder(options);
     }
   }
 
   // Return the video encoder options to use when transcoding.
-  public streamEncoder(width: number, height: number, fps: number, bitrate: number, profile: H264Profile, level: H264Level,
-    idrInterval: number, inputFps: number, useSmartQuality = true): string[] {
+  public streamEncoder(options: EncoderOptions): string[] {
+
+    // Default smart quality to true.
+    if(options.useSmartQuality === undefined) {
+
+      options.useSmartQuality = true;
+    }
 
     // In case we don't have a defined pixel format.
     if(!this.hwPixelFormat.length) {
@@ -463,17 +496,17 @@ export class FfmpegOptions {
     // If we aren't hardware-accelerated, we default to libx264.
     if(!this.protectCamera.hints.hardwareTranscoding) {
 
-      return this.defaultVideoEncoderOptions(width, height, fps, bitrate, profile, level, idrInterval, inputFps, useSmartQuality);
+      return this.defaultVideoEncoderOptions(options);
     }
 
     // If we've enabled hardware-accelerated transcoding, let's select encoder options accordingly.
     //
     // We begin by adjusting the maximum bitrate tolerance used with -bufsize. This provides an upper bound on bitrate, with a little bit extra to allow encoders some
     // variation in order to maximize quality while honoring bandwidth constraints.
-    const adjustedMaxBitrate = bitrate + (useSmartQuality ? PROTECT_HOMEKIT_STREAMING_HEADROOM : 0);
+    const adjustedMaxBitrate = options.bitrate + (options.useSmartQuality ? PROTECT_HOMEKIT_STREAMING_HEADROOM : 0);
 
     // Check the input and output frame rates to see if we need to change it.
-    const useFpsFilter = fps !== inputFps;
+    const useFpsFilter = options.fps !== options.inputFps;
 
     // Initialize our options.
     const encoderOptions = [];
@@ -488,12 +521,12 @@ export class FfmpegOptions {
     //                             rather than using "-r". We only need to apply this filter if our input and output frame rates aren't already identical.
     if(useFpsFilter) {
 
-      videoFilters.push("fps=fps=" + fps.toString());
+      videoFilters.push("fps=fps=" + options.fps.toString());
     }
 
     // scale=-2:min(ih\,height)    Scale the video to the size that's being requested while respecting aspect ratios and ensuring our final dimensions are
     //                             a power of two.
-    videoFilters.push("scale=-2:min(ih\\," + height.toString() + ")");
+    videoFilters.push("scale=-2:min(ih\\," + options.height.toString() + ")");
 
     // Crop the stream, if the user has requested it.
     if(this.protectCamera.hints.crop) {
@@ -529,17 +562,17 @@ export class FfmpegOptions {
           "-allow_sw", "1",
           "-realtime", "1",
           "-coder", "cabac",
-          "-profile:v", this.getH264Profile(profile),
+          "-profile:v", this.getH264Profile(options.profile),
           "-level:v", "0",
           "-bf", "0",
           "-noautoscale",
           "-filter:v", videoFilters.join(", "),
-          "-g:v", (fps * idrInterval).toString(),
-          "-bufsize", (2 * bitrate).toString() + "k",
+          "-g:v", (options.fps * options.idrInterval).toString(),
+          "-bufsize", (2 * options.bitrate).toString() + "k",
           "-maxrate", adjustedMaxBitrate.toString() + "k"
         );
 
-        if(useSmartQuality) {
+        if(options.useSmartQuality) {
 
           // -q:v 90               Use a fixed quality scale of 90, to allow videotoolbox the ability to vary bitrates to achieve the visual quality we want,
           //                       constrained by our maximum bitrate. This is an Apple Silicon-specific feature.
@@ -547,7 +580,7 @@ export class FfmpegOptions {
         } else {
 
           // -b:v                  Average bitrate that's being requested by HomeKit.
-          encoderOptions.push("-b:v", bitrate.toString() + "k");
+          encoderOptions.push("-b:v", options.bitrate.toString() + "k");
         }
 
         return encoderOptions;
@@ -582,14 +615,14 @@ export class FfmpegOptions {
           "-allow_sw", "1",
           "-realtime", "1",
           "-coder", "cabac",
-          "-profile:v", this.getH264Profile(profile),
+          "-profile:v", this.getH264Profile(options.profile),
           "-level:v", "0",
           "-bf", "0",
           "-noautoscale",
           "-filter:v", videoFilters.join(", "),
-          "-b:v", bitrate.toString() + "k",
-          "-g:v", (fps * idrInterval).toString(),
-          "-bufsize", (2 * bitrate).toString() + "k",
+          "-b:v", options.bitrate.toString() + "k",
+          "-g:v", (options.fps * options.idrInterval).toString(),
+          "-bufsize", (2 * options.bitrate).toString() + "k",
           "-maxrate", adjustedMaxBitrate.toString() + "k"
         ];
 
@@ -612,14 +645,14 @@ export class FfmpegOptions {
         return [
 
           "-c:v", "h264_v4l2m2m",
-          "-profile:v", this.getH264Profile(profile, true),
+          "-profile:v", this.getH264Profile(options.profile, true),
           "-bf", "0",
           "-noautoscale",
           "-reset_timestamps", "1",
           "-filter:v", videoFilters.join(", "),
-          "-b:v", bitrate.toString() + "k",
-          "-g:v", (fps * idrInterval).toString(),
-          "-bufsize", (2 * bitrate).toString() + "k",
+          "-b:v", options.bitrate.toString() + "k",
+          "-g:v", (options.fps * options.idrInterval).toString(),
+          "-bufsize", (2 * options.bitrate).toString() + "k",
           "-maxrate", adjustedMaxBitrate.toString() + "k"
         ];
 
@@ -637,15 +670,15 @@ export class FfmpegOptions {
         videoFilters.push("vpp_qsv=" + [
 
           "format=same",
-          "w=min(iw\\, (iw / ih) * " + height.toString() + ")",
-          "h=min(ih\\, " + height.toString() + ")"
+          "w=min(iw\\, (iw / ih) * " + options.height.toString() + ")",
+          "h=min(ih\\, " + options.height.toString() + ")"
         ].join(":"));
 
         // fps=fps=                Use the fps filter to provide the frame rate requested by HomeKit. This has better performance characteristics for Protect
         //                         rather than using "-r". We only need to apply this filter if our input and output frame rates aren't already identical.
         if(useFpsFilter) {
 
-          videoFilters.push("fps=fps=" + fps.toString());
+          videoFilters.push("fps=fps=" + options.fps.toString());
         }
 
         // h264_qsv is the Intel Quick Sync Video hardware encoder API. We use the following options:
@@ -667,19 +700,19 @@ export class FfmpegOptions {
         encoderOptions.push(
 
           "-c:v", "h264_qsv",
-          "-profile:v", this.getH264Profile(profile),
+          "-profile:v", this.getH264Profile(options.profile),
           "-level:v", "0",
           "-bf", "0",
           "-noautoscale",
           "-init_hw_device", "qsv=hw",
           "-filter_hw_device", "hw",
           "-filter:v", videoFilters.join(", "),
-          "-g:v", (fps * idrInterval).toString(),
-          "-bufsize", (2 * bitrate).toString() + "k",
+          "-g:v", (options.fps * options.idrInterval).toString(),
+          "-bufsize", (2 * options.bitrate).toString() + "k",
           "-maxrate", adjustedMaxBitrate.toString() + "k"
         );
 
-        if(useSmartQuality) {
+        if(options.useSmartQuality) {
 
           // -global_quality 20    Use a global quality setting of 20, to allow QSV the ability to vary bitrates to achieve the visual quality we want,
           //                       constrained by our maximum bitrate. This leverages a QSV-specific feature known as intelligent constant quality.
@@ -687,7 +720,7 @@ export class FfmpegOptions {
         } else {
 
           // -b:v                  Average bitrate that's being requested by HomeKit.
-          encoderOptions.push("-b:v", bitrate.toString() + "k");
+          encoderOptions.push("-b:v", options.bitrate.toString() + "k");
         }
 
         return encoderOptions;
@@ -703,16 +736,16 @@ export class FfmpegOptions {
 
       case "raspbian":
 
-        // For constrained CPU environments like Raspberry Pi, we default to recording from the highest quality channel we can, that's at or below 1080p.
-        // That provides a reasonable default, while still allowing users who really want to, to be able to specify something else.
-        return this.protectCamera.findRtsp(1920, 1080, undefined, this.hostSystemMaxPixels)?.channel.name ?? undefined;
+        // For constrained CPU environments like Raspberry Pi, we default to recording from the highest quality channel we can, that's at or below 1080p. That provides
+        // a reasonable default, while still allowing users who really want to, to be able to specify something else.
+        return this.protectCamera.findRtsp(1920, 1080, { maxPixels: this.hostSystemMaxPixels })?.channel.name ?? undefined;
 
         break;
 
       default:
 
         // We default to no preference for the default Protect camera channel.
-        return undefined;
+        return this.protectCamera.hints.hardwareTranscoding ? "High" : undefined;
     }
   }
 
@@ -725,9 +758,9 @@ export class FfmpegOptions {
 
         case "raspbian":
 
-          // For constrained environments like Raspberry Pi, when hardware transcoding has been selected for a camera, we limit the available source
-          // streams to no more than 1080p. In practice, that means that devices like the G4 Pro can't use their highest quality stream for
-          // transcoding due to the limitations of the Raspberry Pi GPU that cannot support higher pixel counts.
+          // For constrained environments like Raspberry Pi, when hardware transcoding has been selected for a camera, we limit the available source streams to no more
+          // than 1080p. In practice, that means that devices like the G4 Pro can't use their highest quality stream for transcoding due to the limitations of the
+          // Raspberry Pi GPU that cannot support higher pixel counts.
           return 1920 * 1080;
 
           break;
@@ -738,7 +771,7 @@ export class FfmpegOptions {
       }
     }
 
-    return 0;
+    return Infinity;
   }
 
   // Translate HomeKit H.264 level information for FFmpeg.

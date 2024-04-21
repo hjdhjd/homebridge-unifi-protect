@@ -6,7 +6,7 @@ import { API, CharacteristicValue, HAP, PlatformAccessory, Service, WithUUID } f
 import { PROTECT_MOTION_DURATION, PROTECT_OCCUPANCY_DURATION} from "../settings.js";
 import { ProtectApi, ProtectCameraConfig, ProtectEventPacket, ProtectNvrConfig } from "unifi-protect";
 import { ProtectDeviceConfigTypes, ProtectLogging, ProtectReservedNames } from "../protect-types.js";
-import { getOptionFloat, getOptionNumber, getOptionValue, isOptionEnabled } from "../protect-options.js";
+import { getOptionFloat, getOptionNumber, getOptionScope, getOptionValue, isOptionEnabled } from "../protect-options.js";
 import { ProtectNvr } from "../protect-nvr.js";
 import { ProtectPlatform } from "../protect-platform.js";
 import util from "node:util";
@@ -93,12 +93,7 @@ export abstract class ProtectBase {
     accessory.getService(this.hap.Service.AccessoryInformation)?.updateCharacteristic(this.hap.Characteristic.Manufacturer, "Ubiquiti Inc.");
 
     // Update the model information for this device.
-    let deviceModel = device.type;
-
-    if("marketName" in device) {
-
-      deviceModel = device.marketName;
-    }
+    const deviceModel = device.marketName ?? device.type;
 
     if(deviceModel.length) {
 
@@ -157,7 +152,7 @@ export abstract class ProtectDevice extends ProtectBase {
   }
 
   // Retrieve an existing service from an accessory, creating it if necessary.
-  protected acquireService(serviceType: WithUUID<typeof Service>, name = this.accessoryName, subtype?: string, onServiceCreate?: () => void): Service | null {
+  protected acquireService(serviceType: WithUUID<typeof Service>, name = this.accessoryName, subtype?: string, onServiceCreate?: (svc: Service) => void): Service | null {
 
     // Services that need the ConfiguredName characteristic added and maintained.
     const configuredNameServices = [ this.hap.Service.ContactSensor, this.hap.Service.Lightbulb, this.hap.Service.MotionSensor, this.hap.Service.OccupancySensor,
@@ -188,7 +183,7 @@ export abstract class ProtectDevice extends ProtectBase {
 
       if(onServiceCreate) {
 
-        onServiceCreate();
+        onServiceCreate(service);
       }
     }
 
@@ -262,7 +257,10 @@ export abstract class ProtectDevice extends ProtectBase {
     // Inform the user if we've opted for something other than the defaults.
     if(this.hints.syncName) {
 
-      this.log.info("Syncing Protect device name to HomeKit.");
+      this.logFeature("Device.SyncName", "Syncing Protect device name to HomeKit.", "Syncing Protect device names to HomeKit.");
+    } else if(this.isDeviceFeature("Device.SyncName")) {
+
+      this.log.info("Not syncing this Protect device name to HomeKit.");
     }
 
     if(this.hints.motionDuration !== PROTECT_MOTION_DURATION) {
@@ -295,7 +293,7 @@ export abstract class ProtectDevice extends ProtectBase {
 
     for(const eventName of Object.keys(this.listeners)) {
 
-      this.nvr.events.removeListener(eventName, this.listeners[eventName]);
+      this.nvr.events.off(eventName, this.listeners[eventName]);
       delete this.listeners[eventName];
     }
   }
@@ -631,6 +629,18 @@ export abstract class ProtectDevice extends ProtectBase {
   public hasFeature(option: string, defaultReturnValue?: boolean): boolean {
 
     return isOptionEnabled(this.platform.featureOptions, this.nvr.ufp, this.ufp, option, defaultReturnValue ?? this.platform.featureOptionDefault(option));
+  }
+
+  // Utility for returning the scope of a feature option.
+  public isDeviceFeature(option: string, defaultReturnValue?: boolean): boolean {
+
+    return getOptionScope(this.platform.featureOptions, this.nvr.ufp, this.ufp, option, defaultReturnValue ?? this.platform.featureOptionDefault(option)) === "device";
+  }
+
+  // Utility for logging feature option availability.
+  public logFeature(option: string, message: string, nvrMessage = message): void {
+
+    this.isDeviceFeature(option) ? this.log.info(message) : this.nvr.logFeature(option, nvrMessage);
   }
 
   // Utility function for reserved identifiers for switches.

@@ -20,20 +20,20 @@
 
 Plugin-specific liveview scenes are really a way to further tailor how you activate or deactivate motion detection across multiple cameras in a single click. I wanted to provide a way for users to be able to create groups of cameras that can have motion detection toggled at a time and I experimented with a couple of ways to do it:
 
-  * Use [HomeKit](https://www.apple.com/ios/home/) automation events to create scenes that activate or deactivate groups of cameras. While this works, it has scaling challenges with larger numbers of cameras and the [HomeKit](https://www.apple.com/ios/home/) UI. This also won't inform the user when those scenes are set, merely activate or deactivate those scenes.
+  * Use [HomeKit](https://www.apple.com/home-app/) automation events to create scenes that activate or deactivate groups of cameras. While this works, it has scaling challenges with larger numbers of cameras and the [Home app](https://www.apple.com/home-app/) UI. This also won't inform the user when those scenes are set, merely activate or deactivate those scenes.
   * Create a configuration option in the plugin to create a switch accessory that allows you to aggregate cameras and control them through a single switch. This one also doesn't notify users when a switch has been activated.
 
-Ultimately, as I was playing more with the second option, I decided that configuring this through `config.json` or the Homebridge webUI was going to be cumbersome and a less than optimal user experience. What to do?
+Ultimately, as I was playing more with the second option, I decided that configuring this through the HBUP webUI was going to be cumbersome and a less than optimal user experience. What to do?
 
-Well, the Protect webUI already has a nice feature called liveviews that allows you to create an aggregated view of cameras. It's straightforward to use and intuitive. Why not use that as a starting point to specify which cameras you want to group together? Then, what was the best way to give users options in how to do so - well, [HomeKit](https://www.apple.com/ios/home/) has a *security system accessory* that allows for setting multiple security states, and will notify the user when switching to any of those states. Seems very well-suited to the task, and that brings us to how all this works.
+Well, the Protect webUI already has a nice feature called liveviews that allows you to create an aggregated view of cameras. It's straightforward to use and intuitive. Why not use that as a starting point to specify which cameras you want to group together? Then, what was the best way to give users options in how to do so - well, [HomeKit](https://www.apple.com/home-app/) has a *security system accessory* that allows for setting multiple security states, and will notify the user when switching to any of those states. Seems very well-suited to the task, and that brings us to how all this works.
 
 Finally, you might want to create a way to toggle multiple cameras at once in the form of a switch, either in addition to, or instead of, a security system accessory, so we support that too to give you as much flexibility as you'd like in tailoring your experience.
 
-Please note: **by design, you must have at least one camera configured in a given liveview scene. The reason for this is to ensure there is no ambiguity regarding which cameras will and will not have motion detection enabled. The `Off` state in the [security system](#security-system) accessory is intentionally the only one that will universally disable motion detection across *all* cameras (presuming you don't override this behavior as described below). HBUP will ignore any liveview scenes with no cameras in them.**
+Please note: **by design, you must have at least one camera configured in a given liveview scene. The reason for this is to ensure there is no ambiguity regarding which cameras will and will not have motion detection enabled (for HBUP and HomeKit purposes) at any given time. The `Off` state in the [security system](#security-system) accessory is intentionally the only one that will universally disable motion detection across *all* cameras (presuming you don't override this behavior as described below). HBUP will ignore any liveview scenes with no cameras in them.**
 
 ### <A NAME="security-system"></A>Configuring the Liveview Security System Feature
 
-First, we need to understand the security system accessory in [HomeKit](https://www.apple.com/ios/home/). This accessory is best described as a switch with multiple settings. You can set a security system accessory to the following states using the Home app:
+First, we need to understand the security system accessory in [HomeKit](https://www.apple.com/home-app/). This accessory is best described as a switch with multiple settings. You can set a security system accessory to the following states using the Home app:
 
 | Security System State | Description
 |-----------------------|----------------------------------
@@ -47,10 +47,10 @@ Next, you have the UniFi Protect *Liveview* functionality in the Protect webUI. 
 Now, to put all the pieces together. What `homebridge-unifi-protect` does is:
 
  * Periodically check the controller to see if we have certain liveviews configured.
- * If there are no liveviews specific to this plugin, then `homebridge-unifi-protect` will remove the security system accessory (if it was previously present) from [HomeKit](https://www.apple.com/ios/home/) so we don't clutter up with unneeded accessories.
- * If you have configured plugin-specific liveviews, they will be linked to the security system state settings above. You don't need to configure all of them, you can configure certain ones and not others. If there's at least one plugin-specific liveview present, the security system accessory will appear in [HomeKit](https://www.apple.com/ios/home/).
+ * If there are no liveviews specific to the format that HBUP is looking for, then HBUP will remove the security system accessory (if it was previously present) from [HomeKit](https://www.apple.com/home-app/) so we don't clutter up with unneeded accessories.
+ * If you have configured plugin-specific liveviews, they will be linked to the security system state settings above. You don't need to configure all of them, you can configure certain ones and not others. If there's at least one HBUP-specific liveview present, the security system accessory will appear in [HomeKit](https://www.apple.com/home-app/).
 
-Creating plugin-specific liveviews are as simple as ensuring they are named:
+Creating HBUP-specific liveviews are as simple as ensuring they are named:
 
 | Security System State | Liveview
 |-----------------------|----------------------------------
@@ -61,7 +61,7 @@ Creating plugin-specific liveviews are as simple as ensuring they are named:
 
 Once configured, you can set the security system state in the Home app. When you select a setting - *Away* for example - it will lookup all the cameras associated with that liveview and activate motion detection for those cameras, and **it will disable motion detection on all other cameras**. Put another way - when using this feature, and you enable a specific security system state, only those cameras will have motion detection active. All other cameras will have motion detection set to off.
 
-The security system accessory in HomeKit has an additional state - *alarm triggered*. In HomeKit, this state isn't really a true state in the way `Home` or `Away` might be. Instead, think of it as an alert to let you know that there's something you should look at. Once the alarm state is cleared, that alert disappears within HomeKit and the Home app. In all cases, the existing liveview scene that's set is the one that remains. Setting a new state for the security system - say going from `Home` to `Away` will clear the alarm alert. For those that want to access this alarm functionality, you can choose to enable the `SecuritySystem.Alarm` [feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md#securitysystem). Why might you want to? In a word - automation. If you have a specific camera or set of cameras you want to be uniquely alerted for, you might choose to turn on the security alarm through automation when motion is detected or a specific set of conditions occur. The security alarm switch is an additional service that will be enabled on the security system accessory. You can toggle it on or off to activate or deactivate the alarm as desired, or simply change security system states (e.g. from Home to Away) to clear the alarm state.
+The security system accessory in HomeKit has an additional setting - *alarm triggered*. In HomeKit, this isn't really a true state in the way `Home` or `Away` might be. Instead, think of it as an alert to let you know that there's something you should look at. Once the alarm state is cleared, that alert disappears within HomeKit and the Home app. In all cases, the existing liveview scene that's set is the one that remains. Setting a new state for the security system - say going from `Home` to `Away` will clear the alarm alert. For those that want to access this alarm functionality, you can choose to enable the security system alarm in the security system section within the HBUP feature options webUI. Why might this be useful? In a word - automation. If you have a specific camera or set of cameras you want to be uniquely alerted for, you might choose to turn on the security alarm through automation when motion is detected or a specific set of conditions occur. The security alarm switch is an additional service that will be enabled on the security system accessory. You can toggle it on or off to activate or deactivate the alarm as desired, or simply change security system states (e.g. from Home to Away) to clear the alarm state.
 
 ### <A NAME="switch"></A>Configuring the Liveview Switch Feature
 
@@ -71,20 +71,9 @@ For example, if you configure a liveview named `Protect-Outside`, you'll see a s
 
 There's a crucial difference between liveview switches and the liveview security system accessory: ***liveview switches only impact the cameras you've configured in that liveview***. The security system accessory will disable motion detection on all cameras not explicitly configured in a given liveview scene (with the exception of the *Off* scene, which is special - [see below](#fun-facts)).
 
-### MQTT Support
-[MQTT support](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/MQTT.md) is available for liveviews. You can set liveviews, as well as security system states, using MQTT. The following MQTT actions are supported:
-
-  * When the security system state is changed, a message will be published to MQTT.
-  * You can set the security system state using MQTT.
-  * When a liveview scene state changes, a message will be published to MQTT.
-  * You can get the state of all liveview scenes using MQTT.
-  * You can set a liveview scene using MQTT.
-
-To learn more about the MQTT support provided by this plugin, see the [MQTT](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/MQTT.md) page.
-
 ### <A NAME="fun-facts"></A>Some Fun Facts
   * You don't need to configure all the liveviews. If you have at least one, the security system accessory will appear. For security system states with no corresponding liveviews, nothing will happen.
   * UniFi Protect will allow you to have multiple liveviews with the same name. In this case, `homebridge-unifi-protect` will pull all the cameras in all the liveviews with the same name and control them together.
   * There is a setting when editing liveviews called `Share view with others`. This makes a given liveview available to all users, instead of just the user you're currently logged in with. Why does this matter? If you use a different username and password for `homebridge-unifi-protect` than the one you use to login, you'll want to ensure that any views you create are shared with all users so they can be used with other usernames. Alternatively, login to the Protect webUI with the same username you configured `homebridge-unifi-protect` to configure liveviews for that user.
   * You don't need to restart the plugin to make any of this work. When you configure liveviews, they'll get detected and configured automagically.
-  * The *Off* state is special. If you don't have a plugin-specific liveview for Off, it will default to turning off motion detection in [HomeKit](https://www.apple.com/ios/home/) for all cameras attached to this Protect controller. If you do create a plugin-specific liveview for *Off*, it will honor those settings instead.
+  * The *Off* state is special. If you don't have a plugin-specific liveview for Off, it will default to turning off motion detection in [HomeKit](https://www.apple.com/home-app/) for all cameras attached to this Protect controller. If you do create a plugin-specific liveview for *Off*, it will honor those settings instead.

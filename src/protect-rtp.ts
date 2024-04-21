@@ -192,14 +192,13 @@ export class RtpPortAllocator {
     }
   }
 
-  // Reserve consecutive ports for use with FFmpeg. FFmpeg currently lacks the ability to specify both the RTP and RTCP ports.
-  // FFmpeg always assumes, by convention, that when you specify an RTP port, the RTCP port is the RTP port + 1. In order to
-  // work around that challenge, we need to always ensure that when we reserve multiple ports for RTP (primarily for two-way audio)
-  // that we we are reserving consecutive ports only.
-  public async reservePort(ipFamily: ("ipv4" | "ipv6") = "ipv4", portCount: (1 | 2) = 1, attempts = 0): Promise<number> {
+  // Reserve consecutive ports for use with FFmpeg. FFmpeg currently lacks the ability to specify both the RTP and RTCP ports. FFmpeg always assumes, by convention, that
+  // when you specify an RTP port, the RTCP port is the RTP port + 1. In order to work around that challenge, we need to always ensure that when we reserve multiple ports
+  // for RTP (primarily for two-way audio) that we we are reserving consecutive ports only.
+  public async reserve(ipFamily: ("ipv4" | "ipv6") = "ipv4", portCount: (1 | 2) = 1, attempts = 0): Promise<number> {
 
     // Sanity check and make sure we're not requesting any more than two ports at a time, or if we've exceeded our attempt limit.
-    if(((portCount !== 1) && (portCount !== 2)) || (attempts > 10)) {
+    if(![1, 2].includes(portCount) || (attempts > 10)) {
 
       return -1;
     }
@@ -218,11 +217,11 @@ export class RtpPortAllocator {
         // If we've gotten the first port of a pair of ports, make sure we release it here.
         if(firstPort) {
 
-          this.freePort(firstPort);
+          this.cancel(firstPort);
         }
 
         // We still haven't found what we're looking for...keep looking.
-        return this.reservePort(ipFamily, portCount, attempts++);
+        return this.reserve(ipFamily, portCount, attempts++);
       }
 
       // We've seen the first port we may be looking for, let's save it.
@@ -237,7 +236,7 @@ export class RtpPortAllocator {
   }
 
   // Delete a port reservation that's no longer needed.
-  public freePort(port: number): void {
+  public cancel(port: number): void {
 
     delete this.portsInUse[port];
   }

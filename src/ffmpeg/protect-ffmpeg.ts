@@ -266,8 +266,8 @@ export class FfmpegProcess extends EventEmitter {
       }
 
       // Cleanup after ourselves.
-      this.process?.stdin?.removeListener("error", errorListener);
-      this.process?.stderr?.removeListener("data", dataListener);
+      this.process?.stdin?.off("error", errorListener);
+      this.process?.stderr?.off("data", dataListener);
       this.process = null;
       this.stderrLog = [];
     });
