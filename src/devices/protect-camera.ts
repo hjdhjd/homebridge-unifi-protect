@@ -713,20 +713,20 @@ export class ProtectCamera extends ProtectDevice {
       // Check to see if the user has requested a specific streaming profile for this camera.
       if(this.hasFeature("Video.Stream.Only." + rtspProfile)) {
 
-        this.rtspQuality.StreamingDefault = rtspProfile;
+        this.rtspQuality.streamingDefault = rtspProfile;
       }
 
       // Check to see if the user has requested a specific recording profile for this camera.
       if(this.hasFeature("Video.HKSV.Record.Only." + rtspProfile)) {
 
-        this.rtspQuality.RecordingDefault = rtspProfile;
+        this.rtspQuality.recordingDefault = rtspProfile;
       }
     }
 
     // Inform the user if we've set a streaming default.
-    if(this.rtspQuality.StreamingDefault) {
+    if(this.rtspQuality.streamingDefault) {
 
-      this.log.info("Video streaming configured to use only: %s.", toCamelCase(this.rtspQuality.StreamingDefault.toLowerCase()));
+      this.log.info("Video streaming configured to use only: %s.", toCamelCase(this.rtspQuality.streamingDefault.toLowerCase()));
     }
 
     // Inform the user if they've selected the legacy snapshot API.
@@ -736,9 +736,9 @@ export class ProtectCamera extends ProtectDevice {
     }
 
     // Inform the user if we've set a recording default.
-    if(this.rtspQuality.RecordingDefault) {
+    if(this.rtspQuality.recordingDefault) {
 
-      this.log.info("HomeKit Secure Video event recording configured to use only: %s.", toCamelCase(this.rtspQuality.RecordingDefault.toLowerCase()));
+      this.log.info("HomeKit Secure Video event recording configured to use only: %s.", toCamelCase(this.rtspQuality.recordingDefault.toLowerCase()));
     }
 
     // Configure the video stream with our resolutions.
@@ -1174,10 +1174,13 @@ export class ProtectCamera extends ProtectDevice {
   }
 
   // Find a streaming RTSP configuration for a given target resolution.
-  public findRtsp(width: number, height: number, options?: { biasHigher?: boolean, maxPixels?: number, rtspEntries?: RtspEntry[] }): RtspEntry | null {
+  public findRtsp(width: number, height: number, options?: { biasHigher?: boolean, default?: string, maxPixels?: number, rtspEntries?: RtspEntry[] }): RtspEntry | null {
 
     // Create our options JSON if needed.
     options = options ?? {};
+
+    // Set our default stream, if we've configured one.
+    options.default = this.rtspQuality.streamingDefault;
 
     // See if we've been given RTSP entries or whether we should default to our own.
     options.rtspEntries = options.rtspEntries ?? this.rtspEntries;
@@ -1195,7 +1198,7 @@ export class ProtectCamera extends ProtectDevice {
   // Find a recording RTSP configuration for a given target resolution.
   public findRecordingRtsp(width: number, height: number): RtspEntry | null {
 
-    return this.findRtspEntry(width, height, { biasHigher: true, default: this.rtspQuality.RecordingDefault ?? this.stream.ffmpegOptions.recordingDefaultChannel });
+    return this.findRtspEntry(width, height, { biasHigher: true, default: this.rtspQuality.recordingDefault ?? this.stream.ffmpegOptions.recordingDefaultChannel });
   }
 
   // Utility function for sorting by resolution.
