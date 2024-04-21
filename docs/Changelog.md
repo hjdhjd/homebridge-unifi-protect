@@ -2,6 +2,8 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 6.21.1 (2024-04-21)
+  * Fix: ensure we honor user-selected stream quality defaults.
 
 ## 6.21.0 (2024-04-21)
   * Improvement: even faster startup times for livestreams.
