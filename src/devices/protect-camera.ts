@@ -19,6 +19,15 @@ export interface RtspEntry {
   url: string
 }
 
+// Options for tuning our RTSP lookups.
+type RtspOptions = Partial<{
+
+  biasHigher: boolean,
+  default: string,
+  maxPixels: number,
+  rtspEntries: RtspEntry[]
+}>;
+
 export class ProtectCamera extends ProtectDevice {
 
   public hasHksv: boolean;
@@ -1136,7 +1145,7 @@ export class ProtectCamera extends ProtectDevice {
   }
 
   // Find an RTSP configuration for a given target resolution.
-  private findRtspEntry(width: number, height: number, options?: { biasHigher?: boolean, default?: string, rtspEntries?: RtspEntry[] }): RtspEntry | null {
+  private findRtspEntry(width: number, height: number, options?: RtspOptions): RtspEntry | null {
 
     const rtspEntries = options?.rtspEntries ?? this.rtspEntries;
 
@@ -1174,7 +1183,7 @@ export class ProtectCamera extends ProtectDevice {
   }
 
   // Find a streaming RTSP configuration for a given target resolution.
-  public findRtsp(width: number, height: number, options?: { biasHigher?: boolean, default?: string, maxPixels?: number, rtspEntries?: RtspEntry[] }): RtspEntry | null {
+  public findRtsp(width: number, height: number, options?: RtspOptions): RtspEntry | null {
 
     // Create our options JSON if needed.
     options = options ?? {};
