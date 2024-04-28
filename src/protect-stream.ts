@@ -394,8 +394,11 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     // How do we determine if we're a high latency connection? We look at the RTP packet time of the audio packet time for a hint. HomeKit uses values of 20, 30, 40,
     // and 60ms. We make an assumption, validated by lots of real-world testing, that when we see 60ms used by HomeKit, it's a high latency connection and act
     // accordingly.
-    const isTranscoding = this.protectCamera.hints.transcode || this.protectCamera.hints.crop ||
-      ((request.audio.packet_time >= 60) && this.protectCamera.hints.transcodeHighLatency);
+    const isHighLatency = request.audio.packet_time >= 60;
+    const isTranscoding = this.protectCamera.hints.transcode || this.protectCamera.hints.crop || (isHighLatency && this.protectCamera.hints.transcodeHighLatency);
+
+    // Set the initial bitrate we should use for this request based on what HomeKit is requesting.
+    let targetBitrate = request.video.max_bit_rate;
 
     // Find the best RTSP stream based on what we're looking for.
     if(isTranscoding) {
@@ -405,6 +408,21 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
         (this.protectCamera.hints.hardwareTranscoding) ? 2160 : request.video.height,
         { biasHigher: true, maxPixels: this.ffmpegOptions.hostSystemMaxPixels }
       );
+
+      // If we have specified the bitrates we want to use when transcoding, let's honor those here.
+      if(isHighLatency && (this.protectCamera.hints.transcodeHighLatencyBitrate > 0)) {
+
+        targetBitrate = this.protectCamera.hints.transcodeHighLatencyBitrate;
+      } else if(!isHighLatency && (this.protectCamera.hints.transcodeBitrate > 0)) {
+
+        targetBitrate = this.protectCamera.hints.transcodeBitrate;
+      }
+
+      // If we're targeting a bitrate that's beyond the capabilities of our input channel, match the bitrate of the input channel.
+      if(this.rtspEntry && (targetBitrate > (this.rtspEntry.channel.bitrate / 1000))) {
+
+        targetBitrate = this.rtspEntry.channel.bitrate / 1000;
+      }
     } else {
 
       this.rtspEntry = this.protectCamera.findRtsp(request.video.width, request.video.height);
@@ -421,8 +439,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       return;
     }
 
-    // Save our current bitrate before we modify it, but only if we're the first stream - we don't want to do this for
-    // concurrent streaming clients for this camera.
+    // Save our current bitrate before we modify it, but only if we're the first stream - we don't want to do this for concurrent streaming clients for this camera.
     if(!this.savedBitrate) {
 
       this.savedBitrate = this.protectCamera.getBitrate(this.rtspEntry.channel.id);
@@ -435,7 +452,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
     // Set the desired bitrate in Protect. We don't need to for this to return, because Protect
     // will adapt the stream once it processes the configuration change.
-    await this.protectCamera.setBitrate(this.rtspEntry.channel.id, request.video.max_bit_rate * 1000);
+    await this.protectCamera.setBitrate(this.rtspEntry.channel.id, targetBitrate * 1000);
 
     // Set our packet size to be 564. Why? MPEG transport stream (TS) packets are 188 bytes in size each.
     // These packets transmit the video data that you ultimately see on your screen and are transmitted using
@@ -494,7 +511,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     // Inform the user.
     this.log.info("Streaming request from %s%s: %sx%s@%sfps, %s kbps. %s %s, %s kbps.",
       sessionInfo.address, (request.audio.packet_time === 60) ? " (high latency connection)" : "",
-      request.video.width, request.video.height, request.video.fps, request.video.max_bit_rate.toLocaleString("en-US"),
+      request.video.width, request.video.height, request.video.fps, targetBitrate.toLocaleString("en-US"),
       isTranscoding ? (this.protectCamera.hints.hardwareTranscoding ? "Hardware accelerated transcoding" : "Transcoding") : "Using",
       this.rtspEntry.name, (this.rtspEntry.channel.bitrate / 1000).toLocaleString("en-US"));
 
@@ -504,7 +521,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       // Configure our video parameters for transcoding.
       ffmpegArgs.push(...this.ffmpegOptions.streamEncoder({
 
-        bitrate: request.video.max_bit_rate,
+        bitrate: targetBitrate,
         fps: this.rtspEntry.channel.fps,
         height: request.video.height,
         idrInterval: PROTECT_HOMEKIT_IDR_INTERVAL,

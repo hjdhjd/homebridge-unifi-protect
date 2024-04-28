@@ -47,7 +47,9 @@ export interface ProtectHints {
   syncName: boolean,
   timeshift: boolean,
   transcode: boolean,
+  transcodeBitrate: number,
   transcodeHighLatency: boolean,
+  transcodeHighLatencyBitrate: number,
   twoWayAudio: boolean
 }
 

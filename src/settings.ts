@@ -77,5 +77,11 @@ export const PROTECT_RPI_GPU_MINIMUM = 128;
 // Maximum age of a snapshot in seconds.
 export const PROTECT_SNAPSHOT_CACHE_MAXAGE = 90;
 
+// Bitrate, in kilobits per second, to use when transcoding to local clients.
+export const PROTECT_TRANSCODE_BITRATE = 2000;
+
+// Bitrate, in kilobits per second, to use when transcoding to high-latency clients.
+export const PROTECT_TRANSCODE_HIGH_LATENCY_BITRATE = 1000;
+
 // How often, in seconds, should we heartbeat FFmpeg in two-way audio sessions. This should be less than 5 seconds, which is FFmpeg's input timeout interval.
 export const PROTECT_TWOWAY_HEARTBEAT_INTERVAL = 3;

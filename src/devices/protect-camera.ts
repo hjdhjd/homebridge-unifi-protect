@@ -73,8 +73,21 @@ export class ProtectCamera extends ProtectDevice {
     this.hints.smartDetect = this.ufp.featureFlags.hasSmartDetect && this.hasFeature("Motion.SmartDetect");
     this.hints.timeshift = this.hasFeature("Video.HKSV.TimeshiftBuffer");
     this.hints.transcode = this.hasFeature("Video.Transcode");
+    this.hints.transcodeBitrate = this.getFeatureNumber("Video.Transcode.Bitrate") as number;
     this.hints.transcodeHighLatency = this.hasFeature("Video.Transcode.HighLatency");
+    this.hints.transcodeHighLatencyBitrate = this.getFeatureNumber("Video.Transcode.HighLatency.Bitrate") as number;
     this.hints.twoWayAudio = this.ufp.featureFlags.hasSpeaker && this.hasFeature("Audio") && this.hasFeature("Audio.TwoWay");
+
+    // Sanity check our target transcoding bitrates, if defined.
+    if((this.hints.transcodeBitrate === undefined) || (this.hints.transcodeBitrate <= 0)) {
+
+      this.hints.transcodeBitrate = -1;
+    }
+
+    if((this.hints.transcodeHighLatencyBitrate === undefined) || (this.hints.transcodeHighLatencyBitrate <= 0)) {
+
+      this.hints.transcodeHighLatencyBitrate = -1;
+    }
 
     return true;
   }
