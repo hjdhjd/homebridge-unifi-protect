@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 6.22.0 (2024-04-27)
+  * New feature: you can now choose to override the bitrates HomeKit requests (either locally or remotely). This allows you to have a much higher quality transcoding experience at home or remotely.
+  * Housekeeping.
+
 ## 6.21.1 (2024-04-21)
   * Fix: ensure we honor user-selected stream quality defaults.
 
