@@ -75,35 +75,35 @@ I hope to continue to work on this one to get AEC working for two-way audio. [Yo
   * [Plugin Configuration Reference](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/ConfigurationReference.md): complete list of configuration options available in this plugin.
 
 ## Installation
-### Prerequisites:
 
-  * Ensure you are using a machine that can handle the CPU and GPU requirements of `homebridge-unifi-protect`. The more cameras you have, the higher the performance requirements. If you intend to use HomeKit Secure Video, in particular, you will need a capable, modern CPU. Raspberry Pi 4 is a great piece of hardware, but it cannot keep up with the demands of more than a few Protect cameras, and definitely not the higher end members of the Protect camera ecosystem.
-  * If you are new to Homebridge, please first read the [Homebridge](https://homebridge.io) [documentation](https://github.com/homebridge/homebridge/wiki) and installation instructions before proceeding. Ensure you've installed Homebridge and the [Homebridge Config UI](https://github.com/homebridge/homebridge-config-ui-x) before proceeding.
-  * Ensure you have a ***local user*** account on your UniFi console dedicated to `homebridge-unifi-protect`. To create a local user account on your UniFi console:
-    * Go to the ***OS Settings*** tab on the Protect controller web interface. This is typicaly near the top left of the Protect controller UI page.
-    * Click ***Add Admin*** located near the top right of the ***OS Settings*** page.
-    * Click ***Restrict to local access only*** and then enter in a username and password for the new local user.
-    * Optionally customize the role of the user to adjust the roles. HBUP requires the ***Full Management*** role for all of it's capabilities to work, although it will work in a more limited form without administrative privileges.
+> [!IMPORTANT]
+>  ### Prerequisites
+>   * Ensure you are using a machine that can handle the CPU and GPU requirements of `homebridge-unifi-protect`. The more cameras you have, the higher the performance requirements. If you intend to use HomeKit Secure Video, in particular, you will need a capable, modern CPU. Raspberry Pi 4 is a great piece of hardware, but it cannot keep up with the demands of more than a few Protect cameras, and definitely not the higher end members of the Protect camera ecosystem.
+>   * If you are new to Homebridge, please first read the [Homebridge](https://homebridge.io) [documentation](https://github.com/homebridge/homebridge/wiki) and installation instructions before proceeding. Ensure you've installed Homebridge and the [Homebridge Config UI](https://github.com/homebridge/homebridge-config-ui-x) before proceeding.
+>   * Ensure you have a ***local user*** account on your UniFi console dedicated to `homebridge-unifi-protect`. To create a local user account on your UniFi console:
+>     * Go to the ***OS Settings*** tab on the Protect controller web interface. This is typicaly near the top left of the Protect controller UI page.
+>     * Click ***Add Admin*** located near the top right of the ***OS Settings*** page.
+>     * Click ***Restrict to local access only*** and then enter in a username and password for the new local user.
+>     * Optionally customize the role of the user to adjust the roles. HBUP requires the ***Full Management*** role for all of it's capabilities to work, although it will work in a more limited form without administrative privileges.
+> 
+> ### Getting Started
+> To install `homebridge-unifi-protect`:
+> 
+> 1. Go to the `Plugins` tab in the Homebridge Config UI and searching for `homebridge-unifi-protect` and install it.
+> 2. Click on the ***Set Up*** icon located in the top right corner of the Homebridge UniFi Protect tile and then enter the hostname or IP address of the Protect controller as well as the username and password you created in the steps above and then login to the Protect controller.
+> 3. For the moment, don't make any other configuration changes and click ***Save*** and then click ***Restart Homebridge***.
+> 4. After restarting Homebridge, click on the ***Set Up Child Bridge*** icon located in the top right corner of the Homebridge UniFi Protect tile. Toggle the child bridge setting for UniFi Protect to ***on*** and then save and restart Homebridge.
+> 5. After restarting Homebridge, click on the ***Connect to HomeKit*** icon located in the top right corner of the Homebridge UniFi Protect tile. Use the Home app on your iPhone and scan the QR code to connect UniFi Protect to HomeKit. The Home app may ask questions about where to locate your cameras and whether you want to enable HomeKit Secure Video. Answer according to your preferences.
+> 6. That's it! You should now be able to access all your UniFi Protect devices in HomeKit. You can further tailor your experience by going to the Homebridge UniFi Protect webUI and exploring the various features and options that are available to you.
 
-### Getting Started
-To install `homebridge-unifi-protect`:
-
-1. Go to the `Plugins` tab in the Homebridge Config UI and searching for `homebridge-unifi-protect` and install it.
-2. Click on the ***Set Up*** icon located in the top right corner of the Homebridge UniFi Protect tile and then enter the hostname or IP address of the Protect controller as well as the username and password you created in the steps above and then login to the Protect controller.
-3. For the moment, don't make any other configuration changes and click ***Save*** and then click ***Restart Homebridge***.
-4. After restarting Homebridge, click on the ***Set Up Child Bridge*** icon located in the top right corner of the Homebridge UniFi Protect tile. Toggle the child bridge setting for UniFi Protect to ***on*** and then save and restart Homebridge.
-5. After restarting Homebridge, click on the ***Connect to HomeKit*** icon located in the top right corner of the Homebridge UniFi Protect tile. Use the Home app on your iPhone and scan the QR code to connect UniFi Protect to HomeKit. The Home app may ask questions about where to locate your cameras and whether you want to enable HomeKit Secure Video. Answer according to your preferences.
-6. That's it! You should now be able to access all your UniFi Protect devices in HomeKit. You can further tailor your experience by going to the Homebridge UniFi Protect webUI and exploring the various features and options that are available to you.
-
-### Technical Considerations
-
-HBUP includes everything required to get up and running on many of the [more popular platforms and operating systems](https://github.com/homebridge/ffmpeg-for-homebridge#supported-platforms). **If you're running on an unsupported platform, you will need to install a working version of *FFmpeg* for `homebridge-unifi-protect` to work correctly with your cameras. Additionally, your FFmpeg will need to support the *fdk-aac* codec if you want audio support to work. Setting up and configuring FFmpeg is beyond the scope of this documentation.**
-
-### Things To Be Aware Of
-- Only official releases of UniFi Protect and UniFi OS firmwares are supported. **No beta, early access, or release candidate versions of any kind are supported**.
-- Only official hardware releases for UniFi Protect are supported. Early access or beta hardware is unsupported.
-- No support is provided for any beta versions of Apple operating systems (iOS, iPadOS, macOS, tvOS, etc.).
-- **My philosophy is to aggressively adopt the capability and features (that make sense in a HomeKit context) in the latest official Ubiquiti firmware releases and to deprecate old functionality that's been superceded by newer, richer, or more performant capabilities - either by HomeKit or Ubiquiti. Read the [Changelog](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Changelog.md) carefully for the latest information on what's new.**
+> [!NOTE]
+> HBUP includes everything required to get up and running on many of the [more popular platforms and operating systems](https://github.com/homebridge/ffmpeg-for-homebridge#supported-platforms). **If you're running on an unsupported platform, you will need to install a working version of *FFmpeg* for `homebridge-unifi-protect` to work correctly with your cameras. Additionally, your FFmpeg will need to support the *fdk-aac* codec if you want audio support to work. Setting up and configuring FFmpeg is beyond the scope of this documentation.**
+ 
+> [!TIP]
+> - Only official releases of UniFi Protect and UniFi OS firmwares are supported. **No beta, early access, or release candidate versions of any kind are supported**.
+> - Only official hardware releases for UniFi Protect are supported. Early access or beta hardware is unsupported.
+> - No support is provided for any beta versions of Apple operating systems (iOS, iPadOS, macOS, tvOS, etc.).
+> - **My philosophy is to aggressively adopt the capability and features (that make sense in a HomeKit context) in the latest official Ubiquiti firmware releases and to deprecate old functionality that's been superceded by newer, richer, or more performant capabilities - either by HomeKit or Ubiquiti. Read the [Changelog](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Changelog.md) carefully for the latest information on what's new.**
 
 ## Plugin Development Dashboard
 This is mostly of interest to the true developer nerds amongst us.
