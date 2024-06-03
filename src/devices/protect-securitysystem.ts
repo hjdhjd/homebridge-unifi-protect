@@ -76,13 +76,13 @@ export class ProtectSecuritySystem extends ProtectBase {
   private configureMqtt(): boolean {
 
     // Get the current status of the security system.
-    this.nvr.mqtt?.subscribeGet(this.accessory, "securitysystem", "security system state", () => {
+    this.nvr.mqtt?.subscribeGet(this.nvr.ufp.mac, "securitysystem", "security system state", () => {
 
       return this.currentSecuritySystemState;
     });
 
     // Set the security system state.
-    this.nvr.mqtt?.subscribeSet(this.accessory, "securitysystem", "security system state", (value: string) => {
+    this.nvr.mqtt?.subscribeSet(this.nvr.ufp.mac, "securitysystem", "security system state", (value: string) => {
 
       const SecuritySystemCurrentState = this.hap.Characteristic.SecuritySystemCurrentState;
       const SecuritySystemTargetState = this.hap.Characteristic.SecuritySystemTargetState;
@@ -256,6 +256,7 @@ export class ProtectSecuritySystem extends ProtectBase {
       if(!switchService) {
 
         this.log.error("Unable to add security system alarm.");
+
         return false;
       }
 
@@ -320,7 +321,7 @@ export class ProtectSecuritySystem extends ProtectBase {
 
     // Only show the available values we've configured.
     this.accessory.getService(this.hap.Service.SecuritySystem)?.
-      getCharacteristic(this.hap.Characteristic.SecuritySystemTargetState).setProps( { validValues: availableSecurityStates });
+      getCharacteristic(this.hap.Characteristic.SecuritySystemTargetState).setProps({ validValues: availableSecurityStates });
 
     return true;
   }
@@ -363,29 +364,34 @@ export class ProtectSecuritySystem extends ProtectBase {
 
         newState = SecuritySystemCurrentState.STAY_ARM;
         viewScene = "Protect-Home".toLowerCase();
+
         break;
 
       case SecuritySystemTargetState.AWAY_ARM:
 
         newState = SecuritySystemCurrentState.AWAY_ARM;
         viewScene = "Protect-Away".toLowerCase();
+
         break;
 
       case SecuritySystemTargetState.NIGHT_ARM:
 
         newState = SecuritySystemCurrentState.NIGHT_ARM;
         viewScene = "Protect-Night".toLowerCase();
+
         break;
 
       case SecuritySystemTargetState.DISARM:
 
         newState = SecuritySystemCurrentState.DISARMED;
         viewScene = "Protect-Off".toLowerCase();
+
         break;
 
       default:
 
         newState = SecuritySystemCurrentState.DISARMED;
+
         break;
     }
 
@@ -458,7 +464,7 @@ export class ProtectSecuritySystem extends ProtectBase {
     }
 
     // Publish to MQTT, if configured.
-    this.nvr.mqtt?.publish(this.accessory, "securitysystem", this.currentSecuritySystemState);
+    this.nvr.mqtt?.publish(this.nvr.ufp.mac, "securitysystem", this.currentSecuritySystemState);
   }
 
   // Set the security alarm.
@@ -481,6 +487,6 @@ export class ProtectSecuritySystem extends ProtectBase {
     this.accessory.getService(this.hap.Service.Switch)?.updateCharacteristic(this.hap.Characteristic.On, this.isAlarmTriggered);
 
     // Publish to MQTT, if configured.
-    this.nvr.mqtt?.publish(this.accessory, "securitysystem", this.currentSecuritySystemState);
+    this.nvr.mqtt?.publish(this.nvr.ufp.mac, "securitysystem", this.currentSecuritySystemState);
   }
 }

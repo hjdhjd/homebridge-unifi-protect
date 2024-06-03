@@ -7,7 +7,7 @@
  */
 "use strict";
 
-import { featureOptionCategories, featureOptions, isOptionEnabled } from "../dist/protect-options.js";
+import { featureOptionCategories, featureOptions } from "../dist/protect-options.js";
 import { HomebridgePluginUiServer } from "@homebridge/plugin-ui-utils";
 import { ProtectApi } from "unifi-protect";
 import util from "node:util";
@@ -16,7 +16,8 @@ class PluginUiServer extends HomebridgePluginUiServer {
 
   errorInfo;
 
-  constructor () {
+  constructor() {
+
     super();
 
     this.errorInfo = "";
@@ -44,6 +45,7 @@ class PluginUiServer extends HomebridgePluginUiServer {
         return this.errorInfo;
       } catch(err) {
 
+        // eslint-disable-next-line no-console
         console.log(err);
 
         // Return nothing if we error out for some reason.
@@ -62,22 +64,17 @@ class PluginUiServer extends HomebridgePluginUiServer {
 
         const log = {
 
-          debug: (message, parameters) => {},
+          debug: () => {},
           error: (message, parameters = []) => {
 
             // Save the error to inform the user in the webUI.
-            if(!!parameters?.[Symbol.iterator]) {
+            this.errorInfo = util.format(message, ...(Array.isArray(parameters) ? parameters : [parameters]));
 
-              this.errorInfo = util.format(message, ...parameters);
-            } else {
-
-              this.errorInfo = util.format(message, parameters);
-            }
-
+            // eslint-disable-next-line no-console
             console.error(this.errorInfo);
           },
-          info: (message, parameters) => {},
-          warn: (message, parameters = []) => {}
+          info: () => {},
+          warn: () => {}
         };
 
         // Connect to the Protect controller.
@@ -142,9 +139,11 @@ class PluginUiServer extends HomebridgePluginUiServer {
           return aCase > bCase ? 1 : (bCase > aCase ? -1 : 0);
         });
 
-        return [ ufpApi.bootstrap.nvr, ...ufpApi.bootstrap.cameras, ...ufpApi.bootstrap.chimes, ...ufpApi.bootstrap.lights, ...ufpApi.bootstrap.sensors, ...ufpApi.bootstrap.viewers ];
+        return [ ufpApi.bootstrap.nvr, ...ufpApi.bootstrap.cameras, ...ufpApi.bootstrap.chimes, ...ufpApi.bootstrap.lights, ...ufpApi.bootstrap.sensors,
+          ...ufpApi.bootstrap.viewers ];
       } catch(err) {
 
+        // eslint-disable-next-line no-console
         console.log(err);
 
         // Return nothing if we error out for some reason.
@@ -157,32 +156,7 @@ class PluginUiServer extends HomebridgePluginUiServer {
   #registerGetOptions() {
 
     // Return the list of options configured for a given Protect device.
-    this.onRequest("/getOptions", async(request) => {
-
-      try {
-
-        const optionSet = {};
-
-        // Loop through all the feature option categories.
-        for(const category of featureOptionCategories) {
-
-          optionSet[category.name] = [];
-
-          for(const options of featureOptions[category.name]) {
-
-            options.value = isOptionEnabled(request.configOptions, request.nvrUfp, request.deviceUfp, category.name + "." + options.name, options.default);
-            optionSet[category.name].push(options);
-          }
-        }
-
-        return { categories: featureOptionCategories, options: optionSet };
-
-      } catch(err) {
-
-        // Return nothing if we error out for some reason.
-        return {};
-      }
-    });
+    this.onRequest("/getOptions", () => ({ categories: featureOptionCategories, options: featureOptions }));
   }
 }
 

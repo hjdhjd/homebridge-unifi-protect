@@ -44,6 +44,7 @@ export class FfmpegStreamingProcess extends FfmpegProcess {
 
         this.callback(new Error(errorMessage));
         this.callback = null;
+
         return;
       }
 
@@ -111,18 +112,29 @@ export class FfmpegStreamingProcess extends FfmpegProcess {
   // Log errors.
   protected logFfmpegError(exitCode: number, signal: NodeJS.Signals): void {
 
+    // We want to process known streaming-related errors due to the performance and latency tweaks we've made to the FFmpeg command line. In some cases we inform the
+    // user and take no action, in others, we tune our own internal parameters.
+
+    // Test for known errors due to occasional inconsistencies in the Protect livestream API.
+    const timeshiftLivestreamRegex = new RegExp("could not find corresponding trex");
+
+    if(this.stderrLog.some(logEntry => timeshiftLivestreamRegex.test(logEntry))) {
+
+      this.log.error("FFmpeg ended unexpectedly due to issues processing the media stream provided by the UniFi Protect livestream API. " +
+        "This error can be safely ignored - they will occur occasionally.");
+
+      return;
+    }
+
+    // Test for probesize errors.
     const probesizeRegex = new RegExp("not enough frames to estimate rate; consider increasing probesize");
 
-    // Known streaming-related errors due to the performance and latency tweaks we've made to the FFmpeg command line.
-    for(const line of this.stderrLog) {
+    if(this.stderrLog.some(logEntry => probesizeRegex.test(logEntry))) {
 
-      // Test for probesize errors.
-      if(probesizeRegex.test(line)) {
+      // Let the streaming delegate know to adjust it's parameters for the next run and inform the user.
+      this.delegate.adjustProbeSize();
 
-        // Let the streaming delegate know to adjust it's parameters for the next run and inform the user.
-        this.delegate.adjustProbeSize();
-        return;
-      }
+      return;
     }
 
     // Otherwise, revert to our default logging in our parent.

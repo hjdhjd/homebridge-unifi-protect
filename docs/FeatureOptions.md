@@ -63,9 +63,9 @@ These option(s) apply to: all Protect device types.
 | Option                                           | Description
 |--------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 | `Device`                                         | Make this device available in HomeKit. **(default: enabled)**.
+| `Device.StatusLed`                               | Enable the status LED for this device in HomeKit. **(default: disabled)**. <BR>*Supported on Protect devices that have a status LED.*
 | `Device.Standalone`                              | Make this a standalone device in HomeKit that will need to be added to HomeKit through the Home app. **(default: disabled)**.
 | `Device.SyncName`                                | Synchronize the UniFi Protect name of this device with HomeKit. Synchronization is one-way only, syncing the device name from UniFi Protect to HomeKit. **(default: disabled)**.
-| `Device.StatusLed`                               | Enable the status LED for this device in HomeKit. **(default: disabled)**. <BR>*Supported on Protect devices that have a status LED.*
 
 #### <A NAME="doorbell"></A>Doorbell feature options.
 
@@ -137,6 +137,7 @@ These option(s) apply to: Protect cameras.
 | Option                                           | Description
 |--------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 | `Video.Transcode.Hardware`                       | Use hardware-accelerated transcoding when available (Apple Macs, Intel Quick Sync Video-enabled CPUs, Raspberry Pi 4). **(default: disabled)**.
+| `Video.Stream.UseApi`                            | Use the native Protect livestream API to view livestreams (Experimental). **(default: disabled)**.
 | `Video.Transcode`                                | When streaming to local clients (e.g. at home), always transcode livestreams, instead of transmuxing them. **(default: disabled)**.
 | `Video.Transcode.Bitrate<I>.Value</I>`           | Bitrate, in kilobits per second, to use when transcoding to local clients, ignoring the bitrate HomeKit requests. HomeKit typically requests lower video quality than you may desire in your environment. **(default: 2000)**.
 | `Video.Transcode.HighLatency`                    | When streaming to high-latency clients (e.g. cellular connections), transcode livestreams instead of transmuxing them. **(default: enabled)**.
@@ -144,8 +145,6 @@ These option(s) apply to: Protect cameras.
 | `Video.Stream.Only.High`                         | When viewing livestreams, force the use of the high quality video stream from the Protect controller. **(default: disabled)**.
 | `Video.Stream.Only.Medium`                       | When viewing livestreams, force the use of the medium quality video stream from the Protect controller. **(default: disabled)**.
 | `Video.Stream.Only.Low`                          | When viewing livestreams, force the use of the low quality video stream from the Protect controller. **(default: disabled)**.
-| `Video.DynamicBitrate`                           | Dynamically adjust the image quality of the camera directly on the UniFi Protect controller to accomodate HomeKit requests. **(default: disabled)**.
-| `Video.DynamicBitrate.Switch`                    | Add a switch accessory to enable or disable dynamic bitrate support on the Protect controller. **(default: disabled)**.
 | `Video.Crop`                                     | Crop the camera video stream. Enabling this option will also force transcoding of livestreams. **(default: disabled)**.
 | `Video.Crop.X<I>.Value</I>`                      | Left offset of the crop window, as a percentage of the original image width. **(default: 0)**.
 | `Video.Crop.Y<I>.Value</I>`                      | Top offset of the crop window, as a percentage of the original image height. **(default: 0)**.
@@ -165,4 +164,3 @@ These option(s) apply to: Protect cameras.
 | `Video.HKSV.Record.Only.High`                    | When recording HomeKit Secure Video events, force the use of the high quality video stream from the Protect controller. **(default: disabled)**.
 | `Video.HKSV.Record.Only.Medium`                  | When recording HomeKit Secure Video events, force the use of the medium quality video stream from the Protect controller. **(default: disabled)**.
 | `Video.HKSV.Record.Only.Low`                     | When recording HomeKit Secure Video events, force the use of the low quality video stream from the Protect controller. **(default: disabled)**.
-

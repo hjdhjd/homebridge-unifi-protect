@@ -1,10 +1,18 @@
+<style>
+  .hbup-blockquote {
+    background-color: #E6EEF9;
+    border-left: 5px solid #0559C9;
+    font-size: 0.8rem;
+    font-weight: 550;
+  }
+</style>
 <p class="text-center">
   <img src="https://raw.githubusercontent.com/hjdhjd/homebridge-unifi-protect/main/images/homebridge-unifi-protect.svg" alt="homebridge-unifi-protect logo" class="w-50" />
 </p>
 <div id="pageFirstRun" style="display: none;">
-  <div class="text-center">
+  <div class="mx-auto text-left" style="width: 90%;">
     <p>Please enter the address of your UniFi Protect controller (e.g. unvr.local or 10.0.0.1) and the login credentials for a <strong>local user</strong> to get started with <strong>homebridge-unifi-protect</strong>.</p>
-    <table class="table table-sm table-borderless">
+    <table class="table table-sm table-borderless text-center">
       <tr>
         <td>
           <input type="test" placeholder="Protect controller hostname or IP address" size="40" id="address"></input>
@@ -26,8 +34,18 @@
         </td>
       </tr>
     </table>
+    <blockquote class="blockquote hbup-blockquote mb-0 mt-0 pb-0 pt-0">
+      Things to keep in mind regarding UniFi Protect:
+      <ul dir="auto">
+        <li><b>A local user account is required to use this plugin. Ubiquiti.com/UI.com accounts are not supported.</b>. You can create an account by accessing the <i>Admins & Users</i> tab in the UniFi console webUI.</li>
+        <li>If you have a large number of cameras, make sure you are running this plugin on a machine that has sufficient CPU resources for the best performance. The recommended configuration is to use any Apple Silicon-based macOS environment.</li>
+        <li>You may run into networking issues when using Docker-based environments. These are Homebridge-specific issues, not HBUP-specific ones. You can access the <a target="_blank" href="https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Troubleshooting.md">Troubleshooting</a> documentation for more information.</li>
+      </ul>
+    </blockquote>
+  </div>
+  <div class="text-center">
     <br>
-      <button type="button" class="btn btn-primary" id="firstRun">Login to UniFi Protect &rarr;</button>
+      <button type="button" class="btn btn-primary" id="firstRun">Configure Plugin &rarr;</button>
     <br>
       To optimize performance and responsiveness, please make this plugin a <a target="_blank" href="https://github.com/homebridge/homebridge/wiki/Child-Bridges">child bridge</a> once you've completed configuration.
   </div>
@@ -61,10 +79,10 @@
         <td id="deviceStatsTable">
           <table class="table table-sm table-borderless border-bottom m-0 p-0">
             <tr id="deviceStatsHeader">
-              <th class="m-0 p-0" style="width: 30%;"><B>Model<B></th>
-              <th class="m-0 p-0 w-25"><B>IP Address</B></th>
-              <th class="m-0 p-0" style="width: 20%;"><B>MAC Address</B></th>
-              <th class="m-0 p-0 w-25"><B>Status</B></th>
+              <th class="m-0 p-0" style="width: 30%;"><b>Model</b></th>
+              <th class="m-0 p-0 w-25"><b>IP Address</b></th>
+              <th class="m-0 p-0" style="width: 20%;"><b>MAC Address</b></th>
+              <th class="m-0 p-0 w-25"><b>Status</b></th>
             </tr>
             <tr>
               <td id="device_model" class="m-0 p-0"></td>
@@ -83,15 +101,16 @@
 </div>
 <div id="pageSupport" class="mt-4" style="display: none;">
   <h5>Introduction</h5>
-    <p class="px-4">I hope you enjoy <a target="_blank" href="https://github.com/hjdhjd/homebridge-unifi-protect">homebridge-unifi-protect</a> as much as I enjoy developing it. All my projects are labors of love. If you'd like to show your appreciation - <a target="_blank" href="https://github.com/hjdhjd/homebridge-unifi-protect">star this project on Github</A> and do some good in your community, either financially or with your time: a food bank, an animal shelter (two of my passions), or whatever resonates with you that can give something back to the world around you.</p>
+    <p class="px-4">I hope you enjoy this plugin as much as I enjoy developing it. All my projects are labors of love. If you'd like to show your appreciation - <a target="_blank" href="https://github.com/hjdhjd/homebridge-unifi-protect">star this project on GitHub</A> and do some good in your community, either financially or with your time: a food bank, an animal shelter (two of my passions), or whatever resonates with you that can give something back to the world around you. If you're looking for a couple of my faves: <a target="_blank" href="https://wck.org/donate">World Central Kitchen</a> and <a target="_blank" href="https://bestfriends.org/donate">Best Friends</a>.</p>
 
     <div class="px-4">
-      Other plugins by <a target="_blank" href="https://github.com/hjdhjd">HJD</a>:
+      Plugins by <a target="_blank" href="https://github.com/hjdhjd">HJD</a>:
 
       <ul dir="auto">
-        <li><a target="_blank" href="https://github.com/hjdhjd/homebridge-myq">homebridge-myQ: Liftmaster and Chamberlain garage door and gate opener support for HomeKit</a></li>
+        <li><a target="_blank" href="https://github.com/hjdhjd/homebridge-hunter-hydrawise">homebridge-hunter-hydrawise: Hunter Hydrawise integration for HomeKit.</a></li>
         <li><a target="_blank" href="https://github.com/hjdhjd/homebridge-ratgdo">homebridge-ratgdo: Ratgdo (non-myQ Liftmaster and Chamberlain) garage door and gate opener support for HomeKit</a></li>
         <li><a target="_blank" href="https://github.com/hjdhjd/homebridge-unifi-access">homebridge-unifi-access: HomeKit integration for the UniFi Access ecosystem</a></li>
+        <li><a target="_blank" href="https://github.com/hjdhjd/homebridge-unifi-protect">homebridge-unifi-protect: Complete HomeKit integration for the entire UniFi Protect ecosystem</a></li>
       </ul>
     </div>
 
@@ -111,7 +130,7 @@
       </li>
       <li>
           <b><a target="_blank" href="https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Troubleshooting.md">Troubleshooting</a>
-          : running into login problems or streaming issues? Give this a read before looking anywhere else.</b>
+          : running into login problems, network problems, or streaming issues? Give this a read before looking anywhere else.</b>
       </li>
       <li>
         <a target="_blank" href="https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Changelog.md">Changelog</a>: changes and release history of this plugin, starting with v3.0.
@@ -159,15 +178,17 @@
     </li>
   </ul>
 </div>
-<noscript>
-  <h2>A JavaScript-enabled web browser is required to use this webUI.</h2>
-</noscript>
-<script>
-  <!--
-  (async () => {
+<script type="module">
 
-    // We use dynamic imports because web browsers often attempt to cache modules and we always want to pull a fresh copy, in case they've been updated.
-    await import("./ui.mjs");
-  })();
-  // -->
+  /* Copyright(C) 2017-2024, HJD (https://github.com/hjdhjd). All rights reserved.
+   *
+   * Plugin webUI script loader.
+   */
+  "use strict";
+
+  // Ensure we load the webUI dynamically so it isn't cached on each load.
+  const script = document.createElement('script');
+  script.src = "./ui.mjs?v=" + Date.now().toString();
+  script.type = "module";
+  document.body.appendChild(script);
 </script>

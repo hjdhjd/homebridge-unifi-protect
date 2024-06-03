@@ -12,15 +12,6 @@ export function toCamelCase(input: string): string {
   return input.replace(/(^\w|\s+\w)/g, match => match.toUpperCase());
 }
 
-// Define Protect logging conventions.
-export interface ProtectLogging {
-
-  debug: (message: string, ...parameters: unknown[]) => void,
-  error: (message: string, ...parameters: unknown[]) => void,
-  info: (message: string, ...parameters: unknown[]) => void,
-  warn: (message: string, ...parameters: unknown[]) => void
-}
-
 // Protect device categories that we support and the classes they correspond to.
 export type ProtectDeviceTypes = {
 
@@ -51,7 +42,6 @@ export enum ProtectReservedNames {
   SWITCH_DOORBELL_CHIME_NONE = "DoorbellChime.none",
   SWITCH_DOORBELL_CHIME_SPEAKER = "DoorbellChime.speaker",
   SWITCH_DOORBELL_TRIGGER = "DoorbellTrigger",
-  SWITCH_DYNAMIC_BITRATE = "DynamicBitrate",
   SWITCH_HKSV_RECORDING = "HKSVRecordingSwitch",
   SWITCH_MOTION_SENSOR = "MotionSensorSwitch",
   SWITCH_MOTION_TRIGGER = "MotionSensorTrigger",

@@ -3,15 +3,15 @@
  * protect-nvr.ts: NVR device class for UniFi Protect.
  */
 import { API, APIEvent, HAP, PlatformAccessory } from "homebridge";
+import { FeatureOptions, HomebridgePluginLogging, MqttClient, retry, sleep } from "homebridge-plugin-utils";
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_CONTROLLER_REFRESH_INTERVAL, PROTECT_CONTROLLER_RETRY_INTERVAL, PROTECT_M3U_PLAYLIST_PORT } from "./settings.js";
 import { ProtectApi, ProtectCameraConfig, ProtectChimeConfig, ProtectLightConfig, ProtectNvrBootstrap, ProtectNvrConfig, ProtectSensorConfig,
   ProtectViewerConfig } from "unifi-protect";
 import { ProtectCamera, ProtectChime, ProtectDevice, ProtectDoorbell, ProtectLight, ProtectLiveviews, ProtectNvrSystemInfo, ProtectSensor,
   ProtectViewer } from "./devices/index.js";
-import { ProtectDeviceCategories, ProtectDeviceConfigTypes, ProtectDeviceTypes, ProtectDevices, ProtectLogging } from "./protect-types.js";
-import { ProtectNvrOptions, getOptionFloat, getOptionNumber, getOptionScope, getOptionValue, isOptionEnabled } from "./protect-options.js";
+import { ProtectDeviceCategories, ProtectDeviceConfigTypes, ProtectDeviceTypes, ProtectDevices } from "./protect-types.js";
 import { ProtectEvents } from "./protect-events.js";
-import { ProtectMqtt } from "./protect-mqtt.js";
+import { ProtectNvrOptions } from "./protect-options.js";
 import { ProtectPlatform } from "./protect-platform.js";
 import http from "node:http";
 import util from "node:util";
@@ -27,8 +27,8 @@ export class ProtectNvr {
   private hap: HAP;
   private liveviews: ProtectLiveviews | null;
   public logApiErrors: boolean;
-  public readonly log: ProtectLogging;
-  public mqtt: ProtectMqtt | null;
+  public readonly log: HomebridgePluginLogging;
+  public mqtt: MqttClient | null;
   private name: string;
   public nvrHksvErrors: number;
   public platform: ProtectPlatform;
@@ -66,6 +66,7 @@ export class ProtectNvr {
 
     // Validate our Protect address and login information.
     if(!nvrOptions.address || !nvrOptions.username || !nvrOptions.password) {
+
       return;
     }
 
@@ -84,7 +85,7 @@ export class ProtectNvr {
   private async bootstrapNvr(): Promise<void> {
 
     // Attempt to bootstrap the controller until we're successful.
-    await this.retry(() => this.ufpApi.getBootstrap(), PROTECT_CONTROLLER_RETRY_INTERVAL * 1000);
+    await retry(() => this.ufpApi.getBootstrap(), PROTECT_CONTROLLER_RETRY_INTERVAL * 1000);
   }
 
   // Initialize our connection to the UniFi Protect controller.
@@ -94,6 +95,7 @@ export class ProtectNvr {
     if(!this.hasFeature("Device")) {
 
       this.log.info("Disabling this UniFi Protect controller.");
+
       return;
     }
 
@@ -117,7 +119,7 @@ export class ProtectNvr {
 
     // Attempt to login to the Protect controller, retrying at reasonable intervals. This accounts for cases where the Protect controller or the network connection
     // may not be fully available when we startup.
-    await this.retry(() => this.ufpApi.login(this.config.address, this.config.username, this.config.password), PROTECT_CONTROLLER_RETRY_INTERVAL * 1000);
+    await retry(() => this.ufpApi.login(this.config.address, this.config.username, this.config.password), PROTECT_CONTROLLER_RETRY_INTERVAL * 1000);
 
     // Now, let's get the bootstrap configuration from the Protect controller.
     await this.bootstrapNvr();
@@ -142,11 +144,12 @@ export class ProtectNvr {
 
       // Let's sleep for thirty seconds to give all the accessories a chance to load before disabling everything. Homebridge doesn't have a good mechanism to notify us
       // when all the cached accessories are loaded at startup.
-      await this.sleep(30);
+      await sleep(30);
 
       // Unregister all the accessories for this controller from Homebridge that may have been restored already. Any additional ones will be automatically caught when
       // they are restored.
       this.removeHomeKitAccessories(this.platform.accessories.filter(x => x.context.nvr === this.ufp.mac));
+
       return;
     }
 
@@ -154,7 +157,7 @@ export class ProtectNvr {
     this.events = new ProtectEvents(this);
 
     // Configure any NVR-specific settings.
-    void this.configureNvr();
+    this.configureNvr();
 
     // Initialize our liveviews.
     this.liveviews = new ProtectLiveviews(this);
@@ -165,7 +168,7 @@ export class ProtectNvr {
     // Initialize MQTT, if needed.
     if(!this.mqtt && this.config.mqttUrl) {
 
-      this.mqtt = new ProtectMqtt(this);
+      this.mqtt = new MqttClient(this.config.mqttUrl, this.config.mqttTopic, this.log);
     }
 
     // Initialize our playlist service, if enabled.
@@ -175,7 +178,7 @@ export class ProtectNvr {
     }
 
     // Inform the user about the devices we see.
-    for(const device of [ this.ufp, ...bootstrap.cameras, ...bootstrap.chimes, ...bootstrap.lights, ...bootstrap.sensors, ...bootstrap.viewers ] ) {
+    for(const device of [ this.ufp, ...bootstrap.cameras, ...bootstrap.chimes, ...bootstrap.lights, ...bootstrap.sensors, ...bootstrap.viewers ]) {
 
       // Filter out any devices that aren't adopted by this Protect controller.
       if((device.modelKey !== "nvr") &&
@@ -222,44 +225,7 @@ export class ProtectNvr {
   }
 
   // Configure NVR-specific settings.
-  private async configureNvr(): Promise<boolean> {
-
-    // Warn users if they're running versions of UniFi OS below 3.0.
-    const firmwareVersion = this.ufp.firmwareVersion.split(".");
-
-    if(parseInt(firmwareVersion[0]) < 3) {
-
-      this.log.error("Warning: your Protect controller firmware version is less than UniFi OS 3.0. Some features may not work correctly.");
-    }
-
-    // Configure the default doorbell message on the NVR.
-    await this.configureDefaultDoorbellMessage();
-    return true;
-  }
-
-  // Configure a default doorbell message on the Protect doorbell.
-  private async configureDefaultDoorbellMessage(): Promise<boolean> {
-
-    // If we haven't configured a default doorbell message or we aren't an admin user, don't attempt to set the default doorbell message.
-    if(!this.config.defaultDoorbellMessage || !this.ufpApi.isAdminUser) {
-
-      return false;
-    }
-
-    // Set the default message.
-    const newUfp = await this.ufpApi.updateDevice(this.ufp, { doorbellSettings: { defaultMessageText: this.config.defaultDoorbellMessage } });
-
-    if(!newUfp) {
-
-      this.log.error("Unable to set the default doorbell message. Please ensure this username has the Administrator role in UniFi Protect.");
-      return false;
-    }
-
-    // Update our internal view of the NVR configuration.
-    this.ufp = newUfp;
-
-    // Inform the user.
-    this.log.info("Default doorbell message set to: %s.", this.config.defaultDoorbellMessage);
+  private configureNvr(): boolean {
 
     return true;
   }
@@ -287,16 +253,12 @@ export class ProtectNvr {
 
         return true;
 
-        break;
-
       case "chime":
 
         // We have a UniFi Protect chime.
         this.configuredDevices[accessory.UUID] = new ProtectChime(this, device as ProtectChimeConfig, accessory);
 
         return true;
-
-        break;
 
       case "light":
 
@@ -305,8 +267,6 @@ export class ProtectNvr {
 
         return true;
 
-        break;
-
       case "sensor":
 
         // We have a UniFi Protect sensor.
@@ -314,16 +274,12 @@ export class ProtectNvr {
 
         return true;
 
-        break;
-
       case "viewer":
 
         // We have a UniFi Protect viewer.
         this.configuredDevices[accessory.UUID] = new ProtectViewer(this, device as ProtectViewerConfig, accessory);
 
         return true;
-
-        break;
 
       default:
 
@@ -355,6 +311,7 @@ export class ProtectNvr {
       this.unsupportedDevices[device.mac] = true;
 
       this.log.info("UniFi Protect device type %s is not currently supported, ignoring: %s.", device.modelKey, this.ufpApi.getDeviceName(device));
+
       return null;
     }
 
@@ -385,6 +342,7 @@ export class ProtectNvr {
 
         this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
       }
+
       this.platform.accessories.push(accessory);
       this.api.updatePlatformAccessories(this.platform.accessories);
     }
@@ -531,6 +489,7 @@ export class ProtectNvr {
 
         // In case we have previously queued a device for deletion, let's remove it from the queue since it's reappeared.
         delete this.deviceRemovalQueue[protectDevice.accessory.UUID];
+
         continue;
       }
 
@@ -796,7 +755,7 @@ export class ProtectNvr {
 
       // Put in a short delay between cameras, to alleviate potentially impacts to the Protect controller.
       // eslint-disable-next-line no-await-in-loop
-      await this.sleep(1500);
+      await sleep(1500);
     }
   }
 
@@ -824,25 +783,25 @@ export class ProtectNvr {
   // Utility function to return a floating point configuration parameter on a device.
   public getFeatureFloat(option: string): number | undefined {
 
-    return getOptionFloat(getOptionValue(this.platform.featureOptions, this.ufp, null, option));
+    return this.platform.featureOptions.getFloat(option, this.ufp.mac);
   }
 
   // Utility function to return an integer configuration parameter on a device.
   public getFeatureNumber(option: string): number | undefined {
 
-    return getOptionNumber(getOptionValue(this.platform.featureOptions, this.ufp, null, option));
+    return this.platform.featureOptions.getInteger(option, this.ufp.mac);
   }
 
   // Utility for checking the scope of feature options on the NVR.
-  public isNvrFeature(option: string, device: ProtectDeviceConfigTypes | ProtectNvrConfig | null = null): boolean {
+  public isNvrFeature(option: string, device?: ProtectDeviceConfigTypes | ProtectNvrConfig): boolean {
 
-    return ["global", "nvr"].includes(getOptionScope(this.platform.featureOptions, this.ufp, device, option, this.platform.featureOptionDefault(option)));
+    return ["global", "controller"].includes(this.platform.featureOptions.scope(option, device?.mac, this.ufp.mac));
   }
 
   // Utility for checking feature options on the NVR.
-  public hasFeature(option: string, device: ProtectDeviceConfigTypes | ProtectNvrConfig | null = null): boolean {
+  public hasFeature(option: string, device?: ProtectDeviceConfigTypes | ProtectNvrConfig): boolean {
 
-    return isOptionEnabled(this.platform.featureOptions, this.ufp, device, option, this.platform.featureOptionDefault(option));
+    return this.platform.featureOptions.test(option, device?.mac, this.ufp.mac);
   }
 
   // Utility for logging feature option availability on the NVR.
@@ -859,26 +818,5 @@ export class ProtectNvr {
     this.featureLog[option] = true;
 
     this.log.info(message);
-  }
-
-  // Emulate a sleep function.
-  public sleep(sleepTimer: number): Promise<NodeJS.Timeout> {
-
-    return new Promise(resolve => setTimeout(resolve, sleepTimer));
-  }
-
-  // Retry an operation until we're successful.
-  private async retry(operation: () => Promise<boolean>, retryInterval: number): Promise<boolean> {
-
-    // Try the operation that was requested.
-    if(!(await operation())) {
-
-      // If the operation wasn't successful, let's sleep for the requested interval and try again.
-      await this.sleep(retryInterval);
-      return this.retry(operation, retryInterval);
-    }
-
-    // We were successful - we're done.
-    return true;
   }
 }

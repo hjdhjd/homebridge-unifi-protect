@@ -3,11 +3,11 @@
  * protect-platform.ts: homebridge-unifi-protect platform class.
  */
 import { API, APIEvent, DynamicPlatformPlugin, Logging, PlatformAccessory, PlatformConfig } from "homebridge";
+import { FeatureOptions, RtpPortAllocator } from "homebridge-plugin-utils";
 import { PROTECT_FFMPEG_OPTIONS, PROTECT_MQTT_TOPIC } from "./settings.js";
 import { ProtectNvrOptions, ProtectOptions, featureOptionCategories, featureOptions } from "./protect-options.js";
 import { FfmpegCodecs } from "./ffmpeg/index.js";
 import { ProtectNvr } from "./protect-nvr.js";
-import { RtpPortAllocator } from "./protect-rtp.js";
 import ffmpegPath from "ffmpeg-for-homebridge";
 import os from "node:os";
 import { platform } from "node:process";
@@ -21,8 +21,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
   public readonly codecSupport!: FfmpegCodecs;
   public readonly config!: ProtectOptions;
   private readonly controllers: ProtectNvr[];
-  private featureOptionDefaults: { [index: string]: boolean };
-  public readonly featureOptions: string[];
+  public readonly featureOptions: FeatureOptions;
   public readonly log: Logging;
   public readonly rtpPorts: RtpPortAllocator;
   private _hostSystem: string;
@@ -34,8 +33,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
     this.accessories = [];
     this.api = api;
     this.controllers = [];
-    this.featureOptionDefaults = {};
-    this.featureOptions = [];
+    this.featureOptions = new FeatureOptions(featureOptionCategories, featureOptions, config?.options ?? []);
     this.log = log;
     this.rtpPorts = new RtpPortAllocator();
     this.verboseFfmpeg = false;
@@ -63,6 +61,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
     if(!this.config.controllers) {
 
       this.log.info("No UniFi Protect controllers have been configured.");
+
       return;
     }
 
@@ -76,24 +75,6 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
       this.log.info("Verbose logging of video streaming sessions enabled. Expect a lot of data.");
     }
 
-    // Build our list of default values for our feature options.
-    for(const category of featureOptionCategories) {
-
-      for(const options of featureOptions[category.name]) {
-
-        this.featureOptionDefaults[(category.name + (options.name.length ? "." + options.name : "")).toLowerCase()] = options.default;
-      }
-    }
-
-    // If we have feature options, put them into their own array, lower-cased for future reference.
-    if(this.config.options) {
-
-      for(const featureOption of this.config.options) {
-
-        this.featureOptions.push(featureOption.toLowerCase());
-      }
-    }
-
     // Loop through each configured NVR and instantiate it.
     for(const controllerConfig of this.config.controllers) {
 
@@ -101,6 +82,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
       if(!controllerConfig.address) {
 
         this.log.info("No host or IP address has been configured.");
+
         continue;
       }
 
@@ -108,6 +90,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
       if(!controllerConfig.username || !controllerConfig.password) {
 
         this.log.info("No UniFi Protect login credentials have been configured.");
+
         continue;
       }
 
@@ -128,12 +111,10 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
 
     // Avoid a prospective race condition by waiting to configure our controllers until Homebridge is done loading all the cached accessories it knows about, and calling
     // configureAccessory() on each.
-    // eslint-disable-next-line @typescript-eslint/no-misused-promises
     api.on(APIEvent.DID_FINISH_LAUNCHING, this.launchControllers.bind(this));
   }
 
-  // This gets called when homebridge restores cached accessories at startup. We intentionally avoid doing anything significant here, and save all that logic
-  // for device discovery.
+  // This gets called when homebridge restores cached accessories at startup. We intentionally avoid doing anything significant here, and save it for device discovery.
   public configureAccessory(accessory: PlatformAccessory): void {
 
     // Add this to the accessory array so we can track it.
@@ -205,20 +186,6 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
   public get hostSystem(): string {
 
     return this._hostSystem;
-  }
-
-  // Utility to return the default value for a feature option.
-  public featureOptionDefault(option: string): boolean {
-
-    const defaultValue = this.featureOptionDefaults[option.toLowerCase()];
-
-    // If it's a feature that's unknown to us, assume it's false.
-    if(defaultValue === undefined) {
-
-      return false;
-    }
-
-    return defaultValue;
   }
 
   // Utility for debug logging.

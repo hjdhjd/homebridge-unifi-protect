@@ -20,9 +20,7 @@
 
 [MQTT](https://mqtt.org) is a popular Internet of Things (IoT) messaging protocol that can be used to weave together different smart devices and orchestrate or instrument them in an infinite number of ways. In short - it lets things that might not normally be able to talk to each other communicate across ecosystems, provided they can support MQTT.
 
-I've provided MQTT support for those that are interested - I'm genuinely curious, if not a bit skeptical, at how many people actually want to use this capability. MQTT has a lot of nerd-credibility, and it was a fun side project to mess around with. :smile:
-
-`homebridge-unifi-protect` will publish MQTT events if you've configured a broker in the controller-specific settings. The plugin supports a rich set of capabilities over MQTT allowing you to observe or interact with every UniFi Protect device category. This includes:
+`homebridge-unifi-protect` will publish MQTT events if you've configured a broker in the controller-specific settings. Supported MQTT capabilities include:
 
   * Camera-specific RTSP information.
   * Doorbell message events. See [doorbell message events](#doorbell-messages) for additional details.
@@ -32,25 +30,26 @@ I've provided MQTT support for those that are interested - I'm genuinely curious
   * Snapshot events, including publishing the actual images over MQTT.
   * And many more, documented below.
 
-### How to configure and use this feature
+### Configuration
 
-This documentation assumes you know what MQTT is, what an MQTT broker does, and how to configure it. Setting up an MQTT broker is beyond the scope of this documentation. There are plenty of guides available on how to do so just a search away.
+This documentation assumes you know what MQTT is, what an MQTT broker does, and how to configure it. Setting up an MQTT broker will not be covered here. There are plenty of guides available on how to do so just a search away.
 
-You configure MQTT settings within a `controller` configuration block. The settings are:
+You can configure MQTT settings in the plugin webUI. The settings are:
 
 | Configuration Setting | Description
 |-----------------------|----------------------------------
 | `mqttUrl`             | The URL of your MQTT broker. **This must be in URL form**, e.g.: `mqtt://user:password@1.2.3.4`.
 | `mqttTopic`           | The base topic to publish to. The default is: `unifi/protect`.
 
-To reemphasize the above: **mqttUrl** must be a valid URL. Simply entering in a hostname without specifying it in URL form will result in an error. The URL can use any of these protocols: `mqtt`, `mqtts`, `tcp`, `tls`, `ws`, `wss`. HBUP supports self-signed TLS certificates when connecting to an MQTT broker, if you choose to do so.
+> [!IMPORTANT]
+> **mqttUrl** must be a valid URL. Just entering a hostname will result in an error. The URL can use any of these protocols: `mqtt`, `mqtts`, `tcp`, `tls`, `ws`, `wss`.
 
 When events are published, by default, the topics look like:
 
-```sh
-unifi/protect/1234567890AB/motion
-unifi/protect/ABCDEF123456/doorbell
-```
+> ```sh
+> unifi/protect/1234567890AB/motion
+> unifi/protect/ABCDEF123456/doorbell
+> ```
 
 In the above example, `1234567890AB` and `ABCDEF123456` are the MAC addresses of your cameras. We use MAC addresses as an easy way to guarantee unique identifiers that won't change. `homebridge-unifi-protect` provides you information about your cameras and their respective MAC addresses in the homebridge log on startup. Additionally, you can use the UniFi Protect app or webUI to lookup what the MAC addresses are of your cameras, should you need to do so.
 
@@ -125,9 +124,9 @@ Doorbell messages are a fun feature available in UniFi Protect doorbells. You ca
 
 Doorbell messages are published to MQTT using the topic `message`. `homebridge-unifi-protect` will publish the following JSON every time the plugin sets a message to the `message` topic:
 
-```js
-{ "message": "Some Message", "duration": 60}
-```
+> ```js
+> { "message": "Some Message", "duration": 60}
+> ```
 
 | Property          | Description
 |-------------------|----------------------------------
@@ -146,8 +145,8 @@ The accepted values for `duration` are:
 
 `homebridge-unifi-protect` subscribes to messages sent to the topic `message/get`. If you publish an MQTT message containing `true` to the `message/get` topic, a message will be published to the `message` topic containing the current doorbell message and remaining duration in the JSON message format above.
 
-### Additional Notes
-  * MQTT support is disabled by default. It's enabled when an MQTT broker is specified in the configuration.
-  * MQTT is configured per-controller. This allows you to have different MQTT brokers for different Protect controllers, if needed.
-  * If connectivity to the broker is lost, HBUP will perpetually retry to connect in one-minute intervals.
-  * If an invalid URL is provided, MQTT support will not be enabled.
+> [!NOTE]
+>   * MQTT support is disabled by default. It's enabled when an MQTT broker is specified in the configuration.
+>   * MQTT is configured per-controller. This allows you to have different MQTT brokers for different Protect controllers, if needed.
+>   * If connectivity to the broker is lost, it will perpetually retry to connect in one-minute intervals.
+>   * If a bad URL is provided, MQTT support will not be enabled.

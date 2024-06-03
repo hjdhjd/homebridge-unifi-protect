@@ -30,6 +30,8 @@ Before going further, there are some quick checklist activities you should check
 * Are you running in a firewalled environment?
   * It's popular in some circles to have a separate network at home for your IoT devices . Unfortunately, this is also a common source of issues relating to video streaming, almost always related to firewall rules or mDNS issues.
 
+* Have you reviewed the [best practices documentation](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/BestPractices.md)?
+
 ### <A NAME="user"></A>Logging In and Permissions
 Getting `homebridge-unifi-protect` connected to UniFi Protect is the foundational step you need to complete to begin using this plugin. When users have issues logging in, the challenges tend to be in the following areas:
 
@@ -70,9 +72,9 @@ The ports will correspond to those seen in the `FFmpeg` command if you turn on v
 There are lots of things that can go wrong with video streaming, unfortunately. I want to start by providing a bit of background on how streaming actually works in HomeKit, homebridge and this plugin before getting into where things can break.
 
 #### Background
-The good news is that the video streams coming from UniFi Protect tend to work well without needing any significant manipulation to make them accessible through HomeKit. Since we can [transmux](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Autoconfiguration.md#transcoding-and-transmuxing) the RTSP streams coming from Protect, HBUP has very modest CPU horsepower requirements.
+The good news is that the video streams coming from UniFi Protect tend to work well without needing any significant manipulation to make them accessible through HomeKit. Since we can [transmux](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Autoconfiguration.md#transcoding-and-transmuxing) the RTSP streams coming from Protect, HBUP has very modest CPU horsepower requirements when streaming locally, by default.
 
-  * HomeKit video streaming, especially when streaming non-locally (i.e. away from home), is understanding that **HomeKit decides what quality it wants to request, not the end user, nor HBUP**. What this means in practice is that you have no control over what HomeKit requests and what it can handle in response to that request when it comes to video streaming size and quality.
+  * The key to HomeKit video streaming, especially when streaming non-locally (i.e. away from home), is understanding that **HomeKit decides what quality it wants to request, not the end user, nor HBUP**. What this means in practice is that you have no control over what HomeKit requests and what it can handle in response to that request when it comes to video streaming size and quality. There are options in HBUP to override these quality settings, but I would encourage you to get up and running with a basic configuration first before tweaking options.
 
   * UniFi Protect allows you to have up to three different RTSP streams available per camera (for most camera types). Each stream represents a different quality level - *High*, *Medium*, and *Low*, and you may choose to stream using any of them so long as they are enabled (HBUP [autoconfigures](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Autoconfiguration.md) all the available RTSP streams, if it has the permissions to do so in Protect).
 
@@ -117,3 +119,12 @@ You can tune when HBUP chooses to transcode by adjusting the options under the v
 
 ##### Final Thoughts
 For quickly trying to get things up and running when you're struggling, always start by forcing the stream quality to `Low` and potentially forcing HBUP to always transcode. From there, experiment with the options to tune it to your environment.
+
+
+
+## TODO
+
+Not receiving motion alerts
+When I stream I am told that the stream has started, but I only see the loading circle. Until I get "No response" at some point.
+User permissions...not able to see all cameras...things not working...answer: make sure you have a local account and the permissions are correct. UniFi OS sometimes goofs up local accounts when you update...
+HKSV issues...

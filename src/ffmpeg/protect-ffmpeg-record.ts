@@ -82,6 +82,7 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
     //                               Yes, we included these above as well: they need to be included for every I/O stream to
     //                               maximize effectiveness it seems.
     // -reset_timestamps             Reset timestamps at the beginning of each segment.
+    // -video_track_timescale        Set the video timescale to HKSV's preferred value.
     // -movflags flags               In the generated fMP4 stream: start a new fragment at each keyframe, write a blank MOOV box, and
     //                               avoid writing absolute offsets
     this.commandLineArgs.push(
@@ -98,6 +99,7 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
         profile: recordingConfig.videoCodec.parameters.profile,
         width: recordingConfig.videoCodec.resolution[0]
       }),
+      "-video_track_timescale", "600",
       "-reset_timestamps", "1",
       "-movflags", "frag_keyframe+empty_moov+default_base_moof"
     );
@@ -197,6 +199,7 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
         if(data.length < dataLength) {
 
           bufferRemaining = data;
+
           break;
         }
 
@@ -213,6 +216,7 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
         if(buffer.length === (offset + dataLength)) {
 
           dataLength = 0;
+
           break;
         }
 
@@ -275,6 +279,7 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
 
       this.log.error("FFmpeg ended unexpectedly due to issues processing the media stream provided by the UniFi Protect livestream API. " +
         "This error can be safely ignored - they will occur occasionally.");
+
       return;
     }
 

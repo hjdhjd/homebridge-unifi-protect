@@ -10,8 +10,8 @@ import { API, CameraRecordingConfiguration, CameraRecordingDelegate, HAP, HDSPro
   PlatformAccessory, RecordingPacket } from "homebridge";
 import { ProtectCamera, RtspEntry } from "./devices/index.js";
 import { FfmpegRecordingProcess } from "./ffmpeg/index.js";
+import { HomebridgePluginLogging } from "homebridge-plugin-utils";
 import { PROTECT_HKSV_MAX_EVENT_ERRORS } from "./settings.js";
-import { ProtectLogging } from "./protect-types.js";
 import { ProtectNvr } from "./protect-nvr.js";
 import { ProtectTimeshiftBuffer } from "./protect-timeshift.js";
 
@@ -26,13 +26,13 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
   private ffmpegStream: FfmpegRecordingProcess | null;
   private isInitialized: boolean;
   private isTransmitting: boolean;
-  private readonly log: ProtectLogging;
+  private readonly log: HomebridgePluginLogging;
   private readonly maxRecordingDuration: number;
   private nvr: ProtectNvr;
   private readonly protectCamera: ProtectCamera;
   private recordingConfig: CameraRecordingConfiguration | undefined;
   public rtspEntry: RtspEntry | null;
-  private readonly timeshift: ProtectTimeshiftBuffer;
+  public readonly timeshift: ProtectTimeshiftBuffer;
   private timeshiftedSegments: number;
   private transmitListener: ((segment: Buffer) => void) | null;
   private transmittedSegments: number;
@@ -124,6 +124,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
 
       this.recordingConfig = configuration;
       this.timeshift.stop();
+
       return;
     }
 
@@ -138,10 +139,10 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
   }
 
   // Handle the actual recording stream request.
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   public async *handleRecordingStreamRequest(streamId: number): AsyncGenerator<RecordingPacket> {
 
     let isLastSegment = false;
+
     this.transmittedSegments = 0;
 
     // If we are recording HKSV events and we haven't fully initialized our timeshift buffer (e.g. offline cameras preventing us from doing so), then do so now.
@@ -202,7 +203,6 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
   }
 
   // Receive an acknowledgement from HomeKit that it's seen an end-of-stream packet from us.
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   public async acknowledgeStream(streamId: number): Promise<void> {
 
     // Since HomeKit knows our transmission is ending, it's safe to do so now.
@@ -232,6 +232,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
 
       this.log.error("%s: the camera is not currently connected to the Protect controller." +
         " HomeKit Secure Video event recording will resume once the camera reconnects to the Protect controller.", timeshiftError);
+
       return false;
     }
 
@@ -243,6 +244,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     if(!this.rtspEntry) {
 
       this.log.error("%s: no valid RTSP stream profile was found for this camera.", timeshiftError);
+
       return false;
     }
 
@@ -250,15 +252,6 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     if(!this.protectCamera.hints.timeshift || !this.isRecording) {
 
       return true;
-    }
-
-    // Set the bitrate to what HomeKit is looking for. This is particularly useful when we occasionally have to livestream to a user, where bitrates can be different and
-    // even get reconfigured in realtime. By contrast, HomeKit Secure Video has a consistent bitrate it accepts, and we want to try to match it as closely as posible,
-    // assuming dynamic bitrates are enabled.
-    if(!(await this.protectCamera.setBitrate(this.rtspEntry.channel.id, this.recordingConfig.videoCodec.parameters.bitRate * 1000))) {
-
-      this.log.error("%s: unable to set the bitrate to %skbps.", timeshiftError, this.recordingConfig.videoCodec.parameters.bitRate.toLocaleString("en-US"));
-      return false;
     }
 
     // If we haven't changed the camera channel or lens we're using, and we've already started timeshifting, we're done.
@@ -269,9 +262,10 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     }
 
     // Fire up the timeshift buffer. If we've got multiple lenses, we use the first channel and explicitly request the lens we want.
-    if(!(await this.timeshift.start((this.rtspEntry.lens === undefined) ? this.rtspEntry.channel.id : 0, this.rtspEntry.lens))) {
+    if(!(await this.timeshift.start(this.rtspEntry.channel.id, this.rtspEntry.lens))) {
 
       this.log.error("%s: unable to connect to the livestream API on the Protect controller.", timeshiftError);
+
       return false;
     }
 
@@ -323,31 +317,13 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
 
       this.timeshiftedSegments = 0;
 
-      // Check to make sure something didn't go wrong when we start transmitting the stream.
-      if(!(await this.timeshift.startTransmitting())) {
-
-        // Stop our FFmpeg process and our timeshift buffer.
-        this.ffmpegStream?.stop();
-        this.timeshift.stop();
-
-        // Ensure we cleanup.
-        this.ffmpegStream = null;
-        this.isTransmitting = false;
-
-        // Restart our timeshift buffer.
-        await this.restartTimeshifting();
-
-        return false;
-      }
-
       let seenInitSegment = false;
 
-      // Listen in for events from the timeshift buffer and feed FFmpeg. This looks simple, conceptually,
-      // but there's a lot going on here.
+      // Listen in for events from the timeshift buffer and feed FFmpeg. This looks simple, conceptually, but there's a lot going on here.
       this.transmitListener = (segment: Buffer): void => {
 
-        // We don't want to send the initialization segment more than once - FFmpeg will get confused if you do, plus
-        // it's wrong and you should only send the fMP4 stream header information once.
+        // We don't want to send the initialization segment more than once - FFmpeg will get confused if you do, plus it's wrong and you should only send the fMP4 stream
+        // header information once.
         if(this.timeshift.isInitSegment(segment)) {
 
           if(!seenInitSegment) {
@@ -365,6 +341,29 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
       };
 
       this.timeshift.on("segment", this.transmitListener);
+
+      // Check to make sure something didn't go wrong when we start transmitting the stream.
+      if(!(await this.timeshift.transmitStart())) {
+
+        // Stop our FFmpeg process and our timeshift buffer.
+        this.ffmpegStream?.stop();
+        this.timeshift.stop();
+
+        if(this.transmitListener) {
+
+          this.timeshift.off("segment", this.transmitListener);
+          this.transmitListener = null;
+        }
+
+        // Ensure we cleanup.
+        this.ffmpegStream = null;
+        this.isTransmitting = false;
+
+        // Restart our timeshift buffer.
+        await this.restartTimeshifting();
+
+        return false;
+      }
     }
 
     // Inform the user.
@@ -379,7 +378,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     // We're done transmitting, so we can go back to maintaining our timeshift buffer for HomeKit.
     if(this.protectCamera.hints.timeshift) {
 
-      this.timeshift.stopTransmitting();
+      this.timeshift.transmitStop();
     }
 
     let ffmpegError = false;
@@ -419,7 +418,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
 
       // Calculate the time elements.
       const hours = Math.floor(recordedSeconds / 3600);
-      const minutes = Math.floor((recordedSeconds % 3600)/ 60);
+      const minutes = Math.floor((recordedSeconds % 3600) / 60);
       const seconds = Math.floor((recordedSeconds % 3600) % 60);
 
       // Create a nicely formatted string for end users. Yes, the author recognizes this isn't essential, but it does bring a smile to their face.
@@ -499,16 +498,19 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
       case HDSProtocolSpecificErrorReason.CANCELLED:
 
         reasonDescription = "HomeKit canceled the request.";
+
         break;
 
       case HDSProtocolSpecificErrorReason.UNEXPECTED_FAILURE:
 
         reasonDescription = "An unexpected protocol failure has occured.";
+
         break;
 
       case HDSProtocolSpecificErrorReason.TIMEOUT:
 
         reasonDescription = "The request timed out.";
+
         break;
 
       default:
@@ -529,6 +531,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
           "If these issues persist, you might want to consider restarting the Protect controller.");
 
         await this.nvr.resetNvrConnection();
+
         return;
       }
 

@@ -73,6 +73,7 @@ export class ProtectLiveviews extends ProtectBase {
 
       this.securityAccessory = null;
       this.securitySystem = null;
+
       return;
     }
 
@@ -93,6 +94,7 @@ export class ProtectLiveviews extends ProtectBase {
       if(!this.securityAccessory) {
 
         this.log.error("Unable to create the security system accessory.");
+
         return;
       }
 
@@ -107,6 +109,7 @@ export class ProtectLiveviews extends ProtectBase {
       if(!this.securitySystem) {
 
         this.log.error("Unable to configure the security system accessory.");
+
         return;
       }
     }
@@ -191,6 +194,7 @@ export class ProtectLiveviews extends ProtectBase {
       if(!newAccessory) {
 
         this.log.error("Unable to create the switch for liveview: %s.", viewName);
+
         return;
       }
 
@@ -216,6 +220,7 @@ export class ProtectLiveviews extends ProtectBase {
         if(!switchService) {
 
           this.log.error("Unable to create the switch for liveview: %s.", viewName);
+
           return;
         }
 
@@ -253,8 +258,8 @@ export class ProtectLiveviews extends ProtectBase {
     this.nvr.mqtt?.subscribeGet(this.nvr.ufp.mac, "liveviews", "liveview scenes", () => {
 
       // Get the list of liveviews.
-      const liveviews = this.platform.accessories.filter(x => "liveview" in x.context).map(x =>
-        ({ name: x.context.liveview as string, state: x.getService(this.hap.Service.Switch)?.getCharacteristic(this.hap.Characteristic.On).value }));
+      const liveviews = this.platform.accessories.filter(x => "liveview" in x.context)
+        .map(x => ({ name: x.context.liveview as string, state: x.getService(this.hap.Service.Switch)?.getCharacteristic(this.hap.Characteristic.On).value }));
 
       return JSON.stringify(liveviews);
     });
@@ -286,6 +291,7 @@ export class ProtectLiveviews extends ProtectBase {
       if(!incomingPayload || !incomingPayload.length) {
 
         this.log.error("Unable to process MQTT message: \"%s\".", incomingPayload);
+
         return;
       }
 

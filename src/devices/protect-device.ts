@@ -5,8 +5,8 @@
 import { API, CharacteristicValue, HAP, PlatformAccessory, Service, WithUUID } from "homebridge";
 import { PROTECT_MOTION_DURATION, PROTECT_OCCUPANCY_DURATION} from "../settings.js";
 import { ProtectApi, ProtectCameraConfig, ProtectEventPacket, ProtectNvrConfig } from "unifi-protect";
-import { ProtectDeviceConfigTypes, ProtectLogging, ProtectReservedNames } from "../protect-types.js";
-import { getOptionFloat, getOptionNumber, getOptionScope, getOptionValue, isOptionEnabled } from "../protect-options.js";
+import { ProtectDeviceConfigTypes, ProtectReservedNames } from "../protect-types.js";
+import { HomebridgePluginLogging } from "homebridge-plugin-utils";
 import { ProtectNvr } from "../protect-nvr.js";
 import { ProtectPlatform } from "../protect-platform.js";
 import util from "node:util";
@@ -22,7 +22,8 @@ export interface ProtectDevice {
 // Device-specific options and settings.
 export interface ProtectHints {
 
-  crop: boolean;
+  apiStreaming: boolean,
+  crop: boolean,
   cropOptions: {
 
     height: number,
@@ -41,9 +42,11 @@ export interface ProtectHints {
   motionDuration: number,
   occupancyDuration: number,
   probesize: number,
+  recordingDefault: string,
   smartDetect: boolean,
   smartOccupancy: string[],
   standalone: boolean,
+  streamingDefault: string,
   syncName: boolean,
   timeshift: boolean,
   transcode: boolean,
@@ -58,7 +61,7 @@ export abstract class ProtectBase {
   public readonly api: API;
   private debug: (message: string, ...parameters: unknown[]) => void;
   protected readonly hap: HAP;
-  public readonly log: ProtectLogging;
+  public readonly log: HomebridgePluginLogging;
   public readonly nvr: ProtectNvr;
   public ufpApi: ProtectApi;
   public readonly platform: ProtectPlatform;
@@ -135,7 +138,7 @@ export abstract class ProtectDevice extends ProtectBase {
   public accessory!: PlatformAccessory;
   public hints: ProtectHints;
   protected listeners: { [index: string]: (packet: ProtectEventPacket) => void };
-  public abstract ufp: ProtectDeviceConfigTypes;
+  public ufp: ProtectDeviceConfigTypes;
 
   // The constructor initializes key variables and calls configureDevice().
   constructor(nvr: ProtectNvr, accessory: PlatformAccessory) {
@@ -145,6 +148,7 @@ export abstract class ProtectDevice extends ProtectBase {
 
     this.hints = {} as ProtectHints;
     this.listeners = {};
+    this.ufp = {} as ProtectDeviceConfigTypes;
 
     // Set the accessory, if we have it. Otherwise, we expect configureDevice to assign it.
     if(accessory) {
@@ -245,13 +249,13 @@ export abstract class ProtectDevice extends ProtectBase {
     this.hints.syncName = this.hasFeature("Device.SyncName");
 
     // Sanity check motion detection duration. Make sure it's never less than 2 seconds so we can actually alert the user.
-    if(this.hints.motionDuration < 2 ) {
+    if(this.hints.motionDuration < 2) {
 
       this.hints.motionDuration = 2;
     }
 
     // Sanity check occupancy detection duration. Make sure it's never less than 60 seconds so we can actually alert the user.
-    if(this.hints.occupancyDuration < 60 ) {
+    if(this.hints.occupancyDuration < 60) {
 
       this.hints.occupancyDuration = 60;
     }
@@ -303,19 +307,19 @@ export abstract class ProtectDevice extends ProtectBase {
   // Utility to ease publishing of MQTT events.
   protected publish(topic: string, message: string): void {
 
-    this.nvr.mqtt?.publish(this.accessory, topic, message);
+    this.nvr.mqtt?.publish(this.ufp.mac, topic, message);
   }
 
   // Configure our MQTT get subscriptions.
   protected subscribeGet(topic: string, type: string, getValue: () => string): void {
 
-    this.nvr.mqtt?.subscribeGet(this.accessory, topic, type, getValue);
+    this.nvr.mqtt?.subscribeGet(this.ufp.mac, topic, type, getValue);
   }
 
   // Configure our MQTT set subscriptions.
   protected subscribeSet(topic: string, type: string, setValue: (value: string, rawValue: string) => Promise<void> | void): void {
 
-    this.nvr.mqtt?.subscribeSet(this.accessory, topic, type, setValue);
+    this.nvr.mqtt?.subscribeSet(this.ufp.mac, topic, type, setValue);
   }
 
   // Configure the Protect motion sensor for HomeKit.
@@ -327,8 +331,8 @@ export abstract class ProtectDevice extends ProtectBase {
       // Have we disabled the motion sensor?
       if(!isEnabled) {
 
-        this.nvr.mqtt?.unsubscribe(this.accessory, "motion/get");
-        this.nvr.mqtt?.unsubscribe(this.accessory, "motion/set");
+        this.nvr.mqtt?.unsubscribe(this.ufp.mac, "motion/get");
+        this.nvr.mqtt?.unsubscribe(this.ufp.mac, "motion/set");
         this.configureMotionSwitch(isEnabled);
         this.configureMotionTrigger(isEnabled);
 
@@ -500,10 +504,7 @@ export abstract class ProtectDevice extends ProtectBase {
         // Check to see if motion events are disabled.
         if(switchService && !switchService.getCharacteristic(this.hap.Characteristic.On).value) {
 
-          setTimeout(() => {
-
-            triggerService?.updateCharacteristic(this.hap.Characteristic.On, false);
-          }, 50);
+          setTimeout(() => triggerService?.updateCharacteristic(this.hap.Characteristic.On, false), 50);
 
         } else {
 
@@ -520,10 +521,7 @@ export abstract class ProtectDevice extends ProtectBase {
       // If the motion sensor is still on, we should be as well.
       if(motionService?.getCharacteristic(this.hap.Characteristic.MotionDetected).value) {
 
-        setTimeout(() => {
-
-          triggerService?.updateCharacteristic(this.hap.Characteristic.On, true);
-        }, 50);
+        setTimeout(() => triggerService?.updateCharacteristic(this.hap.Characteristic.On, true), 50);
       }
     });
 
@@ -544,7 +542,7 @@ export abstract class ProtectDevice extends ProtectBase {
       // Occupancy sensors are disabled by default and primarily exist for automation purposes.
       if(!isEnabled || !this.hasFeature("Motion.OccupancySensor")) {
 
-        this.nvr.mqtt?.unsubscribe(this.accessory, "occupancy/get");
+        this.nvr.mqtt?.unsubscribe(this.ufp.mac, "occupancy/get");
 
         return false;
       }
@@ -612,31 +610,31 @@ export abstract class ProtectDevice extends ProtectBase {
   // Utility function to return a floating point configuration parameter on a device.
   public getFeatureFloat(option: string): number | undefined {
 
-    return getOptionFloat(this.getFeatureValue(option));
+    return this.platform.featureOptions.getFloat(option, this.ufp.mac, this.nvr.ufp.mac);
   }
 
   // Utility function to return an integer configuration parameter on a device.
   public getFeatureNumber(option: string): number | undefined {
 
-    return getOptionNumber(this.getFeatureValue(option));
+    return this.platform.featureOptions.getInteger(option, this.ufp.mac, this.nvr.ufp.mac);
   }
 
   // Utility function to return a configuration parameter on a device.
   public getFeatureValue(option: string): string | undefined {
 
-    return getOptionValue(this.platform.featureOptions, this.nvr.ufp, this.ufp, option);
+    return this.platform.featureOptions.value(option, this.ufp.mac, this.nvr.ufp.mac);
   }
 
   // Utility for checking feature options on a device.
-  public hasFeature(option: string, defaultReturnValue?: boolean): boolean {
+  public hasFeature(option: string): boolean {
 
-    return isOptionEnabled(this.platform.featureOptions, this.nvr.ufp, this.ufp, option, defaultReturnValue ?? this.platform.featureOptionDefault(option));
+    return this.platform.featureOptions.test(option, this.ufp.mac, this.nvr.ufp.mac);
   }
 
   // Utility for returning the scope of a feature option.
   public isDeviceFeature(option: string, defaultReturnValue?: boolean): boolean {
 
-    return getOptionScope(this.platform.featureOptions, this.nvr.ufp, this.ufp, option, defaultReturnValue ?? this.platform.featureOptionDefault(option)) === "device";
+    return this.platform.featureOptions.scope(option) === "device";
   }
 
   // Utility for logging feature option availability.
@@ -646,9 +644,9 @@ export abstract class ProtectDevice extends ProtectBase {
   }
 
   // Utility function for reserved identifiers for switches.
-  public isReservedName(name: string | undefined): boolean {
+  public isReservedName(name?: string): boolean {
 
-    return name === undefined ? false : Object.values(ProtectReservedNames).map(x => x.toUpperCase()).includes(name.toUpperCase());
+    return name ? Object.values(ProtectReservedNames).map(x => x.toUpperCase()).includes(name.toUpperCase()) : false;
   }
 
   // Utility function to determine whether or not a device is currently online.

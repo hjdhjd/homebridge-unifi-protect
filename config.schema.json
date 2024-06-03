@@ -2,7 +2,7 @@
   "pluginAlias": "UniFi Protect",
   "pluginType": "platform",
   "headerDisplay": "Full HomeKit support UniFi Protect devices. See the [homebridge-unifi-protect](https://github.com/hjdhjd/homebridge-unifi-protect) developer page for detailed documentation.",
-  "footerDisplay": "A working **ffmpeg** installation is required for this plugin to work. For audio support, make sure your version of ffmpeg is compiled with support for **fdk-aac**.",
+  "footerDisplay": "A working **FFmpeg** installation is required for this plugin to work. For audio support, make sure your version of ffmpeg is compiled with support for the **fdk-aac** codec.",
   "singular": true,
   "customUi": true,
 
@@ -26,15 +26,6 @@
               "format": "hostname",
               "placeholder": "e.g. 1.2.3.4",
               "description": "Hostname or IP address of your UniFi Protect controller."
-            },
-
-            "defaultDoorbellMessage": {
-              "type": "string",
-              "title": "Default doorbell message",
-              "required": false,
-              "maxLength": 30,
-              "placeholder": "e.g. WELCOME",
-              "description": "Default message to be used on UniFi Protect doorbells. Default: WELCOME."
             },
 
             "doorbellMessages": {
@@ -138,8 +129,8 @@
           "type": "string",
           "title": "Feature Option",
           "required": false,
-          "description": "Enter only one option per entry. See the plugin documentation for the complete list of available options or use the feature options webUI tab above.",
-          "placeholder": "e.g. Disable.Video.Transcode"
+          "description": "Enter only one option per entry. Use the feature options webUI tab above unless you know what you're doing.",
+          "placeholder": "e.g. Disable.Device"
         }
       },
 
@@ -210,7 +201,6 @@
               "expanded": false,
               "items": [
 
-                "controllers[].defaultDoorbellMessage",
                 {
                   "key": "controllers[].doorbellMessages",
                   "type": "array",
@@ -273,8 +263,8 @@
           "key": "options",
           "type": "array",
           "name": " ",
-          "description": "Feature options allow you to further customize the behavior of this plugin such as the ability to show or hide cameras or specify stream quality. You can use the the feature options tab above (recommended) to customize these settings or enter them manually below.",
-          "orderable": false,
+          "description": "Use the feature options webUI tab above instead of manually configuring feature options here.",
+          "orderable": true,
           "buttonText": "Add Feature Option",
           "items": [
             "options[]"

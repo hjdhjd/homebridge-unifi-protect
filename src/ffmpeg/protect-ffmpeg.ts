@@ -7,8 +7,8 @@
 import { ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { Readable, Writable } from "node:stream";
 import { EventEmitter } from "node:events";
+import { HomebridgePluginLogging } from "homebridge-plugin-utils";
 import { ProtectCamera } from "../devices/index.js";
-import { ProtectLogging } from "../protect-types.js";
 import { ProtectNvr } from "../protect-nvr.js";
 import { ProtectPlatform } from "../protect-platform.js";
 import { StreamRequestCallback } from "homebridge";
@@ -27,7 +27,7 @@ export class FfmpegProcess extends EventEmitter {
   private isPrepared: boolean;
   public isStarted: boolean;
   protected isVerbose: boolean;
-  protected readonly log: ProtectLogging;
+  protected readonly log: HomebridgePluginLogging;
   protected readonly nvr: ProtectNvr;
   private readonly platform: ProtectPlatform;
   protected process: ChildProcessWithoutNullStreams | null;
@@ -84,6 +84,7 @@ export class FfmpegProcess extends EventEmitter {
     if(!this.commandLineArgs) {
 
       this.log.error("No FFmpeg command line specified.");
+
       return;
     }
 
@@ -131,6 +132,7 @@ export class FfmpegProcess extends EventEmitter {
       if(!this.isPrepared) {
 
         this.log.error("Error preparing to run FFmpeg.");
+
         return;
       }
     }
@@ -208,8 +210,8 @@ export class FfmpegProcess extends EventEmitter {
 
         // Grab the next complete line, and increment our buffer.
         const line = this.stderrBuffer.slice(0, lineIndex);
-        this.stderrBuffer = this.stderrBuffer.slice(lineIndex + os.EOL.length);
 
+        this.stderrBuffer = this.stderrBuffer.slice(lineIndex + os.EOL.length);
         this.stderrLog.push(line);
 
         // Show it to the user if it's been requested.

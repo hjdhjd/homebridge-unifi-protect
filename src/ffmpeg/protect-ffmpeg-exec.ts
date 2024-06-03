@@ -36,6 +36,7 @@ export class FfmpegExec extends FfmpegProcess {
       if(this.process === null) {
 
         this.log.error("Unable to execute command.");
+
         return null;
       }
 

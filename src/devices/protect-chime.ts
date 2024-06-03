@@ -85,6 +85,7 @@ export class ProtectChime extends ProtectDevice {
       if(!newDevice) {
 
         this.log.error("Unable to turn the volume off. Please ensure this username has the Administrator role in UniFi Protect.");
+
         return;
       }
 
@@ -106,6 +107,7 @@ export class ProtectChime extends ProtectDevice {
       if(!newDevice) {
 
         this.log.error("Unable to adjust the volume to %s%. Please ensure this username has the Administrator role in UniFi Protect.", value);
+
         return;
       }
 
@@ -146,10 +148,7 @@ export class ProtectChime extends ProtectDevice {
       // state given you can't undo the play command to the chime.
       if(!value) {
 
-        setTimeout(() => {
-
-          service.updateCharacteristic(this.hap.Characteristic.On, !!this.eventTimers[endpoint]);
-        }, 50);
+        setTimeout(() => service.updateCharacteristic(this.hap.Characteristic.On, !!this.eventTimers[endpoint]), 50);
 
         return;
       }
@@ -159,10 +158,7 @@ export class ProtectChime extends ProtectDevice {
 
         this.log.error("Unable to play " + name + ".");
 
-        setTimeout(() => {
-
-          service.updateCharacteristic(this.hap.Characteristic.On, !!this.eventTimers[endpoint]);
-        }, 50);
+        setTimeout(() => service.updateCharacteristic(this.hap.Characteristic.On, !!this.eventTimers[endpoint]), 50);
       }
 
       this.eventTimers[endpoint] = setTimeout(() => {
@@ -241,16 +237,19 @@ export class ProtectChime extends ProtectDevice {
         case "chime":
 
           void this.playTone("chime", "play-speaker");
+
           break;
 
         case "buzzer":
 
           void this.playTone("buzzer", "play-buzzer");
+
           break;
 
         default:
 
           this.log.error("Unknown chime tone.");
+
           break;
       }
     });

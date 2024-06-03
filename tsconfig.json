@@ -1,22 +1,16 @@
 {
   "compilerOptions": {
-    "allowSyntheticDefaultImports": true,
-    "declaration": true,
-    "esModuleInterop": true,
-    "forceConsistentCasingInFileNames": true,
-    "lib": [
-      "DOM",
-      "ES2022"
-    ],
-    "module": "ES2022",
-    "moduleResolution":"node",
+
     "outDir": "dist",
-    "rootDir": "src",
-    "sourceMap": true,
-    "strict": true,
-    "target": "ES2022"
+    "rootDir": "src"
   },
+
+  "extends": "./node_modules/homebridge-plugin-utils/build/tsconfig.json",
+
   "include": [
+
+    "eslint.config.mjs",
+    "homebridge-ui",
     "src"
   ]
 }

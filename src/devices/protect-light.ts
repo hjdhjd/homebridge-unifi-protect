@@ -109,6 +109,7 @@ export class ProtectLight extends ProtectDevice {
       if(!newDevice) {
 
         this.log.error("Unable to adjust the brightness to %s%. Please ensure this username has the Administrator role in UniFi Protect.", value);
+
         return;
       }
 
@@ -116,10 +117,7 @@ export class ProtectLight extends ProtectDevice {
       this.ufp = newDevice;
 
       // Make sure we properly reflect what brightness we're actually at, given the differences in setting granularity between Protect and HomeKit.
-      setTimeout(() => {
-
-        service?.updateCharacteristic(this.hap.Characteristic.Brightness, (brightness - 1) * 20);
-      }, 50);
+      setTimeout(() => service?.updateCharacteristic(this.hap.Characteristic.Brightness, (brightness - 1) * 20), 50);
 
       // Publish our state.
       this.publish("light/brightness", ((brightness - 1) * 20).toString());

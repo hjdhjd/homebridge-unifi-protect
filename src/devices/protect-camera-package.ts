@@ -20,10 +20,12 @@ export class ProtectCameraPackage extends ProtectCamera {
 
     if(parentCamera) {
 
-      this.hints.timeshift = parentCamera.hints.timeshift;
+      this.hints.apiStreaming = parentCamera.hints.apiStreaming;
       this.hints.hardwareDecoding = parentCamera.hints.hardwareDecoding;
-      this.hints.hardwareTranscoding = false;
+      this.hints.hardwareTranscoding = parentCamera.hints.hardwareTranscoding;
+      this.hints.highResSnapshots = parentCamera.hints.highResSnapshots;
       this.hints.logHksv = parentCamera.hints.logHksv;
+      this.hints.timeshift = parentCamera.hints.timeshift;
     }
 
     // Clean out the context object in case it's been polluted somehow.
@@ -140,20 +142,5 @@ export class ProtectCameraPackage extends ProtectCamera {
   public findRecordingRtsp(): RtspEntry | null {
 
     return this.findRtsp();
-  }
-
-  // Get the current bitrate for a specific camera channel.
-  public getBitrate(channelId: number): number {
-
-    // Find the right channel.
-    const channel = this.ufp.channels.find(x => x.id === channelId);
-
-    return channel?.bitrate ?? -1;
-  }
-
-  // Set the bitrate for a specific camera channel.
-  public setBitrate(): Promise<boolean> {
-
-    return Promise.resolve(true);
   }
 }

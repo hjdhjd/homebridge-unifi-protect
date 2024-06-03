@@ -67,6 +67,7 @@ export class ProtectNvrSystemInfo extends ProtectBase {
 
       this.accessory = null;
       this.isConfigured = true;
+
       return;
     }
 
@@ -77,8 +78,10 @@ export class ProtectNvrSystemInfo extends ProtectBase {
       this.accessory = new this.api.platformAccessory(this.nvr.ufp.name ?? this.nvr.ufp.marketName, uuid);
 
       if(!this.accessory) {
-        this.log.error("Unable to create the system information accessory.");
+
         this.isConfigured = true;
+        this.log.error("Unable to create the system information accessory.");
+
         return;
       }
 
@@ -105,8 +108,10 @@ export class ProtectNvrSystemInfo extends ProtectBase {
 
     // Inform the user what we're enabling on startup.
     if(enabledSensors.length) {
+
       this.log.info("Enabled system information sensor%s: %s.", enabledSensors.length > 1 ? "s" : "", enabledSensors.join(", "));
-    }  else {
+    } else {
+
       this.log.info("No system information sensors enabled.");
     }
 
@@ -180,6 +185,7 @@ export class ProtectNvrSystemInfo extends ProtectBase {
       if(!temperatureService) {
 
         this.log.error("Unable to add CPU temperature sensor.");
+
         return false;
       }
 

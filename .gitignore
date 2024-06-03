@@ -7,6 +7,9 @@ dist
 # Ignore macOS attribute files.
 .DS_Store
 
+# Ignore generated files.
+homebridge-ui/public/lib
+
 # ------------- Defaults ------------- #
 
 # Logs

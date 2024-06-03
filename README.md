@@ -85,10 +85,10 @@ I hope to continue to work on this one to get AEC working for two-way audio. [Yo
 >     * Click ***Add Admin*** located near the top right of the ***OS Settings*** page.
 >     * Click ***Restrict to local access only*** and then enter in a username and password for the new local user.
 >     * Optionally customize the role of the user to adjust the roles. HBUP requires the ***Full Management*** role for all of it's capabilities to work, although it will work in a more limited form without administrative privileges.
-> 
+>
 > ### Getting Started
 > To install `homebridge-unifi-protect`:
-> 
+>
 > 1. Go to the `Plugins` tab in the Homebridge Config UI and searching for `homebridge-unifi-protect` and install it.
 > 2. Click on the ***Set Up*** icon located in the top right corner of the Homebridge UniFi Protect tile and then enter the hostname or IP address of the Protect controller as well as the username and password you created in the steps above and then login to the Protect controller.
 > 3. For the moment, don't make any other configuration changes and click ***Save*** and then click ***Restart Homebridge***.
@@ -98,7 +98,7 @@ I hope to continue to work on this one to get AEC working for two-way audio. [Yo
 
 > [!NOTE]
 > HBUP includes everything required to get up and running on many of the [more popular platforms and operating systems](https://github.com/homebridge/ffmpeg-for-homebridge#supported-platforms). **If you're running on an unsupported platform, you will need to install a working version of *FFmpeg* for `homebridge-unifi-protect` to work correctly with your cameras. Additionally, your FFmpeg will need to support the *fdk-aac* codec if you want audio support to work. Setting up and configuring FFmpeg is beyond the scope of this documentation.**
- 
+
 > [!TIP]
 > - Only official releases of UniFi Protect and UniFi OS firmwares are supported. **No beta, early access, or release candidate versions of any kind are supported**.
 > - Only official hardware releases for UniFi Protect are supported. Early access or beta hardware is unsupported.
@@ -111,4 +111,4 @@ This is mostly of interest to the true developer nerds amongst us.
 [![License](https://img.shields.io/npm/l/homebridge-unifi-protect?color=%230559C9&logo=open%20source%20initiative&logoColor=%23FFFFFF&style=for-the-badge)](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/LICENSE.md)
 [![Build Status](https://img.shields.io/github/actions/workflow/status/hjdhjd/homebridge-unifi-protect/ci.yml?branch=main&color=%230559C9&logo=github-actions&logoColor=%23FFFFFF&style=for-the-badge)](https://github.com/hjdhjd/homebridge-unifi-protect/actions?query=workflow%3A%22Continuous+Integration%22)
 [![Dependencies](https://img.shields.io/librariesio/release/npm/homebridge-unifi-protect?color=%230559C9&logo=dependabot&style=for-the-badge)](https://libraries.io/npm/homebridge-unifi-protect)
-[![GitHub commits since latest release (by SemVer)](https://img.shields.io/github/commits-since/hjdhjd/homebridge-unifi-protect/latest?color=%230559C9&logo=github&sort=semver&style=for-the-badge)](https://github.com/hjdhjd/homebridge-unifi-protect/commits/master)
+[![GitHub commits since latest release (by SemVer)](https://img.shields.io/github/commits-since/hjdhjd/homebridge-unifi-protect/latest?color=%230559C9&logo=github&sort=semver&style=for-the-badge)](https://github.com/hjdhjd/homebridge-unifi-protect/commits/main)

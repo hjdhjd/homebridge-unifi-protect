@@ -40,6 +40,7 @@ export class FfmpegCodecs {
 
         // If we're on a Raspberry Pi, let's verify that we have enough GPU memory for hardware-based decoding and encoding.
         await this.probeRpiGpuMem();
+
         break;
 
       default:
@@ -255,6 +256,7 @@ export class FfmpegCodecs {
       if(error instanceof Error) {
 
         interface SystemError {
+
           cmd: string,
           code: string,
           errno: number,

@@ -3,10 +3,11 @@
  * protect-events.ts: Protect events class for UniFi Protect.
  */
 import { API, HAP, Service } from "homebridge";
-import { ProtectApi, ProtectEventAdd, ProtectEventMetadata, ProtectEventPacket, ProtectNvrConfig } from "unifi-protect";
+import { ProtectApi, ProtectEventAdd, ProtectEventMetadata, ProtectEventPacket, ProtectKnownDeviceTypes, ProtectNvrConfig } from "unifi-protect";
 import { ProtectCamera, ProtectDevice } from "./devices/index.js";
-import { ProtectDeviceConfigTypes, ProtectLogging, ProtectReservedNames } from "./protect-types.js";
+import { ProtectDeviceConfigTypes, ProtectReservedNames } from "./protect-types.js";
 import { EventEmitter } from "node:events";
+import { HomebridgePluginLogging } from "homebridge-plugin-utils";
 import { PROTECT_DOORBELL_TRIGGER_DURATION } from "./settings.js";
 import { ProtectNvr } from "./protect-nvr.js";
 import { ProtectPlatform } from "./protect-platform.js";
@@ -15,7 +16,7 @@ export class ProtectEvents extends EventEmitter {
 
   private api: API;
   private hap: HAP;
-  private log: ProtectLogging;
+  private log: HomebridgePluginLogging;
   private mqttPublishTelemetry: boolean;
   private nvr: ProtectNvr;
   private readonly eventTimers: { [index: string]: NodeJS.Timeout };
@@ -57,39 +58,45 @@ export class ProtectEvents extends EventEmitter {
   // with object merges and we've accounted for those in this deep merge / deep patch utility.
   //
   // Thanks to https://stackoverflow.com/a/48218209 for the foundation for this one in thinking about how to do deep object merges in JavaScript.
-  private patchUfpConfigJson(...objects: Record<string, unknown>[]): Record<string, unknown> {
+  private updateUfp<DeviceType extends ProtectKnownDeviceTypes>(ufp: DeviceType, payload: unknown): DeviceType {
 
-    const result: Record<string, unknown> = {};
+    const mergeJson = (...objects: Record<string, unknown>[]): Record<string, unknown> => {
 
-    // Utility to validate if a value is an object, excluding arrays.
-    const isObject = (value: unknown): value is Record<string, unknown> => (typeof value === "object") && !Array.isArray(value) && (value !== null);
+      const result = {} as Record<string, unknown>;
 
-    // Process each object in the input array
-    for(const object of objects) {
+      // Utility to validate if a value is an object, excluding arrays.
+      const isObject = (value: unknown): value is Record<string, unknown> => (typeof value === "object") && !Array.isArray(value) && (value !== null);
 
-      // Iterate through the keys that belong to this object while explicitly filter out any keys that are inherited. This could ostensibly be done using reduce, but we
-      // take a more performance-conscious view of things here given that this code will be called quite frequently due to the number of Protect events we typically
-      // process.
-      for(const key of Object.keys(object).filter(key => Object.hasOwn(object, key))) {
+      // Process each object in the input array
+      for(const object of objects) {
 
-        // Initialize.
-        const existingValue = result[key];
-        const newValue = object[key];
+        // Iterate through the keys that belong to this object while explicitly filter out any keys that are inherited. This could ostensibly be done using reduce, but we
+        // take a more performance-conscious view of things here given that this code will be called quite frequently due to the number of Protect events we typically
+        // process.
+        for(const key of Object.keys(object).filter(key => Object.hasOwn(object, key))) {
 
-        // Check if both the existing value and the new value are non-array, non-null, objects, in which case we recurse to do a deep merge of the objects.
-        if(isObject(existingValue) && isObject(newValue)) {
+          // Initialize.
+          const existingValue = result[key];
+          const newValue = object[key];
 
-          result[key] = this.patchUfpConfigJson(existingValue, newValue);
-          continue;
+          // Check if both the existing value and the new value are non-array, non-null, objects, in which case we recurse to do a deep merge of the objects.
+          if(isObject(existingValue) && isObject(newValue)) {
+
+            result[key] = mergeJson(existingValue, newValue);
+
+            continue;
+          }
+
+          // Otherwise, let's directly assign the new value.
+          result[key] = newValue;
         }
-
-        // Otherwise, let's directly assign the new value.
-        result[key] = newValue;
       }
-    }
 
-    // We're done.
-    return result;
+      // We're done.
+      return result;
+    };
+
+    return mergeJson(ufp as unknown as Record<string, unknown>, payload as Record<string, unknown>) as DeviceType;
   }
 
   // Process Protect API update events.
@@ -101,7 +108,8 @@ export class ProtectEvents extends EventEmitter {
 
       case "nvr":
 
-        this.nvr.ufp = this.patchUfpConfigJson(this.nvr.ufp, packet.payload as Record<string, unknown>) as ProtectNvrConfig;
+        this.nvr.ufp = this.updateUfp(this.nvr.ufp, packet.payload);
+
         break;
 
       default:
@@ -116,7 +124,7 @@ export class ProtectEvents extends EventEmitter {
         }
 
         // Update our device state.
-        protectDevice.ufp = this.patchUfpConfigJson(protectDevice.ufp, packet.payload as Record<string, unknown>) as ProtectDeviceConfigTypes;
+        protectDevice.ufp = this.updateUfp(protectDevice.ufp, packet.payload);
 
         // Detect device availability changes.
         if((packet.payload as Record<string, unknown>).state) {
@@ -172,6 +180,7 @@ export class ProtectEvents extends EventEmitter {
       }
 
       this.nvr.addHomeKitDevice(this.ufpDeviceState[deviceId]);
+
       return;
     }
 
@@ -186,6 +195,7 @@ export class ProtectEvents extends EventEmitter {
 
       // Remove the device.
       this.nvr.removeHomeKitDevice(protectDevice);
+
       return;
     }
   }
@@ -220,6 +230,7 @@ export class ProtectEvents extends EventEmitter {
           }
 
           this.emit("addEvent." + packet.header.modelKey, packet);
+
           break;
 
         case "remove":
@@ -227,6 +238,7 @@ export class ProtectEvents extends EventEmitter {
           this.emit("removeEvent", packet);
           this.emit("removeEvent." + packet.header.id, packet);
           this.emit("removeEvent." + packet.header.modelKey, packet);
+
           break;
 
         case "update":
@@ -234,6 +246,7 @@ export class ProtectEvents extends EventEmitter {
           this.emit("updateEvent", packet);
           this.emit("updateEvent." + packet.header.id, packet);
           this.emit("updateEvent." + packet.header.modelKey, packet);
+
           break;
 
         default:
@@ -297,7 +310,7 @@ export class ProtectEvents extends EventEmitter {
     protectDevice.accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_MOTION_TRIGGER)?.updateCharacteristic(this.hap.Characteristic.On, true);
 
     // Publish the motion event to MQTT, if the user has configured it.
-    this.nvr.mqtt?.publish(protectDevice.accessory, "motion", "true");
+    this.nvr.mqtt?.publish(protectDevice.ufp.mac, "motion", "true");
 
     // Log the event, if configured to do so.
     if(protectDevice.hints.logMotion) {
@@ -324,7 +337,7 @@ export class ProtectEvents extends EventEmitter {
         ?.updateCharacteristic(this.hap.Characteristic.ContactSensorState, true);
 
       // Publish the smart motion event to MQTT, if the user has configured it.
-      this.nvr.mqtt?.publish(protectDevice.accessory, "motion/smart/" + detectedObject, "true");
+      this.nvr.mqtt?.publish(protectDevice.ufp.mac, "motion/smart/" + detectedObject, "true");
 
       // Trigger license plate contact sensors, if configured.
       if(metadata && ("licensePlate" in metadata) && (detectedObject === "licensePlate") && ("name" in metadata.licensePlate)) {
@@ -333,7 +346,7 @@ export class ProtectEvents extends EventEmitter {
           metadata.licensePlate.name.toUpperCase())?.updateCharacteristic(this.hap.Characteristic.ContactSensorState, true);
 
         // Publish the smart motion event to MQTT, if the user has configured it.
-        this.nvr.mqtt?.publish(protectDevice.accessory, "motion/smart/" + detectedObject + "/metadata", JSON.stringify(metadata));
+        this.nvr.mqtt?.publish(protectDevice.ufp.mac, "motion/smart/" + detectedObject + "/metadata", JSON.stringify(metadata));
       }
     }
 
@@ -349,7 +362,7 @@ export class ProtectEvents extends EventEmitter {
       protectDevice.log.debug("Resetting motion event.");
 
       // Publish to MQTT, if the user has configured it.
-      this.nvr.mqtt?.publish(protectDevice.accessory, "motion", "false");
+      this.nvr.mqtt?.publish(protectDevice.ufp.mac, "motion", "false");
 
       // Delete the timer from our motion event tracker.
       delete this.eventTimers[protectDevice.id];
@@ -380,7 +393,7 @@ export class ProtectEvents extends EventEmitter {
           ?.updateCharacteristic(this.hap.Characteristic.ContactSensorState, false);
 
         // Publish the smart motion event to MQTT, if the user has configured it.
-        this.nvr.mqtt?.publish(protectDevice.accessory, "motion/smart/" + detectedObject, "false");
+        this.nvr.mqtt?.publish(protectDevice.ufp.mac, "motion/smart/" + detectedObject, "false");
 
         protectDevice.log.debug("Resetting smart object motion event.");
       }
@@ -411,7 +424,7 @@ export class ProtectEvents extends EventEmitter {
           occupancyService.updateCharacteristic(this.hap.Characteristic.OccupancyDetected, true);
 
           // Publish the occupancy event to MQTT, if the user has configured it.
-          this.nvr.mqtt?.publish(protectDevice.accessory, "occupancy", "true");
+          this.nvr.mqtt?.publish(protectDevice.ufp.mac, "occupancy", "true");
 
           // Log the event, if configured to do so.
           if(protectDevice.hints.logMotion) {
@@ -428,7 +441,7 @@ export class ProtectEvents extends EventEmitter {
           occupancyService.updateCharacteristic(this.hap.Characteristic.OccupancyDetected, false);
 
           // Publish to MQTT, if the user has configured it.
-          this.nvr.mqtt?.publish(protectDevice.accessory, "occupancy", "false");
+          this.nvr.mqtt?.publish(protectDevice.ufp.mac, "occupancy", "false");
 
           // Log the event, if configured to do so.
           if(protectDevice.hints.logMotion) {
@@ -501,7 +514,7 @@ export class ProtectEvents extends EventEmitter {
     }
 
     // Publish to MQTT, if the user has configured it.
-    this.nvr.mqtt?.publish(protectDevice.accessory, "doorbell", "true");
+    this.nvr.mqtt?.publish(protectDevice.ufp.mac, "doorbell", "true");
 
     if(protectDevice.hints.logDoorbell) {
 
@@ -518,7 +531,7 @@ export class ProtectEvents extends EventEmitter {
     // Fire off our MQTT doorbell ring event.
     this.eventTimers[protectDevice.id + ".Doorbell.Ring.MQTT"] = setTimeout(() => {
 
-      this.nvr.mqtt?.publish(protectDevice.accessory, "doorbell", "false");
+      this.nvr.mqtt?.publish(protectDevice.ufp.mac, "doorbell", "false");
 
       // Delete the timer from our event tracker.
       delete this.eventTimers[protectDevice.id + ".Doorbell.Ring.MQTT"];

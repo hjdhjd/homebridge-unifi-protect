@@ -37,6 +37,11 @@ You **must** create a local user account in order for `homebridge-unifi-protect`
 
 But wait, you're thinking, am I just giving a random plugin the ability to do crazy things on my system?! Nope. The *full management role* in UniFi Protect allows HBUP the ability to change individual camera settings, create liveviews, and do a handful of other relatively benign things. You're not giving this local user account the keys to your kingdom, but you are allowing the account to directly configure the UniFi Protect controller to more optimally work with `homebridge-unifi-protect`. If you don't feel comfortable doing so, that's always your perrogative. HBUP will log warnings when things aren't configured as optimally as it would prefer to, or when it encounters permissions issues due to it's role.
 
+#### Default Settings
+**Importance: high**
+
+In short: **start with the HBUP defaults.** The defaults exist for a reason and have been thought through with intention. I would strongly suggestion you resist the urge to tweak or experiment with all the settings you can adjust in HBUP until you're up and running - validate streaming, validate motion detection, etc. Things should *just work* by default. If they do, then you can begin tailoring the experience to your liking. I would recommend playing with a single feature at a time to give yourself the opportunity to familiarize yourself with HBUP.
+
 #### HomeKit Secure Video
 **Importance: medium**
 

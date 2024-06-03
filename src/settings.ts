@@ -53,8 +53,11 @@ export const PROTECT_HKSV_TIMESHIFT_BUFFER_MAXLENGTH = PROTECT_HKSV_SEGMENT_LENG
 // Additional headroom for bitrates beyond what HomeKit is requesting when streaming to improve quality with a minor additional bandwidth cost.
 export const PROTECT_HOMEKIT_STREAMING_HEADROOM = 64;
 
-// HomeKit prefers a video streaming I-frame interval of 2 seconds.
-export const PROTECT_HOMEKIT_IDR_INTERVAL = 2;
+// HomeKit prefers a default I-frame interval of 4 seconds for HKSV event recordings.
+export const PROTECT_HKSV_IDR_INTERVAL = 4;
+
+// HomeKit prefers an I-frame interval of 5 seconds when livestreaming.
+export const PROTECT_HOMEKIT_IDR_INTERVAL = 5;
 
 // Default port to use to publish an M3U playlist for use in other apps that can consume one to make camera livestreams available, such as Channels DVR.
 export const PROTECT_M3U_PLAYLIST_PORT = 10110;

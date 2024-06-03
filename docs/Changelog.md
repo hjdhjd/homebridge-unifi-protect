@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 7.0.0 (2024-06-03)
+  * New feature: experimental support for using the Protect livestream API directly when livestreaming in the Home app. This will provide an instantaneous livestreaming experience, but it has some caveats that I'm continuing to work through. At some point it may become the default - for now, if you want to enable this feature, you'll need to do so through the feature options webUI under the video options section. **Note: this is an experimental feature and I will accept no support requests related to it. You're on your own if you have an issue.**
+  * Breaking change: default doorbell messages are no longer supported as of Protect controller firmware 4.0. That functionality has been removed from HBUP. To accomplish the same thing, just set a message with an indefinite duration either in HBUP, or through the Protect controller webUI (or native Protect app).
+  * Breaking change: dynamic bitrate support has been removed. This was always an esoteric and often misunderstood feature, and generally didn't do a great job of solving the problem it was meant to solve. In the era of HEVC on Protect, it makes even less sense now given the need to transcode in most circumstances.
+  * Improvement: if you're using the Protect *enhanced encoding* (which enables H.265/HEVC as the video codec Protect uses rather than H.264) setting on your cameras, HBUP will detect this and transcode even if you've requested that it not do so. HomeKit does not currently support anything other than H.264.
+  * Improvement: the HBUP webUI has been further refined. Nobody might notice but me, but it still makes me smile.
+  * Housekeeping: some significant spring cleaning and standardization.
+
 ## 6.22.0 (2024-04-27)
   * New feature: you can now choose to override the bitrates HomeKit requests (either locally or remotely). This allows you to have a much higher quality transcoding experience at home or remotely.
   * Housekeeping.
@@ -20,7 +28,7 @@ All notable changes to this project will be documented in this file. This projec
 
 ## 6.20.0 (2024-03-30)
   * New feature: UniFi chime devices now expose two additional switches, allowing you to trigger the chime speaker with either the default tone or the buzzer tone. Buzzer tone you say, what's that? Give it a try.
-  * New feature: The new high quality (and performance) snapshot capabilities can now be controlled through a feature option. The option is enabled by default, but can be disabled if you prefer. Why might you want to disable it? In certain performance-constrained environments (e.g. Pi), snapshots may take longer to generate than HomeKit allows for when the CPU is under heavier load.
+  * New feature: the new high quality (and performance) snapshot capabilities can now be controlled through a feature option. The option is enabled by default, but can be disabled if you prefer. Why might you want to disable it? In certain performance-constrained environments (e.g. Pi), snapshots may take longer to generate than HomeKit allows for when the CPU is under heavier load.
   * Change: HomeKit Secure Video events are no longer logged by default. You can enable HKSV event logging using the appropriate feature option through the webUI.
   * Breaking changes for MQTT users: MQTT capabilities have been standardized - see the [MQTT documentation](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/MQTT.md) for details. The changes are focused on streamlining how you can query HBUP, and how information is published. In addition, all the MQTT capabilities are now documented. A few items weren't previously.
   * Housekeeping, spring cleaning, and a few refinements throughout.

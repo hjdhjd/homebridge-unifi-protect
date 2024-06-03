@@ -4,9 +4,9 @@
  */
 import { API, HAP, SnapshotRequest } from "homebridge";
 import { FfmpegExec } from "./ffmpeg/index.js";
+import { HomebridgePluginLogging } from "homebridge-plugin-utils";
 import { PROTECT_SNAPSHOT_CACHE_MAXAGE } from "./settings.js";
 import { ProtectCamera } from "./devices/index.js";
-import { ProtectLogging } from "./protect-types.js";
 import { ProtectNvr } from "./protect-nvr.js";
 import { ProtectPlatform } from "./protect-platform.js";
 
@@ -15,7 +15,7 @@ export class ProtectSnapshot {
 
   private readonly api: API;
   private readonly hap: HAP;
-  public readonly log: ProtectLogging;
+  public readonly log: HomebridgePluginLogging;
   private readonly nvr: ProtectNvr;
   public readonly platform: ProtectPlatform;
   public readonly protectCamera: ProtectCamera;
@@ -95,6 +95,7 @@ export class ProtectSnapshot {
 
     // Cache the image before returning it.
     this.snapshotCache[this.protectCamera.ufp.mac] = { image: snapshot, time: Date.now() };
+
     return this.snapshotCache[this.protectCamera.ufp.mac].image;
   }
 
@@ -179,7 +180,7 @@ export class ProtectSnapshot {
     // -nostats             Suppress printing progress reports while encoding in FFmpeg.
     // -fflags flags        Set the format flags to generate a presentation timestamp if it's missing and discard any corrupt packets rather than exit.
     // -frames:v 1          Extract a single video frame for the output.
-    // -q:v 1               Set the quality output of the JPEG output.
+    // -q:v 2               Set the quality output of the JPEG output.
     const ffmpegOptions = [
 
       "-hide_banner",
@@ -193,9 +194,13 @@ export class ProtectSnapshot {
     // If we've specified dimensions, scale the snapshot.
     if(request) {
 
-      // -filter:v scale=   Scale the image down, if needed, but never upscale it, preserving aspect ratios and letterboxing where needed.
+      // Video filter options we use for -filter:v are:
+      //
+      // select             Select only keyframes. These will be full images and avoid potential image corruption, especially in HEVC use cases.
+      // scale=             Scale the image down, if needed, but never upscale it, preserving aspect ratios and letterboxing where needed.
       ffmpegOptions.push("-filter:v", [
 
+        "select=eq(pict_type\\,I)," +
         "scale=" + request.width.toString(), request.height.toString(),
         "force_original_aspect_ratio=decrease,pad=" + request.width.toString(), request.height.toString(),
         "(ow-iw)/2", "(oh-ih)/2"
@@ -228,7 +233,7 @@ export class ProtectSnapshot {
   }
 
   // Image snapshot crop handler.
-  private async cropSnapshot(snapshot: Buffer): Promise<Buffer|null> {
+  private async cropSnapshot(snapshot: Buffer): Promise<Buffer | null> {
 
     // Crop the snapshot using the FFmpeg with crop filter. Options we use are:
     //
@@ -261,6 +266,7 @@ export class ProtectSnapshot {
 
     // Something went wrong.
     this.log.error("Unable to crop snapshot.");
+
     return null;
   }
 
@@ -271,6 +277,7 @@ export class ProtectSnapshot {
     if(!this.snapshotCache[cameraMac] || ((Date.now() - this.snapshotCache[cameraMac].time) > (PROTECT_SNAPSHOT_CACHE_MAXAGE * 1000))) {
 
       delete this.snapshotCache[cameraMac];
+
       return null;
     }
 

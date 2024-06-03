@@ -463,19 +463,13 @@ export class ProtectSensor extends ProtectDevice {
   private configureStateCharacteristics(service: Service): boolean {
 
     // Retrieve the current connection status when requested.
-    service.getCharacteristic(this.hap.Characteristic.StatusActive)?.onGet(() => {
-
-      return this.isOnline;
-    });
+    service.getCharacteristic(this.hap.Characteristic.StatusActive)?.onGet(() => this.isOnline);
 
     // Update the current connection status.
     service.updateCharacteristic(this.hap.Characteristic.StatusActive, this.isOnline);
 
     // Retrieve the current tamper status when requested.
-    service.getCharacteristic(this.hap.Characteristic.StatusTampered)?.onGet(() => {
-
-      return this.ufp.tamperingDetectedAt !== null;
-    });
+    service.getCharacteristic(this.hap.Characteristic.StatusTampered)?.onGet(() => this.ufp.tamperingDetectedAt !== null);
 
     // Update the tamper status.
     service.updateCharacteristic(this.hap.Characteristic.StatusTampered, this.ufp.tamperingDetectedAt !== null);
@@ -534,6 +528,7 @@ export class ProtectSensor extends ProtectDevice {
     if((this.lastLeak === undefined) && !value) {
 
       this.lastLeak = value;
+
       return value;
     }
 

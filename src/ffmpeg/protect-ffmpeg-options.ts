@@ -4,8 +4,8 @@
  */
 import { H264Level, H264Profile } from "homebridge";
 import { PROTECT_HOMEKIT_STREAMING_HEADROOM, PROTECT_RPI_GPU_MINIMUM } from "../settings.js";
+import { HomebridgePluginLogging } from "homebridge-plugin-utils";
 import { ProtectCamera } from "../devices/index.js";
-import { ProtectLogging } from "../protect-types.js";
 import { ProtectPlatform } from "../protect-platform.js";
 
 interface EncoderOptions {
@@ -24,7 +24,7 @@ interface EncoderOptions {
 export class FfmpegOptions {
 
   private readonly hwPixelFormat: string[];
-  private readonly log: ProtectLogging;
+  private readonly log: HomebridgePluginLogging;
   private readonly platform: ProtectPlatform;
   private readonly protectCamera: ProtectCamera;
 
@@ -67,7 +67,6 @@ export class FfmpegOptions {
     if(this.protectCamera.hints.hardwareDecoding) {
 
       // Utility function to check that we have a specific decoder codec available to us.
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const validateDecoder = (codec: string, pixelFormat: string[]): boolean => {
 
         if(!this.platform.codecSupport.hasDecoder("h264", codec)) {
@@ -76,6 +75,7 @@ export class FfmpegOptions {
             "Using software decoding instead.");
 
           this.protectCamera.hints.hardwareDecoding = false;
+
           return false;
         }
 
@@ -109,6 +109,7 @@ export class FfmpegOptions {
 
           // Verify that we have hardware-accelerated decoding available to us.
           validateHwAccel("videotoolbox", ["videotoolbox_vld", "nv12", "yuv420p"]);
+
           break;
 
         case "raspbian":
@@ -268,6 +269,7 @@ export class FfmpegOptions {
         if(!this.platform.codecSupport.hasEncoder("aac", "aac_at")) {
 
           encoderOptions = defaultAudioEncoderOptions();
+
           break;
         }
 
@@ -379,11 +381,8 @@ export class FfmpegOptions {
 
     const videoFilters = [];
 
-    // Default smart quality to true.
-    if(options.useSmartQuality === undefined) {
-
-      options.useSmartQuality = true;
-    }
+    // Default smart quality to true unless specified.
+    options = Object.assign({}, { useSmartQuality: true }, options);
 
     // Set our FFmpeg video filter options:
     //
@@ -469,7 +468,6 @@ export class FfmpegOptions {
         // Raspberry Pi struggles with hardware-accelerated HKSV event recording due to issues in the FFmpeg codec driver, currently. We hope this improves
         // over time and can offer it to Pi users, or develop a workaround. For now, we default to libx264.
         return this.defaultVideoEncoderOptions(options);
-        break;
 
       default:
 
@@ -585,8 +583,6 @@ export class FfmpegOptions {
 
         return encoderOptions;
 
-        break;
-
       case "macOS.Intel":
 
         // h264_videotoolbox is the macOS hardware encoder API. We use the following options on Intel-based Macs:
@@ -626,8 +622,6 @@ export class FfmpegOptions {
           "-maxrate", adjustedMaxBitrate.toString() + "k"
         ];
 
-        break;
-
       case "raspbian":
 
         // h264_v4l2m2m is the preferred interface to the Raspberry Pi hardware encoder API. We use the following options:
@@ -655,8 +649,6 @@ export class FfmpegOptions {
           "-bufsize", (2 * options.bitrate).toString() + "k",
           "-maxrate", adjustedMaxBitrate.toString() + "k"
         ];
-
-        break;
 
       default:
 
@@ -724,8 +716,6 @@ export class FfmpegOptions {
         }
 
         return encoderOptions;
-
-        break;
     }
   }
 
@@ -739,8 +729,6 @@ export class FfmpegOptions {
         // For constrained CPU environments like Raspberry Pi, we default to recording from the highest quality channel we can, that's at or below 1080p. That provides
         // a reasonable default, while still allowing users who really want to, to be able to specify something else.
         return this.protectCamera.findRtsp(1920, 1080, { maxPixels: this.hostSystemMaxPixels })?.channel.name ?? undefined;
-
-        break;
 
       default:
 
@@ -763,8 +751,6 @@ export class FfmpegOptions {
           // Raspberry Pi GPU that cannot support higher pixel counts.
           return 1920 * 1080;
 
-          break;
-
         default:
 
           break;
@@ -782,22 +768,18 @@ export class FfmpegOptions {
       case H264Level.LEVEL3_1:
 
         return numeric ? "31" : "3.1";
-        break;
 
       case H264Level.LEVEL3_2:
 
         return numeric ? "32" : "3.2";
-        break;
 
       case H264Level.LEVEL4_0:
 
         return numeric ? "40" : "4.0";
-        break;
 
       default:
 
         return numeric ? "31" : "3.1";
-        break;
     }
   }
 
@@ -809,22 +791,18 @@ export class FfmpegOptions {
       case H264Profile.BASELINE:
 
         return numeric ? "66" : "baseline";
-        break;
 
       case H264Profile.HIGH:
 
         return numeric ? "100" : "high";
-        break;
 
       case H264Profile.MAIN:
 
         return numeric ? "77" : "main";
-        break;
 
       default:
 
         return numeric ? "77" : "main";
-        break;
     }
   }
 }
