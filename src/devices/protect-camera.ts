@@ -609,7 +609,8 @@ export class ProtectCamera extends ProtectDevice {
       rtspEntries.push({
 
         channel: channel,
-        name: this.getResolution([channel.width, channel.height, channel.fps]) + " (" + channel.name + ")",
+        name: this.getResolution([channel.width, channel.height, channel.fps]) + " (" + channel.name +
+          ") [" + (this.ufp.videoCodec.replace("h265", "hevc")).toUpperCase() + "]" ,
         resolution: [ channel.width, channel.height, channel.fps ],
         url: cameraUrl + channel.rtspAlias + "?enableSrtp"
       });
