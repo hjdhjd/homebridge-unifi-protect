@@ -10,7 +10,7 @@ import { API, AudioRecordingCodecType, AudioRecordingSamplerate, AudioStreamingC
 import { FfmpegOptions, FfmpegStreamingProcess } from "./ffmpeg/index.js";
 import { HomebridgePluginLogging, RtpDemuxer } from "homebridge-plugin-utils";
 import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_HKSV_SEGMENT_LENGTH, PROTECT_HKSV_TIMESHIFT_BUFFER_MAXLENGTH, PROTECT_HOMEKIT_IDR_INTERVAL } from "./settings.js";
-import { ProtectCamera, RtspEntry } from "./devices/index.js";
+import { ProtectCamera } from "./devices/index.js";
 import { ProtectNvr } from "./protect-nvr.js";
 import { ProtectPlatform } from "./protect-platform.js";
 import { ProtectRecordingDelegate } from "./protect-record.js";
@@ -61,7 +61,6 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   private probesizeOverride: number;
   private probesizeOverrideCount: number;
   private probesizeOverrideTimeout?: NodeJS.Timeout;
-  private rtspEntry: RtspEntry | null;
   private snapshot: ProtectSnapshot;
   public verboseFfmpeg: boolean;
   private abTest = true;
@@ -80,7 +79,6 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     this.platform = protectCamera.platform;
     this.probesizeOverride = 0;
     this.probesizeOverrideCount = 0;
-    this.rtspEntry = null;
     this.verboseFfmpeg = false;
 
     // Configure our hardware acceleration support.
@@ -409,14 +407,18 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     // Set the initial bitrate we should use for this request based on what HomeKit is requesting.
     let targetBitrate = request.video.max_bit_rate;
 
+    // Override the stream quality selection if we know they're problematic on the Protect controller.
+    const overrideStream = this.protectCamera.hints.apiStreaming && ["AI Pro", "G4 Pro"].includes(this.protectCamera.ufp.marketName);
+    let rtspEntry;
+
     // Find the best RTSP stream based on what we're looking for.
     if(isTranscoding) {
 
       // If we have hardware transcoding enabled, we treat it uniquely and get the highest quality stream we can. Fixed-function hardware transcoders tend to perform
       // better with higher bitrate sources. Wel also want to generally bias ourselves toward higher quality streams where possible.
-      this.rtspEntry = this.protectCamera.findRtsp(
-        (this.protectCamera.hints.hardwareTranscoding) ? 3840 : request.video.width,
-        (this.protectCamera.hints.hardwareTranscoding) ? 2160 : request.video.height,
+      rtspEntry = this.protectCamera.findRtsp(
+        (this.protectCamera.hints.hardwareTranscoding || overrideStream) ? 3840 : request.video.width,
+        (this.protectCamera.hints.hardwareTranscoding || overrideStream) ? 2160 : request.video.height,
         { biasHigher: true, maxPixels: this.ffmpegOptions.hostSystemMaxPixels }
       );
 
@@ -430,16 +432,16 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       }
 
       // If we're targeting a bitrate that's beyond the capabilities of our input channel, match the bitrate of the input channel.
-      if(this.rtspEntry && (targetBitrate > (this.rtspEntry.channel.bitrate / 1000))) {
+      if(rtspEntry && (targetBitrate > (rtspEntry.channel.bitrate / 1000))) {
 
-        targetBitrate = this.rtspEntry.channel.bitrate / 1000;
+        targetBitrate = rtspEntry.channel.bitrate / 1000;
       }
     } else {
 
-      this.rtspEntry = this.protectCamera.findRtsp(request.video.width, request.video.height);
+      rtspEntry = this.protectCamera.findRtsp(overrideStream ? 3840 : request.video.width, overrideStream ? 2160 : request.video.height);
     }
 
-    if(!this.rtspEntry) {
+    if(!rtspEntry) {
 
       const errorMessage = "Unable to start video stream: no valid RTSP stream profile was found.";
 
@@ -477,7 +479,9 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       "-fflags", "+discardcorrupt+genpts",
       ...this.ffmpegOptions.videoDecoder,
       "-max_delay", "500000",
-      "-flags", "low_delay"
+      "-flags", "low_delay",
+      "-copyts",
+      "-start_at_zero"
     ];
 
     if(useApi) {
@@ -497,14 +501,14 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       // -avioflags direct              Tell FFmpeg to minimize buffering to reduce latency for more realtime processing.
       // -r fps                         Set the input frame rate for the video stream.
       // -rtsp_transport tcp            Tell the RTSP stream handler that we're looking for a TCP connection.
-      // -i this.rtspEntry.url          RTSPS URL to get our input stream from.
+      // -i rtspEntry.url               RTSPS URL to get our input stream from.
       ffmpegArgs.push(
 
         "-probesize", this.probesize.toString(),
         "-avioflags", "direct",
-        "-r", this.rtspEntry.channel.fps.toString(),
+        "-r", rtspEntry.channel.fps.toString(),
         "-rtsp_transport", "tcp",
-        "-i", this.rtspEntry.url
+        "-i", rtspEntry.url
       );
     }
 
@@ -519,7 +523,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       sessionInfo.address, (request.audio.packet_time === 60) ? " (high latency connection)" : "",
       request.video.width, request.video.height, request.video.fps, targetBitrate.toLocaleString("en-US"),
       isTranscoding ? (this.protectCamera.hints.hardwareTranscoding ? "Hardware accelerated transcoding" : "Transcoding") : "Using",
-      this.rtspEntry.name + " [" + (useApi ? "API" : "RTSP") + "]", (this.rtspEntry.channel.bitrate / 1000).toLocaleString("en-US"));
+      rtspEntry.name + " [" + (useApi ? "API" : "RTSP") + "]", (rtspEntry.channel.bitrate / 1000).toLocaleString("en-US"));
 
     // Check to see if we're transcoding. If we are, set the right FFmpeg encoder options. If not, copy the video stream.
     if(isTranscoding) {
@@ -528,15 +532,14 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       ffmpegArgs.push(...this.ffmpegOptions.streamEncoder({
 
         bitrate: targetBitrate,
-        fps: this.rtspEntry.channel.fps,
+        fps: rtspEntry.channel.fps,
         height: request.video.height,
         idrInterval: PROTECT_HOMEKIT_IDR_INTERVAL,
-        inputFps: this.rtspEntry.channel.fps,
+        inputFps: rtspEntry.channel.fps,
         level: request.video.level,
         profile: request.video.profile,
         width: request.video.width
       }));
-
     } else {
 
       // Configure our video parameters for just copying the input stream from Protect - it tends to be quite solid in most cases:
@@ -688,30 +691,55 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
         { addressVersion: sessionInfo.addressVersion, port: sessionInfo.videoReturnPort },
       callback);
 
-    // If we're using a timeshift buffer, let's use that to livestream. It has the dual benefit of reducing the workload on the Protect controller since it's already
-    // providing a livestream to us and it also improves performance by ensuring there's several seconds of video ready to immediately transmit.
-    const livestreamListener = (segment: Buffer): void => {
+    if(useApi) {
 
-      // Send the segment to FFmpeg for processing.
-      ffmpegStream.stdin?.write(segment);
-    };
+      const livestream = this.protectCamera.livestream.acquire(rtspEntry.channel.id, rtspEntry.lens);
+      let seenInitSegment = false;
 
-    // Ensure we cleanup on exit.
-    ffmpegStream.ffmpegProcess?.once("exit", () => {
+      // If we're using a timeshift buffer, let's use that to livestream. It has the dual benefit of reducing the workload on the Protect controller since it's already
+      // providing a livestream to us and it also improves performance by ensuring there's several seconds of video ready to immediately transmit.
+      const livestreamListener = async (segment: Buffer): Promise<void> => {
 
-      this.hksv?.timeshift.livestreamStop();
-      this.hksv?.timeshift.off("livestream", livestreamListener);
-    });
+        if(!seenInitSegment) {
 
-    // Transmit video from our timeshift buffer as it arrives.
-    this.hksv?.timeshift.on("livestream", livestreamListener);
+          if(this.hksv?.timeshift.isStarted && (this.hksv?.timeshift.channel === rtspEntry.channel.id) && (this.hksv?.timeshift.lens === rtspEntry.lens)) {
 
-    // Kickoff our livestream.
-    if(!(await this.hksv?.timeshift.livestreamStart())) {
+            ffmpegStream.stdin?.write(this.hksv?.timeshift.getLast(100) ?? (await livestream.getInitSegment()));
+            seenInitSegment = true;
+          } else {
 
-      this.hksv?.timeshift.off("livestream", livestreamListener);
+            ffmpegStream.stdin?.write(await livestream.getInitSegment());
+            seenInitSegment = true;
+          }
+        }
 
-      return;
+        // Send the segment to FFmpeg for processing.
+        ffmpegStream.stdin?.write(segment);
+      };
+
+      const closeListener = (): void => void ffmpegStream.ffmpegProcess?.stdin.end();
+
+      livestream.on("close", closeListener);
+
+      // Ensure we cleanup on exit.
+      ffmpegStream.ffmpegProcess?.once("exit", () => {
+
+        this.protectCamera.livestream.stop(rtspEntry.channel.id, rtspEntry.lens);
+        livestream.off("segment", livestreamListener);
+        livestream.off("close", closeListener);
+      });
+
+      // Transmit video from our livestream as soon as it arrives.
+      livestream.on("segment", livestreamListener);
+
+      // Kickoff our livestream.
+      if(!(await this.protectCamera.livestream.start(rtspEntry.channel.id, rtspEntry.lens))) {
+
+        livestream.off("segment", livestreamListener);
+        livestream.off("close", closeListener);
+
+        return;
+      }
     }
 
     // Some housekeeping for our FFmpeg and demuxer sessions.
