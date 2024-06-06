@@ -67,6 +67,7 @@ export class FfmpegOptions {
     if(this.protectCamera.hints.hardwareDecoding) {
 
       // Utility function to check that we have a specific decoder codec available to us.
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const validateDecoder = (codec: string, pixelFormat: string[]): boolean => {
 
         if(!this.platform.codecSupport.hasDecoder("h264", codec)) {

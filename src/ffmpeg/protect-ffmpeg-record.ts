@@ -82,7 +82,7 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
     //                               Yes, we included these above as well: they need to be included for every I/O stream to
     //                               maximize effectiveness it seems.
     // -reset_timestamps             Reset timestamps at the beginning of each segment.
-    // -video_track_timescale        Set the video timescale to HKSV's preferred value.
+    // -video_track_timescale        Set the video timescale. HKSV wants sample durations to be integers whenever possible and 600 is recommended for 15, 24, and 30 fps.
     // -movflags flags               In the generated fMP4 stream: start a new fragment at each keyframe, write a blank MOOV box, and
     //                               avoid writing absolute offsets
     this.commandLineArgs.push(

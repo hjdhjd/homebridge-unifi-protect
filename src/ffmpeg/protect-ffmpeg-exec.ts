@@ -27,7 +27,7 @@ export class FfmpegExec extends FfmpegProcess {
   }
 
   // Run the FFmpeg process and return the result.
-  public exec(stdinData?: Buffer): Promise<ProcessResult | null> {
+  public async exec(stdinData?: Buffer): Promise<ProcessResult | null> {
 
     return new Promise<ProcessResult | null>((resolve) => {
 
