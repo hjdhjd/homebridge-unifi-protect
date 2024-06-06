@@ -139,7 +139,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
   }
 
   // Handle the actual recording stream request.
-  public async *handleRecordingStreamRequest(streamId: number): AsyncGenerator<RecordingPacket> {
+  public async *handleRecordingStreamRequest(): AsyncGenerator<RecordingPacket> {
 
     let isLastSegment = false;
 
@@ -203,7 +203,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
   }
 
   // Receive an acknowledgement from HomeKit that it's seen an end-of-stream packet from us.
-  public async acknowledgeStream(streamId: number): Promise<void> {
+  public async acknowledgeStream(): Promise<void> {
 
     // Since HomeKit knows our transmission is ending, it's safe to do so now.
     await this.stopTransmitting();
