@@ -632,7 +632,7 @@ export abstract class ProtectDevice extends ProtectBase {
   }
 
   // Utility for returning the scope of a feature option.
-  public isDeviceFeature(option: string, defaultReturnValue?: boolean): boolean {
+  public isDeviceFeature(option: string): boolean {
 
     return this.platform.featureOptions.scope(option) === "device";
   }
@@ -640,7 +640,14 @@ export abstract class ProtectDevice extends ProtectBase {
   // Utility for logging feature option availability.
   public logFeature(option: string, message: string, nvrMessage = message): void {
 
-    this.isDeviceFeature(option) ? this.log.info(message) : this.nvr.logFeature(option, nvrMessage);
+    if(this.isDeviceFeature(option)) {
+
+      this.log.info(message);
+
+      return;
+    }
+
+    this.nvr.logFeature(option, nvrMessage);
   }
 
   // Utility function for reserved identifiers for switches.

@@ -112,7 +112,7 @@ export class ProtectViewer extends ProtectDevice {
         return this.getLiveviewSwitchState(switchService);
       });
 
-      switchService.getCharacteristic(this.hap.Characteristic.On)?.onSet((value: CharacteristicValue) => {
+      switchService.getCharacteristic(this.hap.Characteristic.On)?.onSet(async (value: CharacteristicValue) => {
 
         return this.setLiveviewSwitchState(switchService, value);
       });

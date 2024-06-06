@@ -161,7 +161,7 @@ export class ProtectDoorbell extends ProtectCamera {
     this.updateLcdSwitch(this.ufp.lcdMessage);
 
     // Check to see if any of our existing doorbell messages have disappeared.
-    this.validateMessageSwitches(doorbellMessages);
+    this.validateMessageSwitches();
 
     return true;
   }
@@ -488,7 +488,7 @@ export class ProtectDoorbell extends ProtectCamera {
   }
 
   // Validate our existing HomeKit message switch list.
-  private validateMessageSwitches(messageList: MessageInterface[]): void {
+  private validateMessageSwitches(): void {
 
     // Figure out if there's anything that's disappeared in the canonical list from the doorbell.
     for(const entry of Object.values(this.messageSwitches)) {
