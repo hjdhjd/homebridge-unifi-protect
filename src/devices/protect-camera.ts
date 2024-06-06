@@ -5,6 +5,7 @@
 import { CharacteristicValue, PlatformAccessory, Resolution } from "homebridge";
 import { ProtectCameraChannelConfig, ProtectCameraConfig, ProtectCameraConfigPayload, ProtectEventAdd, ProtectEventPacket } from "unifi-protect";
 import { ProtectReservedNames, toCamelCase } from "../protect-types.js";
+import { LivestreamManager } from "../protect-livestream.js";
 import { PROTECT_HKSV_IDR_INTERVAL } from "../settings.js";
 import { ProtectDevice } from "./protect-device.js";
 import { ProtectNvr } from "../protect-nvr.js";
@@ -34,6 +35,7 @@ export class ProtectCamera extends ProtectDevice {
   private isDeleted: boolean;
   public isRinging: boolean;
   public detectLicensePlate: string[];
+  public readonly livestream: LivestreamManager;
   private rtspEntries: RtspEntry[];
   private rtspQuality: { [index: string]: string };
   public stream!: ProtectStreamingDelegate;
@@ -48,6 +50,7 @@ export class ProtectCamera extends ProtectDevice {
     this.isDeleted = false;
     this.isRinging = false;
     this.detectLicensePlate = [];
+    this.livestream = new LivestreamManager(this);
     this.rtspEntries = [];
     this.rtspQuality = {};
     this.ufp = device;
@@ -573,12 +576,12 @@ export class ProtectCamera extends ProtectDevice {
     let cameraChannels = this.ufp.channels.filter(x => x.isRtspEnabled);
 
     // Make sure we've got a HomeKit compatible IDR frame interval. If not, let's take care of that.
-    const idrChannels = cameraChannels.filter(x => x.idrInterval !== PROTECT_HKSV_IDR_INTERVAL);
+    const idrChannels = cameraChannels.filter(x => x.idrInterval !== (PROTECT_HKSV_IDR_INTERVAL / 2));
 
     if(idrChannels.length) {
 
       // Edit the channel map and update the Protect controller.
-      this.ufp = await this.nvr.ufpApi.updateDevice(this.ufp, { channels: idrChannels.map(x => Object.assign(x, { idrInterval: PROTECT_HKSV_IDR_INTERVAL })) }) ??
+      this.ufp = await this.nvr.ufpApi.updateDevice(this.ufp, { channels: idrChannels.map(x => Object.assign(x, { idrInterval: (PROTECT_HKSV_IDR_INTERVAL / 2) })) }) ??
         this.ufp;
     }
 
@@ -609,8 +612,7 @@ export class ProtectCamera extends ProtectDevice {
       rtspEntries.push({
 
         channel: channel,
-        name: this.getResolution([channel.width, channel.height, channel.fps]) + " (" + channel.name +
-          ") [" + (this.ufp.videoCodec.replace("h265", "hevc")).toUpperCase() + "]" ,
+        name: this.getResolution([channel.width, channel.height, channel.fps]) + " (" + channel.name + ")",
         resolution: [ channel.width, channel.height, channel.fps ],
         url: cameraUrl + channel.rtspAlias + "?enableSrtp"
       });
@@ -1020,6 +1022,17 @@ export class ProtectCamera extends ProtectDevice {
 
     const rtspEntries = options?.rtspEntries ?? this.rtspEntries;
 
+    // Dynamically add codec information to the stream description.
+    const formatEntry = (entry: RtspEntry | undefined | null): RtspEntry | null => {
+
+      if(!entry) {
+
+        return null;
+      }
+
+      return Object.assign({}, entry, { name:  entry.name + " [" + (this.ufp.videoCodec.replace("h265", "hevc")).toUpperCase() + "]" });
+    };
+
     // No RTSP entries to choose from, we're done.
     if(!rtspEntries || !rtspEntries.length) {
 
@@ -1031,7 +1044,7 @@ export class ProtectCamera extends ProtectDevice {
 
       options.default = options.default.toUpperCase();
 
-      return rtspEntries.find(x => x.channel.name.toUpperCase() === options.default) ?? null;
+      return formatEntry(rtspEntries.find(x => x.channel.name.toUpperCase() === options.default)) ?? null;
     }
 
     // See if we have a match for our desired resolution on the camera. We ignore FPS - HomeKit clients seem to be able to handle it just fine.
@@ -1039,18 +1052,18 @@ export class ProtectCamera extends ProtectDevice {
 
     if(exactRtsp) {
 
-      return exactRtsp;
+      return formatEntry(exactRtsp);
     }
 
     // If we haven't found an exact match, by default, we bias ourselves to the next lower resolution we find or the lowest resolution we have available as a backstop.
     if(!options?.biasHigher) {
 
-      return rtspEntries.find(x => x.channel.width < width) ?? rtspEntries[rtspEntries.length - 1];
+      return formatEntry(rtspEntries.find(x => x.channel.width < width) ?? rtspEntries[rtspEntries.length - 1]);
     }
 
     // If we're biasing ourselves toward higher resolutions (primarily used when transcoding so we start with a higher quality input), we look for the first entry that's
     // larger than our requested width and if not found, we return the highest resolution we have available.
-    return rtspEntries.filter(x => x.channel.width > width).pop() ?? rtspEntries[0];
+    return formatEntry(rtspEntries.filter(x => x.channel.width > width).pop() ?? rtspEntries[0]);
   }
 
   // Find a streaming RTSP configuration for a given target resolution.
@@ -1071,7 +1084,6 @@ export class ProtectCamera extends ProtectDevice {
       options.rtspEntries = options.rtspEntries.filter(x => (x.channel.width * x.channel.height) <= (options.maxPixels ?? Infinity));
     }
 
-    // Return the entry.
     return this.findRtspEntry(width, height, options);
   }
 
