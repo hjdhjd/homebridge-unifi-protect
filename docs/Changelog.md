@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 7.0.1 (2024-06-06)
+  * Fix: addressed a regression in the first run webUI.
+  * Improvement: refinements to accessing the Protect Livestream API when livestreaming from the Home app. Certain camera types (notably the AI Pro and G4 Pro) will not livestream certain quality levels due to regressions in the current Protect controller firmware. I've implemented a workaround for the time being that forces the use of the high quality stream with those cameras. Let's see how it goes...**Note: this is an experimental feature and I will accept no support requests related to it. You're on your own if you have an issue.**
+  * Housekeeping.
+
 ## 7.0.0 (2024-06-03)
   * New feature: experimental support for using the Protect livestream API directly when livestreaming in the Home app. This will provide an instantaneous livestreaming experience, but it has some caveats that I'm continuing to work through. At some point it may become the default - for now, if you want to enable this feature, you'll need to do so through the feature options webUI under the video options section. **Note: this is an experimental feature and I will accept no support requests related to it. You're on your own if you have an issue.**
   * Breaking change: default doorbell messages are no longer supported as of Protect controller firmware 4.0. That functionality has been removed from HBUP. To accomplish the same thing, just set a message with an indefinite duration either in HBUP, or through the Protect controller webUI (or native Protect app).
