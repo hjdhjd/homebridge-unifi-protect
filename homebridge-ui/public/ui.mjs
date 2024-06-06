@@ -24,9 +24,9 @@ const firstRunIsRequired = () => {
 const firstRunOnStart = () => {
 
   // Pre-populate with anything we might already have in our configuration.
-  document.getElementById("address").value = ui.featureOptions.currentConfig[0].controllers[0].address ?? "";
-  document.getElementById("username").value = ui.featureOptions.currentConfig[0].controllers[0].username ?? "";
-  document.getElementById("password").value = ui.featureOptions.currentConfig[0].controllers[0].password ?? "";
+  document.getElementById("address").value = ui.featureOptions.currentConfig[0].controllers?.[0]?.address ?? "";
+  document.getElementById("username").value = ui.featureOptions.currentConfig[0].controllers?.[0]?.username ?? "";
+  document.getElementById("password").value = ui.featureOptions.currentConfig[0].controllers?.[0]?.password ?? "";
 
   return true;
 };
@@ -61,6 +61,11 @@ const firstRunOnSubmit = async () => {
   }
 
   // Save the login credentials to our configuration.
+  if(!ui.featureOptions.currentConfig[0].controllers?.length) {
+
+    ui.featureOptions.currentConfig[0].controllers = [{}];
+  }
+
   ui.featureOptions.currentConfig[0].controllers[0].address = address;
   ui.featureOptions.currentConfig[0].controllers[0].username = username;
   ui.featureOptions.currentConfig[0].controllers[0].password = password;
