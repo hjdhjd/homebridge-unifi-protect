@@ -22,7 +22,7 @@ export default ts.config(
 
   {
 
-    files: [ "ui/lib/**.mjs", "eslint.config.mjs" ],
+    files: [ "homebridge-ui/public/**/*.@(js|mjs)", "homebridge-ui/server.js", "eslint.config.mjs" ],
     rules: {
 
       ...hbPluginUtils.rules.js

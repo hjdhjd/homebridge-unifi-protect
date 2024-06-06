@@ -24,8 +24,6 @@ export class ProtectEvents extends EventEmitter {
   private ufpDeviceState: { [index: string]: ProtectDeviceConfigTypes };
   private platform: ProtectPlatform;
   private unsupportedDevices: { [index: string]: boolean };
-  private eventsHandler: ((packet: ProtectEventPacket) => void) | null;
-  private ufpUpdatesHandler:  ((packet: ProtectEventPacket) => void) | null;
 
   // Initialize an instance of our Protect events handler.
   constructor(nvr: ProtectNvr) {
@@ -42,8 +40,6 @@ export class ProtectEvents extends EventEmitter {
     this.ufpDeviceState = {};
     this.platform = nvr.platform;
     this.unsupportedDevices = {};
-    this.eventsHandler = null;
-    this.ufpUpdatesHandler = null;
 
     // If we've enabled telemetry from the controller inform the user.
     if(this.mqttPublishTelemetry) {
@@ -203,20 +199,14 @@ export class ProtectEvents extends EventEmitter {
   // Listen to the UniFi Protect realtime updates API for updates we are interested in (e.g. motion).
   private configureEvents(): boolean {
 
-    // Only configure the event listener if it exists and it's not already configured.
-    if(this.eventsHandler && this.ufpUpdatesHandler) {
-
-      return true;
-    }
-
     // Ensure we update our UFP state before we process any other events.
-    this.prependListener("updateEvent", this.ufpUpdatesHandler = this.ufpUpdates.bind(this));
+    this.prependListener("updateEvent", this.ufpUpdates.bind(this));
 
     // Process remove events.
     this.prependListener("addEvent", this.manageDevices.bind(this));
 
     // Listen for any messages coming in from our listener. We route events to the appropriate handlers based on the type of event that comes across.
-    this.ufpApi.on("message", this.eventsHandler = (packet: ProtectEventPacket): void => {
+    this.ufpApi.on("message", (packet: ProtectEventPacket): void => {
 
       switch(packet.header.action) {
 
