@@ -3,7 +3,7 @@
  * protect-nvr.ts: NVR device class for UniFi Protect.
  */
 import { API, APIEvent, HAP, PlatformAccessory } from "homebridge";
-import { FeatureOptions, HomebridgePluginLogging, MqttClient, retry, sleep } from "homebridge-plugin-utils";
+import { HomebridgePluginLogging, MqttClient, retry, sleep } from "homebridge-plugin-utils";
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_CONTROLLER_REFRESH_INTERVAL, PROTECT_CONTROLLER_RETRY_INTERVAL, PROTECT_M3U_PLAYLIST_PORT } from "./settings.js";
 import { ProtectApi, ProtectCameraConfig, ProtectChimeConfig, ProtectLightConfig, ProtectNvrBootstrap, ProtectNvrConfig, ProtectSensorConfig,
   ProtectViewerConfig } from "unifi-protect";
@@ -85,7 +85,7 @@ export class ProtectNvr {
   private async bootstrapNvr(): Promise<void> {
 
     // Attempt to bootstrap the controller until we're successful.
-    await retry(() => this.ufpApi.getBootstrap(), PROTECT_CONTROLLER_RETRY_INTERVAL * 1000);
+    await retry(async () => this.ufpApi.getBootstrap(), PROTECT_CONTROLLER_RETRY_INTERVAL * 1000);
   }
 
   // Initialize our connection to the UniFi Protect controller.
@@ -119,7 +119,7 @@ export class ProtectNvr {
 
     // Attempt to login to the Protect controller, retrying at reasonable intervals. This accounts for cases where the Protect controller or the network connection
     // may not be fully available when we startup.
-    await retry(() => this.ufpApi.login(this.config.address, this.config.username, this.config.password), PROTECT_CONTROLLER_RETRY_INTERVAL * 1000);
+    await retry(async () => this.ufpApi.login(this.config.address, this.config.username, this.config.password), PROTECT_CONTROLLER_RETRY_INTERVAL * 1000);
 
     // Now, let's get the bootstrap configuration from the Protect controller.
     await this.bootstrapNvr();
@@ -737,7 +737,7 @@ export class ProtectNvr {
   public async resetNvrConnection(): Promise<void> {
 
     // Reset our HKSV-enabled devices.
-    await Promise.all(this.devices("camera").filter(x => x.hasHksv).map(x => x.stream.hksv?.reset()));
+    await Promise.all(this.devices("camera").filter(x => x.hasHksv).map(async x => x.stream.hksv?.reset()));
 
     // Clear our login credentials and error statistics.
     this.nvrHksvErrors = 0;

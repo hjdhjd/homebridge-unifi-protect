@@ -6,8 +6,6 @@ import { PROTECT_DEVICE_REMOVAL_DELAY_INTERVAL, PROTECT_DOORBELL_CHIME_DURATION_
   PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS, PROTECT_M3U_PLAYLIST_PORT, PROTECT_MOTION_DURATION, PROTECT_OCCUPANCY_DURATION, PROTECT_TRANSCODE_BITRATE,
   PROTECT_TRANSCODE_HIGH_LATENCY_BITRATE } from "./settings.js";
 import { FeatureOptionEntry } from "homebridge-plugin-utils";
-import { ProtectDeviceConfigTypes } from "./protect-types.js";
-import { ProtectNvrConfig } from "unifi-protect";
 
 // Plugin configuration options.
 export interface ProtectOptions {
