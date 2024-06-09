@@ -612,7 +612,8 @@ export class ProtectCamera extends ProtectDevice {
       rtspEntries.push({
 
         channel: channel,
-        name: this.getResolution([channel.width, channel.height, channel.fps]) + " (" + channel.name + ")",
+        name: this.getResolution([channel.width, channel.height, channel.fps]) + " (" + channel.name + ") [" +
+          (this.ufp.videoCodec.replace("h265", "hevc")).toUpperCase() + "]",
         resolution: [ channel.width, channel.height, channel.fps ],
         url: cameraUrl + channel.rtspAlias + "?enableSrtp"
       });
@@ -1073,29 +1074,13 @@ export class ProtectCamera extends ProtectDevice {
       options.rtspEntries = options.rtspEntries.filter(x => (x.channel.width * x.channel.height) <= (options.maxPixels ?? Infinity));
     }
 
-    const entry = this.findRtspEntry(width, height, options);
-
-    if(!entry) {
-
-      return null;
-    }
-
-    // Dynamically add codec information to the stream description.
-    return Object.assign({}, entry, { name:  entry.name + " [" + (this.ufp.videoCodec.replace("h265", "hevc")).toUpperCase() + "]" });
+    return this.findRtspEntry(width, height, options);
   }
 
   // Find a recording RTSP configuration for a given target resolution.
   public findRecordingRtsp(width: number, height: number): RtspEntry | null {
 
-    const entry = this.findRtspEntry(width, height, { biasHigher: true, default: this.hints.recordingDefault ?? this.stream.ffmpegOptions.recordingDefaultChannel });
-
-    if(!entry) {
-
-      return null;
-    }
-
-    // Dynamically add codec information to the stream description.
-    return Object.assign({}, entry, { name:  entry.name + " [" + (this.ufp.videoCodec.replace("h265", "hevc")).toUpperCase() + "]" });
+    return this.findRtspEntry(width, height, { biasHigher: true, default: this.hints.recordingDefault ?? this.stream.ffmpegOptions.recordingDefaultChannel });
   }
 
   // Utility function for sorting by resolution.
