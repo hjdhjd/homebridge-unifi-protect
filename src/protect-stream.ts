@@ -453,6 +453,8 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       return;
     }
 
+    let tsBuffer: Buffer | null;
+
     // If we have the timeshift buffer enabled, and it's the right quality channel, we use that as our livestream source. Otherwise, we revert to the RTSP stream from the
     // Protect controller. Using the timeshift buffer has a few advantages.
     //
@@ -476,24 +478,34 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
       "-hide_banner",
       "-nostats",
-      "-fflags", "+discardcorrupt+genpts",
+      "-fflags", "+discardcorrupt",
       ...this.ffmpegOptions.videoDecoder,
       "-max_delay", "500000",
-      "-flags", "low_delay",
-      "-copyts",
-      "-start_at_zero"
+      "-flags", "low_delay"
     ];
 
     if(useApi) {
 
+      tsBuffer = this.hksv?.timeshift.getLast(100) ?? null;
+
+      // -probesize number              How many bytes should be analyzed for stream information.
       // -r fps                         Set the input frame rate for the video stream.
       // -f mp4                         Tell ffmpeg that it should expect an MP4-encoded input stream.
       // -i pipe:0                      Use standard input to get video data.
+      // -enc_time_base demux           Set the encoder timebase to avoid timebase adjustments at the encoder layer.
+      // -fps_mode passthrough          Pass through the framerate as defined by the Protect stream. This avoids frame duplication.
+      // -muxdelay 0                    Set the maximum demux decode delay to 0.
+      // -video_track_timescale 90000   Set the timescale to what Protect sends out.
       ffmpegArgs.push(
 
+        "-probesize", tsBuffer?.length.toString() ?? "32768",
         "-r", this.hksv?.rtspEntry?.channel.fps.toString() ?? "30",
         "-f", "mp4",
-        "-i", "pipe:0"
+        "-i", "pipe:0",
+        "-enc_time_base", "demux",
+        "-fps_mode", "passthrough",
+        "-muxdelay", "0",
+        "-video_track_timescale", "90000"
       );
     } else {
 
@@ -557,9 +569,6 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
         ffmpegArgs.push("-bsf:v", "h264_mp4toannexb");
       }
     }
-
-    // -reset_timestamps                Reset timestamps for this stream instead of accepting what Protect gives us.
-    ffmpegArgs.push("-reset_timestamps", "1");
 
     // Add in any user-specified options for FFmpeg.
     if(this.platform.config.ffmpegOptions) {
@@ -702,9 +711,11 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
         if(!seenInitSegment) {
 
-          if(this.hksv?.timeshift.isStarted && (this.hksv?.timeshift.channel === rtspEntry.channel.id) && (this.hksv?.timeshift.lens === rtspEntry.lens)) {
+          if(this.hksv?.timeshift.isStarted &&
+            (((this.hksv?.timeshift.lens === undefined) && (this.hksv?.timeshift.channel === rtspEntry.channel.id)) ||
+            ((this.hksv?.timeshift.lens !== undefined) && (this.hksv?.timeshift.lens === rtspEntry.lens)))) {
 
-            ffmpegStream.stdin?.write(this.hksv?.timeshift.getLast(100) ?? (await livestream.getInitSegment()));
+            ffmpegStream.stdin?.write(tsBuffer ?? (await livestream.getInitSegment()));
             seenInitSegment = true;
           } else {
 
