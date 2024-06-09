@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 7.0.2 (2024-06-09)
+  * Improvement: more refinements to API livestreaming.
+  * Housekeeping.
+
 ## 7.0.1 (2024-06-06)
   * Fix: addressed a regression in the first run webUI.
   * Improvement: refinements to accessing the Protect Livestream API when livestreaming from the Home app. Certain camera types (notably the AI Pro and G4 Pro) will not livestream certain quality levels due to regressions in the current Protect controller firmware. I've implemented a workaround for the time being that forces the use of the high quality stream with those cameras. Let's see how it goes...**Note: this is an experimental feature and I will accept no support requests related to it. You're on your own if you have an issue.**
