@@ -464,7 +464,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     //
     // - Since we are using an already existing connection to the Protect controller, we don't need to create another connection which incurs an additional delay, as well
     //   as a resource hit on the Protect controller.
-    const useApi = this.protectCamera.hints.apiStreaming &&
+    const useApi = this.protectCamera.hints.apiStreaming && // this.protectCamera.hints.timeshift &&
       (!this.protectCamera.hints.streamingDefault || (this.protectCamera.hints.streamingDefault.toLowerCase() === this.hksv?.rtspEntry?.channel.name.toLowerCase()));
 
     // -hide_banner                     Suppress printing the startup banner in FFmpeg.
