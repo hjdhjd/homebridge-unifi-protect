@@ -17,8 +17,8 @@ export class ProtectCameraPackage extends ProtectCamera {
 
     this.hasHksv = true;
     this.hints.probesize = 32768;
-    this.hints.transcode = true;
 
+    // Inherit settings from our parent.
     if(parentCamera) {
 
       this.hints.apiStreaming = parentCamera.hints.apiStreaming;
@@ -27,6 +27,10 @@ export class ProtectCameraPackage extends ProtectCamera {
       this.hints.highResSnapshots = parentCamera.hints.highResSnapshots;
       this.hints.logHksv = parentCamera.hints.logHksv;
       this.hints.timeshift = parentCamera.hints.timeshift;
+      this.hints.transcode = parentCamera.hints.transcode;
+      this.hints.transcodeBitrate = parentCamera.hints.transcodeBitrate;
+      this.hints.transcodeHighLatency = parentCamera.hints.transcodeHighLatency;
+      this.hints.transcodeHighLatencyBitrate = parentCamera.hints.transcodeHighLatencyBitrate;
     }
 
     // Clean out the context object in case it's been polluted somehow.
