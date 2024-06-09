@@ -1022,17 +1022,6 @@ export class ProtectCamera extends ProtectDevice {
 
     const rtspEntries = options?.rtspEntries ?? this.rtspEntries;
 
-    // Dynamically add codec information to the stream description.
-    const formatEntry = (entry: RtspEntry | undefined | null): RtspEntry | null => {
-
-      if(!entry) {
-
-        return null;
-      }
-
-      return Object.assign({}, entry, { name:  entry.name + " [" + (this.ufp.videoCodec.replace("h265", "hevc")).toUpperCase() + "]" });
-    };
-
     // No RTSP entries to choose from, we're done.
     if(!rtspEntries || !rtspEntries.length) {
 
@@ -1044,7 +1033,7 @@ export class ProtectCamera extends ProtectDevice {
 
       options.default = options.default.toUpperCase();
 
-      return formatEntry(rtspEntries.find(x => x.channel.name.toUpperCase() === options.default)) ?? null;
+      return rtspEntries.find(x => x.channel.name.toUpperCase() === options.default) ?? null;
     }
 
     // See if we have a match for our desired resolution on the camera. We ignore FPS - HomeKit clients seem to be able to handle it just fine.
@@ -1052,18 +1041,18 @@ export class ProtectCamera extends ProtectDevice {
 
     if(exactRtsp) {
 
-      return formatEntry(exactRtsp);
+      return exactRtsp;
     }
 
     // If we haven't found an exact match, by default, we bias ourselves to the next lower resolution we find or the lowest resolution we have available as a backstop.
     if(!options?.biasHigher) {
 
-      return formatEntry(rtspEntries.find(x => x.channel.width < width) ?? rtspEntries[rtspEntries.length - 1]);
+      return rtspEntries.find(x => x.channel.width < width) ?? rtspEntries[rtspEntries.length - 1];
     }
 
     // If we're biasing ourselves toward higher resolutions (primarily used when transcoding so we start with a higher quality input), we look for the first entry that's
     // larger than our requested width and if not found, we return the highest resolution we have available.
-    return formatEntry(rtspEntries.filter(x => x.channel.width > width).pop() ?? rtspEntries[0]);
+    return rtspEntries.filter(x => x.channel.width > width).pop() ?? rtspEntries[0];
   }
 
   // Find a streaming RTSP configuration for a given target resolution.
@@ -1084,13 +1073,29 @@ export class ProtectCamera extends ProtectDevice {
       options.rtspEntries = options.rtspEntries.filter(x => (x.channel.width * x.channel.height) <= (options.maxPixels ?? Infinity));
     }
 
-    return this.findRtspEntry(width, height, options);
+    const entry = this.findRtspEntry(width, height, options);
+
+    if(!entry) {
+
+      return null;
+    }
+
+    // Dynamically add codec information to the stream description.
+    return Object.assign({}, entry, { name:  entry.name + " [" + (this.ufp.videoCodec.replace("h265", "hevc")).toUpperCase() + "]" });
   }
 
   // Find a recording RTSP configuration for a given target resolution.
   public findRecordingRtsp(width: number, height: number): RtspEntry | null {
 
-    return this.findRtspEntry(width, height, { biasHigher: true, default: this.hints.recordingDefault ?? this.stream.ffmpegOptions.recordingDefaultChannel });
+    const entry = this.findRtspEntry(width, height, { biasHigher: true, default: this.hints.recordingDefault ?? this.stream.ffmpegOptions.recordingDefaultChannel });
+
+    if(!entry) {
+
+      return null;
+    }
+
+    // Dynamically add codec information to the stream description.
+    return Object.assign({}, entry, { name:  entry.name + " [" + (this.ufp.videoCodec.replace("h265", "hevc")).toUpperCase() + "]" });
   }
 
   // Utility function for sorting by resolution.

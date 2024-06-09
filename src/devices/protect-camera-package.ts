@@ -17,6 +17,7 @@ export class ProtectCameraPackage extends ProtectCamera {
 
     this.hasHksv = true;
     this.hints.probesize = 32768;
+    this.hints.transcode = true;
 
     if(parentCamera) {
 
@@ -132,7 +133,8 @@ export class ProtectCameraPackage extends ProtectCamera {
 
       channel: channel,
       lens: this.ufp.lenses.length ? this.ufp.lenses[0].id : undefined,
-      name: this.getResolution([channel.width, channel.height, channel.fps]) + " (" + channel.name + ")",
+      name: this.getResolution([channel.width, channel.height, channel.fps]) + " (" + channel.name + ") [" + (this.ufp.videoCodec.replace("h265", "hevc")).toUpperCase() +
+        "]",
       resolution: [ channel.width, channel.height, channel.fps ],
       url:  "rtsps://" + this.nvr.config.address + ":" + this.nvr.ufp.ports.rtsps.toString() + "/" + channel.rtspAlias + "?enableSrtp"
     };
