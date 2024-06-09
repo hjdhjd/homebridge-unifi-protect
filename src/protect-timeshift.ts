@@ -92,12 +92,6 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
   // Start the livestream and begin maintaining our timeshift buffer.
   public async start(channelId = this._channel, lens = this._lens): Promise<boolean> {
 
-    // If we're using a secondary lens, the channel must always be 0.
-    if(lens !== undefined) {
-
-      channelId = 0;
-    }
-
     // Stop the timeshift buffer if it's already running.
     if(this.isStarted) {
 
