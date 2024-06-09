@@ -22,15 +22,21 @@ export class LivestreamManager {
   }
 
   // Utility to return an index into our livestream connection pool.
-  private getIndex(channel: number, lens?: number): string {
+  private getIndex(channel: number, lens?: number): { channel: number, index: string, lens: number | undefined } {
 
-    return channel.toString() + ((lens !== undefined) ? "." + lens.toString() : "");
+    // If we're using a secondary lens, the channel must always be 0 when using the livestream API.
+    if(lens !== undefined) {
+
+      channel = 0;
+    }
+
+    return { channel: channel, index: channel.toString() + ((lens !== undefined) ? "." + lens.toString() : ""), lens: lens };
   }
 
   // Retrieve a connection to the livestream API for a given channel.
   public acquire(channel: number, lens?: number): ProtectLivestream {
 
-    const index = this.getIndex(channel, lens);
+    const { index } = this.getIndex(channel, lens);
 
     // Let's see if we have an existing livestream already open and reuse it if we can.
     if(this.livestreams[index]) {
@@ -47,7 +53,9 @@ export class LivestreamManager {
   // Access the livestream API, registering as a consumer.
   public async start(channel: number, lens?: number, segmentLength = PROTECT_HKSV_SEGMENT_RESOLUTION): Promise<boolean> {
 
-    const index = this.getIndex(channel, lens);
+    let index;
+
+    ({ channel, index, lens } = this.getIndex(channel, lens));
 
     // If we don't have a livestream configured for this channel, we're done. We could just create it here, but given we listen to events on livestream listeners, this
     // is a safer option to ensure that we've acquired a livestream endpoint before trying to start it.
@@ -77,7 +85,7 @@ export class LivestreamManager {
   // End a livestream API connection once all the consumers of the livestream are done.
   public stop(channel: number, lens?: number): void {
 
-    const index = this.getIndex(channel, lens);
+    const { index } = this.getIndex(channel, lens);
 
     // If we have open livestreams, we'll won't close the livestream.
     if(--this.subscriberCount[index] > 0) {
