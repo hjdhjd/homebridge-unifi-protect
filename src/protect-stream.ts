@@ -436,6 +436,10 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
         targetBitrate = rtspEntry.channel.bitrate / 1000;
       }
+    } else if(this.protectCamera.hints.apiStreaming && this.protectCamera.hints.timeshift && this.hksv?.rtspEntry) {
+
+      // If we're using the livestream API and we're timeshifting, we override the stream quality we've determined in favor of our timeshift buffer.
+      rtspEntry = this.hksv.rtspEntry;
     } else {
 
       rtspEntry = this.protectCamera.findRtsp(overrideStream ? 3840 : request.video.width, overrideStream ? 2160 : request.video.height);
@@ -453,27 +457,24 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       return;
     }
 
-    let tsBuffer: Buffer | null;
-
-    // If we have the timeshift buffer enabled, and it's the right quality channel, we use that as our livestream source. Otherwise, we revert to the RTSP stream from the
-    // Protect controller. Using the timeshift buffer has a few advantages.
+    // If we have the timeshift buffer enabled, and we've selected the same quality for the livestream as our timeshift buffer, we use the timeshift buffer to
+    // significantly accelerate our livestream startup. Using the timeshift buffer has a few advantages.
     //
-    // - Typically, we have several seconds of video already queued up in the timeshift buffer, the FFmpeg startup process will get a significant speed up in performance.
+    // - Since we typically have several seconds of video already queued up in the timeshift buffer, FFmpeg will get a significant speed up in startup performance.
     //   FFmpeg takes time at the beginning of each session to analyze the input before allowing you to perform any action. By using the timeshift buffer, we're able to
     //   give FFmpeg all that data right at the beginning, effectively reducing that startup time to the point of being imperceptible.
     //
     // - Since we are using an already existing connection to the Protect controller, we don't need to create another connection which incurs an additional delay, as well
     //   as a resource hit on the Protect controller.
-    const useApi = this.protectCamera.hints.apiStreaming && // this.protectCamera.hints.timeshift &&
-      (!this.protectCamera.hints.streamingDefault || (this.protectCamera.hints.streamingDefault.toLowerCase() === this.hksv?.rtspEntry?.channel.name.toLowerCase()));
+    const tsBuffer: Buffer | null = (this.protectCamera.hints.apiStreaming && this.protectCamera.hints.timeshift) ? (this.hksv?.timeshift.getLast(100) ?? null) : null;
 
     // -hide_banner                     Suppress printing the startup banner in FFmpeg.
     // -nostats                         Suppress printing progress reports while encoding in FFmpeg.
     // -fflags flags                    Set format flags to discard any corrupt packets rather than exit.
     // -max_delay 500000                Set an upper limit on how much time FFmpeg can take in demuxing packets, in microseconds.
     // -flags low_delay                 Tell FFmpeg to optimize for low delay / realtime decoding.
-    //
-    //                                  Yes, we included these above as well: they need to be included for each I/O stream to maximize effectiveness it seems.
+    // -probesize number                How many bytes should be analyzed for stream information.
+    // -r fps                           Set the input frame rate for the video stream.
     const ffmpegArgs = [
 
       "-hide_banner",
@@ -481,15 +482,13 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       "-fflags", "+discardcorrupt",
       ...this.ffmpegOptions.videoDecoder,
       "-max_delay", "500000",
-      "-flags", "low_delay"
+      "-flags", "low_delay",
+      "-probesize", tsBuffer?.length.toString() ?? this.probesize.toString(),
+      "-r", rtspEntry.channel.fps.toString()
     ];
 
-    if(useApi) {
+    if(this.protectCamera.hints.apiStreaming) {
 
-      tsBuffer = this.hksv?.timeshift.getLast(100) ?? null;
-
-      // -probesize number              How many bytes should be analyzed for stream information.
-      // -r fps                         Set the input frame rate for the video stream.
       // -f mp4                         Tell ffmpeg that it should expect an MP4-encoded input stream.
       // -i pipe:0                      Use standard input to get video data.
       // -enc_time_base demux           Set the encoder timebase to avoid timebase adjustments at the encoder layer.
@@ -498,8 +497,6 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       // -video_track_timescale 90000   Set the timescale to what Protect sends out.
       ffmpegArgs.push(
 
-        "-probesize", tsBuffer?.length.toString() ?? "32768",
-        "-r", this.hksv?.rtspEntry?.channel.fps.toString() ?? "30",
         "-f", "mp4",
         "-i", "pipe:0",
         "-enc_time_base", "-1",
@@ -509,16 +506,12 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       );
     } else {
 
-      // -probesize number              How many bytes should be analyzed for stream information.
       // -avioflags direct              Tell FFmpeg to minimize buffering to reduce latency for more realtime processing.
-      // -r fps                         Set the input frame rate for the video stream.
       // -rtsp_transport tcp            Tell the RTSP stream handler that we're looking for a TCP connection.
       // -i rtspEntry.url               RTSPS URL to get our input stream from.
       ffmpegArgs.push(
 
-        "-probesize", this.probesize.toString(),
         "-avioflags", "direct",
-        "-r", rtspEntry.channel.fps.toString(),
         "-rtsp_transport", "tcp",
         "-i", rtspEntry.url
       );
@@ -535,7 +528,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       sessionInfo.address, (request.audio.packet_time === 60) ? " (high latency connection)" : "",
       request.video.width, request.video.height, request.video.fps, targetBitrate.toLocaleString("en-US"),
       isTranscoding ? (this.protectCamera.hints.hardwareTranscoding ? "Hardware accelerated transcoding" : "Transcoding") : "Using",
-      rtspEntry.name + " [" + (useApi ? "API" : "RTSP") + "]", (rtspEntry.channel.bitrate / 1000).toLocaleString("en-US"));
+      rtspEntry.name + " [" + (this.protectCamera.hints.apiStreaming ? "API" : "RTSP") + "]", (rtspEntry.channel.bitrate / 1000).toLocaleString("en-US"));
 
     // Check to see if we're transcoding. If we are, set the right FFmpeg encoder options. If not, copy the video stream.
     if(isTranscoding) {
@@ -563,7 +556,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       );
 
       // The livestream API needs to be transmuxed before we use it directly.
-      if(useApi) {
+      if(this.protectCamera.hints.apiStreaming) {
 
         // -r bsf:v h264_mp4toannexb    Convert the livestream container format from MP4 to MPEG-TS.
         ffmpegArgs.push("-bsf:v", "h264_mp4toannexb");
@@ -700,7 +693,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
         { addressVersion: sessionInfo.addressVersion, port: sessionInfo.videoReturnPort },
       callback);
 
-    if(useApi) {
+    if(this.protectCamera.hints.apiStreaming) {
 
       const livestream = this.protectCamera.livestream.acquire(rtspEntry.channel.id, rtspEntry.lens);
       let seenInitSegment = false;
@@ -711,9 +704,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
         if(!seenInitSegment) {
 
-          if(this.hksv?.timeshift.isStarted &&
-            (((this.hksv?.timeshift.lens === undefined) && (this.hksv?.timeshift.channel === rtspEntry.channel.id)) ||
-            ((this.hksv?.timeshift.lens !== undefined) && (this.hksv?.timeshift.lens === rtspEntry.lens)))) {
+          if(tsBuffer) {
 
             ffmpegStream.stdin?.write(tsBuffer ?? (await livestream.getInitSegment()));
             seenInitSegment = true;
