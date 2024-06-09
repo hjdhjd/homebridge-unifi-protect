@@ -2,7 +2,6 @@
  *
  * ui.mjs: Homebridge UniFi Protect webUI.
  */
-
 "use strict";
 
 import { webUi } from "./lib/webUi.mjs";
