@@ -197,8 +197,8 @@ export class ProtectCamera extends ProtectDevice {
 
     const payload = packet.payload as ProtectCameraConfigPayload;
 
-    // Process any RTSP stream updates.
-    if(payload.channels) {
+    // Process any RTSP stream or video codec updates.
+    if(payload.channels || payload.videoCodec) {
 
       void this.configureVideoStream();
     }
@@ -613,7 +613,7 @@ export class ProtectCamera extends ProtectDevice {
 
         channel: channel,
         name: this.getResolution([channel.width, channel.height, channel.fps]) + " (" + channel.name + ") [" +
-          (this.ufp.videoCodec.replace("h265", "hevc")).toUpperCase() + "]",
+          (this.ufp.videoCodec?.replace("h265", "hevc") ?? "H264").toUpperCase() + "]",
         resolution: [ channel.width, channel.height, channel.fps ],
         url: cameraUrl + channel.rtspAlias + "?enableSrtp"
       });
