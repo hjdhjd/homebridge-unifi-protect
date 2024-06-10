@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 7.0.5 (2024-06-09)
+  * Fix: address a regression with pre-Protect 4.0-based controllers.
+  * Housekeeping.
+
 ## 7.0.4 (2024-06-09)
   * Improvement: more refinements to API livestreaming.
   * Housekeeping.
