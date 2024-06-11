@@ -133,6 +133,15 @@ export class ProtectNvr {
     // Assign our name if the user hasn't explicitly specified a preference.
     this.name = this.config.name ?? (this.ufp.name ?? this.ufp.marketName);
 
+    // If we are running an unsupported version of UniFi Protect, we're done.
+    if(!this.ufp.version.startsWith("4.")) {
+
+      this.log.error("This version of HBUP requires running UniFi Protect v4.0 or above.");
+      this.ufpApi.logout();
+
+      return;
+    }
+
     // We successfully logged in.
     this.log.info("Connected to %s (UniFi Protect %s running on UniFi OS %s).", this.config.address, this.ufp.version, this.ufp.firmwareVersion);
 
