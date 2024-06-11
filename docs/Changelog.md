@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 7.0.6 (2024-06-10)
+  * Breaking change: due to changes in the Protect controller, and my desire to continue to move forward rather than expend too much energy looking back, HBUP v7+ now requires Protect controller v4.0 or better.
+  * Improvement: further refinements to API livestreaming.
+  * Housekeeping.
+
 ## 7.0.5 (2024-06-09)
   * Fix: address a regression with pre-Protect 4.0-based controllers.
   * Housekeeping.
