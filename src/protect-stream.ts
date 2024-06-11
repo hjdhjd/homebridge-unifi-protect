@@ -466,7 +466,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     //
     // - Since we are using an already existing connection to the Protect controller, we don't need to create another connection which incurs an additional delay, as well
     //   as a resource hit on the Protect controller.
-    const tsBuffer: Buffer | null = (this.protectCamera.hints.apiStreaming && this.protectCamera.hints.timeshift) ? (this.hksv?.timeshift.getLast(2000) ?? null) : null;
+    const tsBuffer: Buffer | null = (this.protectCamera.hints.apiStreaming && this.protectCamera.hints.timeshift) ? (this.hksv?.timeshift.getLast(200) ?? null) : null;
 
     // -hide_banner                     Suppress printing the startup banner in FFmpeg.
     // -nostats                         Suppress printing progress reports while encoding in FFmpeg.
