@@ -466,7 +466,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     //
     // - Since we are using an already existing connection to the Protect controller, we don't need to create another connection which incurs an additional delay, as well
     //   as a resource hit on the Protect controller.
-    const tsBuffer: Buffer | null = (this.protectCamera.hints.apiStreaming && this.protectCamera.hints.timeshift) ? (this.hksv?.timeshift.getLast(100) ?? null) : null;
+    const tsBuffer: Buffer | null = (this.protectCamera.hints.apiStreaming && this.protectCamera.hints.timeshift) ? (this.hksv?.timeshift.getLast(2000) ?? null) : null;
 
     // -hide_banner                     Suppress printing the startup banner in FFmpeg.
     // -nostats                         Suppress printing progress reports while encoding in FFmpeg.
@@ -601,6 +601,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     // -b:a bitrate                     Bitrate to use for this audio stream. This is specified by HomeKit.
     // -bufsize size                    This is the decoder buffer size, which drives the variability / quality of the output bitrate.
     // -ac 1                            Set the number of audio channels to 1.
+    // -frame_size                      Set the number of samples per frame to match the requested frame size from HomeKit.
     if(sessionInfo.hasAudioSupport) {
 
       // Configure our audio parameters.
@@ -614,7 +615,8 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
         "-ar", request.audio.sample_rate.toString() + "k",
         "-b:a", request.audio.max_bit_rate.toString() + "k",
         "-bufsize", (2 * request.audio.max_bit_rate).toString() + "k",
-        "-ac", request.audio.channel.toString()
+        "-ac", request.audio.channel.toString(),
+        "-frame_size", (request.audio.packet_time * request.audio.sample_rate).toString()
       );
 
       // If we are audio filtering, address it here.
@@ -665,6 +667,8 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       // -f rtp                           Specify that we're using the RTP protocol.
       // -srtp_out_suite enc              Specify the output encryption encoding suites.
       // -srtp_out_params params          Specify the output encoding parameters. This is negotiated by HomeKit.
+      // pkt_size                         Specify the size of each packet payload. HomeKit wants the block size for AAC-ELD to be 480 samples. That translates to a
+      //                                  packet payload of 480 samples * 8 bits per byte / sample rate.
       ffmpegArgs.push(
 
         "-payload_type", request.audio.pt.toString(),
@@ -672,7 +676,8 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
         "-f", "rtp",
         "-srtp_out_suite", "AES_CM_128_HMAC_SHA1_80",
         "-srtp_out_params", sessionInfo.audioSRTP.toString("base64"),
-        "srtp://" + sessionInfo.address + ":" + sessionInfo.audioPort.toString() + "?rtcpport=" + sessionInfo.audioPort.toString() + "&pkt_size=188"
+        "srtp://" + sessionInfo.address + ":" + sessionInfo.audioPort.toString() + "?rtcpport=" + sessionInfo.audioPort.toString() + "&pkt_size=" +
+          (3840 / request.audio.sample_rate).toString()
       );
     }
 
