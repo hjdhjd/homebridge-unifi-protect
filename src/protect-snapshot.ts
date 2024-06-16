@@ -3,9 +3,9 @@
  * protect-snapshot.ts: UniFi Protect HomeKit snapshot class.
  */
 import { API, HAP, SnapshotRequest } from "homebridge";
+import { HomebridgePluginLogging, runWithTimeout } from "homebridge-plugin-utils";
+import { PROTECT_LIVESTREAM_API_IDR_INTERVAL, PROTECT_SNAPSHOT_CACHE_MAXAGE } from "./settings.js";
 import { FfmpegExec } from "./ffmpeg/index.js";
-import { HomebridgePluginLogging } from "homebridge-plugin-utils";
-import { PROTECT_SNAPSHOT_CACHE_MAXAGE } from "./settings.js";
 import { ProtectCamera } from "./devices/index.js";
 import { ProtectNvr } from "./protect-nvr.js";
 import { ProtectPlatform } from "./protect-platform.js";
@@ -13,13 +13,13 @@ import { ProtectPlatform } from "./protect-platform.js";
 // Camera snapshot class for Protect.
 export class ProtectSnapshot {
 
+  private _cachedSnapshot: { image: Buffer, time: number } | null;
   private readonly api: API;
   private readonly hap: HAP;
   public readonly log: HomebridgePluginLogging;
   private readonly nvr: ProtectNvr;
   public readonly platform: ProtectPlatform;
   public readonly protectCamera: ProtectCamera;
-  private snapshotCache: { [index: string]: { image: Buffer, time: number } };
 
   // Create an instance of a HomeKit streaming delegate.
   constructor(protectCamera: ProtectCamera) {
@@ -30,7 +30,7 @@ export class ProtectSnapshot {
     this.nvr = protectCamera.nvr;
     this.protectCamera = protectCamera;
     this.platform = protectCamera.platform;
-    this.snapshotCache = {};
+    this._cachedSnapshot = null;
   }
 
   // Return a snapshot for use by HomeKit.
@@ -44,40 +44,63 @@ export class ProtectSnapshot {
       return null;
     }
 
+    // See if we have an image cached that we can use, if needed.
+    const cachedSnapshot = this.cachedSnapshot;
+
     // We request the snapshot to prioritize performance and quality of the image. The reason for this is that the Protect API constrains the quality level of snapshot
     // images and doesn't always produce them reliably. Fortunately, we have a few options. We retrieve snapshots by trying to use the following sources, in order:
     //
-    // Timeshift buffer Eliminates querying the Protect controller and allows us to capture the highest quality image we can.
-    // RTSP stream      Queries the Protect controller, but allows us to capture the highest quality image available.
-    // Protect API      Requests a snapshot from the Protect controller. This is an error-prone task for the Protect controller and produces lower quality images.
-    // Cached snapshot  Returns the last snapshot we have taken, assuming it isn't too old.
+    // - Timeshift buffer   eliminates querying the Protect controller and allows us to capture the highest quality image we can.
+    // - RTSP stream        queries the Protect controller, but allows us to capture the highest quality image available.
+    // - Protect API        requests a snapshot from the Protect controller. This is an error-prone task for the Protect controller and produces lower quality images.
+    // - Cached snapshot    returns the last snapshot we have taken, assuming it isn't too old.
     //
     // The exception to this is package cameras - we try the Protect API before the RTSP stream there because the lower frame rate of the camera causes a lengthier
     // response time.
-    let snapshot = await this.snapFromTimeshift(request);
+    const snapshotPromise = (async (): Promise<Buffer | null> => {
 
-    // No snapshot yet, let's try again.
-    if(!snapshot) {
+      let snapAttempt = await this.snapFromTimeshift(request);
 
-      // We treat package cameras uniquely.
-      if("packageCamera" in this.protectCamera.accessory.context) {
+      // No snapshot yet, let's try again.
+      if(!snapAttempt) {
 
-        snapshot = (await this.nvr.ufpApi.getSnapshot(this.protectCamera.ufp, request?.width, request?.height, undefined, true)) ?? (await this.snapFromRtsp(request));
-      } else {
+        // We treat package cameras uniquely.
+        if("packageCamera" in this.protectCamera.accessory.context) {
 
-        snapshot = (await this.snapFromRtsp(request)) ?? (await this.nvr.ufpApi.getSnapshot(this.protectCamera.ufp, request?.width, request?.height));
+          snapAttempt = (await this.nvr.ufpApi.getSnapshot(this.protectCamera.ufp, request?.width, request?.height, undefined, true)) ??
+            (await this.snapFromRtsp(request));
+        } else {
+
+          snapAttempt = (await this.snapFromRtsp(request)) ?? (await this.nvr.ufpApi.getSnapshot(this.protectCamera.ufp, request?.width, request?.height));
+        }
       }
-    }
+
+      if(!snapAttempt) {
+
+        return null;
+      }
+
+      // Crop the snapshot, if we're configured to do so.
+      if(this.protectCamera.hints.crop) {
+
+        snapAttempt = await this.cropSnapshot(snapAttempt) ?? snapAttempt;
+      }
+
+      // Cache the image before returning it.
+      this._cachedSnapshot = { image: snapAttempt, time: Date.now() };
+
+      return snapAttempt;
+    })();
+
+    // Get a snapshot, but ensure we constrain it so we can return in a responsive manner.
+    const snapshot = await runWithTimeout(snapshotPromise, 4990);
 
     // Occasional snapshot failures will happen. The controller isn't always able to generate them if one is already inflight or if it's too soon after the last one.
     if(!snapshot) {
 
-      // See if we have an image cached that we can use instead.
-      const cachedSnapshot = this.getCachedSnapshot(this.protectCamera.ufp.mac);
-
       if(cachedSnapshot) {
 
-        this.log.error("Unable to retrieve a snapshot: using the most recent cached snapshot instead.");
+        this.log.warn("Unable to retrieve a snapshot: using the most recent cached snapshot instead.");
 
         return cachedSnapshot;
       }
@@ -87,16 +110,7 @@ export class ProtectSnapshot {
       return null;
     }
 
-    // Crop the snapshot, if we're configured to do so.
-    if(this.protectCamera.hints.crop) {
-
-      snapshot = await this.cropSnapshot(snapshot) ?? snapshot;
-    }
-
-    // Cache the image before returning it.
-    this.snapshotCache[this.protectCamera.ufp.mac] = { image: snapshot, time: Date.now() };
-
-    return this.snapshotCache[this.protectCamera.ufp.mac].image;
+    return this._cachedSnapshot?.image ?? null;
   }
 
   // Snapshots using the timeshift buffer as the source.
@@ -108,7 +122,7 @@ export class ProtectSnapshot {
       return null;
     }
 
-    const buffer = this.protectCamera.stream.hksv?.getTimeshiftBuffer();
+    const buffer = this.protectCamera.stream.hksv?.timeshift.getLast(PROTECT_LIVESTREAM_API_IDR_INTERVAL * 1000);
 
     if(!buffer) {
 
@@ -117,11 +131,13 @@ export class ProtectSnapshot {
 
     // Use our timeshift buffer to create a snapshot image. Options we use are:
     //
-    // -r fps           Set the input frame rate for the video stream.
-    // -f mp4           Specify that our input will be an MP4 file.
-    // -i pipe:0        Read input from standard input.
+    // -probesize amount    How many bytes should be analyzed for stream information. Use the size of the buffer we are snapshotting.
+    // -r fps               Set the input frame rate for the video stream.
+    // -f mp4               Specify that our input will be an MP4 file.
+    // -i pipe:0            Read input from standard input.
     const ffmpegOptions = [
 
+      "-probesize", buffer.length.toString(),
       "-r", this.protectCamera.stream.hksv?.rtspEntry?.channel.fps.toString() ?? "30",
       "-f", "mp4",
       "-i", "pipe:0"
@@ -149,19 +165,14 @@ export class ProtectSnapshot {
 
     // Use the RTSP stream to generate a snapshot image. Options we use are:
     //
-    // -probesize amount    How many bytes should be analyzed for stream information. We default to to analyze time should be spent analyzing
-    //                      the input stream.
-    // -max_delay 500000    Set an upper limit on how much time FFmpeg can take in demuxing packets.
-    // -flags low_delay     Tell FFmpeg to optimize for low delay / realtime decoding.
+    // -probesize amount    How many bytes should be analyzed for stream information. Use our configured defaults.
     // -avioflags direct    Tell FFmpeg to minimize buffering to reduce latency for more realtime processing.
     // -r fps               Set the input frame rate for the video stream.
     // -rtsp_transport tcp  Tell the RTSP stream handler that we're looking for a TCP connection.
     // -i rtspEntry.url     RTSPS URL to get our input stream from.
     const ffmpegOptions = [
-      ...this.protectCamera.stream.ffmpegOptions.videoDecoder,
+
       "-probesize", this.protectCamera.stream.probesize.toString(),
-      "-max_delay", "500000",
-      "-flags", "low_delay",
       "-avioflags", "direct",
       "-r", rtspEntry.channel.fps.toString(),
       "-rtsp_transport", "tcp",
@@ -179,6 +190,10 @@ export class ProtectSnapshot {
     // -hide_banner         Suppress printing the startup banner in FFmpeg.
     // -nostats             Suppress printing progress reports while encoding in FFmpeg.
     // -fflags flags        Set the format flags to generate a presentation timestamp if it's missing and discard any corrupt packets rather than exit.
+    // -max_delay 500000    Set an upper limit on how much time FFmpeg can take in demuxing packets.
+    // -flags low_delay     Tell FFmpeg to optimize for low delay / realtime decoding.
+    // -skip_frame          Only decode and process I-frames to ensure we always get a complete image when taking a snapshot.
+    // -fps_mode vfr        Ensure we deal with any variable frame rates that might occur.
     // -frames:v 1          Extract a single video frame for the output.
     // -q:v 2               Set the quality output of the JPEG output.
     const ffmpegOptions = [
@@ -186,7 +201,12 @@ export class ProtectSnapshot {
       "-hide_banner",
       "-nostats",
       "-fflags", "+discardcorrupt+genpts",
+      ...this.protectCamera.stream.ffmpegOptions.videoDecoder,
+      "-max_delay", "500000",
+      "-flags", "low_delay",
+      "-skip_frame", "nointra",
       ...ffmpegInputOptions,
+      "-fps_mode", "vfr",
       "-frames:v", "1",
       "-q:v", "2"
     ];
@@ -200,7 +220,6 @@ export class ProtectSnapshot {
       // scale=             Scale the image down, if needed, but never upscale it, preserving aspect ratios and letterboxing where needed.
       ffmpegOptions.push("-filter:v", [
 
-        "select=eq(pict_type\\,I)," +
         "scale=" + request.width.toString(), request.height.toString(),
         "force_original_aspect_ratio=decrease,pad=" + request.width.toString(), request.height.toString(),
         "(ow-iw)/2", "(oh-ih)/2"
@@ -248,6 +267,10 @@ export class ProtectSnapshot {
 
       "-hide_banner",
       "-nostats",
+      "-fflags", "+discardcorrupt+genpts",
+      ...this.protectCamera.stream.ffmpegOptions.videoDecoder,
+      "-max_delay", "500000",
+      "-flags", "low_delay",
       "-i", "pipe:0",
       "-filter:v", this.protectCamera.stream.ffmpegOptions.cropFilter,
       "-f", "image2pipe",
@@ -271,16 +294,16 @@ export class ProtectSnapshot {
   }
 
   // Retrieve a cached snapshot, if available.
-  private getCachedSnapshot(cameraMac: string): Buffer | null {
+  private get cachedSnapshot(): Buffer | null {
 
     // If we have an image from the last few seconds, we can use it. Otherwise, we're done.
-    if(!this.snapshotCache[cameraMac] || ((Date.now() - this.snapshotCache[cameraMac].time) > (PROTECT_SNAPSHOT_CACHE_MAXAGE * 1000))) {
+    if(!this._cachedSnapshot || ((Date.now() - this._cachedSnapshot.time) > (PROTECT_SNAPSHOT_CACHE_MAXAGE * 1000))) {
 
-      delete this.snapshotCache[cameraMac];
+      this._cachedSnapshot = null;
 
       return null;
     }
 
-    return this.snapshotCache[cameraMac].image;
+    return this._cachedSnapshot.image;
   }
 }

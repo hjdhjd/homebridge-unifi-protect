@@ -9,7 +9,8 @@ import { API, AudioRecordingCodecType, AudioRecordingSamplerate, AudioStreamingC
   SRTPCryptoSuites, SnapshotRequest, SnapshotRequestCallback, StartStreamRequest, StreamRequestCallback, StreamRequestTypes, StreamingRequest } from "homebridge";
 import { FfmpegOptions, FfmpegStreamingProcess } from "./ffmpeg/index.js";
 import { HomebridgePluginLogging, RtpDemuxer } from "homebridge-plugin-utils";
-import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_HKSV_SEGMENT_LENGTH, PROTECT_HKSV_TIMESHIFT_BUFFER_MAXLENGTH, PROTECT_HOMEKIT_IDR_INTERVAL } from "./settings.js";
+import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_HKSV_FRAGMENT_LENGTH, PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION, PROTECT_HOMEKIT_IDR_INTERVAL,
+  PROTECT_LIVESTREAM_API_IDR_INTERVAL } from "./settings.js";
 import { ProtectCamera } from "./devices/index.js";
 import { ProtectNvr } from "./protect-nvr.js";
 import { ProtectPlatform } from "./protect-platform.js";
@@ -124,25 +125,22 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
           mediaContainerConfiguration: [
             {
 
-              // The default HKSV segment length is 4000ms. It turns out that any setting less than that will disable
-              // HomeKit Secure Video.
-              fragmentLength: PROTECT_HKSV_SEGMENT_LENGTH,
+              // The default HKSV segment length is 4000ms. It turns out that any setting less than that will disable HomeKit Secure Video.
+              fragmentLength: PROTECT_HKSV_FRAGMENT_LENGTH,
               type: MediaContainerType.FRAGMENTED_MP4
             }
           ],
 
-          // Maximum prebuffer length supported. In Protect, this is effectively unlimited, but HomeKit only seems to
-          // request a maximum of a 4000ms prebuffer.
-          prebufferLength: PROTECT_HKSV_TIMESHIFT_BUFFER_MAXLENGTH,
+          // Maximum prebuffer length supported. In Protect, this is effectively unlimited, but HomeKit only seems to request a maximum of a 4000ms prebuffer.
+          prebufferLength: PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION,
 
           video: {
 
             parameters: {
 
-              // Through admittedly anecdotal testing on various G3 and G4 models, UniFi Protect seems to support
-              // only the H.264 Main profile, though it does support various H.264 levels, ranging from Level 3
-              // through Level 5.1 (G4 Pro at maximum resolution). However, HomeKit only supports Level 3.1, 3.2,
-              // and 4.0 currently.
+              // Through admittedly anecdotal testing on various G3 and G4 models, UniFi Protect seems to support only the H.264 Main profile, though it does support
+              // various H.264 levels, ranging from Level 3 through Level 5.1 (G4 Pro at maximum resolution). However, HomeKit only supports Level 3.1, 3.2, and 4.0
+              // currently.
               levels: [ H264Level.LEVEL3_1, H264Level.LEVEL3_2, H264Level.LEVEL4_0 ],
               profiles: [ H264Profile.MAIN ]
             },
@@ -184,19 +182,16 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
           codec: {
 
-            // Through admittedly anecdotal testing on various G3 and G4 models, UniFi Protect seems to support
-            // only the H.264 Main profile, though it does support various H.264 levels, ranging from Level 3
-            // through Level 5.1 (G4 Pro at maximum resolution). However, HomeKit only supports Level 3.1, 3.2,
-            // and 4.0 currently.
+            // Through admittedly anecdotal testing on various G3 and G4 models, UniFi Protect seems to support only the H.264 Main profile, though it does support
+            // various H.264 levels, ranging from Level 3 through Level 5.1 (G4 Pro at maximum resolution). However, HomeKit only supports Level 3.1, 3.2, and 4.0
+            // currently.
             levels: [ H264Level.LEVEL3_1, H264Level.LEVEL3_2, H264Level.LEVEL4_0 ],
             profiles: [ H264Profile.MAIN ]
           },
 
-          // Retrieve the list of supported resolutions from the camera and apply our best guesses for how to
-          // map specific resolutions to the available RTSP streams on a camera. Unfortunately, this creates
-          // challenges in doing on-the-fly RTSP changes in UniFi Protect. Once the list of supported
-          // resolutions is set here, there's no going back unless a user reboots. Homebridge doesn't have a way
-          // to dynamically adjust the list of supported resolutions at this time.
+          // Retrieve the list of supported resolutions from the camera and apply our best guesses for how to map specific resolutions to the available RTSP streams on a
+          // camera. Unfortunately, this creates challenges in doing on-the-fly RTSP changes in UniFi Protect. Once the list of supported resolutions is set here, there's
+          // no going back unless a user retarts HBUP. Homebridge doesn't have a way to dynamically adjust the list of supported resolutions at this time.
           resolutions: resolutions
         }
       }
@@ -409,14 +404,16 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
     // Override the stream quality selection if we know they're problematic on the Protect controller.
     const overrideStream = this.protectCamera.hints.apiStreaming && ["AI Pro", "G4 Pro"].includes(this.protectCamera.ufp.marketName);
-    let rtspEntry;
+
+    // If we're using the livestream API and we're timeshifting, we override the stream quality we've determined in favor of our timeshift buffer.
+    let rtspEntry = (this.protectCamera.hints.apiStreaming && this.protectCamera.hints.timeshift && this.hksv?.rtspEntry) ? this.hksv.rtspEntry : null;
 
     // Find the best RTSP stream based on what we're looking for.
     if(isTranscoding) {
 
       // If we have hardware transcoding enabled, we treat it uniquely and get the highest quality stream we can. Fixed-function hardware transcoders tend to perform
       // better with higher bitrate sources. Wel also want to generally bias ourselves toward higher quality streams where possible.
-      rtspEntry = this.protectCamera.findRtsp(
+      rtspEntry ??= this.protectCamera.findRtsp(
         (this.protectCamera.hints.hardwareTranscoding || overrideStream) ? 3840 : request.video.width,
         (this.protectCamera.hints.hardwareTranscoding || overrideStream) ? 2160 : request.video.height,
         { biasHigher: true, maxPixels: this.ffmpegOptions.hostSystemMaxPixels }
@@ -436,13 +433,9 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
         targetBitrate = rtspEntry.channel.bitrate / 1000;
       }
-    } else if(this.protectCamera.hints.apiStreaming && this.protectCamera.hints.timeshift && this.hksv?.rtspEntry) {
-
-      // If we're using the livestream API and we're timeshifting, we override the stream quality we've determined in favor of our timeshift buffer.
-      rtspEntry = this.hksv.rtspEntry;
     } else {
 
-      rtspEntry = this.protectCamera.findRtsp(overrideStream ? 3840 : request.video.width, overrideStream ? 2160 : request.video.height);
+      rtspEntry ??= this.protectCamera.findRtsp(overrideStream ? 3840 : request.video.width, overrideStream ? 2160 : request.video.height);
     }
 
     if(!rtspEntry) {
@@ -466,14 +459,14 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     //
     // - Since we are using an already existing connection to the Protect controller, we don't need to create another connection which incurs an additional delay, as well
     //   as a resource hit on the Protect controller.
-    const tsBuffer: Buffer | null = (this.protectCamera.hints.apiStreaming && this.protectCamera.hints.timeshift) ? (this.hksv?.timeshift.getLast(200) ?? null) : null;
+    const tsBuffer: Buffer | null = (this.protectCamera.hints.apiStreaming && this.protectCamera.hints.timeshift) ?
+      (this.hksv?.timeshift.getLast(PROTECT_LIVESTREAM_API_IDR_INTERVAL * 1000) ?? null) : null;
 
     // -hide_banner                     Suppress printing the startup banner in FFmpeg.
     // -nostats                         Suppress printing progress reports while encoding in FFmpeg.
     // -fflags flags                    Set format flags to discard any corrupt packets rather than exit.
     // -max_delay 500000                Set an upper limit on how much time FFmpeg can take in demuxing packets, in microseconds.
     // -flags low_delay                 Tell FFmpeg to optimize for low delay / realtime decoding.
-    // -probesize number                How many bytes should be analyzed for stream information.
     // -r fps                           Set the input frame rate for the video stream.
     const ffmpegArgs = [
 
@@ -483,12 +476,12 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       ...this.ffmpegOptions.videoDecoder,
       "-max_delay", "500000",
       "-flags", "low_delay",
-      "-probesize", tsBuffer?.length.toString() ?? this.probesize.toString(),
       "-r", rtspEntry.channel.fps.toString()
     ];
 
     if(this.protectCamera.hints.apiStreaming) {
 
+      // -probesize number              How many bytes should be analyzed for stream information. Use the lesser of the size of the timeshift buffer or our defaults.
       // -f mp4                         Tell ffmpeg that it should expect an MP4-encoded input stream.
       // -i pipe:0                      Use standard input to get video data.
       // -enc_time_base demux           Set the encoder timebase to avoid timebase adjustments at the encoder layer.
@@ -497,20 +490,23 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       // -video_track_timescale 90000   Set the timescale to what Protect sends out.
       ffmpegArgs.push(
 
+        "-probesize", Math.min(this.probesize, tsBuffer?.length ?? this.probesize).toString(),
         "-f", "mp4",
         "-i", "pipe:0",
-        "-enc_time_base", "-1",
+        "-enc_time_base", "-1", // -1 should be changed to demux for FFmpeg 7 and beyond.
         "-fps_mode", "passthrough",
         "-muxdelay", "0",
         "-video_track_timescale", "90000"
       );
     } else {
 
+      // -probesize number              How many bytes should be analyzed for stream information. Use our configured defaults.
       // -avioflags direct              Tell FFmpeg to minimize buffering to reduce latency for more realtime processing.
       // -rtsp_transport tcp            Tell the RTSP stream handler that we're looking for a TCP connection.
       // -i rtspEntry.url               RTSPS URL to get our input stream from.
       ffmpegArgs.push(
 
+        "-probesize", this.probesize.toString(),
         "-avioflags", "direct",
         "-rtsp_transport", "tcp",
         "-i", rtspEntry.url
@@ -524,11 +520,11 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     ffmpegArgs.push("-map", "0:v:0");
 
     // Inform the user.
-    this.log.info("Streaming request from %s%s: %sx%s@%sfps, %s kbps. %s %s, %s kbps.",
+    this.log.info("Streaming request from %s%s: %sx%s@%sfps, %s kbps. %s %s, %s kbps [%s].",
       sessionInfo.address, (request.audio.packet_time === 60) ? " (high latency connection)" : "",
       request.video.width, request.video.height, request.video.fps, targetBitrate.toLocaleString("en-US"),
       isTranscoding ? (this.protectCamera.hints.hardwareTranscoding ? "Hardware accelerated transcoding" : "Transcoding") : "Using",
-      rtspEntry.name + " [" + (this.protectCamera.hints.apiStreaming ? "API" : "RTSP") + "]", (rtspEntry.channel.bitrate / 1000).toLocaleString("en-US"));
+      rtspEntry.name, (rtspEntry.channel.bitrate / 1000).toLocaleString("en-US"), this.protectCamera.hints.apiStreaming ? "API" : "RTSP");
 
     // Check to see if we're transcoding. If we are, set the right FFmpeg encoder options. If not, copy the video stream.
     if(isTranscoding) {

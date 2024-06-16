@@ -20,12 +20,12 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
   private _lens: number | undefined;
   private _segmentLength: number;
   private readonly accessory: PlatformAccessory;
-  private bufferSize: number;
+  private eventHandlers: { [index: string]: ((segment: Buffer) => void) | (() => void) };
   private livestream: ProtectLivestream | null;
   private readonly log: HomebridgePluginLogging;
   private readonly nvr: ProtectNvr;
   private readonly protectCamera: ProtectCamera;
-  private eventHandlers: { [index: string]: ((segment: Buffer) => void) | (() => void) };
+  private segmentCount: number;
 
   constructor(protectCamera: ProtectCamera) {
 
@@ -36,7 +36,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
     this._isStarted = false;
     this._isTransmitting = false;
     this.accessory = protectCamera.accessory;
-    this.bufferSize = 1;
+    this.segmentCount = 1;
     this._channel = 0;
     this.eventHandlers = {};
     this._lens = (protectCamera instanceof ProtectCameraPackage) ? protectCamera.ufp.lenses[0].id : undefined;
@@ -51,25 +51,19 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
 
     this.eventHandlers.segment = (segment: Buffer): void => {
 
+      // If we're transmitting, send the segment as quickly as we can so FFmpeg can consume it.
+      if(this.isTransmitting) {
+
+        this.emit("segment", segment);
+      }
+
       // Add the livestream segment to the end of the timeshift buffer.
       this._buffer.push(segment);
 
-      // At a minimum we always want to maintain a single segment in our buffer.
-      if(this.bufferSize <= 0) {
-
-        this.bufferSize = 1;
-      }
-
-      // Trim the beginning of the buffer to our configured size unless we are transmitting to HomeKit, in which case, we queue up all the segments for consumption.
-      if(!this.isTransmitting && (this._buffer.length >  this.bufferSize)) {
+      // Trim the beginning of the buffer to our configured size.
+      if(this._buffer.length >  this.segmentCount) {
 
         this._buffer.shift();
-      }
-
-      // If we're transmitting, we want to send all the segments we can so FFmpeg can consume it.
-      if(this.isTransmitting) {
-
-        this.transmit();
       }
     };
   }
@@ -170,10 +164,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
     // albeit a slightly less elegantly.
     const initSegment = await this.getInitSegment();
 
-    if(initSegment) {
-
-      this._buffer.unshift(initSegment);
-    } else {
+    if(!initSegment) {
 
       this.log.error("Unable to begin transmitting the stream to HomeKit Secure Video: unable to retrieve initialization data from the UniFi Protect controller. " +
         "This error is typically due to either an issue connecting to the Protect controller, or a problem on the Protect controller.");
@@ -184,7 +175,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
     }
 
     // Transmit everything we have queued up to get started as quickly as possible.
-    this.transmit();
+    this.emit("segment", Buffer.concat([initSegment, ...this._buffer]));
 
     // Let our livestream listener know that we're now transmitting.
     this._isTransmitting = true;
@@ -199,13 +190,6 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
     this._isTransmitting = false;
 
     return true;
-  }
-
-  // Transmit the contents of our timeshift buffer.
-  private transmit(): void {
-
-    this.emit("segment", Buffer.concat(this._buffer));
-    this._buffer = [];
   }
 
   // Check if this is the fMP4 initialization segment.
@@ -239,6 +223,12 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
   // Return the last duration milliseconds of the buffer, with an initialization segment.
   public getLast(duration: number): Buffer | null {
 
+    // No duration, return nothing.
+    if(!duration) {
+
+      return null;
+    }
+
     // Figure out where in the timeshift buffer we want to slice.
     const start = (duration / this.segmentLength);
 
@@ -249,7 +239,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
     }
 
     // If we don't have our fMP4 initialization segment, we're done. Otherwise, return the duration requested, starting from the end.
-    return (this.livestream?.initSegment && this._buffer.length) ? Buffer.concat([ this.livestream.initSegment, ...this._buffer.slice(start)]) : null;
+    return (this.livestream?.initSegment && this._buffer.length) ? Buffer.concat([this.livestream.initSegment, ...this._buffer.slice(start * -1)]) : null;
   }
 
   // Return the current timeshift buffer, in full.
@@ -281,17 +271,24 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
     return this._isTransmitting;
   }
 
-  // Retrieve the current size of the timeshift buffer, in milliseconds.
-  public get length(): number {
+  // Retrieve how much time is currently in the timeshift buffer, in milliseconds.
+  public get time(): number {
 
-    return (this.bufferSize * this.segmentLength);
+    return this._buffer.length * this._segmentLength;
   }
 
-  // Set the size of the timeshift buffer, in milliseconds.
-  public set length(bufferMillis: number) {
+  // Retrieve the configured duration of the timeshift buffer, in milliseconds.
+  public get duration(): number {
 
-    // Calculate how many segments we need to keep in order to have the appropriate number of seconds in our buffer.
-    this.bufferSize = bufferMillis / this.segmentLength;
+    return (this.segmentCount * this.segmentLength);
+  }
+
+  // Set the configured duration of the timeshift buffer, in milliseconds.
+  public set duration(bufferMillis: number) {
+
+    // Calculate how many segments we need to keep in order to have the appropriate number of seconds in our buffer. At a minimum we always want to maintain a single
+    // segment in our buffer.
+    this.segmentCount = Math.max(bufferMillis / this.segmentLength, 1);
   }
 
   // Return the recording length, in milliseconds, of an individual segment.
