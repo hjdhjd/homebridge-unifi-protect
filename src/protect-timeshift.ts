@@ -278,13 +278,13 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
   }
 
   // Retrieve the configured duration of the timeshift buffer, in milliseconds.
-  public get duration(): number {
+  public get configuredDuration(): number {
 
     return (this.segmentCount * this.segmentLength);
   }
 
   // Set the configured duration of the timeshift buffer, in milliseconds.
-  public set duration(bufferMillis: number) {
+  public set configuredDuration(bufferMillis: number) {
 
     // Calculate how many segments we need to keep in order to have the appropriate number of seconds in our buffer. At a minimum we always want to maintain a single
     // segment in our buffer.

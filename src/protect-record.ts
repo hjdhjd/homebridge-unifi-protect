@@ -103,7 +103,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
         this.protectCamera.hints.hardwareTranscoding ? "hardware-accelerated " : "",
         this.rtspEntry?.name, this.recordingConfig?.videoCodec.parameters.bitRate.toLocaleString("en-US"),
         this.protectCamera.hints.timeshift ?
-          "(" + (this.timeshift.duration / 1000).toString() + " second timeshift buffer)" :
+          "(" + (this.timeshift.configuredDuration / 1000).toString() + " second timeshift buffer)" :
           "with no timeshift buffer. This will provide a suboptimal HKSV experience"
       );
 
@@ -132,7 +132,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     this.recordingConfig = configuration;
 
     // Tell our timeshift buffer how many seconds HomeKit has requested we prebuffer. We intentionally want a relatively large buffer to account for some Protect quirks.
-    this.timeshift.duration = PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION;
+    this.timeshift.configuredDuration = PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION;
 
     // Start or restart our timeshift buffer based on our updated configuration.
     void this.updateRecordingActive(this.isRecording);
