@@ -559,6 +559,9 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       }
     }
 
+    // -reset_timestamps                Reset timestamps for this stream instead of accepting what Protect gives us.
+    ffmpegArgs.push("-reset_timestamps", "1");
+
     // Add in any user-specified options for FFmpeg.
     if(this.platform.config.ffmpegOptions) {
 

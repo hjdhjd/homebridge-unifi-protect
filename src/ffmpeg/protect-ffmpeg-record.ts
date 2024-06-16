@@ -36,7 +36,7 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
 
       "-hide_banner",
       "-nostats",
-      "-fflags", "+discardcorrupt+genpts",
+      "-fflags", "+discardcorrupt",
       ...protectCamera.stream.ffmpegOptions.videoDecoder,
       "-max_delay", "500000",
       "-flags", "low_delay"
@@ -60,7 +60,7 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
         "-r", rtspEntry.channel.fps.toString(),
         "-f", "mp4",
         "-i", "pipe:0",
-        "-ss", ((protectCamera.stream.hksv?.timeshift.duration ?? PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION) - recordingConfig.prebufferLength).toString() + "ms"
+        "-ss", Math.max((protectCamera.stream.hksv?.timeshift.time ?? PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION) - recordingConfig.prebufferLength, 0).toString() + "ms"
       );
     } else {
 
@@ -87,10 +87,10 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
     //                               Protect changes this in the future.
     //                               Yes, we included these above as well: they need to be included for every I/O stream to
     //                               maximize effectiveness it seems.
+    // -fps_mode passthrough         Pass through the framerate as defined by the Protect stream. This avoids frame duplication.
+    // -movflags flags               In the generated fMP4 stream: start a new fragment at each keyframe, write a blank MOOV box, and avoid writing absolute offsets.
     // -reset_timestamps             Reset timestamps at the beginning of each segment.
     // -video_track_timescale        Set the video timescale. HKSV wants sample durations to be integers whenever possible and 600 is recommended for 15, 24, and 30 fps.
-    // -movflags flags               In the generated fMP4 stream: start a new fragment at each keyframe, write a blank MOOV box, and
-    //                               avoid writing absolute offsets
     this.commandLineArgs.push(
 
       "-map", "0:v:0",
@@ -105,9 +105,10 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
         profile: recordingConfig.videoCodec.parameters.profile,
         width: recordingConfig.videoCodec.resolution[0]
       }),
-      "-video_track_timescale", "600",
+      "-fps_mode", "passthrough",
+      "-movflags", "frag_keyframe+empty_moov+default_base_moof",
       "-reset_timestamps", "1",
-      "-movflags", "frag_keyframe+empty_moov+default_base_moof"
+      "-video_track_timescale", "600"
     );
 
     if(isAudioActive) {
@@ -274,9 +275,13 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
     }
 
     // Known HKSV-related errors due to occasional inconsistencies in the Protect livestream API.
-    const ffmpegKnownHksvError = new RegExp(
-      "(Invalid data found when processing input)|(Error splitting the input into NAL units\\.)|(Could not write header for output file #0)"
-    );
+    const ffmpegKnownHksvError = new RegExp([
+
+      "(Invalid data found when processing input)",
+      "(Error splitting the input into NAL units\\.)",
+      "(Could not write header for output file #0)",
+      "(Could not write header \\(incorrect codec parameters \\?\\): Broken pipe)"
+    ].join("|"));
 
     // See if we know about this error.
     if(this.stderrLog.some(x => ffmpegKnownHksvError.test(x))) {
