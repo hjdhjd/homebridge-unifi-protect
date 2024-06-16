@@ -27,15 +27,19 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
     // Initialize our recording buffer.
     this.recordingBuffer = [];
 
-    // -hide_banner     Suppress printing the startup banner in FFmpeg.
-    // -nostats         Suppress printing progress reports while encoding in FFmpeg.
-    // -fflags flags    Set the format flags to generate a presentation timestamp if it's missing and discard any corrupt packets rather than exit.
+    // -hide_banner                  Suppress printing the startup banner in FFmpeg.
+    // -nostats                      Suppress printing progress reports while encoding in FFmpeg.
+    // -fflags flags                 Set the format flags to generate a presentation timestamp if it's missing and discard any corrupt packets rather than exit.
+    // -max_delay 500000             Set an upper limit on how much time FFmpeg can take in demuxing packets.
+    // -flags low_delay              Tell FFmpeg to optimize for low delay / realtime decoding.
     this.commandLineArgs = [
 
       "-hide_banner",
       "-nostats",
       "-fflags", "+discardcorrupt+genpts",
-      ...protectCamera.stream.ffmpegOptions.videoDecoder
+      ...protectCamera.stream.ffmpegOptions.videoDecoder,
+      "-max_delay", "500000",
+      "-flags", "low_delay"
     ];
 
     const tsBuffer = protectCamera.stream.hksv?.timeshift.buffer ?? null;
@@ -45,16 +49,16 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
 
       // Configure our video parameters for our input:
       //
-      // -probesize amount           How many bytes should be analyzed for stream information. Use the lesser of the size of the timeshift buffer or the bare minimum.
-      // -f mp4                      Tell ffmpeg that it should expect an MP4-encoded input stream.
+      // -probesize amount           How many bytes should be analyzed for stream information. Use the size of the timeshift buffer if we have it or our defaults.
       // -r fps                      Set the input frame rate for the video stream.
+      // -f mp4                      Tell ffmpeg that it should expect an MP4-encoded input stream.
       // -i pipe:0                   Use standard input to get video data.
       // -ss                         Fast forward to where HKSV is expecting us to be for a recording event.
       this.commandLineArgs.push(
 
-        "-probesize", Math.min(protectCamera.stream.probesize, tsBuffer?.length ?? 32).toString(),
-        "-f", "mp4",
+        "-probesize", (tsBuffer?.length ?? protectCamera.stream.probesize).toString(),
         "-r", rtspEntry.channel.fps.toString(),
+        "-f", "mp4",
         "-i", "pipe:0",
         "-ss", ((protectCamera.stream.hksv?.timeshift.duration ?? PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION) - recordingConfig.prebufferLength).toString() + "ms"
       );
@@ -63,14 +67,12 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
       // We're not using the timeshift buffer, so let's use the RTSP stream as the input to HKSV.
       //
       // -probesize amount           How many bytes should be analyzed for stream information. Use our configured defaults.
-      // -max_delay 500000           Set an upper limit on how much time FFmpeg can take in demuxing packets.
       // -r fps                      Set the input frame rate for the video stream.
       // -rtsp_transport tcp         Tell the RTSP stream handler that we're looking for a TCP connection.
       // -i rtspEntry.url            RTSPS URL to get our input stream from.
       this.commandLineArgs.push(
 
         "-probesize", protectCamera.stream.probesize.toString(),
-        "-max_delay", "500000",
         "-r", rtspEntry.channel.fps.toString(),
         "-rtsp_transport", "tcp",
         "-i", rtspEntry.url
