@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 7.1.2 (2024-06-16)
+  * Improvement: additional refinements to API livestreaming.
+  * Housekeeping.
+
 ## 7.1.1 (2024-06-15)
   * Improvement: some further refinements to HKSV recording.
 
