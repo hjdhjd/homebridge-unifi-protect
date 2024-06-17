@@ -66,7 +66,7 @@ export class LivestreamManager {
 
     // Start the livestream if this is the first run. We set this to reattempt establishing the livestream up to three times due to occasional controller glitches.
     if(!this.subscriberCount[index] && !(await retry(async () => this.livestreams[index].start(this.protectCamera.ufp.id, channel, lens, segmentLength,
-      this.protectCamera.name + ":" + index), 1000, 3))) {
+      this.protectCamera.name + ":" + index), (Math.random() * 3500) + 1000, 3))) {
 
       this.protectCamera.log.error("Unable to access the Protect livestream API: this is typically due to the Protect controller or camera rebooting.");
 
