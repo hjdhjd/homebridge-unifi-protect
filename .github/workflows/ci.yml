@@ -16,9 +16,6 @@ jobs:
   build:
     name: 'Build package'
 
-    # Build only if we've received a push, manual workflow dispatch, or release event with a release tag (aka v1.2.3).
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'release' && startsWith(github.ref, 'refs/tags/v'))
-
     # Create the build matrix for all the environments we're validating against.
     strategy:
       matrix:
@@ -39,11 +36,12 @@ jobs:
           node-version: ${{ matrix.node-version }}
 
       - name: Build and install the package with a clean slate.
-        run: |
-          npm ci
-          npm run build --if-present
         env:
           CI: true
+          ESLINT_MAX_WARNINGS: 0
+        run: |
+          npm ci
+          npm run prepublishOnly
 
   # Publish the release to the NPM registry.
   publish-npm:
@@ -55,6 +53,10 @@ jobs:
 
     # Specify the environment we're going to build in.
     runs-on: ubuntu-latest
+
+    # Ensure we have permissions to provide our provenance attestation.
+    permissions:
+       id-token: write
 
     # Execute the build and publish activities.
     steps:
@@ -75,6 +77,6 @@ jobs:
       run: npm ci
 
     - name: Publish the package to NPM.
-      run: npm publish --access public
+      run: npm publish --access public --provenance
       env:
         NODE_AUTH_TOKEN: ${{ secrets.npm_token }}
