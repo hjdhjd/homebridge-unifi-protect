@@ -53,7 +53,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
       options: config.options as string[],
       ringDelay: config.ringDelay as number ?? 0,
       verboseFfmpeg: config.verboseFfmpeg === true,
-      videoEncoder: config.videoEncoder as string,
+      videoEncoder: config.videoEncoder as string ?? "libx264",
       videoProcessor: config.videoProcessor as string ?? ffmpegPath ?? "ffmpeg"
     };
 

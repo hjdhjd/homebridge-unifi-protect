@@ -17,7 +17,7 @@ const firstRunIsRequired = () => {
   }
 
   return true;
-}
+};
 
 // Initialize our first run screen with any information from our existing configuration.
 const firstRunOnStart = () => {
@@ -48,12 +48,13 @@ const firstRunOnSubmit = async () => {
     return false;
   }
 
-  const ufpDevices = await homebridge.request("/getDevices", { address: address, username: username, password: password });
+  const ufpDevices = await homebridge.request("/getDevices", { address: address, password: password, username: username });
 
   // Couldn't connect to the Protect controller for some reason.
   if(!ufpDevices?.length) {
 
-    tdLoginError.innerHTML = "Unable to login to the UniFi Protect controller.<br>Please check your controller address, username, and password.<br><code class=\"text-danger\">" + (await homebridge.request("/getErrorMessage")) + "</code>";
+    tdLoginError.innerHTML = "Unable to login to the UniFi Protect controller.<br>Please check your controller address, username, and password.<br>" +
+      "<code class=\"text-danger\">" + (await homebridge.request("/getErrorMessage")) + "</code>";
     homebridge.hideSpinner();
 
     return false;
@@ -84,7 +85,7 @@ const getDevices = async (controller) => {
   }
 
   // Retrieve the current list of devices from the Protect controller.
-  let devices = await homebridge.request("/getDevices", { address: controller.address, username: controller.username, password: controller.password });
+  let devices = await homebridge.request("/getDevices", { address: controller.address, password: controller.password, username: controller.username });
 
   // Add the fields that the webUI framework is looking for to render.
   devices = devices.map(device => ({
@@ -212,7 +213,7 @@ const showProtectDetails = (device) => {
     document.getElementById("device_model").classList.remove("text-center");
     document.getElementById("device_model").colSpan = 1;
     document.getElementById("device_model").style.fontWeight = "normal";
-    document.getElementById("device_model").innerHTML = "N/A"
+    document.getElementById("device_model").innerHTML = "N/A";
     document.getElementById("device_mac").innerHTML = "N/A";
     document.getElementById("device_address").innerHTML = "N/A";
     document.getElementById("device_online").innerHTML = "N/A";

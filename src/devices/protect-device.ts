@@ -3,10 +3,10 @@
  * protect-device.ts: Base class for all UniFi Protect devices.
  */
 import { API, CharacteristicValue, HAP, PlatformAccessory, Service, WithUUID } from "homebridge";
+import { HomebridgePluginLogging, acquireService, validService } from "homebridge-plugin-utils";
 import { PROTECT_MOTION_DURATION, PROTECT_OCCUPANCY_DURATION} from "../settings.js";
 import { ProtectApi, ProtectCameraConfig, ProtectEventPacket, ProtectNvrConfig } from "unifi-protect";
 import { ProtectDeviceConfigTypes, ProtectReservedNames } from "../protect-types.js";
-import { HomebridgePluginLogging } from "homebridge-plugin-utils";
 import { ProtectNvr } from "../protect-nvr.js";
 import { ProtectPlatform } from "../protect-platform.js";
 import util from "node:util";
@@ -35,6 +35,7 @@ export interface ProtectHints {
   hardwareDecoding: boolean,
   hardwareTranscoding: boolean,
   highResSnapshots: boolean,
+  hksvRecordingIndicator: boolean,
   ledStatus: boolean,
   logDoorbell: boolean,
   logHksv: boolean,
@@ -44,11 +45,11 @@ export interface ProtectHints {
   probesize: number,
   recordingDefault: string,
   smartDetect: boolean,
+  smartDetectSensors: boolean,
   smartOccupancy: string[],
   standalone: boolean,
   streamingDefault: string,
   syncName: boolean,
-  timeshift: boolean,
   transcode: boolean,
   transcodeBitrate: number,
   transcodeHighLatency: boolean,
@@ -160,81 +161,13 @@ export abstract class ProtectDevice extends ProtectBase {
   // Retrieve an existing service from an accessory, creating it if necessary.
   protected acquireService(serviceType: WithUUID<typeof Service>, name = this.accessoryName, subtype?: string, onServiceCreate?: (svc: Service) => void): Service | null {
 
-    // Services that need the ConfiguredName characteristic added and maintained.
-    const configuredNameServices = [ this.hap.Service.ContactSensor, this.hap.Service.Lightbulb, this.hap.Service.MotionSensor, this.hap.Service.OccupancySensor,
-      this.hap.Service.Switch ];
-
-    // Services that need the Name characteristic maintained.
-    const nameServices = [ this.hap.Service.Battery, this.hap.Service.ContactSensor, this.hap.Service.HumiditySensor, this.hap.Service.LeakSensor,
-      this.hap.Service.Lightbulb, this.hap.Service.LightSensor, this.hap.Service.MotionSensor, this.hap.Service.TemperatureSensor ];
-
-    // Find the service, if it exists.
-    let service = subtype ? this.accessory.getServiceById(serviceType, subtype) : this.accessory.getService(serviceType);
-
-    // Add the service to the accessory, if needed.
-    if(!service) {
-
-      // @ts-expect-error TypeScript tries to associate this with an overloaded version of the addService method. However, Homebridge/HAP-NodeJS isn't exporting
-      // a version of the method that implements the unexposed interface that's been defined for each service class (e.g. Lightbulb). The constructor on the
-      // service-type-specific version of the service takes the following arguments: constructor(displayName?: string, subtype?: string). We're safe, but because
-      // the type definitions are missing, we need to override it here.
-      service = new serviceType(name, subtype);
-
-      if(!service) {
-
-        return null;
-      }
-
-      this.accessory.addService(service);
-
-      if(onServiceCreate) {
-
-        onServiceCreate(service);
-      }
-    }
-
-    // Update our name.
-    service.displayName = name;
-
-    if(configuredNameServices.includes(serviceType)) {
-
-      // Add the characteristic if we don't already have it. We do this here instead of at service creation to ensure we catch legacy situations where we may have
-      // already created the service previously without adding the optional characteristics we want.
-      if(!service.optionalCharacteristics.some(x => (x.UUID === this.hap.Characteristic.ConfiguredName.UUID))) {
-
-        service.addOptionalCharacteristic(this.hap.Characteristic.ConfiguredName);
-      }
-
-      service.updateCharacteristic(this.hap.Characteristic.ConfiguredName, name);
-    }
-
-    if(nameServices.includes(serviceType)) {
-
-      service.updateCharacteristic(this.hap.Characteristic.Name, name);
-    }
-
-    return service;
+    return acquireService(this.hap, this.accessory, serviceType, name, subtype, onServiceCreate);
   }
 
   // Validate whether a service should exist, removing it if necessary.
   protected validService(serviceType: WithUUID<typeof Service>, validate: () => boolean, subtype?: string): boolean {
 
-    // Find the switch service, if it exists.
-    const service = subtype ? this.accessory.getServiceById(serviceType, subtype) : this.accessory.getService(serviceType);
-
-    // Validate whether we should have the service. If not, remove it.
-    if(!validate()) {
-
-      if(service) {
-
-        this.accessory.removeService(service);
-      }
-
-      return false;
-    }
-
-    // We have a valid service.
-    return true;
+    return validService(this.accessory, serviceType, validate, subtype);
   }
 
   // Configure device-specific settings.
@@ -366,16 +299,10 @@ export abstract class ProtectDevice extends ProtectBase {
       service.updateCharacteristic(this.hap.Characteristic.MotionDetected, false);
       service.updateCharacteristic(this.hap.Characteristic.StatusActive, this.isOnline);
 
-      service.getCharacteristic(this.hap.Characteristic.StatusActive).onGet(() => {
-
-        return this.isOnline;
-      });
+      service.getCharacteristic(this.hap.Characteristic.StatusActive).onGet(() => this.isOnline);
 
       // Configure our MQTT support.
-      this.subscribeGet("motion", "motion", () => {
-
-        return service.getCharacteristic(this.hap.Characteristic.MotionDetected).value === true ? "true" : "false";
-      });
+      this.subscribeGet("motion", "motion", () => service.getCharacteristic(this.hap.Characteristic.MotionDetected).value ? "true" : "false");
 
       this.subscribeSet("motion", "motion event trigger", (value: string) => {
 
@@ -431,19 +358,16 @@ export abstract class ProtectDevice extends ProtectBase {
     }
 
     // Activate or deactivate motion detection.
-    service.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => {
-
-      return this.accessory.context.detectMotion === true;
-    });
+    service.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => !!this.accessory.context.detectMotion);
 
     service.getCharacteristic(this.hap.Characteristic.On)?.onSet((value: CharacteristicValue) => {
 
       if(this.accessory.context.detectMotion !== value) {
 
-        this.log.info("Motion detection %s.", (value === true) ? "enabled" : "disabled");
+        this.log.info("Motion detection %s.", value ? "enabled" : "disabled");
       }
 
-      this.accessory.context.detectMotion = value === true;
+      this.accessory.context.detectMotion = !!value;
     });
 
     // Initialize the switch state.
@@ -492,10 +416,7 @@ export abstract class ProtectDevice extends ProtectBase {
     const switchService = this.accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_MOTION_SENSOR);
 
     // Activate or deactivate motion detection.
-    triggerService.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => {
-
-      return motionService?.getCharacteristic(this.hap.Characteristic.MotionDetected).value === true;
-    });
+    triggerService.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => !!motionService?.getCharacteristic(this.hap.Characteristic.MotionDetected).value);
 
     triggerService.getCharacteristic(this.hap.Characteristic.On)?.onSet((isOn: CharacteristicValue) => {
 
@@ -596,13 +517,85 @@ export abstract class ProtectDevice extends ProtectBase {
       }
 
       // Configure our MQTT support.
-      this.subscribeGet("occupancy", "occupancy", () => {
-
-        return service.getCharacteristic(this.hap.Characteristic.OccupancyDetected).value === true ? "true" : "false";
-      });
+      this.subscribeGet("occupancy", "occupancy", () => service.getCharacteristic(this.hap.Characteristic.OccupancyDetected).value ? "true" : "false");
 
       this.log.info("Enabling occupancy sensor%s.", this.hints.smartDetect ? " using smart motion detection: " + this.hints.smartOccupancy.join(", ")  : "");
     }
+
+    return true;
+  }
+
+  // Configure a switch to turn on or off the status indicator light for HomeKit.
+  protected configureStatusLedSwitch(isEnabled = true): boolean {
+
+    // Validate whether we should have this service enabled.
+    if(!this.validService(this.hap.Service.Switch, () => {
+
+      // Motion switches are disabled by default unless the user enables them.
+      if(!isEnabled || !this.hasFeature("Device.StatusLed.Switch")) {
+
+        return false;
+      }
+
+      return true;
+    }, ProtectReservedNames.SWITCH_STATUS_LED)) {
+
+      return false;
+    }
+
+    // Acquire the service.
+    const service = this.acquireService(this.hap.Service.Switch, this.accessoryName + " Status Indicator", ProtectReservedNames.SWITCH_STATUS_LED);
+
+    // Fail gracefully.
+    if(!service) {
+
+      this.log.error("Unable to add the status indicator light switch.");
+
+      return false;
+    }
+
+    // Enable or disable the status indicator light.
+    service.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => this.statusLed);
+
+    service.getCharacteristic(this.hap.Characteristic.On)?.onSet(async (value: CharacteristicValue) => {
+
+      if(this.statusLed !== value) {
+
+        this.log.info("Status indicator light %s.", value ? "enabled" : "disabled");
+      }
+
+      // Update the status light in Protect.
+      if(!(await this.setStatusLed(!!value))) {
+
+        this.log.error("Unable to turn the status light %s. Please ensure this username has the Administrator role in UniFi Protect.", value ? "on" : "off");
+
+        return;
+      }
+    });
+
+    // Initialize the switch state.
+    service.updateCharacteristic(this.hap.Characteristic.On, this.statusLed);
+
+    this.log.info("Enabling status indicator light switch.");
+
+    return true;
+  }
+
+  // Set the status indicator light on a device.
+  public async setStatusLed(value: boolean): Promise<boolean> {
+
+    // Update the status light in Protect.
+    const newDevice = await this.nvr.ufpApi.updateDevice(this.ufp, this.statusLedCommand(value));
+
+    if(!newDevice) {
+
+      this.log.error("Unable to turn the status indicator light %s. Please ensure this username has the Administrator role in UniFi Protect.", value ? "on" : "off");
+
+      return false;
+    }
+
+    // Update our internal view of the device configuration.
+    this.ufp = newDevice;
 
     return true;
   }
@@ -659,7 +652,7 @@ export abstract class ProtectDevice extends ProtectBase {
   // Utility function to determine whether or not a device is currently online.
   public get isOnline(): boolean {
 
-    return this.ufp?.state === "CONNECTED";
+    return this.ufp?.isConnected;
   }
 
   // Return a unique identifier for a Protect device. We need this for package cameras in particular, since they present multiple cameras in a single physical device.
@@ -690,5 +683,17 @@ export abstract class ProtectDevice extends ProtectBase {
 
     // Set all the HomeKit-visible names.
     this.accessory.getService(this.hap.Service.AccessoryInformation)?.updateCharacteristic(this.hap.Characteristic.Name, name);
+  }
+
+  // Utility to return the command to set the device status indicator light. This works for cameras and sensors, but Protect lights deal with this differently.
+  protected statusLedCommand(value: boolean): object {
+
+    return { ledSettings: { isEnabled: value } };
+  }
+
+  // Utility function to return the current state of the device status indicator. This works for cameras and sensors, but Protect lights control it differently.
+  public get statusLed(): boolean {
+
+    return (this.ufp as ProtectCameraConfig)?.ledSettings?.isEnabled;
   }
 }

@@ -390,16 +390,16 @@ export class FfmpegOptions {
     // format=                     Set the pixel formats we want to target for output.
     videoFilters.push("format=" + [ ...new Set([ ...this.hwPixelFormat, "yuvj420p" ]) ].join("|"));
 
+    // scale=-2:min(ih\,height)    Scale the video to the size that's being requested while respecting aspect ratios and ensuring our final dimensions are
+    //                             a power of two.
+    videoFilters.push("scale=-2:min(ih\\," + options.height.toString() + ")");
+
     // fps=fps=                    Use the fps filter to provide the frame rate requested by HomeKit. This has better performance characteristics for Protect
     //                             rather than using "-r". We only need to apply this filter if our input and output frame rates aren't already identical.
     if(options.fps !== options.inputFps) {
 
       videoFilters.push("fps=fps=" + options.fps.toString());
     }
-
-    // scale=-2:min(ih\,height)    Scale the video to the size that's being requested while respecting aspect ratios and ensuring our final dimensions are
-    //                             a power of two.
-    videoFilters.push("scale=-2:min(ih\\," + options.height.toString() + ")");
 
     // Default to the tried-and-true libx264. We use the following options by default:
     //
@@ -419,7 +419,7 @@ export class FfmpegOptions {
     const encoderOptions = [
 
       // If the user has specified a video encoder, let's use it instead.
-      "-c:v", this.platform.config.videoEncoder ?? "libx264",
+      "-c:v", this.platform.config.videoEncoder,
       "-preset", "veryfast",
       "-profile:v", this.getH264Profile(options.profile),
       "-level:v", this.getH264Level(options.level),
@@ -516,13 +516,6 @@ export class FfmpegOptions {
     // format=                     Set the pixel formats we want to target for output.
     videoFilters.push("format=" + this.hwPixelFormat.join("|"));
 
-    // fps=fps=                    Use the fps filter to provide the frame rate requested by HomeKit. This has better performance characteristics for Protect
-    //                             rather than using "-r". We only need to apply this filter if our input and output frame rates aren't already identical.
-    if(useFpsFilter) {
-
-      videoFilters.push("fps=fps=" + options.fps.toString());
-    }
-
     // scale=-2:min(ih\,height)    Scale the video to the size that's being requested while respecting aspect ratios and ensuring our final dimensions are
     //                             a power of two.
     videoFilters.push("scale=-2:min(ih\\," + options.height.toString() + ")");
@@ -531,6 +524,13 @@ export class FfmpegOptions {
     if(this.protectCamera.hints.crop) {
 
       videoFilters.push(this.cropFilter);
+    }
+
+    // fps=fps=                    Use the fps filter to provide the frame rate requested by HomeKit. This has better performance characteristics for Protect
+    //                             rather than using "-r". We only need to apply this filter if our input and output frame rates aren't already identical.
+    if(useFpsFilter) {
+
+      videoFilters.push("fps=fps=" + options.fps.toString());
     }
 
     switch(this.platform.hostSystem) {

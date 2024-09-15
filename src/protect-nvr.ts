@@ -76,7 +76,7 @@ export class ProtectNvr {
       for(const protectCamera of this.devices("camera")) {
 
         protectCamera.log.debug("Shutting down all video stream processes.");
-        void protectCamera.stream?.shutdown();
+        protectCamera.stream?.shutdown();
       }
     });
   }
@@ -134,9 +134,9 @@ export class ProtectNvr {
     this.name = this.config.name ?? (this.ufp.name ?? this.ufp.marketName);
 
     // If we are running an unsupported version of UniFi Protect, we're done.
-    if(!this.ufp.version.startsWith("4.")) {
+    if(!this.ufp.version.startsWith("4.") || this.ufp.version.split(".").map(Number).slice(0, 2).join(".") < "4.1") {
 
-      this.log.error("This version of HBUP requires running UniFi Protect v4.0 or above.");
+      this.log.error("This version of HBUP requires running UniFi Protect v4.1 or above using the official Protect release channel only.");
       this.ufpApi.logout();
 
       return;
@@ -199,6 +199,13 @@ export class ProtectNvr {
       this.log.info("Discovered %s: %s.", device.modelKey, this.ufpApi.getDeviceName(device, device.name ?? device.marketName, true));
     }
 
+    // Bootstrap refresh loop.
+    const bootstrapRefresh = (): void => {
+
+      // Sleep until it's time to bootstrap again.
+      setTimeout(() => void this.bootstrapNvr(), PROTECT_CONTROLLER_REFRESH_INTERVAL * 1000);
+    };
+
     // Sync the Protect controller's devices with HomeKit.
     const syncUfpHomeKit = (): void => {
 
@@ -211,13 +218,6 @@ export class ProtectNvr {
 
     // Initialize our Protect controller device sync.
     syncUfpHomeKit();
-
-    // Bootstrap refresh loop.
-    const bootstrapRefresh = (): void => {
-
-      // Sleep until it's time to bootstrap again.
-      setTimeout(() => void this.bootstrapNvr(), PROTECT_CONTROLLER_REFRESH_INTERVAL * 1000);
-    };
 
     // Let's set a listener to wait for bootstrap events to occur so we can keep ourselves in sync with the Protect controller.
     this.ufpApi.on("bootstrap", () => {
@@ -240,11 +240,11 @@ export class ProtectNvr {
   }
 
   // Create instances of Protect device types in our plugin.
-  private addProtectDevice(accessory: PlatformAccessory, device: ProtectDeviceConfigTypes): boolean {
+  private addProtectDevice(accessory: PlatformAccessory, device: ProtectDeviceConfigTypes): ProtectDevice | null {
 
     if(!accessory || !device) {
 
-      return false;
+      return null;
     }
 
     switch(device.modelKey) {
@@ -260,51 +260,54 @@ export class ProtectNvr {
           this.configuredDevices[accessory.UUID] = new ProtectCamera(this, device as ProtectCameraConfig, accessory);
         }
 
-        return true;
+        break;
 
       case "chime":
 
         // We have a UniFi Protect chime.
         this.configuredDevices[accessory.UUID] = new ProtectChime(this, device as ProtectChimeConfig, accessory);
 
-        return true;
+        break;
 
       case "light":
 
         // We have a UniFi Protect light.
         this.configuredDevices[accessory.UUID] = new ProtectLight(this, device as ProtectLightConfig, accessory);
 
-        return true;
+        break;
 
       case "sensor":
 
         // We have a UniFi Protect sensor.
         this.configuredDevices[accessory.UUID] = new ProtectSensor(this, device as ProtectSensorConfig, accessory);
 
-        return true;
+        break;
 
       case "viewer":
 
         // We have a UniFi Protect viewer.
         this.configuredDevices[accessory.UUID] = new ProtectViewer(this, device as ProtectViewerConfig, accessory);
 
-        return true;
+        break;
 
       default:
 
         this.log.error("Unknown device class %s detected for %s.", device.modelKey, device.name ?? device.marketName);
 
-        return false;
+        return null;
     }
+
+    // Return our newly created device.
+    return this.configuredDevices[accessory.UUID];
   }
 
   // Add a newly detected Protect device to HomeKit.
-  public addHomeKitDevice(device: ProtectDeviceConfigTypes): ProtectDevice | null {
+  public addHomeKitDevice(device: ProtectDeviceConfigTypes): boolean {
 
     // If we have no MAC address, name, or this camera isn't being managed by this Protect controller, we're done.
     if(!this.ufp?.mac || !device || !device.mac || device.isAdoptedByOther || !device.isAdopted) {
 
-      return null;
+      return false;
     }
 
     // We only support certain devices.
@@ -313,7 +316,7 @@ export class ProtectNvr {
       // If we've already informed the user about this one, we're done.
       if(this.unsupportedDevices[device.mac]) {
 
-        return null;
+        return false;
       }
 
       // Notify the user we see this device, but we aren't adding it to HomeKit.
@@ -321,13 +324,13 @@ export class ProtectNvr {
 
       this.log.info("UniFi Protect device type %s is not currently supported, ignoring: %s.", device.modelKey, this.ufpApi.getDeviceName(device));
 
-      return null;
+      return false;
     }
 
     // Enable or disable certain devices based on configuration parameters.
     if(!this.hasFeature("Device", device)) {
 
-      return null;
+      return false;
     }
 
     // Generate this device's unique identifier.
@@ -356,19 +359,18 @@ export class ProtectNvr {
       this.api.updatePlatformAccessories(this.platform.accessories);
     }
 
-    // Link the accessory to it's device object and it's hosting NVR.
-    accessory.context.nvr = this.ufp.mac;
-
-    // Locate our existing Protect device instance, if we have one.
-    const protectDevice = this.configuredDevices[accessory.UUID];
-
-    // Setup the Protect device if it hasn't been configured yet.
-    if(!protectDevice) {
+    // Setup the accessory as a new Protect device in HBUP if we haven't configured it yet.
+    if(!this.configuredDevices[accessory.UUID]) {
 
       this.addProtectDevice(accessory, device);
+
+      return true;
     }
 
-    return protectDevice;
+    // Update the configuration on an existing Protect device.
+    this.events.emit("updateEvent", { header: { action: "update", hbupBootstrap: true, id: device.id, modelKey: device.modelKey }, payload: device });
+
+    return true;
   }
 
   // Discover and sync UniFi Protect devices between HomeKit and the Protect controller.
@@ -742,32 +744,6 @@ export class ProtectNvr {
     server.listen(port);
   }
 
-  // Reauthenticate with the NVR and reset any HKSV-enabled devices, as needed.
-  public async resetNvrConnection(): Promise<void> {
-
-    // Reset our HKSV-enabled devices.
-    await Promise.all(this.devices("camera").filter(x => x.hasHksv).map(async x => x.stream.hksv?.reset()));
-
-    // Clear our login credentials and error statistics.
-    this.nvrHksvErrors = 0;
-    this.ufpApi.reset();
-
-    // Bootstrap the Protect NVR.
-    await this.bootstrapNvr();
-
-    // Inform all HKSV-enabled devices that are using a timeshift buffer to reset.
-    for(const protectCamera of this.devices("camera").filter(x => x.hasHksv)) {
-
-      // Restart the timeshift buffer, if configured.
-      // eslint-disable-next-line no-await-in-loop
-      await protectCamera.stream.hksv?.restartTimeshifting();
-
-      // Put in a short delay between cameras, to alleviate potentially impacts to the Protect controller.
-      // eslint-disable-next-line no-await-in-loop
-      await sleep(1500);
-    }
-  }
-
   // Return all configured devices.
   private get devicelist(): ProtectDevices[] {
 
@@ -777,16 +753,14 @@ export class ProtectNvr {
   // Return all devices of a particular modelKey.
   private devices<T extends keyof ProtectDeviceTypes>(model?: T): ProtectDeviceTypes[T][] {
 
-    return Object.values(this.configuredDevices).filter(x => x.ufp?.modelKey === model) as ProtectDeviceTypes[T][];
+    return Object.values(this.configuredDevices).filter(device => device.ufp?.modelKey === model) as ProtectDeviceTypes[T][];
   }
 
-  // Lookup a device by it's identifier and return it if it exists.
-  public deviceLookup(deviceId: string): ProtectDevices | null {
+  // Return the Protect device object based on it's unique device identifier, if it exists.
+  public getDeviceById(deviceId: string): ProtectDevices | null {
 
     // Find the device.
-    const foundDevice = Object.keys(this.configuredDevices).find(x => this.configuredDevices[x].ufp.id === deviceId);
-
-    return foundDevice ? this.configuredDevices[foundDevice] : null;
+    return Object.values(this.configuredDevices).find(device => device.ufp.id === deviceId) ?? null;
   }
 
   // Utility function to return a floating point configuration parameter on a device.

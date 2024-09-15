@@ -34,10 +34,10 @@ export class FfmpegStreamingProcess extends FfmpegProcess {
     }
 
     // Start it up, with appropriate error handling.
-    this.start(commandLineArgs, callback, async (errorMessage: string) => {
+    this.start(commandLineArgs, callback, (errorMessage: string) => {
 
       // Stop the stream.
-      await this.delegate.stopStream(this.sessionId);
+      this.delegate.stopStream(this.sessionId);
 
       // Let homebridge know what happened and stop the stream if we've already started.
       if(!this.isStarted && this.callback) {
@@ -50,7 +50,7 @@ export class FfmpegStreamingProcess extends FfmpegProcess {
 
       // Tell Homebridge to forcibly stop the streaming session.
       this.delegate.controller.forceStopStreamingSession(this.sessionId);
-      void this.delegate.stopStream(this.sessionId);
+      this.delegate.stopStream(this.sessionId);
     });
   }
 
@@ -115,15 +115,25 @@ export class FfmpegStreamingProcess extends FfmpegProcess {
     // We want to process known streaming-related errors due to the performance and latency tweaks we've made to the FFmpeg command line. In some cases we inform the
     // user and take no action, in others, we tune our own internal parameters.
 
-    // Test for known errors due to occasional inconsistencies in the Protect livestream API.
-    const timeshiftLivestreamRegex = new RegExp("could not find corresponding trex");
+    // We're using API-based livestreaming. Be attentive to the unique errors they may present.
+    if(this.delegate.protectCamera.hints.apiStreaming && this.delegate.hksv?.isRecording) {
 
-    if(this.stderrLog.some(logEntry => timeshiftLivestreamRegex.test(logEntry))) {
+      // Test for known errors due to occasional inconsistencies in the Protect livestream API.
+      const timeshiftLivestreamRegex = new RegExp([
 
-      this.log.error("FFmpeg ended unexpectedly due to issues processing the media stream provided by the UniFi Protect livestream API. " +
-        "This error can be safely ignored - they will occur occasionally.");
+        "(Cannot determine format of input stream 0:0 after EOF)",
+        "(Finishing stream without any data written to it)",
+        "(could not find corresponding trex)",
+        "(moov atom not found)"
+      ].join("|"));
 
-      return;
+      if(this.stderrLog.some(logEntry => timeshiftLivestreamRegex.test(logEntry))) {
+
+        this.log.error("FFmpeg ended unexpectedly due to issues processing the media stream provided by the UniFi Protect livestream API. " +
+          "This error can be safely ignored - it will occur occasionally.");
+
+        return;
+      }
     }
 
     // Test for probesize errors.

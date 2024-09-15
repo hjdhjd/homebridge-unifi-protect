@@ -83,7 +83,8 @@ export const featureOptions: { [index: string]: ProtectFeatureOption[] } = {
   "Device": [
 
     { default: true, description: "Make this device available in HomeKit.", name: "" },
-    { default: false, description: "Enable the status LED for this device in HomeKit.", hasProperty: [ "ledSettings" ], name: "StatusLed" },
+    { default: false, description: "Enable the status indicator light for this device in HomeKit.", hasProperty: [ "ledSettings" ], name: "StatusLed" },
+    { default: false, description: "Add a switch accessory to control the status indicator light in HomeKit.", hasProperty: [ "ledSettings", "lightDeviceSettings" ], name: "StatusLed.Switch" },
     { default: false, description: "Make this a standalone device in HomeKit that will need to be added to HomeKit through the Home app.", name: "Standalone" },
     { default: false, description: "Synchronize the UniFi Protect name of this device with HomeKit. Synchronization is one-way only, syncing the device name from UniFi Protect to HomeKit.", name: "SyncName" }
   ],
@@ -158,15 +159,14 @@ export const featureOptions: { [index: string]: ProtectFeatureOption[] } = {
     { default: false, defaultValue: 0, description: "Top offset of the crop window, as a percentage of the original image height.", group: "Crop", name: "Crop.Y" },
     { default: false, defaultValue: 100, description: "Width of the crop window, as a percentage of original image width.", group: "Crop", name: "Crop.Width" },
     { default: false, defaultValue: 100, description: "Height of the crop window, as a percentage of original image height.", group: "Crop", name: "Crop.Height" },
-    { default: true, description: "Enable higher quality snapshots using the timeshift buffer or the livestream.", name: "HighResSnapshots" }
+    { default: true, description: "Enable higher quality snapshots.", name: "HighResSnapshots" }
   ],
 
   // HomeKit Secure Video options.
   "Video.HKSV": [
 
-    { default: true, description: "Enable the timeshift buffer for HomeKit Secure Video.", name: "TimeshiftBuffer" },
+    { default: false, description: "Use the camera status indicator light to show when an HKSV event is being recorded.", name: "StatusLedIndicator" },
     { default: false, description: "Add a switch accessory to enable or disable HKSV event recording.", name: "Recording.Switch" },
-    { default: false, defaultValue: 0, description: "Maximum HomeKit Secure Video event duration, in seconds.", name: "Recording.MaxDuration" },
     { default: false, description: "When recording HomeKit Secure Video events, force the use of the high quality video stream from the Protect controller.", name: "Record.Only.High" },
     { default: false, description: "When recording HomeKit Secure Video events, force the use of the medium quality video stream from the Protect controller.", name: "Record.Only.Medium" },
     { default: false, description: "When recording HomeKit Secure Video events, force the use of the low quality video stream from the Protect controller.", name: "Record.Only.Low" }

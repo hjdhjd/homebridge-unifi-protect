@@ -2,7 +2,7 @@
  *
  * protect-timeshift.ts: UniFi Protect livestream timeshift buffer implementation to support HomeKit Secure Video.
  */
-import { HomebridgePluginLogging, sleep } from "homebridge-plugin-utils";
+import { HomebridgePluginLogging, runWithTimeout } from "homebridge-plugin-utils";
 import { ProtectCamera, ProtectCameraPackage } from "./devices/index.js";
 import { EventEmitter } from "node:events";
 import { PROTECT_HKSV_SEGMENT_RESOLUTION } from "./settings.js";
@@ -17,11 +17,11 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
   private _channel: number;
   private _isStarted: boolean;
   private _isTransmitting: boolean;
-  private _lens: number | undefined;
+  private _lens?: number;
   private _segmentLength: number;
   private readonly accessory: PlatformAccessory;
   private eventHandlers: { [index: string]: ((segment: Buffer) => void) | (() => void) };
-  private livestream: ProtectLivestream | null;
+  private livestream?: ProtectLivestream;
   private readonly log: HomebridgePluginLogging;
   private readonly nvr: ProtectNvr;
   private readonly protectCamera: ProtectCamera;
@@ -39,8 +39,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
     this.segmentCount = 1;
     this._channel = 0;
     this.eventHandlers = {};
-    this._lens = (protectCamera instanceof ProtectCameraPackage) ? protectCamera.ufp.lenses[0].id : undefined;
-    this.livestream = null;
+    this._lens = (protectCamera instanceof ProtectCameraPackage) ? protectCamera.ufp.lenses?.[0]?.id : undefined;
     this.log = protectCamera.log;
     this.nvr = protectCamera.nvr;
     this.protectCamera = protectCamera;
@@ -49,6 +48,21 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
     // overhead for modern CPUs, but the result is a much better HKSV event recording experience.
     this._segmentLength = PROTECT_HKSV_SEGMENT_RESOLUTION;
 
+    // Now let's configure the timeshift buffer.
+    this.configureTimeshiftBuffer();
+  }
+
+  // Configure the timeshift buffer.
+  private configureTimeshiftBuffer(): void {
+
+    // If the API connection has closed, let the user know.
+    this.eventHandlers.close = (): void => {
+
+      this.log.error("The livestream API connection was unexpectedly closed by the Protect controller: " +
+        "this is typically due to device restarts or issues with Protect controller firmware versions, and can be safely ignored. Will retry again shortly.");
+    };
+
+    // Listen for any segments sent by the UniFi Protect livestream in order to create our timeshift buffer.
     this.eventHandlers.segment = (segment: Buffer): void => {
 
       // If we're transmitting, send the segment as quickly as we can so FFmpeg can consume it.
@@ -66,21 +80,6 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
         this._buffer.shift();
       }
     };
-  }
-
-  // Configure the timeshift buffer.
-  private configureTimeshiftBuffer(): void {
-
-    // If the livestream API has closed, stop what we're doing. XXX -- LEAK HERE AT CLOSE
-    this.livestream?.on("close", this.eventHandlers.close = (): void => {
-
-      this.log.error("The livestream API connection was unexpectedly closed by the Protect controller: " +
-        "this is typically due to device restarts or issues with Protect controller firmware versions, and can be safely ignored. Will retry again shortly.");
-      this.stop();
-    });
-
-    // First, we need to listen for any segments sent by the UniFi Protect livestream in order to create our timeshift buffer.
-    this.livestream?.on("segment", this.eventHandlers.segment);
   }
 
   // Start the livestream and begin maintaining our timeshift buffer.
@@ -116,10 +115,14 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
     }
 
     // Setup our listeners.
-    this.configureTimeshiftBuffer();
+    this.livestream?.on("close", this.eventHandlers.close);
+    this.livestream?.on("segment", this.eventHandlers.segment);
 
     // Start the livestream and let's begin building our timeshift buffer.
     if(!(await this.protectCamera.livestream.start(channelId, lens, this.segmentLength))) {
+
+      // Something went wrong, let's cleanup our event handlers and we're done.
+      Object.keys(this.eventHandlers).map(eventName => this.livestream?.off(eventName, this.eventHandlers[eventName]));
 
       return false;
     }
@@ -127,6 +130,16 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
     this._channel = channelId;
     this._lens = lens;
     this._isStarted = true;
+
+    // Add the initialization segment to the beginning of the timeshift buffer, if we have it. If we don't, we're either starting up or something's wrong with the API.
+    const initSegment = await this.getInitSegment();
+
+    if(!initSegment) {
+
+      this.stop();
+
+      return false;
+    }
 
     return true;
   }
@@ -147,35 +160,26 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
     return true;
   }
 
+  // Restart the timeshift buffer and underlying livestream.
+  public restart(): void {
+
+    this.livestream?.emit("restart");
+    this._buffer = [];
+  }
+
   // Start transmitting our timeshift buffer.
   public async transmitStart(): Promise<boolean> {
 
     // If we haven't started the livestream, or it was closed for some reason, let's start it now.
-    if(!this.isStarted && !(await this.start())) {
+    if((!this.isStarted && !(await this.start())) || !this.livestream?.initSegment) {
 
       this.log.error("Unable to access the Protect livestream API: this is typically due to the Protect controller or camera rebooting. Will retry again.");
-
-      await this.nvr.resetNvrConnection();
-
-      return false;
-    }
-
-    // Add the initialization segment to the beginning of the timeshift buffer, if we have it. If we don't, FFmpeg will still be able to generate a valid fMP4 stream,
-    // albeit a slightly less elegantly.
-    const initSegment = await this.getInitSegment();
-
-    if(!initSegment) {
-
-      this.log.error("Unable to begin transmitting the stream to HomeKit Secure Video: unable to retrieve initialization data from the UniFi Protect controller. " +
-        "This error is typically due to either an issue connecting to the Protect controller, or a problem on the Protect controller.");
-
-      await this.nvr.resetNvrConnection();
 
       return false;
     }
 
     // Transmit everything we have queued up to get started as quickly as possible.
-    this.emit("segment", Buffer.concat([initSegment, ...this._buffer]));
+    this.emit("segment", Buffer.concat([this.livestream.initSegment, ...this._buffer]));
 
     // Let our livestream listener know that we're now transmitting.
     this._isTransmitting = true;
@@ -213,11 +217,12 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
     }
 
     // We haven't seen it yet, wait for a couple of seconds and check an additional time.
-    await sleep(2000);
+    if(this.livestream) {
 
-    // We either have it or we don't - we can't afford to wait too long for this - HKSV is time-sensitive and we need to ensure we have a reasonable upper bound on how
-    // long we wait for data from the Protect API.
-    return this.livestream?.initSegment ?? null;
+      return runWithTimeout(this.livestream.getInitSegment(), 2000);
+    }
+
+    return null;
   }
 
   // Return the last duration milliseconds of the buffer, with an initialization segment.

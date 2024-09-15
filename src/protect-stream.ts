@@ -402,11 +402,11 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     // Set the initial bitrate we should use for this request based on what HomeKit is requesting.
     let targetBitrate = request.video.max_bit_rate;
 
-    // Override the stream quality selection if we know they're problematic on the Protect controller.
-    const overrideStream = this.protectCamera.hints.apiStreaming && ["AI Pro", "G4 Pro"].includes(this.protectCamera.ufp.marketName);
+    // Only use API livestreaming if we have a live timeshift buffer. Otherwise, we'll get better startup performance out of RTSP streaming.
+    const useApi = this.protectCamera.hints.apiStreaming && this.hksv?.isRecording;
 
     // If we're using the livestream API and we're timeshifting, we override the stream quality we've determined in favor of our timeshift buffer.
-    let rtspEntry = (this.protectCamera.hints.apiStreaming && this.protectCamera.hints.timeshift && this.hksv?.rtspEntry) ? this.hksv.rtspEntry : null;
+    let rtspEntry = useApi ? this.hksv?.rtspEntry : null;
 
     // Find the best RTSP stream based on what we're looking for.
     if(isTranscoding) {
@@ -414,8 +414,8 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       // If we have hardware transcoding enabled, we treat it uniquely and get the highest quality stream we can. Fixed-function hardware transcoders tend to perform
       // better with higher bitrate sources. Wel also want to generally bias ourselves toward higher quality streams where possible.
       rtspEntry ??= this.protectCamera.findRtsp(
-        (this.protectCamera.hints.hardwareTranscoding || overrideStream) ? 3840 : request.video.width,
-        (this.protectCamera.hints.hardwareTranscoding || overrideStream) ? 2160 : request.video.height,
+        (this.protectCamera.hints.hardwareTranscoding) ? 3840 : request.video.width,
+        (this.protectCamera.hints.hardwareTranscoding) ? 2160 : request.video.height,
         { biasHigher: true, maxPixels: this.ffmpegOptions.hostSystemMaxPixels }
       );
 
@@ -435,7 +435,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       }
     } else {
 
-      rtspEntry ??= this.protectCamera.findRtsp(overrideStream ? 3840 : request.video.width, overrideStream ? 2160 : request.video.height);
+      rtspEntry ??= this.protectCamera.findRtsp(request.video.width, request.video.height);
     }
 
     if(!rtspEntry) {
@@ -459,12 +459,12 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     //
     // - Since we are using an already existing connection to the Protect controller, we don't need to create another connection which incurs an additional delay, as well
     //   as a resource hit on the Protect controller.
-    const tsBuffer: Buffer | null = (this.protectCamera.hints.apiStreaming && this.protectCamera.hints.timeshift) ?
-      (this.hksv?.timeshift.getLast(PROTECT_LIVESTREAM_API_IDR_INTERVAL * 1000) ?? null) : null;
+    const tsBuffer: Buffer | null = useApi ? (this.hksv?.timeshift.getLast(PROTECT_LIVESTREAM_API_IDR_INTERVAL * 1000) ?? null) : null;
 
     // -hide_banner                     Suppress printing the startup banner in FFmpeg.
     // -nostats                         Suppress printing progress reports while encoding in FFmpeg.
     // -fflags flags                    Set format flags to discard any corrupt packets rather than exit.
+    // -err_detect ignore_err           Ignore decoding errors and continue rather than exit.
     // -max_delay 500000                Set an upper limit on how much time FFmpeg can take in demuxing packets, in microseconds.
     // -flags low_delay                 Tell FFmpeg to optimize for low delay / realtime decoding.
     // -r fps                           Set the input frame rate for the video stream.
@@ -472,31 +472,22 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
       "-hide_banner",
       "-nostats",
-      "-fflags", "+discardcorrupt",
+      "-fflags", "+discardcorrupt+flush_packets+genpts+igndts+nobuffer",
+      "-err_detect", "ignore_err",
       ...this.ffmpegOptions.videoDecoder,
       "-max_delay", "500000",
       "-flags", "low_delay",
       "-r", rtspEntry.channel.fps.toString()
     ];
 
-    if(this.protectCamera.hints.apiStreaming) {
+    if(useApi) {
 
-      // -probesize number              How many bytes should be analyzed for stream information. Use the lesser of the size of the timeshift buffer or our defaults.
       // -f mp4                         Tell ffmpeg that it should expect an MP4-encoded input stream.
       // -i pipe:0                      Use standard input to get video data.
-      // -enc_time_base demux           Set the encoder timebase to avoid timebase adjustments at the encoder layer.
-      // -fps_mode passthrough          Pass through the framerate as defined by the Protect stream. This avoids frame duplication.
-      // -muxdelay 0                    Set the maximum demux decode delay to 0.
-      // -video_track_timescale 90000   Set the timescale to what Protect sends out.
       ffmpegArgs.push(
 
-        "-probesize", Math.min(this.probesize, tsBuffer?.length ?? this.probesize).toString(),
         "-f", "mp4",
-        "-i", "pipe:0",
-        "-enc_time_base", "-1", // -1 should be changed to demux for FFmpeg 7 and beyond.
-        "-fps_mode", "passthrough",
-        "-muxdelay", "0",
-        "-video_track_timescale", "90000"
+        "-i", "pipe:0"
       );
     } else {
 
@@ -513,18 +504,25 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       );
     }
 
+    // -max_muxing_queue_size 4096      Set the muxing buffer to 4096 packets to allow FFmpeg enough leeway to ensure audio and video remains in sync.
+    // -muxdelay 0                      Set the maximum demux decode delay to 0.
     // -map 0:v:0                       selects the first available video track from the stream. Protect actually maps audio
     //                                  and video tracks in opposite locations from where FFmpeg typically expects them. This
     //                                  setting is a more general solution than naming the track locations directly in case
     //                                  Protect changes this in the future.
-    ffmpegArgs.push("-map", "0:v:0");
+    ffmpegArgs.push(
+
+      "-max_muxing_queue_size", "4096",
+      "-muxdelay", "0",
+      "-map", "0:v:0"
+    );
 
     // Inform the user.
     this.log.info("Streaming request from %s%s: %sx%s@%sfps, %s kbps. %s %s, %s kbps [%s].",
       sessionInfo.address, (request.audio.packet_time === 60) ? " (high latency connection)" : "",
       request.video.width, request.video.height, request.video.fps, targetBitrate.toLocaleString("en-US"),
       isTranscoding ? (this.protectCamera.hints.hardwareTranscoding ? "Hardware accelerated transcoding" : "Transcoding") : "Using",
-      rtspEntry.name, (rtspEntry.channel.bitrate / 1000).toLocaleString("en-US"), this.protectCamera.hints.apiStreaming ? "API" : "RTSP");
+      rtspEntry.name, (rtspEntry.channel.bitrate / 1000).toLocaleString("en-US"), useApi ? "API" : "RTSP");
 
     // Check to see if we're transcoding. If we are, set the right FFmpeg encoder options. If not, copy the video stream.
     if(isTranscoding) {
@@ -533,7 +531,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       ffmpegArgs.push(...this.ffmpegOptions.streamEncoder({
 
         bitrate: targetBitrate,
-        fps: rtspEntry.channel.fps,
+        fps: request.video.fps,
         height: request.video.height,
         idrInterval: PROTECT_HOMEKIT_IDR_INTERVAL,
         inputFps: rtspEntry.channel.fps,
@@ -552,7 +550,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       );
 
       // The livestream API needs to be transmuxed before we use it directly.
-      if(this.protectCamera.hints.apiStreaming) {
+      if(useApi) {
 
         // -r bsf:v h264_mp4toannexb    Convert the livestream container format from MP4 to MPEG-TS.
         ffmpegArgs.push("-bsf:v", "h264_mp4toannexb");
@@ -599,7 +597,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     // -ar samplerate                   Sample rate to use for this audio. This is specified by HomeKit.
     // -b:a bitrate                     Bitrate to use for this audio stream. This is specified by HomeKit.
     // -bufsize size                    This is the decoder buffer size, which drives the variability / quality of the output bitrate.
-    // -ac 1                            Set the number of audio channels to 1.
+    // -ac number                       Set the number of audio channels.
     // -frame_size                      Set the number of samples per frame to match the requested frame size from HomeKit.
     if(sessionInfo.hasAudioSupport) {
 
@@ -697,10 +695,51 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
         { addressVersion: sessionInfo.addressVersion, port: sessionInfo.videoReturnPort },
       callback);
 
-    if(this.protectCamera.hints.apiStreaming) {
+    if(useApi) {
 
       const livestream = this.protectCamera.livestream.acquire(rtspEntry.channel.id, rtspEntry.lens);
       let seenInitSegment = false;
+
+      // We maintain a queue to manage segment writes to FFmpeg. Why? We need to account for backpressure when writing to FFmpeg.
+      const segmentQueue: Buffer[] = [];
+      let isWriting = false;
+
+      // Segment queue manager.
+      const processSegmentQueue = (segment?: Buffer): void => {
+
+        // Add the segment to the queue.
+        if(segment) {
+
+          segmentQueue.push(segment);
+        }
+
+        // If we already have a write in progress, or nothing left to write, we're done.
+        if(isWriting || segmentQueue.length === 0) {
+
+          return;
+        }
+
+        // Dequeue and write.
+        isWriting = true;
+        segment = segmentQueue.shift();
+
+        // Send the segment to FFmpeg for processing.
+        if(!ffmpegStream.stdin?.write(segment)) {
+
+          // FFmpeg isn't ready to read more data yet, queue the segment until we are.
+          ffmpegStream.stdin?.once("drain", () => {
+
+            // Mark us available to write and process the write queue.
+            isWriting = false;
+            processSegmentQueue();
+          });
+        } else {
+
+          // Process the next segment.
+          isWriting = false;
+          processSegmentQueue();
+        }
+      };
 
       // If we're using a timeshift buffer, let's use that to livestream. It has the dual benefit of reducing the workload on the Protect controller since it's already
       // providing a livestream to us and it also improves performance by ensuring there's several seconds of video ready to immediately transmit.
@@ -710,17 +749,17 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
           if(tsBuffer) {
 
-            ffmpegStream.stdin?.write(tsBuffer ?? (await livestream.getInitSegment()));
+            processSegmentQueue(tsBuffer ?? (await livestream.getInitSegment()));
             seenInitSegment = true;
           } else {
 
-            ffmpegStream.stdin?.write(await livestream.getInitSegment());
+            processSegmentQueue(await livestream.getInitSegment());
             seenInitSegment = true;
           }
         }
 
         // Send the segment to FFmpeg for processing.
-        ffmpegStream.stdin?.write(segment);
+        processSegmentQueue(segment);
       };
 
       const closeListener = (): void => void ffmpegStream.ffmpegProcess?.stdin.end();
@@ -970,7 +1009,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       case StreamRequestTypes.STOP:
       default:
 
-        await this.stopStream(request.sessionID);
+        this.stopStream(request.sessionID);
         callback();
 
         break;
@@ -978,7 +1017,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   }
 
   // Close a video stream.
-  public async stopStream(sessionId: string): Promise<void> {
+  public stopStream(sessionId: string): void {
 
     try {
 
@@ -1014,12 +1053,11 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   }
 
   // Shutdown all our video streams.
-  public async shutdown(): Promise<void> {
+  public shutdown(): void {
 
     for(const session of Object.keys(this.ongoingSessions)) {
 
-      // eslint-disable-next-line no-await-in-loop
-      await this.stopStream(session);
+      this.stopStream(session);
     }
   }
 

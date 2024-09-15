@@ -122,7 +122,7 @@ export class FfmpegProcess extends EventEmitter {
   }
 
   // Start our FFmpeg process.
-  protected start(commandLineArgs?: string[], callback?: StreamRequestCallback, errorHandler?: (errorMessage: string) => Promise<void>): void {
+  protected start(commandLineArgs?: string[], callback?: StreamRequestCallback, errorHandler?: (errorMessage: string) => Promise<void> | void): void {
 
     // If we haven't prepared our FFmpeg process, do so now.
     if(!this.isPrepared) {
@@ -145,7 +145,7 @@ export class FfmpegProcess extends EventEmitter {
   }
 
   // Configure our FFmpeg process, once started.
-  protected configureProcess(errorHandler?: (errorMessage: string) => Promise<void>): void {
+  protected configureProcess(errorHandler?: (errorMessage: string) => Promise<void> | void): void {
 
     let dataListener: (data: Buffer) => void;
     let errorListener: (error: Error) => void;
@@ -183,7 +183,6 @@ export class FfmpegProcess extends EventEmitter {
         this.isStarted = true;
         this.isEnded = false;
         this.log.debug("Received the first frame.");
-        this.emit("ffmpegStarted");
 
         // Always remember to execute the callback once we're setup to let homebridge know we're streaming.
         if(this.callback) {

@@ -98,20 +98,21 @@ export class ProtectEvents extends EventEmitter {
   // Process Protect API update events.
   private ufpUpdates(packet: ProtectEventPacket): void {
 
+    const payload = packet.payload as ProtectDeviceConfigTypes;
     let protectDevice: ProtectDevice | null;
 
     switch(packet.header.modelKey) {
 
       case "nvr":
 
-        this.nvr.ufp = this.updateUfp(this.nvr.ufp, packet.payload);
+        this.nvr.ufp = this.updateUfp(this.nvr.ufp, payload);
 
         break;
 
       default:
 
         // Lookup the device.
-        protectDevice = this.nvr.deviceLookup(packet.header.id);
+        protectDevice = this.nvr.getDeviceById(packet.header.id);
 
         // No device found, we're done.
         if(!protectDevice) {
@@ -119,21 +120,26 @@ export class ProtectEvents extends EventEmitter {
           break;
         }
 
-        // Update our device state.
-        protectDevice.ufp = this.updateUfp(protectDevice.ufp, packet.payload);
+        // Update our device state. If we're refreshing the bootstrap, we set it as the full payload rather than update the UFP configuration.
+        protectDevice.ufp = packet.header.hbupBootstrap ? payload : this.updateUfp(protectDevice.ufp, payload);
 
-        // Detect device availability changes.
-        if((packet.payload as Record<string, unknown>).state) {
-
-          protectDevice.log.debug("State has changed to %s.", protectDevice.isOnline ? "online" : "offline");
+        // Detect device availability changes. This ensures we capture the true availability state of a Protect device since it appears that Protect occasionally fails
+        // to send an event out indicating state changes. We catch anything that's been missed dynamically when the bootstrap update occurs.
+        if("isConnected" in payload) {
 
           // If we have services on the accessory associated with the Protect device that have a StatusActive characteristic set, update our availability state.
           protectDevice.accessory.services.filter(x => x.testCharacteristic(this.hap.Characteristic.StatusActive))
             ?.map(x => x.updateCharacteristic(this.hap.Characteristic.StatusActive, protectDevice?.isOnline ?? true));
         }
 
+        // If this is a bootstrap-related update, we're done here. Anything beyond this point is intended for dynamic event updates.
+        if(packet.header.hbupBootstrap) {
+
+          break;
+        }
+
         // Sync names, if configured to do so.
-        if((packet.payload as Record<string, unknown>).name && protectDevice.hints.syncName) {
+        if(payload.name && protectDevice.hints.syncName) {
 
           protectDevice.log.info("Name change detected. A restart of Homebridge may be needed in order to complete name synchronization with HomeKit.");
           protectDevice.configureInfo();
@@ -143,7 +149,7 @@ export class ProtectEvents extends EventEmitter {
     }
 
     // Update the internal list we maintain.
-    this.ufpDeviceState[packet.header.id] = Object.assign(this.ufpDeviceState[packet.header.id] ?? {}, packet.payload);
+    this.ufpDeviceState[packet.header.id] = Object.assign(this.ufpDeviceState[packet.header.id] ?? {}, payload);
   }
 
   // Process device additions and removals from the Protect update events API.
@@ -165,7 +171,7 @@ export class ProtectEvents extends EventEmitter {
 
     // Lookup the device.
     const deviceId = (payload.metadata.deviceId as Record<string, unknown>).text as string;
-    const protectDevice = this.nvr.deviceLookup(deviceId);
+    const protectDevice = this.nvr.getDeviceById(deviceId);
 
     // We're adopting.
     if(payload.type === "deviceAdopted") {
@@ -208,15 +214,19 @@ export class ProtectEvents extends EventEmitter {
     // Listen for any messages coming in from our listener. We route events to the appropriate handlers based on the type of event that comes across.
     this.ufpApi.on("message", (packet: ProtectEventPacket): void => {
 
+      let cameraId;
+
       switch(packet.header.action) {
 
         case "add":
 
           this.emit("addEvent", packet);
 
-          if((packet.payload as ProtectEventAdd).camera) {
+          cameraId = (packet.payload as ProtectEventAdd).camera ?? (packet.payload as ProtectEventAdd).cameraId;
 
-            this.emit("addEvent." + (packet.payload as ProtectEventAdd).camera, packet);
+          if(cameraId) {
+
+            this.emit("addEvent." + cameraId, packet);
           }
 
           this.emit("addEvent." + packet.header.modelKey, packet);
@@ -285,59 +295,38 @@ export class ProtectEvents extends EventEmitter {
       return;
     }
 
-    // If we have an active motion event inflight, we're done.
-    if(this.eventTimers[protectDevice.id]) {
+    // Only update HomeKit if we don't have a motion event inflight.
+    if(!this.eventTimers[protectDevice.id]) {
 
-      return;
-    }
+      // Trigger the motion event in HomeKit.
+      motionService.updateCharacteristic(this.hap.Characteristic.MotionDetected, true);
 
-    const protectCamera = protectDevice as ProtectCamera;
+      // If we have a motion trigger switch configured, update it.
+      protectDevice.accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_MOTION_TRIGGER)?.updateCharacteristic(this.hap.Characteristic.On, true);
 
-    // Trigger the motion event in HomeKit.
-    motionService.updateCharacteristic(this.hap.Characteristic.MotionDetected, true);
+      // Publish the motion event to MQTT, if the user has configured it.
+      this.nvr.mqtt?.publish(protectDevice.ufp.mac, "motion", "true");
 
-    // If we have a motion trigger switch configured, update it.
-    protectDevice.accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_MOTION_TRIGGER)?.updateCharacteristic(this.hap.Characteristic.On, true);
+      // Log the event, if configured to do so.
+      if(protectDevice.hints.logMotion) {
 
-    // Publish the motion event to MQTT, if the user has configured it.
-    this.nvr.mqtt?.publish(protectDevice.ufp.mac, "motion", "true");
+        let logMessage = "";
 
-    // Log the event, if configured to do so.
-    if(protectDevice.hints.logMotion) {
+        // If we have license plate telemetry, let's inform the user if we're logging for motion events.
+        if(metadata?.licensePlate && detectedObjects.includes("licensePlate") && metadata.licensePlate.name) {
 
-      let logMessage = "";
+          logMessage = " (license plate: " + metadata.licensePlate.name + ", " + metadata.licensePlate.confidenceLevel + "% confidence)";
+        }
 
-      // If we have license plate telemetry, let's inform the user if we're logging for motion events.
-      if(metadata?.licensePlate && detectedObjects.includes("licensePlate") && metadata.licensePlate.name) {
-
-        logMessage = " (license plate: " + metadata.licensePlate.name + ", " + metadata.licensePlate.confidenceLevel + "% confidence)";
+        protectDevice.log.info("Motion detected%s.",
+          ((protectDevice.ufp.modelKey === "camera") && detectedObjects.length &&
+          (!(protectDevice as ProtectCamera).stream?.hksv?.isRecording ||
+          protectDevice.hints.smartDetect || protectDevice.hints.smartDetectSensors)) ? ": " + detectedObjects.sort().join(", ") + logMessage : "");
       }
+    } else {
 
-      protectDevice.log.info("Motion detected%s.",
-        ((protectDevice.ufp.modelKey === "camera") && detectedObjects.length &&
-        (!protectCamera.stream?.hksv?.isRecording ||
-        protectCamera.hints.smartDetect || protectDevice.hasFeature("Motion.SmartDetect.ObjectSensors"))) ? ": " + detectedObjects.sort().join(", ") + logMessage : "");
-    }
-
-    // Iterate through our detected Protect smart object types.
-    for(const detectedObject of detectedObjects) {
-
-      // Trigger smart motion contact sensor, if configured.
-      protectDevice.accessory.getServiceById(this.hap.Service.ContactSensor, ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + "." + detectedObject)
-        ?.updateCharacteristic(this.hap.Characteristic.ContactSensorState, true);
-
-      // Publish the smart motion event to MQTT, if the user has configured it.
-      this.nvr.mqtt?.publish(protectDevice.ufp.mac, "motion/smart/" + detectedObject, "true");
-
-      // Trigger license plate contact sensors, if configured.
-      if(metadata && ("licensePlate" in metadata) && (detectedObject === "licensePlate") && ("name" in metadata.licensePlate)) {
-
-        protectDevice.accessory.getServiceById(this.hap.Service.ContactSensor, ProtectReservedNames.CONTACT_MOTION_SMARTDETECT_LICENSE + "." +
-          metadata.licensePlate.name.toUpperCase())?.updateCharacteristic(this.hap.Characteristic.ContactSensorState, true);
-
-        // Publish the smart motion event to MQTT, if the user has configured it.
-        this.nvr.mqtt?.publish(protectDevice.ufp.mac, "motion/smart/" + detectedObject + "/metadata", JSON.stringify(metadata));
-      }
+      // Clear out the inflight motion event timer.
+      clearTimeout(this.eventTimers[protectDevice.id]);
     }
 
     // Reset our motion event after motionDuration.
@@ -359,17 +348,50 @@ export class ProtectEvents extends EventEmitter {
     }, protectDevice.hints.motionDuration * 1000);
 
     // If we have an active smart motion contact sensor reset timer, let's cancel it and create a new one.
-    if(this.eventTimers[protectDevice.id + ".Motion.SmartDetect.ObjectSensors"]) {
+    detectedObjects.map(objectSensor => this.eventTimers[protectDevice.id + ".Motion.SmartDetect.ObjectSensors." + objectSensor] &&
+      clearTimeout(this.eventTimers[protectDevice.id + ".Motion.SmartDetect.ObjectSensors." + objectSensor]));
 
-      // Clear out the inflight timer from our motion event tracker.
-      clearTimeout(this.eventTimers[protectDevice.id + ".Motion.SmartDetect.ObjectSensors"]);
+    // Iterate through our detected Protect smart object types, if not already triggered.
+    for(const detectedObject of detectedObjects.filter(objectSensor => !protectDevice.accessory.getServiceById(this.hap.Service.ContactSensor,
+      ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + "." + objectSensor)?.getCharacteristic(this.hap.Characteristic.ContactSensorState).value)) {
+
+      // Trigger smart motion contact sensor, if configured.
+      protectDevice.accessory.getServiceById(this.hap.Service.ContactSensor, ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + "." + detectedObject)
+        ?.updateCharacteristic(this.hap.Characteristic.ContactSensorState, true);
+
+      // Publish the smart motion event to MQTT, if the user has configured it.
+      this.nvr.mqtt?.publish(protectDevice.ufp.mac, "motion/smart/" + detectedObject, "true");
+
+      // Trigger license plate contact sensors, if configured.
+      if(metadata && ("licensePlate" in metadata) && (detectedObject === "licensePlate") && ("name" in metadata.licensePlate)) {
+
+        protectDevice.accessory.getServiceById(this.hap.Service.ContactSensor, ProtectReservedNames.CONTACT_MOTION_SMARTDETECT_LICENSE + "." +
+          metadata.licensePlate.name.toUpperCase())?.updateCharacteristic(this.hap.Characteristic.ContactSensorState, true);
+
+        // Publish the smart motion event to MQTT, if the user has configured it.
+        this.nvr.mqtt?.publish(protectDevice.ufp.mac, "motion/smart/" + detectedObject + "/metadata", JSON.stringify(metadata));
+      }
+
+      // Log the event, if configured to do so.
+      if(protectDevice.hints.logMotion) {
+
+        let logMessage = "";
+
+        // If we have license plate telemetry, let's inform the user if we're logging for motion events.
+        if(metadata?.licensePlate && (detectedObject === "licensePlate") && metadata.licensePlate.name) {
+
+          logMessage = " (license plate: " + metadata.licensePlate.name + ", " + metadata.licensePlate.confidenceLevel + "% confidence)";
+        }
+
+        protectDevice.log.info("Motion detected: %s%s.", detectedObject, logMessage);
+      }
     }
 
-    // Reset our smart motion contact sensors after motionDuration.
-    this.eventTimers[protectDevice.id + ".Motion.SmartDetect.ObjectSensors"] = setTimeout(() => {
+    // Reset smart motion contact sensors, if configured.
+    for(const detectedObject of detectedObjects) {
 
-      // Reset smart motion contact sensors, if configured.
-      for(const detectedObject of detectedObjects) {
+      // Reset our smart motion contact sensors after motionDuration.
+      this.eventTimers[protectDevice.id + ".Motion.SmartDetect.ObjectSensors." + detectedObject] = setTimeout(() => {
 
         // Reset our license plate contact sensor, if configured.
         if(metadata && ("licensePlate" in metadata) && (detectedObject === "licensePlate") && ("name" in metadata.licensePlate)) {
@@ -386,14 +408,14 @@ export class ProtectEvents extends EventEmitter {
         this.nvr.mqtt?.publish(protectDevice.ufp.mac, "motion/smart/" + detectedObject, "false");
 
         protectDevice.log.debug("Resetting smart object motion event.");
-      }
 
-      // Delete the timer from our motion event tracker.
-      delete this.eventTimers[protectDevice.id + ".Motion.SmartDetect.ObjectSensors"];
-    }, protectDevice.hints.motionDuration * 1000);
+        // Delete the timer from our motion event tracker.
+        delete this.eventTimers[protectDevice.id + ".Motion.SmartDetect.ObjectSensors"];
+      }, protectDevice.hints.motionDuration * 1000);
+    }
 
-    // If we don't have smart motion detection enabled, or if we do have it enabled and we have a smart motion event that's detected a person, let's process our
-    // occupancy event updates.
+    // If we don't have smart motion detection enabled, or if we do have it enabled and we have a smart motion event that's detected an object of interest, let's process
+    // our occupancy event updates.
     if(!protectDevice.hints.smartDetect || (protectDevice.hints.smartDetect && detectedObjects.some(x => protectDevice.hints.smartOccupancy.includes(x)))) {
 
       // First, let's determine if the user has an occupancy sensor configured, before we process anything.

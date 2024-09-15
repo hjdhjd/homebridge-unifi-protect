@@ -2,11 +2,10 @@
  *
  * protect-camera.ts: Camera device class for UniFi Protect.
  */
-import { CharacteristicValue, PlatformAccessory, Resolution } from "homebridge";
+import { CharacteristicValue, PlatformAccessory, Resolution, Service } from "homebridge";
 import { ProtectCameraChannelConfig, ProtectCameraConfig, ProtectCameraConfigPayload, ProtectEventAdd, ProtectEventPacket } from "unifi-protect";
 import { ProtectReservedNames, toCamelCase } from "../protect-types.js";
 import { LivestreamManager } from "../protect-livestream.js";
-import { PROTECT_HKSV_IDR_INTERVAL } from "../settings.js";
 import { ProtectDevice } from "./protect-device.js";
 import { ProtectNvr } from "../protect-nvr.js";
 import { ProtectStreamingDelegate } from "../protect-stream.js";
@@ -31,6 +30,8 @@ type RtspOptions = Partial<{
 
 export class ProtectCamera extends ProtectDevice {
 
+  private ambientLight: number;
+  private ambientLightTimer?: NodeJS.Timeout;
   public hasHksv: boolean;
   private isDeleted: boolean;
   public isRinging: boolean;
@@ -46,6 +47,7 @@ export class ProtectCamera extends ProtectDevice {
 
     super(nvr, accessory);
 
+    this.ambientLight = 0;
     this.hasHksv = false;
     this.isDeleted = false;
     this.isRinging = false;
@@ -70,12 +72,13 @@ export class ProtectCamera extends ProtectDevice {
     this.hints.hardwareDecoding = true;
     this.hints.hardwareTranscoding = this.hasFeature("Video.Transcode.Hardware");
     this.hints.highResSnapshots = this.hasFeature("Video.HighResSnapshots");
+    this.hints.hksvRecordingIndicator = this.hasFeature("Video.HKSV.StatusLedIndicator");
     this.hints.ledStatus = this.ufp.featureFlags.hasLedStatus && this.hasFeature("Device.StatusLed");
     this.hints.logDoorbell = this.hasFeature("Log.Doorbell");
     this.hints.logHksv = this.hasFeature("Log.HKSV");
     this.hints.probesize = 16384;
     this.hints.smartDetect = this.ufp.featureFlags.hasSmartDetect && this.hasFeature("Motion.SmartDetect");
-    this.hints.timeshift = this.hasFeature("Video.HKSV.TimeshiftBuffer");
+    this.hints.smartDetectSensors = this.hints.smartDetect && this.hasFeature("Motion.SmartDetect.ObjectSensors");
     this.hints.transcode = this.hasFeature("Video.Transcode");
     this.hints.transcodeBitrate = this.getFeatureNumber("Video.Transcode.Bitrate") as number;
     this.hints.transcodeHighLatency = this.hasFeature("Video.Transcode.HighLatency");
@@ -128,16 +131,14 @@ export class ProtectCamera extends ProtectDevice {
         ": " + this.ufp.featureFlags.smartDetectTypes.sort().join(", ") : "");
     }
 
-    if(this.hints.apiStreaming) {
-
-      this.log.warn("API streaming enabled. This feature is experimental and provided without support. Any related support requests will be closed without comment.");
-    }
-
     // Configure accessory information.
     this.configureInfo();
 
     // Configure MQTT services.
     this.configureMqtt();
+
+    // Configure the ambient light sensor.
+    await this.configureAmbientLightSensor();
 
     // Configure the motion sensor.
     this.configureMotionSensor();
@@ -164,6 +165,9 @@ export class ProtectCamera extends ProtectDevice {
     // Configure our NVR recording switches.
     this.configureNvrRecordingSwitch();
 
+    // Configure the status indicator light switch.
+    this.configureStatusLedSwitch();
+
     // Configure the doorbell trigger.
     this.configureDoorbellTrigger();
 
@@ -187,6 +191,9 @@ export class ProtectCamera extends ProtectDevice {
       void this.stream.hksv.updateRecordingActive(false);
     }
 
+    // Cleanup our livestream manager.
+    this.livestream.shutdown();
+
     super.cleanup();
 
     this.isDeleted = true;
@@ -196,15 +203,16 @@ export class ProtectCamera extends ProtectDevice {
   protected eventHandler(packet: ProtectEventPacket): void {
 
     const payload = packet.payload as ProtectCameraConfigPayload;
+    const hasProperty = (properties: string[]): boolean => properties.some(property => property in payload);
 
     // Process any RTSP stream or video codec updates.
-    if(payload.channels || payload.videoCodec) {
+    if(hasProperty(["channels", "videoCodec"])) {
 
       void this.configureVideoStream();
     }
 
     // Process motion events.
-    if(payload.lastMotion) {
+    if(hasProperty(["lastMotion"])) {
 
       // We only want to process the motion event if we have the right payload, and either HKSV recording is enabled, or HKSV recording is disabled and we have
       // smart motion events disabled (or a device without smart motion capabilities) since those are handled elsewhere.
@@ -216,9 +224,9 @@ export class ProtectCamera extends ProtectDevice {
     }
 
     // Process ring events.
-    if(payload.lastRing) {
+    if(hasProperty(["lastRing"])) {
 
-      this.nvr.events.doorbellEventHandler(this, payload.lastRing);
+      this.nvr.events.doorbellEventHandler(this, payload.lastRing as number);
     }
 
     // Process camera details updates:
@@ -226,7 +234,7 @@ export class ProtectCamera extends ProtectDevice {
     //   - name change.
     //   - camera status light.
     //   - camera recording settings.
-    if(payload.state || payload.name || payload.ledSettings?.isEnabled || payload.recordingSettings?.mode) {
+    if(hasProperty(["isConnected", "name", "ledSettings", "recordingSettings"])) {
 
       this.updateDevice();
     }
@@ -238,13 +246,118 @@ export class ProtectCamera extends ProtectDevice {
     const payload = packet.payload as ProtectEventAdd;
 
     // We're only interested in smart motion detection events.
-    if((packet.header.modelKey !== "event") || !["smartDetectLine", "smartDetectZone"].includes(payload.type) || !payload.smartDetectTypes.length) {
+    if((packet.header.modelKey !== "smartDetectObject") &&
+      ((packet.header.modelKey !== "event") || !["smartDetectLine", "smartDetectZone"].includes(payload.type) || !payload.smartDetectTypes.length)) {
 
       return;
     }
 
     // Process the motion event.
-    this.nvr.events.motionEventHandler(this, payload.smartDetectTypes, payload.metadata);
+    this.nvr.events.motionEventHandler(this, (packet.header.modelKey === "smartDetectObject") ? [ payload.type ] : payload.smartDetectTypes, payload.metadata);
+  }
+
+  // Configure the ambient light sensor for HomeKit.
+  private async configureAmbientLightSensor(): Promise<boolean> {
+
+    // Configure the ambient light sensor only if it exists on the camera.
+    if(!this.ufp.featureFlags.hasLuxCheck) {
+
+      return false;
+    }
+
+    // Acquire the service.
+    const service = this.acquireService(this.hap.Service.LightSensor, undefined, undefined, (lightSensorService: Service) => {
+
+      lightSensorService.addOptionalCharacteristic(this.hap.Characteristic.StatusActive);
+    });
+
+    // Fail gracefully.
+    if(!service) {
+
+      this.log.error("Unable to add ambient light sensor.");
+
+      return false;
+    }
+
+    const getLux = async (): Promise<number> => {
+
+      if(!this.isOnline) {
+
+        return -1;
+      }
+
+      const response = await this.nvr.ufpApi.retrieve(this.nvr.ufpApi.getApiEndpoint(this.ufp.modelKey) + "/" + this.ufp.id + "/lux");
+
+      if(!response?.ok) {
+
+        return -1;
+      }
+
+      try {
+
+        let lux = (await response.json() as Record<string, number>).illuminance ?? -1;
+
+        // The minimum value for ambient light in HomeKit is 0.0001. I have no idea why...but it is. Honor it.
+        if(!lux) {
+
+          lux = 0.0001;
+        }
+
+        return lux;
+      // eslint-disable-next-line @stylistic/keyword-spacing
+      } catch {
+
+        // We're intentionally ignoring any errors parsing a response and will fall through.
+      }
+
+      return -1;
+    };
+
+    // Update the ambient light sensor at regular intervals
+    this.ambientLightTimer = setInterval(async () => {
+
+      // Stop updating if we no longer exist.
+      if(this.isDeleted) {
+
+        clearInterval(this.ambientLightTimer);
+
+        return;
+      }
+
+      // Grab the current ambient light level.
+      const lux = await getLux();
+
+      // Nothing to update, we're done.
+      if((this.ambientLight === lux) || (lux === -1)) {
+
+        return;
+      }
+
+      // Update the sensor.
+      service.updateCharacteristic(this.hap.Characteristic.CurrentAmbientLightLevel, this.ambientLight = lux);
+
+      // Publish the state.
+      this.publish("ambientlight", this.ambientLight.toString());
+    }, 60 * 1000);
+
+    // Retrieve the active state when requested.
+    service.getCharacteristic(this.hap.Characteristic.StatusActive)?.onGet(() => this.isOnline);
+
+    // Initialize the sensor.
+    this.ambientLight = await getLux();
+
+    if(this.ambientLight === -1) {
+
+      this.ambientLight = 0.0001;
+    }
+
+    // Retrieve the current light level when requested.
+    service.getCharacteristic(this.hap.Characteristic.CurrentAmbientLightLevel)?.onGet(() => this.ambientLight);
+
+    service.updateCharacteristic(this.hap.Characteristic.CurrentAmbientLightLevel, this.ambientLight);
+    service.updateCharacteristic(this.hap.Characteristic.StatusActive, this.isOnline);
+
+    return true;
   }
 
   // Configure discrete smart motion contact sensors for HomeKit.
@@ -269,7 +382,7 @@ export class ProtectCamera extends ProtectDevice {
     }
 
     // If we don't have smart motion detection available or we have smart motion object contact sensors disabled, let's remove them.
-    if(!this.ufp.featureFlags.hasSmartDetect || !this.hasFeature("Motion.SmartDetect.ObjectSensors")) {
+    if(!this.hints.smartDetectSensors) {
 
       // Check for object-centric contact sensors that are no longer enabled and remove them.
       for(const objectService of this.accessory.services.filter(x => x.subtype?.startsWith(ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + "."))) {
@@ -309,7 +422,7 @@ export class ProtectCamera extends ProtectDevice {
     let enabledContactSensors = [];
 
     // Add individual contact sensors for each object detection type, if needed.
-    if(this.hasFeature("Motion.SmartDetect.ObjectSensors")) {
+    if(this.hints.smartDetectSensors) {
 
       for(const smartDetectType of this.ufp.featureFlags.smartDetectTypes) {
 
@@ -462,36 +575,15 @@ export class ProtectCamera extends ProtectDevice {
     // Find the service, if it exists.
     const statusLedService = this.accessory.getService(this.hap.Service.CameraOperatingMode);
 
-    // Have we enabled the camera status LED?
+    // Have we enabled the camera status indicator light?
     if(this.hints.ledStatus && statusLedService) {
 
       // Turn the status light on or off.
-      statusLedService.getCharacteristic(this.hap.Characteristic.CameraOperatingModeIndicator)?.onGet(() => {
-
-        return this.ufp.ledSettings?.isEnabled === true;
-      });
-
-      statusLedService.getCharacteristic(this.hap.Characteristic.CameraOperatingModeIndicator)?.onSet(async (value: CharacteristicValue) => {
-
-        const ledState = value === true;
-
-        // Update the status light in Protect.
-        const newDevice = await this.nvr.ufpApi.updateDevice(this.ufp, { ledSettings: { isEnabled: ledState } });
-
-        if(!newDevice) {
-
-          this.log.error("Unable to turn the status light %s. Please ensure this username has the Administrator role in UniFi Protect.", ledState ? "on" : "off");
-
-          return;
-        }
-
-        // Update our internal view of the device configuration.
-        this.ufp = newDevice;
-      });
-
+      statusLedService.getCharacteristic(this.hap.Characteristic.CameraOperatingModeIndicator)?.onGet(() => this.statusLed);
+      statusLedService.getCharacteristic(this.hap.Characteristic.CameraOperatingModeIndicator)?.onSet(async (value: CharacteristicValue) => this.setStatusLed(!!value));
 
       // Initialize the status light state.
-      statusLedService.updateCharacteristic(this.hap.Characteristic.CameraOperatingModeIndicator, this.ufp.ledSettings.isEnabled === true);
+      statusLedService.updateCharacteristic(this.hap.Characteristic.CameraOperatingModeIndicator, this.statusLed);
     } else if(statusLedService) {
 
       // Remove the camera status light if we have it.
@@ -574,16 +666,6 @@ export class ProtectCamera extends ProtectDevice {
 
     // Figure out which camera channels are RTSP-enabled, and user-enabled.
     let cameraChannels = this.ufp.channels.filter(x => x.isRtspEnabled);
-
-    // Make sure we've got a HomeKit compatible IDR frame interval. If not, let's take care of that.
-    const idrChannels = cameraChannels.filter(x => x.idrInterval !== (PROTECT_HKSV_IDR_INTERVAL / 2));
-
-    if(idrChannels.length) {
-
-      // Edit the channel map and update the Protect controller.
-      this.ufp = await this.nvr.ufpApi.updateDevice(this.ufp, { channels: idrChannels.map(x => Object.assign(x, { idrInterval: (PROTECT_HKSV_IDR_INTERVAL / 2) })) }) ??
-        this.ufp;
-    }
 
     // Set the camera and shapshot URLs.
     const cameraUrl = "rtsps://" + (this.nvr.config.overrideAddress ?? this.ufp.connectionHost) + ":" + this.nvr.ufp.ports.rtsps.toString() + "/";
@@ -780,7 +862,7 @@ export class ProtectCamera extends ProtectDevice {
 
       this.log.info("WARNING: Smart motion detection and HomeKit Secure Video provide overlapping functionality. " +
         "Only HomeKit Secure Video, when event recording is enabled in the Home app, will be used to trigger motion event notifications for this camera." +
-        (this.hasFeature("Motion.SmartDetect.ObjectSensors") ? " Smart motion contact sensors will continue to function using telemetry from UniFi Protect." : ""));
+        (this.hints.smartDetectSensors ? " Smart motion contact sensors will continue to function using telemetry from UniFi Protect." : ""));
     }
 
     return true;
@@ -828,10 +910,10 @@ export class ProtectCamera extends ProtectDevice {
 
       if(this.accessory.context.hksvRecording !== value) {
 
-        this.log.info("HKSV event recording has been %s.", value === true ? "enabled" : "disabled");
+        this.log.info("HKSV event recording %s.", value ? "enabled" : "disabled");
       }
 
-      this.accessory.context.hksvRecording = value === true;
+      this.accessory.context.hksvRecording = !!value;
     });
 
     // Initialize the switch.
@@ -992,12 +1074,19 @@ export class ProtectCamera extends ProtectDevice {
 
     // Update the camera state.
     this.accessory.getService(this.hap.Service.MotionSensor)?.updateCharacteristic(this.hap.Characteristic.StatusActive, this.isOnline);
+    this.accessory.getService(this.hap.Service.LightSensor)?.updateCharacteristic(this.hap.Characteristic.StatusActive, this.isOnline);
 
     // Check to see if this device has a status light.
     if(this.hints.ledStatus) {
 
-      this.accessory.getService(this.hap.Service.CameraOperatingMode)?.
-        updateCharacteristic(this.hap.Characteristic.CameraOperatingModeIndicator, this.ufp.ledSettings.isEnabled === true);
+      this.accessory.getService(this.hap.Service.CameraOperatingMode)?.updateCharacteristic(this.hap.Characteristic.CameraOperatingModeIndicator, this.statusLed);
+    }
+
+    // Update the status indicator light switch.
+    if(this.hasFeature("Device.StatusLed.Switch")) {
+
+      this.accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_STATUS_LED)?.
+        updateCharacteristic(this.hap.Characteristic.On, this.statusLed);
     }
 
     // Check for updates to the recording state, if we have the switches configured.

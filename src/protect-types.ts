@@ -45,6 +45,7 @@ export enum ProtectReservedNames {
   SWITCH_HKSV_RECORDING = "HKSVRecordingSwitch",
   SWITCH_MOTION_SENSOR = "MotionSensorSwitch",
   SWITCH_MOTION_TRIGGER = "MotionSensorTrigger",
+  SWITCH_STATUS_LED = "StatusLedSwitch",
   SWITCH_UFP_RECORDING_ALWAYS = "UFPRecordingSwitch.always",
   SWITCH_UFP_RECORDING_DETECTIONS = "UFPRecordingSwitch.detections",
   SWITCH_UFP_RECORDING_NEVER = "UFPRecordingSwitch.never"

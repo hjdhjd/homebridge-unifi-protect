@@ -42,10 +42,7 @@ export const PROTECT_FFMPEG_OPTIONS = [];
 export const PROTECT_LIVESTREAM_API_IDR_INTERVAL = 5;
 
 // HomeKit prefers a default I-frame interval of 4 seconds for HKSV event recordings.
-export const PROTECT_HKSV_IDR_INTERVAL = 4;
-
-// HomeKit Secure Video maximum event recording errors to accept before resetting a connection to the Protect controller.
-export const PROTECT_HKSV_MAX_EVENT_ERRORS = 3;
+export const PROTECT_HKSV_IDR_INTERVAL = 1;
 
 // HomeKit Secure Video fragment length, in milliseconds. HomeKit only supports this value currently.
 export const PROTECT_HKSV_FRAGMENT_LENGTH = 4000;
@@ -88,6 +85,3 @@ export const PROTECT_TRANSCODE_BITRATE = 2000;
 
 // Bitrate, in kilobits per second, to use when transcoding to high-latency clients.
 export const PROTECT_TRANSCODE_HIGH_LATENCY_BITRATE = 1000;
-
-// How often, in seconds, should we heartbeat FFmpeg in two-way audio sessions. This should be less than 5 seconds, which is FFmpeg's input timeout interval.
-export const PROTECT_TWOWAY_HEARTBEAT_INTERVAL = 3;

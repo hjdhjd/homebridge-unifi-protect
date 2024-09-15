@@ -6,6 +6,7 @@ import { CharacteristicValue, PlatformAccessory } from "homebridge";
 import { ProtectEventPacket, ProtectLightConfig, ProtectLightConfigPayload } from "unifi-protect";
 import { ProtectDevice } from "./protect-device.js";
 import { ProtectNvr } from "../protect-nvr.js";
+import { ProtectReservedNames } from "../protect-types.js";
 
 export class ProtectLight extends ProtectDevice {
 
@@ -45,6 +46,9 @@ export class ProtectLight extends ProtectDevice {
 
     // Configure the occupancy sensor.
     this.configureOccupancySensor();
+
+    // Configure the status indicator light switch.
+    this.configureStatusLedSwitch();
 
     // Configure MQTT services.
     this.configureMqtt();
@@ -185,11 +189,33 @@ export class ProtectLight extends ProtectDevice {
     }
 
     // It's light brightness event - process it accordingly.
-    if(payload.lightDeviceSettings && ("ledLevel" in payload.lightDeviceSettings)) {
+    if(payload.lightDeviceSettings) {
 
-      // Update our brightness.
-      this.accessory.getService(this.hap.Service.Lightbulb)?.
-        updateCharacteristic(this.hap.Characteristic.Brightness, ((payload.lightDeviceSettings.ledLevel as number) - 1) * 20);
+      if("ledLevel" in payload.lightDeviceSettings) {
+
+        // Update our brightness.
+        this.accessory.getService(this.hap.Service.Lightbulb)?.
+          updateCharacteristic(this.hap.Characteristic.Brightness, ((payload.lightDeviceSettings.ledLevel as number) - 1) * 20);
+      }
+
+      if("isIndicatorEnabled" in payload.lightDeviceSettings) {
+
+        // Update our status indicator light.
+        this.accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_STATUS_LED)?.
+          updateCharacteristic(this.hap.Characteristic.On, payload.lightDeviceSettings.isIndicatorEnabled === true);
+      }
     }
+  }
+
+  // Utility to return the command to set the device LED status on a Protect light.
+  protected statusLedCommand(value: boolean): object {
+
+    return { lightDeviceSettings: { isIndicatorEnabled: value === true } };
+  }
+
+  // Utility function to return the current state of the status indicator light.
+  public get statusLed(): boolean {
+
+    return this.ufp.lightDeviceSettings?.isIndicatorEnabled;
   }
 }

@@ -336,7 +336,7 @@ export class ProtectLiveviews extends ProtectBase {
     // Iterate through the cameras in this liveview.
     for(const targetCameraId of targetCameraIds) {
 
-      const protectDevice = this.nvr.deviceLookup(targetCameraId);
+      const protectDevice = this.nvr.getDeviceById(targetCameraId);
 
       // No camera found or we're already at the target state - we're done.
       if(!protectDevice || (protectDevice.accessory.context.detectMotion === targetState)) {
@@ -368,7 +368,7 @@ export class ProtectLiveviews extends ProtectBase {
   private getSwitchState(liveviewName: string): boolean {
 
     // Get the list of unique states that exist across all liveview-specified cameras.
-    const detectedStates = [ ...new Set(this.getLiveviewCameras(liveviewName).map(x => this.nvr.deviceLookup(x)?.accessory.context.detectMotion as boolean)) ];
+    const detectedStates = [ ...new Set(this.getLiveviewCameras(liveviewName).map(x => this.nvr.getDeviceById(x)?.accessory.context.detectMotion as boolean)) ];
 
     // If we have more than one element in the array or an empty array (meaning we don't have a liveview we know about),
     // we don't have consistent states across all the devices, so we assume it's false.

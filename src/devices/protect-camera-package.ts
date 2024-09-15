@@ -13,7 +13,7 @@ export class ProtectCameraPackage extends ProtectCamera {
   protected async configureDevice(): Promise<boolean> {
 
     // Get our parent camera.
-    const parentCamera = this.nvr.deviceLookup(this.ufp.id);
+    const parentCamera = this.nvr.getDeviceById(this.ufp.id);
 
     this.hasHksv = true;
     this.hints.probesize = 32768;
@@ -26,7 +26,6 @@ export class ProtectCameraPackage extends ProtectCamera {
       this.hints.hardwareTranscoding = parentCamera.hints.hardwareTranscoding;
       this.hints.highResSnapshots = parentCamera.hints.highResSnapshots;
       this.hints.logHksv = parentCamera.hints.logHksv;
-      this.hints.timeshift = parentCamera.hints.timeshift;
       this.hints.transcode = parentCamera.hints.transcode;
       this.hints.transcodeBitrate = parentCamera.hints.transcodeBitrate;
       this.hints.transcodeHighLatency = parentCamera.hints.transcodeHighLatency;

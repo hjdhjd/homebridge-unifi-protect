@@ -6,14 +6,16 @@
 import { ProtectCamera, RtspEntry } from "../devices/index.js";
 import { CameraRecordingConfiguration } from "homebridge";
 import { FfmpegProcess } from "./protect-ffmpeg.js";
-import { PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION } from "../settings.js";
+import { PROTECT_HKSV_IDR_INTERVAL } from "../settings.js";
 import { once } from "node:events";
+import { runWithTimeout } from "homebridge-plugin-utils";
 
 // FFmpeg HomeKit Streaming Video recording process management.
 export class FfmpegRecordingProcess extends FfmpegProcess {
 
   private isLoggingErrors: boolean;
-  private recordingBuffer: { data: Buffer, header: Buffer, length: number, type: string }[];
+  public isTimedOut: boolean;
+  private recordingConfig: CameraRecordingConfiguration;
 
   // Create a new FFmpeg process instance.
   constructor(protectCamera: ProtectCamera, recordingConfig: CameraRecordingConfiguration, rtspEntry: RtspEntry, isAudioActive: boolean) {
@@ -24,91 +26,72 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
     // We want to log errors when they occur.
     this.isLoggingErrors = true;
 
-    // Initialize our recording buffer.
-    this.recordingBuffer = [];
+    // Initialize our state.
+    this.isTimedOut = false;
 
+    // Save our recording configuration.
+    this.recordingConfig = recordingConfig;
+
+    // Configure our video parameters for our input:
+    //
     // -hide_banner                  Suppress printing the startup banner in FFmpeg.
     // -nostats                      Suppress printing progress reports while encoding in FFmpeg.
     // -fflags flags                 Set the format flags to generate a presentation timestamp if it's missing and discard any corrupt packets rather than exit.
+    // -err_detect ignore_err        Ignore decoding errors and continue rather than exit.
     // -max_delay 500000             Set an upper limit on how much time FFmpeg can take in demuxing packets.
     // -flags low_delay              Tell FFmpeg to optimize for low delay / realtime decoding.
+    // -r fps                        Set the input frame rate for the video stream.
+    // -f mp4                        Tell FFmpeg that it should expect an MP4-encoded input stream.
+    // -i pipe:0                     Use standard input to get video data.
+    // -ss                           Fast forward to where HKSV is expecting us to be for a recording event.
     this.commandLineArgs = [
 
       "-hide_banner",
       "-nostats",
-      "-fflags", "+discardcorrupt",
+      "-fflags", "+discardcorrupt+flush_packets+genpts+igndts+nobuffer",
+      "-err_detect", "ignore_err",
       ...protectCamera.stream.ffmpegOptions.videoDecoder,
       "-max_delay", "500000",
-      "-flags", "low_delay"
+      "-flags", "low_delay",
+      "-r", rtspEntry.channel.fps.toString(),
+      "-f", "mp4",
+      "-i", "pipe:0",
+      "-ss", Math.max((protectCamera.stream.hksv?.timeshift.time ?? 0) - recordingConfig.prebufferLength, 0).toString() + "ms"
     ];
-
-    const tsBuffer = protectCamera.stream.hksv?.timeshift.buffer ?? null;
-
-    // If we're timeshifting, read from the timeshift buffer if we have anything queued up.
-    if(protectCamera.hints.timeshift && protectCamera.stream.hksv?.timeshift.time) {
-
-      // Configure our video parameters for our input:
-      //
-      // -probesize amount           How many bytes should be analyzed for stream information. Use the size of the timeshift buffer if we have it or our defaults.
-      // -r fps                      Set the input frame rate for the video stream.
-      // -f mp4                      Tell ffmpeg that it should expect an MP4-encoded input stream.
-      // -i pipe:0                   Use standard input to get video data.
-      // -ss                         Fast forward to where HKSV is expecting us to be for a recording event.
-      this.commandLineArgs.push(
-
-        "-probesize", (tsBuffer?.length ?? protectCamera.stream.probesize).toString(),
-        "-r", rtspEntry.channel.fps.toString(),
-        "-f", "mp4",
-        "-i", "pipe:0",
-        "-ss", Math.max((protectCamera.stream.hksv?.timeshift.time ?? PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION) - recordingConfig.prebufferLength, 0).toString() + "ms"
-      );
-    } else {
-
-      // We're not using the timeshift buffer, so let's use the RTSP stream as the input to HKSV.
-      //
-      // -probesize amount           How many bytes should be analyzed for stream information. Use our configured defaults.
-      // -r fps                      Set the input frame rate for the video stream.
-      // -rtsp_transport tcp         Tell the RTSP stream handler that we're looking for a TCP connection.
-      // -i rtspEntry.url            RTSPS URL to get our input stream from.
-      this.commandLineArgs.push(
-
-        "-probesize", protectCamera.stream.probesize.toString(),
-        "-r", rtspEntry.channel.fps.toString(),
-        "-rtsp_transport", "tcp",
-        "-i", rtspEntry.url
-      );
-    }
 
     // Configure our recording options for the video stream:
     //
+    // -max_muxing_queue_size 4096   Set the muxing buffer to 4096 packets to allow FFmpeg enough leeway to ensure audio and video remains in sync.
+    // -muxdelay 0                   Set the maximum demux decode delay to 0.
     // -map 0:v:0                    Selects the first available video track from the stream. Protect actually maps audio
     //                               and video tracks in opposite locations from where FFmpeg typically expects them. This
     //                               setting is a more general solution than naming the track locations directly in case
     //                               Protect changes this in the future.
     //                               Yes, we included these above as well: they need to be included for every I/O stream to
     //                               maximize effectiveness it seems.
-    // -fps_mode passthrough         Pass through the framerate as defined by the Protect stream. This avoids frame duplication.
     // -movflags flags               In the generated fMP4 stream: start a new fragment at each keyframe, write a blank MOOV box, and avoid writing absolute offsets.
     // -reset_timestamps             Reset timestamps at the beginning of each segment.
-    // -video_track_timescale        Set the video timescale. HKSV wants sample durations to be integers whenever possible and 600 is recommended for 15, 24, and 30 fps.
+    // -metadata                     Set the metadata to the name of the camera to distinguish between FFmpeg sessions.
     this.commandLineArgs.push(
 
+      "-max_muxing_queue_size", "4096",
+      "-muxdelay", "0",
       "-map", "0:v:0",
       ...protectCamera.stream.ffmpegOptions.recordEncoder({
 
         bitrate: recordingConfig.videoCodec.parameters.bitRate,
         fps: recordingConfig.videoCodec.resolution[2],
         height: recordingConfig.videoCodec.resolution[1],
-        idrInterval: recordingConfig.videoCodec.parameters.iFrameInterval / 1000,
+        idrInterval: PROTECT_HKSV_IDR_INTERVAL,
         inputFps: rtspEntry.channel.fps,
         level: recordingConfig.videoCodec.parameters.level,
         profile: recordingConfig.videoCodec.parameters.profile,
         width: recordingConfig.videoCodec.resolution[0]
       }),
-      "-fps_mode", "passthrough",
-      "-movflags", "frag_keyframe+empty_moov+default_base_moof",
+
+      "-movflags", "frag_keyframe+empty_moov+default_base_moof+omit_tfhd_offset",
       "-reset_timestamps", "1",
-      "-video_track_timescale", "600"
+      "-metadata", "comment=" + protectCamera.accessoryName
     );
 
     if(isAudioActive) {
@@ -175,7 +158,7 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
 
         let data;
 
-        // The MP4 container format is well-documented and designed around the concept of boxes. A box (or atom as they used to be called), is at the center of an MP4
+        // The MP4 container format is well-documented and designed around the concept of boxes. A box (or atom as they used to be called) is at the center of an MP4
         // container. It's composed of an 8-byte header, followed by the data payload it carries.
 
         // No existing header, let's start a new box.
@@ -184,15 +167,17 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
           // Grab the header. The first four bytes represents the length of the entire box. Second four bytes represent the box type.
           header = buffer.slice(0, 8);
 
-          // Now we retrieve the length of the box and subtract the length of the header to get the length of the data portion of the box.
-          dataLength = header.readUInt32BE(0) - 8;
+          // Now we retrieve the length of the box.
+          dataLength = header.readUInt32BE(0);
 
           // Get the type of the box. This is always a string and has a funky history to it that makes for an interesting read!
           type = header.slice(4).toString();
 
           // Finally, we get the data portion of the box.
-          data = buffer.slice(8, dataLength + 8);
-          offset = 8;
+          data = buffer.slice(8, dataLength);
+
+          // Mark our data offset so we account for the length of the data header and subtract it from the overall length to capture just the data portion.
+          dataLength -= offset = 8;
         } else {
 
           // Grab the data from our buffer.
@@ -209,8 +194,7 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
         }
 
         // Add it to our queue to be eventually pushed out through our generator function.
-        this.recordingBuffer.push({ data: data, header: header, length: dataLength, type: type });
-        this.emit("mp4box");
+        this.emit("mp4box", { data: data, header: header, length: dataLength, type: type });
 
         // Prepare to start a new box for the next buffer that we will be processing.
         data = Buffer.alloc(0);
@@ -246,7 +230,6 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
 
     // Ensure that we clear out of our segment generator by guaranteeing an exit path.
     this.isEnded = true;
-    this.emit("ffmpegStarted");
     this.emit("mp4box");
   }
 
@@ -274,20 +257,23 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
       return;
     }
 
-    // Known HKSV-related errors due to occasional inconsistencies in the Protect livestream API.
+    // Known HKSV-related errors due to occasional inconsistencies that are occasionally produced by the Protect livestream API.
     const ffmpegKnownHksvError = new RegExp([
 
-      "(Invalid data found when processing input)",
-      "(Error splitting the input into NAL units\\.)",
+      "(Cannot determine format of input stream 0:0 after EOF)",
+      "(Could not write header \\(incorrect codec parameters \\?\\): Broken pipe)",
       "(Could not write header for output file #0)",
-      "(Could not write header \\(incorrect codec parameters \\?\\): Broken pipe)"
+      "(Error closing file: Broken pipe)",
+      "(Error splitting the input into NAL units\\.)",
+      "(Invalid data found when processing input)",
+      "(moov atom not found)"
     ].join("|"));
 
     // See if we know about this error.
     if(this.stderrLog.some(x => ffmpegKnownHksvError.test(x))) {
 
       this.log.error("FFmpeg ended unexpectedly due to issues processing the media stream provided by the UniFi Protect livestream API. " +
-        "This error can be safely ignored - they will occur occasionally.");
+        "This error can be safely ignored - it will occur occasionally.");
 
       return;
     }
@@ -304,41 +290,37 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
     // Loop forever, generating either FTYP/MOOV box pairs or MOOF/MDAT box pairs for HomeKit Secure Video.
     for(;;) {
 
+      // Segments are produced by FFmpeg according to our specified IDR interval. If we don't see a segment emitted within that timeframe, we have a failsafe to
+      // guarantee we are never waiting for too long for FFmpeg to return something or error out.
+      // eslint-disable-next-line no-await-in-loop
+      const box = await runWithTimeout(once(this, "mp4box"), /* (2000 * PROTECT_HKSV_IDR_INTERVAL) + 500 */ 5000);
+
       // FFmpeg has finished it's output - we're done.
       if(this.isEnded) {
 
         return;
       }
 
-      // If the buffer is empty, wait for our FFmpeg process to produce more boxes.
-      if(!this.recordingBuffer.length) {
-
-        // eslint-disable-next-line no-await-in-loop
-        await once(this, "mp4box");
-      }
-
-      // Grab the next fMP4 box from our buffer.
-      const box = this.recordingBuffer.shift();
-
-      // No fMP4 box, let's keep trying.
       if(!box) {
 
-        continue;
+        this.isTimedOut = true;
+
+        return;
       }
 
       // Queue up this fMP4 box to send back to HomeKit.
-      segment.push(box.header, box.data);
+      segment.push(box[0].header, box[0].data);
 
       // What we want to send are two types of complete segments, made up of multiple MP4 boxes:
       //
       // - a complete MOOV box, usually with an accompanying FTYP box, that's sent at the very beginning of any valid fMP4 stream. HomeKit Secure Video looks for this
       //   before anything else.
       //
-      // - a complete MOOF/MDAT pair. MOOF describes the sample locations and their sizes and MDAT contains the actual audio and video data related to that segment. This
+      // - a complete MOOF/MDAT pair. MOOF describes the sample locations and their sizes and MDAT contains the actual audio and video data related to that segment. Think
       //   of MOOF as the audio/video data "header", and MDAT as the "payload".
       //
       // Once we see these, we combine all the segments in our queue to send back to HomeKit.
-      if((box.type === "moov") || (box.type === "mdat")) {
+      if((box[0].type === "moov") || (box[0].type === "mdat")) {
 
         yield Buffer.concat(segment);
         segment = [];

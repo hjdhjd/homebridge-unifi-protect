@@ -45,6 +45,9 @@ export class ProtectSensor extends ProtectDevice {
     // Configure the sensor services that have been enabled.
     this.updateDevice(false);
 
+    // Configure the status indicator light switch.
+    this.configureStatusLedSwitch();
+
     // Configure MQTT services.
     this.configureMqtt();
 
@@ -146,6 +149,9 @@ export class ProtectSensor extends ProtectDevice {
 
       currentEnabledSensors.push("temperature");
     }
+
+    // Update the status indicator light switch.
+    this.accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_STATUS_LED)?.updateCharacteristic(this.hap.Characteristic.On, this.statusLed);
 
     // Inform the user if we've had a change.
     if(this.enabledSensors.join(" ") !== currentEnabledSensors.join(" ")) {

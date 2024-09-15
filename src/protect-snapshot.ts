@@ -67,11 +67,12 @@ export class ProtectSnapshot {
         // We treat package cameras uniquely.
         if("packageCamera" in this.protectCamera.accessory.context) {
 
-          snapAttempt = (await this.nvr.ufpApi.getSnapshot(this.protectCamera.ufp, request?.width, request?.height, undefined, true)) ??
+          snapAttempt = (await this.nvr.ufpApi.getSnapshot(this.protectCamera.ufp, { height: request?.height, usePackageCamera: true, width: request?.width })) ??
             (await this.snapFromRtsp(request));
         } else {
 
-          snapAttempt = (await this.snapFromRtsp(request)) ?? (await this.nvr.ufpApi.getSnapshot(this.protectCamera.ufp, request?.width, request?.height));
+          snapAttempt = (await this.snapFromRtsp(request)) ?? (await this.nvr.ufpApi.getSnapshot(this.protectCamera.ufp,
+            { height: request?.height, width: request?.width }));
         }
       }
 
