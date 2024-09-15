@@ -504,16 +504,12 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       );
     }
 
-    // -max_muxing_queue_size 4096      Set the muxing buffer to 4096 packets to allow FFmpeg enough leeway to ensure audio and video remains in sync.
-    // -muxdelay 0                      Set the maximum demux decode delay to 0.
     // -map 0:v:0                       selects the first available video track from the stream. Protect actually maps audio
     //                                  and video tracks in opposite locations from where FFmpeg typically expects them. This
     //                                  setting is a more general solution than naming the track locations directly in case
     //                                  Protect changes this in the future.
     ffmpegArgs.push(
 
-      "-max_muxing_queue_size", "4096",
-      "-muxdelay", "0",
       "-map", "0:v:0"
     );
 

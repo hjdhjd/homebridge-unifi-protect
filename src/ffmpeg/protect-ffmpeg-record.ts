@@ -53,6 +53,7 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
       ...protectCamera.stream.ffmpegOptions.videoDecoder,
       "-max_delay", "500000",
       "-flags", "low_delay",
+      "-probesize", (protectCamera.stream.hksv?.timeshift.buffer?.length ?? protectCamera.stream.probesize).toString(),
       "-r", rtspEntry.channel.fps.toString(),
       "-f", "mp4",
       "-i", "pipe:0",
@@ -61,8 +62,6 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
 
     // Configure our recording options for the video stream:
     //
-    // -max_muxing_queue_size 4096   Set the muxing buffer to 4096 packets to allow FFmpeg enough leeway to ensure audio and video remains in sync.
-    // -muxdelay 0                   Set the maximum demux decode delay to 0.
     // -map 0:v:0                    Selects the first available video track from the stream. Protect actually maps audio
     //                               and video tracks in opposite locations from where FFmpeg typically expects them. This
     //                               setting is a more general solution than naming the track locations directly in case
@@ -74,8 +73,6 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
     // -metadata                     Set the metadata to the name of the camera to distinguish between FFmpeg sessions.
     this.commandLineArgs.push(
 
-      "-max_muxing_queue_size", "4096",
-      "-muxdelay", "0",
       "-map", "0:v:0",
       ...protectCamera.stream.ffmpegOptions.recordEncoder({
 
