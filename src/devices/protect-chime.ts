@@ -40,9 +40,19 @@ export class ProtectChime extends ProtectDevice {
     // Configure the chime as a light. We don't have volume accessories, so a dimmer is the best we can currently do within the constraints of HomeKit.
     this.configureLightbulb();
 
-    // Configure the speakers on the chime.
-    this.configureChimeSwitch("chime", "play-speaker", ProtectReservedNames.SWITCH_DOORBELL_CHIME_SPEAKER);
+    // Configure the buzzer on the chime.
     this.configureChimeSwitch("buzzer", "play-buzzer", ProtectReservedNames.SWITCH_DOORBELL_CHIME_BUZZER);
+
+    // Cleanup legacy switches.
+    const chimeService = this.accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_DOORBELL_CHIME_SPEAKER);
+
+    if(chimeService) {
+
+      this.accessory.removeService(chimeService);
+    }
+
+    // Configure ringtone-specific switches.
+    this.configureRingtoneSwitches();
 
     // Configure MQTT services.
     this.configureMqtt();
@@ -51,6 +61,19 @@ export class ProtectChime extends ProtectDevice {
     this.nvr.events.on("updateEvent." + this.ufp.id, this.listeners["updateEvent." + this.ufp.id] = this.eventHandler.bind(this));
 
     return true;
+  }
+
+  // Configure ringtone-specific switches.
+  private configureRingtoneSwitches(): void {
+
+    const ringtones = this.nvr.ufpApi.bootstrap?.ringtones.filter(tone => tone.nvrMac === this.nvr.ufp.mac);
+
+    ringtones?.map(track => this.configureChimeSwitch(track.name, "play-speaker", ProtectReservedNames.SWITCH_DOORBELL_CHIME_SPEAKER + "." + track.id));
+
+    // Remove ringtones that no longer exist.
+    this.accessory.services.filter(service => service.subtype?.startsWith(ProtectReservedNames.SWITCH_DOORBELL_CHIME_SPEAKER + ".") &&
+      !ringtones?.some(tone => tone.id === service.subtype?.slice(ProtectReservedNames.SWITCH_DOORBELL_CHIME_SPEAKER.length + 1)))
+      .map(service => this.accessory.removeService(service));
   }
 
   // Configure the light for HomeKit.
@@ -153,8 +176,16 @@ export class ProtectChime extends ProtectDevice {
         return;
       }
 
+      let tone;
+
+      // See if we've selected a specific tone.
+      if(subtype.startsWith(ProtectReservedNames.SWITCH_DOORBELL_CHIME_SPEAKER + ".")) {
+
+        tone = subtype.slice(ProtectReservedNames.SWITCH_DOORBELL_CHIME_SPEAKER.length + 1);
+      }
+
       // Play the tone.
-      if(!(await this.playTone(name, endpoint))) {
+      if(!(await this.playTone(name, endpoint, tone))) {
 
         this.log.error("Unable to play " + name + ".");
 
@@ -167,7 +198,6 @@ export class ProtectChime extends ProtectDevice {
         service.updateCharacteristic(this.hap.Characteristic.On, !!this.eventTimers[endpoint]);
       }, PROTECT_DOORBELL_CHIME_SPEAKER_DURATION);
 
-
       // Inform the user.
       this.log.info("Playing %s.", name);
     });
@@ -179,17 +209,32 @@ export class ProtectChime extends ProtectDevice {
   }
 
   // Play the specified tone on the chime.
-  private async playTone(name: string, endpoint: string): Promise<boolean> {
+  private async playTone(name: string, endpoint: string, tone?: string): Promise<boolean> {
 
     if(!endpoint) {
 
       return false;
     }
 
+    let payload = {};
+
+    if(tone) {
+
+      const ringSettings = this.ufp.ringSettings.find(ring => ring.ringtoneId === tone) ?? this.ufp.ringSettings[0];
+
+      // We couldn't find the playback settings for this ringtone, we're done.
+      if(!ringSettings) {
+
+        return false;
+      }
+
+      payload = { repeatTimes: ringSettings.repeatTimes, ringtoneId: tone, volume: ringSettings.volume };
+    }
+
     // Execute teh action on the chime.
     const response = await this.nvr.ufpApi.retrieve(this.nvr.ufpApi.getApiEndpoint(this.ufp.modelKey) + "/" + this.ufp.id + "/" + endpoint, {
 
-      body: JSON.stringify({}),
+      body: JSON.stringify(payload),
       method: "POST"
     });
 
@@ -255,6 +300,12 @@ export class ProtectChime extends ProtectDevice {
     });
 
     return true;
+  }
+
+  // Update device settings when Protect refreshes it's configuration.
+  public updateDevice(): void {
+
+    this.configureRingtoneSwitches();
   }
 
   // Handle chime-related events.

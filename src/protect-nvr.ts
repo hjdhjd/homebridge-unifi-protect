@@ -388,14 +388,17 @@ export class ProtectNvr {
     // Remove Protect devices that are no longer found on this Protect NVR, but we still have in HomeKit.
     this.cleanupDevices();
 
+    // Configure our chime accessories.
+    this.devices("chime").map(chime => chime.updateDevice());
+
     // Configure our liveview-based accessories.
     this.liveviews?.configureLiveviews();
 
     // Update our viewer accessories.
-    this.devices("viewer").map(x => x.updateDevice());
+    this.devices("viewer").map(viewer => viewer.updateDevice());
 
     // Update our device information.
-    this.devicelist.map(x => x.configureInfo());
+    this.devicelist.map(device => device.configureInfo());
 
     return true;
   }
