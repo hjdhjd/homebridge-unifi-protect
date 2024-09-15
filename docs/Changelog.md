@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 7.3.0 (2024-09-15)
+  * New feature: Protect chimes now support all ringtones available, including custom ones. a switch will be created for each ringtone available.
+  * Improvement: improve performance on lower powered environments like Pi4.
+  * Housekeeping.
+
 ## 7.2.0 (2024-09-14)
   * Behavior change: API livestreaming is now the default. You can revert to the former method, using RTSP streams if you prefer. **I intend to deprecate RTSP streaming at some future point.**
   * Behavior change: The timeshift buffer is now mandatory in HBUP for HKSV. Latency issues make the legacy RTSP method extremely unreliable and I've decided to simplify and focus on a great HKSV experience at the expense of supporting low-power/limited CPU environments.
