@@ -146,7 +146,7 @@ export const featureOptions: { [index: string]: ProtectFeatureOption[] } = {
   "Video": [
 
     { default: false, description: "Use hardware-accelerated transcoding when available (Apple Macs, Intel Quick Sync Video-enabled CPUs, Raspberry Pi 4).", name: "Transcode.Hardware" },
-    { default: false, description: "Use the native Protect livestream API to view livestreams (Experimental).", name: "Stream.UseApi" },
+    { default: true, description: "Use the native Protect livestream API to view livestreams.", name: "Stream.UseApi" },
     { default: true, description: "When streaming to low-latency clients (e.g. at home), transcode livestreams, instead of transmuxing them.", name: "Transcode" },
     { default: false, defaultValue: PROTECT_TRANSCODE_BITRATE, description: "Bitrate, in kilobits per second, to use when transcoding to low-latency (e.g. at home) clients, ignoring the bitrate HomeKit requests. HomeKit typically requests lower video quality than you may desire in your environment.", group: "Transcode", name: "Transcode.Bitrate" },
     { default: true, description: "When streaming to high-latency clients (e.g. cellular connections), transcode livestreams instead of transmuxing them.", name: "Transcode.HighLatency" },

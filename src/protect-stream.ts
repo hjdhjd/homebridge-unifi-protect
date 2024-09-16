@@ -472,7 +472,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
       "-hide_banner",
       "-nostats",
-      "-fflags", "+discardcorrupt+flush_packets+genpts+igndts+nobuffer",
+      "-fflags", "+discardcorrupt+genpts+igndts" + (useApi ? "+flush_packets+nobuffer" : ""),
       "-err_detect", "ignore_err",
       ...this.ffmpegOptions.videoDecoder,
       "-max_delay", "500000",
