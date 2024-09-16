@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 7.3.1 (2024-09-15)
+  * Housekeeping.
+
 ## 7.3.0 (2024-09-15)
   * New feature: Protect chimes now support all ringtones available, including custom ones. a switch will be created for each ringtone available.
   * Improvement: improve performance on lower powered environments like Pi4.

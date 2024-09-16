@@ -138,7 +138,7 @@ These option(s) apply to: Protect cameras.
 | Option                                           | Description
 |--------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 | `Video.Transcode.Hardware`                       | Use hardware-accelerated transcoding when available (Apple Macs, Intel Quick Sync Video-enabled CPUs, Raspberry Pi 4). **(default: disabled)**.
-| `Video.Stream.UseApi`                            | Use the native Protect livestream API to view livestreams (Experimental). **(default: disabled)**.
+| `Video.Stream.UseApi`                            | Use the native Protect livestream API to view livestreams. **(default: enabled)**.
 | `Video.Transcode`                                | When streaming to low-latency clients (e.g. at home), transcode livestreams, instead of transmuxing them. **(default: enabled)**.
 | `Video.Transcode.Bitrate<I>.Value</I>`           | Bitrate, in kilobits per second, to use when transcoding to low-latency (e.g. at home) clients, ignoring the bitrate HomeKit requests. HomeKit typically requests lower video quality than you may desire in your environment. **(default: 2000)**.
 | `Video.Transcode.HighLatency`                    | When streaming to high-latency clients (e.g. cellular connections), transcode livestreams instead of transmuxing them. **(default: enabled)**.
