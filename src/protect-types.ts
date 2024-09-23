@@ -35,6 +35,9 @@ export enum ProtectReservedNames {
   CONTACT_SENSOR = "ContactSensor",
   CONTACT_SENSOR_ALARM_SOUND = "ContactAlarmSound",
 
+  // Manage our lightbulb types.
+  LIGHTBULB_NIGHTVISION = "NightVision",
+
   // Manage our switch types.
   SWITCH_DOORBELL_CHIME_BUZZER = "DoorbellChime.buzzer",
   SWITCH_DOORBELL_CHIME_DIGITAL = "DoorbellChime.digital",

@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 7.4.0 (2024-09-22)
+  * Behavior change: the camera status indicator light feature option now defaults to on. This was always the intended default behavior, but due to bugs that seem to be fixed in iOS 18, we can have our toys back. You can control the status indicator light through the camera details screen in the Home app.
+  * New feature: the night vision indicator light is now available in the camera details screen in the Home app. This feature is enabled by default, you can choose to enable or disable it through the HBUP webUI.
+  * New feature: night vision indicator light automation dimmer. This feature is disabled by default, and primarily intended for automation use cases. You can use the dimmer to adjust the sensitivity level of when Protect will trigger infrared settings. 0% disables infrared, 10% sets it to auto, 20-90% reflect the states you would find through the Protect webUI at increasing levels of sensitivity, 100% sets infrared always on.
+  * Housekeeping.
+
 ## 7.3.1 (2024-09-15)
   * Housekeeping.
 
@@ -12,8 +18,8 @@ All notable changes to this project will be documented in this file. This projec
 
 ## 7.2.0 (2024-09-14)
   * Behavior change: API livestreaming is now the default. You can revert to the former method, using RTSP streams if you prefer. **I intend to deprecate RTSP streaming at some future point.**
-  * Behavior change: The timeshift buffer is now mandatory in HBUP for HKSV. Latency issues make the legacy RTSP method extremely unreliable and I've decided to simplify and focus on a great HKSV experience at the expense of supporting low-power/limited CPU environments.
-  * Removed feature: The HKSV maximum recording duration feature option has been removed. With recent changes to the Protect API make this extremely unreliable.
+  * Behavior change: the timeshift buffer is now mandatory in HBUP for HKSV. Latency issues make the legacy RTSP method extremely unreliable and I've decided to simplify and focus on a great HKSV experience at the expense of supporting low-power/limited CPU environments.
+  * Removed feature: the HKSV maximum recording duration feature option has been removed. With recent changes to the Protect API make this extremely unreliable.
   * New feature: on Protect cameras that support it, an ambient light sensor will be added, reporting the current light level.
   * New feature: for automation use cases, an optional switch can be enabled to control the status indicator light on Protect devices that support it. This feature is supported on all UniFi Protect device types that have a status indicator light (currently cameras, lights, and sensors) Find it under device feature options. Disabled by default.
   * New feature: the status indicator light on Protect cameras can be used to automatically reflect when an HKSV event is being recorded. With this enabled, the status indicator light will switch on when an event is being actively recorded and off once it stops. Find it under HKSV feature options. Disabled by default. Thanks to @kevinwestby for the suggestion and enhancement request.

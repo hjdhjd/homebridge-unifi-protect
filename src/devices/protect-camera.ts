@@ -76,6 +76,7 @@ export class ProtectCamera extends ProtectDevice {
     this.hints.ledStatus = this.ufp.featureFlags.hasLedStatus && this.hasFeature("Device.StatusLed");
     this.hints.logDoorbell = this.hasFeature("Log.Doorbell");
     this.hints.logHksv = this.hasFeature("Log.HKSV");
+    this.hints.nightVision = this.ufp.featureFlags.hasInfrared && this.hasFeature("Device.NightVision");
     this.hints.probesize = 16384;
     this.hints.smartDetect = this.ufp.featureFlags.hasSmartDetect && this.hasFeature("Motion.SmartDetect");
     this.hints.smartDetectSensors = this.hints.smartDetect && this.hasFeature("Motion.SmartDetect.ObjectSensors");
@@ -168,6 +169,9 @@ export class ProtectCamera extends ProtectDevice {
     // Configure the status indicator light switch.
     this.configureStatusLedSwitch();
 
+    // Configure the night vision indicator light switch.
+    this.configureNightVisionDimmer();
+
     // Configure the doorbell trigger.
     this.configureDoorbellTrigger();
 
@@ -232,9 +236,10 @@ export class ProtectCamera extends ProtectDevice {
     // Process camera details updates:
     //   - availability state.
     //   - name change.
+    //   - camera night vision.
     //   - camera status light.
     //   - camera recording settings.
-    if(hasProperty(["isConnected", "name", "ledSettings", "recordingSettings"])) {
+    if(hasProperty(["isConnected", "ispSettings", "name", "ledSettings", "recordingSettings"])) {
 
       this.updateDevice();
     }
@@ -573,26 +578,59 @@ export class ProtectCamera extends ProtectDevice {
   private configureCameraDetails(): boolean {
 
     // Find the service, if it exists.
-    const statusLedService = this.accessory.getService(this.hap.Service.CameraOperatingMode);
+    const service = this.accessory.getService(this.hap.Service.CameraOperatingMode);
 
-    // Have we enabled the camera status indicator light?
-    if(this.hints.ledStatus && statusLedService) {
+    // Retrieve the camera status light if we have it enabled.
+    const statusLight = service?.getCharacteristic(this.hap.Characteristic.CameraOperatingModeIndicator);
 
-      // Turn the status light on or off.
-      statusLedService.getCharacteristic(this.hap.Characteristic.CameraOperatingModeIndicator)?.onGet(() => this.statusLed);
-      statusLedService.getCharacteristic(this.hap.Characteristic.CameraOperatingModeIndicator)?.onSet(async (value: CharacteristicValue) => this.setStatusLed(!!value));
-
-      // Initialize the status light state.
-      statusLedService.updateCharacteristic(this.hap.Characteristic.CameraOperatingModeIndicator, this.statusLed);
-    } else if(statusLedService) {
-
-      // Remove the camera status light if we have it.
-      const statusLight = statusLedService.getCharacteristic(this.hap.Characteristic.CameraOperatingModeIndicator);
+    if(!this.hints.ledStatus) {
 
       if(statusLight) {
 
-        statusLedService.removeCharacteristic(statusLight);
+        service?.removeCharacteristic(statusLight);
       }
+    } else {
+
+      // Turn the status light on or off.
+      statusLight?.onGet(() => this.statusLed);
+      statusLight?.onSet(async (value: CharacteristicValue) => this.setStatusLed(!!value));
+
+      // Initialize the status light state.
+      service?.updateCharacteristic(this.hap.Characteristic.CameraOperatingModeIndicator, this.statusLed);
+    }
+
+    // Retrieve the night vision indicator if we have it enabled.
+    const nightVision = service?.getCharacteristic(this.hap.Characteristic.NightVision);
+
+    if(!this.hints.nightVision) {
+
+      if(nightVision) {
+
+        service?.removeCharacteristic(nightVision);
+      }
+    } else {
+
+      service?.getCharacteristic(this.hap.Characteristic.NightVision)?.onGet(() => this.nightVision);
+      service?.getCharacteristic(this.hap.Characteristic.NightVision)?.onSet(async (value: CharacteristicValue) => {
+
+        // Update the night vision setting in Protect.
+        const newUfp = await this.nvr.ufpApi.updateDevice(this.ufp, { ispSettings: { irLedMode: value ? "auto" : "off" } });
+
+        if(!newUfp) {
+
+          this.log.error("Unable to set night vision to %s. Please ensure this username has the Administrator role in UniFi Protect.", value ? "auto" : "off");
+
+          setTimeout(() => service?.updateCharacteristic(this.hap.Characteristic.NightVision, !value), 50);
+
+          return;
+        }
+
+        // Update our internal view of the device configuration.
+        this.ufp = newUfp;
+      });
+
+      // Initialize the status light state.
+      service?.updateCharacteristic(this.hap.Characteristic.NightVision, this.nightVision);
     }
 
     return true;
@@ -924,6 +962,144 @@ export class ProtectCamera extends ProtectDevice {
     return true;
   }
 
+  // Configure a dimmer to turn on or off the night vision capabilities for HomeKit.
+  private configureNightVisionDimmer(): boolean {
+
+    // Validate whether we should have this service enabled.
+    if(!this.validService(this.hap.Service.Lightbulb, () => {
+
+      // Night vision dimmers are disabled by default unless the user enables them and we have the device-specific capabilities to support it.
+      if(!this.ufp.featureFlags.hasInfrared || !this.ufp.featureFlags.hasIcrSensitivity || !this.hasFeature("Device.NightVision.Dimmer")) {
+
+        return false;
+      }
+
+      return true;
+    }, ProtectReservedNames.LIGHTBULB_NIGHTVISION)) {
+
+      return false;
+    }
+
+    // Acquire the service.
+    const service = this.acquireService(this.hap.Service.Lightbulb, this.accessoryName + " Night Vision", ProtectReservedNames.LIGHTBULB_NIGHTVISION);
+
+    // Fail gracefully.
+    if(!service) {
+
+      this.log.error("Unable to add the night vision dimmer.");
+
+      return false;
+    }
+
+    // Adjust night vision capabilities.
+    service.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => this.nightVision);
+
+    service.getCharacteristic(this.hap.Characteristic.On)?.onSet(async (value: CharacteristicValue) => {
+
+      if(this.nightVision !== value) {
+
+        this.log.info("Night vision %s.", value ? "enabled" : "disabled");
+      }
+
+      const mode = service.getCharacteristic(this.hap.Characteristic.Brightness).value === 10 ? "auto" : "custom";
+
+      // Update the night vision setting in Protect.
+      const newUfp = await this.nvr.ufpApi.updateDevice(this.ufp, { ispSettings: { irLedMode: value ? mode : "off" } });
+
+      if(!newUfp) {
+
+        this.log.error("Unable to set night vision to %s. Please ensure this username has the Administrator role in UniFi Protect.", value ? "custom" : "off");
+
+        setTimeout(() => service?.updateCharacteristic(this.hap.Characteristic.On, !value), 50);
+
+        return;
+      }
+
+      // Update our internal view of the device configuration.
+      this.ufp = newUfp;
+    });
+
+    // Adjust the sensitivity of night vision.
+    service.getCharacteristic(this.hap.Characteristic.Brightness)?.onGet(() => this.nightVisionBrightness);
+
+    service.getCharacteristic(this.hap.Characteristic.Brightness)?.onSet(async (value: CharacteristicValue) => {
+
+      let level = value as number;
+      let nightvision = {};
+
+      // If we're less than 10% in brightness, assume we want to disable night vision.
+      if(level < 10) {
+
+        level = 0;
+      }
+
+      // If we're greater than 10%, but less than 20%, assume we want to set night vision to auto.
+      if((level > 10) && (level < 20)) {
+
+        level = 10;
+      }
+
+      // If we're more than 90% in brightness, assume we want to force night vision to be always on.
+      if(level > 90) {
+
+        level = 100;
+      }
+
+      // Let's determine what we're setting on the Protect device.
+      switch(level) {
+
+        case 0:
+
+          nightvision = { ispSettings:{ irLedMode: "off" } };
+
+          break;
+
+        case 10:
+
+          nightvision = { ispSettings:{ irLedMode: "auto" } };
+
+          break;
+
+        case 100:
+
+          nightvision = { ispSettings:{ irLedMode: "on" } };
+
+          break;
+
+        default:
+
+          level = Math.round((level - 20) / 7);
+          nightvision = { ispSettings:{ icrCustomValue: level, irLedMode: "custom" } };
+          level = (level * 7) + 20;
+
+          break;
+      }
+
+      const newUfp = await this.nvr.ufpApi.updateDevice(this.ufp, nightvision);
+
+      if(!newUfp) {
+
+        this.log.error("Unable to adjust night vision settings. Please ensure this username has the Administrator role in UniFi Protect.");
+
+        return;
+      }
+
+      // Set the context to our updated device configuration.
+      this.ufp = newUfp;
+
+      // Make sure we properly reflect what brightness we're actually at, given the differences in setting granularity between Protect and HomeKit.
+      setTimeout(() => service?.updateCharacteristic(this.hap.Characteristic.Brightness, level), 50);
+    });
+
+    // Initialize the dimmer state.
+    service.updateCharacteristic(this.hap.Characteristic.On, this.nightVision);
+    service.updateCharacteristic(this.hap.Characteristic.Brightness, this.nightVisionBrightness);
+
+    this.log.info("Enabling night vision dimmer.");
+
+    return true;
+  }
+
   // Configure a series of switches to manually enable or disable recording on the UniFi Protect controller for a camera.
   private configureNvrRecordingSwitch(): boolean {
 
@@ -1082,6 +1258,21 @@ export class ProtectCamera extends ProtectDevice {
       this.accessory.getService(this.hap.Service.CameraOperatingMode)?.updateCharacteristic(this.hap.Characteristic.CameraOperatingModeIndicator, this.statusLed);
     }
 
+    // Check to see if this device has a status light.
+    if(this.hints.nightVision) {
+
+      this.accessory.getService(this.hap.Service.CameraOperatingMode)?.updateCharacteristic(this.hap.Characteristic.NightVision, this.nightVision);
+    }
+
+    if(this.hasFeature("Device.NightVision.Dimmer")) {
+
+      this.accessory.getServiceById(this.hap.Service.Lightbulb, ProtectReservedNames.LIGHTBULB_NIGHTVISION)?.
+        updateCharacteristic(this.hap.Characteristic.On, this.nightVision);
+
+      this.accessory.getServiceById(this.hap.Service.Lightbulb, ProtectReservedNames.LIGHTBULB_NIGHTVISION)?.
+        updateCharacteristic(this.hap.Characteristic.Brightness, this.nightVisionBrightness);
+    }
+
     // Update the status indicator light switch.
     if(this.hasFeature("Device.StatusLed.Switch")) {
 
@@ -1215,5 +1406,40 @@ export class ProtectCamera extends ProtectDevice {
   protected getResolution(resolution: Resolution): string {
 
     return resolution[0].toString() + "x" + resolution[1].toString() + "@" + resolution[2].toString() + "fps";
+  }
+
+  // Utility function to return the current night vision state of a camera. It's a blunt instrument due to HomeKit constraints.
+  private get nightVision(): boolean {
+
+    return (this.ufp as ProtectCameraConfig)?.ispSettings?.irLedMode !== "off";
+  }
+
+  // Utility function to return the current night vision state of a camera, mapped to a brightness characteristic.
+  private get nightVisionBrightness(): number {
+
+    switch(this.ufp.ispSettings.irLedMode) {
+
+      case "off":
+
+        return 0;
+
+      case "auto":
+        return 10;
+
+      case "on":
+
+        return 100;
+
+      case "custom":
+
+        // The Protect infrared cutoff removal setting ranges from 0 - 10. HomeKit expects percentages, so we convert it like so.
+        return (this.ufp.ispSettings.icrCustomValue * 7) + 20;
+
+      default:
+
+        this.log.error("Unknown night vision value detected.");
+
+        return 0;
+    }
   }
 }

@@ -41,6 +41,7 @@ export interface ProtectHints {
   logHksv: boolean,
   logMotion: boolean,
   motionDuration: number,
+  nightVision: boolean,
   occupancyDuration: number,
   probesize: number,
   recordingDefault: string,
@@ -531,7 +532,7 @@ export abstract class ProtectDevice extends ProtectBase {
     // Validate whether we should have this service enabled.
     if(!this.validService(this.hap.Service.Switch, () => {
 
-      // Motion switches are disabled by default unless the user enables them.
+      // Status LED switches are disabled by default unless the user enables them.
       if(!isEnabled || !this.hasFeature("Device.StatusLed.Switch")) {
 
         return false;

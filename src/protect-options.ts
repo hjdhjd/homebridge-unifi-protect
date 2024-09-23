@@ -83,8 +83,10 @@ export const featureOptions: { [index: string]: ProtectFeatureOption[] } = {
   "Device": [
 
     { default: true, description: "Make this device available in HomeKit.", name: "" },
-    { default: false, description: "Enable the status indicator light for this device in HomeKit.", hasProperty: [ "ledSettings" ], name: "StatusLed" },
+    { default: true, description: "Enable the status indicator light for this device in HomeKit.", hasProperty: [ "ledSettings" ], name: "StatusLed" },
     { default: false, description: "Add a switch accessory to control the status indicator light in HomeKit.", hasProperty: [ "ledSettings", "lightDeviceSettings" ], name: "StatusLed.Switch" },
+    { default: true, description: "Enable the night vision indicator light for this device in HomeKit.", hasFeature: [ "hasInfrared" ], modelKey: [ "camera" ], name: "NightVision" },
+    { default: false, description: "Add a dimmer accessory to control the night vision state in HomeKit.", hasFeature: [ "hasInfrared" ], modelKey: [ "camera" ], name: "NightVision.Dimmer" },
     { default: false, description: "Make this a standalone device in HomeKit that will need to be added to HomeKit through the Home app.", name: "Standalone" },
     { default: false, description: "Synchronize the UniFi Protect name of this device with HomeKit. Synchronization is one-way only, syncing the device name from UniFi Protect to HomeKit.", name: "SyncName" }
   ],

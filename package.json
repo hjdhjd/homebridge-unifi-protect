@@ -77,8 +77,8 @@
   "dependencies": {
     "@homebridge/plugin-ui-utils": "1.0.3",
     "ffmpeg-for-homebridge": "2.1.1",
-    "homebridge-plugin-utils": "^1.8.1",
-    "unifi-protect": "^4.13.0",
+    "homebridge-plugin-utils": "^1.8.2",
+    "unifi-protect": "^4.14.0",
     "ws": "8.18.0"
   },
   "devDependencies": {
@@ -86,11 +86,11 @@
     "@types/node": "22.5.5",
     "@types/readable-stream": "4.0.15",
     "@types/ws": "8.5.12",
-    "eslint": "9.10.0",
+    "eslint": "9.11.0",
     "homebridge": "1.8.4",
     "shx": "0.3.4",
     "typescript": "5.6.2",
-    "typescript-eslint": "8.5.0"
+    "typescript-eslint": "8.6.0"
   },
   "optionalDependencies": {
     "bufferutil": "4.0.8"
