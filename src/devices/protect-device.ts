@@ -502,7 +502,8 @@ export abstract class ProtectDevice extends ProtectBase {
       if(this.hints.smartDetect) {
 
         // Iterate through all the individual object detection types Protect has configured.
-        for(const smartDetectType of (this.ufp as ProtectCameraConfig).featureFlags.smartDetectTypes) {
+        for(const smartDetectType of
+          [...(this.ufp as ProtectCameraConfig).featureFlags.smartDetectAudioTypes, ...(this.ufp as ProtectCameraConfig).featureFlags.smartDetectTypes]) {
 
           if(this.hasFeature("Motion.OccupancySensor." + smartDetectType)) {
 

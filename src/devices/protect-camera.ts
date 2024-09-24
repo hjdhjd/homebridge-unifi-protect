@@ -122,14 +122,10 @@ export class ProtectCamera extends ProtectDevice {
     // Check to see if we have smart motion events enabled on a supported camera.
     if(this.hints.smartDetect) {
 
-      // We deal with smart motion detection options here and save them on the ProtectCamera instance because we're trying to optimize the number of feature option
-      // lookups we do in realtime, when possible. Reading a stream of constant events and having to perform a string comparison through a list of options multiple times
-      // a second isn't an ideal use of CPU cycles, even if you have plenty of them to spare. Instead, we perform that lookup once, here, and set the appropriate option
-      // booleans for faster lookup and use later in event detection.
+      const smartDetectTypes = [...this.ufp.featureFlags.smartDetectAudioTypes, ...this.ufp.featureFlags.smartDetectTypes];
 
       // Inform the user of what smart detection object types we're configured for.
-      this.log.info("Smart motion detection enabled%s.", this.ufp.featureFlags.smartDetectTypes.length ?
-        ": " + this.ufp.featureFlags.smartDetectTypes.sort().join(", ") : "");
+      this.log.info("Smart motion detection enabled%s.", smartDetectTypes.length ? ": " + smartDetectTypes.sort().join(", ") : "");
     }
 
     // Configure accessory information.
@@ -218,10 +214,13 @@ export class ProtectCamera extends ProtectDevice {
     // Process motion events.
     if(hasProperty(["lastMotion"])) {
 
-      // We only want to process the motion event if we have the right payload, and either HKSV recording is enabled, or HKSV recording is disabled and we have
-      // smart motion events disabled (or a device without smart motion capabilities) since those are handled elsewhere.
+      // We only want to process the motion event if we have either:
+      ///
+      //  - HKSV recording enabled.
+      //  - HKSV recording is disabled and we have smart motion events disabled (or a device without smart motion capabilities) since those are handled elsewhere.
       if(this.stream?.hksv?.isRecording || (!this.stream?.hksv?.isRecording &&
-        (!this.ufp.featureFlags.smartDetectTypes.length || (this.ufp.featureFlags.smartDetectTypes.length && !this.hints.smartDetect)))) {
+        ((!this.ufp.featureFlags.smartDetectAudioTypes.length && !this.ufp.featureFlags.smartDetectTypes.length) ||
+          ((this.ufp.featureFlags.smartDetectAudioTypes.length || this.ufp.featureFlags.smartDetectTypes.length) && !this.hints.smartDetect)))) {
 
         this.nvr.events.motionEventHandler(this);
       }
@@ -231,6 +230,13 @@ export class ProtectCamera extends ProtectDevice {
     if(hasProperty(["lastRing"])) {
 
       this.nvr.events.doorbellEventHandler(this, payload.lastRing as number);
+    }
+
+    // Process smart detection events that have occurred on a non-realtime basis. Generally, this includes audio events and video events that require more analysis by
+    // Protect.
+    if(this.hints.smartDetect && hasProperty(["smartDetectTypes"]) && (payload as ProtectEventAdd).smartDetectTypes.length) {
+
+      this.nvr.events.motionEventHandler(this, (payload as ProtectEventAdd).smartDetectTypes, (payload as ProtectEventAdd).metadata);
     }
 
     // Process camera details updates:
@@ -429,7 +435,7 @@ export class ProtectCamera extends ProtectDevice {
     // Add individual contact sensors for each object detection type, if needed.
     if(this.hints.smartDetectSensors) {
 
-      for(const smartDetectType of this.ufp.featureFlags.smartDetectTypes) {
+      for(const smartDetectType of [...this.ufp.featureFlags.smartDetectAudioTypes, ...this.ufp.featureFlags.smartDetectTypes].sort()) {
 
         if(addSmartDetectContactSensor(this.accessoryName + " " + toCamelCase(smartDetectType),
           ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + "." + smartDetectType, "Unable to add smart motion contact sensor for " + smartDetectType + " detection.")) {
