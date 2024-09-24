@@ -376,7 +376,15 @@ export class ProtectNvr {
   // Discover and sync UniFi Protect devices between HomeKit and the Protect controller.
   private discoverAndSyncAccessories(): boolean {
 
-    if(!this.ufpApi.bootstrap) {
+    // If the Protect controller's not bootstrapped, or it's experiencing a meltdown, we're done.
+    if(!this.ufpApi.bootstrap || this.ufpApi.isThrottled) {
+
+      // Clear out the device removal queue since we can't trust the Protect controller at the moment.
+      if(Object.keys(this.deviceRemovalQueue).length) {
+
+        this.log.info("Communication with the controller has been lost. Clearing out the device removal queue as a precaution until connectivity returns.");
+        this.deviceRemovalQueue = {};
+      }
 
       return false;
     }
