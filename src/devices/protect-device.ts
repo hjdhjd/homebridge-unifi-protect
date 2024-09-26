@@ -222,7 +222,7 @@ export abstract class ProtectDevice extends ProtectBase {
     // Sync the Protect name with HomeKit, if configured.
     if(this.hints.syncName) {
 
-      this.accessoryName = this.ufp.name;
+      this.accessoryName = this.ufp.name ?? this.ufp.marketName ?? ("Unknown Device" + (this.ufp.mac ? ": " + this.ufp.mac : ""));
     }
 
     return this.setInfo(this.accessory, this.ufp);

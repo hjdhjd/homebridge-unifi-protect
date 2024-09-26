@@ -341,7 +341,7 @@ export class ProtectNvr {
     // See if we already know about this accessory or if it's truly new. If it is new, add it to HomeKit.
     if((accessory = this.platform.accessories.find(x => x.UUID === uuid)) === undefined) {
 
-      accessory = new this.api.platformAccessory(device.name ?? device.marketName, uuid);
+      accessory = new this.api.platformAccessory(device.name ?? device.marketName ?? ("Unknown Device" + (device.mac ? ": " + device.mac : "")), uuid);
 
       this.log.info("%s: Adding %s to HomeKit%s.", this.ufpApi.getDeviceName(device), device.modelKey,
         this.hasFeature("Device.Standalone", device) ? " as a standalone device" : "");
