@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 7.5.0 (2024-09-26)
+  * Behavior change: smart motion detection will now trigger on **both** realtime and near-realtime events, as detected by Protect. Certain activities (e.g. license plate detection) frequently don't occur in realtime, and historically HBUP has ignored these detections in order to be consistent throughout. Given the continued evolution of Protect, it now makes sense to also trigger on these not-quite-realtime events as well - typically, events will be triggered within a few seconds of actual detection within the Protect environment. This change mostly impacts users who use smart object sensors to detect specific types of objects as detected by Protect. Object detection will more directly mirror what's available under the detections view within the Protect controller's webUI.
+  * Improvement: smart motion detection now includes smart audio detection, when supported by Protect. You too can now have a sensor triggered when a baby is crying, a dog is barking, and a car horn is heard - potentially all at once! Functionality has been incorporated into the smart motion detection feature options and smart object sensors.
+  * Improvement: address edge cases where the Protect controller disappears for large periods of time, leading to potential device removal.
+  * Housekeeping.
+
 ## 7.4.0 (2024-09-22)
   * Behavior change: the camera status indicator light feature option now defaults to on. This was always the intended default behavior, but due to bugs that seem to be fixed in iOS 18, we can have our toys back. You can control the status indicator light through the camera details screen in the Home app.
   * New feature: the night vision indicator light is now available in the camera details screen in the Home app. This feature is enabled by default, you can choose to enable or disable it through the HBUP webUI.
