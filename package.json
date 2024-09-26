@@ -78,7 +78,7 @@
     "@homebridge/plugin-ui-utils": "1.0.3",
     "ffmpeg-for-homebridge": "2.1.1",
     "homebridge-plugin-utils": "^1.8.2",
-    "unifi-protect": "file:../unifi-protect",
+    "unifi-protect": "^4.15.0",
     "ws": "8.18.0"
   },
   "devDependencies": {
