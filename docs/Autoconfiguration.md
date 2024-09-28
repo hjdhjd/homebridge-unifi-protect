@@ -35,12 +35,9 @@ Briefly:
 * *Transcoding* involves a CPU-intensive conversion of a video stream from one format or quality level to another. The process can be made significantly faster (with caveats and compromises) and less resource intensive through the use of GPU hardware acceleration.
 * *Transmuxing* involves repackaging a video stream from one container format or another. No change in format or quality occurs. Notably, it is not a resource intensive activity.
 
-#### How HBUP Decides When to Transcode or Transmux
-Here are the rules that are used by default to decide when to transcode and when to transmux:
+#### Transcoding Customization
 
-* At home, on a local network, livestreams are transcoded by default. HBUP will select the Protect stream that is closest to the resolution that HomeKit is requesting without exceeding the requested resolution, when available. This results in high quality video with lower latency being streamed to clients.
-* When away from home, Apple Watch, or on a high-latency connection (as decided upon by HomeKit, not HBUP), livestreams are transcoded.
-* HomeKit bitrates are notoriously conservative from a bandwidth perspective - they're downright low and result can result in far less than ideal video quality. You can further adjust the bitrates used for local and non-local streaming when transcoded, using HBUP's feature options.
+HomeKit bitrates are notoriously conservative from a bandwidth perspective - they're downright low and result can result in far less than ideal video quality. You can further adjust the bitrates used for local and non-local streaming when transcoded, using HBUP's feature options.
 
 The defaault behavior can be tailored to your preferences, using the appropriate [feature options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md#video).
 
