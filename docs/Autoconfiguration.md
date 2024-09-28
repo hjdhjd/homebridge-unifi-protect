@@ -38,12 +38,13 @@ Briefly:
 #### How HBUP Decides When to Transcode or Transmux
 Here are the rules that are used by default to decide when to transcode and when to transmux:
 
-* At home, on a local network, livestreams are transmuxed rather than transcoded by default. HBUP will select the Protect stream that is closest to the resolution that HomeKit is requesting without exceeding the requested resolution, when available. This results in high quality video with low latency being streamed to clients - *with the exception of the Apple Watch. Apple Watch clients will always receives transcoded video due to Watch hardware constraints.*
+* At home, on a local network, livestreams are transcoded by default. HBUP will select the Protect stream that is closest to the resolution that HomeKit is requesting without exceeding the requested resolution, when available. This results in high quality video with lower latency being streamed to clients.
 * When away from home, Apple Watch, or on a high-latency connection (as decided upon by HomeKit, not HBUP), livestreams are transcoded.
+* HomeKit bitrates are notoriously conservative from a bandwidth perspective - they're downright low and result can result in far less than ideal video quality. You can further adjust the bitrates used for local and non-local streaming when transcoded, using HBUP's feature options.
 
 The defaault behavior can be tailored to your preferences, using the appropriate [feature options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md#video).
 
-#### How HBUP Stream Quality Selectionion Works When Transcding
+#### How HBUP Stream Quality Selection Works When Transcding
 When transcoding, these are the rules used to determine which Protect camera streams (Protect has three stream qualities available: High, Medium, and Low) are used for transcoding.
 
 ##### Livestreams
