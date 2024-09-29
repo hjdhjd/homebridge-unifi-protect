@@ -138,7 +138,7 @@ export class ProtectCamera extends ProtectDevice {
     await this.configureAmbientLightSensor();
 
     // Configure the motion sensor.
-    this.configureMotionSensor();
+    this.configureMotionSensor(!this.ufp.isThirdPartyCamera);
 
     // Configure smart motion contact sensors.
     this.configureMotionSmartSensor();
@@ -589,7 +589,7 @@ export class ProtectCamera extends ProtectDevice {
     // Retrieve the camera status light if we have it enabled.
     const statusLight = service?.getCharacteristic(this.hap.Characteristic.CameraOperatingModeIndicator);
 
-    if(!this.hints.ledStatus) {
+    if(!this.hasHksv || !this.hints.ledStatus) {
 
       if(statusLight) {
 
@@ -608,7 +608,7 @@ export class ProtectCamera extends ProtectDevice {
     // Retrieve the night vision indicator if we have it enabled.
     const nightVision = service?.getCharacteristic(this.hap.Characteristic.NightVision);
 
-    if(!this.hints.nightVision) {
+    if(!this.hasHksv || !this.hints.nightVision) {
 
       if(nightVision) {
 
@@ -899,10 +899,10 @@ export class ProtectCamera extends ProtectDevice {
   // Configure HomeKit Secure Video support.
   private configureHksv(): boolean {
 
-    this.hasHksv = true;
+    this.hasHksv = !this.ufp.isThirdPartyCamera;
 
     // If we have smart motion events enabled, let's warn the user that things will not work quite the way they expect.
-    if(this.hints.smartDetect) {
+    if(this.hasHksv && this.hints.smartDetect) {
 
       this.log.info("WARNING: Smart motion detection and HomeKit Secure Video provide overlapping functionality. " +
         "Only HomeKit Secure Video, when event recording is enabled in the Home app, will be used to trigger motion event notifications for this camera." +
