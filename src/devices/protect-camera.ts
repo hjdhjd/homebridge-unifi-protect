@@ -974,7 +974,7 @@ export class ProtectCamera extends ProtectDevice {
     // Validate whether we should have this service enabled.
     if(!this.validService(this.hap.Service.Lightbulb, () => {
 
-      // Night vision dimmers are disabled by default unless the user enables them and we have the device-specific capabilities to support it.
+      // The night vision dimmer is disabled by default and requires the relevant device-specific capabilities to support it.
       if(!this.ufp.featureFlags.hasInfrared || !this.ufp.featureFlags.hasIcrSensitivity || !this.hasFeature("Device.NightVision.Dimmer")) {
 
         return false;
