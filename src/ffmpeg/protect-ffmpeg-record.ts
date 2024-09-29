@@ -3,10 +3,10 @@
  * protect-ffmpeg-record.ts: Provide FFmpeg process control to support HomeKit Secure Video.
  *
  */
+import { PROTECT_HKSV_IDR_INTERVAL, PROTECT_HKSV_TIMEOUT } from "../settings.js";
 import { ProtectCamera, RtspEntry } from "../devices/index.js";
 import { CameraRecordingConfiguration } from "homebridge";
 import { FfmpegProcess } from "./protect-ffmpeg.js";
-import { PROTECT_HKSV_IDR_INTERVAL } from "../settings.js";
 import { once } from "node:events";
 import { runWithTimeout } from "homebridge-plugin-utils";
 
@@ -15,6 +15,7 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
 
   private isLoggingErrors: boolean;
   public isTimedOut: boolean;
+  private recordingBuffer: { data: Buffer, header: Buffer, length: number, type: string }[];
   private recordingConfig: CameraRecordingConfiguration;
 
   // Create a new FFmpeg process instance.
@@ -25,6 +26,9 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
 
     // We want to log errors when they occur.
     this.isLoggingErrors = true;
+
+    // Initialize our recording buffer.
+    this.recordingBuffer = [];
 
     // Initialize our state.
     this.isTimedOut = false;
@@ -191,7 +195,8 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
         }
 
         // Add it to our queue to be eventually pushed out through our generator function.
-        this.emit("mp4box", { data: data, header: header, length: dataLength, type: type });
+        this.recordingBuffer.push({ data: data, header: header, length: dataLength, type: type });
+        this.emit("mp4box");
 
         // Prepare to start a new box for the next buffer that we will be processing.
         data = Buffer.alloc(0);
@@ -287,17 +292,25 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
     // Loop forever, generating either FTYP/MOOV box pairs or MOOF/MDAT box pairs for HomeKit Secure Video.
     for(;;) {
 
-      // Segments are produced by FFmpeg according to our specified IDR interval. If we don't see a segment emitted within that timeframe, we have a failsafe to
-      // guarantee we are never waiting for too long for FFmpeg to return something or error out.
-      // eslint-disable-next-line no-await-in-loop
-      const box = await runWithTimeout(once(this, "mp4box"), /* (2000 * PROTECT_HKSV_IDR_INTERVAL) + 500 */ 5000);
-
       // FFmpeg has finished it's output - we're done.
       if(this.isEnded) {
 
         return;
       }
 
+      // If the buffer is empty, wait for our FFmpeg process to produce more boxes.
+      if(!this.recordingBuffer.length) {
+
+        // Segments are output by FFmpeg according to our specified IDR interval. If we don't see a segment within the timeframe we need for HKSV's timing requirements,
+        // we flag it accordingly and return null back to the generator that's calling us.
+        // eslint-disable-next-line no-await-in-loop
+        await runWithTimeout(once(this, "mp4box"), PROTECT_HKSV_TIMEOUT);
+      }
+
+      // Grab the next fMP4 box from our buffer.
+      const box = this.recordingBuffer.shift();
+
+      // FFmpeg hasn't produced any output. Given the time-sensitive nature of HKSV that constrains us to no more than 5 seconds to provide the next segment, we're done.
       if(!box) {
 
         this.isTimedOut = true;
@@ -306,7 +319,7 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
       }
 
       // Queue up this fMP4 box to send back to HomeKit.
-      segment.push(box[0].header, box[0].data);
+      segment.push(box.header, box.data);
 
       // What we want to send are two types of complete segments, made up of multiple MP4 boxes:
       //
@@ -317,7 +330,7 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
       //   of MOOF as the audio/video data "header", and MDAT as the "payload".
       //
       // Once we see these, we combine all the segments in our queue to send back to HomeKit.
-      if((box[0].type === "moov") || (box[0].type === "mdat")) {
+      if((box.type === "moov") || (box.type === "mdat")) {
 
         yield Buffer.concat(segment);
         segment = [];

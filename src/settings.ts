@@ -50,6 +50,9 @@ export const PROTECT_HKSV_FRAGMENT_LENGTH = 4000;
 // HomeKit Secure Video segment resolution, in milliseconds. This defines the resolution of our buffer. It should never be less than 100ms or greater than 1500ms.
 export const PROTECT_HKSV_SEGMENT_RESOLUTION = 100;
 
+// HomeKit Secure Video communication timeout threshold, in milliseconds. HKSV has a strict 5 second threshold for communication, so we set this a little below that.
+export const PROTECT_HKSV_TIMEOUT = 4500;
+
 // HomeKit Secure Video timeshift buffer default duration, in milliseconds. This defines how far back in time we can look when we see a motion event.
 export const PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION = PROTECT_LIVESTREAM_API_IDR_INTERVAL * 1000 * 2;
 
