@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 7.5.2 (2024-09-28)
+  * **Note: this will likely be the final version of HBUP to support Protect v4. Protect v5 has several breaking changes that I'll be addressing in future updates, most notably in the way Protect chimes now work, making them far less customizable than previously. Stay tuned for those updates.**
+  * Improvement: HKSV performance and error rates should be noticeably improved. Thanks to @rasod for providing some good comparative logs to help me track this down.
+  * Housekeeping.
+
 ## 7.5.1 (2024-09-26)
   * Housekeeping.
 
