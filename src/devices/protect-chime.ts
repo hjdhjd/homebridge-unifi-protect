@@ -3,9 +3,9 @@
  * protect-chime.ts: Chime device class for UniFi Protect.
  */
 import { CharacteristicValue, PlatformAccessory } from "homebridge";
-import { ProtectChimeConfig, ProtectChimeConfigPayload, ProtectEventPacket } from "unifi-protect";
 import { ProtectReservedNames, toCamelCase } from "../protect-types.js";
 import { PROTECT_DOORBELL_CHIME_SPEAKER_DURATION } from "../settings.js";
+import { ProtectChimeConfig } from "unifi-protect";
 import { ProtectDevice } from "./protect-device.js";
 import { ProtectNvr } from "../protect-nvr.js";
 
@@ -61,9 +61,6 @@ export class ProtectChime extends ProtectDevice {
 
     // Configure MQTT services.
     this.configureMqtt();
-
-    // Listen for events.
-    this.nvr.events.on("updateEvent." + this.ufp.id, this.listeners["updateEvent." + this.ufp.id] = this.eventHandler.bind(this));
 
     return true;
   }
@@ -188,27 +185,6 @@ export class ProtectChime extends ProtectDevice {
   // Configure MQTT capabilities of this chime.
   private configureMqtt(): boolean {
 
-    // Get and set the chime volume.
-    this.subscribeGet("chime", "chime volume", (): string => {
-
-      return this.ufp.volume.toString();
-    });
-
-    this.subscribeSet("chime", "chime volume", (value: string) => {
-
-      const volume = parseInt(value.toString());
-
-      // Unknown message - ignore it.
-      if(isNaN(volume) || (volume < 0) || (volume > 100)) {
-
-        return;
-      }
-
-      // We explicitly want to trigger our set event handler, which will complete this action.
-      this.accessory.getService(this.hap.Service.Lightbulb)?.getCharacteristic(this.hap.Characteristic.Brightness)?.setValue(volume);
-      this.accessory.getService(this.hap.Service.Lightbulb)?.getCharacteristic(this.hap.Characteristic.On)?.setValue(volume > 0);
-    });
-
     // Play a tone on the chime.
     this.subscribeSet("tone", "chime tone", (value: string) => {
 
@@ -241,20 +217,5 @@ export class ProtectChime extends ProtectDevice {
   public updateDevice(): void {
 
     this.configureRingtoneSwitches();
-  }
-
-  // Handle chime-related events.
-  private eventHandler(packet: ProtectEventPacket): void {
-
-    const payload = packet.payload as ProtectChimeConfigPayload;
-
-    // It's a volume setting event - process it accordingly.
-    if("volume" in payload) {
-
-      // Update our volume setting.
-      this.accessory.getService(this.hap.Service.Lightbulb)?.updateCharacteristic(this.hap.Characteristic.Brightness, payload.volume as number);
-      this.accessory.getService(this.hap.Service.Lightbulb)?.updateCharacteristic(this.hap.Characteristic.On, (payload.volume as number) > 0);
-      this.publish("chime", (payload.volume ?? 0).toString());
-    }
   }
 }
