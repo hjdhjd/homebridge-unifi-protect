@@ -190,13 +190,67 @@ const validOption = (device, option) => {
     return false;
   }
 
+  // Test for the explicit exclusion of a property if it's true.
+  if(device && option.isNotProperty?.some(x => device[x] === true)) {
+
+    return false;
+  }
+
+  // Test for device class-specific features and properties.
+  switch(device?.modelKey) {
+
+    case "camera":
+
+      if(option.hasCameraFeature && !option.hasCameraFeature.some(x => device.featureFlags[x])) {
+
+        return false;
+      }
+
+      break;
+
+    case "light":
+
+      if(option.hasLightProperty && !option.hasLightProperty.some(x => x in device)) {
+
+        return false;
+      }
+
+      break;
+
+    case "sensor":
+
+      if(option.hasSensorProperty && !option.hasSensorProperty.some(x => x in device)) {
+
+        return false;
+      }
+
+      break;
+
+    default:
+
+      break;
+  }
+
   return true;
 };
 
 // Only show feature option categories that are valid for a particular device type.
 const validOptionCategory = (device, category) => {
 
-  if(device && (device.modelKey !== "nvr") && !category.modelKey.some(model => ["all", device.modelKey].includes(model))) {
+  // Always show all options at the global and controller level.
+  if(!device || (device?.modelKey === "nvr")) {
+
+    return true;
+  }
+
+  // Only show device categories we're explicitly interested in.
+  if(!category.modelKey?.some(model => ["all", device.modelKey].includes(model))) {
+
+    return false;
+  }
+
+  // Test for the explicit exclusion of a property if it's true.
+  if(category.isNotProperty?.some(x => device[x] === true)) {
 
     return false;
   }

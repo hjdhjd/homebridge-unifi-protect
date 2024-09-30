@@ -45,9 +45,13 @@ export interface ProtectNvrOptions {
 // modelKey:            Device categories that the option applies to, or "all" for any device type.
 interface ProtectFeatureOption extends FeatureOptionEntry {
 
+  hasCameraFeature?: string[],
   hasFeature?: string[],
+  hasLightProperty?: string[],
   hasProperty?: string[],
+  hasSensorProperty?: string[],
   hasSmartObjectType?: string[],
+  isNotProperty?: string[],
   modelKey?: string[]
 }
 
@@ -58,11 +62,11 @@ export const featureOptionCategories = [
   { description: "Device feature options.", modelKey: [ "all" ], name: "Device" },
   { description: "Doorbell feature options.", modelKey: [ "camera" ], name: "Doorbell" },
   { description: "Logging feature options.", modelKey: [ "camera", "light", "sensor" ], name: "Log" },
-  { description: "Motion detection feature options.", modelKey: [ "camera", "light", "sensor" ], name: "Motion" },
+  { description: "Motion detection feature options.", isNotProperty: [ "isThirdPartyCamera" ], modelKey: [ "camera", "light", "sensor" ], name: "Motion" },
   { description: "NVR feature options.", modelKey: [ "camera", "nvr" ], name: "Nvr" },
-  { description: "Security system feature options.", modelKey: [ "camera", "nvr" ], name: "SecuritySystem" },
+  { description: "Security system feature options.", modelKey: [ "nvr" ], name: "SecuritySystem" },
   { description: "Video feature options.", modelKey: [ "camera" ], name: "Video" },
-  { description: "HomeKit Secure Video feature options.", modelKey: [ "camera" ], name: "Video.HKSV" }
+  { description: "HomeKit Secure Video feature options.", isNotProperty: [ "isThirdPartyCamera" ], modelKey: [ "camera" ], name: "Video.HKSV" }
 ];
 
 /* eslint-disable @stylistic/max-len */
@@ -71,22 +75,22 @@ export const featureOptions: { [index: string]: ProtectFeatureOption[] } = {
   // Audio options.
   "Audio": [
 
-    { default: true, description: "Audio support.", hasFeature: [ "hasMic" ], name: ""},
-    { default: false, description: "Audio filter for ambient noise suppression.", group: "", hasFeature: [ "hasMic" ], name: "Filter.Noise"},
+    { default: true, description: "Audio support.", hasFeature: [ "hasMic" ], name: "" },
+    { default: false, description: "Audio filter for ambient noise suppression.", group: "", hasFeature: [ "hasMic" ], name: "Filter.Noise" },
     { default: false, defaultValue: PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, description: "Noise reduction amount, in decibels, for the FFmpeg afftdn filter.", group: "Filter.Noise", name: "Filter.Noise.FftNr" },
     { default: false, defaultValue: PROTECT_FFMPEG_AUDIO_FILTER_HIGHPASS, description: "Frequency, in Hertz, for the FFmpeg highpass filter.", group: "Filter.Noise", name: "Filter.Noise.HighPass" },
     { default: false, defaultValue: PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS, description: "Frequency, in Hertz, for the FFmpeg lowpass filter.", group: "Filter.Noise", name: "Filter.Noise.LowPass" },
-    { default: true, description: "Two-way audio support on supported cameras.", group: "", hasFeature: [ "hasSpeaker" ], name: "TwoWay"}
+    { default: true, description: "Two-way audio support on supported cameras.", group: "", hasFeature: [ "hasSpeaker" ], name: "TwoWay" }
   ],
 
   // Device options.
   "Device": [
 
     { default: true, description: "Make this device available in HomeKit.", name: "" },
-    { default: true, description: "Enable the status indicator light for this device in HomeKit.", hasProperty: [ "ledSettings" ], name: "StatusLed" },
-    { default: false, description: "Add a switch accessory to control the status indicator light in HomeKit.", hasProperty: [ "ledSettings", "lightDeviceSettings" ], name: "StatusLed.Switch" },
-    { default: true, description: "Enable the night vision indicator light for this device in HomeKit.", hasFeature: [ "hasInfrared" ], modelKey: [ "camera" ], name: "NightVision" },
-    { default: false, description: "Add a dimmer accessory to control the night vision state in HomeKit.", hasFeature: [ "hasInfrared" ], modelKey: [ "camera" ], name: "NightVision.Dimmer" },
+    { default: true, description: "Enable the status indicator light for this device in HomeKit.", hasFeature: [ "hasLedStatus" ], modelKey: [ "camera" ], name: "StatusLed" },
+    { default: false, description: "Add a switch accessory to control the status indicator light in HomeKit.", hasCameraFeature: [ "hasLedStatus" ], hasLightProperty: [ "lightDeviceSettings" ], hasSensorProperty: [ "ledSettings" ], modelKey: [ "camera", "light", "sensor" ], name: "StatusLed.Switch" },
+    { default: true, description: "Enable the night vision indicator light for this device in HomeKit.", hasFeature: [ "hasLedIr" ], modelKey: [ "camera" ], name: "NightVision" },
+    { default: false, description: "Add a dimmer accessory to control the night vision state in HomeKit.", hasFeature: [ "hasLedIr" ], modelKey: [ "camera" ], name: "NightVision.Dimmer" },
     { default: false, description: "Make this a standalone device in HomeKit that will need to be added to HomeKit through the Home app.", name: "Standalone" },
     { default: false, description: "Synchronize the UniFi Protect name of this device with HomeKit. Synchronization is one-way only, syncing the device name from UniFi Protect to HomeKit.", name: "SyncName" }
   ],
@@ -94,19 +98,20 @@ export const featureOptions: { [index: string]: ProtectFeatureOption[] } = {
   // Doorbell options.
   "Doorbell": [
 
-    { default: true, description: "Enable the doorbell messages feature.", hasFeature: [ "isDoorbell" ], name: "Messages"},
-    { default: true, description: "Use messages saved to the Protect NVR as message switches.", group: "Messages", hasFeature: [ "isDoorbell" ], name: "Messages.FromDoorbell"},
-    { default: false, description: "Add switch accessories to control the physical chimes attached to a Protect doorbell.", hasFeature: [ "hasChime" ], name: "PhysicalChime"},
-    { default: false, defaultValue: PROTECT_DOORBELL_CHIME_DURATION_DIGITAL, description: "Chime duration, in milliseconds, of a digital physical chime attached to a Protect doorbell.", group: "PhysicalChime", hasFeature: [ "hasChime" ], name: "PhysicalChime.Duration.Digital"},
-    { default: false, description: "Add a switch accessory to trigger doorbell ring events on a Protect camera or doorbell.", hasFeature: [ "hasMotionZones" ], name: "Trigger"}
+    { default: true, description: "Enable the doorbell messages feature.", hasFeature: [ "isDoorbell" ], name: "Messages" },
+    { default: true, description: "Use messages saved to the Protect NVR as message switches.", group: "Messages", hasFeature: [ "isDoorbell" ], name: "Messages.FromDoorbell" },
+    { default: false, description: "Add a dimmer accessory to control the Protect chime volume in HomeKit.", hasFeature: [ "isDoorbell" ], name: "Volume.Dimmer" },
+    { default: false, description: "Add switch accessories to control the physical chimes attached to a Protect doorbell.", hasFeature: [ "hasChime" ], name: "PhysicalChime" },
+    { default: false, defaultValue: PROTECT_DOORBELL_CHIME_DURATION_DIGITAL, description: "Chime duration, in milliseconds, of a digital physical chime attached to a Protect doorbell.", group: "PhysicalChime", hasFeature: [ "hasChime" ], name: "PhysicalChime.Duration.Digital" },
+    { default: false, description: "Add a switch accessory to trigger doorbell ring events on a Protect camera or doorbell.", name: "Trigger" }
   ],
 
   // Logging options.
   "Log": [
 
-    { default: true, description: "Log doorbell ring events in Homebridge.", hasFeature: [ "hasMotionZones" ], name: "Doorbell"},
-    { default: false, description: "Log HomeKit Secure Video recording events in Homebridge.", hasFeature: [ "hasMotionZones" ], name: "HKSV"},
-    { default: false, description: "Log motion events in Homebridge.", hasProperty: [ "isMotionDetected", "isPirMotionDetected" ], name: "Motion" }
+    { default: true, description: "Log doorbell ring events in Homebridge.", modelKey: [ "camera" ], name: "Doorbell" },
+    { default: false, description: "Log HomeKit Secure Video recording events in Homebridge.", isNotProperty: [ "isThirdPartyCamera" ], modelKey: [ "camera" ], name: "HKSV" },
+    { default: false, description: "Log motion events in Homebridge.", hasProperty: [ "isMotionDetected", "isPirMotionDetected" ], isNotProperty: [ "isThirdPartyCamera" ], name: "Motion" }
   ],
 
   // Motion options.
@@ -115,24 +120,24 @@ export const featureOptions: { [index: string]: ProtectFeatureOption[] } = {
     { default: false, defaultValue: PROTECT_MOTION_DURATION, description: "Duration, in seconds, of a single motion event, before allowing a new one.", name: "Duration" },
     { default: false, description: "Add an occupancy sensor accessory using motion sensor activity to determine occupancy. By default, any motion will trigger occupancy. If the smart detection feature option is enabled, it will be used instead.", hasProperty: [ "isMotionDetected", "isPirMotionDetected" ], name: "OccupancySensor" },
     { default: false, defaultValue: PROTECT_OCCUPANCY_DURATION, description: "Duration, in seconds, to wait without receiving a motion event to determine when occupancy is no longer detected.", group: "OccupancySensor", name: "OccupancySensor.Duration" },
-    { default: false, description: "When using both the occupancy sensor and smart detection feature options, use UniFi Protect's animal detection to trigger occupancy.", group: "OccupancySensor", hasFeature: [ "hasSmartDetect" ], name: "OccupancySensor.Animal"},
-    { default: false, description: "When using both the occupancy sensor and smart detection feature options, use UniFi Protect's face detection to trigger occupancy.", group: "OccupancySensor", hasFeature: [ "hasSmartDetect" ], name: "OccupancySensor.Face"},
-    { default: false, description: "When using both the occupancy sensor and smart detection feature options, use UniFi Protect's license plate detection to trigger occupancy.", group: "OccupancySensor", hasFeature: [ "hasSmartDetect" ], name: "OccupancySensor.LicensePlate"},
-    { default: false, description: "When using both the occupancy sensor and smart detection feature options, use UniFi Protect's package detection to trigger occupancy.", group: "OccupancySensor", hasFeature: [ "hasSmartDetect" ], name: "OccupancySensor.Package"},
-    { default: true, description: "When using both the occupancy sensor and smart detection feature options, use UniFi Protect's person detection to trigger occupancy.", group: "OccupancySensor", hasFeature: [ "hasSmartDetect" ], name: "OccupancySensor.Person"},
-    { default: false, description: "When using both the occupancy sensor and smart detection feature options, use UniFi Protect's vehicle detection to trigger occupancy.", group: "OccupancySensor", hasFeature: [ "hasSmartDetect" ], name: "OccupancySensor.Vehicle"},
-    { default: false, description: "When using both the occupancy sensor and smart detection feature options, use UniFi Protect's baby crying audio detection to trigger occupancy.", group: "OccupancySensor", hasFeature: [ "hasSmartDetect" ], name: "OccupancySensor.AlrmBabyCry"},
-    { default: false, description: "When using both the occupancy sensor and smart detection feature options, use UniFi Protect's bark audio detection to trigger occupancy.", group: "OccupancySensor", hasFeature: [ "hasSmartDetect" ], name: "OccupancySensor.AlrmBark"},
-    { default: false, description: "When using both the occupancy sensor and smart detection feature options, use UniFi Protect's car alarm audio detection to trigger occupancy.", group: "OccupancySensor", hasFeature: [ "hasSmartDetect" ], name: "OccupancySensor.AlrmBurglar"},
-    { default: false, description: "When using both the occupancy sensor and smart detection feature options, use UniFi Protect's car horn audio detection to trigger occupancy.", group: "OccupancySensor", hasFeature: [ "hasSmartDetect" ], name: "OccupancySensor.AlrmCarHorn"},
-    { default: false, description: "When using both the occupancy sensor and smart detection feature options, use UniFi Protect's CO alarm audio detection to trigger occupancy.", group: "OccupancySensor", hasFeature: [ "hasSmartDetect" ], name: "OccupancySensor.AlrmCmonx"},
-    { default: false, description: "When using both the occupancy sensor and smart detection feature options, use UniFi Protect's glass break audio detection to trigger occupancy.", group: "OccupancySensor", hasFeature: [ "hasSmartDetect" ], name: "OccupancySensor.alrmGlassBreak"},
-    { default: false, description: "When using both the occupancy sensor and smart detection feature options, use UniFi Protect's siren audio detection to trigger occupancy.", group: "OccupancySensor", hasFeature: [ "hasSmartDetect" ], name: "OccupancySensor.AlrmSiren"},
-    { default: false, description: "When using both the occupancy sensor and smart detection feature options, use UniFi Protect's smoke alarm audio detection to trigger occupancy.", group: "OccupancySensor", hasFeature: [ "hasSmartDetect" ], name: "OccupancySensor.AlrmSmoke"},
-    { default: false, description: "When using both the occupancy sensor and smart detection feature options, use UniFi Protect's speaking audio detection to trigger occupancy.", group: "OccupancySensor", hasFeature: [ "hasSmartDetect" ], name: "OccupancySensor.AlrmSpeak"},
-    { default: false, description: "When using both the occupancy sensor and smart detection feature options, use UniFi Protect's CO and smoke alarm audio detection to trigger occupancy.", group: "OccupancySensor", hasFeature: [ "hasSmartDetect" ], name: "OccupancySensor.Smoke_cmonx"},
-    { default: false, description: "Use UniFi Protect smart detection for HomeKit motion events when on a supported device.", hasFeature: [ "hasSmartDetect" ], name: "SmartDetect"},
-    { default: false, description: "Add contact sensors for each smart detection object type that UniFi Protect supports.", group: "SmartDetect", hasFeature: [ "hasSmartDetect" ], name: "SmartDetect.ObjectSensors"},
+    { default: false, description: "When using both the occupancy sensor and smart detection feature options, use UniFi Protect's animal detection to trigger occupancy.", group: "OccupancySensor", hasFeature: [ "hasSmartDetect" ], name: "OccupancySensor.Animal" },
+    { default: false, description: "When using both the occupancy sensor and smart detection feature options, use UniFi Protect's face detection to trigger occupancy.", group: "OccupancySensor", hasFeature: [ "hasSmartDetect" ], name: "OccupancySensor.Face" },
+    { default: false, description: "When using both the occupancy sensor and smart detection feature options, use UniFi Protect's license plate detection to trigger occupancy.", group: "OccupancySensor", hasFeature: [ "hasSmartDetect" ], name: "OccupancySensor.LicensePlate" },
+    { default: false, description: "When using both the occupancy sensor and smart detection feature options, use UniFi Protect's package detection to trigger occupancy.", group: "OccupancySensor", hasFeature: [ "hasSmartDetect" ], name: "OccupancySensor.Package" },
+    { default: true, description: "When using both the occupancy sensor and smart detection feature options, use UniFi Protect's person detection to trigger occupancy.", group: "OccupancySensor", hasFeature: [ "hasSmartDetect" ], name: "OccupancySensor.Person" },
+    { default: false, description: "When using both the occupancy sensor and smart detection feature options, use UniFi Protect's vehicle detection to trigger occupancy.", group: "OccupancySensor", hasFeature: [ "hasSmartDetect" ], name: "OccupancySensor.Vehicle" },
+    { default: false, description: "When using both the occupancy sensor and smart detection feature options, use UniFi Protect's baby crying audio detection to trigger occupancy.", group: "OccupancySensor", hasFeature: [ "hasSmartDetect" ], name: "OccupancySensor.AlrmBabyCry" },
+    { default: false, description: "When using both the occupancy sensor and smart detection feature options, use UniFi Protect's bark audio detection to trigger occupancy.", group: "OccupancySensor", hasFeature: [ "hasSmartDetect" ], name: "OccupancySensor.AlrmBark" },
+    { default: false, description: "When using both the occupancy sensor and smart detection feature options, use UniFi Protect's car alarm audio detection to trigger occupancy.", group: "OccupancySensor", hasFeature: [ "hasSmartDetect" ], name: "OccupancySensor.AlrmBurglar" },
+    { default: false, description: "When using both the occupancy sensor and smart detection feature options, use UniFi Protect's car horn audio detection to trigger occupancy.", group: "OccupancySensor", hasFeature: [ "hasSmartDetect" ], name: "OccupancySensor.AlrmCarHorn" },
+    { default: false, description: "When using both the occupancy sensor and smart detection feature options, use UniFi Protect's CO alarm audio detection to trigger occupancy.", group: "OccupancySensor", hasFeature: [ "hasSmartDetect" ], name: "OccupancySensor.AlrmCmonx" },
+    { default: false, description: "When using both the occupancy sensor and smart detection feature options, use UniFi Protect's glass break audio detection to trigger occupancy.", group: "OccupancySensor", hasFeature: [ "hasSmartDetect" ], name: "OccupancySensor.alrmGlassBreak" },
+    { default: false, description: "When using both the occupancy sensor and smart detection feature options, use UniFi Protect's siren audio detection to trigger occupancy.", group: "OccupancySensor", hasFeature: [ "hasSmartDetect" ], name: "OccupancySensor.AlrmSiren" },
+    { default: false, description: "When using both the occupancy sensor and smart detection feature options, use UniFi Protect's smoke alarm audio detection to trigger occupancy.", group: "OccupancySensor", hasFeature: [ "hasSmartDetect" ], name: "OccupancySensor.AlrmSmoke" },
+    { default: false, description: "When using both the occupancy sensor and smart detection feature options, use UniFi Protect's speaking audio detection to trigger occupancy.", group: "OccupancySensor", hasFeature: [ "hasSmartDetect" ], name: "OccupancySensor.AlrmSpeak" },
+    { default: false, description: "When using both the occupancy sensor and smart detection feature options, use UniFi Protect's CO and smoke alarm audio detection to trigger occupancy.", group: "OccupancySensor", hasFeature: [ "hasSmartDetect" ], name: "OccupancySensor.Smoke_cmonx" },
+    { default: false, description: "Use UniFi Protect smart detection for HomeKit motion events when on a supported device.", hasFeature: [ "hasSmartDetect" ], name: "SmartDetect" },
+    { default: false, description: "Add contact sensors for each smart detection object type that UniFi Protect supports.", group: "SmartDetect", hasFeature: [ "hasSmartDetect" ], name: "SmartDetect.ObjectSensors" },
     { default: false, defaultValue: "", description: "Add a contact sensor accessory that will match a specific license plate detected by UniFi Protect. You may specify multiple license plates by using hyphens to distinguish unique license plates (e.g. PLATE1-PLATE2-PLATE3).", group: "SmartDetect", hasSmartObjectType: [ "licensePlate" ], name: "SmartDetect.ObjectSensors.LicensePlate" },
     { default: false, description: "Add a switch accessory to activate or deactivate motion detection in HomeKit.", hasProperty: [ "isMotionDetected", "isPirMotionDetected" ], name: "Switch" },
     { default: false, description: "Add a switch accessory to manually trigger a motion detection event in HomeKit.", hasProperty: [ "isMotionDetected", "isPirMotionDetected" ], name: "Trigger" }
@@ -158,7 +163,7 @@ export const featureOptions: { [index: string]: ProtectFeatureOption[] } = {
   "Video": [
 
     { default: false, description: "Use hardware-accelerated transcoding when available (Apple Macs, Intel Quick Sync Video-enabled CPUs, Raspberry Pi 4).", name: "Transcode.Hardware" },
-    { default: true, description: "Use the native Protect livestream API to view livestreams.", name: "Stream.UseApi" },
+    { default: true, description: "Use the native Protect livestream API to view livestreams.", isNotProperty: [ "isThirdPartyCamera" ], name: "Stream.UseApi" },
     { default: true, description: "When streaming to low-latency clients (e.g. at home), transcode livestreams, instead of transmuxing them.", name: "Transcode" },
     { default: false, defaultValue: PROTECT_TRANSCODE_BITRATE, description: "Bitrate, in kilobits per second, to use when transcoding to low-latency (e.g. at home) clients, ignoring the bitrate HomeKit requests. HomeKit typically requests lower video quality than you may desire in your environment.", group: "Transcode", name: "Transcode.Bitrate" },
     { default: true, description: "When streaming to high-latency clients (e.g. cellular connections), transcode livestreams instead of transmuxing them.", name: "Transcode.HighLatency" },
