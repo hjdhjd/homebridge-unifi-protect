@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 7.6.0 (2024-09-29)
+  * **Note: HBUP now requires Protect v5 as if this release. Prior versions of Protect are no longer supported.**
+  * Behavior change: Protect v5 has significantly changed interactions between doorbell cameras and chimes. As a result of Ubiquiti's changes, Protect chimes cannot have their volume controlled individually any longer. For the time being, it seems Protect's still permitting individual chimes to play unique ringtones and that functionality remains in HBUP. Volume control for Protect chimes attached to Protect doorbells can be enabled by a feature option, allowing you to control the volume across all Protect chimes paired to a particular doorbell.
+  * New feature: Protect doorbell chime support is now available through Protect doorbells. You can find the relevant feature option under the doorbell section in the HBUP webUI.
+  * New feature: third party cameras in Protect via ONVIF are now supported in HBUP, with constraints: there's no motion sensor exposed by the Protect controller, which means HKSV is unavailable to these cameras, as are any unique camera-specific controls.
+  * Housekeeping.
+
 ## 7.5.2 (2024-09-28)
   * **Note: this will likely be the final version of HBUP to support Protect v4. Protect v5 has several breaking changes that I'll be addressing in future updates, most notably in the way Protect chimes now work, making them far less customizable than previously. Stay tuned for those updates.**
   * Improvement: HKSV performance and error rates should be noticeably improved. Thanks to @rasod for providing some good comparative logs to help me track this down.

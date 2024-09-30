@@ -37,7 +37,7 @@ Briefly:
 
 #### Transcoding Customization
 
-HomeKit bitrates are notoriously conservative from a bandwidth perspective - they're downright low and result can result in far less than ideal video quality. You can further adjust the bitrates used for local and non-local streaming when transcoded, using HBUP's feature options.
+HomeKit bitrates are notoriously conservative from a bandwidth and quality perspective - they're downright low and result can result in far less than ideal video quality. You can further customize the bitrates used for local and non-local streaming when transcoded, using HBUP's feature options.
 
 The defaault behavior can be tailored to your preferences, using the appropriate [feature options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md#video).
 
@@ -46,6 +46,9 @@ When transcoding, these are the rules used to determine which Protect camera str
 
 ##### Livestreams
 
+In order, the following occurs:
+
+* If you have HomeKit Secure Video enabled, we will always use the existing video that's being captured through the Protect API. The quality setting used for HKSV event recording will be the input quality for a HomeKit livestream session. You can change this behavior through disabling the use of the livestream API using the appropriate [feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md#video). If use of the Protect API has been disabled for livestreams, or you aren't using HKSV, keep reading.
 * If you’re on a hardware accelerated platform, we always use the highest quality camera stream that's available to us as a starting point when transcoding. It always yields better performance and quality results for fixed-function hardware transcoders (e.g. most GPUs).
 * If you’re not on a hardware accelerated platform, we always try to match the quality that’s being requested, with a bias of going higher versus lower, and then passing that along to the software transcoder.
 
@@ -55,9 +58,10 @@ When transcoding, these are the rules used to determine which Protect camera str
 * On Raspberry Pi platform, the software interface to the onboard GPU transcoder has issues dealing with very high bitrate stream quality and HBUP will default to a starting point of **Medium** because of those capability constraints.
 
 #### Customizing Defaults
-All of the behavior described above can be tailored to your environment and taste through the HBUP feature options webUI. Specifically, you can:
+The behavior described above can be tailored to your environment and taste through the HBUP feature options webUI. Specifically, you can:
 
-* Choose to transcode instead of transmux for local clients or not. **Default: transmux local clients.**
+* Choose to not use the Protect livestream API for livestreaming. **Default: use the Protect livestream API when possible.**
+* Choose to transmux instead of transcode for local clients or not. **Default: transcode local clients.**
 * Choose to transmux instead of transcode for high-latency / remote clients. **Default: transcode high-latency / remote clients.**
 * Which Protect stream qualities to make available for HBUP. **Default: all stream qualities are available (High, Medium, and Low) that are configured on the Protect camera.**
 * Bypass the intelligence applied by HBUP when selecting which Protect stream quality to use for transcoding livestreams by forcing the use of a specific Protect stream quality. **Default: HBUP will decide based on the transcoding rules above.**

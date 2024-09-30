@@ -91,8 +91,8 @@ The topics that `homebridge-unifi-protect` subscribes to are:
 |-------------------------|---------------------|------------------
 | `alarm/get`             | Sensor              | `true` will trigger a publish event of the current alarm state for a UniFi Protect sensor.
 | `ambientlight/get`      | Sensor              | `true` will trigger a publish event of the ambient light level, in lux, for a UniFi Protect sensor.
-| `chime/get`             | Chime               | `true` will trigger a publish event of the volume level for a UniFi Protect chime.
-| `chime/set`             | Chime               | A number between 0 and 100 that will set the volume level for a UniFi Protect chime.
+| `chime/get`             | Chime               | `true` will trigger a publish event of the volume level for a UniFi Protect doorbell.
+| `chime/set`             | Chime               | A number between 0 and 100 that will set the volume level for a UniFi Protect doorbell.
 | `contact/get`           | Sensor              | `true` will trigger a publish event of the current contact state for a UniFi Protect sensor. Note: UniFi Protect will set this state differently depending on the placement type you select in the Protect app or the Protect webUI.
 | `doorbell/set`          | Doorbell            | `true` will trigger the camera (if set as doorbell) or doorbell to generate a ring event.
 | `humidity/get`          | Sensor              | `true` will trigger a publish event of the humidity level, as a percentage, for a UniFi Protect sensor.

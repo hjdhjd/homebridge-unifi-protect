@@ -63,10 +63,10 @@ These option(s) apply to: all Protect device types.
 | Option                                           | Description
 |--------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 | `Device`                                         | Make this device available in HomeKit. **(default: enabled)**.
-| `Device.StatusLed`                               | Enable the status indicator light for this device in HomeKit. **(default: enabled)**. <BR>*Supported on Protect devices that have a status indicator light.*
-| `Device.StatusLed.Switch`                        | Add a switch accessory to control the status indicator light in HomeKit. **(default: disabled)**. <BR>*Supported on Protect devices that have a status indicator light.*
-| `Device.NightVision`                             | Enable the night vision indicator light for this device in HomeKit. **(default: enabled)**. <BR>*Supported on Protect devices that have infrared.*
-| `Device.NightVision.Dimmer`                      | Add a dimmer accessory to control the night vision state in HomeKit. **(default: disabled)**. <BR>*Supported on Protect devices that have infrared.*
+| `Device.StatusLed`                               | Enable the status indicator light for this device in HomeKit. **(default: enabled)**. <BR>*Supported on Protect devices with a status LED.*
+| `Device.StatusLed.Switch`                        | Add a switch accessory to control the status indicator light in HomeKit. **(default: disabled)**. <BR>*Supported on Protect devices with a status LED.*
+| `Device.NightVision`                             | Enable the night vision indicator light for this device in HomeKit. **(default: enabled)**. <BR>*Supported on Protect devices that have infrared LEDs.*
+| `Device.NightVision.Dimmer`                      | Add a dimmer accessory to control the night vision state in HomeKit. **(default: disabled)**. <BR>*Supported on Protect devices that have infrared LEDs.*
 | `Device.Standalone`                              | Make this a standalone device in HomeKit that will need to be added to HomeKit through the Home app. **(default: disabled)**.
 | `Device.SyncName`                                | Synchronize the UniFi Protect name of this device with HomeKit. Synchronization is one-way only, syncing the device name from UniFi Protect to HomeKit. **(default: disabled)**.
 
@@ -78,9 +78,10 @@ These option(s) apply to: Protect cameras.
 |--------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 | `Doorbell.Messages`                              | Enable the doorbell messages feature. **(default: enabled)**. <BR>*Supported on Protect devices that have a doorbell.*
 | `Doorbell.Messages.FromDoorbell`                 | Use messages saved to the Protect NVR as message switches. **(default: enabled)**. <BR>*Supported on Protect devices that have a doorbell.*
+| `Doorbell.Volume.Dimmer`                         | Add a dimmer accessory to control the Protect chime volume in HomeKit. **(default: disabled)**. <BR>*Supported on Protect devices that have a doorbell.*
 | `Doorbell.PhysicalChime`                         | Add switch accessories to control the physical chimes attached to a Protect doorbell. **(default: disabled)**. <BR>*Supported on Protect devices that have a physical chime.*
 | `Doorbell.PhysicalChime.Duration.Digital<I>.Value</I>`  | Chime duration, in milliseconds, of a digital physical chime attached to a Protect doorbell. **(default: 1000)**. <BR>*Supported on Protect devices that have a physical chime.*
-| `Doorbell.Trigger`                               | Add a switch accessory to trigger doorbell ring events on a Protect camera or doorbell. **(default: disabled)**. <BR>*Supported on Protect cameras that have a motion sensor.*
+| `Doorbell.Trigger`                               | Add a switch accessory to trigger doorbell ring events on a Protect camera or doorbell. **(default: disabled)**.
 
 #### <A NAME="log"></A>Logging feature options.
 
@@ -88,8 +89,8 @@ These option(s) apply to: Protect cameras, Protect lights, and Protect sensors.
 
 | Option                                           | Description
 |--------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-| `Log.Doorbell`                                   | Log doorbell ring events in Homebridge. **(default: enabled)**. <BR>*Supported on Protect cameras that have a motion sensor.*
-| `Log.HKSV`                                       | Log HomeKit Secure Video recording events in Homebridge. **(default: disabled)**. <BR>*Supported on Protect cameras that have a motion sensor.*
+| `Log.Doorbell`                                   | Log doorbell ring events in Homebridge. **(default: enabled)**. <BR>*Supported on Protect cameras.*
+| `Log.HKSV`                                       | Log HomeKit Secure Video recording events in Homebridge. **(default: disabled)**. <BR>*Supported on Protect cameras.*
 | `Log.Motion`                                     | Log motion events in Homebridge. **(default: disabled)**. <BR>*Supported on Protect devices that have a motion sensor.*
 
 #### <A NAME="motion"></A>Motion detection feature options.
@@ -137,7 +138,7 @@ These option(s) apply to: Protect cameras and Protect controllers.
 
 #### <A NAME="securitysystem"></A>Security system feature options.
 
-These option(s) apply to: Protect cameras and Protect controllers.
+These option(s) apply to: Protect controllers.
 
 | Option                                           | Description
 |--------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
