@@ -4,7 +4,8 @@
  */
 import { CharacteristicValue, PlatformAccessory, Service } from "homebridge";
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_DOORBELL_CHIME_DURATION_DIGITAL } from "../settings.js";
-import { ProtectCameraConfig, ProtectCameraConfigPayload, ProtectCameraLcdMessagePayload, ProtectEventPacket, ProtectNvrConfigPayload } from "unifi-protect";
+import { ProtectCameraConfig, ProtectCameraConfigPayload, ProtectCameraLcdMessagePayload, ProtectChimeConfigPayload, ProtectEventPacket, ProtectNvrConfigPayload }
+  from "unifi-protect";
 import { ProtectReservedNames, toCamelCase } from "../protect-types.js";
 import { ProtectCamera } from "./protect-camera.js";
 import { ProtectCameraPackage } from "./protect-camera-package.js";
@@ -78,11 +79,15 @@ export class ProtectDoorbell extends ProtectCamera {
     // Now, make the doorbell LCD message functionality available.
     this.configureDoorbellLcdSwitch();
 
-    // Configure physical chime switches, if configured.
+    // Configure physical chime switches, if enabled.
     this.configurePhysicalChimes();
+
+    // Configure volume control, if enabled.
+    this.configureProtectChimeLightbulb();
 
     // Register our event handlers.
     this.nvr.events.on("updateEvent." + this.nvr.ufp.id, this.listeners["updateEvent." + this.nvr.ufp.id] = this.nvrEventHandler.bind(this));
+    this.nvr.events.on("updateEvent.chime", this.listeners["updateEvent.chime"] = this.chimeEventHandler.bind(this));
 
     return true;
   }
@@ -312,11 +317,91 @@ export class ProtectDoorbell extends ProtectCamera {
     return true;
   }
 
+  // Configure the dimmer for HomeKit to control the volume.
+  private configureProtectChimeLightbulb(): boolean {
+
+    // Validate whether we should have this service enabled.
+    if(!this.validService(this.hap.Service.Lightbulb, () => {
+
+      // The volume dimmer is disabled by default unless the user enables it.
+      if(!this.hasFeature("Doorbell.Volume.Dimmer")) {
+
+        return false;
+      }
+
+      return true;
+    }, ProtectReservedNames.LIGHTBULB_DOORBELL_VOLUME)) {
+
+      return false;
+    }
+
+    // Acquire the service.
+    const service = this.acquireService(this.hap.Service.Lightbulb, this.accessoryName + " Chime Volume", ProtectReservedNames.LIGHTBULB_DOORBELL_VOLUME);
+
+    if(!service) {
+
+      this.log.error("Unable to add chime volume control.");
+
+      return false;
+    }
+
+    // Turn the chime on or off.
+    service.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => this.chimeVolume > 0);
+
+    service.getCharacteristic(this.hap.Characteristic.On)?.onSet(async (value: CharacteristicValue) => {
+
+      // We really only want to act when the volume is zero. Otherwise, it's handled by the brightness event.
+      if(value) {
+
+        return;
+      }
+
+      await this.setChimeVolume(0);
+    });
+
+    // Return the volume level of the chime.
+    service.getCharacteristic(this.hap.Characteristic.Brightness)?.onGet(() => this.chimeVolume);
+
+    // Adjust the volume of the chime by adjusting brightness of the light.
+    service.getCharacteristic(this.hap.Characteristic.Brightness)?.onSet(async (value: CharacteristicValue) => this.setChimeVolume(value as number));
+
+    // Initialize the chime.
+    service.updateCharacteristic(this.hap.Characteristic.On, this.chimeVolume > 0);
+    service.updateCharacteristic(this.hap.Characteristic.Brightness, this.chimeVolume);
+
+    this.log.info("Enabling Protect chime volume control.");
+
+    return true;
+  }
+
   // Configure MQTT capabilities for the doorbell.
   protected configureMqtt(): boolean {
 
     // Call our parent to setup the general camera MQTT capabilities.
     super.configureMqtt();
+
+    // Get and set the chime volume.
+    this.subscribeGet("chime", "chime volume", (): string => {
+
+      return this.chimeVolume.toString();
+    });
+
+    this.subscribeSet("chime", "chime volume", (value: string) => {
+
+      const volume = parseInt(value.toString());
+
+      // Unknown message - ignore it.
+      if(isNaN(volume) || (volume < 0) || (volume > 100)) {
+
+        return;
+      }
+
+      // We explicitly want to trigger our set event handler, which will complete this action.
+      this.accessory.getServiceById(this.hap.Service.Lightbulb, ProtectReservedNames.LIGHTBULB_DOORBELL_VOLUME)
+        ?.getCharacteristic(this.hap.Characteristic.Brightness)?.setValue(volume);
+      this.accessory.getServiceById(this.hap.Service.Lightbulb, ProtectReservedNames.LIGHTBULB_DOORBELL_VOLUME)
+        ?.getCharacteristic(this.hap.Characteristic.On)?.setValue(volume > 0);
+    });
 
     // Get the current message on the doorbell.
     this.subscribeGet("message", "doorbell message", (): string => {
@@ -641,5 +726,106 @@ export class ProtectDoorbell extends ProtectCamera {
 
       this.configureDoorbellLcdSwitch();
     }
+  }
+
+  // Handle chime volume updates on the Protect controller.
+  private chimeEventHandler(packet: ProtectEventPacket): void {
+
+    const payload = packet.payload as ProtectChimeConfigPayload;
+
+    // We're only interested in events for this Protect controller and this doorbell.
+    if(!this.nvr.ufpApi.bootstrap || (payload.nvrMac !== this.nvr.ufp.mac) || !payload.cameraIds?.includes(this.ufp.id) || !("ringSettings" in payload)) {
+
+      return;
+    }
+
+    const chime = this.nvr.ufpApi.bootstrap.chimes.find(device => packet.header.id === device.id);
+
+    if(chime) {
+
+      this.nvr.ufpApi.bootstrap.chimes = [...this.nvr.ufpApi.bootstrap.chimes.filter(device => payload.id !== device.id), Object.assign(chime, payload)];
+
+      const ring = payload.ringSettings?.find(tone => tone.cameraId === this.ufp.id);
+
+      if(ring && ("volume" in ring)) {
+
+        const service = this.accessory.getServiceById(this.hap.Service.Lightbulb, ProtectReservedNames.LIGHTBULB_DOORBELL_VOLUME);
+
+        service?.updateCharacteristic(this.hap.Characteristic.Brightness, ring.volume as number);
+        service?.updateCharacteristic(this.hap.Characteristic.On, (ring.volume as number) > 0);
+      }
+    }
+  }
+
+  private get chimeVolume(): number {
+
+    let volume = 0;
+    let chimes = 0;
+
+    // If the bootstrap is missing, we're done.
+    if(!this.nvr.ufpApi.bootstrap) {
+
+      return 0;
+    }
+
+    for(const chime of this.nvr.ufpApi.bootstrap.chimes.filter(chime => chime.cameraIds.includes(this.ufp.id))) {
+
+      const ring = chime.ringSettings.find(ring => ring.cameraId === this.ufp.id);
+
+      if(!ring) {
+
+        continue;
+      }
+
+      volume += ring.volume;
+      chimes++;
+    }
+
+    return chimes ? (volume / chimes) : 0;
+  }
+
+  private async setChimeVolume(value: number): Promise<void> {
+
+    // If the bootstrap is missing, we're done.
+    if(!this.nvr.ufpApi.bootstrap) {
+
+      return;
+    }
+
+    // Ensure we don't have any negative values.
+    value = Math.max(value, 0);
+
+    // Find all the chimes configured for this doorbell so we can sync their volume.
+    for(const chime of this.nvr.ufpApi.bootstrap.chimes.filter(chime => chime.cameraIds.includes(this.ufp.id))) {
+
+      // Given that chimes can be assigned to multiple doorbells, find the specific entry for this doorbell.
+      const ring = chime.ringSettings.find(ring => ring.cameraId === this.ufp.id);
+
+      if(!ring) {
+
+        continue;
+      }
+
+      // Set the volume and update the chime device.
+      ring.volume = value;
+
+      // eslint-disable-next-line no-await-in-loop
+      const newDevice = await this.nvr.ufpApi.updateDevice(chime, { ringSettings: [ ring ] });
+
+      if(!newDevice) {
+
+        this.log.error("Unable to turn the volume off. Please ensure this username has the Administrator role in UniFi Protect.");
+
+        return;
+      }
+
+      // Set the context to our updated device configuration.
+      const newChimes = this.nvr.ufpApi.bootstrap.chimes.filter(newChime => newChime.mac !== chime.mac);
+
+      newChimes.push(newDevice);
+      this.nvr.ufpApi.bootstrap.chimes = newChimes;
+    }
+
+    this.publish("chime", value.toString());
   }
 }

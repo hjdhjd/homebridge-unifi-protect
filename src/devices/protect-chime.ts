@@ -37,18 +37,23 @@ export class ProtectChime extends ProtectDevice {
     // Configure accessory information.
     this.configureInfo();
 
-    // Configure the chime as a light. We don't have volume accessories, so a dimmer is the best we can currently do within the constraints of HomeKit.
-    this.configureLightbulb();
+    // Protect v5 has relocated the chime volume control to the doorbell. Remove any legacy volume service.
+    let service = this.accessory.getService(this.hap.Service.Lightbulb);
+
+    if(service) {
+
+      this.accessory.removeService(service);
+    }
 
     // Configure the buzzer on the chime.
     this.configureChimeSwitch("buzzer", "play-buzzer", ProtectReservedNames.SWITCH_DOORBELL_CHIME_BUZZER);
 
     // Cleanup legacy switches.
-    const chimeService = this.accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_DOORBELL_CHIME_SPEAKER);
+    service = this.accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_DOORBELL_CHIME_SPEAKER);
 
-    if(chimeService) {
+    if(service) {
 
-      this.accessory.removeService(chimeService);
+      this.accessory.removeService(service);
     }
 
     // Configure ringtone-specific switches.
@@ -74,76 +79,6 @@ export class ProtectChime extends ProtectDevice {
     this.accessory.services.filter(service => service.subtype?.startsWith(ProtectReservedNames.SWITCH_DOORBELL_CHIME_SPEAKER + ".") &&
       !ringtones?.some(tone => tone.id === service.subtype?.slice(ProtectReservedNames.SWITCH_DOORBELL_CHIME_SPEAKER.length + 1)))
       .map(service => this.accessory.removeService(service));
-  }
-
-  // Configure the light for HomeKit.
-  private configureLightbulb(): boolean {
-
-    // Acquire the service.
-    const service = this.acquireService(this.hap.Service.Lightbulb);
-
-    if(!service) {
-
-      this.log.error("Unable to add chime.");
-
-      return false;
-    }
-
-    // Turn the chime on or off.
-    service.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => {
-
-      return this.ufp.volume > 0;
-    });
-
-    service.getCharacteristic(this.hap.Characteristic.On)?.onSet(async (value: CharacteristicValue) => {
-
-      // We really only want to act when the chime is turned off. Otherwise, it's handled by the brightness event.
-      if(value) {
-
-        return;
-      }
-
-      const newDevice = await this.nvr.ufpApi.updateDevice(this.ufp, { volume: 0 });
-
-      if(!newDevice) {
-
-        this.log.error("Unable to turn the volume off. Please ensure this username has the Administrator role in UniFi Protect.");
-
-        return;
-      }
-
-      // Set the context to our updated device configuration.
-      this.ufp = newDevice;
-    });
-
-    // Adjust the volume of the chime by adjusting brightness of the light.
-    service.getCharacteristic(this.hap.Characteristic.Brightness)?.onGet(() => {
-
-      // Return the volume level of the chime.
-      return this.ufp.volume;
-    });
-
-    service.getCharacteristic(this.hap.Characteristic.Brightness)?.onSet(async (value: CharacteristicValue) => {
-
-      const newDevice = await this.nvr.ufpApi.updateDevice(this.ufp, { volume: value as number });
-
-      if(!newDevice) {
-
-        this.log.error("Unable to adjust the volume to %s%. Please ensure this username has the Administrator role in UniFi Protect.", value);
-
-        return;
-      }
-
-      // Set the context to our updated device configuration.
-      this.ufp = newDevice;
-      this.publish("chime", this.ufp.volume.toString());
-    });
-
-    // Initialize the chime.
-    service.updateCharacteristic(this.hap.Characteristic.On, this.ufp.volume > 0);
-    service.updateCharacteristic(this.hap.Characteristic.Brightness, this.ufp.volume);
-
-    return true;
   }
 
   // Configure chime speaker switches for HomeKit.
