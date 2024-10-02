@@ -76,8 +76,8 @@
   "main": "dist/index.js",
   "dependencies": {
     "@homebridge/plugin-ui-utils": "1.0.3",
-    "ffmpeg-for-homebridge": "2.1.1",
-    "homebridge-plugin-utils": "^1.8.2",
+    "ffmpeg-for-homebridge": "2.1.2",
+    "homebridge-plugin-utils": "^1.9.0",
     "unifi-protect": "^4.15.1",
     "ws": "8.18.0"
   },
@@ -90,7 +90,7 @@
     "homebridge": "1.8.4",
     "shx": "0.3.4",
     "typescript": "5.6.2",
-    "typescript-eslint": "8.7.0"
+    "typescript-eslint": "8.8.0"
   },
   "optionalDependencies": {
     "bufferutil": "4.0.8"

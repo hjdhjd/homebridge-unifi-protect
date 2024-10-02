@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 7.7.0 (2024-10-02)
+  * Behavior change: HBUP will now ensure HomeKit accessory names are compliant with [HomeKit's naming guidelines](https://developer.apple.com/design/human-interface-guidelines/homekit#Help-people-choose-useful-names). Invalid characters will be replaced with a space, and multiple spaces will be squashed.
+  * Housekeeping.
+
 ## 7.6.0 (2024-09-29)
   * **Note: HBUP now requires Protect v5 as if this release. Prior versions of Protect are no longer supported.**
   * Behavior change: Protect v5 has significantly changed interactions between doorbell cameras and chimes. As a result of Ubiquiti's changes, Protect chimes cannot have their volume controlled individually any longer. For the time being, it seems Protect's still permitting individual chimes to play unique ringtones and that functionality remains in HBUP. Volume control for Protect chimes attached to Protect doorbells can be enabled by a feature option, allowing you to control the volume across all Protect chimes paired to a particular doorbell.
