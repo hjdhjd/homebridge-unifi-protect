@@ -3,7 +3,7 @@
  * protect-device.ts: Base class for all UniFi Protect devices.
  */
 import { API, CharacteristicValue, HAP, PlatformAccessory, Service, WithUUID } from "homebridge";
-import { HomebridgePluginLogging, acquireService, validService } from "homebridge-plugin-utils";
+import { HomebridgePluginLogging, acquireService, validService, validateName } from "homebridge-plugin-utils";
 import { PROTECT_MOTION_DURATION, PROTECT_OCCUPANCY_DURATION} from "../settings.js";
 import { ProtectApi, ProtectCameraConfig, ProtectEventPacket, ProtectNvrConfig } from "unifi-protect";
 import { ProtectDeviceConfigTypes, ProtectReservedNames } from "../protect-types.js";
@@ -222,7 +222,7 @@ export abstract class ProtectDevice extends ProtectBase {
     // Sync the Protect name with HomeKit, if configured.
     if(this.hints.syncName) {
 
-      this.accessoryName = this.ufp.name ?? this.ufp.marketName ?? ("Unknown Device" + (this.ufp.mac ? ": " + this.ufp.mac : ""));
+      this.accessoryName = this.ufp.name ?? this.ufp.marketName ?? ("Unknown Device" + (this.ufp.mac ? " " + this.ufp.mac : ""));
     }
 
     return this.setInfo(this.accessory, this.ufp);
@@ -679,12 +679,14 @@ export abstract class ProtectDevice extends ProtectBase {
   // Utility function to set the current accessory name of this device.
   public set accessoryName(name: string) {
 
+    const cleanedName = validateName(name);
+
     // Set all the internally managed names within Homebridge to the new accessory name.
-    this.accessory.displayName = name;
-    this.accessory._associatedHAPAccessory.displayName = name;
+    this.accessory.displayName = cleanedName;
+    this.accessory._associatedHAPAccessory.displayName = cleanedName;
 
     // Set all the HomeKit-visible names.
-    this.accessory.getService(this.hap.Service.AccessoryInformation)?.updateCharacteristic(this.hap.Characteristic.Name, name);
+    this.accessory.getService(this.hap.Service.AccessoryInformation)?.updateCharacteristic(this.hap.Characteristic.Name, cleanedName);
   }
 
   // Utility to return the command to set the device status indicator light. This works for cameras and sensors, but Protect lights deal with this differently.

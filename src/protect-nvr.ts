@@ -3,7 +3,7 @@
  * protect-nvr.ts: NVR device class for UniFi Protect.
  */
 import { API, APIEvent, HAP, PlatformAccessory } from "homebridge";
-import { HomebridgePluginLogging, MqttClient, retry, sleep } from "homebridge-plugin-utils";
+import { HomebridgePluginLogging, MqttClient, retry, sleep, validateName } from "homebridge-plugin-utils";
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_CONTROLLER_REFRESH_INTERVAL, PROTECT_CONTROLLER_RETRY_INTERVAL, PROTECT_M3U_PLAYLIST_PORT } from "./settings.js";
 import { ProtectApi, ProtectCameraConfig, ProtectChimeConfig, ProtectLightConfig, ProtectNvrBootstrap, ProtectNvrConfig, ProtectSensorConfig,
   ProtectViewerConfig } from "unifi-protect";
@@ -341,7 +341,7 @@ export class ProtectNvr {
     // See if we already know about this accessory or if it's truly new. If it is new, add it to HomeKit.
     if((accessory = this.platform.accessories.find(x => x.UUID === uuid)) === undefined) {
 
-      accessory = new this.api.platformAccessory(device.name ?? device.marketName ?? ("Unknown Device" + (device.mac ? ": " + device.mac : "")), uuid);
+      accessory = new this.api.platformAccessory(validateName(device.name ?? device.marketName ?? ("Unknown Device" + (device.mac ? " " + device.mac : ""))), uuid);
 
       this.log.info("%s: Adding %s to HomeKit%s.", this.ufpApi.getDeviceName(device), device.modelKey,
         this.hasFeature("Device.Standalone", device) ? " as a standalone device" : "");
