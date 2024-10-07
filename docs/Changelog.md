@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 7.7.1 (2024-10-06)
+  * **Note: FFmpeg v7.1 currently has fatal issues handling H.264 and HEVC decoding in certain scenarios. Unfortunately, this impacts HBUP as well as a lot of software out there. Until further notice, HBUP does not support FFmpeg versions above 7.0.x. If you have no idea what any of this means, that generally means you can ignore all this because things work fine in your environment. 😀**
+  * Housekeeping.
+
 ## 7.7.0 (2024-10-02)
   * Behavior change: HBUP will now ensure HomeKit accessory names are compliant with [HomeKit's naming guidelines](https://developer.apple.com/design/human-interface-guidelines/homekit#Help-people-choose-useful-names). Invalid characters will be replaced with a space, and multiple spaces will be squashed.
   * Housekeeping.
