@@ -72,21 +72,19 @@ The ports will correspond to those seen in the `FFmpeg` command if you turn on v
 There are lots of things that can go wrong with video streaming, unfortunately. I want to start by providing a bit of background on how streaming actually works in HomeKit, homebridge and this plugin before getting into where things can break.
 
 #### Background
-The good news is that the video streams coming from UniFi Protect tend to work well without needing any significant manipulation to make them accessible through HomeKit. Since we can [transmux](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Autoconfiguration.md#transcoding-and-transmuxing) the RTSP streams coming from Protect, HBUP has very modest CPU horsepower requirements when streaming locally, by default.
+Read about [video autoconfiguration in HBUP](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Autoconfiguration.md) for a primer on how stream selection, transcoding, and transmuxing works in HBUP.
 
-  * The key to HomeKit video streaming, especially when streaming non-locally (i.e. away from home), is understanding that **HomeKit decides what quality it wants to request, not the end user, nor HBUP**. What this means in practice is that you have no control over what HomeKit requests and what it can handle in response to that request when it comes to video streaming size and quality. There are options in HBUP to override these quality settings, but I would encourage you to get up and running with a basic configuration first before tweaking options.
+  * The key to HomeKit video streaming, is understanding that **HomeKit decides what quality it wants to request, not the end user, nor HBUP**. What this means in practice is that you have no control over what HomeKit requests and what it can handle in response to that request when it comes to video streaming size and quality. There are options in HBUP to override these quality settings, but I would encourage you to get up and running first before tweaking options.
 
-  * UniFi Protect allows you to have up to three different RTSP streams available per camera (for most camera types). Each stream represents a different quality level - *High*, *Medium*, and *Low*, and you may choose to stream using any of them so long as they are enabled (HBUP [autoconfigures](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Autoconfiguration.md) all the available RTSP streams, if it has the permissions to do so in Protect).
+  * UniFi Protect typically allows you to have up to three different RTSP streams available per camera (for most camera types). Each stream represents a different quality level - *High*, *Medium*, and *Low*, and you may choose to stream using any of them so long as they are enabled (HBUP [autoconfigures](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Autoconfiguration.md) all the available RTSP streams, if it has the permissions to do so in Protect).
 
 When HomeKit requests a stream of a specific quality, HBUP selects a stream that's closest to what's being requested, and send that back to your device. You can see that when you look at the Homebridge logs:
 
 ```
-Streaming request from 1.2.3.4: 1280x720@30fps, 299 kbps. Using 1280x720@30fps (Medium), 2,000 kbps.
+Streaming request from 1.2.3.4: 1280x720@30fps, 299 kbps. Transcoding 1280x720@30fps (Medium), 2,000 kbps.
 ```
 
-What the above means is that a HomeKit client, in this case an iPhone, is requesting a stream of quality 1280x720@30fps. In response, HBUP looks at the available RTSP streams on the camera, an AI Pro, and selected the `Medium` RTSP profile to use.
-
-You can read about autoconfiguration of RTSP streams in HBUP in the [autoconfiguration documentation](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Autoconfiguration.md).
+What the above means is that a HomeKit client, in this case an iPhone, is requesting a stream of quality 1280x720@30fps at a bitrate of 299kbps. In response, HBUP looks at the available RTSP streams on the camera, an AI Pro, and selected the `Medium` RTSP profile to use.
 
 #### Video Streaming Issues
 This brings us to where the problems people encounter can come from. When that stream comes from Protect to HBUP, it's processed by `FFmpeg` before being sent on it's way to your iPhone. I've taken time to tune the parameters used within FFmpeg for Protect to get things working just right. Despite that, it's not always perfect.
@@ -94,17 +92,15 @@ This brings us to where the problems people encounter can come from. When that s
 Almost all of the streaming issues that aren't one of the simpler ones described above (firewall rules, etc.) boil down to two related things:
 
  * The quality of the stream is pushing more data at a faster rate than either FFmpeg can consume or the HomeKit device can consume (or both!).
- * When transcoding is required, the hardware that HBUP is running on is unable to keep up with the requirements of the stream that's being pushed through it.
+ * When transcoding, the hardware that HBUP is running on is unable to keep up with the requirements of the stream that's being pushed through it.
 
 ##### Use The Low Stream
 While the defaults work for most users, most of the time, sometimes the specifics of your own environment will make things off *just enough* that streaming doesn't work. The first, and easiest, step in addressing it is simple: **force HBUP to use a lower stream quality**. You can do that by forcing the use of the `Low` RTSP stream in the HBUP feature options webUI under the video section. If this works, then you're done and your HomeKit life is once more complete and all is right with the world. You can experiment and see if the `Medium` RTSP stream works after you're up and running.
 
-I know that instinctively people may not like the idea of having higher-end Protect cameras and using what they perceive to be a low-quality stream. To that, I'd say a couple of things...the quality of the stream is actually *very* good and often better than most other IP-based camera systems that I've seen. Don't think twice about it. It's the nature of the HomeKit beast, I'm afraid. For the purposes of glancing at video on occasion, when you need it, it's more than sufficient.
-
-If you're one of the unlucky few who, after forcing the `Low` stream to be used for HomeKit still can't get streaming working, and you don't have any of the other issues above (e.g. firewall issues again), we next have to look toward transcoding to getting the livestream working.
+I know that instinctively people may not like the idea of having higher-end Protect cameras and using what they perceive to be a low-quality stream. To that, I'd say a couple of things...the quality of the stream is actually *very* good relative to the very conservative bitrates HomeKit tends to request. Those bitrates can be overriden by tweaking your feature options, but in general, lower quality video streaming is just the nature of the HomeKit beast, I'm afraid. For the purposes of glancing at video on occasion, it's more than sufficient.
 
 ##### Transcoding
-Transcoding should be viewed as a last resort to getting things working locally in your environment. This is because it will almost always look worse than getting the native RTSP stream working. When transcoding, HBUP will take the closest match it can find to the request from HomeKit and will transcode the video stream in realtime to match the parameters being requested by HomeKit. When transcoding, you'll see a log entry in Homebridge like this:
+Transcoding is used by HBUP to ensure that video streams are in the form that HomeKit expects when it comes to format, quality, and dimensions. HBUP will take the closest match it can find to the request from HomeKit and will transcode the video stream in realtime to match the parameters being requested by HomeKit. When transcoding, you'll see a log entry in Homebridge like this:
 
 ```
 Streaming request from 1.2.3.4: 1280x720@30fps, 299 kbps. Transcoding 1280x720@30fps (Medium), 2,000 kbps.
@@ -113,18 +109,9 @@ Streaming request from 1.2.3.4: 1280x720@30fps, 299 kbps. Transcoding 1280x720@3
 Transcoding has two significant implications:
 
   * It will consume more CPU on the device where you run Homebridge. If your device is underpowered, it may struggle to use higher quality streams.
-  * The quality of the final stream will likely not be as high as it would be if you were able to get the native RTSP streams working above. This is because HomeKit defaults to a very modest bitrate - 299kbps in the above example versus the 2,000kbps being provided by Protect - which represents a 6.5x reduction in quality! Transmux whenever possible, transcode when you must.
+  * The quality of the final stream will be reduced to comply with HomeKit's requested parameters. This is because HomeKit defaults to a very modest bitrate - 299kbps in the above example versus the 2,000kbps being provided by Protect - which represents a 6.5x reduction in quality!
 
 You can tune when HBUP chooses to transcode by adjusting the options under the video section of the HBUP feature options webUI. If you're struggling with potential CPU constraints in your environment, you can force the use of a lower stream quality which should reduce the CPU load on your hardware. I would recommend starting with the `Low` quality stream and working your way up when it comes to quality to see what works best in your environment.
 
 ##### Final Thoughts
-For quickly trying to get things up and running when you're struggling, always start by forcing the stream quality to `Low` and potentially forcing HBUP to always transcode. From there, experiment with the options to tune it to your environment.
-
-
-
-## TODO
-
-Not receiving motion alerts
-When I stream I am told that the stream has started, but I only see the loading circle. Until I get "No response" at some point.
-User permissions...not able to see all cameras...things not working...answer: make sure you have a local account and the permissions are correct. UniFi OS sometimes goofs up local accounts when you update...
-HKSV issues...
+For quickly trying to get things up and running when you're struggling, always start by forcing the stream quality to `Low`. From there, experiment with the options to tune it to your environment.
