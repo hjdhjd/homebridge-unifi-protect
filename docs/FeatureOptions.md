@@ -65,8 +65,8 @@ These option(s) apply to: all Protect device types.
 | `Device`                                         | Make this device available in HomeKit. **(default: enabled)**.
 | `Device.StatusLed`                               | Enable the status indicator light for this device in HomeKit. **(default: enabled)**. <BR>*Supported on Protect devices with a status LED.*
 | `Device.StatusLed.Switch`                        | Add a switch accessory to control the status indicator light in HomeKit. **(default: disabled)**. <BR>*Supported on Protect devices with a status LED.*
-| `Device.NightVision`                             | Enable the night vision indicator light for this device in HomeKit. **(default: enabled)**. <BR>*Supported on Protect devices that have infrared LEDs.*
-| `Device.NightVision.Dimmer`                      | Add a dimmer accessory to control the night vision state in HomeKit. **(default: disabled)**. <BR>*Supported on Protect devices that have infrared LEDs.*
+| `Device.NightVision`                             | Enable the night vision indicator light for this device in HomeKit. **(default: enabled)**. <BR>*Supported on Protect cameras that have infrared LEDs.*
+| `Device.NightVision.Dimmer`                      | Add a dimmer accessory to control the night vision state in HomeKit. **(default: disabled)**. <BR>*Supported on Protect cameras that have infrared LEDs.*
 | `Device.Standalone`                              | Make this a standalone device in HomeKit that will need to be added to HomeKit through the Home app. **(default: disabled)**.
 | `Device.SyncName`                                | Synchronize the UniFi Protect name of this device with HomeKit. Synchronization is one-way only, syncing the device name from UniFi Protect to HomeKit. **(default: disabled)**.
 
@@ -79,8 +79,8 @@ These option(s) apply to: Protect cameras.
 | `Doorbell.Messages`                              | Enable the doorbell messages feature. **(default: enabled)**. <BR>*Supported on Protect devices that have a doorbell.*
 | `Doorbell.Messages.FromDoorbell`                 | Use messages saved to the Protect NVR as message switches. **(default: enabled)**. <BR>*Supported on Protect devices that have a doorbell.*
 | `Doorbell.Volume.Dimmer`                         | Add a dimmer accessory to control the Protect chime volume in HomeKit. **(default: disabled)**. <BR>*Supported on Protect devices that have a doorbell.*
-| `Doorbell.PhysicalChime`                         | Add switch accessories to control the physical chimes attached to a Protect doorbell. **(default: disabled)**. <BR>*Supported on Protect devices that have a physical chime.*
-| `Doorbell.PhysicalChime.Duration.Digital<I>.Value</I>`  | Chime duration, in milliseconds, of a digital physical chime attached to a Protect doorbell. **(default: 1000)**. <BR>*Supported on Protect devices that have a physical chime.*
+| `Doorbell.PhysicalChime`                         | Add switch accessories to control the physical chimes attached to a Protect doorbell. **(default: disabled)**. <BR>*Supported on Protect doorbells that have a physical chime.*
+| `Doorbell.PhysicalChime.Duration.Digital<I>.Value</I>`  | Chime duration, in milliseconds, of a digital physical chime attached to a Protect doorbell. **(default: 1000)**. <BR>*Supported on Protect doorbells that have a physical chime.*
 | `Doorbell.Trigger`                               | Add a switch accessory to trigger doorbell ring events on a Protect camera or doorbell. **(default: disabled)**.
 
 #### <A NAME="log"></A>Logging feature options.
@@ -150,7 +150,7 @@ These option(s) apply to: Protect cameras.
 
 | Option                                           | Description
 |--------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-| `Video.Transcode.Hardware`                       | Use hardware-accelerated transcoding when available (Apple Macs, Intel Quick Sync Video-enabled CPUs, Raspberry Pi 4). **(default: disabled)**.
+| `Video.Transcode.Hardware`                       | Use hardware-accelerated transcoding when available (Apple Macs, Intel Quick Sync Video-enabled CPUs, Raspberry Pi 4). **(default: enabled)**.
 | `Video.Stream.UseApi`                            | Use the native Protect livestream API to view livestreams. **(default: enabled)**.
 | `Video.Transcode`                                | When streaming to low-latency clients (e.g. at home), transcode livestreams, instead of transmuxing them. **(default: enabled)**.
 | `Video.Transcode.Bitrate<I>.Value</I>`           | Bitrate, in kilobits per second, to use when transcoding to low-latency (e.g. at home) clients, ignoring the bitrate HomeKit requests. HomeKit typically requests lower video quality than you may desire in your environment. **(default: 2000)**.
