@@ -2,17 +2,17 @@
  *
  * protect-nvr-systeminfo.ts: NVR System Information device class for UniFi Protect.
  */
+import { Nullable, validateName } from "homebridge-plugin-utils";
 import { PLATFORM_NAME, PLUGIN_NAME } from "../settings.js";
 import { PlatformAccessory } from "homebridge";
 import { ProtectBase } from "./protect-device.js";
 import { ProtectEventPacket } from "unifi-protect";
 import { ProtectNvr } from "../protect-nvr.js";
-import { validateName } from "homebridge-plugin-utils";
 
 export class ProtectNvrSystemInfo extends ProtectBase {
 
-  private accessory: PlatformAccessory | null | undefined;
-  private eventListener: ((packet: ProtectEventPacket) => void) | null;
+  private accessory: Nullable<PlatformAccessory> | undefined;
+  private eventListener: Nullable<(packet: ProtectEventPacket) => void>;
   private isConfigured: boolean;
   private lastTemp: number;
 

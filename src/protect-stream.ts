@@ -8,7 +8,7 @@ import { API, AudioRecordingCodecType, AudioRecordingSamplerate, AudioStreamingC
   CameraControllerOptions, CameraStreamingDelegate, H264Level, H264Profile, HAP, MediaContainerType, PrepareStreamCallback, PrepareStreamRequest, PrepareStreamResponse,
   SRTPCryptoSuites, SnapshotRequest, SnapshotRequestCallback, StartStreamRequest, StreamRequestCallback, StreamRequestTypes, StreamingRequest } from "homebridge";
 import { FfmpegOptions, FfmpegStreamingProcess } from "./ffmpeg/index.js";
-import { HomebridgePluginLogging, RtpDemuxer } from "homebridge-plugin-utils";
+import { HomebridgePluginLogging, Nullable, RtpDemuxer } from "homebridge-plugin-utils";
 import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_HKSV_FRAGMENT_LENGTH, PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION, PROTECT_HOMEKIT_IDR_INTERVAL,
   PROTECT_LIVESTREAM_API_IDR_INTERVAL } from "./settings.js";
 import { ProtectCamera } from "./devices/index.js";
@@ -33,10 +33,10 @@ type SessionInfo = {
 
   hasAudioSupport: boolean; // Does the user have a version of FFmpeg that supports AAC-ELD?
 
-  rtpDemuxer: RtpDemuxer | null; // RTP demuxer needed for two-way audio.
+  rtpDemuxer: Nullable<RtpDemuxer>; // RTP demuxer needed for two-way audio.
   rtpPortReservations: number[]; // RTP port reservations.
 
-  talkBack: string | null; // Talkback websocket needed for two-way audio.
+  talkBack: Nullable<string>; // Talkback websocket needed for two-way audio.
 
   videoCryptoSuite: SRTPCryptoSuites; // This should be saved if multiple suites are supported.
   videoPort: number;
@@ -52,10 +52,10 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   public controller: CameraController;
   public readonly ffmpegOptions: FfmpegOptions;
   private readonly hap: HAP;
-  public hksv: ProtectRecordingDelegate | null;
+  public hksv: Nullable<ProtectRecordingDelegate>;
   public readonly log: HomebridgePluginLogging;
   private readonly nvr: ProtectNvr;
-  private ongoingSessions: { [index: string]: { ffmpeg: FfmpegStreamingProcess[], rtpDemuxer: RtpDemuxer | null, rtpPortReservations: number[] } };
+  private ongoingSessions: { [index: string]: { ffmpeg: FfmpegStreamingProcess[], rtpDemuxer: Nullable<RtpDemuxer>, rtpPortReservations: number[] } };
   private pendingSessions: { [index: string]: SessionInfo };
   public readonly platform: ProtectPlatform;
   public readonly protectCamera: ProtectCamera;
@@ -459,7 +459,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     //
     // - Since we are using an already existing connection to the Protect controller, we don't need to create another connection which incurs an additional delay, as well
     //   as a resource hit on the Protect controller.
-    const tsBuffer: Buffer | null = useApi ? (this.hksv?.timeshift.getLast(PROTECT_LIVESTREAM_API_IDR_INTERVAL * 1000) ?? null) : null;
+    const tsBuffer: Nullable<Buffer> = useApi ? (this.hksv?.timeshift.getLast(PROTECT_LIVESTREAM_API_IDR_INTERVAL * 1000) ?? null) : null;
 
     // -hide_banner                     Suppress printing the startup banner in FFmpeg.
     // -nostats                         Suppress printing progress reports while encoding in FFmpeg.
@@ -876,7 +876,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     try {
 
       // Now it's time to talkback.
-      let ws: WebSocket | null = null;
+      let ws: Nullable<WebSocket> = null;
       let isTalkbackLive = false;
       let dataListener: (data: Buffer) => void;
       let openListener: () => void;

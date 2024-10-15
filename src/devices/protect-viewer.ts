@@ -4,6 +4,7 @@
  */
 import { CharacteristicValue, PlatformAccessory, Service } from "homebridge";
 import { ProtectEventPacket, ProtectViewerConfig, ProtectViewerConfigPayload } from "unifi-protect";
+import { Nullable } from "homebridge-plugin-utils";
 import { ProtectDevice } from "./protect-device.js";
 import { ProtectNvr } from "../protect-nvr.js";
 
@@ -191,7 +192,7 @@ export class ProtectViewer extends ProtectDevice {
   }
 
   // Set the liveview on a viewer device in UniFi Protect.
-  private async setViewer(newLiveview: string | null): Promise<ProtectViewerConfig> {
+  private async setViewer(newLiveview: Nullable<string>): Promise<ProtectViewerConfig> {
 
     // Set the liveview.
     const newDevice = (await this.nvr.ufpApi.updateDevice(this.ufp, { liveview: newLiveview })) as ProtectViewerConfig;

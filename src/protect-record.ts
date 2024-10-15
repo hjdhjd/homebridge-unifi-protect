@@ -8,9 +8,9 @@
  */
 import { API, CameraRecordingConfiguration, CameraRecordingDelegate, HAP, HDSProtocolSpecificErrorReason,
   PlatformAccessory, RecordingPacket } from "homebridge";
+import { HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
 import { ProtectCamera, RtspEntry } from "./devices/index.js";
 import { FfmpegRecordingProcess } from "./ffmpeg/index.js";
-import { HomebridgePluginLogging } from "homebridge-plugin-utils";
 import { PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION } from "./settings.js";
 import { ProtectNvr } from "./protect-nvr.js";
 import { ProtectTimeshiftBuffer } from "./protect-timeshift.js";
@@ -32,7 +32,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
   private nvr: ProtectNvr;
   private readonly protectCamera: ProtectCamera;
   private recordingConfig?: CameraRecordingConfiguration;
-  public rtspEntry: RtspEntry | null;
+  public rtspEntry: Nullable<RtspEntry>;
   public readonly timeshift: ProtectTimeshiftBuffer;
   private timeshiftedSegments: number;
   private transmitListener?: ((segment: Buffer) => void);
@@ -553,7 +553,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
   }
 
   // Return our current HomeKit Secure Video recording configuration.
-  public get recordingConfiguration(): CameraRecordingConfiguration | null {
+  public get recordingConfiguration(): Nullable<CameraRecordingConfiguration> {
 
     return this.recordingConfig ?? null;
   }

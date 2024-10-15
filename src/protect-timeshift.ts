@@ -2,7 +2,7 @@
  *
  * protect-timeshift.ts: UniFi Protect livestream timeshift buffer implementation to support HomeKit Secure Video.
  */
-import { HomebridgePluginLogging, runWithTimeout } from "homebridge-plugin-utils";
+import { HomebridgePluginLogging, Nullable, runWithTimeout } from "homebridge-plugin-utils";
 import { ProtectCamera, ProtectCameraPackage } from "./devices/index.js";
 import { EventEmitter } from "node:events";
 import { PROTECT_HKSV_SEGMENT_RESOLUTION } from "./settings.js";
@@ -208,7 +208,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
   }
 
   // Get the fMP4 initialization segment from the livestream API.
-  public async getInitSegment(): Promise<Buffer | null> {
+  public async getInitSegment(): Promise<Nullable<Buffer>> {
 
     // If we have the initialization segment, return it.
     if(this.livestream?.initSegment) {
@@ -226,7 +226,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
   }
 
   // Return the last duration milliseconds of the buffer, with an initialization segment.
-  public getLast(duration: number): Buffer | null {
+  public getLast(duration: number): Nullable<Buffer> {
 
     // No duration, return nothing.
     if(!duration) {
@@ -248,7 +248,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
   }
 
   // Return the current timeshift buffer, in full.
-  public get buffer(): Buffer | null {
+  public get buffer(): Nullable<Buffer> {
 
     // If we don't have our fMP4 initialization segment, we're done. Otherwise, return the current timeshift buffer in full.
     return (this.livestream?.initSegment && this._buffer.length) ? Buffer.concat([ this.livestream.initSegment, ...this._buffer ]) : null;

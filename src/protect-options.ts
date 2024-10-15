@@ -8,7 +8,7 @@ import { PROTECT_DEVICE_REMOVAL_DELAY_INTERVAL, PROTECT_DOORBELL_CHIME_DURATION_
 import { FeatureOptionEntry } from "homebridge-plugin-utils";
 
 // Plugin configuration options.
-export interface ProtectOptions {
+export type ProtectOptions = {
 
   controllers: ProtectNvrOptions[],
   debugAll: boolean,
@@ -18,7 +18,7 @@ export interface ProtectOptions {
   verboseFfmpeg: boolean,
   videoEncoder: string,
   videoProcessor: string
-}
+};
 
 // NVR configuration options.
 export interface ProtectNvrOptions {
@@ -39,9 +39,13 @@ export interface ProtectNvrOptions {
 
 // HBUP's webUI makes use of additional metadata to only surface the feature options relevant for a particular device. These properties provide that metadata.
 //
+// hasCameraFeature:    Properties in the featureFlags object on cameras that must be enabled for this option to be exposed.
 // hasFeature:          Properties in the featureFlags object that must be enabled for this option to be exposed.
+// hasLightProperty:    Properties that must exist on the device object for a light device for this option to be exposed.
 // hasProperty:         Properties that must exist on the device object for this option to be exposed.
+// hasSensorProperty:   Properties that must exist on the device object for a sensor device for this option to be exposed.
 // hasSmartObjectType:  Smart object detection capability that must exist for this option to be exposed.
+// isNotProperty:       Properties that must specifically not exist on the device object for this option to be exposed.
 // modelKey:            Device categories that the option applies to, or "all" for any device type.
 interface ProtectFeatureOption extends FeatureOptionEntry {
 
@@ -76,11 +80,11 @@ export const featureOptions: { [index: string]: ProtectFeatureOption[] } = {
   "Audio": [
 
     { default: true, description: "Audio support.", hasFeature: [ "hasMic" ], name: "" },
-    { default: false, description: "Audio filter for ambient noise suppression.", group: "", hasFeature: [ "hasMic" ], name: "Filter.Noise" },
+    { default: false, description: "Audio filter for ambient noise suppression.", hasFeature: [ "hasMic" ], name: "Filter.Noise" },
     { default: false, defaultValue: PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, description: "Noise reduction amount, in decibels, for the FFmpeg afftdn filter.", group: "Filter.Noise", name: "Filter.Noise.FftNr" },
     { default: false, defaultValue: PROTECT_FFMPEG_AUDIO_FILTER_HIGHPASS, description: "Frequency, in Hertz, for the FFmpeg highpass filter.", group: "Filter.Noise", name: "Filter.Noise.HighPass" },
     { default: false, defaultValue: PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS, description: "Frequency, in Hertz, for the FFmpeg lowpass filter.", group: "Filter.Noise", name: "Filter.Noise.LowPass" },
-    { default: true, description: "Two-way audio support on supported cameras.", group: "", hasFeature: [ "hasSpeaker" ], name: "TwoWay" }
+    { default: true, description: "Two-way audio support on supported cameras.", hasFeature: [ "hasSpeaker" ], name: "TwoWay" }
   ],
 
   // Device options.

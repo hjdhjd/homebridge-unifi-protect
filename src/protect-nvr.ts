@@ -3,7 +3,7 @@
  * protect-nvr.ts: NVR device class for UniFi Protect.
  */
 import { API, APIEvent, HAP, PlatformAccessory } from "homebridge";
-import { HomebridgePluginLogging, MqttClient, retry, sleep, validateName } from "homebridge-plugin-utils";
+import { HomebridgePluginLogging, MqttClient, Nullable, retry, sleep, validateName } from "homebridge-plugin-utils";
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_CONTROLLER_REFRESH_INTERVAL, PROTECT_CONTROLLER_RETRY_INTERVAL, PROTECT_M3U_PLAYLIST_PORT } from "./settings.js";
 import { ProtectApi, ProtectCameraConfig, ProtectChimeConfig, ProtectLightConfig, ProtectNvrBootstrap, ProtectNvrConfig, ProtectSensorConfig,
   ProtectViewerConfig } from "unifi-protect";
@@ -25,14 +25,14 @@ export class ProtectNvr {
   public events!: ProtectEvents;
   private featureLog: { [index: string]: boolean };
   private hap: HAP;
-  private liveviews: ProtectLiveviews | null;
+  private liveviews: Nullable<ProtectLiveviews>;
   public logApiErrors: boolean;
   public readonly log: HomebridgePluginLogging;
-  public mqtt: MqttClient | null;
+  public mqtt: Nullable<MqttClient>;
   private name: string;
   public nvrHksvErrors: number;
   public platform: ProtectPlatform;
-  public systemInfo: ProtectNvrSystemInfo | null;
+  public systemInfo: Nullable<ProtectNvrSystemInfo>;
   public ufp: ProtectNvrConfig;
   public ufpApi!: ProtectApi;
   private unsupportedDevices: { [index: string]: boolean };
@@ -240,7 +240,7 @@ export class ProtectNvr {
   }
 
   // Create instances of Protect device types in our plugin.
-  private addProtectDevice(accessory: PlatformAccessory, device: ProtectDeviceConfigTypes): ProtectDevice | null {
+  private addProtectDevice(accessory: PlatformAccessory, device: ProtectDeviceConfigTypes): Nullable<ProtectDevice> {
 
     if(!accessory || !device) {
 
@@ -768,7 +768,7 @@ export class ProtectNvr {
   }
 
   // Return the Protect device object based on it's unique device identifier, if it exists.
-  public getDeviceById(deviceId: string): ProtectDevices | null {
+  public getDeviceById(deviceId: string): Nullable<ProtectDevices> {
 
     // Find the device.
     return Object.values(this.configuredDevices).find(device => device.ufp.id === deviceId) ?? null;

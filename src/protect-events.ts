@@ -3,11 +3,11 @@
  * protect-events.ts: Protect events class for UniFi Protect.
  */
 import { API, HAP, Service } from "homebridge";
+import { HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
 import { ProtectApi, ProtectEventAdd, ProtectEventMetadata, ProtectEventPacket, ProtectKnownDeviceTypes } from "unifi-protect";
 import { ProtectCamera, ProtectDevice } from "./devices/index.js";
 import { ProtectDeviceConfigTypes, ProtectReservedNames } from "./protect-types.js";
 import { EventEmitter } from "node:events";
-import { HomebridgePluginLogging } from "homebridge-plugin-utils";
 import { PROTECT_DOORBELL_TRIGGER_DURATION } from "./settings.js";
 import { ProtectNvr } from "./protect-nvr.js";
 import { ProtectPlatform } from "./protect-platform.js";
@@ -99,7 +99,7 @@ export class ProtectEvents extends EventEmitter {
   private ufpUpdates(packet: ProtectEventPacket): void {
 
     const payload = packet.payload as ProtectDeviceConfigTypes;
-    let protectDevice: ProtectDevice | null;
+    let protectDevice: Nullable<ProtectDevice>;
 
     switch(packet.header.modelKey) {
 
@@ -474,7 +474,7 @@ export class ProtectEvents extends EventEmitter {
   }
 
   // Doorbell event processing from UniFi Protect and delivered to HomeKit.
-  public doorbellEventHandler(protectDevice: ProtectCamera, lastRing: number | null): void {
+  public doorbellEventHandler(protectDevice: ProtectCamera, lastRing: Nullable<number>): void {
 
     if(!protectDevice || !lastRing) {
 

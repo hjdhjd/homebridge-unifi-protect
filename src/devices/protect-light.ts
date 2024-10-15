@@ -151,7 +151,7 @@ export class ProtectLight extends ProtectDevice {
     // Control the light.
     this.subscribeSet("light", "light", (value: string) => {
 
-      this.accessory.getService(this.hap.Service.Lightbulb)?.getCharacteristic(this.hap.Characteristic.On)?.setValue(value === "true");
+      this.accessory.getService(this.hap.Service.Lightbulb)?.updateCharacteristic(this.hap.Characteristic.On, value === "true");
     });
 
     this.subscribeSet("light/brightness", "light brightness", (value: string) => {
@@ -164,7 +164,7 @@ export class ProtectLight extends ProtectDevice {
         return;
       }
 
-      this.accessory.getService(this.hap.Service.Lightbulb)?.getCharacteristic(this.hap.Characteristic.Brightness)?.setValue(brightness);
+      this.accessory.getService(this.hap.Service.Lightbulb)?.updateCharacteristic(this.hap.Characteristic.Brightness, brightness);
     });
 
     return true;

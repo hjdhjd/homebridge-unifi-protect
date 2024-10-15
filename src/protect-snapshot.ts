@@ -3,7 +3,7 @@
  * protect-snapshot.ts: UniFi Protect HomeKit snapshot class.
  */
 import { API, HAP, SnapshotRequest } from "homebridge";
-import { HomebridgePluginLogging, runWithTimeout } from "homebridge-plugin-utils";
+import { HomebridgePluginLogging, Nullable, runWithTimeout } from "homebridge-plugin-utils";
 import { PROTECT_LIVESTREAM_API_IDR_INTERVAL, PROTECT_SNAPSHOT_CACHE_MAXAGE } from "./settings.js";
 import { FfmpegExec } from "./ffmpeg/index.js";
 import { ProtectCamera } from "./devices/index.js";
@@ -13,7 +13,7 @@ import { ProtectPlatform } from "./protect-platform.js";
 // Camera snapshot class for Protect.
 export class ProtectSnapshot {
 
-  private _cachedSnapshot: { image: Buffer, time: number } | null;
+  private _cachedSnapshot: Nullable<{ image: Buffer, time: number }>;
   private readonly api: API;
   private readonly hap: HAP;
   public readonly log: HomebridgePluginLogging;
@@ -34,7 +34,7 @@ export class ProtectSnapshot {
   }
 
   // Return a snapshot for use by HomeKit.
-  public async getSnapshot(request?: SnapshotRequest): Promise<Buffer | null> {
+  public async getSnapshot(request?: SnapshotRequest): Promise<Nullable<Buffer>> {
 
     // If we aren't connected, we're done.
     if(!this.protectCamera.isOnline) {
@@ -57,7 +57,7 @@ export class ProtectSnapshot {
     //
     // The exception to this is package cameras - we try the Protect API before the RTSP stream there because the lower frame rate of the camera causes a lengthier
     // response time.
-    const snapshotPromise = (async (): Promise<Buffer | null> => {
+    const snapshotPromise = (async (): Promise<Nullable<Buffer>> => {
 
       let snapAttempt = await this.snapFromTimeshift(request);
 
@@ -115,7 +115,7 @@ export class ProtectSnapshot {
   }
 
   // Snapshots using the timeshift buffer as the source.
-  private async snapFromTimeshift(request?: SnapshotRequest): Promise<Buffer | null> {
+  private async snapFromTimeshift(request?: SnapshotRequest): Promise<Nullable<Buffer>> {
 
     // If we aren't generating high resolution snapshots, we're done.
     if(!this.protectCamera.hints.highResSnapshots) {
@@ -148,7 +148,7 @@ export class ProtectSnapshot {
   }
 
   // Snapshots using the Protect RTSP endpoints as the source.
-  private async snapFromRtsp(request?: SnapshotRequest): Promise<Buffer | null> {
+  private async snapFromRtsp(request?: SnapshotRequest): Promise<Nullable<Buffer>> {
 
     // If we aren't generating high resolution snapshots, we're done.
     if(!this.protectCamera.hints.highResSnapshots) {
@@ -184,7 +184,7 @@ export class ProtectSnapshot {
   }
 
   // Generate a snapshot using FFmpeg.
-  private async snapFromFfmpeg(ffmpegInputOptions: string[], request?: SnapshotRequest, buffer?: Buffer): Promise<Buffer | null> {
+  private async snapFromFfmpeg(ffmpegInputOptions: string[], request?: SnapshotRequest, buffer?: Buffer): Promise<Nullable<Buffer>> {
 
     // Options we use to generate an image based on our MP4 input are:
     //
@@ -253,7 +253,7 @@ export class ProtectSnapshot {
   }
 
   // Image snapshot crop handler.
-  private async cropSnapshot(snapshot: Buffer): Promise<Buffer | null> {
+  private async cropSnapshot(snapshot: Buffer): Promise<Nullable<Buffer>> {
 
     // Crop the snapshot using the FFmpeg with crop filter. Options we use are:
     //
@@ -295,7 +295,7 @@ export class ProtectSnapshot {
   }
 
   // Retrieve a cached snapshot, if available.
-  private get cachedSnapshot(): Buffer | null {
+  private get cachedSnapshot(): Nullable<Buffer> {
 
     // If we have an image from the last few seconds, we can use it. Otherwise, we're done.
     if(!this._cachedSnapshot || ((Date.now() - this._cachedSnapshot.time) > (PROTECT_SNAPSHOT_CACHE_MAXAGE * 1000))) {

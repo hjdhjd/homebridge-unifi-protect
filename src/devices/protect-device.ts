@@ -3,7 +3,7 @@
  * protect-device.ts: Base class for all UniFi Protect devices.
  */
 import { API, CharacteristicValue, HAP, PlatformAccessory, Service, WithUUID } from "homebridge";
-import { HomebridgePluginLogging, acquireService, validService, validateName } from "homebridge-plugin-utils";
+import { HomebridgePluginLogging, Nullable, acquireService, validService, validateName } from "homebridge-plugin-utils";
 import { PROTECT_MOTION_DURATION, PROTECT_OCCUPANCY_DURATION} from "../settings.js";
 import { ProtectApi, ProtectCameraConfig, ProtectEventPacket, ProtectNvrConfig } from "unifi-protect";
 import { ProtectDeviceConfigTypes, ProtectReservedNames } from "../protect-types.js";
@@ -160,7 +160,8 @@ export abstract class ProtectDevice extends ProtectBase {
   }
 
   // Retrieve an existing service from an accessory, creating it if necessary.
-  protected acquireService(serviceType: WithUUID<typeof Service>, name = this.accessoryName, subtype?: string, onServiceCreate?: (svc: Service) => void): Service | null {
+  protected acquireService(serviceType: WithUUID<typeof Service>, name = this.accessoryName, subtype?: string, onServiceCreate?: (svc: Service) => void):
+  Nullable<Service> {
 
     return acquireService(this.hap, this.accessory, serviceType, name, subtype, onServiceCreate);
   }

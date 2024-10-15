@@ -4,11 +4,12 @@
  *
  */
 import { FfmpegProcess } from "./protect-ffmpeg.js";
+import { Nullable } from "homebridge-plugin-utils";
 import { ProtectCamera } from "../devices/index.js";
 
 type ProcessResult = {
 
-  exitCode: number | null;
+  exitCode: Nullable<number>;
   stderr: Buffer;
   stdout: Buffer;
 };
@@ -27,9 +28,9 @@ export class FfmpegExec extends FfmpegProcess {
   }
 
   // Run the FFmpeg process and return the result.
-  public async exec(stdinData?: Buffer): Promise<ProcessResult | null> {
+  public async exec(stdinData?: Buffer): Promise<Nullable<ProcessResult>> {
 
-    return new Promise<ProcessResult | null>((resolve) => {
+    return new Promise<Nullable<ProcessResult>>((resolve) => {
 
       this.start();
 

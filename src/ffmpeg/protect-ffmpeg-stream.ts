@@ -5,6 +5,7 @@
  */
 import { ChildProcessWithoutNullStreams } from "child_process";
 import { FfmpegProcess } from "./protect-ffmpeg.js";
+import { Nullable } from "homebridge-plugin-utils";
 import { ProtectStreamingDelegate } from "../protect-stream.js";
 import { StreamRequestCallback } from "homebridge";
 import { createSocket } from "node:dgram";
@@ -104,7 +105,7 @@ export class FfmpegStreamingProcess extends FfmpegProcess {
   }
 
   // Return the actual FFmpeg process.
-  public get ffmpegProcess(): ChildProcessWithoutNullStreams | null {
+  public get ffmpegProcess(): Nullable<ChildProcessWithoutNullStreams> {
 
     return this.process;
   }

@@ -3,6 +3,7 @@
  * protect-camera-package.ts: Package camera device class for UniFi Protect.
  */
 import { ProtectCamera, RtspEntry } from "./protect-camera.js";
+import { Nullable } from "homebridge-plugin-utils";
 import { ProtectStreamingDelegate } from "../protect-stream.js";
 import { Resolution } from "homebridge";
 
@@ -122,7 +123,7 @@ export class ProtectCameraPackage extends ProtectCamera {
   }
 
   // Make our RTSP stream findable.
-  public findRtsp(): RtspEntry | null {
+  public findRtsp(): Nullable<RtspEntry> {
 
     const channel = this.ufp.channels.find(x => x.name === "Package Camera");
 
@@ -144,7 +145,7 @@ export class ProtectCameraPackage extends ProtectCamera {
   }
 
   // Return a recording RTSP configuration for HKSV.
-  public findRecordingRtsp(): RtspEntry | null {
+  public findRecordingRtsp(): Nullable<RtspEntry> {
 
     return this.findRtsp();
   }

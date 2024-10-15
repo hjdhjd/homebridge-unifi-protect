@@ -6,6 +6,7 @@ import { CharacteristicValue, PlatformAccessory, Resolution, Service } from "hom
 import { ProtectCameraChannelConfig, ProtectCameraConfig, ProtectCameraConfigPayload, ProtectEventAdd, ProtectEventPacket } from "unifi-protect";
 import { ProtectReservedNames, toCamelCase } from "../protect-types.js";
 import { LivestreamManager } from "../protect-livestream.js";
+import { Nullable } from "homebridge-plugin-utils";
 import { ProtectDevice } from "./protect-device.js";
 import { ProtectNvr } from "../protect-nvr.js";
 import { ProtectStreamingDelegate } from "../protect-stream.js";
@@ -1306,7 +1307,7 @@ export class ProtectCamera extends ProtectDevice {
   }
 
   // Find an RTSP configuration for a given target resolution.
-  private findRtspEntry(width: number, height: number, options?: RtspOptions): RtspEntry | null {
+  private findRtspEntry(width: number, height: number, options?: RtspOptions): Nullable<RtspEntry> {
 
     const rtspEntries = options?.rtspEntries ?? this.rtspEntries;
 
@@ -1344,7 +1345,7 @@ export class ProtectCamera extends ProtectDevice {
   }
 
   // Find a streaming RTSP configuration for a given target resolution.
-  public findRtsp(width: number, height: number, options?: RtspOptions): RtspEntry | null {
+  public findRtsp(width: number, height: number, options?: RtspOptions): Nullable<RtspEntry> {
 
     // Create our options JSON if needed.
     options = options ?? {};
@@ -1365,7 +1366,7 @@ export class ProtectCamera extends ProtectDevice {
   }
 
   // Find a recording RTSP configuration for a given target resolution.
-  public findRecordingRtsp(width: number, height: number): RtspEntry | null {
+  public findRecordingRtsp(width: number, height: number): Nullable<RtspEntry> {
 
     return this.findRtspEntry(width, height, { biasHigher: true, default: this.hints.recordingDefault ?? this.stream.ffmpegOptions.recordingDefaultChannel });
   }

@@ -5,9 +5,9 @@
  * This module is heavily inspired by the homebridge and homebridge-camera-ffmpeg source code. Thank you for your contributions to the HomeKit world.
  */
 import { ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import { HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
 import { Readable, Writable } from "node:stream";
 import { EventEmitter } from "node:events";
-import { HomebridgePluginLogging } from "homebridge-plugin-utils";
 import { ProtectCamera } from "../devices/index.js";
 import { ProtectNvr } from "../protect-nvr.js";
 import { ProtectPlatform } from "../protect-platform.js";
@@ -18,7 +18,7 @@ import util from "node:util";
 // Base class for all FFmpeg process management.
 export class FfmpegProcess extends EventEmitter {
 
-  protected callback: StreamRequestCallback | null;
+  protected callback: Nullable<StreamRequestCallback>;
   protected commandLineArgs: string[];
   private ffmpegTimeout?: NodeJS.Timeout;
   public hasError: boolean;
@@ -30,7 +30,7 @@ export class FfmpegProcess extends EventEmitter {
   protected readonly log: HomebridgePluginLogging;
   protected readonly nvr: ProtectNvr;
   private readonly platform: ProtectPlatform;
-  protected process: ChildProcessWithoutNullStreams | null;
+  protected process: Nullable<ChildProcessWithoutNullStreams>;
   protected protectCamera: ProtectCamera;
   private stderrBuffer: string;
   protected stderrLog: string[];
@@ -316,19 +316,19 @@ export class FfmpegProcess extends EventEmitter {
   }
 
   // Return the standard input for this process.
-  public get stdin(): Writable | null {
+  public get stdin(): Nullable<Writable> {
 
     return this.process?.stdin ?? null;
   }
 
   // Return the standard output for this process.
-  public get stdout(): Readable | null {
+  public get stdout(): Nullable<Readable> {
 
     return this.process?.stdout ?? null;
   }
 
   // Return the standard error for this process.
-  public get stderr(): Readable | null {
+  public get stderr(): Nullable<Readable> {
 
     return this.process?.stderr ?? null;
   }

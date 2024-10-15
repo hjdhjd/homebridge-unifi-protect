@@ -3,6 +3,7 @@
  * protect-doorbell.ts: Doorbell device class for UniFi Protect.
  */
 import { CharacteristicValue, PlatformAccessory, Service } from "homebridge";
+import { Nullable, validateName } from "homebridge-plugin-utils";
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_DOORBELL_CHIME_DURATION_DIGITAL } from "../settings.js";
 import { ProtectCameraConfig, ProtectCameraConfigPayload, ProtectCameraLcdMessagePayload, ProtectChimeConfigPayload, ProtectEventPacket, ProtectNvrConfigPayload }
   from "unifi-protect";
@@ -10,7 +11,6 @@ import { ProtectReservedNames, toCamelCase } from "../protect-types.js";
 import { ProtectCamera } from "./protect-camera.js";
 import { ProtectCameraPackage } from "./protect-camera-package.js";
 import { ProtectNvr } from "../protect-nvr.js";
-import { validateName } from "homebridge-plugin-utils";
 
 // A doorbell message entry.
 interface MessageInterface {
@@ -34,7 +34,7 @@ export class ProtectDoorbell extends ProtectCamera {
   private isMessagesEnabled: boolean;
   private isMessagesFromControllerEnabled: boolean;
   private messageSwitches: { [index: string]: MessageSwitchInterface };
-  public packageCamera!: ProtectCameraPackage | null;
+  public packageCamera!: Nullable<ProtectCameraPackage>;
 
   // Create an instance.
   constructor(nvr: ProtectNvr, device: ProtectCameraConfig, accessory: PlatformAccessory) {
@@ -399,9 +399,9 @@ export class ProtectDoorbell extends ProtectCamera {
 
       // We explicitly want to trigger our set event handler, which will complete this action.
       this.accessory.getServiceById(this.hap.Service.Lightbulb, ProtectReservedNames.LIGHTBULB_DOORBELL_VOLUME)
-        ?.getCharacteristic(this.hap.Characteristic.Brightness)?.setValue(volume);
+        ?.updateCharacteristic(this.hap.Characteristic.Brightness, volume);
       this.accessory.getServiceById(this.hap.Service.Lightbulb, ProtectReservedNames.LIGHTBULB_DOORBELL_VOLUME)
-        ?.getCharacteristic(this.hap.Characteristic.On)?.setValue(volume > 0);
+        ?.updateCharacteristic(this.hap.Characteristic.On, volume > 0);
     });
 
     // Get the current message on the doorbell.
