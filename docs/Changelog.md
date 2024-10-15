@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 7.8.0 (2024-10-14)
+  * Behavior change: hardware acceleration is now enabled by default if it's available and detected as working by HBUP.
+  * Behavior change: the bundled FFmpeg no longer attempts to provide Intel QSV hardware acceleration support due to bugs in the QSV libraries when creating static FFmpeg builds.
+  * Improvement: Intel QSV hardware acceleration support now works with HEVC (Protect calls this enhanced encoding).
+  * Improvement: support for Jellfin FFmpeg builds for use with Intel QSV hardware acceleration. If you want to use Intel QSV hardware acceleration, I recommend either [downloading it for your particular Linux environment from Jellyfin](https://repo.jellyfin.org/?path=/ffmpeg) or [adding the Jellyfin repository to your Linux distribution](https://jellyfin.org/docs/general/installation/linux/#debuntu-debian-ubuntu-and-derivatives-using-apt) and then installing `jellyfin-ffmpeg`. Ensure you specify the location of the Jellyfin FFmpeg version under the Settings | Additional Settings section in the HBUP webUI.
+  * Housekeeping.
+
 ## 7.7.1 (2024-10-06)
   * **Note: FFmpeg v7.1 currently has fatal issues handling H.264 and HEVC decoding in certain scenarios. Unfortunately, this impacts HBUP as well as a lot of software out there. Until further notice, HBUP does not support FFmpeg versions above 7.0.x. If you have no idea what any of this means, that generally means you can ignore all this because things work fine in your environment. 😀**
   * Housekeeping.
