@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 7.8.1 (2024-10-20)
+  * Housekeeping.
+
 ## 7.8.0 (2024-10-14)
   * Behavior change: hardware acceleration is now enabled by default if it's available and detected as working by HBUP.
   * Behavior change: the bundled FFmpeg no longer attempts to provide Intel QSV hardware acceleration support due to bugs in the QSV libraries when creating static FFmpeg builds.
