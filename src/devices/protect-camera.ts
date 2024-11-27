@@ -1270,9 +1270,18 @@ export class ProtectCamera extends ProtectDevice {
         continue;
       }
 
-      // Activate PTZ Preset (No need to worry about state as Protect API doesn't keep it anyways)
-      service.getCharacteristic(this.hap.Characteristic.On)?.onGet(async () => {
+      service.getCharacteristic(this.hap.Characteristic.On)?.onSet(async (value: CharacteristicValue) => {
 
+        /*
+          We only want to do something if we're being activated. If changing switch to off we call
+          updateDevice which resets all switches to off since the API is not statful for PTZ
+          Presets
+        */
+        if(!value) {
+
+          setTimeout(() => this.updateDevice(), 50);
+
+        }
         const response = await this.nvr.ufpApi.retrieve(this.nvr.ufpApi.getApiEndpoint(this.ufp.modelKey) + "/" + this.ufp.id + "/ptz/goto/" + ptzPresetSwitch, {
 
           method: "POST"
@@ -1290,18 +1299,6 @@ export class ProtectCamera extends ProtectDevice {
         this.log.info("UniFi Protect Camera %s has been change to preset %s successfully.", this.accessoryName,  ptzPresetFriendlyName);
 
         return true;
-      });
-
-      service.getCharacteristic(this.hap.Characteristic.On)?.onSet((value: CharacteristicValue) => {
-
-        // We only want to do something if we're being activated. Turning off the switch would really be an undefined state given that there are three different
-        // settings one can choose from. Instead, we do nothing and leave it to the user to choose what state they really want to set.
-        if(!value) {
-
-          setTimeout(() => this.updateDevice(), 50);
-
-        }
-
       });
     }
 
