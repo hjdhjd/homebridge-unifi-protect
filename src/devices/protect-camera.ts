@@ -1295,9 +1295,9 @@ export class ProtectCamera extends ProtectDevice {
 
           return true;
         }
+        // Turn off Switch always as we are not stateful
+        service.updateCharacteristic(this.hap.Characteristic.On, false);
       });
-      // Turn off Switch always as we are not stateful
-      service.updateCharacteristic(this.hap.Characteristic.On, false);
     }
 
     return true;
