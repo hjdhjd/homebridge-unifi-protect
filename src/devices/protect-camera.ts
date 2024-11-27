@@ -1398,40 +1398,6 @@ export class ProtectCamera extends ProtectDevice {
       }
     }
 
-    for(const ptzPresetSwitchType of
-      [
-        ProtectReservedNames.SWITCH_PTZ_PRESET_HOME,
-        ProtectReservedNames.SWITCH_PTZ_PRESET_1,
-        ProtectReservedNames.SWITCH_PTZ_PRESET_2,
-        ProtectReservedNames.SWITCH_PTZ_PRESET_3,
-        ProtectReservedNames.SWITCH_PTZ_PRESET_4,
-        ProtectReservedNames.SWITCH_PTZ_PRESET_5,
-        ProtectReservedNames.SWITCH_PTZ_PRESET_6,
-        ProtectReservedNames.SWITCH_PTZ_PRESET_7,
-        ProtectReservedNames.SWITCH_PTZ_PRESET_8,
-        ProtectReservedNames.SWITCH_PTZ_PRESET_9
-      ]
-    ) {
-
-      const ptzPresetSwitch = ptzPresetSwitchType.slice(ptzPresetSwitchType.lastIndexOf(".") + 1);
-
-      if(this.hasFeature("Device.Ptz.Preset.Switch.${ptzPresetSwitch}")) {
-
-
-        /*
-            This always disables the switch after it has been activated
-            since the api provides no state for PTZ camera presets
-            Homekit support for interactive buttons does not exist
-            so treating this switch like a button by disabling it after
-            moving camera.
-          */
-        this.accessory.getServiceById(this.hap.Service.Switch, ptzPresetSwitch)?.
-          updateCharacteristic(this.hap.Characteristic.On, false);
-
-      }
-
-    }
-
     return true;
   }
 
