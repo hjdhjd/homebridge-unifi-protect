@@ -1290,7 +1290,6 @@ export class ProtectCamera extends ProtectDevice {
         // Something went wrong.
         if(!response?.ok) {
 
-
           this.log.info("UniFi Protect Camera %s failed to change to preset %s.", this.accessoryName,  ptzPresetFriendlyName);
 
           return false;
