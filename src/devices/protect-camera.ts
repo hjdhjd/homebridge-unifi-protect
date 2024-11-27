@@ -1220,8 +1220,8 @@ export class ProtectCamera extends ProtectDevice {
   private configurePtzPresetSwitches(): boolean {
 
     // The Protect controller supports nine presets for ptz cameras and a reserved one for home preset.
-    // We create switches for each of the modes.
-    // There is no way via api to know how many the user has created inside protect so we allow user to create all 9 + Home
+    // We create switches for each of the presets and for home.
+    // There is no way via api to know how many presets the user has created inside Protect so we allow user to create all 9 + Home
     for(const ptzPresetSwitchType of
       [
         ProtectReservedNames.SWITCH_PTZ_PRESET_HOME,
@@ -1244,7 +1244,7 @@ export class ProtectCamera extends ProtectDevice {
       // Validate whether we should have this service enabled.
       if(!this.validService(this.hap.Service.Switch, () => {
 
-        // If we don't have the feature option enabled, disable the switch and we're done.
+        // If we do not have the feature option enabled for this particular preset, disable the switch and we're done.
         const featureName = "Device.Ptz.Preset.Switch." + ptzPresetSwitch;
 
         if(!this.hasFeature(featureName)) {
@@ -1273,7 +1273,7 @@ export class ProtectCamera extends ProtectDevice {
       service.getCharacteristic(this.hap.Characteristic.On)?.onSet(async (value: CharacteristicValue) => {
 
         /*
-          We only want to do something if we're being activated. We always flip the switch back off
+          We only want to do something if we are being activated. We always flip the switch back off
           since the API is not statful for PTZ Presets
         */
         if(value) {
@@ -1293,7 +1293,7 @@ export class ProtectCamera extends ProtectDevice {
           // Inform the user, and we're done.
           this.log.info("UniFi Protect Camera %s has been change to preset %s successfully.", this.accessoryName,  ptzPresetFriendlyName);
 
-          // Turn off Switch always as we are not stateful
+          // Turn off Switch always as we are not stateful due to Unifi API implementation
           setTimeout(()=> service.setCharacteristic(this.hap.Characteristic.On, false), 1000);
 
           return true;
