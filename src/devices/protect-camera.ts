@@ -1277,11 +1277,14 @@ export class ProtectCamera extends ProtectDevice {
           updateDevice which resets all switches to off since the API is not statful for PTZ
           Presets
         */
+        this.log.info("service.getCharacteristic.onSet",value);
+
         if(!value) {
 
           setTimeout(() => this.updateDevice(), 50);
 
         }
+
         const response = await this.nvr.ufpApi.retrieve(this.nvr.ufpApi.getApiEndpoint(this.ufp.modelKey) + "/" + this.ufp.id + "/ptz/goto/" + ptzPresetSwitch, {
 
           method: "POST"
@@ -1300,6 +1303,7 @@ export class ProtectCamera extends ProtectDevice {
         return true;
       });
     }
+    setTimeout(() => this.updateDevice(), 50);
 
     return true;
   }
