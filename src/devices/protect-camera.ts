@@ -1273,37 +1273,33 @@ export class ProtectCamera extends ProtectDevice {
       service.getCharacteristic(this.hap.Characteristic.On)?.onSet(async (value: CharacteristicValue) => {
 
         /*
-          We only want to do something if we're being activated. If changing switch to off we call
-          updateDevice which resets all switches to off since the API is not statful for PTZ
-          Presets
+          We only want to do something if we're being activated. We always flip the switch back off
+          since the API is not statful for PTZ Presets
         */
-        this.log.info("service.getCharacteristic.onSet",value);
+        if(value) {
 
-        if(!value) {
+          const response = await this.nvr.ufpApi.retrieve(this.nvr.ufpApi.getApiEndpoint(this.ufp.modelKey) + "/" + this.ufp.id + "/ptz/goto/" + ptzPresetSwitch, {
 
+            method: "POST"
+          });
+
+          // Something went wrong.
+          if(!response?.ok) {
+
+            this.log.info("UniFi Protect Camera %s failed to change to preset %s.", this.accessoryName,  ptzPresetFriendlyName);
+
+            return false;
+          }
+          // Inform the user, and we're done.
+          this.log.info("UniFi Protect Camera %s has been change to preset %s successfully.", this.accessoryName,  ptzPresetFriendlyName);
+
+          // this.accessory.getServiceById(this.hap.Service.Switch, ptzPresetSwitch)?.updateCharacteristic(this.hap.Characteristic.On, false);
           setTimeout(() => this.updateDevice(), 50);
 
+          return true;
         }
-
-        const response = await this.nvr.ufpApi.retrieve(this.nvr.ufpApi.getApiEndpoint(this.ufp.modelKey) + "/" + this.ufp.id + "/ptz/goto/" + ptzPresetSwitch, {
-
-          method: "POST"
-        });
-
-        // Something went wrong.
-        if(!response?.ok) {
-
-          this.log.info("UniFi Protect Camera %s failed to change to preset %s.", this.accessoryName,  ptzPresetFriendlyName);
-
-          return false;
-        }
-        // Inform the user, and we're done.
-        this.log.info("UniFi Protect Camera %s has been change to preset %s successfully.", this.accessoryName,  ptzPresetFriendlyName);
-
-        return true;
       });
     }
-    setTimeout(() => this.updateDevice(), 50);
 
     return true;
   }
