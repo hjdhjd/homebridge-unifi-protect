@@ -36,6 +36,7 @@ export class ProtectCamera extends ProtectDevice {
   public hasHksv: boolean;
   private isDeleted: boolean;
   public isRinging: boolean;
+  public isPtz: boolean;
   public detectLicensePlate: string[];
   public readonly livestream: LivestreamManager;
   private rtspEntries: RtspEntry[];
@@ -52,6 +53,7 @@ export class ProtectCamera extends ProtectDevice {
     this.hasHksv = false;
     this.isDeleted = false;
     this.isRinging = false;
+    this.isPtz = false;
     this.detectLicensePlate = [];
     this.livestream = new LivestreamManager(this);
     this.rtspEntries = [];
@@ -111,6 +113,7 @@ export class ProtectCamera extends ProtectDevice {
     this.accessory.context = {};
     this.accessory.context.detectMotion = savedContext.detectMotion as boolean ?? true;
     this.accessory.context.hksvRecording = savedContext.hksvRecording as boolean ?? true;
+    this.accessory.context.isPtz = savedContext.isPtz as boolean ?? false;
     this.accessory.context.mac = this.ufp.mac;
     this.accessory.context.nvr = this.nvr.ufp.mac;
 
@@ -162,6 +165,9 @@ export class ProtectCamera extends ProtectDevice {
 
     // Configure our NVR recording switches.
     this.configureNvrRecordingSwitch();
+
+    // Configure the ptz camera presets.
+    this.configurePtzPresetSwitches();
 
     // Configure the status indicator light switch.
     this.configureStatusLedSwitch();
@@ -1210,6 +1216,98 @@ export class ProtectCamera extends ProtectDevice {
     return true;
   }
 
+  // Configure a series of switches to manually enable or disable recording on the UniFi Protect controller for a camera.
+  private configurePtzPresetSwitches(): boolean {
+
+    // The Protect controller supports nine presets for ptz cameras and a reserved one for home preset.
+    // We create switches for each of the modes.
+    // There is no way via api to know how many the user has created inside protect so we allow user to create all 9 + Home
+    for(const ptzPresetSwitchType of
+      [
+        ProtectReservedNames.SWITCH_PTZ_PRESET_HOME,
+        ProtectReservedNames.SWITCH_PTZ_PRESET_1,
+        ProtectReservedNames.SWITCH_PTZ_PRESET_2,
+        ProtectReservedNames.SWITCH_PTZ_PRESET_3,
+        ProtectReservedNames.SWITCH_PTZ_PRESET_4,
+        ProtectReservedNames.SWITCH_PTZ_PRESET_5,
+        ProtectReservedNames.SWITCH_PTZ_PRESET_6,
+        ProtectReservedNames.SWITCH_PTZ_PRESET_7,
+        ProtectReservedNames.SWITCH_PTZ_PRESET_8,
+        ProtectReservedNames.SWITCH_PTZ_PRESET_9
+      ]
+    ) {
+
+      const ptzPresetSwitch = ptzPresetSwitchType.slice(ptzPresetSwitchType.lastIndexOf(".") + 1);
+      // Create a friendly name since array index start at 0 for API calls and -1 is reserved for "Home"
+      const ptzPresetFriendlyName = ptzPresetSwitch === "-1" ? "Home" : (Number(ptzPresetSwitch) + 1).toString();
+
+      // Validate whether we should have this service enabled.
+      if(!this.validService(this.hap.Service.Switch, () => {
+
+        // If we don't have the feature option enabled, disable the switch and we're done.
+        const featureName = "Device.Ptz.Preset.Switch." + ptzPresetSwitch;
+
+        if(!this.hasFeature(featureName)) {
+
+          return false;
+        }
+
+        return true;
+      }, ptzPresetSwitchType)) {
+
+        continue;
+      }
+      const switchName = this.accessoryName + " PTZ Preset " + ptzPresetFriendlyName;
+
+      // Acquire the service.
+      const service = this.acquireService(this.hap.Service.Switch, switchName, ptzPresetSwitchType);
+
+      // Fail gracefully.
+      if(!service) {
+
+        this.log.error("Unable to add UniFi Protect recording switches.");
+
+        continue;
+      }
+
+      // Activate PTZ Preset (No need to worry about state as Protect API doesn't keep it anyways)
+      service.getCharacteristic(this.hap.Characteristic.On)?.onGet(async () => {
+
+        const response = await this.nvr.ufpApi.retrieve(this.nvr.ufpApi.getApiEndpoint(this.ufp.modelKey) + "/" + this.ufp.id + "/ptz/goto/" + ptzPresetSwitch, {
+
+          method: "POST"
+        });
+
+        // Something went wrong.
+        if(!response?.ok) {
+
+
+          this.log.info("UniFi Protect Camera %s failed to change to preset %s.", this.accessoryName,  ptzPresetFriendlyName);
+
+          return false;
+        }
+        // Inform the user, and we're done.
+        this.log.info("UniFi Protect Camera %s has been change to preset %s successfully.", this.accessoryName,  ptzPresetFriendlyName);
+
+        return true;
+      });
+
+      service.getCharacteristic(this.hap.Characteristic.On)?.onSet((value: CharacteristicValue) => {
+
+        // We only want to do something if we're being activated. Turning off the switch would really be an undefined state given that there are three different
+        // settings one can choose from. Instead, we do nothing and leave it to the user to choose what state they really want to set.
+        if(!value) {
+
+          setTimeout(() => this.updateDevice(), 50);
+
+        }
+
+      });
+    }
+
+    return true;
+  }
+
   // Configure MQTT capabilities of this camera.
   protected configureMqtt(): boolean {
 
@@ -1301,6 +1399,40 @@ export class ProtectCamera extends ProtectDevice {
         this.accessory.getServiceById(this.hap.Service.Switch, ufpRecordingSwitchType)?.
           updateCharacteristic(this.hap.Characteristic.On, ufpRecordingSetting === this.ufp.recordingSettings.mode);
       }
+    }
+
+    for(const ptzPresetSwitchType of
+      [
+        ProtectReservedNames.SWITCH_PTZ_PRESET_HOME,
+        ProtectReservedNames.SWITCH_PTZ_PRESET_1,
+        ProtectReservedNames.SWITCH_PTZ_PRESET_2,
+        ProtectReservedNames.SWITCH_PTZ_PRESET_3,
+        ProtectReservedNames.SWITCH_PTZ_PRESET_4,
+        ProtectReservedNames.SWITCH_PTZ_PRESET_5,
+        ProtectReservedNames.SWITCH_PTZ_PRESET_6,
+        ProtectReservedNames.SWITCH_PTZ_PRESET_7,
+        ProtectReservedNames.SWITCH_PTZ_PRESET_8,
+        ProtectReservedNames.SWITCH_PTZ_PRESET_9
+      ]
+    ) {
+
+      const ptzPresetSwitch = ptzPresetSwitchType.slice(ptzPresetSwitchType.lastIndexOf(".") + 1);
+
+      if(this.hasFeature("Device.Ptz.Preset.Switch.${ptzPresetSwitch}")) {
+
+
+        /*
+            This always disables the switch after it has been activated
+            since the api provides no state for PTZ camera presets
+            Homekit support for interactive buttons does not exist
+            so treating this switch like a button by disabling it after
+            moving camera.
+          */
+        this.accessory.getServiceById(this.hap.Service.Switch, ptzPresetSwitch)?.
+          updateCharacteristic(this.hap.Characteristic.On, false);
+
+      }
+
     }
 
     return true;

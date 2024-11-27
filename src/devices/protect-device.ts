@@ -44,6 +44,7 @@ export interface ProtectHints {
   nightVision: boolean,
   occupancyDuration: number,
   probesize: number,
+  ptz: boolean,
   recordingDefault: string,
   smartDetect: boolean,
   smartDetectSensors: boolean,
@@ -182,6 +183,7 @@ export abstract class ProtectDevice extends ProtectBase {
     this.hints.smartOccupancy = [];
     this.hints.standalone = this.hasFeature("Device.Standalone");
     this.hints.syncName = this.hasFeature("Device.SyncName");
+    this.hints.ptz = this.hasFeature("Device.Ptz");
 
     // Sanity check motion detection duration. Make sure it's never less than 2 seconds so we can actually alert the user.
     if(this.hints.motionDuration < 2) {

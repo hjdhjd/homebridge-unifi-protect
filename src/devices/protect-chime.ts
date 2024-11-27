@@ -163,7 +163,7 @@ export class ProtectChime extends ProtectDevice {
       payload = { repeatTimes: ringSettings.repeatTimes, ringtoneId: tone, volume: ringSettings.volume };
     }
 
-    // Execute teh action on the chime.
+    // Execute the action on the chime.
     const response = await this.nvr.ufpApi.retrieve(this.nvr.ufpApi.getApiEndpoint(this.ufp.modelKey) + "/" + this.ufp.id + "/" + endpoint, {
 
       body: JSON.stringify(payload),

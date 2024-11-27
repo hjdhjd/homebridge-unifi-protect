@@ -52,5 +52,15 @@ export enum ProtectReservedNames {
   SWITCH_STATUS_LED = "StatusLedSwitch",
   SWITCH_UFP_RECORDING_ALWAYS = "UFPRecordingSwitch.always",
   SWITCH_UFP_RECORDING_DETECTIONS = "UFPRecordingSwitch.detections",
-  SWITCH_UFP_RECORDING_NEVER = "UFPRecordingSwitch.never"
+  SWITCH_UFP_RECORDING_NEVER = "UFPRecordingSwitch.never",
+  SWITCH_PTZ_PRESET_HOME = "PtzPresetSwitch.-1",
+  SWITCH_PTZ_PRESET_1 = "PtzPresetSwitch.0",
+  SWITCH_PTZ_PRESET_2 = "PtzPresetSwitch.1",
+  SWITCH_PTZ_PRESET_3 = "PtzPresetSwitch.2",
+  SWITCH_PTZ_PRESET_4 = "PtzPresetSwitch.3",
+  SWITCH_PTZ_PRESET_5 = "PtzPresetSwitch.4",
+  SWITCH_PTZ_PRESET_6 = "PtzPresetSwitch.5",
+  SWITCH_PTZ_PRESET_7 = "PtzPresetSwitch.6",
+  SWITCH_PTZ_PRESET_8 = "PtzPresetSwitch.7",
+  SWITCH_PTZ_PRESET_9 = "PtzPresetSwitch.8"
 }

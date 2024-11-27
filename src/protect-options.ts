@@ -96,7 +96,17 @@ export const featureOptions: { [index: string]: ProtectFeatureOption[] } = {
     { default: true, description: "Enable the night vision indicator light for this device in HomeKit.", hasFeature: [ "hasLedIr" ], modelKey: [ "camera" ], name: "NightVision" },
     { default: false, description: "Add a dimmer accessory to control the night vision state in HomeKit.", hasFeature: [ "hasLedIr" ], modelKey: [ "camera" ], name: "NightVision.Dimmer" },
     { default: false, description: "Make this a standalone device in HomeKit that will need to be added to HomeKit through the Home app.", name: "Standalone" },
-    { default: false, description: "Synchronize the UniFi Protect name of this device with HomeKit. Synchronization is one-way only, syncing the device name from UniFi Protect to HomeKit.", name: "SyncName" }
+    { default: false, description: "Synchronize the UniFi Protect name of this device with HomeKit. Synchronization is one-way only, syncing the device name from UniFi Protect to HomeKit.", name: "SyncName" },
+    { default: false, description: "Add a switch accessory to control PTZ camera to move preset home", hasFeature: [ "isPtz" ], name: "Ptz.Preset.Switch.-1" },
+    { default: false, description: "Add a switch accessory to control PTZ camera to move to preset 1", hasFeature: [ "isPtz" ], name: "Ptz.Preset.Switch.0" },
+    { default: false, description: "Add a switch accessory to control PTZ camera to move to preset 2", hasFeature: [ "isPtz" ], name: "Ptz.Preset.Switch.1" },
+    { default: false, description: "Add a switch accessory to control PTZ camera to move to preset 3", hasFeature: [ "isPtz" ], name: "Ptz.Preset.Switch.2" },
+    { default: false, description: "Add a switch accessory to control PTZ camera to move to preset 4", hasFeature: [ "isPtz" ], name: "Ptz.Preset.Switch.3" },
+    { default: false, description: "Add a switch accessory to control PTZ camera to move to preset 5", hasFeature: [ "isPtz" ], name: "Ptz.Preset.Switch.4" },
+    { default: false, description: "Add a switch accessory to control PTZ camera to move to preset 6", hasFeature: [ "isPtz" ], name: "Ptz.Preset.Switch.5" },
+    { default: false, description: "Add a switch accessory to control PTZ camera to move to preset 7", hasFeature: [ "isPtz" ], name: "Ptz.Preset.Switch.6" },
+    { default: false, description: "Add a switch accessory to control PTZ camera to move to preset 8", hasFeature: [ "isPtz" ], name: "Ptz.Preset.Switch.7" },
+    { default: false, description: "Add a switch accessory to control PTZ camera to move to preset 9", hasFeature: [ "isPtz" ], name: "Ptz.Preset.Switch.8" }
   ],
 
   // Doorbell options.
