@@ -1293,10 +1293,12 @@ export class ProtectCamera extends ProtectDevice {
           // Inform the user, and we're done.
           this.log.info("UniFi Protect Camera %s has been change to preset %s successfully.", this.accessoryName,  ptzPresetFriendlyName);
 
+          // Turn off Switch always as we are not stateful
+          service.updateCharacteristic(this.hap.Characteristic.On, false);
+
           return true;
         }
-        // Turn off Switch always as we are not stateful
-        service.updateCharacteristic(this.hap.Characteristic.On, false);
+
       });
     }
 
