@@ -4,9 +4,9 @@
  */
 import { CharacteristicValue, PlatformAccessory, Service } from "homebridge";
 import { Nullable, validateName } from "homebridge-plugin-utils";
-import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_DOORBELL_CHIME_DURATION_DIGITAL } from "../settings.js";
-import { ProtectCameraConfig, ProtectCameraConfigPayload, ProtectCameraLcdMessagePayload, ProtectChimeConfigPayload, ProtectEventPacket, ProtectNvrConfigPayload }
-  from "unifi-protect";
+import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_DOORBELL_AUTHSENSOR_DURATION, PROTECT_DOORBELL_CHIME_DURATION_DIGITAL } from "../settings.js";
+import { ProtectCameraConfig, ProtectCameraConfigPayload, ProtectCameraLcdMessagePayload, ProtectChimeConfigPayload, ProtectEventAdd, ProtectEventPacket,
+  ProtectNvrConfigPayload } from "unifi-protect";
 import { ProtectReservedNames, toCamelCase } from "../protect-types.js";
 import { ProtectCamera } from "./protect-camera.js";
 import { ProtectCameraPackage } from "./protect-camera-package.js";
@@ -30,11 +30,12 @@ interface MessageSwitchInterface extends MessageInterface {
 export class ProtectDoorbell extends ProtectCamera {
 
   private chimeDigitalDuration: number;
+  private contactAuthTimer?: NodeJS.Timeout;
   private defaultMessageDuration: number;
   private isMessagesEnabled: boolean;
   private isMessagesFromControllerEnabled: boolean;
   private messageSwitches: { [index: string]: MessageSwitchInterface };
-  public packageCamera!: Nullable<ProtectCameraPackage>;
+  public packageCamera?: Nullable<ProtectCameraPackage>;
 
   // Create an instance.
   constructor(nvr: ProtectNvr, device: ProtectCameraConfig, accessory: PlatformAccessory) {
@@ -77,7 +78,10 @@ export class ProtectDoorbell extends ProtectCamera {
     // Let's setup the doorbell-specific attributes.
     this.configureVideoDoorbell();
 
-    // Now, make the doorbell LCD message functionality available.
+    // Configure the authentication sensor, if enabled.
+    this.configureAuthSensor();
+
+    // Configure the doorbell LCD message capabilities.
     this.configureDoorbellLcdSwitch();
 
     // Configure physical chime switches, if enabled.
@@ -371,6 +375,43 @@ export class ProtectDoorbell extends ProtectCamera {
     service.updateCharacteristic(this.hap.Characteristic.Brightness, this.chimeVolume);
 
     this.log.info("Enabling Protect chime volume control.");
+
+    return true;
+  }
+
+  // Configure the contact sensor to indicate authentication success.
+  private configureAuthSensor(): boolean {
+
+    // Validate whether we should have this service enabled.
+    if(!this.validService(this.hap.Service.ContactSensor, () => {
+
+      // The authentication contact sensor is disabled by default unless the user enables it. We only make it available if we have at least one of the
+      // fingerprint sensor or the NFC sensor available.
+      if(!this.hasFeature("Doorbell.AuthSensor") || (!this.ufp.enableNfc && !this.ufp.featureFlags.hasFingerprintSensor)) {
+
+        return false;
+      }
+
+      return true;
+    }, ProtectReservedNames.CONTACT_AUTHSENSOR)) {
+
+      return false;
+    }
+
+    // Acquire the service.
+    const service = this.acquireService(this.hap.Service.ContactSensor, this.accessoryName + " Authenticated", ProtectReservedNames.CONTACT_AUTHSENSOR);
+
+    if(!service) {
+
+      this.log.error("Unable to add authentication sensor.");
+
+      return false;
+    }
+
+    // Initialize the authentication contact sensor.
+    service.updateCharacteristic(this.hap.Characteristic.ContactSensorState, false);
+
+    this.log.info("Enabling Protect authentication contact sensor.");
 
     return true;
   }
@@ -705,6 +746,51 @@ export class ProtectDoorbell extends ProtectCamera {
     if(payload.lcdMessage) {
 
       this.updateLcdSwitch(payload.lcdMessage);
+    }
+  }
+
+  // Handle add-related events from the controller.
+  protected addEventHandler(packet: ProtectEventPacket): void {
+
+    const payload = packet.payload as ProtectEventAdd;
+
+    super.eventHandler(packet);
+
+    // Process any authentication events.
+    if(payload.type && ["fingerprintIdentified", "nfcCardScanned"].includes(payload.type)) {
+
+      // Clear out the contact sensor timer.
+      if(this.contactAuthTimer) {
+
+        clearTimeout(this.contactAuthTimer);
+        this.contactAuthTimer = undefined;
+      }
+
+      // Grab the service, if we've configured it.
+      const service = this.accessory.getServiceById(this.hap.Service.ContactSensor, ProtectReservedNames.CONTACT_AUTHSENSOR);
+
+      if(!service) {
+
+        return;
+      }
+
+      // We've failed to authenticate, we're done.
+      if(!payload.metadata?.fingerprint?.ulpId && !payload.metadata?.nfc?.ulpId) {
+
+        service.updateCharacteristic(this.hap.Characteristic.ContactSensorState, false);
+
+        return;
+      }
+
+      // We've successfully authenticated either a fingerprint or an NFC card.
+      service.updateCharacteristic(this.hap.Characteristic.ContactSensorState, true);
+
+      // Reset our contact sensor after our auth sensor duration.
+      this.contactAuthTimer = setTimeout(() => {
+
+        service.updateCharacteristic(this.hap.Characteristic.ContactSensorState, false);
+        this.contactAuthTimer = undefined;
+      }, PROTECT_DOORBELL_AUTHSENSOR_DURATION);
     }
   }
 

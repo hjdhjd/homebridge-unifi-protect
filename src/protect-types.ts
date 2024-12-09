@@ -30,6 +30,7 @@ export type ProtectDevices = ProtectCamera | ProtectChime | ProtectDoorbell | Pr
 export enum ProtectReservedNames {
 
   // Manage our contact sensor types.
+  CONTACT_AUTHSENSOR = "ContactAuthSensor",
   CONTACT_MOTION_SMARTDETECT = "ContactMotionSmartDetect",
   CONTACT_MOTION_SMARTDETECT_LICENSE = "ContactMotionSmartDetectLicense",
   CONTACT_SENSOR = "ContactSensor",
@@ -38,6 +39,7 @@ export enum ProtectReservedNames {
   // Manage our lightbulb types.
   LIGHTBULB_DOORBELL_VOLUME = "ChimeVolume",
   LIGHTBULB_NIGHTVISION = "NightVision",
+  LIGHTBULB_PACKAGE_FLASHLIGHT = "PackageCamera.Flashlight",
 
   // Manage our switch types.
   SWITCH_DOORBELL_CHIME_BUZZER = "DoorbellChime.buzzer",

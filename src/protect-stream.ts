@@ -6,7 +6,8 @@
  */
 import { API, AudioRecordingCodecType, AudioRecordingSamplerate, AudioStreamingCodecType, AudioStreamingSamplerate, CameraController,
   CameraControllerOptions, CameraStreamingDelegate, H264Level, H264Profile, HAP, MediaContainerType, PrepareStreamCallback, PrepareStreamRequest, PrepareStreamResponse,
-  SRTPCryptoSuites, SnapshotRequest, SnapshotRequestCallback, StartStreamRequest, StreamRequestCallback, StreamRequestTypes, StreamingRequest } from "homebridge";
+  SRTPCryptoSuites, Service, SnapshotRequest, SnapshotRequestCallback, StartStreamRequest, StreamRequestCallback, StreamRequestTypes,
+  StreamingRequest } from "homebridge";
 import { FfmpegOptions, FfmpegStreamingProcess } from "./ffmpeg/index.js";
 import { HomebridgePluginLogging, Nullable, RtpDemuxer } from "homebridge-plugin-utils";
 import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_HKSV_FRAGMENT_LENGTH, PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION, PROTECT_HOMEKIT_IDR_INTERVAL,
@@ -15,9 +16,18 @@ import { ProtectCamera } from "./devices/index.js";
 import { ProtectNvr } from "./protect-nvr.js";
 import { ProtectPlatform } from "./protect-platform.js";
 import { ProtectRecordingDelegate } from "./protect-record.js";
+import { ProtectReservedNames } from "./protect-types.js";
 import { ProtectSnapshot } from "./protect-snapshot.js";
 import WebSocket from "ws";
 import { once } from "node:events";
+
+type OngoingSessionEntry = {
+
+  ffmpeg: FfmpegStreamingProcess[],
+  rtpDemuxer: Nullable<RtpDemuxer>,
+  rtpPortReservations: number[],
+  toggleLight?: Service
+};
 
 type SessionInfo = {
 
@@ -55,7 +65,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   public hksv: Nullable<ProtectRecordingDelegate>;
   public readonly log: HomebridgePluginLogging;
   private readonly nvr: ProtectNvr;
-  private ongoingSessions: { [index: string]: { ffmpeg: FfmpegStreamingProcess[], rtpDemuxer: Nullable<RtpDemuxer>, rtpPortReservations: number[] } };
+  private ongoingSessions: { [index: string]: OngoingSessionEntry };
   private pendingSessions: { [index: string]: SessionInfo };
   public readonly platform: ProtectPlatform;
   public readonly protectCamera: ProtectCamera;
@@ -450,6 +460,24 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       return;
     }
 
+    let flashlightService;
+
+    // If we are streaming the package camera, and it's dark outside, activate the flashlight on the camera.
+    if("packageCamera" in this.protectCamera.accessory.context) {
+
+      flashlightService = this.protectCamera.accessory.getServiceById(this.hap.Service.Lightbulb, ProtectReservedNames.LIGHTBULB_PACKAGE_FLASHLIGHT);
+
+      // If we're already on, we assume the user's activated it and we'll leave it untouched. Otherwise, we'll toggle it on and off when we begin and end streaming.
+      if(this.protectCamera.ufp.isDark && flashlightService && !flashlightService.getCharacteristic(this.hap.Characteristic.On).value) {
+
+        // We explicitly want to call the set handler for the flashlight.
+        flashlightService.setCharacteristic(this.hap.Characteristic.On, true);
+      } else {
+
+        flashlightService = undefined;
+      }
+    }
+
     // If we have the timeshift buffer enabled, and we've selected the same quality for the livestream as our timeshift buffer, we use the timeshift buffer to
     // significantly accelerate our livestream startup. Using the timeshift buffer has a few advantages.
     //
@@ -639,12 +667,12 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
         const lowpass = this.protectCamera.getFeatureNumber("Audio.Filter.Noise.LowPass");
 
         // Only set the highpass and lowpass filters if the user has explicitly enabled them.
-        if(highpass !== undefined) {
+        if((highpass !== null) && (highpass !== undefined)) {
 
           afOptions.push("highpass=f=" + highpass.toString());
         }
 
-        if(lowpass !== undefined) {
+        if((lowpass !== null) && (lowpass !== undefined)) {
 
           afOptions.push("lowpass=f=" + lowpass.toString());
         }
@@ -788,7 +816,8 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
       ffmpeg: [ ffmpegStream ],
       rtpDemuxer: sessionInfo.rtpDemuxer,
-      rtpPortReservations: sessionInfo.rtpPortReservations
+      rtpPortReservations: sessionInfo.rtpPortReservations,
+      toggleLight: flashlightService
     };
 
     delete this.pendingSessions[request.sessionID];
@@ -1024,6 +1053,9 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
         // Close the demuxer, if we have one.
         this.ongoingSessions[sessionId].rtpDemuxer?.close();
+
+        // Turn off the flashlight on package cameras, if enabled. We explicitly want to call the set handler for the flashlight.
+        this.ongoingSessions[sessionId].toggleLight?.setCharacteristic(this.hap.Characteristic.On, false);
 
         // Inform the user.
         this.log.info("Stopped video streaming session.");

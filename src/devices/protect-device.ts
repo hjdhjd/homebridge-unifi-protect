@@ -604,19 +604,19 @@ export abstract class ProtectDevice extends ProtectBase {
   }
 
   // Utility function to return a floating point configuration parameter on a device.
-  public getFeatureFloat(option: string): number | undefined {
+  public getFeatureFloat(option: string): Nullable<number | undefined> {
 
     return this.platform.featureOptions.getFloat(option, this.ufp.mac, this.nvr.ufp.mac);
   }
 
   // Utility function to return an integer configuration parameter on a device.
-  public getFeatureNumber(option: string): number | undefined {
+  public getFeatureNumber(option: string): Nullable<number | undefined> {
 
     return this.platform.featureOptions.getInteger(option, this.ufp.mac, this.nvr.ufp.mac);
   }
 
   // Utility function to return a configuration parameter on a device.
-  public getFeatureValue(option: string): string | undefined {
+  public getFeatureValue(option: string): Nullable<string | undefined> {
 
     return this.platform.featureOptions.value(option, this.ufp.mac, this.nvr.ufp.mac);
   }

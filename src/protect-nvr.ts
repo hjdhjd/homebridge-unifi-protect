@@ -181,7 +181,7 @@ export class ProtectNvr {
     }
 
     // Initialize our playlist service, if enabled.
-    if(this.getFeatureNumber("Nvr.Service.Playlist") !== undefined) {
+    if(this.hasFeature("Nvr.Service.Playlist")) {
 
       this.servePlaylist();
     }
@@ -455,7 +455,7 @@ export class ProtectNvr {
 
         // For certain use cases, we may want to defer removal of a Protect device (e.g. in stacked NVR configurations) where Protect may lose track of devices for a
         // brief period of time. This prevents a potential back-and-forth where devices are removed momentarily only to be readded later.
-        if((delayInterval !== undefined) && (delayInterval > 0)) {
+        if(delayInterval && (delayInterval > 0)) {
 
           // Have we seen this device queued for removal previously? If not, let's add it to the queue and come back after our specified delay.
           if(!this.deviceRemovalQueue[accessory.UUID]) {
@@ -563,7 +563,7 @@ export class ProtectNvr {
     // period of time. This prevents a potential back-and-forth where devices are removed momentarily only to be readded later.
     const delayInterval = this.getFeatureNumber("Nvr.DelayDeviceRemoval");
 
-    if((delayInterval !== undefined) && (delayInterval > 0)) {
+    if(delayInterval && (delayInterval > 0)) {
 
       // Have we seen this device queued for removal previously? If not, let's add it to the queue and come back after our specified delay.
       if(!this.deviceRemovalQueue[protectDevice.accessory.UUID]) {
@@ -775,13 +775,13 @@ export class ProtectNvr {
   }
 
   // Utility function to return a floating point configuration parameter on a device.
-  public getFeatureFloat(option: string): number | undefined {
+  public getFeatureFloat(option: string): Nullable<number | undefined> {
 
     return this.platform.featureOptions.getFloat(option, this.ufp.mac);
   }
 
   // Utility function to return an integer configuration parameter on a device.
-  public getFeatureNumber(option: string): number | undefined {
+  public getFeatureNumber(option: string): Nullable<number | undefined> {
 
     return this.platform.featureOptions.getInteger(option, this.ufp.mac);
   }

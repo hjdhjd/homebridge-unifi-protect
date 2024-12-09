@@ -91,7 +91,7 @@ const getDevices = async (controller) => {
   devices = devices.map(device => ({
 
     ...device,
-    serial: device.mac
+    serialNumber: device.mac
   }));
 
   return devices;
@@ -157,12 +157,12 @@ const showSidebarDevices = (controller, devices) => {
 
       const label = document.createElement("label");
 
-      label.name = device.serial;
+      label.name = device.serialNumber;
       label.appendChild(document.createTextNode(device.name ?? device.marketName));
       label.style.cursor = "pointer";
       label.classList.add("mx-2", "my-0", "p-0", "w-100");
 
-      label.addEventListener("click", () => ui.featureOptions.showDeviceOptions(device.serial));
+      label.addEventListener("click", () => ui.featureOptions.showDeviceOptions(device.serialNumber));
 
       // Add the device label to our cell.
       tdDevice.appendChild(label);

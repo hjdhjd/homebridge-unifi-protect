@@ -76,10 +76,12 @@ These option(s) apply to: Protect cameras.
 
 | Option                                           | Description
 |--------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+| `Doorbell.AuthSensor`                            | Add a contact sensor that gets activates when a fingerprint or NFC successfully authenticates on a Protect doorbell. **(default: disabled)**. <BR>*Supported on Protect doorbells that have a fingerprint sensor.*
 | `Doorbell.Messages`                              | Enable the doorbell messages feature. **(default: enabled)**. <BR>*Supported on Protect devices that have a doorbell.*
 | `Doorbell.Messages.FromDoorbell`                 | Use messages saved to the Protect NVR as message switches. **(default: enabled)**. <BR>*Supported on Protect devices that have a doorbell.*
 | `Doorbell.Volume.Dimmer`                         | Add a dimmer accessory to control the Protect chime volume in HomeKit. **(default: disabled)**. <BR>*Supported on Protect devices that have a doorbell.*
 | `Doorbell.PhysicalChime`                         | Add switch accessories to control the physical chimes attached to a Protect doorbell. **(default: disabled)**. <BR>*Supported on Protect doorbells that have a physical chime.*
+| `Doorbell.PackageCamera.Flashlight`              | Add a light accessory to control the flashlight on a Protect doorbell package camera. **(default: enabled)**. <BR>*Supported on Protect doorbells that have a package camera.*
 | `Doorbell.PhysicalChime.Duration.Digital<I>.Value</I>`  | Chime duration, in milliseconds, of a digital physical chime attached to a Protect doorbell. **(default: 1000)**. <BR>*Supported on Protect doorbells that have a physical chime.*
 | `Doorbell.Trigger`                               | Add a switch accessory to trigger doorbell ring events on a Protect camera or doorbell. **(default: disabled)**.
 
@@ -131,7 +133,7 @@ These option(s) apply to: Protect cameras and Protect controllers.
 | Option                                           | Description
 |--------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 | `Nvr.Service.Playlist<I>.Value</I>`              | Publish an M3U playlist of Protect cameras on the specified port of this Homebridge server that is suitable for use in apps (e.g. Channels DVR) that can make camera livestreams available through them. **(default: 10110)**. <BR>*Supported on Protect controllers.*
-| `Nvr.DelayDeviceRemoval<I>.Value</I>`            | Delay, in seconds, before removing devices that are no longer detected on the Protect controller. By default, devices are added and removed in realtime. **(default: 60)**. <BR>*Supported on Protect controllers.*
+| `Nvr.DelayDeviceRemoval<I>.Value</I>`            | Delay, in seconds, before removing devices that are no longer detected on the Protect controller. If disabled, devices are removed in realtime when the Protect controller does so. **(default: 60)**. <BR>*Supported on Protect controllers.*
 | `Nvr.Publish.Telemetry`                          | Publish all the realtime telemetry received from the Protect controller to MQTT. **(default: disabled)**. <BR>*Supported on Protect controllers.*
 | `Nvr.Recording.Switch`                           | Add switch accessories to control the native recording capabilities of the UniFi Protect NVR. **(default: disabled)**. <BR>*Supported on Protect cameras.*
 | `Nvr.SystemInfo`                                 | Add sensor accessories to display the Protect controller system information (currently only the temperature). **(default: disabled)**. <BR>*Supported on Protect controllers.*

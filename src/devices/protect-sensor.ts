@@ -71,17 +71,6 @@ export class ProtectSensor extends ProtectDevice {
       return false;
     }
 
-    // Retrieve the current battery status when requested.
-    service.getCharacteristic(this.hap.Characteristic.StatusLowBattery)?.onGet(() => {
-
-      return this.ufp.batteryStatus?.percentage ?? 0;
-    });
-
-    service.getCharacteristic(this.hap.Characteristic.StatusLowBattery)?.onGet(() => {
-
-      return this.ufp.batteryStatus?.isLow ?? false;
-    });
-
     // Initialize the battery state.
     this.updateBatteryStatus();
 

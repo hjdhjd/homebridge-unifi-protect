@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 7.9.0 (2024-12-08)
+  * New feature: on Protect G4 Doorbell Pro doorbells, the fingerprint and NFC sensors are now available through a contact sensor that gets activated when the doorbell detects a successful authentication. It's disabled by default, available under the doorbell-related feature options section.
+  * New feature: on Protect G4 Doorbell Pro doorbells, the downlight (Protect calls this the flashlight) is now accessible. It has some constraints - namely that API limitations make it only crudely accessible, which in practice means: the light is only available when the doorbell believes it's dark, and the light has a delay of up to 25 seconds before to turn off after you've toggled it off. Aside from that, enjoy! It's enabled by default and can be disabled in the doorbell-related feature options section.
+  * New feature: when streaming a package camera at night, HBUP will turn on the flashlight, similar to the way Protect does so in the native Protect app.
+  * Fix: addressed a regression with viewing the package camera on G4 Doorbell Pros that changed in Protect controller versions above 5.1.
+  * Housekeeping.
+
 ## 7.8.2 (2024-10-20)
   * Housekeeping.
 

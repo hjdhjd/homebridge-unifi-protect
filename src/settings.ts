@@ -17,6 +17,9 @@ export const PROTECT_CONTROLLER_RETRY_INTERVAL = 10;
 // Default delay, in seconds, before removing Protect devices that no longer exist.
 export const PROTECT_DEVICE_REMOVAL_DELAY_INTERVAL = 60;
 
+// Default duration, in milliseconds, of the authentication contact sensor for a Protect doorbell, primarily for automation purposes.
+export const PROTECT_DOORBELL_AUTHSENSOR_DURATION = 5000;
+
 // Default duration, in milliseconds, of a physical digital chime attached to a Protect doorbell. This value comes from UniFi Protect itself.
 export const PROTECT_DOORBELL_CHIME_DURATION_DIGITAL = 1000;
 

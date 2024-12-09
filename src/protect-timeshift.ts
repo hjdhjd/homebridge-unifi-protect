@@ -39,7 +39,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
     this.segmentCount = 1;
     this._channel = 0;
     this.eventHandlers = {};
-    this._lens = (protectCamera instanceof ProtectCameraPackage) ? protectCamera.ufp.lenses?.[0]?.id : undefined;
+    this._lens = (protectCamera instanceof ProtectCameraPackage) ? 2 : undefined;
     this.log = protectCamera.log;
     this.nvr = protectCamera.nvr;
     this.protectCamera = protectCamera;

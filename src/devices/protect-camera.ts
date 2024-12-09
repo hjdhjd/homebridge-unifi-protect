@@ -88,12 +88,12 @@ export class ProtectCamera extends ProtectDevice {
     this.hints.twoWayAudio = this.ufp.featureFlags.hasSpeaker && this.hasFeature("Audio") && this.hasFeature("Audio.TwoWay");
 
     // Sanity check our target transcoding bitrates, if defined.
-    if((this.hints.transcodeBitrate === undefined) || (this.hints.transcodeBitrate <= 0)) {
+    if((this.hints.transcodeBitrate === null) || (this.hints.transcodeBitrate === undefined) || (this.hints.transcodeBitrate <= 0)) {
 
       this.hints.transcodeBitrate = -1;
     }
 
-    if((this.hints.transcodeHighLatencyBitrate === undefined) || (this.hints.transcodeHighLatencyBitrate <= 0)) {
+    if((this.hints.transcodeHighLatencyBitrate === null) || (this.hints.transcodeHighLatencyBitrate === undefined) || (this.hints.transcodeHighLatencyBitrate <= 0)) {
 
       this.hints.transcodeHighLatencyBitrate = -1;
     }
@@ -173,12 +173,8 @@ export class ProtectCamera extends ProtectDevice {
     this.configureDoorbellTrigger();
 
     // Listen for events.
+    this.nvr.events.on("addEvent." + this.ufp.id, this.listeners["addEvent." + this.ufp.id] = this.addEventHandler.bind(this));
     this.nvr.events.on("updateEvent." + this.ufp.id, this.listeners["updateEvent." + this.ufp.id] = this.eventHandler.bind(this));
-
-    if(this.hints.smartDetect) {
-
-      this.nvr.events.on("addEvent." + this.ufp.id, this.listeners["addEvent." + this.ufp.id] = this.smartMotionEventHandler.bind(this));
-    }
 
     return true;
   }
@@ -200,7 +196,7 @@ export class ProtectCamera extends ProtectDevice {
     this.isDeleted = true;
   }
 
-  // Handle camera-related events.
+  // Handle update-related events.
   protected eventHandler(packet: ProtectEventPacket): void {
 
     const payload = packet.payload as ProtectCameraConfigPayload;
@@ -252,14 +248,14 @@ export class ProtectCamera extends ProtectDevice {
     }
   }
 
-  // Handle smart motion detection events.
-  private smartMotionEventHandler(packet: ProtectEventPacket): void {
+  // Handle add-related events from the controller.
+  protected addEventHandler(packet: ProtectEventPacket): void {
 
     const payload = packet.payload as ProtectEventAdd;
 
     // We're only interested in smart motion detection events.
-    if((packet.header.modelKey !== "smartDetectObject") &&
-      ((packet.header.modelKey !== "event") || !["smartDetectLine", "smartDetectZone"].includes(payload.type) || !payload.smartDetectTypes.length)) {
+    if(!this.hints.smartDetect || ((packet.header.modelKey !== "smartDetectObject") &&
+      ((packet.header.modelKey !== "event") || !["smartDetectLine", "smartDetectZone"].includes(payload.type) || !payload.smartDetectTypes.length))) {
 
       return;
     }
@@ -376,7 +372,7 @@ export class ProtectCamera extends ProtectDevice {
   private configureMotionSmartSensor(): boolean {
 
     // Get any license plates the user has configured for detection, if any.
-    this.detectLicensePlate = this.getFeatureValue("Motion.SmartDetect.ObjectSensors.LicensePlate")?.split("-").map(x => x.toUpperCase()) ?? [];
+    this.detectLicensePlate = this.getFeatureValue("Motion.SmartDetect.ObjectSensors.LicensePlate")?.split("-").filter(x => x.length).map(x => x.toUpperCase()) ?? [];
 
     // Check if we have disabled specific license plate smart motion object contact sensors, and if so, remove them.
     for(const objectService of this.accessory.services.filter(x => x.subtype?.startsWith(ProtectReservedNames.CONTACT_MOTION_SMARTDETECT_LICENSE + "."))) {
@@ -454,7 +450,7 @@ export class ProtectCamera extends ProtectDevice {
     if(this.ufp.featureFlags.smartDetectTypes.includes("licensePlate")) {
 
       // Get the list of plates.
-      for(const licenseOption of this.detectLicensePlate) {
+      for(const licenseOption of this.detectLicensePlate.filter(plate => plate.length)) {
 
         if(addSmartDetectContactSensor(this.accessoryName + " License Plate " + licenseOption,
           ProtectReservedNames.CONTACT_MOTION_SMARTDETECT_LICENSE + "." + licenseOption,

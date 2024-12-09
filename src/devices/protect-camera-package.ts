@@ -2,13 +2,17 @@
  *
  * protect-camera-package.ts: Package camera device class for UniFi Protect.
  */
+import { CharacteristicValue, Resolution } from "homebridge";
+import { Nullable , retry} from "homebridge-plugin-utils";
 import { ProtectCamera, RtspEntry } from "./protect-camera.js";
-import { Nullable } from "homebridge-plugin-utils";
+import { ProtectReservedNames } from "../protect-types.js";
 import { ProtectStreamingDelegate } from "../protect-stream.js";
-import { Resolution } from "homebridge";
 
 // Package camera class. To avoid circular dependencies, this has to be declared in the same file as ProtectCamera, given the ProtectCamera class references it.
 export class ProtectCameraPackage extends ProtectCamera {
+
+  private flashlightState?: boolean;
+  private flashlightTimer?: NodeJS.Timeout;
 
   // Configure the package camera.
   protected async configureDevice(): Promise<boolean> {
@@ -16,6 +20,7 @@ export class ProtectCameraPackage extends ProtectCamera {
     // Get our parent camera.
     const parentCamera = this.nvr.getDeviceById(this.ufp.id);
 
+    this.flashlightState = false;
     this.hasHksv = true;
     this.hints.probesize = 32768;
 
@@ -49,6 +54,9 @@ export class ProtectCameraPackage extends ProtectCamera {
 
     // Configure the motion sensor.
     this.configureMotionSensor();
+
+    // Configure the flashlight.
+    this.configureFlashlight();
 
     let hkResolutions: Resolution[] = [];
     const validResolutions: Resolution[] = [ this.findRtsp()?.resolution ?? [ 1600, 1200, 2 ] ];
@@ -116,6 +124,109 @@ export class ProtectCameraPackage extends ProtectCamera {
     return Promise.resolve(true);
   }
 
+  // Configure a light accessory to turn on or off the flashlight.
+  private configureFlashlight(): boolean {
+
+    // Validate whether we should have this service enabled.
+    if(!this.validService(this.hap.Service.Lightbulb, () => {
+
+      // If we don't have the package camera flashlight enabled, we're done.
+      if(!this.hasFeature("Doorbell.PackageCamera.Flashlight")) {
+
+        return false;
+      }
+
+      return true;
+    }, ProtectReservedNames.LIGHTBULB_PACKAGE_FLASHLIGHT)) {
+
+      return false;
+    }
+
+    // Acquire the service.
+    const service = this.acquireService(this.hap.Service.Lightbulb, this.accessoryName + " Flashlight", ProtectReservedNames.LIGHTBULB_PACKAGE_FLASHLIGHT);
+
+    // Fail gracefully.
+    if(!service) {
+
+      this.log.error("Unable to add flashlight.");
+
+      return false;
+    }
+
+    // Activate or deactivate the package camera flashlight.
+    service.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => !!this.flashlightState);
+
+    service.getCharacteristic(this.hap.Characteristic.On)?.onSet(async (value: CharacteristicValue) => {
+
+      // Stop heartbeating the flashlight to allow it to turn off.
+      if(!value) {
+
+        clearInterval(this.flashlightTimer);
+        this.flashlightTimer = undefined;
+        this.flashlightState = false;
+
+        return;
+      }
+
+      // Utility function to activate the package camera's flashlight.
+      const activateFlashlight = async (): Promise<boolean> => {
+
+        // Retry the heartbeat up to three times before giving up.
+        this.flashlightState = await retry(async (): Promise<boolean> => {
+
+          if(!this.isOnline) {
+
+            return false;
+          }
+
+          const response = await this.nvr.ufpApi.retrieve(this.nvr.ufpApi.getApiEndpoint(this.ufp.modelKey) + "/" + this.ufp.id + "/turnon-flashlight",
+            { method: "POST" });
+
+          if(!response?.ok) {
+
+            return false;
+          }
+
+          return true;
+        }, 1000, 3);
+
+        // Update the sensor.
+        service.updateCharacteristic(this.hap.Characteristic.On, this.flashlightState);
+
+        // Stop if we've been told to turn off.
+        if(!this.flashlightState) {
+
+          clearInterval(this.flashlightTimer);
+          this.flashlightTimer = undefined;
+        }
+
+        return this.flashlightState;
+      };
+
+      // Clear out any interval we have.
+      clearInterval(this.flashlightTimer);
+
+      // If it's dark, we're done.
+      if(!this.ufp.isDark) {
+
+        setTimeout(() => service?.updateCharacteristic(this.hap.Characteristic.On, false), 50);
+
+        return;
+      }
+
+      // Activate the flashlight.
+      await activateFlashlight();
+
+      // Heartbeat the flashlight at regular intervals to keep it on.
+      this.flashlightTimer = setInterval(async () => activateFlashlight(), 20 * 1000);
+    });
+
+    // Initialize the flashlight.
+    service.updateCharacteristic(this.hap.Characteristic.On, !!this.flashlightState);
+
+    return true;
+  }
+
   // Return a unique identifier for package cameras based on the parent device's MAC address.
   public get id(): string {
 
@@ -136,7 +247,7 @@ export class ProtectCameraPackage extends ProtectCamera {
     return {
 
       channel: channel,
-      lens: this.ufp.lenses.length ? this.ufp.lenses[0].id : undefined,
+      lens: 2,
       name: this.getResolution([channel.width, channel.height, channel.fps]) + " (" + channel.name + ") [" + (this.ufp.videoCodec.replace("h265", "hevc")).toUpperCase() +
         "]",
       resolution: [ channel.width, channel.height, channel.fps ],
