@@ -769,26 +769,33 @@ export class ProtectDoorbell extends ProtectCamera {
       // Grab the service, if we've configured it.
       const service = this.accessory.getServiceById(this.hap.Service.ContactSensor, ProtectReservedNames.CONTACT_AUTHSENSOR);
 
-      if(!service) {
-
-        return;
-      }
-
       // We've failed to authenticate, we're done.
       if(!payload.metadata?.fingerprint?.ulpId && !payload.metadata?.nfc?.ulpId) {
 
-        service.updateCharacteristic(this.hap.Characteristic.ContactSensorState, false);
+        service?.updateCharacteristic(this.hap.Characteristic.ContactSensorState, false);
 
         return;
       }
 
       // We've successfully authenticated either a fingerprint or an NFC card.
-      service.updateCharacteristic(this.hap.Characteristic.ContactSensorState, true);
+      service?.updateCharacteristic(this.hap.Characteristic.ContactSensorState, true);
+
+      // Publish to MQTT, if the user has configured it.
+      const authInfo: Record<string, string> = { type: "fingerprint" };
+
+      // We publish a bit more information if we have an NFC card.
+      if(payload.type === "nfcCardScanned") {
+
+        authInfo.id = payload.metadata.nfc.nfcId;
+        authInfo.type = "nfc";
+      }
+
+      this.publish("authenticate", JSON.stringify(authInfo));
 
       // Reset our contact sensor after our auth sensor duration.
       this.contactAuthTimer = setTimeout(() => {
 
-        service.updateCharacteristic(this.hap.Characteristic.ContactSensorState, false);
+        service?.updateCharacteristic(this.hap.Characteristic.ContactSensorState, false);
         this.contactAuthTimer = undefined;
       }, PROTECT_DOORBELL_AUTHSENSOR_DURATION);
     }

@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 7.10.0 (2024-12-22)
+  * Breaking change: node 18 is no longer supported. The minimum version required for HBUP as of this release is node 20.
+  * New feature: MQTT support for doorbell authentication, including NFC card information, when available. See the [MQTT documentation](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/MQTT.md) for details.
+  * Improvement: HBUP will now workaround Protect controller quirkiness/bugginess much more gracefully, significantly reducing connectivity issues with the Protect API. It was a fun problem.
+  * Housekeeping.
+
 ## 7.9.0 (2024-12-08)
   * New feature: on Protect G4 Doorbell Pro doorbells, the fingerprint and NFC sensors are now available through a contact sensor that gets activated when the doorbell detects a successful authentication. It's disabled by default, available under the doorbell-related feature options section.
   * New feature: on Protect G4 Doorbell Pro doorbells, the downlight (Protect calls this the flashlight) is now accessible. It has some constraints due to API limitations that make it only crudely accessible: the light is only available when the doorbell believes it's dark, and the light has a delay of up to 25 seconds before it turns off, once you’ve turned it off in HBUP. Aside from that, enjoy! It's enabled by default and can be disabled in the doorbell-related feature options section.

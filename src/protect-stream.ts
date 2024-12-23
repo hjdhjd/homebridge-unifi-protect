@@ -738,7 +738,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
         }
 
         // If we already have a write in progress, or nothing left to write, we're done.
-        if(isWriting || segmentQueue.length === 0) {
+        if(isWriting || !segmentQueue.length) {
 
           return;
         }

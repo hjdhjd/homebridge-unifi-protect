@@ -60,6 +60,7 @@ The topics and messages that `homebridge-unifi-protect` publishes are:
 |-----------------------|---------------------|------------------
 | `alarm`               | Sensor              | `true` or `false` when a UniFi Protect sensor detects a recognized alarm sound.
 | `ambientlight`        | Sensor              | Ambient light level, in lux, on a UniFi Protect sensor.
+| `authenticate`        | Doorbell            | `{type: "fingerprint" or "nfc", id:cardId}`. Publishes upon a successful authentication using fingerprint or NFC. Type is `fingerprint` or `nfc` depending on which authentication type was used. If an NFC card was used, `id` will contain the NFC card ID as detected by the doorbell.
 | `chime`               | Chime               | A number between 0 and 100 that represents the current volume of the chime as a percentage.
 | `contact`             | Sensor              | `true` or `false` when a UniFi Protect sensor detects contact. Note: UniFi Protect will set this state differently depending on the placement type you select in the Protect app or the Protect webUI.
 | `doorbell`            | Camera              | `true` when the doorbell is rung. Each press of the doorbell will trigger a new event.
@@ -68,13 +69,13 @@ The topics and messages that `homebridge-unifi-protect` publishes are:
 | `light`               | Light               | `true` or `false` when a UniFi Protect light is on or off.
 | `light/brightness`    | Light               | A number between 0 and 100 that represents the current brightness as a percentage.
 | `liveview`            | Viewport            | The current liveview being displayed on a UniFi Protect Viewport.
-| `liveviews`           | Camera              | `[{"name": "LiveviewName", "state": true},{"name": "AnotherLiveview", "state": false}]`. `state` can be `true` or `false`, indicating whether a liveview scene is active.
-| `message`             | Doorbell            | `{"message":"Some Message","duration":60}`. See [Doorbell Messages](#doorbell-messages) for additional documentation.
+| `liveviews`           | Camera              | `[{name: "LiveviewName", state: true}, {name: "AnotherLiveview", state: false}]`. `state` can be `true` or `false`, indicating whether a liveview scene is active.
+| `message`             | Doorbell            | `{message: "Some Message", duration: 60}`. See [Doorbell Messages](#doorbell-messages) for additional documentation.
 | `motion`              | Multiple            | `true` when motion is detected. `false` when the motion event is reset.
 | <CODE>motion/smart/<I>object</I></CODE> | Cameras | `true` when a smart motion event is detected for *object*. `false` when the smart motion event is reset. Valid *object* types are currently: `licensePlate`, `person`, `package` `vehicle`. If what you want to listen for is whether a motion event is sent to HomeKit, use the `motion` topic instead.
 | <CODE>motion/smart/<I>object</I>/metadata</CODE> | Cameras | `JSON` when a smart motion event such as a license plate is detected and Protect has metadata that may be useful associated with the detection event.  The JSON is the unfiltered metadata JSON as provided by UniFi Protect's telemetry for that event. Currently, this is only valid for `licensePlate` smart motion events.
 | `occupancy`           | Multiple            | `true` when occupancy is detected. `false` when occupancy is no longer detected.
-| `rtsp`                | Camera              | `{"Name": "URL"}`. Represents a JSON containing all the valid RTSP URLs that can be used to stream from this camera. `Name` is the name assigned by UniFi Protect to the RTSP URL. `URL` represents the URL that can be used for streaming.
+| `rtsp`                | Camera              | `{name: "URL"}`. Represents a JSON containing all the valid RTSP URLs that can be used to stream from this camera. `Name` is the name assigned by UniFi Protect to the RTSP URL. `URL` represents the URL that can be used for streaming.
 | `securitysystem`      | Camera              | One of `Alarm`, `Away`, `Home`, `Night`, `Off`. This message is published every time the security state is set.
 | `snapshot`            | Camera              | A [data URL](https://developer.mozilla.org/en-US/docs/Web/HTTP/Basics_of_HTTP/Data_URIs) containing a base64-encoded JPEG of the snapshot that was requested (either by HomeKit or MQTT).
 | `systeminfo`          | Controller          | `JSON` containing the current Protect controller system information.
