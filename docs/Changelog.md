@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 7.10.1 (2024-12-27)
+  * Housekeeping.
+
 ## 7.10.0 (2024-12-22)
   * Breaking change: node 18 is no longer supported. The minimum version required for HBUP as of this release is node 20.
   * New feature: MQTT support for doorbell authentication, including NFC card information, when available. See the [MQTT documentation](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/MQTT.md) for details.

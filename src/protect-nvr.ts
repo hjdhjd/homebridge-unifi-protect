@@ -461,6 +461,7 @@ export class ProtectNvr {
           if(!this.deviceRemovalQueue[accessory.UUID]) {
 
             this.deviceRemovalQueue[accessory.UUID] = Date.now();
+
             this.log.info("%s: Delaying device removal for at least %s second%s.", accessory.displayName, delayInterval, delayInterval > 1 ? "s" : "");
 
             continue;
