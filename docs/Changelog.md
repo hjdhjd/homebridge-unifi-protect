@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 7.11.0 (2025-01-05)
+  * Improvement: additional refinements to deal with more frequent Protect controller connectivity quirks.
+  * Housekeeping.
+
 ## 7.10.1 (2024-12-27)
   * Housekeeping.
 

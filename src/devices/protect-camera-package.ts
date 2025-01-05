@@ -1,4 +1,4 @@
-/* Copyright(C) 2019-2024, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2019-2025, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * protect-camera-package.ts: Package camera device class for UniFi Protect.
  */
@@ -15,7 +15,7 @@ export class ProtectCameraPackage extends ProtectCamera {
   private flashlightTimer?: NodeJS.Timeout;
 
   // Configure the package camera.
-  protected async configureDevice(): Promise<boolean> {
+  protected configureDevice(): boolean {
 
     // Get our parent camera.
     const parentCamera = this.nvr.getDeviceById(this.ufp.id);
@@ -121,7 +121,7 @@ export class ProtectCameraPackage extends ProtectCamera {
     this.accessory.configureController(this.stream.controller);
 
     // We're done.
-    return Promise.resolve(true);
+    return true;
   }
 
   // Configure a light accessory to turn on or off the flashlight.

@@ -1,4 +1,4 @@
-/* Copyright(C) 2019-2024, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2019-2025, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * protect-doorbell.ts: Doorbell device class for UniFi Protect.
  */
@@ -10,7 +10,6 @@ import { ProtectCameraConfig, ProtectCameraConfigPayload, ProtectCameraLcdMessag
 import { ProtectReservedNames, toCamelCase } from "../protect-types.js";
 import { ProtectCamera } from "./protect-camera.js";
 import { ProtectCameraPackage } from "./protect-camera-package.js";
-import { ProtectNvr } from "../protect-nvr.js";
 
 // A doorbell message entry.
 interface MessageInterface {
@@ -29,24 +28,23 @@ interface MessageSwitchInterface extends MessageInterface {
 
 export class ProtectDoorbell extends ProtectCamera {
 
-  private chimeDigitalDuration: number;
+  private chimeDigitalDuration!: number;
   private contactAuthTimer?: NodeJS.Timeout;
-  private defaultMessageDuration: number;
-  private isMessagesEnabled: boolean;
-  private isMessagesFromControllerEnabled: boolean;
-  private messageSwitches: { [index: string]: MessageSwitchInterface };
+  private defaultMessageDuration!: number;
+  private isMessagesEnabled!: boolean;
+  private isMessagesFromControllerEnabled!: boolean;
+  private messageSwitches!: { [index: string]: MessageSwitchInterface };
   public packageCamera?: Nullable<ProtectCameraPackage>;
 
-  // Create an instance.
-  constructor(nvr: ProtectNvr, device: ProtectCameraConfig, accessory: PlatformAccessory) {
-
-    super(nvr, device, accessory);
+  // Configure the doorbell for HomeKit.
+  protected configureDevice(): boolean {
 
     this.chimeDigitalDuration = this.getFeatureNumber("Doorbell.PhysicalChime.Duration.Digital") ?? PROTECT_DOORBELL_CHIME_DURATION_DIGITAL;
     this.defaultMessageDuration = this.nvr.ufp.doorbellSettings?.defaultMessageResetTimeoutMs ?? 60000;
     this.isMessagesEnabled = this.hasFeature("Doorbell.Messages");
     this.isMessagesFromControllerEnabled = this.hasFeature("Doorbell.Messages.FromDoorbell");
     this.messageSwitches = {};
+    this.packageCamera = null;
 
     // Ensure physical chimes that are digital have sane durations.
     if(this.chimeDigitalDuration < 1000) {
@@ -56,12 +54,6 @@ export class ProtectDoorbell extends ProtectCamera {
 
       this.chimeDigitalDuration = 10000;
     }
-  }
-
-  // Configure the doorbell for HomeKit.
-  protected async configureDevice(): Promise<boolean> {
-
-    this.packageCamera = null;
 
     // We only want to deal with actual Protect doorbell devices.
     if(!this.ufp.featureFlags.isDoorbell) {
@@ -70,7 +62,7 @@ export class ProtectDoorbell extends ProtectCamera {
     }
 
     // Call our parent to setup the camera portion of the doorbell.
-    await super.configureDevice();
+    super.configureDevice();
 
     // Configure our package camera, if we have one.
     this.configurePackageCamera();
@@ -95,6 +87,18 @@ export class ProtectDoorbell extends ProtectCamera {
     this.nvr.events.on("updateEvent.chime", this.listeners["updateEvent.chime"] = this.chimeEventHandler.bind(this));
 
     return true;
+  }
+
+  // Cleanup after ourselves if we're being deleted.
+  public cleanup(): void {
+
+    if(this.packageCamera) {
+
+      this.packageCamera.cleanup();
+      this.packageCamera = null;
+    }
+
+    super.cleanup();
   }
 
   // Configure our access to the doorbell LCD screen.
@@ -210,9 +214,17 @@ export class ProtectDoorbell extends ProtectCamera {
         return false;
       }
 
-      // Register this accessory with homebridge and add it to the platform accessory array so we can track it.
-      this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [ packageCameraAccessory ]);
+      // Register this accessory with homebridge and add it to the accessory array so we can track it.
+      if(this.hasFeature("Device.Standalone")) {
+
+        this.api.publishExternalAccessories(PLUGIN_NAME, [ packageCameraAccessory ]);
+      } else {
+
+        this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [ packageCameraAccessory ]);
+      }
+
       this.platform.accessories.push(packageCameraAccessory);
+      this.api.updatePlatformAccessories(this.platform.accessories);
     }
 
     // Now create the package camera accessory. We do want to modify the camera name to ensure things look pretty.

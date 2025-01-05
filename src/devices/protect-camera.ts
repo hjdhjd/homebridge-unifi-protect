@@ -1,4 +1,4 @@
-/* Copyright(C) 2019-2024, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2019-2025, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * protect-camera.ts: Camera device class for UniFi Protect.
  */
@@ -59,7 +59,7 @@ export class ProtectCamera extends ProtectDevice {
     this.ufp = device;
 
     this.configureHints();
-    void this.configureDevice();
+    this.configureDevice();
   }
 
   // Configure device-specific settings for this device.
@@ -102,7 +102,7 @@ export class ProtectCamera extends ProtectDevice {
   }
 
   // Configure a camera accessory for HomeKit.
-  protected async configureDevice(): Promise<boolean> {
+  protected configureDevice(): boolean {
 
     // Save our context for reference before we recreate it.
     const savedContext = this.accessory.context;
@@ -135,9 +135,6 @@ export class ProtectCamera extends ProtectDevice {
     // Configure MQTT services.
     this.configureMqtt();
 
-    // Configure the ambient light sensor.
-    await this.configureAmbientLightSensor();
-
     // Configure the motion sensor.
     this.configureMotionSensor(!this.ufp.isThirdPartyCamera);
 
@@ -154,27 +151,34 @@ export class ProtectCamera extends ProtectDevice {
     this.configureHksv();
     this.configureHksvRecordingSwitch();
 
-    // Configure our video stream.
-    await this.configureVideoStream();
+    // We use an IIFE here since we can't make the enclosing function asynchronous.
+    (async (): Promise<void> => {
 
-    // Configure our camera details.
-    this.configureCameraDetails();
+      // Configure the ambient light sensor.
+      await this.configureAmbientLightSensor();
 
-    // Configure our NVR recording switches.
-    this.configureNvrRecordingSwitch();
+      // Configure our video stream.
+      await this.configureVideoStream();
 
-    // Configure the status indicator light switch.
-    this.configureStatusLedSwitch();
+      // Configure our camera details.
+      this.configureCameraDetails();
 
-    // Configure the night vision indicator light switch.
-    this.configureNightVisionDimmer();
+      // Configure our NVR recording switches.
+      this.configureNvrRecordingSwitch();
 
-    // Configure the doorbell trigger.
-    this.configureDoorbellTrigger();
+      // Configure the status indicator light switch.
+      this.configureStatusLedSwitch();
 
-    // Listen for events.
-    this.nvr.events.on("addEvent." + this.ufp.id, this.listeners["addEvent." + this.ufp.id] = this.addEventHandler.bind(this));
-    this.nvr.events.on("updateEvent." + this.ufp.id, this.listeners["updateEvent." + this.ufp.id] = this.eventHandler.bind(this));
+      // Configure the night vision indicator light switch.
+      this.configureNightVisionDimmer();
+
+      // Configure the doorbell trigger.
+      this.configureDoorbellTrigger();
+
+      // Listen for events.
+      this.nvr.events.on("addEvent." + this.ufp.id, this.listeners["addEvent." + this.ufp.id] = this.addEventHandler.bind(this));
+      this.nvr.events.on("updateEvent." + this.ufp.id, this.listeners["updateEvent." + this.ufp.id] = this.eventHandler.bind(this));
+    })();
 
     return true;
   }
@@ -190,6 +194,12 @@ export class ProtectCamera extends ProtectDevice {
 
     // Cleanup our livestream manager.
     this.livestream.shutdown();
+
+    // Unregister our controller.
+    if(this.stream?.controller) {
+
+      this.accessory.removeController(this.stream.controller);
+    }
 
     super.cleanup();
 
@@ -705,20 +715,17 @@ export class ProtectCamera extends ProtectDevice {
     // Enable RTSP on the camera if needed and get the list of RTSP streams we have ultimately configured.
     this.ufp = await this.nvr.ufpApi.enableRtsp(this.ufp) ?? this.ufp;
 
-    // Figure out which camera channels are RTSP-enabled, and user-enabled.
-    let cameraChannels = this.ufp.channels.filter(x => x.isRtspEnabled);
+    // Figure out which camera channels are RTSP-enabled, and user-enabled. We also filter out any package camera entries. We deal with those independently elsewhere.
+    const cameraChannels = this.ufp.channels.filter(channel => channel.isRtspEnabled && (channel.name !== "Package Camera"));
 
     // Set the camera and shapshot URLs.
     const cameraUrl = "rtsps://" + (this.nvr.config.overrideAddress ?? this.ufp.connectionHost ?? this.nvr.ufp.host) + ":" + this.nvr.ufp.ports.rtsps.toString() + "/";
 
-    // Filter out any package camera entries. We deal with those independently in the package camera class.
-    cameraChannels = cameraChannels.filter(x => x.name !== "Package Camera");
-
     // No RTSP streams are available that meet our criteria - we're done.
     if(!cameraChannels.length) {
 
-      this.log.info("No RTSP streaming profiles have been configured for this camera. You can resolve this issue by either enabling at least one RTSP profile in the " +
-        "UniFi Protect webUI or assigning an admin role to the local Protect user account you configured for this plugin.");
+      this.log.info("No RTSP profiles found for this camera. " +
+        "Enable at least one RTSP profile in the UniFi Protect webUI or assign an admin role to the local Protect user you configured for use with this plugin.");
 
       return false;
     }

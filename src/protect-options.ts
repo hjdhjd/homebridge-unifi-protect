@@ -1,4 +1,4 @@
-/* Copyright(C) 2020-2024, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2020-2025, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * protect-options.ts: Feature option and type definitions for UniFi Protect.
  */

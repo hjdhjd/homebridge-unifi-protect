@@ -1,4 +1,4 @@
-/* Copyright(C) 2023-2024, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2023-2025, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * protect-ffmpeg-options.ts: FFmpeg decoder and encoder options with hardware-accelerated codec support where available.
  */

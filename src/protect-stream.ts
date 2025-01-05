@@ -1,4 +1,4 @@
-/* Copyright(C) 2017-2024, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2017-2025, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * protect-stream.ts: Homebridge camera streaming delegate implementation for Protect.
  *
@@ -983,7 +983,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       // Send the audio.
       ffmpegReturnAudio.stdout?.on("data", dataListener = (data: Buffer): void => {
 
-        ws?.send(data, (error: Error | undefined): void => {
+        ws?.send(data, (error?: Error): void => {
 
           // This happens when an error condition is encountered on sending data to the websocket. We assume the worst and close our talkback channel.
           if(error) {
@@ -1129,6 +1129,6 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   // Utility to return the currently set probesize for a camera.
   public get probesize(): number {
 
-    return this.probesizeOverride ? this.probesizeOverride : this.protectCamera.hints.probesize;
+    return this.probesizeOverride || this.protectCamera.hints.probesize;
   }
 }

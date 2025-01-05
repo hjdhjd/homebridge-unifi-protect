@@ -1,4 +1,4 @@
-/* Copyright(C) 2017-2024, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2017-2025, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * protect-nvr.ts: NVR device class for UniFi Protect.
  */
@@ -157,7 +157,7 @@ export class ProtectNvr {
 
       // Unregister all the accessories for this controller from Homebridge that may have been restored already. Any additional ones will be automatically caught when
       // they are restored.
-      this.removeHomeKitAccessories(this.platform.accessories.filter(x => x.context.nvr === this.ufp.mac));
+      this.platform.accessories.filter(accessory => accessory.context.nvr === this.ufp.mac).map(accessory => this.removeHomeKitDevice(accessory));
 
       return;
     }
@@ -327,19 +327,25 @@ export class ProtectNvr {
       return false;
     }
 
+    // Generate this device's unique identifier.
+    const uuid = this.hap.uuid.generate(device.mac);
+
+    // See if we already know about this accessory.
+    let accessory = this.platform.accessories.find(x => x.UUID === uuid);
+
     // Enable or disable certain devices based on configuration parameters.
     if(!this.hasFeature("Device", device)) {
+
+      if(accessory) {
+
+        this.removeHomeKitDevice(accessory, true);
+      }
 
       return false;
     }
 
-    // Generate this device's unique identifier.
-    const uuid = this.hap.uuid.generate(device.mac);
-
-    let accessory: PlatformAccessory | undefined;
-
-    // See if we already know about this accessory or if it's truly new. If it is new, add it to HomeKit.
-    if((accessory = this.platform.accessories.find(x => x.UUID === uuid)) === undefined) {
+    // We've got a new device, let's add it to HomeKit.
+    if(!accessory) {
 
       accessory = new this.api.platformAccessory(validateName(device.name ?? device.marketName ?? ("Unknown Device" + (device.mac ? " " + device.mac : ""))), uuid);
 
@@ -414,8 +420,10 @@ export class ProtectNvr {
   // Cleanup removed Protect devices from HomeKit.
   private cleanupDevices(): void {
 
-    const delayInterval = this.getFeatureNumber("Nvr.DelayDeviceRemoval");
+    // Process the device removal queue before we do anything else.
+    this.platform.accessories.filter(accessory => Object.keys(this.deviceRemovalQueue).includes(accessory.UUID)).map(accessory => this.removeHomeKitDevice(accessory));
 
+    // Cleanup our accessories.
     for(const accessory of this.platform.accessories.filter(x => x.context.nvr === this.ufp.mac)) {
 
       const protectDevice = this.configuredDevices[accessory.UUID];
@@ -425,74 +433,7 @@ export class ProtectNvr {
       // catch those orphan devices here.
       if(!protectDevice) {
 
-        // We only remove devices if they're on the Protect controller we're interested in.
-        if(("nvr" in accessory.context) && (accessory.context.nvr !== this.ufp.mac)) {
-
-          continue;
-        }
-
-        // We only store MAC addresses on devices that exist on the Protect controller. Any other accessories created are ones we created ourselves and are managed
-        // elsewhere.
-        if(!("mac" in accessory.context)) {
-
-          // If it's not a package camera, we're done.
-          if(!("packageCamera" in accessory.context)) {
-
-            continue;
-          }
-
-          if((accessory.context.packageCamera as string).length) {
-
-            const uuid = this.hap.uuid.generate(accessory.context.packageCamera as string);
-
-            // If we have a matching parent camera for the package camera, we're done here. Otherwise, this is an orphan that we need to remove.
-            if(this.platform.accessories.some(x => x.UUID === uuid)) {
-
-              continue;
-            }
-          }
-        }
-
-        // For certain use cases, we may want to defer removal of a Protect device (e.g. in stacked NVR configurations) where Protect may lose track of devices for a
-        // brief period of time. This prevents a potential back-and-forth where devices are removed momentarily only to be readded later.
-        if(delayInterval && (delayInterval > 0)) {
-
-          // Have we seen this device queued for removal previously? If not, let's add it to the queue and come back after our specified delay.
-          if(!this.deviceRemovalQueue[accessory.UUID]) {
-
-            this.deviceRemovalQueue[accessory.UUID] = Date.now();
-
-            this.log.info("%s: Delaying device removal for at least %s second%s.", accessory.displayName, delayInterval, delayInterval > 1 ? "s" : "");
-
-            continue;
-          }
-
-          // Is it time to process this device removal?
-          if((delayInterval * 1000) > (Date.now() - this.deviceRemovalQueue[accessory.UUID])) {
-
-            continue;
-          }
-
-          // Cleanup after ourselves.
-          delete this.deviceRemovalQueue[accessory.UUID];
-        }
-
-        // See if we can pull the device's configuration details from the controller.
-        const device = ProtectDeviceCategories.map(category => this.ufpApi.bootstrap && this.ufpApi.bootstrap[category + "s"] &&
-          ((this.ufpApi.bootstrap[category + "s"] as ProtectDeviceConfigTypes[]) ?? []).find(x => x.mac === accessory.context.mac)).reduce((acc, x) => x ?? acc, null);
-
-        this.log.info("%s: Removing %s from HomeKit.%s", device ? this.ufpApi.getDeviceName(device) : accessory.displayName, device ? device.modelKey : "device",
-          accessory._associatedHAPAccessory.bridged ? "" : " You will need to manually delete the device in the Home app to complete the removal.");
-
-        // Unregister the accessory and delete it's remnants from HomeKit. We can only unregister bridged accessories - standalone acceossories are managed directly by
-        // users in the Home app.
-        if(accessory._associatedHAPAccessory.bridged) {
-
-          this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [ accessory ]);
-        }
-
-        this.platform.accessories.splice(this.platform.accessories.indexOf(accessory), 1);
-        this.api.updatePlatformAccessories(this.platform.accessories);
+        this.removeHomeKitDevice(accessory);
 
         continue;
       }
@@ -516,136 +457,125 @@ export class ProtectNvr {
         continue;
       }
 
+      // Remove and then add the device back to HomeKit if we're really just transitioning between bridged and standalone devices.
+      if(protectDevice.hints.enabled && ((!accessory._associatedHAPAccessory.bridged && !protectDevice.hints.standalone) ||
+        (accessory._associatedHAPAccessory.bridged && protectDevice.hints.standalone))) {
+
+        this.removeHomeKitDevice(accessory, true);
+        this.addHomeKitDevice(protectDevice.ufp);
+
+        continue;
+      }
+
       // Process the device removal.
-      this.removeHomeKitDevice(this.configuredDevices[accessory.UUID]);
+      this.removeHomeKitDevice(accessory);
     }
   }
 
-  // Remove an individual Protect device from HomeKit.
-  public removeHomeKitDevice(protectDevice: ProtectDevice): void {
+  // Remove an individual Protect accessory from HomeKit.
+  public removeHomeKitDevice(accessory: PlatformAccessory, noRemovalDelay = false): void {
 
-    // Sanity check.
-    if(!protectDevice) {
+    // Ensure that this accessory hasn't already been removed.
+    if(!this.platform.accessories.some(x => x.UUID === accessory.UUID)) {
 
       return;
     }
 
     // We only remove devices if they're on the Protect controller we're interested in.
-    if(protectDevice.accessory.context.nvr !== this.ufp.mac) {
+    if(accessory.context.nvr !== this.ufp.mac) {
 
       return;
     }
 
-    // Package cameras are handled elsewhere.
-    if("packageCamera" in protectDevice.accessory.context) {
-
-      const uuid = this.hap.uuid.generate(protectDevice.accessory.context.packageCamera as string);
-
-      // If we have a matching parent camera, we're done here. Otherwise, this is an orphan that we need to remove.
-      if(this.platform.accessories.some(x => x.UUID === uuid)) {
-
-        return;
-      }
-    }
-
     // The NVR system information accessory is handled elsewhere.
-    if("systemInfo" in protectDevice.accessory.context) {
+    if(accessory.context.systemInfo) {
 
       return;
     }
 
     // Liveview-centric accessories are handled elsewhere.
-    if(("liveview" in protectDevice.accessory.context) || protectDevice.accessory.getService(this.hap.Service.SecuritySystem)) {
+    if(accessory.context.liveview || accessory.getService(this.hap.Service.SecuritySystem)) {
 
       return;
     }
 
-    // For certain use cases, we may want to defer removal of a Protect device (e.g. in stacked NVR configurations) where Protect may lose track of devices for a brief
-    // period of time. This prevents a potential back-and-forth where devices are removed momentarily only to be readded later.
-    const delayInterval = this.getFeatureNumber("Nvr.DelayDeviceRemoval");
+    // We only store MAC addresses on devices that exist on the Protect controller. Any other accessories created are ones we created ourselves and are managed
+    // elsewhere, with one exception - package cameras. If we have a matching parent camera for the package camera, we're done here. Package cameras are dealt with
+    // when we remove the parent camera. If the parent doesn't exist, this is an orphan that we need to remove.
+    if(!accessory.context.mac &&
+      (!accessory.context.packageCamera || (this.platform.accessories.some(x => x.context.mac === accessory.context.packageCamera)))) {
 
-    if(delayInterval && (delayInterval > 0)) {
+      return;
+    }
+
+    const delayInterval = this.getFeatureNumber("Nvr.DelayDeviceRemoval") ?? 0;
+
+    // For certain use cases, we may want to defer removal of a Protect device where Protect may lose track of devices for a brief period of time. This prevents a
+    // potential back-and-forth where devices are removed momentarily only to be readded later.
+    if(!noRemovalDelay && delayInterval) {
 
       // Have we seen this device queued for removal previously? If not, let's add it to the queue and come back after our specified delay.
-      if(!this.deviceRemovalQueue[protectDevice.accessory.UUID]) {
+      if(!this.deviceRemovalQueue[accessory.UUID]) {
 
-        this.deviceRemovalQueue[protectDevice.accessory.UUID] = Date.now();
+        this.deviceRemovalQueue[accessory.UUID] = Date.now();
 
-        this.log.info("%s: Delaying device removal for %s second%s.",
-          protectDevice.ufp.name ? this.ufpApi.getDeviceName(protectDevice.ufp) : protectDevice.accessoryName,
-          delayInterval, delayInterval > 1 ? "s" : "");
+        this.log.info("%s: Delaying device removal for at least %s second%s.", accessory.displayName, delayInterval, delayInterval > 1 ? "s" : "");
 
         return;
       }
 
       // Is it time to process this device removal?
-      if((delayInterval * 1000) > (Date.now() - this.deviceRemovalQueue[protectDevice.accessory.UUID])) {
+      if((delayInterval * 1000) > (Date.now() - this.deviceRemovalQueue[accessory.UUID])) {
 
         return;
       }
-
-      // Cleanup after ourselves.
-      delete this.deviceRemovalQueue[protectDevice.accessory.UUID];
     }
 
-    // Remove this device.
+    // Cleanup after ourselves.
+    delete this.deviceRemovalQueue[accessory.UUID];
+
+    // Grab our instance of the Protect device, if it exists.
+    const protectDevice = this.configuredDevices[accessory.UUID];
+
+    // See if we can pull the device's configuration details from our Protect device instance or the controller.
+    const device = protectDevice?.ufp ?? ProtectDeviceCategories.map(category => this.ufpApi.bootstrap && this.ufpApi.bootstrap[category + "s"] &&
+      ((this.ufpApi.bootstrap[category + "s"] as ProtectDeviceConfigTypes[]) ?? []).find(x => x.mac === accessory.context.mac)).reduce((acc, x) => x ?? acc, null);
+
     this.log.info("%s: Removing %s from HomeKit.%s",
-      protectDevice.ufp.name ? this.ufpApi.getDeviceName(protectDevice.ufp) : protectDevice.accessoryName,
-      protectDevice.ufp.modelKey ? protectDevice.ufp.modelKey : "device",
-      protectDevice.accessory._associatedHAPAccessory.bridged ? "" : " You will need to manually delete the device in the Home app to complete the removal.");
+      device ? this.ufpApi.getDeviceName(device) : protectDevice?.accessoryName ?? accessory.displayName,
+      device?.modelKey ?? "device",
+      accessory._associatedHAPAccessory.bridged ? "" : " You will need to manually delete the device in the Home app to complete the removal.");
 
-    // Keep track of whether this was a standalone accessory or not to deal with the special case of a user transitioning between bridged and standalone devices.
-    const isStandalone = !protectDevice.accessory._associatedHAPAccessory.bridged;
+    const deletingAccessories = [ accessory ];
 
-    const deletingAccessories = [ protectDevice.accessory ];
+    // If it's an unknown device or a camera, look for a corresponding package camera if we have one and remove it as well.
+    if(!device || (device?.modelKey === "camera")) {
 
-    // Check to see if we're removing a camera device that has a package camera as well.
-    if(protectDevice.ufp.modelKey === "camera") {
+      const packageCameraAccessory = this.platform.accessories.find(x => x.context.packageCamera === accessory.context.mac);
 
-      const protectDoorbell = protectDevice as ProtectDoorbell;
+      // Remove the package camera, if it exists, and cleanup the device if it's been confgured.
+      if(packageCameraAccessory) {
 
-      if(protectDoorbell && protectDoorbell.packageCamera) {
-
-        // Ensure we delete the accessory and cleanup after ourselves.
-        deletingAccessories.push(protectDoorbell.packageCamera.accessory);
-        protectDoorbell.packageCamera.cleanup();
-        protectDoorbell.packageCamera = null;
+        deletingAccessories.push(packageCameraAccessory);
       }
     }
 
-    // Cleanup our event handlers.
-    protectDevice.cleanup();
+    // Cleanup our device instance.
+    protectDevice?.cleanup();
 
     // Finally, remove it from our list of configured devices and HomeKit.
-    delete this.configuredDevices[protectDevice.accessory.UUID];
-    this.removeHomeKitAccessories(deletingAccessories);
-
-    // Add it back to HomeKit if we're really just transitioning between bridged and standalone devices.
-    if(protectDevice.hints.enabled && ((isStandalone && !protectDevice.hints.standalone) || (!isStandalone && protectDevice.hints.standalone))) {
-
-      this.addHomeKitDevice(protectDevice.ufp);
-    }
-  }
-
-  // Remove accessories from HomeKit and Homebridge.
-  private removeHomeKitAccessories(deletingAccessories: PlatformAccessory[]): void {
-
-    // Sanity check.
-    if(!deletingAccessories || (deletingAccessories.length <= 0)) {
-
-      return;
-    }
+    delete this.configuredDevices[accessory.UUID];
 
     // Update our internal list of all the accessories we know about.
-    for(const accessory of deletingAccessories) {
+    for(const targetAccessory of deletingAccessories) {
 
       // Unregister the accessory from HomeKit if we have a bridged accessory. Unbridged accessories are managed directly by users in the Home app.
-      if(accessory._associatedHAPAccessory.bridged) {
+      if(targetAccessory._associatedHAPAccessory.bridged) {
 
-        this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [ accessory ]);
+        this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [ targetAccessory ]);
       }
 
-      this.platform.accessories.splice(this.platform.accessories.indexOf(accessory), 1);
+      this.platform.accessories.splice(this.platform.accessories.indexOf(targetAccessory), 1);
     }
 
     // Tell Homebridge to save the updated list of accessories.

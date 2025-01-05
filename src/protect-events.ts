@@ -1,4 +1,4 @@
-/* Copyright(C) 2017-2024, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2017-2025, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * protect-events.ts: Protect events class for UniFi Protect.
  */
@@ -196,7 +196,7 @@ export class ProtectEvents extends EventEmitter {
       }
 
       // Remove the device.
-      this.nvr.removeHomeKitDevice(protectDevice);
+      this.nvr.removeHomeKitDevice(protectDevice.accessory);
 
       return;
     }
