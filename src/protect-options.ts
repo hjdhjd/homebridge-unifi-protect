@@ -59,6 +59,8 @@ interface ProtectFeatureOption extends FeatureOptionEntry {
   modelKey?: string[]
 }
 
+/* eslint-disable @stylistic/max-len */
+
 // Feature option categories.
 export const featureOptionCategories = [
 
@@ -73,7 +75,6 @@ export const featureOptionCategories = [
   { description: "HomeKit Secure Video feature options.", isNotProperty: [ "isThirdPartyCamera" ], modelKey: [ "camera" ], name: "Video.HKSV" }
 ];
 
-/* eslint-disable @stylistic/max-len */
 export const featureOptions: { [index: string]: ProtectFeatureOption[] } = {
 
   // Audio options.
