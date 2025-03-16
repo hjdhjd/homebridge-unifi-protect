@@ -77,7 +77,7 @@ These option(s) apply to: Protect cameras.
 | Option                                           | Description
 |--------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 | `Doorbell.AuthSensor`                            | Add a contact sensor that gets activates when a fingerprint or NFC successfully authenticates on a Protect doorbell. **(default: disabled)**. <BR>*Supported on Protect doorbells that have a fingerprint sensor.*
-| `Doorbell.Messages`                              | Enable the doorbell messages feature. **(default: enabled)**. <BR>*Supported on Protect devices that have a doorbell.*
+| `Doorbell.Messages`                              | Enable the doorbell messages feature. **(default: disabled)**. <BR>*Supported on Protect devices that have a doorbell.*
 | `Doorbell.Messages.FromDoorbell`                 | Use messages saved to the Protect NVR as message switches. **(default: enabled)**. <BR>*Supported on Protect devices that have a doorbell.*
 | `Doorbell.Volume.Dimmer`                         | Add a dimmer accessory to control the Protect chime volume in HomeKit. **(default: disabled)**. <BR>*Supported on Protect devices that have a doorbell.*
 | `Doorbell.PhysicalChime`                         | Add switch accessories to control the physical chimes attached to a Protect doorbell. **(default: disabled)**. <BR>*Supported on Protect doorbells that have a physical chime.*

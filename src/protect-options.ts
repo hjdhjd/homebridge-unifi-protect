@@ -66,7 +66,7 @@ export const featureOptionCategories = [
   { description: "Device feature options.", modelKey: [ "all" ], name: "Device" },
   { description: "Doorbell feature options.", modelKey: [ "camera" ], name: "Doorbell" },
   { description: "Logging feature options.", modelKey: [ "camera", "light", "sensor" ], name: "Log" },
-  { description: "Motion detection feature options.", isNotProperty: [ "isThirdPartyCamera" ], modelKey: [ "camera", "light", "sensor" ], name: "Motion" },
+  { description: "Motion detection feature options.", isNotProperty: [ "isAdoptedByAccessApp", "isThirdPartyCamera" ], modelKey: [ "camera", "light", "sensor" ], name: "Motion" },
   { description: "NVR feature options.", modelKey: [ "camera", "nvr" ], name: "Nvr" },
   { description: "Security system feature options.", modelKey: [ "nvr" ], name: "SecuritySystem" },
   { description: "Video feature options.", modelKey: [ "camera" ], name: "Video" },
@@ -103,7 +103,7 @@ export const featureOptions: { [index: string]: ProtectFeatureOption[] } = {
   "Doorbell": [
 
     { default: false, description: "Add a contact sensor that gets activates when a fingerprint or NFC successfully authenticates on a Protect doorbell.", hasFeature: [ "hasFingerprintSensor" ], name: "AuthSensor" },
-    { default: true, description: "Enable the doorbell messages feature.", hasFeature: [ "isDoorbell" ], name: "Messages" },
+    { default: false, description: "Enable the doorbell messages feature.", hasFeature: [ "isDoorbell" ], name: "Messages" },
     { default: true, description: "Use messages saved to the Protect NVR as message switches.", group: "Messages", hasFeature: [ "isDoorbell" ], name: "Messages.FromDoorbell" },
     { default: false, description: "Add a dimmer accessory to control the Protect chime volume in HomeKit.", hasFeature: [ "isDoorbell" ], name: "Volume.Dimmer" },
     { default: false, description: "Add switch accessories to control the physical chimes attached to a Protect doorbell.", hasFeature: [ "hasChime" ], name: "PhysicalChime" },

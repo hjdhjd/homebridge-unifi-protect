@@ -6,6 +6,7 @@ import { CharacteristicValue, PlatformAccessory, Resolution, Service } from "hom
 import { ProtectCameraChannelConfig, ProtectCameraConfig, ProtectCameraConfigPayload, ProtectEventAdd, ProtectEventPacket } from "unifi-protect";
 import { ProtectReservedNames, toCamelCase } from "../protect-types.js";
 import { LivestreamManager } from "../protect-livestream.js";
+import { MessageSwitchInterface } from "./protect-doorbell.js";
 import { Nullable } from "homebridge-plugin-utils";
 import { ProtectDevice } from "./protect-device.js";
 import { ProtectNvr } from "../protect-nvr.js";
@@ -38,6 +39,7 @@ export class ProtectCamera extends ProtectDevice {
   public isRinging: boolean;
   public detectLicensePlate: string[];
   public readonly livestream: LivestreamManager;
+  public messageSwitches: { [index: string]: MessageSwitchInterface };
   private rtspEntries: RtspEntry[];
   private rtspQuality: { [index: string]: string };
   public stream!: ProtectStreamingDelegate;
@@ -54,6 +56,7 @@ export class ProtectCamera extends ProtectDevice {
     this.isRinging = false;
     this.detectLicensePlate = [];
     this.livestream = new LivestreamManager(this);
+    this.messageSwitches = {};
     this.rtspEntries = [];
     this.rtspQuality = {};
     this.ufp = device;

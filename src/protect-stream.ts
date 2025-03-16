@@ -9,7 +9,7 @@ import { API, AudioRecordingCodecType, AudioRecordingSamplerate, AudioStreamingC
   SRTPCryptoSuites, Service, SnapshotRequest, SnapshotRequestCallback, StartStreamRequest, StreamRequestCallback, StreamRequestTypes,
   StreamingRequest } from "homebridge";
 import { FfmpegOptions, FfmpegStreamingProcess } from "./ffmpeg/index.js";
-import { HomebridgePluginLogging, Nullable, RtpDemuxer } from "homebridge-plugin-utils";
+import { HomebridgePluginLogging, Nullable, RtpDemuxer, formatBps } from "homebridge-plugin-utils";
 import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_HKSV_FRAGMENT_LENGTH, PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION, PROTECT_HOMEKIT_IDR_INTERVAL,
   PROTECT_LIVESTREAM_API_IDR_INTERVAL } from "./settings.js";
 import { ProtectCamera } from "./devices/index.js";
@@ -542,11 +542,11 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     );
 
     // Inform the user.
-    this.log.info("Streaming request from %s%s: %sx%s@%sfps, %s kbps. %s %s, %s kbps [%s].",
+    this.log.info("Streaming request from %s%s: %sx%s@%sfps, %s. %s %s, %s [%s].",
       sessionInfo.address, (request.audio.packet_time === 60) ? " (high latency connection)" : "",
-      request.video.width, request.video.height, request.video.fps, targetBitrate.toLocaleString("en-US"),
-      isTranscoding ? (this.protectCamera.hints.hardwareTranscoding ? "Hardware accelerated transcoding" : "Transcoding") : "Using",
-      rtspEntry.name, (rtspEntry.channel.bitrate / 1000).toLocaleString("en-US"), useApi ? "API" : "RTSP");
+      request.video.width, request.video.height, request.video.fps, formatBps(targetBitrate),
+      isTranscoding ? (this.protectCamera.hints.hardwareTranscoding ? "Hardware-accelerated transcoding" : "Transcoding") : "Using",
+      rtspEntry.name, formatBps(rtspEntry.channel.bitrate), useApi ? "API" : "RTSP");
 
     // Check to see if we're transcoding. If we are, set the right FFmpeg encoder options. If not, copy the video stream.
     if(isTranscoding) {
@@ -1024,8 +1024,8 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       case StreamRequestTypes.RECONFIGURE:
 
         // Once FFmpeg is updated to support this, we'll enable this one.
-        this.log.debug("Streaming parameters adjustment requested by HomeKit: %sx%s, %s fps, %s kbps.",
-          request.video.width, request.video.height, request.video.fps, request.video.max_bit_rate.toLocaleString("en-US"));
+        this.log.debug("Streaming parameters adjustment requested by HomeKit: %sx%s, %s fps, %s.",
+          request.video.width, request.video.height, request.video.fps, formatBps(request.video.max_bit_rate));
 
         callback();
 

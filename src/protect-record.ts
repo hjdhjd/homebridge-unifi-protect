@@ -8,7 +8,7 @@
  */
 import { API, CameraRecordingConfiguration, CameraRecordingDelegate, HAP, HDSProtocolSpecificErrorReason,
   PlatformAccessory, RecordingPacket } from "homebridge";
-import { HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
+import { HomebridgePluginLogging, Nullable, formatBps } from "homebridge-plugin-utils";
 import { ProtectCamera, RtspEntry } from "./devices/index.js";
 import { FfmpegRecordingProcess } from "./ffmpeg/index.js";
 import { PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION } from "./settings.js";
@@ -102,9 +102,8 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
 
     this.isInitialized = true;
 
-    this.log.info("HKSV: %s%s, %s kbps (%s second timeshift buffer).",
-      this.protectCamera.hints.hardwareTranscoding ? "hardware-accelerated " : "",
-      this.rtspEntry?.name, this.recordingConfig?.videoCodec.parameters.bitRate.toLocaleString("en-US"), this.timeshift.configuredDuration / 1000);
+    this.log.info("HKSV: %s%s, %s.", this.protectCamera.hints.hardwareTranscoding ? "hardware-accelerated " : "", this.rtspEntry?.name,
+      formatBps(this.recordingConfig?.videoCodec.parameters.bitRate ?? 0));
   }
 
   // Process updated recording configuration settings from HomeKit Secure Video.

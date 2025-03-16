@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 7.12.0 (2025-03-16)
+  * Behavior change: Protect doorbell message switches are now disabled by default. The feature's still there and available for those who wish to use it, but for those who don't, it provides a more streamlined experience by default.
+  * Fix: address regressions in message switches.
+  * Fix: workaround quirks in recent Homebridge UI releases.
+  * Housekeeping and refinements.
+  * The author would like to express his deep appreciation to a certain member of the community...thank you, again.
+
 ## 7.11.0 (2025-01-05)
   * Improvement: additional refinements to deal with more frequent Protect controller connectivity quirks.
   * Housekeeping.

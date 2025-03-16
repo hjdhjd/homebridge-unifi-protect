@@ -20,7 +20,7 @@ interface MessageInterface {
 }
 
 // Extend the message interface to include a doorbell message switch.
-interface MessageSwitchInterface extends MessageInterface {
+export interface MessageSwitchInterface extends MessageInterface {
 
   service: Service,
   state: boolean
@@ -33,7 +33,6 @@ export class ProtectDoorbell extends ProtectCamera {
   private defaultMessageDuration!: number;
   private isMessagesEnabled!: boolean;
   private isMessagesFromControllerEnabled!: boolean;
-  private messageSwitches!: { [index: string]: MessageSwitchInterface };
   public packageCamera?: Nullable<ProtectCameraPackage>;
 
   // Configure the doorbell for HomeKit.
@@ -111,10 +110,8 @@ export class ProtectDoorbell extends ProtectCamera {
     }
 
     // Grab the consolidated list of messages from the doorbell and our configuration.
-    const doorbellMessages = this.getMessages();
-
     // Look through the combined messages from the doorbell and what the user has configured and tell HomeKit about it.
-    for(const entry of doorbellMessages) {
+    for(const entry of this.getMessages()) {
 
       // Truncate anything longer than the character limit that the doorbell will accept.
       if(entry.text.length > 30) {
@@ -155,9 +152,9 @@ export class ProtectDoorbell extends ProtectCamera {
       this.messageSwitches[switchIndex] = { duration: duration, service: service, state: false, text: entry.text, type: entry.type };
 
       // Configure the message switch.
-      service.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => this.messageSwitches[switchIndex].state);
       service.getCharacteristic(this.hap.Characteristic.On)?.onSet(async (value: CharacteristicValue) => {
 
+        // Lookup the message switch.
         const messageSwitch = this.messageSwitches[switchIndex];
 
         // If we're already in the state we want to be in, we're done.

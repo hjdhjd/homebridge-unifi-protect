@@ -222,7 +222,7 @@ export class FfmpegOptions {
         "Hardware-accelerated " + accelCategories() + " enabled" + (logMessage.length ? ": " + logMessage : "") + ".");
     }
 
-    // Encourage users to enable hardware accelerated transcoding on macOS.
+    // Encourage users to enable hardware-accelerated transcoding on macOS.
     if(!this.protectCamera.hints.hardwareTranscoding && !this.protectCamera.accessory.context.packageCamera && this.platform.hostSystem.startsWith("macOS.")) {
 
       this.log.warn("macOS detected: consider enabling hardware acceleration (located under the video feature options section in the HBUP webUI) for even better " +
