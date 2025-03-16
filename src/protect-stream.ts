@@ -544,7 +544,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     // Inform the user.
     this.log.info("Streaming request from %s%s: %sx%s@%sfps, %s. %s %s, %s [%s].",
       sessionInfo.address, (request.audio.packet_time === 60) ? " (high latency connection)" : "",
-      request.video.width, request.video.height, request.video.fps, formatBps(targetBitrate),
+      request.video.width, request.video.height, request.video.fps, formatBps(targetBitrate * 1000),
       isTranscoding ? (this.protectCamera.hints.hardwareTranscoding ? "Hardware-accelerated transcoding" : "Transcoding") : "Using",
       rtspEntry.name, formatBps(rtspEntry.channel.bitrate), useApi ? "API" : "RTSP");
 

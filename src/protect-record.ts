@@ -103,7 +103,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     this.isInitialized = true;
 
     this.log.info("HKSV: %s%s, %s.", this.protectCamera.hints.hardwareTranscoding ? "hardware-accelerated " : "", this.rtspEntry?.name,
-      formatBps(this.recordingConfig?.videoCodec.parameters.bitRate ?? 0));
+      formatBps((this.recordingConfig?.videoCodec.parameters.bitRate ?? 0) * 1000));
   }
 
   // Process updated recording configuration settings from HomeKit Secure Video.
