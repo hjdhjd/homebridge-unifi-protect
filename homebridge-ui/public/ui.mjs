@@ -182,6 +182,7 @@ const showSidebarDevices = (controller, devices) => {
 const validOption = (device, option) => {
 
   if(device && (device.modelKey !== "nvr") && (
+    (option.hasAccessFeature && (!device.accessDeviceMetadata?.featureFlags || !option.hasAccessFeature.some(x => device.accessDeviceMetadata.featureFlags[x]))) ||
     (option.hasFeature && (!device.featureFlags || !option.hasFeature.some(x => device.featureFlags[x]))) ||
     (option.hasProperty && !option.hasProperty.some(x => x in device)) ||
     (option.modelKey && (option.modelKey !== "all") && !option.modelKey.includes(device.modelKey)) ||

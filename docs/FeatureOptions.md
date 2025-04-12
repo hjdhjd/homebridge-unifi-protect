@@ -40,6 +40,7 @@ Feature options provide a rich mechanism for tailoring your `homebridge-unifi-pr
  * [Motion](#motion): Motion detection feature options.
  * [Nvr](#nvr): NVR feature options.
  * [SecuritySystem](#securitysystem): Security system feature options.
+ * [UniFi.Access](#unifi.access): UniFi Access options.
  * [Video](#video): Video feature options.
  * [Video.HKSV](#video.hksv): HomeKit Secure Video feature options.
 
@@ -145,6 +146,14 @@ These option(s) apply to: Protect controllers.
 | Option                                           | Description
 |--------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 | `SecuritySystem.Alarm`                           | Add a switch accessory to trigger the security system accessory, when using the liveview feature option. **(default: disabled)**.
+
+#### <A NAME="unifi.access"></A>UniFi Access options.
+
+These option(s) apply to: Protect cameras.
+
+| Option                                           | Description
+|--------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+| `UniFi.Access.Lock`                              | Add a lock accessory to unlock. Currently, Protect only supports unlocking Access readers with a camera on the same controller as Protect. **(default: enabled)**.
 
 #### <A NAME="video"></A>Video feature options.
 

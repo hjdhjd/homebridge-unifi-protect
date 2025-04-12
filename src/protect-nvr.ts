@@ -30,7 +30,6 @@ export class ProtectNvr {
   public readonly log: HomebridgePluginLogging;
   public mqtt: Nullable<MqttClient>;
   private name: string;
-  public nvrHksvErrors: number;
   public platform: ProtectPlatform;
   public systemInfo: Nullable<ProtectNvrSystemInfo>;
   public ufp: ProtectNvrConfig;
@@ -49,7 +48,6 @@ export class ProtectNvr {
     this.logApiErrors = true;
     this.mqtt = null;
     this.name = nvrOptions.name ?? nvrOptions.address;
-    this.nvrHksvErrors = 0;
     this.platform = platform;
     this.systemInfo = null;
     this.ufp = {} as ProtectNvrConfig;

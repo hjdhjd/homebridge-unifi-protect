@@ -8,12 +8,15 @@ import { ProtectLivestream } from "unifi-protect";
 import { sleep } from "homebridge-plugin-utils";
 
 const LIVESTREAM_TIMEOUT = 3500;
+const LIVESTREAM_RESTART_INTERVAL = 30;
 
 export class LivestreamManager {
 
   private eventHandlers: { [index: string]: () => void };
   private livestreams: { [index: string]: ProtectLivestream };
   private protectCamera: ProtectCamera;
+  private restartDelay: { [index: string]: number };
+  private restarting: { [index: string]: boolean };
   private subscriberCount: { [index: string]: number };
   private segmentTimers: { [index: string]: NodeJS.Timeout };
 
@@ -23,6 +26,8 @@ export class LivestreamManager {
     this.eventHandlers = {};
     this.livestreams = {};
     this.protectCamera = protectCamera;
+    this.restartDelay = {};
+    this.restarting = {};
     this.segmentTimers = {};
     this.subscriberCount = {};
   }
@@ -54,6 +59,12 @@ export class LivestreamManager {
     this.subscriberCount[index] = 0;
 
     return this.livestreams[index] = this.protectCamera.nvr.ufpApi.createLivestream();
+  }
+
+  // Restarting status.
+  public isRestarting(channel: number, lens?: number): boolean {
+
+    return this.restarting[this.getIndex(channel, lens).index];
   }
 
   // Shutdown all our connections.
@@ -96,35 +107,42 @@ export class LivestreamManager {
     // Keep track of any issues in the livestream.
     if(!this.subscriberCount[index]) {
 
-      let isRestarting = false;
+      this.restartDelay[index] = LIVESTREAM_RESTART_INTERVAL;
+      this.restarting[index] = false;
 
       // Configure a restart event for the livestream API session so we can restart the session in case of problems.
       this.livestreams[index].on("restart", this.eventHandlers[index + ".restart"] = async (): Promise<void> => {
 
         // If we have a restart inflight, we're done.
-        if(isRestarting) {
+        if(this.restarting[index]) {
 
           return;
         }
 
-        isRestarting = true;
+        this.restarting[index] = true;
         this.protectCamera.log.warn("Reconnecting to the livestream API.");
 
         // Clear out any existing timer.
         if(this.segmentTimers[index]) {
 
           clearTimeout(this.segmentTimers[index]);
+          this.restartDelay[index] = LIVESTREAM_RESTART_INTERVAL;
         }
 
         this.livestreams[index].stop();
 
-        // Wait at least a full minute before we try to reconnect to the livestream. This accounts for reboots and other potential connection issues that can occur.
-        await sleep((((Math.random() * 10) + 60) * 1000));
+        // Wait at least thirty seconds before we try to reconnect to the livestream. This accounts for reboots and other potential connection issues that can occur.
+        await sleep((((Math.random() * 3) + this.restartDelay[index]) * 1000));
         await this.livestreams[index].start(this.protectCamera.ufp.id, channel, lens, segmentLength, this.protectCamera.name + ":" + index);
 
         // Check on the state of our livestream API session regularly.
         this.segmentTimers[index] = setTimeout(() => this.livestreams[index].emit("restart"), LIVESTREAM_TIMEOUT);
-        isRestarting = false;
+
+        // Increase our backoff interval in case we've got a stuck livestream websocket on the Protect controller.
+        this.restartDelay[index] = Math.min(this.restartDelay[index] + (LIVESTREAM_RESTART_INTERVAL / 2), LIVESTREAM_RESTART_INTERVAL * 2.5);
+
+        // We've restarted.
+        this.restarting[index] = false;
       });
 
       // Set a regular heartbeat for the livestream API.

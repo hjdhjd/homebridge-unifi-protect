@@ -33,16 +33,16 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
     super();
 
     this._buffer = [];
+    this._channel = 0;
     this._isStarted = false;
     this._isTransmitting = false;
-    this.accessory = protectCamera.accessory;
-    this.segmentCount = 1;
-    this._channel = 0;
-    this.eventHandlers = {};
     this._lens = (protectCamera instanceof ProtectCameraPackage) ? 2 : undefined;
+    this.accessory = protectCamera.accessory;
+    this.eventHandlers = {};
     this.log = protectCamera.log;
     this.nvr = protectCamera.nvr;
     this.protectCamera = protectCamera;
+    this.segmentCount = 1;
 
     // We use a small value for segment resolution in our timeshift buffer to ensure we provide an optimal timeshifting experience. It's a very small amount of additional
     // overhead for modern CPUs, but the result is a much better HKSV event recording experience.
@@ -58,8 +58,12 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
     // If the API connection has closed, let the user know.
     this.eventHandlers.close = (): void => {
 
-      this.log.error("The livestream API connection was unexpectedly closed by the Protect controller: " +
-        "this is typically due to device restarts or issues with Protect controller firmware versions, and can be safely ignored. Will retry again shortly.");
+      if(this.isRestarting) {
+
+        return;
+      }
+
+      this.log.error("Protect livestream API connection closed by the controller: usually due to Protect controller or devices reboot. Retrying shortly.");
     };
 
     // Listen for any segments sent by the UniFi Protect livestream in order to create our timeshift buffer.
@@ -156,6 +160,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
 
     this._buffer = [];
     this._isStarted = false;
+    this.livestream = undefined;
 
     return true;
   }
@@ -173,7 +178,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
     // If we haven't started the livestream, or it was closed for some reason, let's start it now.
     if((!this.isStarted && !(await this.start())) || !this.livestream?.initSegment) {
 
-      this.log.error("Unable to access the Protect livestream API: this is typically due to the Protect controller or camera rebooting. Will retry again.");
+      this.log.error("Unable to connect to the Protect livestream API — usually occurs when the Protect controller or devices reboot. Retrying shortly.");
 
       return false;
     }
@@ -254,14 +259,22 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
     return (this.livestream?.initSegment && this._buffer.length) ? Buffer.concat([ this.livestream.initSegment, ...this._buffer ]) : null;
   }
 
+  // Return the current camera that we're using for this timeshift buffer.
   public get channel(): number {
 
     return this._channel;
   }
 
+  // Return the current lens that we're using for this timeshift buffer.
   public get lens(): number | undefined {
 
     return this._lens;
+  }
+
+  // Return whether the underlying livestream connection is currently restarting itself.
+  public get isRestarting(): boolean {
+
+    return this.protectCamera.livestream?.isRestarting(this._channel, this._lens);
   }
 
   // Return whether or not we have started the timeshift buffer.

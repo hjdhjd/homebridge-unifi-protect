@@ -22,7 +22,6 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
   private readonly accessory: PlatformAccessory;
   private readonly api: API;
   private closedReason?: HDSProtocolSpecificErrorReason;
-  public errors: number;
   private readonly hap: HAP;
   private ffmpegStream?: FfmpegRecordingProcess;
   private hksvRequestedClose: boolean;
@@ -45,7 +44,6 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     this.accessory = protectCamera.accessory;
     this.api = protectCamera.api;
     this.closedReason = undefined;
-    this.errors = 0;
     this.hap = protectCamera.api.hap;
     this.hksvRequestedClose = false;
     this.isInitialized = false;
@@ -132,7 +130,6 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
   // Handle the actual recording stream request.
   public async *handleRecordingStreamRequest(): AsyncGenerator<RecordingPacket> {
 
-
     // The first transmitted segment in an fMP4 stream is always the initialization segment and contains no video, so we don't count it.
     this.transmittedSegments = 0;
 
@@ -144,7 +141,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
 
     // If we've explicitly disabled HKSV recording, or we have issues setting up our timeshift buffer, we're done right now. Otherwise, start transmitting our timeshift
     // buffer and process it through FFmpeg.
-    if(!this.accessory.context.hksvRecording || !this.isInitialized || !(await this.startTransmitting()) || !this.ffmpegStream) {
+    if(!this.accessory.context.hksvRecording || !this.isInitialized || this.timeshift.isRestarting || !(await this.startTransmitting()) || !this.ffmpegStream) {
 
       // Stop transmitting.
       if(this.isTransmitting) {
@@ -254,8 +251,6 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     // Fire up the timeshift buffer. If we've got multiple lenses, we use the first channel and explicitly request the lens we want.
     if(!(await this.timeshift.start(this.rtspEntry.channel.id, this.rtspEntry.lens))) {
 
-      this.log.error("%s: unable to connect to the livestream API on the Protect controller.", timeshiftError);
-
       return false;
     }
 
@@ -280,7 +275,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     }
 
     // If we don't have a recording configuration from HomeKit or an RTSP profile, we can't continue.
-    if(!this.recordingConfig || !this.rtspEntry) {
+    if(!this.recordingConfig || !this.rtspEntry || this.timeshift.isRestarting) {
 
       return false;
     }
@@ -502,10 +497,6 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
 
         this.log.info("HKSV: %s %s event.", recordedTime, timeUnit);
       }
-
-      // Once we've got a successful event, let's reset our error count.
-      this.errors = 0;
-      this.nvr.nvrHksvErrors = 0;
     }
 
     // Let's figure out the reason why we're stopping, if we have one, and it's noteworthy.
@@ -539,7 +530,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     this.closedReason = reason;
 
     // Inform the user when things stopped unexpectedly, and reset the timeshift buffer for good measure.
-    if((reason !== undefined) && (reason !== HDSProtocolSpecificErrorReason.NORMAL)) {
+    if((reason !== undefined) && (reason !== HDSProtocolSpecificErrorReason.NORMAL) && !this.timeshift.isRestarting) {
 
       this.log.error("HKSV recording event ended early: %s", reasonDescription);
     }

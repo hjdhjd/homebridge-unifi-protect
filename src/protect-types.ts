@@ -41,6 +41,9 @@ export enum ProtectReservedNames {
   LIGHTBULB_NIGHTVISION = "NightVision",
   LIGHTBULB_PACKAGE_FLASHLIGHT = "PackageCamera.Flashlight",
 
+  // Manage our lock types.
+  LOCK_ACCESS = "Access",
+
   // Manage our switch types.
   SWITCH_DOORBELL_CHIME_BUZZER = "DoorbellChime.buzzer",
   SWITCH_DOORBELL_CHIME_DIGITAL = "DoorbellChime.digital",

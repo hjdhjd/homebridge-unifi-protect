@@ -32,6 +32,7 @@ type RtspOptions = Partial<{
 
 export class ProtectCamera extends ProtectDevice {
 
+  private accessUnlockTimer?: NodeJS.Timeout;
   private ambientLight: number;
   private ambientLightTimer?: NodeJS.Timeout;
   public hasHksv: boolean;
@@ -139,13 +140,16 @@ export class ProtectCamera extends ProtectDevice {
     this.configureMqtt();
 
     // Configure the motion sensor.
-    this.configureMotionSensor(!this.ufp.isThirdPartyCamera);
+    this.configureMotionSensor(!this.ufp.isThirdPartyCamera && !this.ufp.isAdoptedByAccessApp);
 
     // Configure smart motion contact sensors.
     this.configureMotionSmartSensor();
 
     // Configure the occupancy sensor.
     this.configureOccupancySensor();
+
+    // Configure UniFi Access specific features on supported devices such as lock mechanisms that cohabitate on the same controller as Protect.
+    this.configureAccessFeatures();
 
     // Configure cropping.
     this.configureCrop();
@@ -266,6 +270,36 @@ export class ProtectCamera extends ProtectDevice {
 
     const payload = packet.payload as ProtectEventAdd;
 
+    // Detect UniFi Access unlock events surfaced in Protect.
+    if((packet.header.modelKey === "event") && (payload.metadata?.action === "open_door") && payload.metadata?.openSuccess) {
+
+      const lockService = this.accessory.getServiceById(this.hap.Service.LockMechanism, ProtectReservedNames.LOCK_ACCESS);
+
+      if(!lockService) {
+
+        return;
+      }
+
+      lockService.updateCharacteristic(this.hap.Characteristic.LockTargetState, this.hap.Characteristic.LockTargetState.UNSECURED);
+      lockService.updateCharacteristic(this.hap.Characteristic.LockCurrentState, this.hap.Characteristic.LockCurrentState.UNSECURED);
+      this.log.info("Unlocked.");
+
+      if(this.accessUnlockTimer) {
+
+        clearTimeout(this.accessUnlockTimer);
+      }
+
+      this.accessUnlockTimer = setTimeout(() => {
+
+        lockService?.updateCharacteristic(this.hap.Characteristic.LockTargetState, this.hap.Characteristic.LockTargetState.SECURED);
+        lockService?.updateCharacteristic(this.hap.Characteristic.LockCurrentState, this.hap.Characteristic.LockCurrentState.SECURED);
+
+        this.accessUnlockTimer = undefined;
+      }, 2000);
+
+      return;
+    }
+
     // We're only interested in smart motion detection events.
     if(!this.hints.smartDetect || ((packet.header.modelKey !== "smartDetectObject") &&
       ((packet.header.modelKey !== "event") || !["smartDetectLine", "smartDetectZone"].includes(payload.type) || !payload.smartDetectTypes.length))) {
@@ -377,6 +411,79 @@ export class ProtectCamera extends ProtectDevice {
 
     service.updateCharacteristic(this.hap.Characteristic.CurrentAmbientLightLevel, this.ambientLight);
     service.updateCharacteristic(this.hap.Characteristic.StatusActive, this.isOnline);
+
+    return true;
+  }
+
+  // Configure UniFi Access specific features for devices that are made available in Protect.
+  private configureAccessFeatures(): boolean {
+
+    // If the Access device doesn't have unlock capabilities, we're done.
+    if(!this.ufp.accessDeviceMetadata?.featureFlags?.supportUnlock) {
+
+      return false;
+    }
+
+    // Validate whether we should have this service enabled.
+    if(!this.validService(this.hap.Service.LockMechanism, () => {
+
+      // If we don't have the lock feature enabled, disable it and we're done.
+      if(!this.hasFeature("UniFi.Access.Lock")) {
+
+        return false;
+      }
+
+      return true;
+    }, ProtectReservedNames.LOCK_ACCESS)) {
+
+      return false;
+    }
+
+    // Acquire the service.
+    const service = this.acquireService(this.hap.Service.LockMechanism, this.accessoryName, ProtectReservedNames.LOCK_ACCESS);
+
+    // Fail gracefully.
+    if(!service) {
+
+      this.log.error("Unable to add lock.");
+
+      return false;
+    }
+
+    // Configure the lock current and target state characteristics.
+    service.getCharacteristic(this.hap.Characteristic.LockTargetState).onSet(async (value: CharacteristicValue) => {
+
+      // Protect currently only supports unlocking.
+      if(value === this.hap.Characteristic.LockTargetState.SECURED) {
+
+        // Let's make sure we revert the lock to it's prior state.
+        setTimeout(() => {
+
+          service?.updateCharacteristic(this.hap.Characteristic.LockTargetState, this.hap.Characteristic.LockTargetState.UNSECURED);
+          service?.updateCharacteristic(this.hap.Characteristic.LockCurrentState, this.hap.Characteristic.LockCurrentState.UNSECURED);
+        }, 50);
+
+        return;
+      }
+
+      // Unlock the Access device.
+      const response = await this.nvr.ufpApi.retrieve(this.nvr.ufpApi.getApiEndpoint(this.ufp.modelKey) + "/" + this.ufp.id + "/unlock", { method: "POST" });
+
+      if(response?.ok) {
+
+        // Something went wrong, revert to our prior state.
+        setTimeout(() => {
+
+          service?.updateCharacteristic(this.hap.Characteristic.LockTargetState, this.hap.Characteristic.LockTargetState.UNSECURED);
+          service?.updateCharacteristic(this.hap.Characteristic.LockCurrentState, this.hap.Characteristic.LockCurrentState.UNSECURED);
+        }, 50);
+
+        return;
+      }
+    });
+
+    service.updateCharacteristic(this.hap.Characteristic.LockTargetState, this.hap.Characteristic.LockTargetState.SECURED);
+    service.updateCharacteristic(this.hap.Characteristic.LockCurrentState, this.hap.Characteristic.LockCurrentState.SECURED);
 
     return true;
   }
@@ -906,7 +1013,7 @@ export class ProtectCamera extends ProtectDevice {
   // Configure HomeKit Secure Video support.
   private configureHksv(): boolean {
 
-    this.hasHksv = !this.ufp.isThirdPartyCamera;
+    this.hasHksv = !this.ufp.isThirdPartyCamera && !this.ufp.isAdoptedByAccessApp;
 
     // If we have smart motion events enabled, let's warn the user that things will not work quite the way they expect.
     if(this.hasHksv && this.hints.smartDetect) {

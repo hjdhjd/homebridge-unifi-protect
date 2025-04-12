@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 7.13.0 (2025-04-12)
+  * New feature: UniFi Access devices hosted on the same controller as Protect and exposed through Protect, can be unlocked. Crucially - Protect only provides the capability to view the livestream of an Access reader and to unlock it. There's no ability to lock it, no motion sensor (and therefore no HKSV support). As Protect evolves it's integration with Access, HBUP will continue to provide as much capability as we can (and more, where I can).
+  * Improvement: better edge case recovery to deal with Protect controller API connectivity quirks.
+  * Housekeeping.
+
 ## 7.12.1 (2025-03-16)
   * Housekeeping.
 

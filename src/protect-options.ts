@@ -39,6 +39,7 @@ export interface ProtectNvrOptions {
 
 // HBUP's webUI makes use of additional metadata to only surface the feature options relevant for a particular device. These properties provide that metadata.
 //
+// hasAccessFeature:    Properties in the UniFi Access metadata featureFlags object that must be enabled for this option to be exposed.
 // hasCameraFeature:    Properties in the featureFlags object on cameras that must be enabled for this option to be exposed.
 // hasFeature:          Properties in the featureFlags object that must be enabled for this option to be exposed.
 // hasLightProperty:    Properties that must exist on the device object for a light device for this option to be exposed.
@@ -49,6 +50,7 @@ export interface ProtectNvrOptions {
 // modelKey:            Device categories that the option applies to, or "all" for any device type.
 interface ProtectFeatureOption extends FeatureOptionEntry {
 
+  hasAccessFeature?: string[],
   hasCameraFeature?: string[],
   hasFeature?: string[],
   hasLightProperty?: string[],
@@ -71,6 +73,7 @@ export const featureOptionCategories = [
   { description: "Motion detection feature options.", isNotProperty: [ "isAdoptedByAccessApp", "isThirdPartyCamera" ], modelKey: [ "camera", "light", "sensor" ], name: "Motion" },
   { description: "NVR feature options.", modelKey: [ "camera", "nvr" ], name: "Nvr" },
   { description: "Security system feature options.", modelKey: [ "nvr" ], name: "SecuritySystem" },
+  { description: "UniFi Access options.", modelKey: [ "camera" ], name: "UniFi.Access" },
   { description: "Video feature options.", modelKey: [ "camera" ], name: "Video" },
   { description: "HomeKit Secure Video feature options.", isNotProperty: [ "isThirdPartyCamera" ], modelKey: [ "camera" ], name: "Video.HKSV" }
 ];
@@ -164,6 +167,12 @@ export const featureOptions: { [index: string]: ProtectFeatureOption[] } = {
   "SecuritySystem": [
 
     { default: false, description: "Add a switch accessory to trigger the security system accessory, when using the liveview feature option.", name: "Alarm" }
+  ],
+
+  // HomeKit Secure Video options.
+  "UniFi.Access": [
+
+    { default: true, description: "Add a lock accessory to unlock. Currently, Protect only supports unlocking Access readers with a camera on the same controller as Protect.", hasAccessFeature: [ "supportUnlock" ], name: "Lock" }
   ],
 
   // Video options.
