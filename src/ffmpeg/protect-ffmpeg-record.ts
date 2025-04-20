@@ -42,8 +42,7 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
     // -nostats                      Suppress printing progress reports while encoding in FFmpeg.
     // -fflags flags                 Set the format flags to generate a presentation timestamp if it's missing and discard any corrupt packets rather than exit.
     // -err_detect ignore_err        Ignore decoding errors and continue rather than exit.
-    // -max_delay 500000             Set an upper limit on how much time FFmpeg can take in demuxing packets.
-    // -flags low_delay              Tell FFmpeg to optimize for low delay / realtime decoding.
+    // -probesize number             How many bytes should be analyzed for stream information. Use the size of the timeshift buffer or our configured defaults.
     // -r fps                        Set the input frame rate for the video stream.
     // -f mp4                        Tell FFmpeg that it should expect an MP4-encoded input stream.
     // -i pipe:0                     Use standard input to get video data.
@@ -52,11 +51,8 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
 
       "-hide_banner",
       "-nostats",
-      "-fflags", "+discardcorrupt+flush_packets+genpts+igndts+nobuffer",
+      "-fflags", "+discardcorrupt+genpts",
       "-err_detect", "ignore_err",
-      ...protectCamera.stream.ffmpegOptions.videoDecoder,
-      "-max_delay", "500000",
-      "-flags", "low_delay",
       "-probesize", (protectCamera.stream.hksv?.timeshift.buffer?.length ?? protectCamera.stream.probesize).toString(),
       "-r", rtspEntry.channel.fps.toString(),
       "-f", "mp4",
@@ -90,7 +86,7 @@ export class FfmpegRecordingProcess extends FfmpegProcess {
         width: recordingConfig.videoCodec.resolution[0]
       }),
 
-      "-movflags", "frag_keyframe+empty_moov+default_base_moof+omit_tfhd_offset",
+      "-movflags", "frag_keyframe+empty_moov+default_base_moof",
       "-reset_timestamps", "1",
       "-metadata", "comment=" + protectCamera.accessoryName
     );
