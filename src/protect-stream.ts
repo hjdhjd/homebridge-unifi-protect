@@ -721,7 +721,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
     if(useApi) {
 
-      const livestream = this.protectCamera.livestream.acquire(rtspEntry.channel.id, rtspEntry.lens);
+      const livestream = this.protectCamera.livestream.acquire(rtspEntry);
       let seenInitSegment = false;
 
       // We maintain a queue to manage segment writes to FFmpeg. Why? We need to account for backpressure when writing to FFmpeg.
@@ -793,7 +793,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       // Ensure we cleanup on exit.
       ffmpegStream.ffmpegProcess?.once("exit", () => {
 
-        this.protectCamera.livestream.stop(rtspEntry.channel.id, rtspEntry.lens);
+        this.protectCamera.livestream.stop(rtspEntry);
         livestream.off("segment", livestreamListener);
         livestream.off("close", closeListener);
       });
@@ -802,7 +802,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       livestream.on("segment", livestreamListener);
 
       // Kickoff our livestream.
-      if(!(await this.protectCamera.livestream.start(rtspEntry.channel.id, rtspEntry.lens))) {
+      if(!(await this.protectCamera.livestream.start(rtspEntry))) {
 
         livestream.off("segment", livestreamListener);
         livestream.off("close", closeListener);

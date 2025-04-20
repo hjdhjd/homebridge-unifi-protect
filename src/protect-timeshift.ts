@@ -3,21 +3,20 @@
  * protect-timeshift.ts: UniFi Protect livestream timeshift buffer implementation to support HomeKit Secure Video.
  */
 import { HomebridgePluginLogging, Nullable, runWithTimeout } from "homebridge-plugin-utils";
-import { ProtectCamera, ProtectCameraPackage } from "./devices/index.js";
 import { EventEmitter } from "node:events";
 import { PROTECT_HKSV_SEGMENT_RESOLUTION } from "./settings.js";
 import { PlatformAccessory } from "homebridge";
+import { ProtectCamera } from "./devices/index.js";
 import { ProtectLivestream } from "unifi-protect";
 import { ProtectNvr } from "./protect-nvr.js";
+import { RtspEntry } from "./devices/protect-camera.js";
 
 // UniFi Protect livestream timeshift buffer.
 export class ProtectTimeshiftBuffer extends EventEmitter {
 
   private _buffer: Buffer[];
-  private _channel: number;
   private _isStarted: boolean;
   private _isTransmitting: boolean;
-  private _lens?: number;
   private _segmentLength: number;
   private readonly accessory: PlatformAccessory;
   private eventHandlers: { [index: string]: ((segment: Buffer) => void) | (() => void) };
@@ -25,6 +24,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
   private readonly log: HomebridgePluginLogging;
   private readonly nvr: ProtectNvr;
   private readonly protectCamera: ProtectCamera;
+  private rtspEntry?: RtspEntry;
   private segmentCount: number;
 
   constructor(protectCamera: ProtectCamera) {
@@ -33,10 +33,8 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
     super();
 
     this._buffer = [];
-    this._channel = 0;
     this._isStarted = false;
     this._isTransmitting = false;
-    this._lens = (protectCamera instanceof ProtectCameraPackage) ? 2 : undefined;
     this.accessory = protectCamera.accessory;
     this.eventHandlers = {};
     this.log = protectCamera.log;
@@ -87,7 +85,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
   }
 
   // Start the livestream and begin maintaining our timeshift buffer.
-  public async start(channelId = this._channel, lens = this._lens): Promise<boolean> {
+  public async start(rtspEntry: RtspEntry): Promise<boolean> {
 
     // Stop the timeshift buffer if it's already running.
     if(this.isStarted) {
@@ -110,7 +108,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
     this._buffer = [];
 
     // Acquire our livestream.
-    this.livestream = this.protectCamera.livestream.acquire(channelId, lens);
+    this.livestream = this.protectCamera.livestream.acquire(rtspEntry);
 
     // Something went wrong.
     if(!this.livestream) {
@@ -123,7 +121,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
     this.livestream?.on("segment", this.eventHandlers.segment);
 
     // Start the livestream and let's begin building our timeshift buffer.
-    if(!(await this.protectCamera.livestream.start(channelId, lens, this.segmentLength))) {
+    if(!(await this.protectCamera.livestream.start(rtspEntry, this.segmentLength))) {
 
       // Something went wrong, let's cleanup our event handlers and we're done.
       Object.keys(this.eventHandlers).map(eventName => this.livestream?.off(eventName, this.eventHandlers[eventName]));
@@ -131,8 +129,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
       return false;
     }
 
-    this._channel = channelId;
-    this._lens = lens;
+    this.rtspEntry = rtspEntry;
     this._isStarted = true;
 
     // Add the initialization segment to the beginning of the timeshift buffer, if we have it. If we don't, we're either starting up or something's wrong with the API.
@@ -154,13 +151,18 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
     if(this.isStarted) {
 
       // Stop the livestream and remove the listeners.
-      this.protectCamera.livestream.stop(this._channel, this._lens);
+      if(this.rtspEntry) {
+
+        this.protectCamera.livestream.stop(this.rtspEntry);
+      }
+
       Object.keys(this.eventHandlers).map(eventName => this.livestream?.off(eventName, this.eventHandlers[eventName]));
     }
 
     this._buffer = [];
     this._isStarted = false;
     this.livestream = undefined;
+    this.rtspEntry = undefined;
 
     return true;
   }
@@ -176,7 +178,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
   public async transmitStart(): Promise<boolean> {
 
     // If we haven't started the livestream, or it was closed for some reason, let's start it now.
-    if((!this.isStarted && !(await this.start())) || !this.livestream?.initSegment) {
+    if((!this.isStarted && this.rtspEntry && !(await this.start(this.rtspEntry))) || !this.livestream?.initSegment) {
 
       this.log.error("Unable to connect to the Protect livestream API — usually occurs when the Protect controller or devices reboot. Retrying shortly.");
 
@@ -259,22 +261,10 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
     return (this.livestream?.initSegment && this._buffer.length) ? Buffer.concat([ this.livestream.initSegment, ...this._buffer ]) : null;
   }
 
-  // Return the current camera that we're using for this timeshift buffer.
-  public get channel(): number {
-
-    return this._channel;
-  }
-
-  // Return the current lens that we're using for this timeshift buffer.
-  public get lens(): number | undefined {
-
-    return this._lens;
-  }
-
   // Return whether the underlying livestream connection is currently restarting itself.
   public get isRestarting(): boolean {
 
-    return this.protectCamera.livestream?.isRestarting(this._channel, this._lens);
+    return this.rtspEntry ? this.protectCamera.livestream?.isRestarting(this.rtspEntry) : false;
   }
 
   // Return whether or not we have started the timeshift buffer.

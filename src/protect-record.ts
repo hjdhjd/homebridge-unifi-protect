@@ -141,7 +141,8 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
 
     // If we've explicitly disabled HKSV recording, or we have issues setting up our timeshift buffer, we're done right now. Otherwise, start transmitting our timeshift
     // buffer and process it through FFmpeg.
-    if(!this.accessory.context.hksvRecording || !this.isInitialized || this.timeshift.isRestarting || !(await this.startTransmitting()) || !this.ffmpegStream) {
+    if(!this.accessory.context.hksvRecording || !this.isInitialized || this.timeshift.isRestarting || !this.protectCamera.isOnline ||
+      (this.timeshift.time < (this.recordingConfig?.prebufferLength ?? -1)) || !(await this.startTransmitting()) || !this.ffmpegStream) {
 
       // Stop transmitting.
       if(this.isTransmitting) {
@@ -177,13 +178,16 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
       yield { data: segment, isLast: false };
     }
 
-    // If FFmpeg timed out it's typically due to the quality of the video coming from the Protect controller. Restart the livestream API to see if we can improve things.
-    if(this.ffmpegStream?.isTimedOut) {
+    // If FFmpeg timed out it's typically due to issues with the video coming from the Protect controller. Restart the timeshift buffer to see if we can improve things.
+    if(this.ffmpegStream?.isTimedOut || !this.transmittedSegments) {
 
       this.timeshift.restart();
 
-      // Send HKSV a final segment to cleanly wrap up.
-      yield { data: Buffer.alloc(1, 0), isLast: true };
+      if(this.ffmpegStream?.isTimedOut) {
+
+        // Send HKSV a final segment to cleanly wrap up.
+        yield { data: Buffer.alloc(1, 0), isLast: true };
+      }
     }
   }
 
@@ -212,13 +216,12 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
       return false;
     }
 
-    const timeshiftError = "Unable to configure HomeKit Secure Video event recording support";
+    const timeshiftError = "Unable to configure HKSV event recording support";
 
     // If the camera isn't connected, don't attempt to do anything with the timeshift buffer or HKSV quite yet.
     if(!this.protectCamera.isOnline) {
 
-      this.log.error("%s: the camera is not currently connected to the Protect controller." +
-        " HomeKit Secure Video event recording will resume once the camera reconnects to the Protect controller.", timeshiftError);
+      this.log.error("%s: the camera is offline or unavailable. Event recording will resume after the camera is online.", timeshiftError);
 
       return false;
     }
@@ -249,7 +252,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     }
 
     // Fire up the timeshift buffer. If we've got multiple lenses, we use the first channel and explicitly request the lens we want.
-    if(!(await this.timeshift.start(this.rtspEntry.channel.id, this.rtspEntry.lens))) {
+    if(!(await this.timeshift.start(this.rtspEntry))) {
 
       return false;
     }
@@ -529,8 +532,8 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
 
     this.closedReason = reason;
 
-    // Inform the user when things stopped unexpectedly, and reset the timeshift buffer for good measure.
-    if((reason !== undefined) && (reason !== HDSProtocolSpecificErrorReason.NORMAL) && !this.timeshift.isRestarting) {
+    // Inform the user when things stopped unexpectedly, accounting for known factors like the camera being online or the timeshift buffer restarting.
+    if((reason !== undefined) && (reason !== HDSProtocolSpecificErrorReason.NORMAL) && !this.timeshift.isRestarting && this.protectCamera.isOnline) {
 
       this.log.error("HKSV recording event ended early: %s", reasonDescription);
     }
