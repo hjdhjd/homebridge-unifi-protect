@@ -27,7 +27,7 @@ For the more technically inclined - this plugin has continued to pioneer the Hom
 
 - **Full HomeKit support for the UniFi Protect ecosystem.** All generally available UniFi Protect devices are supported, including cameras, chimes, doorbells, lights, sensors, and Viewports.
 
-- **[Complete HomeKit Secure Video support for all UniFi Protect cameras.](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/HomeKitSecureVideo.md)** Complete HomeKit Secure Video support, without the need for additional plugins or software beyond FFmpeg. Another community first - all without the need for additional tools to get a complete solution.
+- **[Complete HomeKit Secure Video support for all UniFi Protect cameras.](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/HomeKitSecureVideo.md)** Complete HomeKit Secure Video support, without the need for additional plugins or software beyond FFmpeg. Another community first - all without the need for additional tools to get a complete solution. Third party cameras using an AI Port are also fully supported.
 
 - **Incredibly high performance.** I've spent the time to optimize the video streaming experience to ensure it feels very responsive, and *just works*. For those that have hardware-accelerated CPUs and GPUs, live video stream load times using the Home app on iOS average at 0.2-0.3 seconds on a day-to-day basis, which is often better than the native UniFi Protect app! Supported hardware-accelerated platforms are currently: Apple Macs (both Intel and Apple Silicon), Intel Quick Sync Video-enabled CPUs, and Raspberry Pi 4. When not using hardware acceleration, or on slower systems, you can expect live video streams to load within 1-2 seconds.
 

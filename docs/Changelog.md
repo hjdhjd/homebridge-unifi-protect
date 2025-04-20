@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 7.14.0 (2025-04-20)
+  * New feature: Third party cameras connected paired with an AI Port can be used for HKSV. An AI Port provides the necessary Protect plumbing to generate motion events and smart motion events from third party cameras. If a camera is no longer paired with an AI Port, HKSV support for it will be disabled.
+  * Improvement: I've reverted a set of optimizations I made last year to HKSV that cause audio and occasional video issues in recorded events. The result should be a smoother HKSV event recording experience at the expense of some minor additional CPU overhead. Seems that hardware accelerated video decoding in FFmpeg doesn't like the particular way HKSV prefers things. Thanks to @mn7474 for persistently raising the issue and having a sharp memory to help me track this down quickly.
+  * Housekeeping.
+
 ## 7.13.0 (2025-04-12)
   * New feature: UniFi Access devices hosted on the same controller as Protect and exposed through Protect, can be unlocked. Crucially - Protect only provides the capability to view the livestream of an Access reader and to unlock it. There's no ability to lock it, no motion sensor (and therefore no HKSV support). As Protect evolves it's integration with Access, HBUP will continue to provide as much capability as we can (and more, where I can).
   * Improvement: better edge case recovery to deal with Protect controller API connectivity quirks.

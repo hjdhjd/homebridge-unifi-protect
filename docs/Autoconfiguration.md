@@ -39,7 +39,7 @@ Briefly:
 
 HomeKit bitrates are notoriously conservative from a bandwidth and quality perspective - they're downright low and result can result in far less than ideal video quality. You can further customize the bitrates used for local and non-local streaming when transcoded, using HBUP's feature options.
 
-The defaault behavior can be tailored to your preferences, using the appropriate [feature options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md#video).
+The default behavior can be tailored to your preferences, using the appropriate [feature options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md#video).
 
 #### How HBUP Stream Quality Selection Works When Transcding
 When transcoding, these are the rules used to determine which Protect camera streams (Protect has three stream qualities available: High, Medium, and Low) are used for transcoding.
