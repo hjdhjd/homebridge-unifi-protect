@@ -21,7 +21,6 @@ export class ProtectCameraPackage extends ProtectCamera {
     const parentCamera = this.nvr.getDeviceById(this.ufp.id);
 
     this.flashlightState = false;
-    this.hasHksv = true;
     this.hints.probesize = 32768;
 
     // Inherit settings from our parent.

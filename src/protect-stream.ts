@@ -96,7 +96,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     this.ffmpegOptions = new FfmpegOptions(protectCamera);
 
     // Setup for HKSV, if enabled.
-    if(this.protectCamera.hasHksv) {
+    if(this.protectCamera.isHksvCapable) {
 
       this.hksv = new ProtectRecordingDelegate(protectCamera);
     }
@@ -114,7 +114,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       delegate: this,
 
       // Our recording capabilities for HomeKit Secure Video.
-      recording: !this.protectCamera.hasHksv ? undefined : {
+      recording: !this.protectCamera.isHksvCapable ? undefined : {
 
         delegate: this.hksv as ProtectRecordingDelegate,
 
@@ -163,7 +163,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       },
 
       // Our motion sensor.
-      sensors: !this.protectCamera.hasHksv ? undefined : {
+      sensors: !this.protectCamera.isHksvCapable ? undefined : {
 
         motion: this.protectCamera.accessory.getService(this.hap.Service.MotionSensor)
       },

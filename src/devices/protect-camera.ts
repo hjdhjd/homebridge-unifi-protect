@@ -35,7 +35,6 @@ export class ProtectCamera extends ProtectDevice {
   private accessUnlockTimer?: NodeJS.Timeout;
   private ambientLight: number;
   private ambientLightTimer?: NodeJS.Timeout;
-  public hasHksv: boolean;
   private isDeleted: boolean;
   public isRinging: boolean;
   public detectLicensePlate: string[];
@@ -52,7 +51,6 @@ export class ProtectCamera extends ProtectDevice {
     super(nvr, accessory);
 
     this.ambientLight = 0;
-    this.hasHksv = false;
     this.isDeleted = false;
     this.isRinging = false;
     this.detectLicensePlate = [];
@@ -140,7 +138,7 @@ export class ProtectCamera extends ProtectDevice {
     this.configureMqtt();
 
     // Configure the motion sensor.
-    this.configureMotionSensor(!this.ufp.isThirdPartyCamera && !this.ufp.isAdoptedByAccessApp);
+    this.configureMotionSensor(this.isHksvCapable);
 
     // Configure smart motion contact sensors.
     this.configureMotionSmartSensor();
@@ -706,7 +704,7 @@ export class ProtectCamera extends ProtectDevice {
     // Retrieve the camera status light if we have it enabled.
     const statusLight = service?.getCharacteristic(this.hap.Characteristic.CameraOperatingModeIndicator);
 
-    if(!this.hasHksv || !this.hints.ledStatus) {
+    if(!this.isHksvCapable || !this.hints.ledStatus) {
 
       if(statusLight) {
 
@@ -725,7 +723,7 @@ export class ProtectCamera extends ProtectDevice {
     // Retrieve the night vision indicator if we have it enabled.
     const nightVision = service?.getCharacteristic(this.hap.Characteristic.NightVision);
 
-    if(!this.hasHksv || !this.hints.nightVision) {
+    if(!this.isHksvCapable || !this.hints.nightVision) {
 
       if(nightVision) {
 
@@ -1013,10 +1011,8 @@ export class ProtectCamera extends ProtectDevice {
   // Configure HomeKit Secure Video support.
   private configureHksv(): boolean {
 
-    this.hasHksv = !this.ufp.isThirdPartyCamera && !this.ufp.isAdoptedByAccessApp;
-
     // If we have smart motion events enabled, let's warn the user that things will not work quite the way they expect.
-    if(this.hasHksv && this.hints.smartDetect) {
+    if(this.isHksvCapable && this.hints.smartDetect) {
 
       this.log.info("WARNING: Smart motion detection and HomeKit Secure Video provide overlapping functionality. " +
         "Only HomeKit Secure Video, when event recording is enabled in the Home app, will be used to trigger motion event notifications for this camera." +
@@ -1527,6 +1523,11 @@ export class ProtectCamera extends ProtectDevice {
   protected getResolution(resolution: Resolution): string {
 
     return resolution[0].toString() + "x" + resolution[1].toString() + "@" + resolution[2].toString() + "fps";
+  }
+
+  public get isHksvCapable(): boolean {
+
+    return (!this.ufp.isThirdPartyCamera && !this.ufp.isAdoptedByAccessApp) || (this.ufp.isThirdPartyCamera && this.ufp.isPairedWithAiPort);
   }
 
   // Utility function to return the current night vision state of a camera. It's a blunt instrument due to HomeKit constraints.
