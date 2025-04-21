@@ -155,7 +155,7 @@ export class ProtectNvr {
 
       // Unregister all the accessories for this controller from Homebridge that may have been restored already. Any additional ones will be automatically caught when
       // they are restored.
-      this.platform.accessories.filter(accessory => accessory.context.nvr === this.ufp.mac).map(accessory => this.removeHomeKitDevice(accessory));
+      this.platform.accessories.filter(accessory => accessory.context.nvr === this.ufp.mac).map(accessory => this.removeHomeKitDevice(accessory, true));
 
       return;
     }
@@ -419,7 +419,10 @@ export class ProtectNvr {
   private cleanupDevices(): void {
 
     // Process the device removal queue before we do anything else.
-    this.platform.accessories.filter(accessory => Object.keys(this.deviceRemovalQueue).includes(accessory.UUID)).map(accessory => this.removeHomeKitDevice(accessory));
+    this.platform.accessories.filter(accessory => Object.keys(this.deviceRemovalQueue).includes(accessory.UUID)).map(accessory =>
+      // eslint-disable-next-line @stylistic/implicit-arrow-linebreak
+      this.removeHomeKitDevice(accessory, !this.platform.featureOptions.test("Device",
+        (accessory.getService(this.hap.Service.AccessoryInformation)?.getCharacteristic(this.hap.Characteristic.SerialNumber).value as string) ?? "", this.ufp.mac)));
 
     // Cleanup our accessories.
     for(const accessory of this.platform.accessories.filter(x => x.context.nvr === this.ufp.mac)) {
@@ -431,7 +434,8 @@ export class ProtectNvr {
       // catch those orphan devices here.
       if(!protectDevice) {
 
-        this.removeHomeKitDevice(accessory);
+        this.removeHomeKitDevice(accessory, !this.platform.featureOptions.test("Device",
+          (accessory.getService(this.hap.Service.AccessoryInformation)?.getCharacteristic(this.hap.Characteristic.SerialNumber).value as string) ?? ""));
 
         continue;
       }
@@ -466,7 +470,7 @@ export class ProtectNvr {
       }
 
       // Process the device removal.
-      this.removeHomeKitDevice(accessory);
+      this.removeHomeKitDevice(accessory, !this.hasFeature("Device", protectDevice.ufp));
     }
   }
 
