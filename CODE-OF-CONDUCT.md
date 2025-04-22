@@ -8,7 +8,7 @@ Always be mindful that in the free / open source community, people are contribut
 
 * Harassment includes sexual language and imagery, deliberate intimidation, stalking, name-calling, unwelcome attention, libel, and any malicious hacking or social engineering. This repository should be a harassment-free experience for everyone, regardless of your background, identity, or experience level.
 
-* Trolling includes posting inflammatory comments to provoke an emotional response or disrupt discussions.
+* Trolling includes posting inflammatory comments to provoke an emotional response or disrupting discussions.
 
 * Spamming includes posting off-topic messages to disrupt discussions, promote a product, solicit donations, advertise a job / internship / gig, or flooding discussions with files or text.
 

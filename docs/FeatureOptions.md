@@ -56,6 +56,7 @@ These option(s) apply to: Protect cameras.
 | <A NAME="Audio.Filter.Noise.HighPass"></A><CODE>Audio.Filter.Noise.HighPass<I>.Value</I></CODE>  | Frequency, in Hertz, for the FFmpeg highpass filter. **(default: 200)**.
 | <A NAME="Audio.Filter.Noise.LowPass"></A><CODE>Audio.Filter.Noise.LowPass<I>.Value</I></CODE>  | Frequency, in Hertz, for the FFmpeg lowpass filter. **(default: 1000)**.
 | <A NAME="Audio.TwoWay"></A>`Audio.TwoWay`                                           | Two-way audio support on supported cameras. **(default: enabled)**. <BR>*Supported on Protect devices that have a speaker (e.g. Protect doorbells).*
+| <A NAME="Audio.TwoWay.Direct"></A>`Audio.TwoWay.Direct`                             | Send two-way audio directly to supported cameras, bypassing the controller. Useful for working around bugs in some Protect controller firmware versions. **(default: disabled)**. <BR>*Supported on Protect devices that have a speaker (e.g. Protect doorbells).*
 
 #### <A NAME="device"></A>Device feature options.
 

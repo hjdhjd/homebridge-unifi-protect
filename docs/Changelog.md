@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 7.15.0 (2025-04-22)
+  * New feature: Send two-way audio directly to supported cameras, bypassing the controller. Useful for working around bugs in some Protect controller firmware versions. It's disabled by default and requires ensuring that HBUP can access the camera directly over your network (for obvious reasons). Why is this useful? Well...Protect can be flaky with two-way audio in the API-supported mechanism it provides. Protect's been addressing this by disabling functionality in the native Protect app in recent releases because there's some bugginess in the controller. For instance, if you use HEVC (aka enhanced encoding) for a camera that supports two-way audio, you can't use the native Protect app to send two-way audio. It's disabled by default because this should really not be needed (maybe one day?), but it is for some users and use cases.
+  * Housekeeping.
+
 ## 7.14.0 (2025-04-20)
   * New feature: Third party cameras connected paired with an AI Port can be used for HKSV. An AI Port provides the necessary Protect plumbing to generate motion events and smart motion events from third party cameras. If a camera is no longer paired with an AI Port, HKSV support for it will be disabled.
   * Improvement: I've reverted a set of optimizations I made last year to HKSV that cause audio and occasional video issues in recorded events. The result should be a smoother HKSV event recording experience at the expense of some minor additional CPU overhead. Seems that hardware accelerated video decoding in FFmpeg doesn't like the particular way HKSV prefers things. Thanks to @mn7474 for persistently raising the issue and having a sharp memory to help me track this down quickly.
