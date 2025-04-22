@@ -88,7 +88,8 @@ export const featureOptions: { [index: string]: ProtectFeatureOption[] } = {
     { default: true, defaultValue: PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, description: "Noise reduction amount, in decibels, for the FFmpeg afftdn filter.", group: "Filter.Noise", name: "Filter.Noise.FftNr" },
     { default: false, defaultValue: PROTECT_FFMPEG_AUDIO_FILTER_HIGHPASS, description: "Frequency, in Hertz, for the FFmpeg highpass filter.", group: "Filter.Noise", name: "Filter.Noise.HighPass" },
     { default: false, defaultValue: PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS, description: "Frequency, in Hertz, for the FFmpeg lowpass filter.", group: "Filter.Noise", name: "Filter.Noise.LowPass" },
-    { default: true, description: "Two-way audio support on supported cameras.", hasFeature: [ "hasSpeaker" ], name: "TwoWay" }
+    { default: true, description: "Two-way audio support on supported cameras.", hasFeature: [ "hasSpeaker" ], name: "TwoWay" },
+    { default: false, description: "Send two-way audio directly to supported cameras, bypassing the controller. Useful for working around bugs in some Protect controller firmware versions.", group: "TwoWay", hasFeature: [ "hasSpeaker" ], name: "TwoWay.Direct" }
   ],
 
   // Device options.

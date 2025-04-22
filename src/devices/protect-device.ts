@@ -55,7 +55,8 @@ export interface ProtectHints {
   transcodeBitrate: number,
   transcodeHighLatency: boolean,
   transcodeHighLatencyBitrate: number,
-  twoWayAudio: boolean
+  twoWayAudio: boolean,
+  twoWayAudioDirect: boolean
 }
 
 export abstract class ProtectBase {

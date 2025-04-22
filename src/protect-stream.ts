@@ -887,9 +887,16 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       "-ar", this.protectCamera.ufp.talkbackSettings.samplingRate.toString(),
       "-b:a", request.audio.max_bit_rate.toString() + "k",
       "-ac", this.protectCamera.ufp.talkbackSettings.channels.toString(),
-      "-f", "adts",
-      "pipe:1"
+      "-f", "adts"
     ];
+
+    if(this.protectCamera.hints.twoWayAudioDirect) {
+
+      ffmpegReturnAudioCmd.push("udp://" + this.protectCamera.ufp.host + ":" + this.protectCamera.ufp.talkbackSettings.bindPort.toString());
+    } else {
+
+      ffmpegReturnAudioCmd.push("pipe:1");
+    }
 
     // Additional logging, but only if we're debugging.
     if(this.platform.verboseFfmpeg || this.verboseFfmpeg) {
@@ -918,7 +925,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
         }
       };
 
-      if(sessionInfo.talkBack) {
+      if(sessionInfo.talkBack && !this.protectCamera.hints.twoWayAudioDirect) {
 
         // Open the talkback connection.
         ws = new WebSocket(sessionInfo.talkBack, { rejectUnauthorized: false });
@@ -980,30 +987,33 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       // Feed the SDP session description to FFmpeg on stdin.
       ffmpegReturnAudio.stdin?.end(sdpReturnAudio + "\n");
 
-      // Send the audio.
-      ffmpegReturnAudio.stdout?.on("data", dataListener = (data: Buffer): void => {
+      // Send the audio, if we're communicating through the Protect controller. Otherwise, FFmpeg is handling this directly with the camera.
+      if(!this.protectCamera.hints.twoWayAudioDirect) {
 
-        ws?.send(data, (error?: Error): void => {
+        ffmpegReturnAudio.stdout?.on("data", dataListener = (data: Buffer): void => {
 
-          // This happens when an error condition is encountered on sending data to the websocket. We assume the worst and close our talkback channel.
-          if(error) {
+          ws?.send(data, (error?: Error): void => {
 
-            wsCleanup();
-          }
+            // This happens when an error condition is encountered on sending data to the websocket. We assume the worst and close our talkback channel.
+            if(error) {
+
+              wsCleanup();
+            }
+          });
         });
-      });
 
-      // Make sure we terminate the talkback websocket when we're done.
-      ffmpegReturnAudio.ffmpegProcess?.once("exit", () => {
+        // Make sure we terminate the talkback websocket when we're done.
+        ffmpegReturnAudio.ffmpegProcess?.once("exit", () => {
 
-        // Make sure we catch any stray connections that may be too slow to open.
-        isTalkbackLive = false;
+          // Make sure we catch any stray connections that may be too slow to open.
+          isTalkbackLive = false;
 
-        // Clean up our talkback websocket.
-        wsCleanup();
+          // Clean up our talkback websocket.
+          wsCleanup();
 
-        ffmpegReturnAudio.stdout?.off("data", dataListener);
-      });
+          ffmpegReturnAudio.stdout?.off("data", dataListener);
+        });
+      }
     } catch(error) {
 
       this.log.error("Unable to connect to the return audio channel: %s", error);

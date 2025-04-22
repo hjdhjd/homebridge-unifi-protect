@@ -88,6 +88,7 @@ export class ProtectCamera extends ProtectDevice {
     this.hints.transcodeHighLatency = this.hasFeature("Video.Transcode.HighLatency");
     this.hints.transcodeHighLatencyBitrate = this.getFeatureNumber("Video.Transcode.HighLatency.Bitrate") as number;
     this.hints.twoWayAudio = this.ufp.featureFlags.hasSpeaker && this.hasFeature("Audio") && this.hasFeature("Audio.TwoWay");
+    this.hints.twoWayAudioDirect = this.ufp.featureFlags.hasSpeaker && this.hasFeature("Audio") && this.hasFeature("Audio.TwoWay.Direct");
 
     // Sanity check our target transcoding bitrates, if defined.
     if((this.hints.transcodeBitrate === null) || (this.hints.transcodeBitrate === undefined) || (this.hints.transcodeBitrate <= 0)) {
@@ -1525,18 +1526,19 @@ export class ProtectCamera extends ProtectDevice {
     return resolution[0].toString() + "x" + resolution[1].toString() + "@" + resolution[2].toString() + "fps";
   }
 
+  // Utility property to return whether the camera is HKSV capable or not.
   public get isHksvCapable(): boolean {
 
     return (!this.ufp.isThirdPartyCamera && !this.ufp.isAdoptedByAccessApp) || (this.ufp.isThirdPartyCamera && this.ufp.isPairedWithAiPort);
   }
 
-  // Utility function to return the current night vision state of a camera. It's a blunt instrument due to HomeKit constraints.
+  // Utility property to return the current night vision state of a camera. It's a blunt instrument due to HomeKit constraints.
   private get nightVision(): boolean {
 
     return (this.ufp as ProtectCameraConfig)?.ispSettings?.irLedMode !== "off";
   }
 
-  // Utility function to return the current night vision state of a camera, mapped to a brightness characteristic.
+  // Utility property to return the current night vision state of a camera, mapped to a brightness characteristic.
   private get nightVisionBrightness(): number {
 
     switch(this.ufp.ispSettings.irLedMode) {
