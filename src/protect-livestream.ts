@@ -114,10 +114,10 @@ export class LivestreamManager {
       this.startTime[index] = Date.now();
 
       // Configure a restart event for the livestream API session so we can restart the session in case of problems.
-      this.livestreams[index].on("restart", this.eventHandlers[index + ".restart"] = async (): Promise<void> => {
+      this.livestreams[index].on("restart", this.eventHandlers[index + ".restart"] = async (retryRestart = false): Promise<void> => {
 
-        // If we have a restart inflight, we're done.
-        if(this.restarting[index]) {
+        // If we have a restart inflight and this restart trigger isn't internally triggered, we're done.
+        if(this.restarting[index] && !retryRestart) {
 
           return;
         }
@@ -133,9 +133,9 @@ export class LivestreamManager {
         this.livestreams[index].stop();
 
         // If the camera isn't connected, let's retry again in a minute.
-        if(!this.protectCamera.ufp.isConnected) {
+        if(!this.protectCamera.isOnline) {
 
-          this.segmentTimer[index] = setTimeout(() => this.livestreams[index].emit("restart"), 60 * 1000);
+          this.segmentTimer[index] = setTimeout(() => this.livestreams[index].emit("restart", true), 60 * 1000);
 
           return;
         }
@@ -150,10 +150,10 @@ export class LivestreamManager {
         // Check on the state of our livestream API session regularly.
         this.segmentTimer[index] = setTimeout(() => this.livestreams[index].emit("restart"), LIVESTREAM_TIMEOUT);
 
-        // Increase our backoff interval in case we've got a stuck livestream websocket on the Protect controller.
+        // Increase our backoff interval in case we've got a stuck livestream websocket on the Protect controller or the camera is offline.
         this.restartDelay[index] = Math.min(this.restartDelay[index] + (LIVESTREAM_RESTART_INTERVAL / 2), LIVESTREAM_RESTART_INTERVAL * 3);
 
-        // We've restarted.
+        // We're done with this restart attempt.
         this.restarting[index] = false;
       });
 
