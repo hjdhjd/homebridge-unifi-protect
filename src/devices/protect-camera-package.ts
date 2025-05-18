@@ -26,7 +26,7 @@ export class ProtectCameraPackage extends ProtectCamera {
     // Inherit settings from our parent.
     if(parentCamera) {
 
-      this.hints.apiStreaming = parentCamera.hints.apiStreaming;
+      this.hints.tsbStreaming = parentCamera.hints.tsbStreaming;
       this.hints.hardwareDecoding = parentCamera.hints.hardwareDecoding;
       this.hints.hardwareTranscoding = parentCamera.hints.hardwareTranscoding;
       this.hints.highResSnapshots = parentCamera.hints.highResSnapshots;

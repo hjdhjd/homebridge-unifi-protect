@@ -3,9 +3,8 @@
  * protect-snapshot.ts: UniFi Protect HomeKit snapshot class.
  */
 import { API, HAP, SnapshotRequest } from "homebridge";
-import { HomebridgePluginLogging, Nullable, runWithTimeout } from "homebridge-plugin-utils";
+import { FfmpegExec, HomebridgePluginLogging, Nullable, runWithTimeout } from "homebridge-plugin-utils";
 import { PROTECT_LIVESTREAM_API_IDR_INTERVAL, PROTECT_SNAPSHOT_CACHE_MAXAGE } from "./settings.js";
-import { FfmpegExec } from "./ffmpeg/index.js";
 import { ProtectCamera } from "./devices/index.js";
 import { ProtectNvr } from "./protect-nvr.js";
 import { ProtectPlatform } from "./protect-platform.js";
@@ -197,12 +196,12 @@ export class ProtectSnapshot {
     // -fps_mode vfr        Ensure we deal with any variable frame rates that might occur.
     // -frames:v 1          Extract a single video frame for the output.
     // -q:v 2               Set the quality output of the JPEG output.
-    const ffmpegOptions = [
+    const commandLineOptions = [
 
       "-hide_banner",
       "-nostats",
       "-fflags", "+discardcorrupt+genpts",
-      ...this.protectCamera.stream.ffmpegOptions.videoDecoder,
+      ...this.protectCamera.stream.ffmpegOptions.videoDecoder(this.protectCamera.ufp.videoCodec),
       "-max_delay", "500000",
       "-flags", "low_delay",
       "-skip_frame", "nointra",
@@ -219,7 +218,7 @@ export class ProtectSnapshot {
       //
       // select             Select only keyframes. These will be full images and avoid potential image corruption, especially in HEVC use cases.
       // scale=             Scale the image down, if needed, but never upscale it, preserving aspect ratios and letterboxing where needed.
-      ffmpegOptions.push("-filter:v", [
+      commandLineOptions.push("-filter:v", [
 
         "scale=" + request.width.toString(), request.height.toString(),
         "force_original_aspect_ratio=decrease,pad=" + request.width.toString(), request.height.toString(),
@@ -230,7 +229,7 @@ export class ProtectSnapshot {
     // -f image2pipe        Specifies the output format to use a pipe, since we are outputting to stdout and want to consume the data directly.
     // -c:v mjpeg           Specify the MJPEG encoder to get a JPEG file.
     // pipe:1               Output the snapshot to standard output.
-    ffmpegOptions.push(
+    commandLineOptions.push(
 
       "-f", "image2pipe",
       "-c:v", "mjpeg",
@@ -238,7 +237,7 @@ export class ProtectSnapshot {
     );
 
     // Instantiate FFmpeg.
-    const ffmpeg = new FfmpegExec(this.protectCamera, ffmpegOptions, false);
+    const ffmpeg = new FfmpegExec(this.protectCamera.stream.ffmpegOptions, commandLineOptions, false);
 
     // Retrieve the snapshot.
     const ffmpegResult = await ffmpeg.exec(buffer);
@@ -264,12 +263,12 @@ export class ProtectSnapshot {
     // -f image2pipe        Specifies the output format to use a pipe, since we are outputting to stdout and want to consume the data directly.
     // -c:v mjpeg           Specify the MJPEG encoder to get a JPEG file.
     // pipe:1               Output the cropped snapshot to standard output.
-    const ffmpeg = new FfmpegExec(this.protectCamera, [
+    const ffmpeg = new FfmpegExec(this.protectCamera.stream.ffmpegOptions, [
 
       "-hide_banner",
       "-nostats",
       "-fflags", "+discardcorrupt+genpts",
-      ...this.protectCamera.stream.ffmpegOptions.videoDecoder,
+      ...this.protectCamera.stream.ffmpegOptions.videoDecoder(this.protectCamera.ufp.videoCodec),
       "-max_delay", "500000",
       "-flags", "low_delay",
       "-i", "pipe:0",

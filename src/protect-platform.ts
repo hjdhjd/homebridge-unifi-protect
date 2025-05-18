@@ -3,15 +3,11 @@
  * protect-platform.ts: homebridge-unifi-protect platform class.
  */
 import { API, APIEvent, DynamicPlatformPlugin, Logging, PlatformAccessory, PlatformConfig } from "homebridge";
-import { FeatureOptions, RtpPortAllocator } from "homebridge-plugin-utils";
+import { FeatureOptions, FfmpegCodecs, RtpPortAllocator } from "homebridge-plugin-utils";
 import { PROTECT_FFMPEG_OPTIONS, PROTECT_MQTT_TOPIC } from "./settings.js";
 import { ProtectNvrOptions, ProtectOptions, featureOptionCategories, featureOptions } from "./protect-options.js";
-import { FfmpegCodecs } from "./ffmpeg/index.js";
 import { ProtectNvr } from "./protect-nvr.js";
 import ffmpegPath from "ffmpeg-for-homebridge";
-import os from "node:os";
-import { platform } from "node:process";
-import { readFileSync } from "node:fs";
 import util from "node:util";
 
 export class ProtectPlatform implements DynamicPlatformPlugin {
@@ -24,12 +20,10 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
   public readonly featureOptions: FeatureOptions;
   public readonly log: Logging;
   public readonly rtpPorts: RtpPortAllocator;
-  private _hostSystem: string;
   public verboseFfmpeg: boolean;
 
   constructor(log: Logging, config: PlatformConfig, api: API) {
 
-    this._hostSystem = "";
     this.accessories = [];
     this.api = api;
     this.controllers = [];
@@ -103,11 +97,8 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
       this.controllers.push(new ProtectNvr(this, controllerConfig));
     }
 
-    // Identify what we're running on so we can take advantage of hardware-specific features.
-    this.probeHwOs();
-
     // Probe our FFmpeg capabilities.
-    this.codecSupport = new FfmpegCodecs(this);
+    this.codecSupport = new FfmpegCodecs({ ffmpegExec: this.config.videoProcessor, log: this.log, verbose: this.verboseFfmpeg });
 
     // Avoid a prospective race condition by waiting to configure our controllers until Homebridge is done loading all the cached accessories it knows about, and calling
     // configureAccessory() on each.
@@ -136,56 +127,6 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
       // Login to the Protect controller.
       void controller.login();
     }
-  }
-
-  // Identify what hardware and operating system environment we're actually running on.
-  private probeHwOs(): void {
-
-    // Start off with a generic identifier.
-    this._hostSystem = "generic";
-
-    // Take a look at the platform we're on for an initial hint of what we are.
-    switch(platform) {
-
-      // The beloved macOS.
-      case "darwin":
-
-        this._hostSystem = "macOS." + (os.cpus()[0].model.includes("Apple") ? "Apple" : "Intel");
-
-        break;
-
-      // The indomitable Linux.
-      case "linux":
-
-        // Let's further see if we're a small, but scrappy, Raspberry Pi.
-        try {
-
-          // As of the 4.9 kernel, Raspberry Pi prefers to be identified using this method and has deprecated cpuinfo.
-          const systemId = readFileSync("/sys/firmware/devicetree/base/model", { encoding: "utf8" });
-
-          // Is it a Pi 4?
-          if(/Raspberry Pi (Compute Module )?4/.test(systemId)) {
-
-            this._hostSystem = "raspbian";
-          }
-        } catch(error) {
-
-          // We aren't especially concerned with errors here, given we're just trying to ascertain the system information through hints.
-        }
-
-        break;
-
-      default:
-
-        // We aren't trying to solve for every system type.
-        break;
-    }
-  }
-
-  // Utility to return the hardware environment we're on.
-  public get hostSystem(): string {
-
-    return this._hostSystem;
   }
 
   // Utility for debug logging.

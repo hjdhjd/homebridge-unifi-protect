@@ -2,11 +2,11 @@
  *
  * protect-livestream.ts: Protect livestream API manager.
  */
+import { FfmpegLivestreamProcess, sleep } from "homebridge-plugin-utils";
 import { PROTECT_HKSV_SEGMENT_RESOLUTION } from "./settings.js";
 import { ProtectCamera } from "./devices/index.js";
 import { ProtectLivestream } from "unifi-protect";
 import { RtspEntry } from "./devices/protect-camera.js";
-import { sleep } from "homebridge-plugin-utils";
 
 const LIVESTREAM_TIMEOUT = 3500;
 const LIVESTREAM_RESTART_INTERVAL = 10;
@@ -14,7 +14,7 @@ const LIVESTREAM_RESTART_INTERVAL = 10;
 export class LivestreamManager {
 
   private eventHandlers: { [index: string]: () => void };
-  private livestreams: { [index: string]: ProtectLivestream };
+  private livestreams: { [index: string]: FfmpegLivestreamProcess | ProtectLivestream };
   private protectCamera: ProtectCamera;
   private restartDelay: { [index: string]: number };
   private restarting: { [index: string]: boolean };
@@ -46,7 +46,7 @@ export class LivestreamManager {
   }
 
   // Retrieve a connection to the livestream API for a given channel.
-  public acquire(rtspEntry: RtspEntry): ProtectLivestream {
+  public acquire(rtspEntry: RtspEntry): FfmpegLivestreamProcess | ProtectLivestream {
 
     const { index } = this.getIndex(rtspEntry);
 
@@ -58,6 +58,12 @@ export class LivestreamManager {
 
     // Create a new livestream instance.
     this.subscriberCount[index] = 0;
+
+    if(this.protectCamera.hasFeature("Debug.Video.HKSV.UseRtsp") && this.protectCamera.stream.hksv?.recordingConfiguration) {
+
+      return this.livestreams[index] = new FfmpegLivestreamProcess(this.protectCamera.stream.ffmpegOptions, this.protectCamera.stream.hksv.recordingConfiguration,
+        rtspEntry.url, rtspEntry.channel.fps, this.protectCamera.stream.hksv.isAudioActive);
+    }
 
     return this.livestreams[index] = this.protectCamera.nvr.ufpApi.createLivestream();
   }
@@ -97,13 +103,20 @@ export class LivestreamManager {
     }
 
     // Start the livestream if this is the first run. We set this to reattempt establishing the livestream up to three times due to occasional controller glitches.
-    if(!this.subscriberCount[index] &&
-      !(await this.livestreams[index].start(this.protectCamera.ufp.id, channel, lens, segmentLength, this.protectCamera.name + ":" + index))) {
+    if(!this.subscriberCount[index]) {
 
-      this.protectCamera.log.error("Unable to access the Protect livestream API: this is typically due to the Protect controller or camera rebooting.");
+      if(this.protectCamera.hasFeature("Debug.Video.HKSV.UseRtsp")) {
 
-      // Something went wrong in communicating with the controller.
-      return false;
+        (this.livestreams[index] as FfmpegLivestreamProcess).segmentLength = segmentLength;
+        (this.livestreams[index] as FfmpegLivestreamProcess).start();
+      } else if(!(await (this.livestreams[index] as ProtectLivestream).start(this.protectCamera.ufp.id, channel, lens, segmentLength,
+        this.protectCamera.name + ":" + index))) {
+
+        this.protectCamera.log.error("Unable to access the Protect livestream API: this is typically due to the Protect controller or camera rebooting.");
+
+        // Something went wrong in communicating with the controller.
+        return false;
+      }
     }
 
     // Keep track of any issues in the livestream.
@@ -139,12 +152,20 @@ export class LivestreamManager {
 
           return;
         }
-
-        this.protectCamera.log.warn("Reconnecting to the livestream API.");
+        this.protectCamera.log.warn("Reconnecting to the %s.", this.protectCamera.hasFeature("Debug.Video.HKSV.UseRtsp") ? "RTSP stream" : "livestream API");
 
         // Wait before we try to reconnect to the livestream. This accounts for reboots and other potential connection issues that can occur.
         await sleep((((Math.random() * 3) + this.restartDelay[index]) * 1000));
-        await this.livestreams[index].start(this.protectCamera.ufp.id, channel, lens, segmentLength, this.protectCamera.name + ":" + index);
+
+        if(this.protectCamera.hasFeature("Debug.Video.HKSV.UseRtsp")) {
+
+          (this.livestreams[index] as FfmpegLivestreamProcess).segmentLength = segmentLength;
+          (this.livestreams[index] as FfmpegLivestreamProcess).start();
+        } else {
+
+          await (this.livestreams[index] as ProtectLivestream).start(this.protectCamera.ufp.id, channel, lens, segmentLength, this.protectCamera.name + ":" + index);
+        }
+
         this.startTime[index] = Date.now();
 
         // Check on the state of our livestream API session regularly.

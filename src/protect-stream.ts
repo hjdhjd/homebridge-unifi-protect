@@ -5,13 +5,11 @@
  * This module is heavily inspired by the homebridge and homebridge-camera-ffmpeg source code. Thank you for your contributions to the HomeKit world.
  */
 import { API, AudioRecordingCodecType, AudioRecordingSamplerate, AudioStreamingCodecType, AudioStreamingSamplerate, CameraController,
-  CameraControllerOptions, CameraStreamingDelegate, H264Level, H264Profile, HAP, MediaContainerType, PrepareStreamCallback, PrepareStreamRequest, PrepareStreamResponse,
-  SRTPCryptoSuites, Service, SnapshotRequest, SnapshotRequestCallback, StartStreamRequest, StreamRequestCallback, StreamRequestTypes,
-  StreamingRequest } from "homebridge";
-import { FfmpegOptions, FfmpegStreamingProcess } from "./ffmpeg/index.js";
-import { HomebridgePluginLogging, Nullable, RtpDemuxer, formatBps } from "homebridge-plugin-utils";
-import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_HKSV_FRAGMENT_LENGTH, PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION, PROTECT_HOMEKIT_IDR_INTERVAL,
-  PROTECT_LIVESTREAM_API_IDR_INTERVAL } from "./settings.js";
+  CameraControllerOptions, H264Level, H264Profile, HAP, MediaContainerType, PrepareStreamCallback, PrepareStreamRequest, PrepareStreamResponse, SRTPCryptoSuites,
+  Service, SnapshotRequest, SnapshotRequestCallback, StartStreamRequest, StreamRequestCallback, StreamRequestTypes, StreamingRequest } from "homebridge";
+import { FfmpegOptions, FfmpegStreamingProcess, HKSV_FRAGMENT_LENGTH, HOMEKIT_IDR_INTERVAL, HomebridgePluginLogging, HomebridgeStreamingDelegate,
+  Nullable, RtpDemuxer, formatBps } from "homebridge-plugin-utils";
+import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION, PROTECT_LIVESTREAM_API_IDR_INTERVAL } from "./settings.js";
 import { ProtectCamera } from "./devices/index.js";
 import { ProtectNvr } from "./protect-nvr.js";
 import { ProtectPlatform } from "./protect-platform.js";
@@ -56,7 +54,7 @@ type SessionInfo = {
 };
 
 // Camera streaming delegate implementation for Protect.
-export class ProtectStreamingDelegate implements CameraStreamingDelegate {
+export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
 
   private readonly api: API;
   public controller: CameraController;
@@ -74,7 +72,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
   private probesizeOverrideTimeout?: NodeJS.Timeout;
   private snapshot: ProtectSnapshot;
   public verboseFfmpeg: boolean;
-  private abTest = true;
+  private abTest = false;
 
   // Create an instance of a HomeKit streaming delegate.
   constructor(protectCamera: ProtectCamera, resolutions: [number, number, number][]) {
@@ -93,7 +91,24 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     this.verboseFfmpeg = false;
 
     // Configure our hardware acceleration support.
-    this.ffmpegOptions = new FfmpegOptions(protectCamera);
+    this.ffmpegOptions = new FfmpegOptions({
+
+      codecSupport: this.platform.codecSupport,
+      crop: this.protectCamera.hints.cropOptions,
+      debug: this.platform.config.debugAll,
+      hardwareDecoding: this.protectCamera.hints.hardwareDecoding,
+      hardwareTranscoding: this.protectCamera.hints.hardwareTranscoding,
+      log: this.log,
+      name: (): string => this.protectCamera.accessoryName
+    });
+
+    // Encourage users to enable hardware-accelerated transcoding on macOS.
+    if(!this.protectCamera.hints.hardwareTranscoding && !this.protectCamera.accessory.context.packageCamera &&
+      this.platform.codecSupport.hostSystem.startsWith("macOS.")) {
+
+      this.log.warn("macOS detected: consider enabling hardware acceleration (located under the video feature options section in the HBUP webUI) for even better " +
+        "performance and an improved user experience.");
+    }
 
     // Setup for HKSV, if enabled.
     if(this.protectCamera.isHksvCapable) {
@@ -136,7 +151,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
             {
 
               // The default HKSV segment length is 4000ms. It turns out that any setting less than that will disable HomeKit Secure Video.
-              fragmentLength: PROTECT_HKSV_FRAGMENT_LENGTH,
+              fragmentLength: HKSV_FRAGMENT_LENGTH,
               type: MediaContainerType.FRAGMENTED_MP4
             }
           ],
@@ -220,7 +235,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
       if(callback) {
 
-        callback(new Error(this.protectCamera.name + ": Unable to retrieve a snapshot"));
+        callback(new Error(this.protectCamera.accessoryName + ": Unable to retrieve a snapshot"));
       }
 
       return;
@@ -388,7 +403,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       const errorMessage = "Unable to start video stream: the camera is offline or unavailable.";
 
       this.log.error(errorMessage);
-      callback(new Error(this.protectCamera.name + ": " + errorMessage));
+      callback(new Error(this.protectCamera.accessoryName + ": " + errorMessage));
 
       return;
     }
@@ -413,10 +428,18 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     let targetBitrate = request.video.max_bit_rate;
 
     // Only use API livestreaming if we have a live timeshift buffer. Otherwise, we'll get better startup performance out of RTSP streaming.
-    const useApi = this.protectCamera.hints.apiStreaming && this.hksv?.isRecording;
+    let useTsb = this.protectCamera.hints.tsbStreaming && this.hksv?.isRecording;
+
+    // If we're A/B testing, switch our streaming types. This is intended for internal development purposes only.
+    if(this.abTest && this.protectCamera.hasFeature("Debug.Video.Stream.ABTest")) {
+
+      useTsb = !useTsb;
+    }
+
+    this.abTest = !this.abTest;
 
     // If we're using the livestream API and we're timeshifting, we override the stream quality we've determined in favor of our timeshift buffer.
-    let rtspEntry = useApi ? this.hksv?.rtspEntry : null;
+    let rtspEntry = useTsb ? this.hksv?.rtspEntry : null;
 
     // Find the best RTSP stream based on what we're looking for.
     if(isTranscoding) {
@@ -455,7 +478,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       this.log.error("%s %sx%s, %s fps, %s kbps.", errorMessage,
         request.video.width, request.video.height, request.video.fps, request.video.max_bit_rate.toLocaleString("en-US"));
 
-      callback(new Error(this.protectCamera.name + ": " + errorMessage));
+      callback(new Error(this.protectCamera.accessoryName + ": " + errorMessage));
 
       return;
     }
@@ -487,45 +510,43 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     //
     // - Since we are using an already existing connection to the Protect controller, we don't need to create another connection which incurs an additional delay, as well
     //   as a resource hit on the Protect controller.
-    const tsBuffer: Nullable<Buffer> = useApi ? (this.hksv?.timeshift.getLast(PROTECT_LIVESTREAM_API_IDR_INTERVAL * 1000) ?? null) : null;
+    const tsBuffer: Nullable<Buffer> = useTsb ? (this.hksv?.timeshift.getLast(PROTECT_LIVESTREAM_API_IDR_INTERVAL * 1000) ?? null) : null;
 
     // -hide_banner                     Suppress printing the startup banner in FFmpeg.
     // -nostats                         Suppress printing progress reports while encoding in FFmpeg.
-    // -fflags flags                    Set format flags to discard any corrupt packets rather than exit.
+    // -fflags flags                    Set format flags to discard any corrupt packets, generate presentation timestamps when needed, and minimize buffering and latency.
     // -err_detect ignore_err           Ignore decoding errors and continue rather than exit.
     // -max_delay 500000                Set an upper limit on how much time FFmpeg can take in demuxing packets, in microseconds.
-    // -flags low_delay                 Tell FFmpeg to optimize for low delay / realtime decoding.
-    // -r fps                           Set the input frame rate for the video stream.
+    // -probesize number                How many bytes should be analyzed for stream information. Use the timeshift buffer length or our configured defaults.
     const ffmpegArgs = [
 
       "-hide_banner",
       "-nostats",
-      "-fflags", "+discardcorrupt+genpts+igndts" + (useApi ? "+flush_packets+nobuffer" : ""),
+      "-fflags", "+discardcorrupt+genpts" + (useTsb ? "+flush_packets+nobuffer" : ""),
       "-err_detect", "ignore_err",
-      ...this.ffmpegOptions.videoDecoder,
+      ...this.ffmpegOptions.videoDecoder(this.protectCamera.ufp.videoCodec),
       "-max_delay", "500000",
-      "-flags", "low_delay",
-      "-r", rtspEntry.channel.fps.toString()
+      "-probesize", ((useTsb ? this.hksv?.timeshift.buffer?.length : undefined) ?? this.probesize).toString()
     ];
 
-    if(useApi) {
+    if(useTsb) {
 
       // -f mp4                         Tell ffmpeg that it should expect an MP4-encoded input stream.
       // -i pipe:0                      Use standard input to get video data.
+      // -r bsf:v h264_mp4toannexb      Convert the livestream container format from MP4 to MPEG-TS.
       ffmpegArgs.push(
 
+        "-bsf:v", (this.protectCamera.ufp.videoCodec === "h264") ? "h264_mp4toannexb" : "hevc_mp4toannexb",
         "-f", "mp4",
         "-i", "pipe:0"
       );
     } else {
 
-      // -probesize number              How many bytes should be analyzed for stream information. Use our configured defaults.
       // -avioflags direct              Tell FFmpeg to minimize buffering to reduce latency for more realtime processing.
       // -rtsp_transport tcp            Tell the RTSP stream handler that we're looking for a TCP connection.
       // -i rtspEntry.url               RTSPS URL to get our input stream from.
       ffmpegArgs.push(
 
-        "-probesize", this.probesize.toString(),
         "-avioflags", "direct",
         "-rtsp_transport", "tcp",
         "-i", rtspEntry.url
@@ -546,7 +567,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       sessionInfo.address, (request.audio.packet_time === 60) ? " (high latency connection)" : "",
       request.video.width, request.video.height, request.video.fps, formatBps(targetBitrate * 1000),
       isTranscoding ? (this.protectCamera.hints.hardwareTranscoding ? "Hardware-accelerated transcoding" : "Transcoding") : "Using",
-      rtspEntry.name, formatBps(rtspEntry.channel.bitrate), useApi ? "API" : "RTSP");
+      rtspEntry.name, formatBps(rtspEntry.channel.bitrate), useTsb ? "TSB/" + (this.protectCamera.hasFeature("Debug.Video.HKSV.UseRtsp") ? "RTSP" : "API") : "RTSP");
 
     // Check to see if we're transcoding. If we are, set the right FFmpeg encoder options. If not, copy the video stream.
     if(isTranscoding) {
@@ -557,7 +578,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
         bitrate: targetBitrate,
         fps: request.video.fps,
         height: request.video.height,
-        idrInterval: PROTECT_HOMEKIT_IDR_INTERVAL,
+        idrInterval: HOMEKIT_IDR_INTERVAL,
         inputFps: rtspEntry.channel.fps,
         level: request.video.level,
         profile: request.video.profile,
@@ -574,7 +595,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       );
 
       // The livestream API needs to be transmuxed before we use it directly.
-      if(useApi) {
+      if(useTsb) {
 
         // -r bsf:v h264_mp4toannexb    Convert the livestream container format from MP4 to MPEG-TS.
         ffmpegArgs.push("-bsf:v", "h264_mp4toannexb");
@@ -582,7 +603,12 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     }
 
     // -reset_timestamps                Reset timestamps for this stream instead of accepting what Protect gives us.
-    ffmpegArgs.push("-reset_timestamps", "1");
+    // -metadata                        Set the metadata to the name of the camera to distinguish between FFmpeg sessions.
+    ffmpegArgs.push(
+
+      "-reset_timestamps", "1",
+      "-metadata", "comment=" + this.protectCamera.accessoryName + " Livestream"
+    );
 
     // Add in any user-specified options for FFmpeg.
     if(this.platform.config.ffmpegOptions) {
@@ -595,6 +621,9 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     // -payload_type num                Payload type for the RTP stream. This is negotiated by HomeKit and is usually 99 for H.264 video.
     // -ssrc                            Synchronization source stream identifier. Random number negotiated by HomeKit to identify this stream.
     // -f rtp                           Specify that we're using the RTP protocol.
+    // -avioflags direct                Tell FFmpeg to minimize buffering to reduce latency for more realtime processing.
+    // -packetsize 1200                 Use a packetsize of 1200 for compatibility across network environments. This should be no more than HomeKit livestreaming MTU
+    //                                  (1378 for IPv4 and 1228 for IPv6).
     // -srtp_out_suite enc              Specify the output encryption encoding suites.
     // -srtp_out_params params          Specify the output encoding parameters. This is negotiated by HomeKit.
     ffmpegArgs.push(
@@ -602,10 +631,11 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       "-payload_type", request.video.pt.toString(),
       "-ssrc", sessionInfo.videoSSRC.toString(),
       "-f", "rtp",
+      "-avioflags", "direct",
+      "-packetsize", "1200",
       "-srtp_out_suite", "AES_CM_128_HMAC_SHA1_80",
       "-srtp_out_params", sessionInfo.videoSRTP.toString("base64"),
-      "srtp://" + sessionInfo.address + ":" + sessionInfo.videoPort.toString() + "?rtcpport=" + sessionInfo.videoPort.toString() +
-        "&pkt_size=" + request.video.mtu.toString()
+      "srtp://" + sessionInfo.address + ":" + sessionInfo.videoPort.toString() + "?rtcpport=" + sessionInfo.videoPort.toString()
     );
 
     // Configure the audio portion of the command line, if we have a version of FFmpeg supports the audio codecs we need. Options we use are:
@@ -617,7 +647,6 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     // -acodec                          Encode using the codecs available to us on given platforms.
     // -profile:a 38                    Specify enhanced, low-delay AAC for HomeKit.
     // -flags +global_header            Sets the global header in the bitstream.
-    // -f null                          Null filter to pass the audio unchanged without running through a muxing operation.
     // -ar samplerate                   Sample rate to use for this audio. This is specified by HomeKit.
     // -b:a bitrate                     Bitrate to use for this audio stream. This is specified by HomeKit.
     // -bufsize size                    This is the decoder buffer size, which drives the variability / quality of the output bitrate.
@@ -632,7 +661,6 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
         ...this.ffmpegOptions.audioEncoder,
         "-profile:a", "38",
         "-flags", "+global_header",
-        "-f", "null",
         "-ar", request.audio.sample_rate.toString() + "k",
         "-b:a", request.audio.max_bit_rate.toString() + "k",
         "-bufsize", (2 * request.audio.max_bit_rate).toString() + "k",
@@ -686,19 +714,21 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       // -payload_type num                Payload type for the RTP stream. This is negotiated by HomeKit and is usually 110 for AAC-ELD audio.
       // -ssrc                            synchronization source stream identifier. Random number negotiated by HomeKit to identify this stream.
       // -f rtp                           Specify that we're using the RTP protocol.
+      // -avioflags direct                Tell FFmpeg to minimize buffering to reduce latency for more realtime processing.
+      // -packetsize 384                  Use a packetsize as a multiple of the sample rate. HomeKit livestreaming wants a block size of 480 samples when using AAC-ELD.
+      //                                  We loosely interpret that to mean less than 480 bytes per packet and use 384 since it's divisible by 16 kHz and 24 kHz.
       // -srtp_out_suite enc              Specify the output encryption encoding suites.
       // -srtp_out_params params          Specify the output encoding parameters. This is negotiated by HomeKit.
-      // pkt_size                         Specify the size of each packet payload. HomeKit wants the block size for AAC-ELD to be 480 samples. That translates to a
-      //                                  packet payload of 480 samples * 8 bits per byte / sample rate.
       ffmpegArgs.push(
 
         "-payload_type", request.audio.pt.toString(),
         "-ssrc", sessionInfo.audioSSRC.toString(),
         "-f", "rtp",
+        "-avioflags", "direct",
+        "-packetsize", "384",
         "-srtp_out_suite", "AES_CM_128_HMAC_SHA1_80",
         "-srtp_out_params", sessionInfo.audioSRTP.toString("base64"),
-        "srtp://" + sessionInfo.address + ":" + sessionInfo.audioPort.toString() + "?rtcpport=" + sessionInfo.audioPort.toString() + "&pkt_size=" +
-          (3840 / request.audio.sample_rate).toString()
+        "srtp://" + sessionInfo.address + ":" + sessionInfo.audioPort.toString() + "?rtcpport=" + sessionInfo.audioPort.toString()
       );
     }
 
@@ -714,12 +744,12 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     }
 
     // Combine everything and start an instance of FFmpeg.
-    const ffmpegStream = new FfmpegStreamingProcess(this, request.sessionID, ffmpegArgs,
+    const ffmpegStream = new FfmpegStreamingProcess(this, request.sessionID, this.ffmpegOptions, ffmpegArgs,
       (sessionInfo.hasAudioSupport && this.protectCamera.hints.twoWayAudio) ? undefined :
         { addressVersion: sessionInfo.addressVersion, port: sessionInfo.videoReturnPort },
       callback);
 
-    if(useApi) {
+    if(useTsb) {
 
       const livestream = this.protectCamera.livestream.acquire(rtspEntry);
       let seenInitSegment = false;
@@ -847,7 +877,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
       "v=0",
       "o=- 0 0 IN " + sdpIpVersion + " 127.0.0.1",
-      "s=" + this.protectCamera.name + " Audio Talkback",
+      "s=" + this.protectCamera.accessoryName + " Audio Talkback",
       "c=IN " + sdpIpVersion + " " + sessionInfo.address,
       "t=0 0",
       "m=audio " + sessionInfo.audioIncomingRtpPort.toString() + " RTP/AVP " + request.audio.pt.toString(),
@@ -979,7 +1009,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       }
 
       // Fire up FFmpeg and start processing the incoming audio.
-      const ffmpegReturnAudio = new FfmpegStreamingProcess(this, request.sessionID, ffmpegReturnAudioCmd);
+      const ffmpegReturnAudio = new FfmpegStreamingProcess(this, request.sessionID, this.ffmpegOptions, ffmpegReturnAudioCmd);
 
       // Setup housekeeping for the twoway FFmpeg session.
       this.ongoingSessions[request.sessionID].ffmpeg.push(ffmpegReturnAudio);
@@ -1097,6 +1127,31 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
       this.stopStream(session);
     }
+  }
+
+  // FFmpeg error checking when abnormal exits occur so we don't fill logs up with known occasional issues.
+  public ffmpegErrorCheck(stderrLog: string[]): string | undefined {
+
+    // We're using API-based livestreaming. Be attentive to the unique errors they may present.
+    if(this.protectCamera.hints.tsbStreaming && this.hksv?.isRecording) {
+
+      // Test for known errors due to occasional inconsistencies in the Protect livestream API.
+      const timeshiftLivestreamRegex = new RegExp([
+
+        "(Cannot determine format of input stream 0:0 after EOF)",
+        "(Finishing stream without any data written to it)",
+        "(could not find corresponding trex)",
+        "(moov atom not found)"
+      ].join("|"));
+
+      if(stderrLog.some(logEntry => timeshiftLivestreamRegex.test(logEntry))) {
+
+        return "FFmpeg ended unexpectedly due to issues processing the media stream provided by the UniFi Protect livestream API. " +
+          "This error can be safely ignored - it will occur occasionally.";
+      }
+    }
+
+    return undefined;
   }
 
   // Adjust our probe hints.

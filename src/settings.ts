@@ -44,12 +44,6 @@ export const PROTECT_FFMPEG_OPTIONS = [];
 // Protect's native I-frame interval can vary, but the livestream API seems to default to 5 seconds at most, though it depends on camera type and stream quality selected.
 export const PROTECT_LIVESTREAM_API_IDR_INTERVAL = 5;
 
-// HomeKit prefers a default I-frame interval of 4 seconds for HKSV event recordings.
-export const PROTECT_HKSV_IDR_INTERVAL = 1;
-
-// HomeKit Secure Video fragment length, in milliseconds. HomeKit only supports this value currently.
-export const PROTECT_HKSV_FRAGMENT_LENGTH = 4000;
-
 // HomeKit Secure Video segment resolution, in milliseconds. This defines the resolution of our buffer. It should never be less than 100ms or greater than 1500ms.
 export const PROTECT_HKSV_SEGMENT_RESOLUTION = 100;
 

@@ -22,7 +22,6 @@ export interface ProtectDevice {
 // Device-specific options and settings.
 export interface ProtectHints {
 
-  apiStreaming: boolean,
   crop: boolean,
   cropOptions: {
 
@@ -55,6 +54,7 @@ export interface ProtectHints {
   transcodeBitrate: number,
   transcodeHighLatency: boolean,
   transcodeHighLatencyBitrate: number,
+  tsbStreaming: boolean,
   twoWayAudio: boolean,
   twoWayAudioDirect: boolean
 }

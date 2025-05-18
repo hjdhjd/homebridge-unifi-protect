@@ -70,7 +70,7 @@ export class ProtectCamera extends ProtectDevice {
     // Configure our parent's hints.
     super.configureHints();
 
-    this.hints.apiStreaming = this.hasFeature("Video.Stream.UseApi");
+    this.hints.tsbStreaming = this.hasFeature("Video.Stream.UseApi");
     this.hints.crop = this.hasFeature("Video.Crop");
     this.hints.hardwareDecoding = true;
     this.hints.hardwareTranscoding = this.hasFeature("Video.Transcode.Hardware");
@@ -871,21 +871,24 @@ export class ProtectCamera extends ProtectDevice {
 
       validResolutions = [
 
-        [ 3840, 2880, 30 ], [ 2560, 1920, 30 ],
-        [ 1920, 1440, 30 ], [ 1280, 960, 30 ],
-        [ 640, 480, 30 ], [ 480, 360, 30 ],
-        [ 320, 240, 30 ]
+        [ 3840, 2880 ], [ 2560, 1920 ],
+        [ 1920, 1440 ], [ 1280, 960 ],
+        [ 640, 480 ], [ 480, 360 ],
+        [ 320, 240 ]
       ];
     } else {
 
       validResolutions = [
 
-        [ 3840, 2160, 30 ], [ 2560, 1440, 30 ],
-        [ 1920, 1080, 30], [ 1280, 720, 30 ],
-        [ 640, 360, 30 ], [ 480, 270, 30 ],
-        [ 320, 180, 30 ]
+        [ 3840, 2160 ], [ 2560, 1440 ],
+        [ 1920, 1080 ], [ 1280, 720 ],
+        [ 640, 360 ], [ 480, 270 ],
+        [ 320, 180 ]
       ];
     }
+
+    // Generate a list of valid resolutions that support both 30 and 15fps.
+    validResolutions = validResolutions.flatMap(([ width, height ]) => [ 30, 15 ].map(fps => [ width, height, fps ]));
 
     // Validate and add our entries to the list of what we make available to HomeKit. We map these resolutions to the channels we have available to us on the camera.
     for(const entry of validResolutions) {
@@ -994,14 +997,34 @@ export class ProtectCamera extends ProtectDevice {
       this.log.info("Disabling the use of higher quality snapshots.");
     }
 
-    // Inform the user if we've set a recording default.
-    if(this.hints.recordingDefault) {
-
-      this.log.info("HomeKit Secure Video event recording configured to use only: %s.", toCamelCase(this.hints.recordingDefault.toLowerCase()));
-    }
-
     // Configure the video stream with our resolutions.
     this.stream = new ProtectStreamingDelegate(this, this.rtspEntries.map(x => x.resolution));
+
+    // If the user hasn't overriden our defaults, make sure we account for constrained hardware environments.
+    if(!this.hints.recordingDefault) {
+
+      switch(this.platform.codecSupport.hostSystem) {
+
+        case "raspbian":
+
+          // For constrained CPU environments like Raspberry Pi, we default to recording from the highest quality channel we can, that's at or below 1080p. That provides
+          // a reasonable default, while still allowing users who really want to, to be able to specify something else.
+          this.hints.recordingDefault = (this.findRtsp(1920, 1080, { maxPixels: this.stream.ffmpegOptions.hostSystemMaxPixels })?.channel.name ?? undefined) as string;
+
+          break;
+
+        default:
+
+          // We default to no preference for the default Protect camera channel.
+          this.hints.recordingDefault = (this.hints.hardwareTranscoding ? "High" : undefined) as string;
+
+          break;
+      }
+    } else {
+
+      // Inform the user if we've set a recording default.
+      this.log.info("HomeKit Secure Video event recording configured to use only: %s.", toCamelCase(this.hints.recordingDefault.toLowerCase()));
+    }
 
     // Fire up the controller and inform HomeKit about it.
     this.accessory.configureController(this.stream.controller);
@@ -1012,10 +1035,17 @@ export class ProtectCamera extends ProtectDevice {
   // Configure HomeKit Secure Video support.
   private configureHksv(): boolean {
 
+    // If we've enabled RTSP-based HKSV recording, warn that this is unsupported.
+    if(this.hasFeature("Debug.Video.HKSV.UseRtsp")) {
+
+      this.log.warn("Enabling RTSP-based HKSV events are for debugging purposes only and unsupported." +
+        " It consumes more resources on both the Protect controller and the system running HBUP.");
+    }
+
     // If we have smart motion events enabled, let's warn the user that things will not work quite the way they expect.
     if(this.isHksvCapable && this.hints.smartDetect) {
 
-      this.log.info("WARNING: Smart motion detection and HomeKit Secure Video provide overlapping functionality. " +
+      this.log.warn("WARNING: Smart motion detection and HomeKit Secure Video provide overlapping functionality. " +
         "Only HomeKit Secure Video, when event recording is enabled in the Home app, will be used to trigger motion event notifications for this camera." +
         (this.hints.smartDetectSensors ? " Smart motion contact sensors will continue to function using telemetry from UniFi Protect." : ""));
     }
@@ -1478,7 +1508,7 @@ export class ProtectCamera extends ProtectDevice {
   // Find a recording RTSP configuration for a given target resolution.
   public findRecordingRtsp(width: number, height: number): Nullable<RtspEntry> {
 
-    return this.findRtspEntry(width, height, { biasHigher: true, default: this.hints.recordingDefault ?? this.stream.ffmpegOptions.recordingDefaultChannel });
+    return this.findRtspEntry(width, height, { biasHigher: true, default: this.hints.recordingDefault });
   }
 
   // Utility function for sorting by resolution.

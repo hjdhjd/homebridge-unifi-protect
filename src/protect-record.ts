@@ -8,9 +8,8 @@
  */
 import { API, CameraRecordingConfiguration, CameraRecordingDelegate, HAP, HDSProtocolSpecificErrorReason,
   PlatformAccessory, RecordingPacket } from "homebridge";
-import { HomebridgePluginLogging, Nullable, formatBps } from "homebridge-plugin-utils";
+import { FfmpegRecordingProcess, HomebridgePluginLogging, Nullable, formatBps } from "homebridge-plugin-utils";
 import { ProtectCamera, RtspEntry } from "./devices/index.js";
-import { FfmpegRecordingProcess } from "./ffmpeg/index.js";
 import { PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION } from "./settings.js";
 import { ProtectNvr } from "./protect-nvr.js";
 import { ProtectTimeshiftBuffer } from "./protect-timeshift.js";
@@ -291,15 +290,16 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     // Keep track of how many fMP4 segments we are feeding FFmpeg.
     this.transmittedSegments = this.timeshiftedSegments = 0;
 
-    // Check to see if the user has audio enabled or disabled for recordings.
-    const isAudioActive = (this.protectCamera.ufp.featureFlags.hasMic && this.protectCamera.hasFeature("Audio") &&
-      (this.protectCamera.stream.controller.recordingManagement?.recordingManagementService
-        .getCharacteristic(this.api.hap.Characteristic.RecordingAudioActive).value === 1)) ? true : false;
-
-    // Start a new FFmpeg instance to transcode using HomeKit's requirements.
-    this.ffmpegStream = new FfmpegRecordingProcess(this.protectCamera, this.recordingConfig, this.rtspEntry, isAudioActive);
+    // Prepare for a new instance.
     this.closedReason = undefined;
     this.hksvRequestedClose = false;
+
+    // Start a new FFmpeg instance to transcode using HomeKit's requirements.
+    this.ffmpegStream = new FfmpegRecordingProcess(this.protectCamera.stream.ffmpegOptions, this.recordingConfig, this.rtspEntry.channel.fps, this.isAudioActive,
+      this.protectCamera.stream.hksv?.timeshift.buffer?.length ?? this.protectCamera.stream.probesize,
+      Math.max((this.protectCamera.stream.hksv?.timeshift.time ?? 0) - this.recordingConfig.prebufferLength, 0));
+
+    this.ffmpegStream.start();
     this.isTransmitting = true;
 
     // We maintain a queue to manage segment writes to FFmpeg. Why? We need to be prepared for backpressure when writing to FFmpeg.
@@ -537,6 +537,14 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
 
       this.log.error("HKSV recording event ended early: %s", reasonDescription);
     }
+  }
+
+  // Return whether the user has audio enabled or disabled for recordings.
+  public get isAudioActive(): boolean {
+
+    return (this.protectCamera.ufp.featureFlags.hasMic && this.protectCamera.hasFeature("Audio") &&
+      (this.protectCamera.stream.controller.recordingManagement?.recordingManagementService
+        .getCharacteristic(this.api.hap.Characteristic.RecordingAudioActive).value === 1)) ? true : false;
   }
 
   // Return our HomeKit Secure Video recording state. This effectively tells us if HKSV has been configured and is on.

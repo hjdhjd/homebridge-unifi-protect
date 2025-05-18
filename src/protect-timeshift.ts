@@ -2,7 +2,7 @@
  *
  * protect-timeshift.ts: UniFi Protect livestream timeshift buffer implementation to support HomeKit Secure Video.
  */
-import { HomebridgePluginLogging, Nullable, runWithTimeout } from "homebridge-plugin-utils";
+import { FfmpegLivestreamProcess, HomebridgePluginLogging, Nullable, runWithTimeout } from "homebridge-plugin-utils";
 import { EventEmitter } from "node:events";
 import { PROTECT_HKSV_SEGMENT_RESOLUTION } from "./settings.js";
 import { PlatformAccessory } from "homebridge";
@@ -20,7 +20,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
   private _segmentLength: number;
   private readonly accessory: PlatformAccessory;
   private eventHandlers: { [index: string]: ((segment: Buffer) => void) | (() => void) };
-  private livestream?: ProtectLivestream;
+  private livestream?: FfmpegLivestreamProcess | ProtectLivestream;
   private readonly log: HomebridgePluginLogging;
   private readonly nvr: ProtectNvr;
   private readonly protectCamera: ProtectCamera;
@@ -61,7 +61,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
         return;
       }
 
-      this.log.error("Protect livestream API connection closed by the controller: usually due to Protect controller or devices reboot. Retrying shortly.");
+      this.log.error("%s connection closed by the controller. Retrying shortly.", this.protectCamera.hasFeature("Debug.Video.HKSV.UseRtsp") ? "RTSP" : "Livestream API");
     };
 
     // Listen for any segments sent by the UniFi Protect livestream in order to create our timeshift buffer.
