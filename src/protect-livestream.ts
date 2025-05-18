@@ -4,9 +4,9 @@
  */
 import { FfmpegLivestreamProcess, sleep } from "homebridge-plugin-utils";
 import { PROTECT_HKSV_SEGMENT_RESOLUTION } from "./settings.js";
-import { ProtectCamera } from "./devices/index.js";
-import { ProtectLivestream } from "unifi-protect";
-import { RtspEntry } from "./devices/protect-camera.js";
+import type { ProtectCamera } from "./devices/index.js";
+import type { ProtectLivestream } from "unifi-protect";
+import type { RtspEntry } from "./devices/protect-camera.js";
 
 const LIVESTREAM_TIMEOUT = 3500;
 const LIVESTREAM_RESTART_INTERVAL = 10;

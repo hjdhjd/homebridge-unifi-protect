@@ -6,12 +6,12 @@
  * for being sounding boards as I worked through several ideas and iterations of this work. Their camaraderie and support was
  * deeply appreciated.
  */
-import { API, CameraRecordingConfiguration, CameraRecordingDelegate, HAP, HDSProtocolSpecificErrorReason,
-  PlatformAccessory, RecordingPacket } from "homebridge";
-import { FfmpegRecordingProcess, HomebridgePluginLogging, Nullable, formatBps } from "homebridge-plugin-utils";
-import { ProtectCamera, RtspEntry } from "./devices/index.js";
+import type { API, CameraRecordingConfiguration, CameraRecordingDelegate, HAP, PlatformAccessory, RecordingPacket } from "homebridge";
+import { FfmpegRecordingProcess, type HomebridgePluginLogging, type Nullable, formatBps } from "homebridge-plugin-utils";
+import type { ProtectCamera, RtspEntry } from "./devices/index.js";
+import { HDSProtocolSpecificErrorReason } from "homebridge";
 import { PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION } from "./settings.js";
-import { ProtectNvr } from "./protect-nvr.js";
+import type { ProtectNvr } from "./protect-nvr.js";
 import { ProtectTimeshiftBuffer } from "./protect-timeshift.js";
 
 // Camera recording delegate implementation for Protect.

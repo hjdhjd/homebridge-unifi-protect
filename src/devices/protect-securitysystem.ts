@@ -2,9 +2,9 @@
  *
  * protect-securitysystem.ts: Security system accessory for UniFi Protect.
  */
-import { CharacteristicValue, PlatformAccessory } from "homebridge";
+import type { CharacteristicValue, PlatformAccessory } from "homebridge";
 import { ProtectBase } from "./protect-device.js";
-import { ProtectNvr } from "../protect-nvr.js";
+import type { ProtectNvr } from "../protect-nvr.js";
 import { ProtectReservedNames } from "../protect-types.js";
 
 export class ProtectSecuritySystem extends ProtectBase {

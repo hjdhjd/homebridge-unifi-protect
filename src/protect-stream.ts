@@ -4,15 +4,16 @@
  *
  * This module is heavily inspired by the homebridge and homebridge-camera-ffmpeg source code. Thank you for your contributions to the HomeKit world.
  */
-import { API, AudioRecordingCodecType, AudioRecordingSamplerate, AudioStreamingCodecType, AudioStreamingSamplerate, CameraController,
-  CameraControllerOptions, H264Level, H264Profile, HAP, MediaContainerType, PrepareStreamCallback, PrepareStreamRequest, PrepareStreamResponse, SRTPCryptoSuites,
-  Service, SnapshotRequest, SnapshotRequestCallback, StartStreamRequest, StreamRequestCallback, StreamRequestTypes, StreamingRequest } from "homebridge";
-import { FfmpegOptions, FfmpegStreamingProcess, HKSV_FRAGMENT_LENGTH, HOMEKIT_IDR_INTERVAL, HomebridgePluginLogging, HomebridgeStreamingDelegate,
-  Nullable, RtpDemuxer, formatBps } from "homebridge-plugin-utils";
+import type { API, CameraController, CameraControllerOptions, HAP, PrepareStreamCallback, PrepareStreamRequest, PrepareStreamResponse, SRTPCryptoSuites, Service,
+  SnapshotRequest, SnapshotRequestCallback, StartStreamRequest, StreamRequestCallback, StreamingRequest } from "homebridge";
+import { AudioRecordingCodecType, AudioRecordingSamplerate, AudioStreamingCodecType, AudioStreamingSamplerate, H264Level, H264Profile, MediaContainerType,
+  StreamRequestTypes } from "homebridge";
+import { FfmpegOptions, FfmpegStreamingProcess, HKSV_FRAGMENT_LENGTH, HOMEKIT_IDR_INTERVAL, type HomebridgePluginLogging, type HomebridgeStreamingDelegate,
+  type Nullable, RtpDemuxer, formatBps } from "homebridge-plugin-utils";
 import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION, PROTECT_LIVESTREAM_API_IDR_INTERVAL } from "./settings.js";
-import { ProtectCamera } from "./devices/index.js";
-import { ProtectNvr } from "./protect-nvr.js";
-import { ProtectPlatform } from "./protect-platform.js";
+import type { ProtectCamera } from "./devices/index.js";
+import type { ProtectNvr } from "./protect-nvr.js";
+import type { ProtectPlatform } from "./protect-platform.js";
 import { ProtectRecordingDelegate } from "./protect-record.js";
 import { ProtectReservedNames } from "./protect-types.js";
 import { ProtectSnapshot } from "./protect-snapshot.js";

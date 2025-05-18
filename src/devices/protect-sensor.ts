@@ -2,10 +2,10 @@
  *
  * protect-sensor.ts: Sensor device class for UniFi Protect.
  */
-import { PlatformAccessory, Service } from "homebridge";
-import { ProtectEventPacket, ProtectSensorConfig, ProtectSensorConfigPayload } from "unifi-protect";
+import type { PlatformAccessory, Service } from "homebridge";
+import type { ProtectEventPacket, ProtectSensorConfig, ProtectSensorConfigPayload } from "unifi-protect";
 import { ProtectDevice } from "./protect-device.js";
-import { ProtectNvr } from "../protect-nvr.js";
+import type { ProtectNvr } from "../protect-nvr.js";
 import { ProtectReservedNames } from "../protect-types.js";
 
 export class ProtectSensor extends ProtectDevice {

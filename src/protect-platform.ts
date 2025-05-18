@@ -2,10 +2,11 @@
  *
  * protect-platform.ts: homebridge-unifi-protect platform class.
  */
-import { API, APIEvent, DynamicPlatformPlugin, Logging, PlatformAccessory, PlatformConfig } from "homebridge";
+import type { API, DynamicPlatformPlugin, Logging, PlatformAccessory, PlatformConfig } from "homebridge";
 import { FeatureOptions, FfmpegCodecs, RtpPortAllocator } from "homebridge-plugin-utils";
 import { PROTECT_FFMPEG_OPTIONS, PROTECT_MQTT_TOPIC } from "./settings.js";
-import { ProtectNvrOptions, ProtectOptions, featureOptionCategories, featureOptions } from "./protect-options.js";
+import { type ProtectNvrOptions, type ProtectOptions, featureOptionCategories, featureOptions } from "./protect-options.js";
+import { APIEvent } from "homebridge";
 import { ProtectNvr } from "./protect-nvr.js";
 import ffmpegPath from "ffmpeg-for-homebridge";
 import util from "node:util";

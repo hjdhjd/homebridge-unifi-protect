@@ -2,12 +2,12 @@
  *
  * protect-chime.ts: Chime device class for UniFi Protect.
  */
-import { CharacteristicValue, PlatformAccessory } from "homebridge";
+import type { CharacteristicValue, PlatformAccessory } from "homebridge";
 import { ProtectReservedNames, toCamelCase } from "../protect-types.js";
 import { PROTECT_DOORBELL_CHIME_SPEAKER_DURATION } from "../settings.js";
-import { ProtectChimeConfig } from "unifi-protect";
+import type { ProtectChimeConfig } from "unifi-protect";
 import { ProtectDevice } from "./protect-device.js";
-import { ProtectNvr } from "../protect-nvr.js";
+import type { ProtectNvr } from "../protect-nvr.js";
 
 export class ProtectChime extends ProtectDevice {
 

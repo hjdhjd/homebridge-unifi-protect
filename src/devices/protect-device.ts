@@ -2,13 +2,13 @@
  *
  * protect-device.ts: Base class for all UniFi Protect devices.
  */
-import { API, CharacteristicValue, HAP, PlatformAccessory, Service, WithUUID } from "homebridge";
-import { HomebridgePluginLogging, Nullable, acquireService, validService, validateName } from "homebridge-plugin-utils";
+import type { API, CharacteristicValue, HAP, PlatformAccessory, Service, WithUUID } from "homebridge";
+import { type HomebridgePluginLogging, type Nullable, acquireService, validService, validateName } from "homebridge-plugin-utils";
 import { PROTECT_MOTION_DURATION, PROTECT_OCCUPANCY_DURATION} from "../settings.js";
-import { ProtectApi, ProtectCameraConfig, ProtectEventPacket, ProtectNvrConfig } from "unifi-protect";
-import { ProtectDeviceConfigTypes, ProtectReservedNames } from "../protect-types.js";
-import { ProtectNvr } from "../protect-nvr.js";
-import { ProtectPlatform } from "../protect-platform.js";
+import type { ProtectApi, ProtectCameraConfig, ProtectEventPacket, ProtectNvrConfig } from "unifi-protect";
+import { type ProtectDeviceConfigTypes, ProtectReservedNames } from "../protect-types.js";
+import type { ProtectNvr } from "../protect-nvr.js";
+import type { ProtectPlatform } from "../protect-platform.js";
 import util from "node:util";
 
 /*

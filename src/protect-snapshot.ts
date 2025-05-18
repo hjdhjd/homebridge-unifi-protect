@@ -2,12 +2,12 @@
  *
  * protect-snapshot.ts: UniFi Protect HomeKit snapshot class.
  */
-import { API, HAP, SnapshotRequest } from "homebridge";
-import { FfmpegExec, HomebridgePluginLogging, Nullable, runWithTimeout } from "homebridge-plugin-utils";
+import type { API, HAP, SnapshotRequest } from "homebridge";
+import { FfmpegExec, type HomebridgePluginLogging, type Nullable, runWithTimeout } from "homebridge-plugin-utils";
 import { PROTECT_LIVESTREAM_API_IDR_INTERVAL, PROTECT_SNAPSHOT_CACHE_MAXAGE } from "./settings.js";
-import { ProtectCamera } from "./devices/index.js";
-import { ProtectNvr } from "./protect-nvr.js";
-import { ProtectPlatform } from "./protect-platform.js";
+import type { ProtectCamera } from "./devices/index.js";
+import type { ProtectNvr } from "./protect-nvr.js";
+import type { ProtectPlatform } from "./protect-platform.js";
 
 // Camera snapshot class for Protect.
 export class ProtectSnapshot {

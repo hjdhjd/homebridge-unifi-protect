@@ -2,14 +2,14 @@
  *
  * protect-camera.ts: Camera device class for UniFi Protect.
  */
-import { CharacteristicValue, PlatformAccessory, Resolution, Service } from "homebridge";
-import { ProtectCameraChannelConfig, ProtectCameraConfig, ProtectCameraConfigPayload, ProtectEventAdd, ProtectEventPacket } from "unifi-protect";
+import type { CharacteristicValue, PlatformAccessory, Resolution, Service } from "homebridge";
+import type { ProtectCameraChannelConfig, ProtectCameraConfig, ProtectCameraConfigPayload, ProtectEventAdd, ProtectEventPacket } from "unifi-protect";
 import { ProtectReservedNames, toCamelCase } from "../protect-types.js";
 import { LivestreamManager } from "../protect-livestream.js";
-import { MessageSwitchInterface } from "./protect-doorbell.js";
-import { Nullable } from "homebridge-plugin-utils";
+import type { MessageSwitchInterface } from "./protect-doorbell.js";
+import type { Nullable } from "homebridge-plugin-utils";
 import { ProtectDevice } from "./protect-device.js";
-import { ProtectNvr } from "../protect-nvr.js";
+import type { ProtectNvr } from "../protect-nvr.js";
 import { ProtectStreamingDelegate } from "../protect-stream.js";
 
 export interface RtspEntry {

@@ -2,9 +2,9 @@
  *
  * protect-camera-package.ts: Package camera device class for UniFi Protect.
  */
-import { CharacteristicValue, Resolution } from "homebridge";
-import { Nullable , retry} from "homebridge-plugin-utils";
-import { ProtectCamera, RtspEntry } from "./protect-camera.js";
+import type { CharacteristicValue, Resolution } from "homebridge";
+import { type Nullable , retry} from "homebridge-plugin-utils";
+import { ProtectCamera, type RtspEntry } from "./protect-camera.js";
 import { ProtectReservedNames } from "../protect-types.js";
 import { ProtectStreamingDelegate } from "../protect-stream.js";
 

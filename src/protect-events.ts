@@ -2,15 +2,15 @@
  *
  * protect-events.ts: Protect events class for UniFi Protect.
  */
-import { API, HAP, Service } from "homebridge";
-import { HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
-import { ProtectApi, ProtectEventAdd, ProtectEventMetadata, ProtectEventPacket, ProtectKnownDeviceTypes } from "unifi-protect";
-import { ProtectCamera, ProtectDevice } from "./devices/index.js";
-import { ProtectDeviceConfigTypes, ProtectReservedNames } from "./protect-types.js";
+import type { API, HAP, Service } from "homebridge";
+import type { HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
+import type { ProtectApi, ProtectEventAdd, ProtectEventMetadata, ProtectEventPacket, ProtectKnownDeviceTypes } from "unifi-protect";
+import type { ProtectCamera, ProtectDevice } from "./devices/index.js";
+import { type ProtectDeviceConfigTypes, ProtectReservedNames } from "./protect-types.js";
 import { EventEmitter } from "node:events";
 import { PROTECT_DOORBELL_TRIGGER_DURATION } from "./settings.js";
-import { ProtectNvr } from "./protect-nvr.js";
-import { ProtectPlatform } from "./protect-platform.js";
+import type { ProtectNvr } from "./protect-nvr.js";
+import type { ProtectPlatform } from "./protect-platform.js";
 
 export class ProtectEvents extends EventEmitter {
 

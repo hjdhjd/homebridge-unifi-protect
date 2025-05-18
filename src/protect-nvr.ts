@@ -2,17 +2,20 @@
  *
  * protect-nvr.ts: NVR device class for UniFi Protect.
  */
-import { API, APIEvent, HAP, PlatformAccessory } from "homebridge";
-import { HomebridgePluginLogging, MqttClient, Nullable, retry, sleep, validateName } from "homebridge-plugin-utils";
+import type { API, HAP, PlatformAccessory } from "homebridge";
+import { type HomebridgePluginLogging, MqttClient, type Nullable, retry, sleep, validateName } from "homebridge-plugin-utils";
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_CONTROLLER_REFRESH_INTERVAL, PROTECT_CONTROLLER_RETRY_INTERVAL, PROTECT_M3U_PLAYLIST_PORT } from "./settings.js";
-import { ProtectApi, ProtectCameraConfig, ProtectChimeConfig, ProtectLightConfig, ProtectNvrBootstrap, ProtectNvrConfig, ProtectSensorConfig,
-  ProtectViewerConfig } from "unifi-protect";
-import { ProtectCamera, ProtectChime, ProtectDevice, ProtectDoorbell, ProtectLight, ProtectLiveviews, ProtectNvrSystemInfo, ProtectSensor,
+import { ProtectCamera, ProtectChime, type ProtectDevice, ProtectDoorbell, ProtectLight, ProtectLiveviews, ProtectNvrSystemInfo, ProtectSensor,
   ProtectViewer } from "./devices/index.js";
-import { ProtectDeviceCategories, ProtectDeviceConfigTypes, ProtectDeviceTypes, ProtectDevices } from "./protect-types.js";
+import type { ProtectCameraConfig, ProtectChimeConfig, ProtectLightConfig, ProtectNvrBootstrap, ProtectNvrConfig, ProtectSensorConfig,
+  ProtectViewerConfig } from "unifi-protect";
+import type { ProtectDeviceConfigTypes, ProtectDeviceTypes, ProtectDevices } from "./protect-types.js";
+import { APIEvent } from "homebridge";
+import { ProtectApi } from "unifi-protect";
+import { ProtectDeviceCategories } from "./protect-types.js";
 import { ProtectEvents } from "./protect-events.js";
-import { ProtectNvrOptions } from "./protect-options.js";
-import { ProtectPlatform } from "./protect-platform.js";
+import type { ProtectNvrOptions } from "./protect-options.js";
+import type { ProtectPlatform } from "./protect-platform.js";
 import http from "node:http";
 import util from "node:util";
 

@@ -2,10 +2,10 @@
  *
  * protect-doorbell.ts: Doorbell device class for UniFi Protect.
  */
-import { CharacteristicValue, PlatformAccessory, Service } from "homebridge";
-import { Nullable, validateName } from "homebridge-plugin-utils";
+import type { CharacteristicValue, PlatformAccessory, Service } from "homebridge";
+import { type Nullable, validateName } from "homebridge-plugin-utils";
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_DOORBELL_AUTHSENSOR_DURATION, PROTECT_DOORBELL_CHIME_DURATION_DIGITAL } from "../settings.js";
-import { ProtectCameraConfig, ProtectCameraConfigPayload, ProtectCameraLcdMessagePayload, ProtectChimeConfigPayload, ProtectEventAdd, ProtectEventPacket,
+import type { ProtectCameraConfig, ProtectCameraConfigPayload, ProtectCameraLcdMessagePayload, ProtectChimeConfigPayload, ProtectEventAdd, ProtectEventPacket,
   ProtectNvrConfigPayload } from "unifi-protect";
 import { ProtectReservedNames, toCamelCase } from "../protect-types.js";
 import { ProtectCamera } from "./protect-camera.js";

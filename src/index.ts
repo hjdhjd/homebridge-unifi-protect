@@ -3,7 +3,7 @@
  * index.ts: homebridge-unifi-protect plugin registration.
  */
 import { PLATFORM_NAME, PLUGIN_NAME } from "./settings.js";
-import { API } from "homebridge";
+import type { API } from "homebridge";
 import { ProtectPlatform } from "./protect-platform.js";
 
 // Register our platform with homebridge.

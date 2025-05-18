@@ -13,7 +13,7 @@ export default ts.config(
 
   {
 
-    files: [ "src/**.ts", "src/devices/**.ts", "src/ffmpeg/**.ts" ],
+    files: [ "src/**.ts", "src/devices/**.ts" ],
     rules: {
 
       ...hbPluginUtils.rules.ts
@@ -31,7 +31,7 @@ export default ts.config(
 
   {
 
-    files: [ "src/**.ts", "src/devices/**.ts", "src/ffmpeg/**.ts", "homebridge-ui/*.@(js|mjs)", "homebridge-ui/public/**/*.@(js|mjs)", "eslint.config.mjs" ],
+    files: [ "src/**.ts", "src/devices/**.ts", "homebridge-ui/*.@(js|mjs)", "homebridge-ui/public/**/*.@(js|mjs)", "eslint.config.mjs" ],
 
     ignores: [ "dist" ],
 

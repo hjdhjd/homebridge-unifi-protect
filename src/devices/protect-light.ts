@@ -2,10 +2,10 @@
  *
  * protect-light.ts: Light device class for UniFi Protect.
  */
-import { CharacteristicValue, PlatformAccessory } from "homebridge";
-import { ProtectEventPacket, ProtectLightConfig, ProtectLightConfigPayload } from "unifi-protect";
+import type { CharacteristicValue, PlatformAccessory } from "homebridge";
+import type { ProtectEventPacket, ProtectLightConfig, ProtectLightConfigPayload } from "unifi-protect";
 import { ProtectDevice } from "./protect-device.js";
-import { ProtectNvr } from "../protect-nvr.js";
+import type { ProtectNvr } from "../protect-nvr.js";
 import { ProtectReservedNames } from "../protect-types.js";
 
 export class ProtectLight extends ProtectDevice {
