@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 7.16.0 (2025-05-18)
+ * Improvement: further refinements to livestreaming.
+ * Fix: Corrected a regression in MQTT set events for doorbells and lights that weren't being properly.
+ * Housekeeping.
+
 ## 7.15.0 (2025-04-22)
   * New feature: Send two-way audio directly to supported cameras, bypassing the controller. Useful for working around bugs in some Protect controller firmware versions. It's disabled by default and requires ensuring that HBUP can access the camera directly over your network (for obvious reasons). Why is this useful? Well...Protect can be flaky with two-way audio in the API-supported mechanism it provides. Protect's been addressing this by disabling functionality in the native Protect app in recent releases because there's some bugginess in the controller. For instance, if you use HEVC (aka enhanced encoding) for a camera that supports two-way audio, you can't use the native Protect app to send two-way audio. It's disabled by default because this should really not be needed (maybe one day?), but it is for some users and use cases.
   * Housekeeping.
