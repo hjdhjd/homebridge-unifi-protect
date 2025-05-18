@@ -449,9 +449,9 @@ export class ProtectDoorbell extends ProtectCamera {
 
       // We explicitly want to trigger our set event handler, which will complete this action.
       this.accessory.getServiceById(this.hap.Service.Lightbulb, ProtectReservedNames.LIGHTBULB_DOORBELL_VOLUME)
-        ?.updateCharacteristic(this.hap.Characteristic.Brightness, volume);
+        ?.setCharacteristic(this.hap.Characteristic.Brightness, volume);
       this.accessory.getServiceById(this.hap.Service.Lightbulb, ProtectReservedNames.LIGHTBULB_DOORBELL_VOLUME)
-        ?.updateCharacteristic(this.hap.Characteristic.On, volume > 0);
+        ?.setCharacteristic(this.hap.Characteristic.On, volume > 0);
     });
 
     // Get the current message on the doorbell.
