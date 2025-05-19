@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 7.16.1 (2025-05-18)
+  * Fix: Livestreaming resilience regressions.
+  * Housekeeping.
+
 ## 7.16.0 (2025-05-18)
  * Improvement: further refinements to livestreaming.
  * Fix: Corrected a regression in MQTT set events for doorbells and lights that weren't being properly.
