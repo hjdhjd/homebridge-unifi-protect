@@ -515,26 +515,30 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
 
     // -hide_banner                     Suppress printing the startup banner in FFmpeg.
     // -nostats                         Suppress printing progress reports while encoding in FFmpeg.
-    // -fflags flags                    Set format flags to discard any corrupt packets, generate presentation timestamps when needed, and minimize buffering and latency.
+    // -fflags flags                    Set format flags to discard any corrupt packets and minimize buffering and latency.
     // -err_detect ignore_err           Ignore decoding errors and continue rather than exit.
     // -max_delay 500000                Set an upper limit on how much time FFmpeg can take in demuxing packets, in microseconds.
-    // -probesize number                How many bytes should be analyzed for stream information. Use the timeshift buffer length or our configured defaults.
+    // -flags low_delay                 Tell FFmpeg to optimize for low delay / realtime decoding.
+    // -r fps                           Specify the input frame rate for the video stream.
+    // -probesize number                How many bytes should be analyzed for stream information.
     const ffmpegArgs = [
 
       "-hide_banner",
       "-nostats",
-      "-fflags", "+discardcorrupt+genpts" + (useTsb ? "+flush_packets+nobuffer" : ""),
+      "-fflags", "+discardcorrupt" + (useTsb ? "+flush_packets+nobuffer" : ""),
       "-err_detect", "ignore_err",
       ...this.ffmpegOptions.videoDecoder(this.protectCamera.ufp.videoCodec),
       "-max_delay", "500000",
-      "-probesize", ((useTsb ? this.hksv?.timeshift.buffer?.length : undefined) ?? this.probesize).toString()
+      "-flags", "low_delay",
+      "-r", rtspEntry.channel.fps.toString(),
+      "-probesize", this.probesize.toString()
     ];
 
     if(useTsb) {
 
       // -f mp4                         Tell ffmpeg that it should expect an MP4-encoded input stream.
       // -i pipe:0                      Use standard input to get video data.
-      // -r bsf:v h264_mp4toannexb      Convert the livestream container format from MP4 to MPEG-TS.
+      // -bsf:v h264_mp4toannexb        Convert the livestream container format from MP4 to MPEG-TS.
       ffmpegArgs.push(
 
         "-bsf:v", (this.protectCamera.ufp.videoCodec === "h264") ? "h264_mp4toannexb" : "hevc_mp4toannexb",
@@ -598,7 +602,7 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
       // The livestream API needs to be transmuxed before we use it directly.
       if(useTsb) {
 
-        // -r bsf:v h264_mp4toannexb    Convert the livestream container format from MP4 to MPEG-TS.
+        // -bsf:v h264_mp4toannexb    Convert the livestream container format from MP4 to MPEG-TS.
         ffmpegArgs.push("-bsf:v", "h264_mp4toannexb");
       }
     }
