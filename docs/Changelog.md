@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 7.17.0 (2025-05-22)
+  * Improvement: refined audio quality when livestreaming.
+  * Fix: Workaround regressions in Apple's native audio encoder in recent macOS releases.
+  * Housekeeping.
+
 ## 7.16.1 (2025-05-18)
   * Fix: Livestreaming resilience regressions.
   * Housekeeping.
