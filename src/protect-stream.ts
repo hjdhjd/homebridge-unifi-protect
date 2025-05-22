@@ -141,8 +141,8 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
             codecs: [
               {
 
-                // Protect supports a 48 KHz sampling rate, and the low complexity AAC profile.
-                samplerate: AudioRecordingSamplerate.KHZ_48,
+                // When using the livestream API, Protect cameras sample audio at 16 kHz, except for doorbells, which sample audio at 48 kHz.
+                samplerate: this.protectCamera.ufp.featureFlags.isDoorbell ? AudioRecordingSamplerate.KHZ_48 : AudioRecordingSamplerate.KHZ_16,
                 type: AudioRecordingCodecType.AAC_LC
               }
             ]
@@ -194,7 +194,10 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
 
               audioChannels: 1,
               bitrate: 0,
-              samplerate: [ AudioStreamingSamplerate.KHZ_16, AudioStreamingSamplerate.KHZ_24 ],
+
+              // Protect doorbells and the Opus audio track over RTSP both use a 48 kHz audio sampling rate. Otherwise, the livestream API uses a 16 kHz sampling rate.
+              samplerate: (this.protectCamera.ufp.featureFlags.isDoorbell || !this.protectCamera.hints.tsbStreaming) ?
+                [ AudioStreamingSamplerate.KHZ_16, AudioStreamingSamplerate.KHZ_24 ] : AudioStreamingSamplerate.KHZ_16,
               type: AudioStreamingCodecType.AAC_ELD
             }
           ],
@@ -662,8 +665,14 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
       // Configure our audio parameters.
       ffmpegArgs.push(
 
-        "-map", "0:a:0?",
-        ...this.ffmpegOptions.audioEncoder,
+        // Take advantage of the higher fidelity potentially available to us from the Opus track in the RTSP stream. The livestream API only provides an AAC track.
+        "-map", useTsb ? "0:a:0?" : "0:a:1?",
+
+        // Workaround for regressions in the native audiotoolbox encoder in recent macOS releases for lower sampling rates. We fallback back to FDK AAC in that specific
+        // instance, primarily impacting Apple Watch livestreaming.
+        ...(((request.audio.sample_rate === 16) && this.ffmpegOptions.audioEncoder.includes("aac_at")) ?
+          [ "-acodec", "libfdk_aac", "-afterburner", "1", "-eld_v2", "1", ...(!/-Jellyfi$/i.test(this.platform.codecSupport.ffmpegVersion) ? [ "-eld_sbr", "1" ] : []) ] :
+          this.ffmpegOptions.audioEncoder),
         "-profile:a", "38",
         "-flags", "+global_header",
         "-ar", request.audio.sample_rate.toString() + "k",
