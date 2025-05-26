@@ -12,7 +12,6 @@ export type ProtectOptions = {
 
   controllers: ProtectNvrOptions[],
   debugAll: boolean,
-  ffmpegOptions: string[],
   options: string[],
   ringDelay: number,
   verboseFfmpeg: boolean,

@@ -618,12 +618,6 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
       "-metadata", "comment=" + this.protectCamera.accessoryName + " Livestream"
     );
 
-    // Add in any user-specified options for FFmpeg.
-    if(this.platform.config.ffmpegOptions) {
-
-      ffmpegArgs.push(...this.platform.config.ffmpegOptions);
-    }
-
     // Configure our video parameters for SRTP streaming:
     //
     // -payload_type num                Payload type for the RTP stream. This is negotiated by HomeKit and is usually 99 for H.264 video.

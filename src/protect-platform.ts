@@ -4,9 +4,9 @@
  */
 import type { API, DynamicPlatformPlugin, Logging, PlatformAccessory, PlatformConfig } from "homebridge";
 import { FeatureOptions, FfmpegCodecs, RtpPortAllocator } from "homebridge-plugin-utils";
-import { PROTECT_FFMPEG_OPTIONS, PROTECT_MQTT_TOPIC } from "./settings.js";
 import { type ProtectNvrOptions, type ProtectOptions, featureOptionCategories, featureOptions } from "./protect-options.js";
 import { APIEvent } from "homebridge";
+import { PROTECT_MQTT_TOPIC } from "./settings.js";
 import { ProtectNvr } from "./protect-nvr.js";
 import ffmpegPath from "ffmpeg-for-homebridge";
 import util from "node:util";
@@ -44,7 +44,6 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
 
       controllers: config.controllers as ProtectNvrOptions[],
       debugAll: config.debug as boolean === true,
-      ffmpegOptions: config.ffmpegOptions as string[] ?? PROTECT_FFMPEG_OPTIONS,
       options: config.options as string[],
       ringDelay: config.ringDelay as number ?? 0,
       verboseFfmpeg: config.verboseFfmpeg === true,
