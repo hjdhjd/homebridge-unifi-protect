@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 7.17.1 (2025-05-26)
+  * Fix: hardware-accelerated HKSV and snapshots for Intel QSV.
+  * Housekeeping.
+
 ## 7.17.0 (2025-05-22)
   * Improvement: refined audio quality when livestreaming.
   * Fix: Workaround regressions in Apple's native audio encoder in recent macOS releases.
