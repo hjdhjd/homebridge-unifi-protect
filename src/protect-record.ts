@@ -297,7 +297,8 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     // Start a new FFmpeg instance to transcode using HomeKit's requirements.
     this.ffmpegStream = new FfmpegRecordingProcess(this.protectCamera.stream.ffmpegOptions, this.recordingConfig, this.rtspEntry.channel.fps, this.isAudioActive,
       this.protectCamera.stream.hksv?.timeshift.buffer?.length ?? this.protectCamera.stream.probesize,
-      Math.max((this.protectCamera.stream.hksv?.timeshift.time ?? 0) - this.recordingConfig.prebufferLength, 0));
+      Math.max((this.protectCamera.stream.hksv?.timeshift.time ?? 0) - this.recordingConfig.prebufferLength, 0), this.protectCamera.ufp.videoCodec,
+      this.protectCamera.hasFeature("Debug.Video.HKSV"));
 
     this.ffmpegStream.start();
     this.isTransmitting = true;

@@ -62,7 +62,7 @@ export class LivestreamManager {
     if(this.protectCamera.hasFeature("Debug.Video.HKSV.UseRtsp") && this.protectCamera.stream.hksv?.recordingConfiguration) {
 
       return this.livestreams[index] = new FfmpegLivestreamProcess(this.protectCamera.stream.ffmpegOptions, this.protectCamera.stream.hksv.recordingConfiguration,
-        rtspEntry.url, rtspEntry.channel.fps, this.protectCamera.stream.hksv.isAudioActive);
+        rtspEntry.url, rtspEntry.channel.fps, this.protectCamera.stream.hksv.isAudioActive, this.protectCamera.ufp.videoCodec);
     }
 
     return this.livestreams[index] = this.protectCamera.nvr.ufpApi.createLivestream();

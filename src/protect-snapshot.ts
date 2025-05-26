@@ -220,6 +220,8 @@ export class ProtectSnapshot {
       // scale=             Scale the image down, if needed, but never upscale it, preserving aspect ratios and letterboxing where needed.
       commandLineOptions.push("-filter:v", [
 
+        (this.protectCamera.stream.ffmpegOptions.videoDecoder(this.protectCamera.ufp.videoCodec).some(decoder => ["h264_qsv", "hevc_qsv"].includes(decoder)) ?
+          "hwdownload,format=nv12," : "") +
         "scale=" + request.width.toString(), request.height.toString(),
         "force_original_aspect_ratio=decrease,pad=" + request.width.toString(), request.height.toString(),
         "(ow-iw)/2", "(oh-ih)/2"
@@ -235,6 +237,12 @@ export class ProtectSnapshot {
       "-c:v", "mjpeg",
       "pipe:1"
     );
+
+    // Enable verbose logging, if we're debugging.
+    if(this.protectCamera.hasFeature("Debug.Video.Snapshot")) {
+
+      commandLineOptions.unshift("-loglevel", "level+verbose");
+    }
 
     // Instantiate FFmpeg.
     const ffmpeg = new FfmpegExec(this.protectCamera.stream.ffmpegOptions, commandLineOptions, false);
