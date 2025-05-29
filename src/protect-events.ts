@@ -357,12 +357,13 @@ export class ProtectEvents extends EventEmitter {
       clearTimeout(this.eventTimers[protectDevice.id + ".Motion.SmartDetect.ObjectSensors." + objectSensor]));
 
     // Iterate through our detected Protect smart object types, if not already triggered.
-    for(const detectedObject of detectedObjects.filter(objectSensor => !protectDevice.accessory.getServiceById(this.hap.Service.ContactSensor,
-      ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + "." + objectSensor)?.getCharacteristic(this.hap.Characteristic.ContactSensorState).value)) {
+    for(const detectedObject of detectedObjects.filter(objectSensor => protectDevice.accessory.getServiceById(this.hap.Service.ContactSensor,
+      ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + "." + objectSensor)?.getCharacteristic(this.hap.Characteristic.ContactSensorState).value ===
+      this.hap.Characteristic.ContactSensorState.CONTACT_DETECTED)) {
 
       // Trigger smart detection contact sensor, if configured.
       protectDevice.accessory.getServiceById(this.hap.Service.ContactSensor, ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + "." + detectedObject)
-        ?.updateCharacteristic(this.hap.Characteristic.ContactSensorState, true);
+        ?.updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.hap.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED);
 
       // Publish the smart detection event to MQTT, if the user has configured it.
       this.nvr.mqtt?.publish(protectDevice.ufp.mac, "motion/smart/" + detectedObject, "true");
@@ -371,7 +372,8 @@ export class ProtectEvents extends EventEmitter {
       if(metadata && ("licensePlate" in metadata) && (detectedObject === "licensePlate") && ("name" in metadata.licensePlate)) {
 
         protectDevice.accessory.getServiceById(this.hap.Service.ContactSensor, ProtectReservedNames.CONTACT_MOTION_SMARTDETECT_LICENSE + "." +
-          metadata.licensePlate.name.toUpperCase())?.updateCharacteristic(this.hap.Characteristic.ContactSensorState, true);
+          metadata.licensePlate.name.toUpperCase())
+          ?.updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.hap.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED);
 
         // Publish the smart detection event to MQTT, if the user has configured it.
         this.nvr.mqtt?.publish(protectDevice.ufp.mac, "motion/smart/" + detectedObject + "/metadata", JSON.stringify(metadata));
@@ -402,12 +404,13 @@ export class ProtectEvents extends EventEmitter {
         if(metadata && ("licensePlate" in metadata) && (detectedObject === "licensePlate") && ("name" in metadata.licensePlate)) {
 
           protectDevice.accessory.getServiceById(this.hap.Service.ContactSensor, ProtectReservedNames.CONTACT_MOTION_SMARTDETECT_LICENSE + "." +
-            metadata.licensePlate.name.toUpperCase())?.updateCharacteristic(this.hap.Characteristic.ContactSensorState, false);
+            metadata.licensePlate.name.toUpperCase())?.updateCharacteristic(this.hap.Characteristic.ContactSensorState,
+            this.hap.Characteristic.ContactSensorState.CONTACT_DETECTED);
         }
 
         // Reset our smart detection contact sensor, if configured.
         protectDevice.accessory.getServiceById(this.hap.Service.ContactSensor, ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + "." + detectedObject)
-          ?.updateCharacteristic(this.hap.Characteristic.ContactSensorState, false);
+          ?.updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.hap.Characteristic.ContactSensorState.CONTACT_DETECTED);
 
         // Publish the smart detection event to MQTT, if the user has configured it.
         this.nvr.mqtt?.publish(protectDevice.ufp.mac, "motion/smart/" + detectedObject, "false");

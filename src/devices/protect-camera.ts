@@ -541,7 +541,7 @@ export class ProtectCamera extends ProtectDevice {
       }
 
       // Initialize the sensor.
-      service.updateCharacteristic(this.hap.Characteristic.ContactSensorState, false);
+      service.updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.hap.Characteristic.ContactSensorState.CONTACT_DETECTED);
 
       return true;
     };

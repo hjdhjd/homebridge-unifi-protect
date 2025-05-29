@@ -188,10 +188,7 @@ export class ProtectSensor extends ProtectDevice {
     }
 
     // Retrieve the current contact sensor state when requested.
-    service.getCharacteristic(this.hap.Characteristic.ContactSensorState)?.onGet(() => {
-
-      return this.alarmDetected;
-    });
+    service.getCharacteristic(this.hap.Characteristic.ContactSensorState)?.onGet(() => this.alarmDetected);
 
     // Update the sensor.
     service.updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.alarmDetected);
@@ -283,10 +280,7 @@ export class ProtectSensor extends ProtectDevice {
     }
 
     // Retrieve the current contact sensor state when requested.
-    service.getCharacteristic(this.hap.Characteristic.ContactSensorState)?.onGet(() => {
-
-      return this.contact;
-    });
+    service.getCharacteristic(this.hap.Characteristic.ContactSensorState)?.onGet(() => this.contact);
 
     // Update the sensor.
     service.updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.contact);
