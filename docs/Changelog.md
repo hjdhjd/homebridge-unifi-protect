@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 7.17.2 (2025-05-29)
+  * Fix: address audio regressions in HKSV.
+  * Housekeeping.
+
 ## 7.17.1 (2025-05-26)
   * Fix: hardware-accelerated HKSV and snapshots for Intel QSV.
   * Housekeeping.
