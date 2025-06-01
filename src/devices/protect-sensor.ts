@@ -162,16 +162,7 @@ export class ProtectSensor extends ProtectDevice {
   private configureAlarmSoundSensor(): boolean {
 
     // Validate whether we should have this service enabled.
-    if(!this.validService(this.hap.Service.ContactSensor, () => {
-
-      // Have we disabled the sensor?
-      if(!this.ufp.alarmSettings?.isEnabled) {
-
-        return false;
-      }
-
-      return true;
-    }, ProtectReservedNames.CONTACT_SENSOR_ALARM_SOUND)) {
+    if(!this.validService(this.hap.Service.ContactSensor, this.ufp.alarmSettings?.isEnabled, ProtectReservedNames.CONTACT_SENSOR_ALARM_SOUND)) {
 
       return false;
     }
@@ -206,16 +197,7 @@ export class ProtectSensor extends ProtectDevice {
   private configureAmbientLightSensor(): boolean {
 
     // Validate whether we should have this service enabled.
-    if(!this.validService(this.hap.Service.LightSensor, () => {
-
-      // Have we disabled the sensor?
-      if(!this.ufp.lightSettings?.isEnabled) {
-
-        return false;
-      }
-
-      return true;
-    })) {
+    if(!this.validService(this.hap.Service.LightSensor, this.ufp.lightSettings?.isEnabled)) {
 
       return false;
     }
@@ -254,16 +236,8 @@ export class ProtectSensor extends ProtectDevice {
   private configureContactSensor(): boolean {
 
     // Validate whether we should have this service enabled.
-    if(!this.validService(this.hap.Service.ContactSensor, () => {
-
-      // Have we disabled the sensor or are we configured as a leak sensor?
-      if(!this.ufp.mountType || (this.ufp.mountType === "leak") || (this.ufp.mountType === "none")) {
-
-        return false;
-      }
-
-      return true;
-    }, ProtectReservedNames.CONTACT_SENSOR)) {
+    if(!this.validService(this.hap.Service.ContactSensor, !!this.ufp.mountType && (this.ufp.mountType !== "leak") && (this.ufp.mountType !== "none"),
+      ProtectReservedNames.CONTACT_SENSOR)) {
 
       return false;
     }
@@ -298,16 +272,7 @@ export class ProtectSensor extends ProtectDevice {
   private configureHumiditySensor(): boolean {
 
     // Validate whether we should have this service enabled.
-    if(!this.validService(this.hap.Service.HumiditySensor, () => {
-
-      // Have we disabled the sensor?
-      if(!this.ufp.humiditySettings?.isEnabled) {
-
-        return false;
-      }
-
-      return true;
-    })) {
+    if(!this.validService(this.hap.Service.HumiditySensor, this.ufp.humiditySettings?.isEnabled)) {
 
       return false;
     }
@@ -345,16 +310,7 @@ export class ProtectSensor extends ProtectDevice {
   private configureLeakSensor(): boolean {
 
     // Validate whether we should have this service enabled.
-    if(!this.validService(this.hap.Service.LeakSensor, () => {
-
-      // Have we disabled the leak sensor?
-      if(this.ufp.mountType !== "leak") {
-
-        return false;
-      }
-
-      return true;
-    })) {
+    if(!this.validService(this.hap.Service.LeakSensor, this.ufp.mountType === "leak")) {
 
       return false;
     }
@@ -392,16 +348,7 @@ export class ProtectSensor extends ProtectDevice {
   private configureTemperatureSensor(): boolean {
 
     // Validate whether we should have this service enabled.
-    if(!this.validService(this.hap.Service.TemperatureSensor, () => {
-
-      // Have we disabled the sensor?
-      if(!this.ufp.temperatureSettings?.isEnabled) {
-
-        return false;
-      }
-
-      return true;
-    })) {
+    if(!this.validService(this.hap.Service.TemperatureSensor, this.ufp.temperatureSettings?.isEnabled)) {
 
       return false;
     }

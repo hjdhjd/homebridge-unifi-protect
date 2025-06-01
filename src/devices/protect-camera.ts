@@ -8,6 +8,7 @@ import { ProtectReservedNames, toCamelCase } from "../protect-types.js";
 import { LivestreamManager } from "../protect-livestream.js";
 import type { MessageSwitchInterface } from "./protect-doorbell.js";
 import type { Nullable } from "homebridge-plugin-utils";
+import type { ProtectCameraPackage } from "./protect-camera-package.js";
 import { ProtectDevice } from "./protect-device.js";
 import type { ProtectNvr } from "../protect-nvr.js";
 import { ProtectStreamingDelegate } from "../protect-stream.js";
@@ -40,6 +41,7 @@ export class ProtectCamera extends ProtectDevice {
   public detectLicensePlate: string[];
   public readonly livestream: LivestreamManager;
   public messageSwitches: { [index: string]: MessageSwitchInterface };
+  public packageCamera?: Nullable<ProtectCameraPackage>;
   private rtspEntries: RtspEntry[];
   private rtspQuality: { [index: string]: string };
   public stream!: ProtectStreamingDelegate;
@@ -424,16 +426,7 @@ export class ProtectCamera extends ProtectDevice {
     }
 
     // Validate whether we should have this service enabled.
-    if(!this.validService(this.hap.Service.LockMechanism, () => {
-
-      // If we don't have the lock feature enabled, disable it and we're done.
-      if(!this.hasFeature("UniFi.Access.Lock")) {
-
-        return false;
-      }
-
-      return true;
-    }, ProtectReservedNames.LOCK_ACCESS)) {
+    if(!this.validService(this.hap.Service.LockMechanism, this.hasFeature("UniFi.Access.Lock"), ProtectReservedNames.LOCK_ACCESS)) {
 
       return false;
     }
@@ -595,16 +588,7 @@ export class ProtectCamera extends ProtectDevice {
     let doorbellService = this.accessory.getService(this.hap.Service.Doorbell);
 
     // Validate whether we should have this service enabled.
-    if(!this.validService(this.hap.Service.Switch, () => {
-
-      // Doorbell switches are disabled by default and primarily exist for automation purposes.
-      if(!this.hasFeature("Doorbell.Trigger")) {
-
-        return false;
-      }
-
-      return true;
-    }, ProtectReservedNames.SWITCH_DOORBELL_TRIGGER)) {
+    if(!this.validService(this.hap.Service.Switch, this.hasFeature("Doorbell.Trigger"), ProtectReservedNames.SWITCH_DOORBELL_TRIGGER)) {
 
       // Since we aren't enabling the doorbell trigger on this camera, remove the doorbell service if the camera isn't actually doorbell-capable hardware.
       if(!this.ufp.featureFlags.isDoorbell && doorbellService) {
@@ -1057,16 +1041,7 @@ export class ProtectCamera extends ProtectDevice {
   private configureHksvRecordingSwitch(): boolean {
 
     // Validate whether we should have this service enabled.
-    if(!this.validService(this.hap.Service.Switch, () => {
-
-      // If we don't have HKSV or the HKSV recording switch enabled, disable it and we're done.
-      if(!this.hasFeature("Video.HKSV.Recording.Switch")) {
-
-        return false;
-      }
-
-      return true;
-    }, ProtectReservedNames.SWITCH_HKSV_RECORDING)) {
+    if(!this.validService(this.hap.Service.Switch, this.hasFeature("Video.HKSV.Recording.Switch"), ProtectReservedNames.SWITCH_HKSV_RECORDING)) {
 
       // We want to default this back to recording whenever we disable the recording switch.
       this.accessory.context.hksvRecording = true;
@@ -1113,16 +1088,8 @@ export class ProtectCamera extends ProtectDevice {
   private configureNightVisionDimmer(): boolean {
 
     // Validate whether we should have this service enabled.
-    if(!this.validService(this.hap.Service.Lightbulb, () => {
-
-      // The night vision dimmer is disabled by default and requires the relevant device-specific capabilities to support it.
-      if(!this.ufp.featureFlags.hasInfrared || !this.ufp.featureFlags.hasIcrSensitivity || !this.hasFeature("Device.NightVision.Dimmer")) {
-
-        return false;
-      }
-
-      return true;
-    }, ProtectReservedNames.LIGHTBULB_NIGHTVISION)) {
+    if(!this.validService(this.hap.Service.Lightbulb, this.ufp.featureFlags.hasInfrared && this.ufp.featureFlags.hasIcrSensitivity &&
+      this.hasFeature("Device.NightVision.Dimmer"), ProtectReservedNames.LIGHTBULB_NIGHTVISION)) {
 
       return false;
     }
@@ -1259,16 +1226,7 @@ export class ProtectCamera extends ProtectDevice {
       const ufpRecordingSetting = ufpRecordingSwitchType.slice(ufpRecordingSwitchType.lastIndexOf(".") + 1);
 
       // Validate whether we should have this service enabled.
-      if(!this.validService(this.hap.Service.Switch, () => {
-
-        // If we don't have the feature option enabled, disable the switch and we're done.
-        if(!this.hasFeature("Nvr.Recording.Switch")) {
-
-          return false;
-        }
-
-        return true;
-      }, ufpRecordingSwitchType)) {
+      if(!this.validService(this.hap.Service.Switch, this.hasFeature("Nvr.Recording.Switch"), ufpRecordingSwitchType)) {
 
         continue;
       }

@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 7.17.3 (2025-06-01)
+  * Fix: address a regression in recent releases that caused doorbell package cameras to not see motion events.
+  * Housekeeping.
+
 ## 7.17.2 (2025-05-29)
   * Fix: address audio regressions in HKSV.
   * Housekeeping.

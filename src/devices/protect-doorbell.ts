@@ -3,13 +3,13 @@
  * protect-doorbell.ts: Doorbell device class for UniFi Protect.
  */
 import type { CharacteristicValue, PlatformAccessory, Service } from "homebridge";
-import { type Nullable, validateName } from "homebridge-plugin-utils";
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_DOORBELL_AUTHSENSOR_DURATION, PROTECT_DOORBELL_CHIME_DURATION_DIGITAL } from "../settings.js";
 import type { ProtectCameraConfig, ProtectCameraConfigPayload, ProtectCameraLcdMessagePayload, ProtectChimeConfigPayload, ProtectEventAdd, ProtectEventPacket,
   ProtectNvrConfigPayload } from "unifi-protect";
 import { ProtectReservedNames, toCamelCase } from "../protect-types.js";
 import { ProtectCamera } from "./protect-camera.js";
 import { ProtectCameraPackage } from "./protect-camera-package.js";
+import { validateName } from "homebridge-plugin-utils";
 
 // A doorbell message entry.
 interface MessageInterface {
@@ -33,7 +33,6 @@ export class ProtectDoorbell extends ProtectCamera {
   private defaultMessageDuration!: number;
   private isMessagesEnabled!: boolean;
   private isMessagesFromControllerEnabled!: boolean;
-  public packageCamera?: Nullable<ProtectCameraPackage>;
 
   // Configure the doorbell for HomeKit.
   protected configureDevice(): boolean {
@@ -243,16 +242,8 @@ export class ProtectDoorbell extends ProtectCamera {
       const chimeSetting = physicalChimeType.slice(physicalChimeType.lastIndexOf(".") + 1);
 
       // Validate whether we should have this service enabled.
-      if(!this.validService(this.hap.Service.Switch, () => {
-
-        // If we don't have the physical capabilities or the feature option enabled, disable the switch and we're done.
-        if(!this.ufp.featureFlags.hasChime || !this.hasFeature("Doorbell.PhysicalChime")) {
-
-          return false;
-        }
-
-        return true;
-      }, physicalChimeType)) {
+      // If we don't have the physical capabilities or the feature option enabled, disable the switch and we're done.
+      if(!this.validService(this.hap.Service.Switch, this.ufp.featureFlags.hasChime && this.hasFeature("Doorbell.PhysicalChime"), physicalChimeType)) {
 
         continue;
       }
@@ -335,16 +326,7 @@ export class ProtectDoorbell extends ProtectCamera {
   private configureProtectChimeLightbulb(): boolean {
 
     // Validate whether we should have this service enabled.
-    if(!this.validService(this.hap.Service.Lightbulb, () => {
-
-      // The volume dimmer is disabled by default unless the user enables it.
-      if(!this.hasFeature("Doorbell.Volume.Dimmer")) {
-
-        return false;
-      }
-
-      return true;
-    }, ProtectReservedNames.LIGHTBULB_DOORBELL_VOLUME)) {
+    if(!this.validService(this.hap.Service.Lightbulb, this.hasFeature("Doorbell.Volume.Dimmer"), ProtectReservedNames.LIGHTBULB_DOORBELL_VOLUME)) {
 
       return false;
     }
@@ -392,17 +374,10 @@ export class ProtectDoorbell extends ProtectCamera {
   private configureAuthSensor(): boolean {
 
     // Validate whether we should have this service enabled.
-    if(!this.validService(this.hap.Service.ContactSensor, () => {
-
-      // The authentication contact sensor is disabled by default unless the user enables it. We only make it available if we have at least one of the
-      // fingerprint sensor or the NFC sensor available.
-      if(!this.hasFeature("Doorbell.AuthSensor") || (!this.ufp.enableNfc && !this.ufp.featureFlags.hasFingerprintSensor)) {
-
-        return false;
-      }
-
-      return true;
-    }, ProtectReservedNames.CONTACT_AUTHSENSOR)) {
+    // The authentication contact sensor is disabled by default unless the user enables it. We only make it available if we have at least one of the
+    // fingerprint sensor or the NFC sensor available.
+    if(!this.validService(this.hap.Service.ContactSensor, this.hasFeature("Doorbell.AuthSensor") && (this.ufp.enableNfc || this.ufp.featureFlags.hasFingerprintSensor),
+      ProtectReservedNames.CONTACT_AUTHSENSOR)) {
 
       return false;
     }

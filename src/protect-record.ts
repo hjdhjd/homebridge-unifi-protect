@@ -81,7 +81,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
       return;
     }
 
-    // We're recording - update our recording state internally. We set this regardless of whether or not we succeed at starting the timeshift buffer in order to maintain
+    // We're recording - update our recording state internally. We set this regardless of whether or not we succeed at starting the timeshift buffer in order to keep
     // our state consistent with HKSV.
     this._isRecording = active;
 
@@ -99,8 +99,8 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
 
     this.isInitialized = true;
 
-    this.log.info("HKSV: %s%s, %s.", this.protectCamera.hints.hardwareTranscoding ? "hardware-accelerated " : "", this.rtspEntry?.name,
-      formatBps((this.recordingConfig?.videoCodec.parameters.bitRate ?? 0) * 1000));
+    this.log.info("HKSV: %s%s, %s.", (this.protectCamera.hints.hardwareTranscoding && (this.protectCamera.platform.codecSupport.hostSystem !== "raspbian")) ?
+      "hardware-accelerated " : "", this.rtspEntry?.name, formatBps((this.recordingConfig?.videoCodec.parameters.bitRate ?? 0) * 1000));
   }
 
   // Process updated recording configuration settings from HomeKit Secure Video.
@@ -295,10 +295,16 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     this.hksvRequestedClose = false;
 
     // Start a new FFmpeg instance to transcode using HomeKit's requirements.
-    this.ffmpegStream = new FfmpegRecordingProcess(this.protectCamera.stream.ffmpegOptions, this.recordingConfig, this.rtspEntry.channel.fps, this.isAudioActive,
-      this.protectCamera.stream.hksv?.timeshift.buffer?.length ?? this.protectCamera.stream.probesize,
-      Math.max((this.protectCamera.stream.hksv?.timeshift.time ?? 0) - this.recordingConfig.prebufferLength, 0), this.protectCamera.ufp.videoCodec,
-      this.protectCamera.hasFeature("Debug.Video.HKSV"));
+    this.ffmpegStream = new FfmpegRecordingProcess(this.protectCamera.stream.ffmpegOptions, this.recordingConfig, {
+
+      audioStream: 0,
+      codec: this.protectCamera.ufp.videoCodec,
+      enableAudio: this.isAudioActive,
+      fps: this.rtspEntry.channel.fps,
+      probesize: this.protectCamera.stream.hksv?.timeshift.buffer?.length ?? this.protectCamera.stream.probesize,
+      timeshift: Math.max((this.protectCamera.stream.hksv?.timeshift.time ?? 0) - this.recordingConfig.prebufferLength, 0),
+      transcodeAudio: false
+    }, this.protectCamera.hasFeature("Debug.Video.HKSV"));
 
     this.ffmpegStream.start();
     this.isTransmitting = true;

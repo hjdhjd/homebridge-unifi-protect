@@ -168,7 +168,7 @@ export abstract class ProtectDevice extends ProtectBase {
   }
 
   // Validate whether a service should exist, removing it if necessary.
-  protected validService(serviceType: WithUUID<typeof Service>, validate: () => boolean, subtype?: string): boolean {
+  protected validService(serviceType: WithUUID<typeof Service>, validate: boolean, subtype?: string): boolean {
 
     return validService(this.accessory, serviceType, validate, subtype);
   }
@@ -261,22 +261,17 @@ export abstract class ProtectDevice extends ProtectBase {
   // Configure the Protect motion sensor for HomeKit.
   protected configureMotionSensor(isEnabled = true, isInitialized = false): boolean {
 
+    // Have we disabled the motion sensor?
+    if(!isEnabled) {
+
+      this.nvr.mqtt?.unsubscribe(this.ufp.mac, "motion/get");
+      this.nvr.mqtt?.unsubscribe(this.ufp.mac, "motion/set");
+      this.configureMotionSwitch(isEnabled);
+      this.configureMotionTrigger(isEnabled);
+    }
+
     // Validate whether we should have this service enabled.
-    if(!this.validService(this.hap.Service.MotionSensor, () => {
-
-      // Have we disabled the motion sensor?
-      if(!isEnabled) {
-
-        this.nvr.mqtt?.unsubscribe(this.ufp.mac, "motion/get");
-        this.nvr.mqtt?.unsubscribe(this.ufp.mac, "motion/set");
-        this.configureMotionSwitch(isEnabled);
-        this.configureMotionTrigger(isEnabled);
-
-        return false;
-      }
-
-      return true;
-    })) {
+    if(!this.validService(this.hap.Service.MotionSensor, isEnabled)) {
 
       return false;
     }
@@ -331,16 +326,7 @@ export abstract class ProtectDevice extends ProtectBase {
   private configureMotionSwitch(isEnabled = true): boolean {
 
     // Validate whether we should have this service enabled.
-    if(!this.validService(this.hap.Service.Switch, () => {
-
-      // Motion switches are disabled by default unless the user enables them.
-      if(!isEnabled || !this.hasFeature("Motion.Switch")) {
-
-        return false;
-      }
-
-      return true;
-    }, ProtectReservedNames.SWITCH_MOTION_SENSOR)) {
+    if(!this.validService(this.hap.Service.Switch, isEnabled && this.hasFeature("Motion.Switch"), ProtectReservedNames.SWITCH_MOTION_SENSOR)) {
 
       // If we disable the switch, make sure we fully reset it's state. Otherwise, we can end up in a situation (e.g. liveview switches) where we have disabled motion
       // detection with no meaningful way to enable it again.
@@ -390,16 +376,7 @@ export abstract class ProtectDevice extends ProtectBase {
   private configureMotionTrigger(isEnabled = true): boolean {
 
     // Validate whether we should have this service enabled.
-    if(!this.validService(this.hap.Service.Switch, () => {
-
-      // Motion triggers are disabled by default and primarily exist for automation purposes.
-      if(!isEnabled || !this.hasFeature("Motion.Trigger")) {
-
-        return false;
-      }
-
-      return true;
-    }, ProtectReservedNames.SWITCH_MOTION_TRIGGER)) {
+    if(!this.validService(this.hap.Service.Switch, isEnabled && this.hasFeature("Motion.Trigger"), ProtectReservedNames.SWITCH_MOTION_TRIGGER)) {
 
       return false;
     }
@@ -460,19 +437,14 @@ export abstract class ProtectDevice extends ProtectBase {
   // Configure the Protect occupancy sensor for HomeKit.
   protected configureOccupancySensor(isEnabled = true, isInitialized = false): boolean {
 
+    // Occupancy sensors are disabled by default and primarily exist for automation purposes.
+    if(!isEnabled || !this.hasFeature("Motion.OccupancySensor")) {
+
+      this.nvr.mqtt?.unsubscribe(this.ufp.mac, "occupancy/get");
+    }
+
     // Validate whether we should have this service enabled.
-    if(!this.validService(this.hap.Service.OccupancySensor, () => {
-
-      // Occupancy sensors are disabled by default and primarily exist for automation purposes.
-      if(!isEnabled || !this.hasFeature("Motion.OccupancySensor")) {
-
-        this.nvr.mqtt?.unsubscribe(this.ufp.mac, "occupancy/get");
-
-        return false;
-      }
-
-      return true;
-    })) {
+    if(!this.validService(this.hap.Service.OccupancySensor, isEnabled && this.hasFeature("Motion.OccupancySensor"))) {
 
       return false;
     }
@@ -533,16 +505,7 @@ export abstract class ProtectDevice extends ProtectBase {
   protected configureStatusLedSwitch(isEnabled = true): boolean {
 
     // Validate whether we should have this service enabled.
-    if(!this.validService(this.hap.Service.Switch, () => {
-
-      // Status LED switches are disabled by default unless the user enables them.
-      if(!isEnabled || !this.hasFeature("Device.StatusLed.Switch")) {
-
-        return false;
-      }
-
-      return true;
-    }, ProtectReservedNames.SWITCH_STATUS_LED)) {
+    if(!this.validService(this.hap.Service.Switch, isEnabled && this.hasFeature("Device.StatusLed.Switch"), ProtectReservedNames.SWITCH_STATUS_LED)) {
 
       return false;
     }

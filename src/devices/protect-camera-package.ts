@@ -37,12 +37,15 @@ export class ProtectCameraPackage extends ProtectCamera {
       this.hints.transcodeHighLatencyBitrate = parentCamera.hints.transcodeHighLatencyBitrate;
     }
 
+    // Save our context for reference before we recreate it.
+    const savedContext = this.accessory.context;
+
     // Clean out the context object in case it's been polluted somehow.
     this.accessory.context = {};
 
     // Inherit our HKSV and motion awareness states from our parent camera.
-    this.accessory.context.hksvRecording = parentCamera?.accessory.context.hksvRecording as boolean;
-    this.accessory.context.detectMotion = parentCamera?.accessory.context.detectMotion as boolean;
+    this.accessory.context.detectMotion = savedContext.detectMotion as boolean ?? true;
+    this.accessory.context.hksvRecording = savedContext.hksvRecording as boolean ?? true;
 
     // We explicitly avoid adding the MAC address of the camera - that's reserved for real Protect devices, not synthetic ones we create.
     this.accessory.context.nvr = this.nvr.ufp.mac;
@@ -127,16 +130,7 @@ export class ProtectCameraPackage extends ProtectCamera {
   private configureFlashlight(): boolean {
 
     // Validate whether we should have this service enabled.
-    if(!this.validService(this.hap.Service.Lightbulb, () => {
-
-      // If we don't have the package camera flashlight enabled, we're done.
-      if(!this.hasFeature("Doorbell.PackageCamera.Flashlight")) {
-
-        return false;
-      }
-
-      return true;
-    }, ProtectReservedNames.LIGHTBULB_PACKAGE_FLASHLIGHT)) {
+    if(!this.validService(this.hap.Service.Lightbulb, this.hasFeature("Doorbell.PackageCamera.Flashlight"), ProtectReservedNames.LIGHTBULB_PACKAGE_FLASHLIGHT)) {
 
       return false;
     }

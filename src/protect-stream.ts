@@ -296,7 +296,7 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
     const isAudioEnabled = this.protectCamera.ufp.featureFlags.hasMic && this.protectCamera.hasFeature("Audio");
 
     // We need to check for AAC support because it's going to determine whether we support audio.
-    const hasAudioSupport = isAudioEnabled && (this.ffmpegOptions.audioEncoder.length > 0);
+    const hasAudioSupport = isAudioEnabled && (this.ffmpegOptions.audioEncoder().length > 0);
 
     // Setup our audio plumbing.
     const audioIncomingRtcpPort = (await reservePort(request.addressVersion));
@@ -518,7 +518,9 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
 
     // -hide_banner                     Suppress printing the startup banner in FFmpeg.
     // -nostats                         Suppress printing progress reports while encoding in FFmpeg.
-    // -fflags flags                    Set format flags to discard any corrupt packets and minimize buffering and latency.
+    // -fflags flags                    Set the format flags to discard any corrupt packets rather than exit, generate a presentation timestamp if it's missing, ignore
+    //                                  the decoding timestamp, and minimize buffering as well as latency. Adjusting timestamps is a necessity if we want to ensure we
+    //                                  keep audio and video in sync, especially when using hardware acceleration.
     // -err_detect ignore_err           Ignore decoding errors and continue rather than exit.
     // -max_delay 500000                Set an upper limit on how much time FFmpeg can take in demuxing packets, in microseconds.
     // -flags low_delay                 Tell FFmpeg to optimize for low delay / realtime decoding.
@@ -528,7 +530,7 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
 
       "-hide_banner",
       "-nostats",
-      "-fflags", "+discardcorrupt" + (useTsb ? "+flush_packets+nobuffer" : ""),
+      "-fflags", "+discardcorrupt+genpts+igndts" + (useTsb ? "+flush_packets+nobuffer" : ""),
       "-err_detect", "ignore_err",
       ...this.ffmpegOptions.videoDecoder(this.protectCamera.ufp.videoCodec),
       "-max_delay", "500000",
@@ -596,10 +598,10 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
 
       // Configure our video parameters for just copying the input stream from Protect - it tends to be quite solid in most cases:
       //
-      // -vcodec copy                   Copy the stream withour reencoding it.
+      // -codec:v copy                  Copy the stream withour reencoding it.
       ffmpegArgs.push(
 
-        "-vcodec", "copy"
+        "-codec:v", "copy"
       );
 
       // The livestream API needs to be transmuxed before we use it directly.
@@ -646,7 +648,7 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
     //                                  and video tracks in opposite locations from where FFmpeg typically expects them. This
     //                                  setting is a more general solution than naming the track locations directly in case
     //                                  Protect changes this in the future.
-    // -acodec                          Encode using the codecs available to us on given platforms.
+    // -codec:v                         Encode using the codecs available to us on given platforms.
     // -profile:a 38                    Specify enhanced, low-delay AAC for HomeKit.
     // -flags +global_header            Sets the global header in the bitstream.
     // -ar samplerate                   Sample rate to use for this audio. This is specified by HomeKit.
@@ -664,9 +666,9 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
 
         // Workaround for regressions in the native audiotoolbox encoder in recent macOS releases for lower sampling rates. We fallback back to FDK AAC in that specific
         // instance, primarily impacting Apple Watch livestreaming.
-        ...(((request.audio.sample_rate === 16) && this.ffmpegOptions.audioEncoder.includes("aac_at")) ?
-          [ "-acodec", "libfdk_aac", "-afterburner", "1", "-eld_v2", "1", ...(!/-Jellyfi$/i.test(this.platform.codecSupport.ffmpegVersion) ? [ "-eld_sbr", "1" ] : []) ] :
-          this.ffmpegOptions.audioEncoder),
+        ...(((request.audio.sample_rate === 16) && this.ffmpegOptions.audioEncoder().includes("aac_at")) ?
+          [ "-codec:v", "libfdk_aac", "-afterburner", "1", "-eld_v2", "1", ...(!/-Jellyfi$/.test(this.platform.codecSupport.ffmpegVersion) ? [ "-eld_sbr", "1" ] : []) ] :
+          this.ffmpegOptions.audioEncoder()),
         "-profile:a", "38",
         "-flags", "+global_header",
         "-ar", request.audio.sample_rate.toString() + "k",
@@ -902,9 +904,9 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
     // -nostats               Suppress printing progress reports while encoding in FFmpeg.
     // -protocol_whitelist    Set the list of allowed protocols for this FFmpeg session.
     // -f sdp                 Specify that our input will be an SDP file.
-    // -acodec                Decode AAC input using the specified decoder.
+    // -codec:a               Decode AAC input using the specified decoder.
     // -i pipe:0              Read input from standard input.
-    // -acodec                Encode to AAC. This format is set by Protect.
+    // -codec:a               Encode to AAC. This format is set by Protect.
     // -flags +global_header  Sets the global header in the bitstream.
     // -ar                    Sets the audio rate to what Protect is expecting.
     // -b:a                   Bitrate to use for this audio stream based on what HomeKit is providing us.
@@ -917,10 +919,10 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
       "-nostats",
       "-protocol_whitelist", "crypto,file,pipe,rtp,udp",
       "-f", "sdp",
-      "-acodec", this.ffmpegOptions.audioDecoder,
+      "-codec:a", this.ffmpegOptions.audioDecoder,
       "-i", "pipe:0",
       "-map", "0:a:0",
-      ...this.ffmpegOptions.audioEncoder,
+      ...this.ffmpegOptions.audioEncoder(),
       "-flags", "+global_header",
       "-ar", this.protectCamera.ufp.talkbackSettings.samplingRate.toString(),
       "-b:a", request.audio.max_bit_rate.toString() + "k",
