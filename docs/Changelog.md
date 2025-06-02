@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 7.17.5 (2025-06-02)
+  * Housekeeping.
+
 ## 7.17.4 (2025-06-02)
   * Behavior change: MQTT events will be published for smart object detection, whether or not a user has enabled smart object sensors.
   * Housekeeping.
