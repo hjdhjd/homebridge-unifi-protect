@@ -502,8 +502,8 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
           break;
       }
 
-      // Inform the user if they've enabled logging. We log HKSV events by default, for now.
-      if((reason === HDSProtocolSpecificErrorReason.NORMAL) && (this.protectCamera.hints.logHksv || this.protectCamera.hints.logMotion)) {
+      // Inform the user if they've enabled logging.
+      if((reason === HDSProtocolSpecificErrorReason.NORMAL) && this.protectCamera.hints.logHksv) {
 
         this.log.info("HKSV: %s %s event.", recordedTime, timeUnit);
       }

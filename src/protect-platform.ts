@@ -134,7 +134,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
 
     if(this.config.debugAll) {
 
-      this.log.info(util.format(message, ...parameters));
+      this.log.warn(util.format(message, ...parameters));
     }
   }
 }

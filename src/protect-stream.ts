@@ -310,8 +310,8 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
       this.log.info("Audio support disabled.%s", isAudioEnabled ? " A version of FFmpeg that is compiled with fdk_aac support is required to support audio." : "");
     }
 
-    let rtpDemuxer = null;
-    let talkBack = null;
+    let rtpDemuxer: Nullable<RtpDemuxer> = null;
+    let talkBack: Nullable<string> = null;
 
     if(hasAudioSupport && this.protectCamera.hints.twoWayAudio) {
 
@@ -648,12 +648,11 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
     //                                  and video tracks in opposite locations from where FFmpeg typically expects them. This
     //                                  setting is a more general solution than naming the track locations directly in case
     //                                  Protect changes this in the future.
-    // -codec:v                         Encode using the codecs available to us on given platforms.
+    // -codec:a                         Encode using the codecs available to us on given platforms.
     // -profile:a 38                    Specify enhanced, low-delay AAC for HomeKit.
     // -flags +global_header            Sets the global header in the bitstream.
     // -ar samplerate                   Sample rate to use for this audio. This is specified by HomeKit.
     // -b:a bitrate                     Bitrate to use for this audio stream. This is specified by HomeKit.
-    // -bufsize size                    This is the decoder buffer size, which drives the variability / quality of the output bitrate.
     // -ac number                       Set the number of audio channels.
     // -frame_size                      Set the number of samples per frame to match the requested frame size from HomeKit.
     if(sessionInfo.hasAudioSupport) {
@@ -663,17 +662,11 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
 
         // Take advantage of the higher fidelity potentially available to us from the Opus track in the RTSP stream. The livestream API only provides an AAC track.
         "-map", useTsb ? "0:a:0?" : "0:a:1?",
-
-        // Workaround for regressions in the native audiotoolbox encoder in recent macOS releases for lower sampling rates. We fallback back to FDK AAC in that specific
-        // instance, primarily impacting Apple Watch livestreaming.
-        ...(((request.audio.sample_rate === 16) && this.ffmpegOptions.audioEncoder().includes("aac_at")) ?
-          [ "-codec:v", "libfdk_aac", "-afterburner", "1", "-eld_v2", "1", ...(!/-Jellyfi$/.test(this.platform.codecSupport.ffmpegVersion) ? [ "-eld_sbr", "1" ] : []) ] :
-          this.ffmpegOptions.audioEncoder()),
+        ...this.ffmpegOptions.audioEncoder(),
         "-profile:a", "38",
         "-flags", "+global_header",
         "-ar", request.audio.sample_rate.toString() + "k",
         "-b:a", request.audio.max_bit_rate.toString() + "k",
-        "-bufsize", (2 * request.audio.max_bit_rate).toString() + "k",
         "-ac", request.audio.channel.toString(),
         "-frame_size", (request.audio.packet_time * request.audio.sample_rate).toString()
       );
@@ -681,7 +674,7 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
       // If we are audio filtering, address it here.
       if(this.protectCamera.hasFeature("Audio.Filter.Noise")) {
 
-        const afOptions = [];
+        const afOptions: string[] = [];
 
         // See what the user has set for the afftdn filter for this camera.
         let fftNr = this.protectCamera.getFeatureFloat("Audio.Filter.Noise.FftNr") ?? PROTECT_FFMPEG_AUDIO_FILTER_FFTNR;
@@ -811,15 +804,9 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
 
         if(!seenInitSegment) {
 
-          if(tsBuffer) {
+          processSegmentQueue(tsBuffer ?? (await livestream.getInitSegment()));
 
-            processSegmentQueue(tsBuffer ?? (await livestream.getInitSegment()));
-            seenInitSegment = true;
-          } else {
-
-            processSegmentQueue(await livestream.getInitSegment());
-            seenInitSegment = true;
-          }
+          seenInitSegment = true;
         }
 
         // Send the segment to FFmpeg for processing.
