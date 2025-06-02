@@ -386,7 +386,7 @@ export class ProtectEvents extends EventEmitter {
           logMessage = " (license plate: " + metadata.licensePlate.name + ", " + metadata.licensePlate.confidenceLevel + "% confidence)";
         }
 
-        protectDevice.log.info("XMotion detected: %s%s.", detectedObject, logMessage);
+        protectDevice.log.info("Motion detected: %s%s.", detectedObject, logMessage);
       }
     }
 
