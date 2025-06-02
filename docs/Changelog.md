@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 7.17.4 (2025-06-02)
+  * Behavior change: MQTT events will be published for smart object detection, whether or not a user has enabled smart object sensors.
+  * Housekeeping.
+
 ## 7.17.3 (2025-06-01)
   * Fix: address a regression in recent releases that caused doorbell package cameras to not see motion events.
   * Housekeeping.
