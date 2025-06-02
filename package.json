@@ -70,7 +70,7 @@
   "scripts": {
     "prebuild": "npm run clean && npm run build-ui",
     "build": "tsc",
-    "build-ui": "shx mkdir -p homebridge-ui/public/lib && shx cp \"node_modules/homebridge-plugin-utils/dist/ui/**/*.@(js|mjs){,.map}\" homebridge-ui/public/lib",
+    "build-ui": "shx mkdir -p homebridge-ui/public/lib && shx cp node_modules/homebridge-plugin-utils/dist/ui/**/*.js homebridge-ui/public/lib || true && shx cp node_modules/homebridge-plugin-utils/dist/ui/**/*.mjs homebridge-ui/public/lib || true && shx cp node_modules/homebridge-plugin-utils/dist/ui/**/*.js.map homebridge-ui/public/lib || true && shx cp node_modules/homebridge-plugin-utils/dist/ui/**/*.mjs.map homebridge-ui/public/lib || true",
     "clean": "shx rm -rf dist homebridge-ui/public/lib",
     "prelint": "npm run build-ui",
     "lint": "eslint --max-warnings=${ESLINT_MAX_WARNINGS:-\"-1\"} eslint.config.mjs src homebridge-ui/*.js homebridge-ui/public/**.mjs",
