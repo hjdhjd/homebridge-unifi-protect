@@ -289,13 +289,8 @@ export class ProtectEvents extends EventEmitter {
   // Motion event delivery to HomeKit.
   private motionEventDelivery(protectDevice: ProtectDevice, motionService: Service, detectedObjects: string[] = [], metadata?: ProtectEventMetadata): void {
 
-    if(!protectDevice) {
-
-      return;
-    }
-
     // If we have disabled motion events, we're done here.
-    if(("detectMotion" in protectDevice.accessory.context) && !protectDevice.accessory.context.detectMotion) {
+    if(!protectDevice || protectDevice.accessory.context.detectMotion === false) {
 
       return;
     }
@@ -352,14 +347,15 @@ export class ProtectEvents extends EventEmitter {
       delete this.eventTimers[protectDevice.id];
     }, protectDevice.hints.motionDuration * 1000);
 
-    // If we have an active smart detection contact sensor reset timer, let's cancel it and create a new one.
-    detectedObjects.map(objectSensor => this.eventTimers[protectDevice.id + ".Motion.SmartDetect.ObjectSensors." + objectSensor] &&
-      clearTimeout(this.eventTimers[protectDevice.id + ".Motion.SmartDetect.ObjectSensors." + objectSensor]));
+    // Capture inflight events that we've already triggered.
+    const inflightObjects = detectedObjects.filter(object => this.eventTimers[protectDevice.id + ".Motion.SmartDetect.ObjectSensors." + object]);
 
-    // Iterate through our detected Protect smart object types, if not already triggered.
-    for(const detectedObject of detectedObjects.filter(objectSensor => protectDevice.accessory.getServiceById(this.hap.Service.ContactSensor,
-      ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + "." + objectSensor)?.getCharacteristic(this.hap.Characteristic.ContactSensorState).value ===
-      this.hap.Characteristic.ContactSensorState.CONTACT_DETECTED)) {
+    // If we have an active smart detection contact sensor reset timer, let's cancel it and create a new one.
+    inflightObjects.map(object => clearTimeout(this.eventTimers[protectDevice.id + ".Motion.SmartDetect.ObjectSensors." + object]));
+
+    // Iterate through our detected Protect smart object types, and trigger them appropriately if we haven't already done so previously. This prevents spammy
+    // notifications by enforcing a time constraint on the minimal amount of time between event triggers.
+    for(const detectedObject of detectedObjects.filter(object => !inflightObjects.includes(object))) {
 
       // Trigger smart detection contact sensor, if configured.
       protectDevice.accessory.getServiceById(this.hap.Service.ContactSensor, ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + "." + detectedObject)
@@ -390,7 +386,7 @@ export class ProtectEvents extends EventEmitter {
           logMessage = " (license plate: " + metadata.licensePlate.name + ", " + metadata.licensePlate.confidenceLevel + "% confidence)";
         }
 
-        protectDevice.log.info("Motion detected: %s%s.", detectedObject, logMessage);
+        protectDevice.log.info("XMotion detected: %s%s.", detectedObject, logMessage);
       }
     }
 
