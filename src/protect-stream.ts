@@ -431,7 +431,7 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
     // Set the initial bitrate we should use for this request based on what HomeKit is requesting.
     let targetBitrate = request.video.max_bit_rate;
 
-    // Only use API livestreaming if we have a live timeshift buffer. Otherwise, we'll get better startup performance out of RTSP streaming.
+    // Only use API livestreaming if we have an active timeshift buffer. Otherwise, we'll fallback to RTSP streaming.
     let useTsb = this.protectCamera.hints.tsbStreaming && this.hksv?.isRecording;
 
     // If we're A/B testing, switch our streaming types. This is intended for internal development purposes only.
@@ -441,6 +441,18 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
     }
 
     this.abTest = !this.abTest;
+
+    // FFmpeg doesn't support AV1 over RTSP yet.
+    if(!useTsb && (this.protectCamera.ufp.videoCodec === "av1")) {
+
+      const errorMessage = "Unable to start video stream: FFmpeg does not currently support AV1-encoded RTSP streams. " +
+        "Enable HKSV in the Home app and ensure API-based livestreaming is enabled in HBUP (enabled by default).";
+
+      this.log.error(errorMessage);
+      callback(new Error(this.protectCamera.accessoryName + ": " + errorMessage));
+
+      return;
+    }
 
     // If we're using the livestream API and we're timeshifting, we override the stream quality we've determined in favor of our timeshift buffer.
     let rtspEntry = useTsb ? this.hksv?.rtspEntry : null;
@@ -506,7 +518,7 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
     }
 
     // If we have the timeshift buffer enabled, and we've selected the same quality for the livestream as our timeshift buffer, we use the timeshift buffer to
-    // significantly accelerate our livestream startup. Using the timeshift buffer has a few advantages.
+    // significantly accelerate our livestream startup. Using the timeshift buffer provides advantages:
     //
     // - Since we typically have several seconds of video already queued up in the timeshift buffer, FFmpeg will get a significant speed up in startup performance.
     //   FFmpeg takes time at the beginning of each session to analyze the input before allowing you to perform any action. By using the timeshift buffer, we're able to
@@ -518,6 +530,8 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
 
     // -hide_banner                     Suppress printing the startup banner in FFmpeg.
     // -nostats                         Suppress printing progress reports while encoding in FFmpeg.
+    // -copyts                          When using the timeshift buffer, ensures that our outbound RTP timestamps mirror the TSB's presentation timestamp spacing exactly.
+    // -start_at_zero                   When using the timeshift buffer, ensures the first packet's timestamp is 0.
     // -fflags flags                    Set the format flags to discard any corrupt packets rather than exit, generate a presentation timestamp if it's missing, ignore
     //                                  the decoding timestamp, and minimize buffering as well as latency. Adjusting timestamps is a necessity if we want to ensure we
     //                                  keep audio and video in sync, especially when using hardware acceleration.
@@ -530,7 +544,8 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
 
       "-hide_banner",
       "-nostats",
-      "-fflags", "+discardcorrupt+genpts+igndts" + (useTsb ? "+flush_packets+nobuffer" : ""),
+      ...(useTsb ? [ "-copyts", "-start_at_zero" ] : []),
+      "-fflags", "+discardcorrupt+genpts+igndts",
       "-err_detect", "ignore_err",
       ...this.ffmpegOptions.videoDecoder(this.protectCamera.ufp.videoCodec),
       "-max_delay", "500000",
@@ -543,10 +558,8 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
 
       // -f mp4                         Tell ffmpeg that it should expect an MP4-encoded input stream.
       // -i pipe:0                      Use standard input to get video data.
-      // -bsf:v h264_mp4toannexb        Convert the livestream container format from MP4 to MPEG-TS.
       ffmpegArgs.push(
 
-        "-bsf:v", (this.protectCamera.ufp.videoCodec === "h264") ? "h264_mp4toannexb" : "hevc_mp4toannexb",
         "-f", "mp4",
         "-i", "pipe:0"
       );
