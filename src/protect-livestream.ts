@@ -109,8 +109,8 @@ export class LivestreamManager {
 
         (this.livestreams[index] as FfmpegLivestreamProcess).segmentLength = segmentLength;
         (this.livestreams[index] as FfmpegLivestreamProcess).start();
-      } else if(!(await (this.livestreams[index] as ProtectLivestream).start(this.protectCamera.ufp.id, channel, lens, segmentLength,
-        this.protectCamera.name + ":" + index))) {
+      } else if(!(await (this.livestreams[index] as ProtectLivestream).start(this.protectCamera.ufp.id, channel,
+        { lens, requestId: this.protectCamera.name + ":" + index, segmentLength }))) {
 
         this.protectCamera.log.error("Unable to access the Protect livestream API: this is typically due to the Protect controller or camera rebooting.");
 
@@ -163,7 +163,8 @@ export class LivestreamManager {
           (this.livestreams[index] as FfmpegLivestreamProcess).start();
         } else {
 
-          await (this.livestreams[index] as ProtectLivestream).start(this.protectCamera.ufp.id, channel, lens, segmentLength, this.protectCamera.name + ":" + index);
+          await (this.livestreams[index] as ProtectLivestream).start(this.protectCamera.ufp.id, channel,
+            { lens, requestId: this.protectCamera.name + ":" + index, segmentLength });
         }
 
         this.startTime[index] = Date.now();

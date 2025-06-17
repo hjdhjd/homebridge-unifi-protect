@@ -97,8 +97,8 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
     // configuration available to us immediately upon startup.
     if(this.protectCamera.stream.hksv?.recordingConfiguration?.mediaContainerConfiguration.fragmentLength) {
 
-      if((this.segmentLength < 100) || (this.segmentLength > 1500) ||
-        (this.segmentLength > (this.protectCamera.stream.hksv?.recordingConfiguration?.mediaContainerConfiguration.fragmentLength / 2))) {
+      if((this._segmentLength < 100) || (this._segmentLength > 1500) ||
+        (this._segmentLength > (this.protectCamera.stream.hksv?.recordingConfiguration?.mediaContainerConfiguration.fragmentLength / 2))) {
 
         this._segmentLength = PROTECT_HKSV_SEGMENT_RESOLUTION;
       }
@@ -121,7 +121,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
     this.livestream?.on("segment", this.eventHandlers.segment);
 
     // Start the livestream and let's begin building our timeshift buffer.
-    if(!(await this.protectCamera.livestream.start(rtspEntry, this.segmentLength))) {
+    if(!(await this.protectCamera.livestream.start(rtspEntry, this._segmentLength))) {
 
       // Something went wrong, let's cleanup our event handlers and we're done.
       Object.keys(this.eventHandlers).map(eventName => this.livestream?.off(eventName, this.eventHandlers[eventName]));
@@ -242,7 +242,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
     }
 
     // Figure out where in the timeshift buffer we want to slice.
-    const start = (duration / this.segmentLength);
+    const start = (duration / this._segmentLength);
 
     // We're really trying to get the whole buffer, so let's do that.
     if(start >= this._buffer.length) {
@@ -288,7 +288,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
   // Retrieve the configured duration of the timeshift buffer, in milliseconds.
   public get configuredDuration(): number {
 
-    return (this.segmentCount * this.segmentLength);
+    return (this.segmentCount * this._segmentLength);
   }
 
   // Set the configured duration of the timeshift buffer, in milliseconds.
@@ -296,7 +296,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
 
     // Calculate how many segments we need to keep in order to have the appropriate number of seconds in our buffer. At a minimum we always want to maintain a single
     // segment in our buffer.
-    this.segmentCount = Math.max(bufferMillis / this.segmentLength, 1);
+    this.segmentCount = Math.max(bufferMillis / this._segmentLength, 1);
   }
 
   // Return the recording length, in milliseconds, of an individual segment.
