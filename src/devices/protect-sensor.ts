@@ -12,7 +12,6 @@ export class ProtectSensor extends ProtectDevice {
 
   private enabledSensors: string[];
   private lastAlarm!: boolean;
-  private lastContact!: boolean;
   private lastLeak!: boolean;
   public ufp: ProtectSensorConfig;
 
@@ -433,25 +432,19 @@ export class ProtectSensor extends ProtectDevice {
   // Get the current ambient light information.
   private get ambientLight(): number {
 
-    return this.ufp.stats.light.value ?? -1;
+    return this.ufp.stats?.light?.value ?? -1;
   }
 
   // Get the current contact sensor information.
   private get contact(): boolean {
 
-    // Save the state change and publish to MQTT.
-    if(this.ufp.isOpened !== this.lastContact) {
-
-      this.lastContact = this.ufp.isOpened;
-    }
-
-    return this.ufp.isOpened;
+    return !!this.ufp.isOpened;
   }
 
   // Get the current humidity information.
   private get humidity(): number {
 
-    return this.ufp.stats.humidity.value ?? -1;
+    return this.ufp.stats?.humidity?.value ?? -1;
   }
 
   // Get the current leak sensor information.
@@ -482,7 +475,7 @@ export class ProtectSensor extends ProtectDevice {
   // Get the current temperature information.
   private get temperature(): number {
 
-    return this.ufp.stats.temperature.value ?? -1;
+    return this.ufp.stats?.temperature?.value ?? -1;
   }
 
   // Configure MQTT capabilities for sensors.
