@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 7.18.1 (2025-06-21)
+  * Fix: address a regression in Protect sensors due to changes in Protect v6.
+
 ## 7.18.0 (2025-06-17)
   * New feature: UniFi Protect v6 support.
   * Improvement: livestreaming optimizations.
