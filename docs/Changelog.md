@@ -2,7 +2,14 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 7.19.0 (2025-06-22)
+  * **Note: HBUP now requires Protect v6 as if this release. Prior versions of Protect are no longer supported.**
+  * Improvement: refined MQTT smart motion telemetry when there are additional attributes available (license plates, vehicle type, color, etc).
+  * Fix: address regressions in smart motion detection due to Protect v6 changes.
+  * Housekeeping.
+
 ## 7.18.1 (2025-06-21)
+  * **Note: this will likely be the final version of HBUP to support Protect v5. Protect v6 has several breaking changes that I'll be addressing in future updates, most notably in the way smart event detection. Stay tuned for those updates.**
   * Fix: address a regression in Protect sensors due to changes in Protect v6.
 
 ## 7.18.0 (2025-06-17)
