@@ -9,7 +9,7 @@ All notable changes to this project will be documented in this file. This projec
   * Housekeeping.
 
 ## 7.18.1 (2025-06-21)
-  * **Note: this will likely be the final version of HBUP to support Protect v5. Protect v6 has several breaking changes that I'll be addressing in future updates, most notably in the way smart event detection. Stay tuned for those updates.**
+  * **Note: this will be the final version of HBUP to support Protect v5. Protect v6 has several breaking changes that I'll be addressing in future updates, most notably in the way smart event detection works in v6. Stay tuned for those updates.**
   * Fix: address a regression in Protect sensors due to changes in Protect v6.
 
 ## 7.18.0 (2025-06-17)
