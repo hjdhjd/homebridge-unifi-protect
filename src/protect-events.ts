@@ -4,7 +4,8 @@
  */
 import type { API, HAP, Service } from "homebridge";
 import type { HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
-import type { ProtectApi, ProtectEventAdd, ProtectEventMetadata, ProtectEventPacket, ProtectKnownDeviceTypes } from "unifi-protect";
+import type { ProtectApi, ProtectEventAdd, ProtectEventMetadata, ProtectEventMetadataDetectedThumbnail, ProtectEventPacket,
+  ProtectKnownDeviceTypes } from "unifi-protect";
 import type { ProtectCamera, ProtectDevice } from "./devices/index.js";
 import { type ProtectDeviceConfigTypes, ProtectReservedNames } from "./protect-types.js";
 import { EventEmitter } from "node:events";
@@ -287,7 +288,7 @@ export class ProtectEvents extends EventEmitter {
   }
 
   // Motion event delivery to HomeKit.
-  private motionEventDelivery(protectDevice: ProtectDevice, motionService: Service, detectedObjects: string[] = [], metadata?: ProtectEventMetadata): void {
+  private motionEventDelivery(protectDevice: ProtectDevice, motionService: Service, detectedObjects: string[], metadata: ProtectEventMetadata = {}): void {
 
     // If we have disabled motion events, we're done here.
     if(!protectDevice || protectDevice.accessory.context.detectMotion === false) {
@@ -310,18 +311,7 @@ export class ProtectEvents extends EventEmitter {
       // Log the event, if configured to do so.
       if(protectDevice.hints.logMotion) {
 
-        let logMessage = "";
-
-        // If we have license plate telemetry, let's inform the user if we're logging for motion events.
-        if(metadata?.licensePlate && detectedObjects.includes("licensePlate") && metadata.licensePlate.name) {
-
-          logMessage = " (license plate: " + metadata.licensePlate.name + ", " + metadata.licensePlate.confidenceLevel + "% confidence)";
-        }
-
-        protectDevice.log.info("Motion detected%s.",
-          ((protectDevice.ufp.modelKey === "camera") && detectedObjects.length &&
-          (!(protectDevice as ProtectCamera).stream?.hksv?.isRecording ||
-          protectDevice.hints.smartDetect || protectDevice.hints.smartDetectSensors)) ? ": " + detectedObjects.sort().join(", ") + logMessage : "");
+        protectDevice.log.info("Motion detected.");
       }
     } else {
 
@@ -347,75 +337,145 @@ export class ProtectEvents extends EventEmitter {
       delete this.eventTimers[protectDevice.id];
     }, protectDevice.hints.motionDuration * 1000);
 
-    // Capture inflight events that we've already triggered.
-    const inflightObjects = detectedObjects.filter(object => this.eventTimers[protectDevice.id + ".Motion.SmartDetect.ObjectSensors." + object]);
+    // We build a unified list of the object events we're interested in: legacy smart detections first, followed by thumbnail-based detections.
+    type EventItem = {
 
-    // If we have an active smart detection contact sensor reset timer, let's cancel it and create a new one.
-    inflightObjects.map(object => clearTimeout(this.eventTimers[protectDevice.id + ".Motion.SmartDetect.ObjectSensors." + object]));
+      type: string,
+      name?: string,
+      confidence?: number,
+      payload?: ProtectEventMetadataDetectedThumbnail
+    };
 
-    // Iterate through our detected Protect smart object types, and trigger them appropriately if we haven't already done so previously. This prevents spammy
-    // notifications by enforcing a time constraint on the minimal amount of time between event triggers.
-    for(const detectedObject of detectedObjects.filter(object => !inflightObjects.includes(object))) {
+    const smartEvents: EventItem[] = [];
 
-      // Trigger smart detection contact sensor, if configured.
-      protectDevice.accessory.getServiceById(this.hap.Service.ContactSensor, ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + "." + detectedObject)
-        ?.updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.hap.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED);
+    // Only look for smart detections if we're configured to do so.
+    if(protectDevice.hints.smartDetect) {
 
-      // Publish the smart detection event to MQTT, if the user has configured it.
-      this.nvr.mqtt?.publish(protectDevice.ufp.mac, "motion/smart/" + detectedObject, "true");
+      // Add our legacy smart detections.
+      smartEvents.push(...detectedObjects.map(type => ({ type })));
 
-      // Trigger license plate contact sensors, if configured.
-      if(metadata && ("licensePlate" in metadata) && (detectedObject === "licensePlate") && ("name" in metadata.licensePlate)) {
+      // Now add our thumbnail-based detections.
+      if(metadata?.detectedThumbnails) {
 
-        protectDevice.accessory.getServiceById(this.hap.Service.ContactSensor, ProtectReservedNames.CONTACT_MOTION_SMARTDETECT_LICENSE + "." +
-          metadata.licensePlate.name.toUpperCase())
-          ?.updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.hap.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED);
+        smartEvents.push(...metadata.detectedThumbnails.filter(thumbnail => thumbnail.type).map(detection => ({
 
-        // Publish the smart detection event to MQTT, if the user has configured it.
-        this.nvr.mqtt?.publish(protectDevice.ufp.mac, "motion/smart/" + detectedObject + "/metadata", JSON.stringify(metadata));
-      }
-
-      // Log the event, if configured to do so.
-      if(protectDevice.hints.logMotion) {
-
-        let logMessage = "";
-
-        // If we have license plate telemetry, let's inform the user if we're logging for motion events.
-        if(metadata?.licensePlate && (detectedObject === "licensePlate") && metadata.licensePlate.name) {
-
-          logMessage = " (license plate: " + metadata.licensePlate.name + ", " + metadata.licensePlate.confidenceLevel + "% confidence)";
-        }
-
-        protectDevice.log.info("Motion detected: %s%s.", detectedObject, logMessage);
+          confidence: detection.confidence,
+          name: detection.name,
+          payload: detection as ProtectEventMetadataDetectedThumbnail,
+          type: detection.type as string
+        })));
       }
     }
 
-    // Reset smart detection contact sensors, if configured.
-    for(const detectedObject of detectedObjects) {
+    // Iterate over the smart events that Protect has detected.
+    for(const event of smartEvents) {
 
-      // Reset our smart detection contact sensors after motionDuration.
-      this.eventTimers[protectDevice.id + ".Motion.SmartDetect.ObjectSensors." + detectedObject] = setTimeout(() => {
+      const key = protectDevice.id + ".Motion.SmartDetect.ObjectSensors." + event.type;
 
-        // Reset our license plate contact sensor, if configured.
-        if(metadata && ("licensePlate" in metadata) && (detectedObject === "licensePlate") && ("name" in metadata.licensePlate)) {
+      // We hae a new event, let's make sure we trigger our sensors only once.
+      if(!this.eventTimers[key]) {
 
-          protectDevice.accessory.getServiceById(this.hap.Service.ContactSensor, ProtectReservedNames.CONTACT_MOTION_SMARTDETECT_LICENSE + "." +
-            metadata.licensePlate.name.toUpperCase())?.updateCharacteristic(this.hap.Characteristic.ContactSensorState,
-            this.hap.Characteristic.ContactSensorState.CONTACT_DETECTED);
-        }
-
-        // Reset our smart detection contact sensor, if configured.
-        protectDevice.accessory.getServiceById(this.hap.Service.ContactSensor, ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + "." + detectedObject)
-          ?.updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.hap.Characteristic.ContactSensorState.CONTACT_DETECTED);
+        // These sensors only get triggered if they actually exist on the accessory.
+        protectDevice.accessory.getServiceById(this.hap.Service.ContactSensor, ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + "." + event.type)?.
+          updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.hap.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED);
 
         // Publish the smart detection event to MQTT, if the user has configured it.
-        this.nvr.mqtt?.publish(protectDevice.ufp.mac, "motion/smart/" + detectedObject, "false");
+        this.nvr.mqtt?.publish(protectDevice.ufp.mac, "motion/smart/" + event.type, "true");
 
+        // Inform the user. We handle logging for vehicle-related events below.
+        if(protectDevice.hints.logMotion && (event.type !== "vehicle")) {
+
+          protectDevice.log.info("Smart motion detected: %s.", event.type);
+        }
+      } else {
+
+        // Clear out the inflight motion event timer.
+        clearTimeout(this.eventTimers[key]);
+      }
+
+      // Reset our smart detection contact sensors after motionDuration.
+      this.eventTimers[key] = setTimeout(() => {
+
+        // Reset our smart detection contact sensor.
+        protectDevice.accessory.getServiceById(this.hap.Service.ContactSensor, ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + "." + event.type)?.
+          updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.hap.Characteristic.ContactSensorState.CONTACT_DETECTED);
+
+        // Publish the smart detection event to MQTT, if the user has configured it.
+        this.nvr.mqtt?.publish(protectDevice.ufp.mac, "motion/smart/" + event.type, "false");
         protectDevice.log.debug("Resetting smart object motion event.");
 
         // Delete the timer from our motion event tracker.
-        delete this.eventTimers[protectDevice.id + ".Motion.SmartDetect.ObjectSensors"];
+        delete this.eventTimers[key];
       }, protectDevice.hints.motionDuration * 1000);
+
+      // Vehicles have additional attributes that can be associated with their smart detections. We process those here.
+      if(event.type === "vehicle") {
+
+        // We have a license plate. Let's see if we have a match with what the user has configured.
+        if(event.name) {
+
+          const plate = event.name.toUpperCase();
+          const plateKey = key + "." + plate;
+
+          // We have a new plate detection.
+          if(!this.eventTimers[plateKey]) {
+
+            protectDevice.accessory.getServiceById(this.hap.Service.ContactSensor,
+              ProtectReservedNames.CONTACT_MOTION_SMARTDETECT_LICENSE + "." + plate)?.
+              updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.hap.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED);
+          } else {
+
+            clearTimeout(this.eventTimers[plateKey]);
+          }
+
+          // Reset our license plate smart detection contact sensor after motionDuration.
+          this.eventTimers[plateKey] = setTimeout(() => {
+
+            protectDevice.accessory.getServiceById(this.hap.Service.ContactSensor,
+              ProtectReservedNames.CONTACT_MOTION_SMARTDETECT_LICENSE + "." + plate)?.
+              updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.hap.Characteristic.ContactSensorState.CONTACT_DETECTED);
+
+            // Delete the timer from our motion event tracker.
+            delete this.eventTimers[plateKey];
+          }, protectDevice.hints.motionDuration * 1000);
+        }
+
+        // Publish event metadata when we see it. Currently, Protect publishes additional telemetry for vehicle types.
+        if(protectDevice.hints.logMotion) {
+
+          const attributes: string[] = [];
+
+          // We have a license plate.
+          if(event.name) {
+
+            attributes.push("license plate: " + event.name + " [" + event.confidence + "% confidence]");
+          }
+
+          // Look at the color and vehicle type.
+          for(const attribute of ["color", "vehicleType"] as const) {
+
+            if(event.payload?.attributes?.[attribute]) {
+
+              attributes.push(attribute + ": " + event.payload.attributes[attribute].val + " [" + event.payload.attributes[attribute].confidence + "% confidence]");
+            }
+          }
+
+          // Inform the user.
+          if(attributes.length) {
+
+            this.nvr.mqtt?.publish(protectDevice.ufp.mac, "motion/smart/" + event.type + "/metadata", JSON.stringify({
+
+              ...(Number.isFinite(event.confidence) && { confidence: event.confidence }),
+              ...(event.name?.length && { name: event.name }),
+              type: event.type,
+              ...(event.payload?.attributes?.color && { color: event.payload.attributes.color }),
+              ...(event.payload?.attributes?.vehicleType && { vehicleType: event.payload.attributes.vehicleType })
+            }));
+          }
+
+          protectDevice.log.info("Smart motion detected: %s%s.", event.type, attributes.length ? (" (" + attributes.join(", ") + ")") : "");
+        }
+      }
     }
 
     // If we don't have smart detection enabled, or if we do have it enabled and we have a smart detection event that's detected something of interest, let's process

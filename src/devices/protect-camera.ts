@@ -214,7 +214,7 @@ export class ProtectCamera extends ProtectDevice {
     this.isDeleted = true;
   }
 
-  // Handle update-related events.
+  // Handle update-related events from the controller.
   protected eventHandler(packet: ProtectEventPacket): void {
 
     const payload = packet.payload as ProtectCameraConfigPayload;
@@ -247,9 +247,8 @@ export class ProtectCamera extends ProtectDevice {
       this.nvr.events.doorbellEventHandler(this, payload.lastRing as number);
     }
 
-    // Process smart detection events that have occurred on a non-realtime basis. Generally, this includes audio events and video events that require more analysis by
-    // Protect.
-    if(this.hints.smartDetect && hasProperty(["smartDetectTypes"]) && (payload as ProtectEventAdd).smartDetectTypes.length) {
+    // Process smart detection events that have occurred on a non-realtime basis. Generally, this includes audio and video events that require more analysis by Protect.
+    if(this.hints.smartDetect && ((payload as ProtectEventAdd).smartDetectTypes?.length || (payload as ProtectEventAdd).metadata?.detectedThumbnails?.length)) {
 
       this.nvr.events.motionEventHandler(this, (payload as ProtectEventAdd).smartDetectTypes, (payload as ProtectEventAdd).metadata);
     }

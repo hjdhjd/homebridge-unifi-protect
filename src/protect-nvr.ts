@@ -135,9 +135,9 @@ export class ProtectNvr {
     this.name = this.config.name ?? (this.ufp.name ?? this.ufp.marketName);
 
     // If we are running an unsupported version of UniFi Protect, we're done.
-    if(!/^[56]\..+$/.test(this.ufp.version)) {
+    if(!this.ufp.version.startsWith("6.")) {
 
-      this.log.error("This version of HBUP requires running UniFi Protect v5.0 or above using the official Protect release channel only.");
+      this.log.error("This version of HBUP requires running UniFi Protect v6.0 or above using the official Protect release channel only.");
       this.ufpApi.logout();
 
       return;

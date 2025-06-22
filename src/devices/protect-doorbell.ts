@@ -770,7 +770,7 @@ export class ProtectDoorbell extends ProtectCamera {
       // We publish a bit more information if we have an NFC card.
       if(payload.type === "nfcCardScanned") {
 
-        authInfo.id = payload.metadata.nfc.nfcId;
+        authInfo.id = payload.metadata?.nfc?.nfcId ?? "";
         authInfo.type = "nfc";
       }
 
