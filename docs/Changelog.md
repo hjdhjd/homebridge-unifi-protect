@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 7.19.1 (2025-06-24)
+  * Fix: address regressions in smart motion detection due to Protect v6 changes.
+  * Housekeeping.
+
 ## 7.19.0 (2025-06-22)
   * **Note: HBUP now requires Protect v6 as if this release. Prior versions of Protect are no longer supported.**
   * Improvement: refined MQTT smart motion telemetry when there are additional attributes available (license plates, vehicle type, color, etc).
