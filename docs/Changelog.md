@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 7.19.2 (2025-06-25)
+  * Housekeeping.
+
 ## 7.19.1 (2025-06-24)
   * Fix: address regressions in smart motion detection due to Protect v6 changes.
   * Housekeeping.
