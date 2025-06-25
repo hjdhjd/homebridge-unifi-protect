@@ -230,12 +230,12 @@ export class ProtectCamera extends ProtectDevice {
     if(hasProperty(["lastMotion"])) {
 
       // We only want to process the motion event if we have either:
-      ///
+      //
       //  - HKSV recording enabled.
-      //  - HKSV recording is disabled and we have smart motion events disabled (or a device without smart motion capabilities) since those are handled elsewhere.
-      if(this.stream?.hksv?.isRecording || (!this.stream?.hksv?.isRecording &&
-        ((!this.ufp.featureFlags.smartDetectAudioTypes.length && !this.ufp.featureFlags.smartDetectTypes.length) ||
-          ((this.ufp.featureFlags.smartDetectAudioTypes.length || this.ufp.featureFlags.smartDetectTypes.length) && !this.hints.smartDetect)))) {
+      //  - No enabled smart motion detection capabilities on the Protect device.
+      //  - Smart detection disabled.
+      if(this.stream?.hksv?.isRecording ||
+        !(this.ufp.featureFlags.smartDetectAudioTypes.length || this.ufp.featureFlags.smartDetectTypes.length) || !this.hints.smartDetect) {
 
         this.nvr.events.motionEventHandler(this);
       }
@@ -245,6 +245,16 @@ export class ProtectCamera extends ProtectDevice {
     if(hasProperty(["lastRing"])) {
 
       this.nvr.events.doorbellEventHandler(this, payload.lastRing as number);
+    }
+
+    // If smart detection is enabled, we need to filter out any events tagged as "motion". When users enable the "Create motion events" setting on a camera, Protect will
+    // create motion-specific thumbnail events. We're only interested in true smart detection events.
+    if(this.hints.smartDetect) {
+
+      if((payload as ProtectEventAdd).metadata) {
+
+        (payload as ProtectEventAdd).metadata.detectedThumbnails = (payload as ProtectEventAdd).metadata.detectedThumbnails?.filter(({ type }) => type !== "motion");
+      }
     }
 
     // Process smart detection events that have occurred on a non-realtime basis. Generally, this includes audio and video events that require more analysis by Protect.
@@ -300,9 +310,14 @@ export class ProtectCamera extends ProtectDevice {
       return;
     }
 
-    // We're only interested in smart motion detection events.
-    if(!this.hints.smartDetect || ((packet.header.modelKey !== "smartDetectObject") &&
-      ((packet.header.modelKey !== "event") || !["smartDetectLine", "smartDetectZone"].includes(payload.type) || !payload.smartDetectTypes.length))) {
+    // We're only interested in smart motion detection events here. Our rules are:
+    //
+    //   - We have a smartDetectObject identified.
+    //   - We have an event that involves crossing lines or a smart detection zone with specific smart detection types.
+    //   - We explicitly filter out events tagged as "motion". When users enable the "Create motion events" setting on a camera, Protect will create motion-specific
+    //     thumbnail events. We're only interested in true smart detection events.
+    if(!this.hints.smartDetect || !((packet.header.modelKey === "smartDetectObject") || ((packet.header.modelKey === "event") &&
+      ["smartDetectLine", "smartDetectZone"].includes(payload.type) && (payload.type !== "motion") && payload.smartDetectTypes.length))) {
 
       return;
     }

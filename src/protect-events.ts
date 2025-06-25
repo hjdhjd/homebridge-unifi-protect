@@ -367,9 +367,8 @@ export class ProtectEvents extends EventEmitter {
       }
     }
 
-    // Iterate over the smart events that Protect has detected. We filter out any events tagged as "motion". When users enable the "Create motion events" setting on a
-    // camera, Protect will create motion-specific thumbnail events. We're only interested in smart detection events.
-    for(const event of smartEvents.filter(event => event.type !== "motion")) {
+    // Iterate over the smart events that Protect has detected.
+    for(const event of smartEvents) {
 
       const key = protectDevice.id + ".Motion.SmartDetect.ObjectSensors." + event.type;
 
