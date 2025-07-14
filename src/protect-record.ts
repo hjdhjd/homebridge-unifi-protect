@@ -149,6 +149,9 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
         this.stopTransmitting();
       }
 
+      // Indicate to ourselves that we've intentionally chosen not to respond to this recording event so we don't inadvertently log an error.
+      this.transmittedSegments = -1;
+
       // Send a single byte packet and mark it as our last.
       yield { data: Buffer.alloc(1, 0), isLast: true };
 
@@ -276,8 +279,9 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
       this.transmitListener = undefined;
     }
 
-    // If we don't have a recording configuration from HomeKit or an RTSP profile, we can't continue.
-    if(!this.recordingConfig || !this.rtspEntry || this.timeshift.isRestarting) {
+    // If we don't have a recording configuration from HomeKit, a valid RTSP profile, or not enough time in our timeshift buffer, we can't continue.
+    if(!this.recordingConfig || !this.rtspEntry || this.timeshift.isRestarting ||
+      ((this.protectCamera.stream.hksv?.timeshift.time ?? -1) < this.recordingConfig.prebufferLength)) {
 
       return false;
     }
@@ -301,7 +305,6 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
       codec: this.protectCamera.ufp.videoCodec,
       enableAudio: this.isAudioActive,
       fps: this.rtspEntry.channel.fps,
-      probesize: this.protectCamera.stream.hksv?.timeshift.buffer?.length ?? this.protectCamera.stream.probesize,
       timeshift: Math.max((this.protectCamera.stream.hksv?.timeshift.time ?? 0) - this.recordingConfig.prebufferLength, 0),
       transcodeAudio: false
     }, this.protectCamera.hasFeature("Debug.Video.HKSV"));
@@ -425,6 +428,12 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
       void this.protectCamera.setStatusLed(false);
     }
 
+    // If we have intentionally declined to respond to a recording event, we're done.
+    if(this.transmittedSegments === -1) {
+
+      return;
+    }
+
     // We actually have one less segment than we think we do since we counted the fMP4 stream header as well, which shouldn't count toward our total of transmitted video
     // segments.
     this.timeshiftedSegments = Math.max(--this.timeshiftedSegments, 0);
@@ -540,7 +549,8 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     this.closedReason = reason;
 
     // Inform the user when things stopped unexpectedly, accounting for known factors like the camera being online or the timeshift buffer restarting.
-    if((reason !== undefined) && (reason !== HDSProtocolSpecificErrorReason.NORMAL) && !this.timeshift.isRestarting && this.protectCamera.isOnline) {
+    if((reason !== undefined) && (reason !== HDSProtocolSpecificErrorReason.NORMAL) && !this.timeshift.isRestarting && this.protectCamera.isOnline &&
+      (this.protectCamera.stream.hksv?.timeshift.time ?? -1) >= (this.recordingConfig?.prebufferLength ?? 0)) {
 
       this.log.error("HKSV recording event ended early: %s", reasonDescription);
     }
