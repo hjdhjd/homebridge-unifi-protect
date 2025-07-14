@@ -3,7 +3,7 @@
  * protect-nvr.ts: NVR device class for UniFi Protect.
  */
 import type { API, HAP, PlatformAccessory } from "homebridge";
-import { type HomebridgePluginLogging, MqttClient, type Nullable, retry, sleep, validateName } from "homebridge-plugin-utils";
+import { type HomebridgePluginLogging, MqttClient, type Nullable, retry, sanitizeName, sleep } from "homebridge-plugin-utils";
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_CONTROLLER_REFRESH_INTERVAL, PROTECT_CONTROLLER_RETRY_INTERVAL, PROTECT_M3U_PLAYLIST_PORT } from "./settings.js";
 import { ProtectCamera, ProtectChime, type ProtectDevice, ProtectDoorbell, ProtectLight, ProtectLiveviews, ProtectNvrSystemInfo, ProtectSensor,
   ProtectViewer } from "./devices/index.js";
@@ -83,10 +83,12 @@ export class ProtectNvr {
   }
 
   // Retrieve the bootstrap configuration from the Protect controller.
-  private async bootstrapNvr(): Promise<void> {
+  private async bootstrapNvr(): Promise<boolean> {
 
     // Attempt to bootstrap the controller until we're successful.
     await retry(async () => this.ufpApi.getBootstrap(), PROTECT_CONTROLLER_RETRY_INTERVAL * 1000);
+
+    return !!this.ufpApi.bootstrap;
   }
 
   // Initialize our connection to the UniFi Protect controller.
@@ -123,7 +125,19 @@ export class ProtectNvr {
     await retry(async () => this.ufpApi.login(this.config.address, this.config.username, this.config.password), PROTECT_CONTROLLER_RETRY_INTERVAL * 1000);
 
     // Now, let's get the bootstrap configuration from the Protect controller.
-    await this.bootstrapNvr();
+    for(let count = 0; !this.ufpApi.bootstrap && (count < 5); count++) {
+
+      // eslint-disable-next-line no-await-in-loop
+      await this.bootstrapNvr();
+    }
+
+    // Failsafe against an unresponsive controller.
+    if(!this.ufpApi.bootstrap) {
+
+      this.log.error("Unable to initialize. This may be due to the Protect controller rebooting or becoming unavailable.");
+
+      return;
+    }
 
     // Save the bootstrap to ease our device initialization below.
     const bootstrap = this.ufpApi.bootstrap as ProtectNvrBootstrap;
@@ -348,7 +362,7 @@ export class ProtectNvr {
     // We've got a new device, let's add it to HomeKit.
     if(!accessory) {
 
-      accessory = new this.api.platformAccessory(validateName(device.name ?? device.marketName ?? ("Unknown Device" + (device.mac ? " " + device.mac : ""))), uuid);
+      accessory = new this.api.platformAccessory(sanitizeName(device.name ?? device.marketName ?? ("Unknown Device" + (device.mac ? " " + device.mac : ""))), uuid);
 
       this.log.info("%s: Adding %s to HomeKit%s.", this.ufpApi.getDeviceName(device), device.modelKey,
         this.hasFeature("Device.Standalone", device) ? " as a standalone device" : "");
