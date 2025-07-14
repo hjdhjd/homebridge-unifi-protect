@@ -15,7 +15,6 @@ export type ProtectOptions = {
   options: string[],
   ringDelay: number,
   verboseFfmpeg: boolean,
-  videoEncoder: string,
   videoProcessor: string
 };
 

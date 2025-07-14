@@ -6,6 +6,7 @@
  */
 import type { API, CameraController, CameraControllerOptions, HAP, PrepareStreamCallback, PrepareStreamRequest, PrepareStreamResponse, SRTPCryptoSuites, Service,
   SnapshotRequest, SnapshotRequestCallback, StartStreamRequest, StreamRequestCallback, StreamingRequest } from "homebridge";
+import { Agent, type ErrorEvent, WebSocket } from "undici";
 import { AudioRecordingCodecType, AudioRecordingSamplerate, AudioStreamingCodecType, AudioStreamingSamplerate, H264Level, H264Profile, MediaContainerType,
   StreamRequestTypes } from "homebridge";
 import { FfmpegOptions, FfmpegStreamingProcess, HKSV_FRAGMENT_LENGTH, HOMEKIT_IDR_INTERVAL, type HomebridgePluginLogging, type HomebridgeStreamingDelegate,
@@ -17,7 +18,6 @@ import type { ProtectPlatform } from "./protect-platform.js";
 import { ProtectRecordingDelegate } from "./protect-record.js";
 import { ProtectReservedNames } from "./protect-types.js";
 import { ProtectSnapshot } from "./protect-snapshot.js";
-import WebSocket from "ws";
 import { once } from "node:events";
 
 type OngoingSessionEntry = {
@@ -443,15 +443,26 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
     this.abTest = !this.abTest;
 
     // FFmpeg doesn't support AV1 over RTSP yet.
-    if(!useTsb && (this.protectCamera.ufp.videoCodec === "av1")) {
+    if((this.protectCamera.ufp.videoCodec === "av1") && !useTsb) {
 
-      const errorMessage = "Unable to start video stream: FFmpeg does not currently support AV1-encoded RTSP streams. " +
-        "Enable HKSV in the Home app and ensure API-based livestreaming is enabled in HBUP (enabled by default).";
+      if(!this.hksv?.isRecording) {
 
-      this.log.error(errorMessage);
-      callback(new Error(this.protectCamera.accessoryName + ": " + errorMessage));
+        const errorMessage = "Unable to start video stream: FFmpeg does not currently support AV1-encoded RTSP streams. " +
+          "Enable HKSV in the Home app and ensure API-based livestreaming is enabled in HBUP (enabled by default).";
 
-      return;
+        this.log.error(errorMessage);
+        callback(new Error(this.protectCamera.accessoryName + ": " + errorMessage));
+
+        return;
+      }
+
+      useTsb = true;
+    }
+
+    // Always try to use API livestreaming if we are looking at the package camera.
+    if(("packageCamera" in this.protectCamera.accessory.context) && !useTsb && this.hksv?.isRecording) {
+
+      useTsb = true;
     }
 
     // If we're using the livestream API and we're timeshifting, we override the stream quality we've determined in favor of our timeshift buffer.
@@ -539,19 +550,20 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
     // -max_delay 500000                Set an upper limit on how much time FFmpeg can take in demuxing packets, in microseconds.
     // -flags low_delay                 Tell FFmpeg to optimize for low delay / realtime decoding.
     // -r fps                           Specify the input frame rate for the video stream.
+    // -analyzeduration number          The amount of time, in microseconds, should be spent analyzing the stream for parameters.
     // -probesize number                How many bytes should be analyzed for stream information.
     const ffmpegArgs = [
 
       "-hide_banner",
       "-nostats",
-      ...(useTsb ? [ "-copyts", "-start_at_zero" ] : []),
       "-fflags", "+discardcorrupt+genpts+igndts",
       "-err_detect", "ignore_err",
       ...this.ffmpegOptions.videoDecoder(this.protectCamera.ufp.videoCodec),
       "-max_delay", "500000",
       "-flags", "low_delay",
       "-r", rtspEntry.channel.fps.toString(),
-      "-probesize", this.probesize.toString()
+      "-analyzeduration", "0",
+      "-probesize", "32"
     ];
 
     if(useTsb) {
@@ -592,6 +604,11 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
       isTranscoding ? (this.protectCamera.hints.hardwareTranscoding ? "Hardware-accelerated transcoding" : "Transcoding") : "Using",
       rtspEntry.name, formatBps(rtspEntry.channel.bitrate), useTsb ? "TSB/" + (this.protectCamera.hasFeature("Debug.Video.HKSV.UseRtsp") ? "RTSP" : "API") : "RTSP");
 
+    // When on high-performance hardware like Apple Silicon, using the TSB, and we don't have low-FPS cameras like the package camera, enable the use of the CPU-intensive
+    // FFmpeg minterpolate filter to enable very smooth video, especially when there's motion involved. Currently, only Apple Silicon environments have been able to
+    // reliably use this filter in realtime and with great results. I'm hoping to be able to enable this in the future for other platforms.
+    const useInterpolationFilter = useTsb && !("packageCamera" in this.protectCamera.accessory.context) && (this.platform.codecSupport.hostSystem === "macOS.Apple");
+
     // Check to see if we're transcoding. If we are, set the right FFmpeg encoder options. If not, copy the video stream.
     if(isTranscoding) {
 
@@ -599,7 +616,7 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
       ffmpegArgs.push(...this.ffmpegOptions.streamEncoder({
 
         bitrate: targetBitrate,
-        fps: request.video.fps,
+        fps: useInterpolationFilter ? rtspEntry.channel.fps : request.video.fps,
         height: request.video.height,
         idrInterval: HOMEKIT_IDR_INTERVAL,
         inputFps: rtspEntry.channel.fps,
@@ -607,6 +624,23 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
         profile: request.video.profile,
         width: request.video.width
       }));
+
+      // We augment our video filters to account for the timestamp quirkiness in FFmpeg when it comes to dealing with fMP4 inputs.
+      if(useInterpolationFilter) {
+
+        // Adjust our presentation timestamps for a smoother streaming experience.
+        const minterpolate = "minterpolate=fps=" + request.video.fps.toString() + ":mi_mode=mci:mc_mode=aobmc:me=fss:me_mode=bidir:vsbmc=1:scd=none";
+
+        const vf = ffmpegArgs.indexOf("-filter:v");
+
+        if(vf >= 0) {
+
+          ffmpegArgs[vf + 1] += ", " + minterpolate;
+        } else {
+
+          ffmpegArgs.push("-filter:v", minterpolate);
+        }
+      }
     } else {
 
       // Configure our video parameters for just copying the input stream from Protect - it tends to be quite solid in most cases:
@@ -625,11 +659,11 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
       }
     }
 
-    // -reset_timestamps                Reset timestamps for this stream instead of accepting what Protect gives us.
+    // -fps_mode passthrough            Ensure FFmpeg uses the PTS values we've specified, unaltered.
     // -metadata                        Set the metadata to the name of the camera to distinguish between FFmpeg sessions.
     ffmpegArgs.push(
 
-      "-reset_timestamps", "1",
+      "-fps_mode", "passthrough",
       "-metadata", "comment=" + this.protectCamera.accessoryName + " Livestream"
     );
 
@@ -961,32 +995,31 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
         // Close the websocket.
         if(ws?.readyState !== WebSocket.CLOSED) {
 
-          ws?.terminate();
+          ws?.close();
         }
       };
 
       if(sessionInfo.talkBack && !this.protectCamera.hints.twoWayAudioDirect) {
 
         // Open the talkback connection.
-        ws = new WebSocket(sessionInfo.talkBack, { rejectUnauthorized: false });
+        ws = new WebSocket(sessionInfo.talkBack, { dispatcher: new Agent({ connect: { rejectUnauthorized: false } }) });
         isTalkbackLive = true;
 
         // Catch any errors and inform the user, if needed.
-        ws?.once("error", (error) => {
+        ws?.addEventListener("error", (event: ErrorEvent) => {
 
           // Ignore timeout errors, but notify the user about anything else.
-          if(((error as NodeJS.ErrnoException).code !== "ETIMEDOUT") &&
-            !error.toString().startsWith("Error: WebSocket was closed before the connection was established")) {
+          if((event.error as NodeJS.ErrnoException).code !== "ETIMEDOUT") {
 
-            this.log.error("Error in communicating with the return audio channel: %s", error);
+            this.log.error("Error in communicating with the return audio channel: %s - %s", (event.error.cause as NodeJS.ErrnoException).code, event.error.cause);
           }
 
           // Clean up our talkback websocket.
           wsCleanup();
-        });
+        }, { once: true });
 
         // Catch any stray open events after we've closed.
-        ws?.on("open", openListener = (): void => {
+        ws?.addEventListener("open", openListener = (): void => {
 
           // If we've somehow opened after we've wrapped up talkback, terminate the connection.
           if(!isTalkbackLive) {
@@ -997,10 +1030,10 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
         });
 
         // Cleanup after ourselves on close.
-        ws?.once("close", () => {
+        ws?.addEventListener("close", () => {
 
-          ws?.off("open", openListener);
-        });
+          ws?.removeEventListener("open", openListener);
+        }, { once: true });
       }
 
       // Wait for the first RTP packet to be received before trying to launch FFmpeg.
@@ -1030,17 +1063,7 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
       // Send the audio, if we're communicating through the Protect controller. Otherwise, FFmpeg is handling this directly with the camera.
       if(!this.protectCamera.hints.twoWayAudioDirect) {
 
-        ffmpegReturnAudio.stdout?.on("data", dataListener = (data: Buffer): void => {
-
-          ws?.send(data, (error?: Error): void => {
-
-            // This happens when an error condition is encountered on sending data to the websocket. We assume the worst and close our talkback channel.
-            if(error) {
-
-              wsCleanup();
-            }
-          });
-        });
+        ffmpegReturnAudio.stdout?.on("data", dataListener = (data: Buffer): void => ws?.send(data));
 
         // Make sure we terminate the talkback websocket when we're done.
         ffmpegReturnAudio.ffmpegProcess?.once("exit", () => {
@@ -1162,48 +1185,5 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
     }
 
     return undefined;
-  }
-
-  // Adjust our probe hints.
-  public adjustProbeSize(): void {
-
-    if(this.probesizeOverrideTimeout) {
-
-      clearTimeout(this.probesizeOverrideTimeout);
-      this.probesizeOverrideTimeout = undefined;
-    }
-
-    // Maintain statistics on how often we need to adjust our probesize. If this happens too frequently, we will default to a working value.
-    this.probesizeOverrideCount++;
-
-    // Increase the probesize by a factor of two each time we need to do something about it. This idea is to balance the latency implications
-    // for the user, but also ensuring we have a functional streaming experience.
-    this.probesizeOverride = this.probesize * 2;
-
-    // Safety check to make sure this never gets too crazy.
-    if(this.probesizeOverride > 5000000) {
-
-      this.probesizeOverride = 5000000;
-    }
-
-    this.log.error("The FFmpeg process ended unexpectedly due to issues with the media stream provided by the UniFi Protect livestream API. " +
-    "Adjusting the settings we use for FFmpeg %s to use safer values at the expense of some additional streaming startup latency.",
-    this.probesizeOverrideCount < 10 ? "temporarily" : "permanently");
-
-    // If this happens often enough, keep the override in place permanently.
-    if(this.probesizeOverrideCount < 10) {
-
-      this.probesizeOverrideTimeout = setTimeout(() => {
-
-        this.probesizeOverride = 0;
-        this.probesizeOverrideTimeout = undefined;
-      }, 1000 * 60 * 10);
-    }
-  }
-
-  // Utility to return the currently set probesize for a camera.
-  public get probesize(): number {
-
-    return this.probesizeOverride || this.protectCamera.hints.probesize;
   }
 }

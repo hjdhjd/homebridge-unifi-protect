@@ -3,7 +3,7 @@
  * protect-device.ts: Base class for all UniFi Protect devices.
  */
 import type { API, CharacteristicValue, HAP, PlatformAccessory, Service, WithUUID } from "homebridge";
-import { type HomebridgePluginLogging, type Nullable, acquireService, validService, validateName } from "homebridge-plugin-utils";
+import { type HomebridgePluginLogging, type Nullable, acquireService, sanitizeName, validService } from "homebridge-plugin-utils";
 import { PROTECT_MOTION_DURATION, PROTECT_OCCUPANCY_DURATION} from "../settings.js";
 import type { ProtectApi, ProtectCameraConfig, ProtectEventPacket, ProtectNvrConfig } from "unifi-protect";
 import { type ProtectDeviceConfigTypes, ProtectReservedNames } from "../protect-types.js";
@@ -42,7 +42,6 @@ export interface ProtectHints {
   motionDuration: number,
   nightVision: boolean,
   occupancyDuration: number,
-  probesize: number,
   recordingDefault: string,
   smartDetect: boolean,
   smartDetectSensors: boolean,
@@ -164,7 +163,7 @@ export abstract class ProtectDevice extends ProtectBase {
   protected acquireService(serviceType: WithUUID<typeof Service>, name = this.accessoryName, subtype?: string, onServiceCreate?: (svc: Service) => void):
   Nullable<Service> {
 
-    return acquireService(this.hap, this.accessory, serviceType, name, subtype, onServiceCreate);
+    return acquireService(this.accessory, serviceType, name, subtype, onServiceCreate);
   }
 
   // Validate whether a service should exist, removing it if necessary.
@@ -644,7 +643,7 @@ export abstract class ProtectDevice extends ProtectBase {
   // Utility function to set the current accessory name of this device.
   public set accessoryName(name: string) {
 
-    const cleanedName = validateName(name);
+    const cleanedName = sanitizeName(name);
 
     // Set all the internally managed names within Homebridge to the new accessory name.
     this.accessory.displayName = cleanedName;

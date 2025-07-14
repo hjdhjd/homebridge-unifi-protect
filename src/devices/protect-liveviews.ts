@@ -3,7 +3,7 @@
  * protect-liveviews.ts: Liveviews class for UniFi Protect.
  */
 import type { CharacteristicValue, PlatformAccessory } from "homebridge";
-import { type Nullable, validateName } from "homebridge-plugin-utils";
+import { type Nullable, sanitizeName } from "homebridge-plugin-utils";
 import { PLATFORM_NAME, PLUGIN_NAME } from "../settings.js";
 import { ProtectBase } from "./protect-device.js";
 import type { ProtectNvr } from "../protect-nvr.js";
@@ -85,7 +85,7 @@ export class ProtectLiveviews extends ProtectBase {
       if((this.securityAccessory = this.platform.accessories.find(x => x.UUID === uuid)) === undefined) {
 
         // We will use the NVR MAC address + ".Security" to create our UUID. That should provide the guaranteed uniqueness we need.
-        this.securityAccessory = new this.api.platformAccessory(validateName(this.ufpApi.bootstrap.nvr.name), uuid);
+        this.securityAccessory = new this.api.platformAccessory(sanitizeName(this.ufpApi.bootstrap.nvr.name), uuid);
 
         // Register this accessory with homebridge and add it to the platform accessory array so we can track it.
         this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [ this.securityAccessory ]);
@@ -185,7 +185,7 @@ export class ProtectLiveviews extends ProtectBase {
 
       if((newAccessory = this.platform.accessories.find(x => x.UUID === uuid)) === undefined) {
 
-        newAccessory = new this.api.platformAccessory(validateName(this.ufpApi.bootstrap.nvr.name + " " + viewName), uuid);
+        newAccessory = new this.api.platformAccessory(sanitizeName(this.ufpApi.bootstrap.nvr.name + " " + viewName), uuid);
 
         // Register this accessory with homebridge and add it to the platform accessory array so we can track it.
         this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [ newAccessory ]);

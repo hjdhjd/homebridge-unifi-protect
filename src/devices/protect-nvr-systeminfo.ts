@@ -2,7 +2,7 @@
  *
  * protect-nvr-systeminfo.ts: NVR System Information device class for UniFi Protect.
  */
-import { type Nullable, validateName } from "homebridge-plugin-utils";
+import { type Nullable, sanitizeName } from "homebridge-plugin-utils";
 import { PLATFORM_NAME, PLUGIN_NAME } from "../settings.js";
 import type { PlatformAccessory } from "homebridge";
 import { ProtectBase } from "./protect-device.js";
@@ -76,7 +76,7 @@ export class ProtectNvrSystemInfo extends ProtectBase {
     if(!this.accessory) {
 
       // We will use the NVR MAC address + ".NVRSystemInfo" to create our UUID. That should provide the guaranteed uniqueness we need.
-      this.accessory = new this.api.platformAccessory(validateName(this.nvr.ufp.name ?? this.nvr.ufp.marketName), uuid);
+      this.accessory = new this.api.platformAccessory(sanitizeName(this.nvr.ufp.name ?? this.nvr.ufp.marketName), uuid);
 
       if(!this.accessory) {
 

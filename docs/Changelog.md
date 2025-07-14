@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 7.20.0 (2025-07-12)
+  * Improvement: macOS users will see further improvements to video quality when API livestreaming.
+  * Housekeeping.
+
 ## 7.19.2 (2025-06-25)
   * Housekeeping.
 

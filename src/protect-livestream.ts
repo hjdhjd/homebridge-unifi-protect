@@ -145,13 +145,14 @@ export class LivestreamManager {
 
         this.livestreams[index].stop();
 
-        // If the camera isn't connected, let's retry again in a minute.
-        if(!this.protectCamera.isOnline) {
+        // If either the controller is offline/throttled or the camera isn't connected, let's retry again in a minute.
+        if(!this.protectCamera.ufpApi.bootstrap || this.protectCamera.ufpApi.isThrottled || !this.protectCamera.isOnline) {
 
           this.segmentTimer[index] = setTimeout(() => this.livestreams[index].emit("restart", true), 60 * 1000);
 
           return;
         }
+
         this.protectCamera.log.warn("Reconnecting to the %s.", this.protectCamera.hasFeature("Debug.Video.HKSV.UseRtsp") ? "RTSP stream" : "livestream API");
 
         // Wait before we try to reconnect to the livestream. This accounts for reboots and other potential connection issues that can occur.

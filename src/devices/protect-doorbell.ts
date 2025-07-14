@@ -9,7 +9,7 @@ import type { ProtectCameraConfig, ProtectCameraConfigPayload, ProtectCameraLcdM
 import { ProtectReservedNames, toCamelCase } from "../protect-types.js";
 import { ProtectCamera } from "./protect-camera.js";
 import { ProtectCameraPackage } from "./protect-camera-package.js";
-import { validateName } from "homebridge-plugin-utils";
+import { sanitizeName } from "homebridge-plugin-utils";
 
 // A doorbell message entry.
 interface MessageInterface {
@@ -201,7 +201,7 @@ export class ProtectDoorbell extends ProtectCamera {
     if(!packageCameraAccessory) {
 
       // We will use the NVR MAC address + ".NVRSystemInfo" to create our UUID. That should provide the guaranteed uniqueness we need.
-      packageCameraAccessory = new this.api.platformAccessory(validateName(this.accessoryName + " Package Camera"), uuid);
+      packageCameraAccessory = new this.api.platformAccessory(sanitizeName(this.accessoryName + " Package Camera"), uuid);
 
       if(!packageCameraAccessory) {
 

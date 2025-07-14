@@ -36,9 +36,7 @@ export class ProtectSnapshot {
   public async getSnapshot(request?: SnapshotRequest): Promise<Nullable<Buffer>> {
 
     // If we aren't connected, we're done.
-    if(!this.protectCamera.isOnline) {
-
-      this.log.error("Unable to retrieve a snapshot: the camera is offline or unavailable.");
+    if(!this.protectCamera.ufpApi.bootstrap || this.protectCamera.ufpApi.isThrottled || !this.protectCamera.isOnline) {
 
       return null;
     }
@@ -131,14 +129,16 @@ export class ProtectSnapshot {
 
     // Use our timeshift buffer to create a snapshot image. Options we use are:
     //
-    // -probesize amount    How many bytes should be analyzed for stream information. Use the size of the buffer we are snapshotting.
-    // -r fps               Set the input frame rate for the video stream.
-    // -f mp4               Specify that our input will be an MP4 file.
-    // -i pipe:0            Read input from standard input.
+    // -r fps                     Set the input frame rate for the video stream.
+    // -analyzeduration number    The amount of time, in microseconds, should be spent analyzing the stream for parameters.
+    // -probesize number          How many bytes should be analyzed for stream information.
+    // -f mp4                     Specify that our input will be an MP4 file.
+    // -i pipe:0                  Read input from standard input.
     const ffmpegOptions = [
 
-      "-probesize", buffer.length.toString(),
       "-r", this.protectCamera.stream.hksv?.rtspEntry?.channel.fps.toString() ?? "30",
+      "-analyzeduration", "0",
+      "-probesize", "32",
       "-f", "mp4",
       "-i", "pipe:0"
     ];
@@ -165,16 +165,19 @@ export class ProtectSnapshot {
 
     // Use the RTSP stream to generate a snapshot image. Options we use are:
     //
-    // -probesize amount    How many bytes should be analyzed for stream information. Use our configured defaults.
-    // -avioflags direct    Tell FFmpeg to minimize buffering to reduce latency for more realtime processing.
-    // -r fps               Set the input frame rate for the video stream.
-    // -rtsp_transport tcp  Tell the RTSP stream handler that we're looking for a TCP connection.
-    // -i rtspEntry.url     RTSPS URL to get our input stream from.
+    // -probesize amount          How many bytes should be analyzed for stream information. Use our configured defaults.
+    // -avioflags direct          Tell FFmpeg to minimize buffering to reduce latency for more realtime processing.
+    // -r fps                     Set the input frame rate for the video stream.
+    // -analyzeduration number    The amount of time, in microseconds, should be spent analyzing the stream for parameters.
+    // -probesize number          How many bytes should be analyzed for stream information.
+    // -rtsp_transport tcp        Tell the RTSP stream handler that we're looking for a TCP connection.
+    // -i rtspEntry.url           RTSPS URL to get our input stream from.
     const ffmpegOptions = [
 
-      "-probesize", this.protectCamera.stream.probesize.toString(),
       "-avioflags", "direct",
       "-r", rtspEntry.channel.fps.toString(),
+      "-analyzeduration", "0",
+      "-probesize", "32",
       "-rtsp_transport", "tcp",
       "-i", rtspEntry.url
     ];

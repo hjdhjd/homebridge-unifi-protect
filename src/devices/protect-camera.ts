@@ -82,7 +82,6 @@ export class ProtectCamera extends ProtectDevice {
     this.hints.logDoorbell = this.hasFeature("Log.Doorbell");
     this.hints.logHksv = this.hasFeature("Log.HKSV");
     this.hints.nightVision = this.ufp.featureFlags.hasInfrared && this.hasFeature("Device.NightVision");
-    this.hints.probesize = 16384;
     this.hints.smartDetect = this.ufp.featureFlags.hasSmartDetect && this.hasFeature("Motion.SmartDetect");
     this.hints.smartDetectSensors = this.hints.smartDetect && this.hasFeature("Motion.SmartDetect.ObjectSensors");
     this.hints.transcode = this.hasFeature("Video.Transcode");
@@ -358,14 +357,14 @@ export class ProtectCamera extends ProtectDevice {
 
       const response = await this.nvr.ufpApi.retrieve(this.nvr.ufpApi.getApiEndpoint(this.ufp.modelKey) + "/" + this.ufp.id + "/lux");
 
-      if(!response?.ok) {
+      if(!this.nvr.ufpApi.responseOk(response?.statusCode)) {
 
         return -1;
       }
 
       try {
 
-        let lux = (await response.json() as Record<string, number>).illuminance ?? -1;
+        let lux = (await response?.body.json() as Record<string, number>).illuminance ?? -1;
 
         // The minimum value for ambient light in HomeKit is 0.0001. I have no idea why...but it is. Honor it.
         if(!lux) {
@@ -475,7 +474,7 @@ export class ProtectCamera extends ProtectDevice {
       // Unlock the Access device.
       const response = await this.nvr.ufpApi.retrieve(this.nvr.ufpApi.getApiEndpoint(this.ufp.modelKey) + "/" + this.ufp.id + "/unlock", { method: "POST" });
 
-      if(response?.ok) {
+      if(this.nvr.ufpApi.responseOk(response?.statusCode)) {
 
         // Something went wrong, revert to our prior state.
         setTimeout(() => {

@@ -171,7 +171,7 @@ export class ProtectChime extends ProtectDevice {
     });
 
     // Something went wrong.
-    if(!response?.ok) {
+    if(!this.nvr.ufpApi.responseOk(response?.statusCode)) {
 
       return false;
     }

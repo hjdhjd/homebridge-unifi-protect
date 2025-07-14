@@ -21,7 +21,6 @@ export class ProtectCameraPackage extends ProtectCamera {
     const parentCamera = this.nvr.getDeviceById(this.ufp.id);
 
     this.flashlightState = false;
-    this.hints.probesize = 32768;
 
     // Inherit settings from our parent.
     if(parentCamera) {
@@ -175,7 +174,7 @@ export class ProtectCameraPackage extends ProtectCamera {
           const response = await this.nvr.ufpApi.retrieve(this.nvr.ufpApi.getApiEndpoint(this.ufp.modelKey) + "/" + this.ufp.id + "/turnon-flashlight",
             { method: "POST" });
 
-          if(!response?.ok) {
+          if(!this.nvr.ufpApi.responseOk(response?.statusCode)) {
 
             return false;
           }
