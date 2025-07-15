@@ -42,6 +42,7 @@ export interface ProtectHints {
   motionDuration: number,
   nightVision: boolean,
   occupancyDuration: number,
+  probesize: number,
   recordingDefault: string,
   smartDetect: boolean,
   smartDetectSensors: boolean,

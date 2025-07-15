@@ -541,8 +541,6 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
 
     // -hide_banner                     Suppress printing the startup banner in FFmpeg.
     // -nostats                         Suppress printing progress reports while encoding in FFmpeg.
-    // -copyts                          When using the timeshift buffer, ensures that our outbound RTP timestamps mirror the TSB's presentation timestamp spacing exactly.
-    // -start_at_zero                   When using the timeshift buffer, ensures the first packet's timestamp is 0.
     // -fflags flags                    Set the format flags to discard any corrupt packets rather than exit, generate a presentation timestamp if it's missing, ignore
     //                                  the decoding timestamp, and minimize buffering as well as latency. Adjusting timestamps is a necessity if we want to ensure we
     //                                  keep audio and video in sync, especially when using hardware acceleration.
@@ -550,7 +548,6 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
     // -max_delay 500000                Set an upper limit on how much time FFmpeg can take in demuxing packets, in microseconds.
     // -flags low_delay                 Tell FFmpeg to optimize for low delay / realtime decoding.
     // -r fps                           Specify the input frame rate for the video stream.
-    // -analyzeduration number          The amount of time, in microseconds, should be spent analyzing the stream for parameters.
     // -probesize number                How many bytes should be analyzed for stream information.
     const ffmpegArgs = [
 
@@ -562,8 +559,7 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
       "-max_delay", "500000",
       "-flags", "low_delay",
       "-r", rtspEntry.channel.fps.toString(),
-      "-analyzeduration", "0",
-      "-probesize", "32"
+      "-probesize", this.probesize.toString()
     ];
 
     if(useTsb) {
@@ -598,11 +594,16 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
     );
 
     // Inform the user.
-    this.log.info("Streaming request from %s%s: %sx%s@%sfps, %s. %s %s, %s [%s].",
-      sessionInfo.address, (request.audio.packet_time === 60) ? " (high latency connection)" : "",
-      request.video.width, request.video.height, request.video.fps, formatBps(targetBitrate * 1000),
-      isTranscoding ? (this.protectCamera.hints.hardwareTranscoding ? "Hardware-accelerated transcoding" : "Transcoding") : "Using",
-      rtspEntry.name, formatBps(rtspEntry.channel.bitrate), useTsb ? "TSB/" + (this.protectCamera.hasFeature("Debug.Video.HKSV.UseRtsp") ? "RTSP" : "API") : "RTSP");
+    const hinting = [];
+
+    hinting.push(...(isTranscoding && this.protectCamera.hints.hardwareTranscoding ? [ "⚡" ] : []));
+    hinting.push(...(isTranscoding ? [ "⚙️" ] : []));
+    hinting.push(...((request.audio.packet_time === 60) ? [ "⏳" ] : []));
+    hinting.push(...(hinting.length ? [ "" ] : []));
+
+    this.log.info("%sStreaming request: %sx%s@%sfps, %s. Using %s, %s [%s].", hinting.join(" "), request.video.width, request.video.height, request.video.fps,
+      formatBps(targetBitrate * 1000), rtspEntry.name, formatBps(rtspEntry.channel.bitrate),
+      useTsb ? "TSB/" + (this.protectCamera.hasFeature("Debug.Video.HKSV.UseRtsp") ? "RTSP" : "API") : "RTSP");
 
     // When on high-performance hardware like Apple Silicon, using the TSB, and we don't have low-FPS cameras like the package camera, enable the use of the CPU-intensive
     // FFmpeg minterpolate filter to enable very smooth video, especially when there's motion involved. Currently, only Apple Silicon environments have been able to
@@ -1185,5 +1186,48 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
     }
 
     return undefined;
+  }
+
+  // Adjust our probe hints.
+  public adjustProbeSize(): void {
+
+    if(this.probesizeOverrideTimeout) {
+
+      clearTimeout(this.probesizeOverrideTimeout);
+      this.probesizeOverrideTimeout = undefined;
+    }
+
+    // Maintain statistics on how often we need to adjust our probesize. If this happens too frequently, we will default to a working value.
+    this.probesizeOverrideCount++;
+
+    // Increase the probesize by a factor of two each time we need to do something about it. This idea is to balance the latency implications
+    // for the user, but also ensuring we have a functional streaming experience.
+    this.probesizeOverride = this.probesize * 2;
+
+    // Safety check to make sure this never gets too crazy.
+    if(this.probesizeOverride > 5000000) {
+
+      this.probesizeOverride = 5000000;
+    }
+
+    this.log.error("The FFmpeg process ended unexpectedly due to issues with the media stream provided by the UniFi Protect livestream API. " +
+    "Adjusting the settings we use for FFmpeg %s to use safer values at the expense of some additional streaming startup latency.",
+    this.probesizeOverrideCount < 10 ? "temporarily" : "permanently");
+
+    // If this happens often enough, keep the override in place permanently.
+    if(this.probesizeOverrideCount < 10) {
+
+      this.probesizeOverrideTimeout = setTimeout(() => {
+
+        this.probesizeOverride = 0;
+        this.probesizeOverrideTimeout = undefined;
+      }, 1000 * 60 * 10);
+    }
+  }
+
+  // Utility to return the currently set probesize for a camera.
+  public get probesize(): number {
+
+    return this.probesizeOverride || this.protectCamera.hints.probesize;
   }
 }

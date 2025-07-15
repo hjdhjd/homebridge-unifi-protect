@@ -82,6 +82,7 @@ export class ProtectCamera extends ProtectDevice {
     this.hints.logDoorbell = this.hasFeature("Log.Doorbell");
     this.hints.logHksv = this.hasFeature("Log.HKSV");
     this.hints.nightVision = this.ufp.featureFlags.hasInfrared && this.hasFeature("Device.NightVision");
+    this.hints.probesize = 16384;
     this.hints.smartDetect = this.ufp.featureFlags.hasSmartDetect && this.hasFeature("Motion.SmartDetect");
     this.hints.smartDetectSensors = this.hints.smartDetect && this.hasFeature("Motion.SmartDetect.ObjectSensors");
     this.hints.transcode = this.hasFeature("Video.Transcode");
