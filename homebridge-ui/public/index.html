@@ -16,17 +16,17 @@
     <table class="table table-sm table-borderless text-center">
       <tr>
         <td>
-          <input type="test" placeholder="Protect controller hostname or IP address" size="40" id="address"></input>
+          <input type="text" autocomplete="off" placeholder="Protect controller hostname or IP address" size="40" id="address" />
         </td>
       </tr>
       <tr>
         <td>
-          <input type="username" placeholder="Protect controller username" size="40" id="username"></input>
+          <input type="text" autocomplete="username" placeholder="Protect controller username" size="40" id="username" />
         </td>
       </tr>
       <tr>
         <td>
-          <input type="password" placeholder="Protect controller password" size="40" id="password"></input>
+          <input type="password" autocomplete="current-password" placeholder="Protect controller password" size="40" id="password" />
         </td>
       </tr>
       <tr>
@@ -56,48 +56,33 @@
   <button type="button" class="btn btn-primary" id="menuFeatureOptions">Feature Options</button>
   <button type="button" class="btn btn-primary mr-0" id="menuHome">Support</button>
 </div>
-<div id="pageFeatureOptions" class="mt-2" style="display: none;">
-  <div id="deviceInfo">
-    <table class="table table-sm table-borderless">
-      <tr class="align-center">
-        <td id="headerInfo" colspan="2" class="m-0 p-2 text-center font-weight-bold"></td>
-      </tr>
-      <tr class="align-top">
-        <td rowspan="3" class="w-25">
-          <table id="sidebar" class="table table-sm table-bordered m-0 p-0">
-            <tr>
-              <td>
-                <table class="table table-sm table-borderless m-0 p-0" id="controllersTable"></table>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <table class="table table-sm table-borderless m-0 p-0" id="devicesTable"></table>
-              </td>
-            </tr>
-          </table>
-        </td>
-        <td id="deviceStatsTable">
-          <table class="table table-sm table-borderless border-bottom m-0 p-0">
-            <tr id="deviceStatsHeader">
-              <th class="m-0 p-0" style="font-weight: bold; width: 30%;">Model</th>
-              <th class="m-0 p-0 w-25" style="font-weight: bold;">IP Address</th>
-              <th class="m-0 p-0" style="font-weight: bold; width: 20%;">MAC Address</th>
-              <th class="m-0 p-0 w-25" style="font-weight: bold;">Status</th>
-            </tr>
-            <tr>
-              <td id="device_model" class="m-0 p-0"></td>
-              <td id="device_address" class="m-0 p-0"></td>
-              <td id="device_mac" class="m-0 p-0"></td>
-              <td id="device_online" class="m-0 p-0"></td>
-            </tr>
-          </table>
-        </td>
-      </tr>
-      <tr>
-        <td id="configTable" class="w-100"></td>
-      </tr>
-    </table>
+<div id="pageFeatureOptions" class="mt-2" style="display: none;" tabindex="0">
+  <!-- Header information bar -->
+  <div id="headerInfo" class="alert alert-info bg-transparent py-2 px-3 mb-2"></div>
+
+  <!-- Main content area -->
+  <div class="feature-main-content">
+    <!-- Sidebar -->
+    <aside id="sidebar" class="me-3">
+      <div class="sidebar-content">
+        <nav id="controllersContainer" class="p-2"></nav>
+        <nav id="devicesContainer" class="p-2"></nav>
+      </div>
+    </aside>
+
+    <!-- Main content -->
+    <main class="feature-content">
+      <!-- Device stats using CSS Grid -->
+      <div id="deviceStatsContainer"></div>
+
+      <!-- Search panel -->
+      <div id="search" class="mb-3"></div>
+
+      <!-- Options content area -->
+      <div id="optionsContainer" class="options-content alert-info rounded p-3">
+        <div id="configTable"></div>
+      </div>
+    </main>
   </div>
 </div>
 <div id="pageSupport" class="mt-4" style="display: none;">
@@ -181,16 +166,34 @@
   </ul>
 </div>
 <script type="module">
-
   /* Copyright(C) 2017-2025, HJD (https://github.com/hjdhjd). All rights reserved.
    *
    * Plugin webUI script loader.
    */
   "use strict";
 
-  // Ensure we load the webUI dynamically so it isn't cached on each load.
-  const script = document.createElement('script');
-  script.src = "./ui.mjs?v=" + Date.now().toString();
-  script.type = "module";
-  document.body.appendChild(script);
+  // Compute a timestamp for cache-busting so each URL appears unique.
+  const timestamp = Date.now();
+
+  // Next, set up an import map that will append a cache-busting query string to our modules.
+  const importMap = {
+
+    imports: {
+
+      "./ui.mjs": new URL("./ui.mjs", import.meta.url).href + "?cb=" + timestamp,
+      "./lib/featureOptions.js": new URL("./lib/featureOptions.js", import.meta.url).href + "?cb=" + timestamp,
+      "./lib/webUi.mjs": new URL("./lib/webUi.mjs", import.meta.url).href + "?cb=" + timestamp,
+      "./lib/webUi-featureOptions.mjs": new URL("./lib/webUi-featureOptions.mjs", import.meta.url).href + "?cb=" + timestamp
+    }
+  };
+
+  // Append the import map script to the document head so the browser applies it.
+  const mapScript = document.createElement("script");
+
+  mapScript.type = "importmap";
+  mapScript.textContent = JSON.stringify(importMap);
+  document.head.appendChild(mapScript);
+
+  // Finally, import the UI entry point so we always load a fresh copy.
+  await import("./ui.mjs");
 </script>

@@ -213,10 +213,10 @@ export class ProtectDoorbell extends ProtectCamera {
       // Register this accessory with homebridge and add it to the accessory array so we can track it.
       if(this.hasFeature("Device.Standalone")) {
 
-        this.api.publishExternalAccessories(PLUGIN_NAME, [ packageCameraAccessory ]);
+        this.api.publishExternalAccessories(PLUGIN_NAME, [packageCameraAccessory]);
       } else {
 
-        this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [ packageCameraAccessory ]);
+        this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [packageCameraAccessory]);
       }
 
       this.platform.accessories.push(packageCameraAccessory);
@@ -741,7 +741,7 @@ export class ProtectDoorbell extends ProtectCamera {
     super.eventHandler(packet);
 
     // Process any authentication events.
-    if(payload.type && ["fingerprintIdentified", "nfcCardScanned"].includes(payload.type)) {
+    if(payload.type && [ "fingerprintIdentified", "nfcCardScanned" ].includes(payload.type)) {
 
       // Clear out the contact sensor timer.
       if(this.contactAuthTimer) {
@@ -821,7 +821,7 @@ export class ProtectDoorbell extends ProtectCamera {
 
     if(chime) {
 
-      this.nvr.ufpApi.bootstrap.chimes = [...this.nvr.ufpApi.bootstrap.chimes.filter(device => payload.id !== device.id), Object.assign(chime, payload)];
+      this.nvr.ufpApi.bootstrap.chimes = [ ...this.nvr.ufpApi.bootstrap.chimes.filter(device => payload.id !== device.id), Object.assign(chime, payload) ];
 
       const ring = payload.ringSettings?.find(tone => tone.cameraId === this.ufp.id);
 
@@ -888,7 +888,7 @@ export class ProtectDoorbell extends ProtectCamera {
       ring.volume = value;
 
       // eslint-disable-next-line no-await-in-loop
-      const newDevice = await this.nvr.ufpApi.updateDevice(chime, { ringSettings: [ ring ] });
+      const newDevice = await this.nvr.ufpApi.updateDevice(chime, { ringSettings: [ring] });
 
       if(!newDevice) {
 

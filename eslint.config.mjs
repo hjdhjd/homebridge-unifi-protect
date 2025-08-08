@@ -33,7 +33,7 @@ export default ts.config(
 
     files: [ "src/**.ts", "src/devices/**.ts", "homebridge-ui/*.@(js|mjs)", "homebridge-ui/public/**/*.@(js|mjs)", "eslint.config.mjs" ],
 
-    ignores: [ "dist" ],
+    ignores: ["dist"],
 
     languageOptions: {
 
@@ -85,7 +85,7 @@ export default ts.config(
 
   {
 
-    files: [ "homebridge-ui/server.js" ],
+    files: ["homebridge-ui/server.js"],
 
     languageOptions: {
 

@@ -45,7 +45,18 @@ export class ProtectCameraPackage extends ProtectCamera {
 
     // Inherit our HKSV and motion awareness states from our parent camera.
     this.accessory.context.detectMotion = savedContext.detectMotion as boolean ?? true;
-    this.accessory.context.hksvRecording = savedContext.hksvRecording as boolean ?? true;
+
+    if(this.hasFeature("Video.HKSV.Recording.Switch")) {
+
+      // Compatibility with older releases. I'll remove this in the future.
+      if(savedContext.hksvRecording !== undefined) {
+
+        this.accessory.context.hksvRecordingDisabled = !savedContext.hksvRecording;
+      } else {
+
+        this.accessory.context.hksvRecordingDisabled = savedContext.hksvRecordingDisabled as boolean ?? false;
+      }
+    }
 
     // We explicitly avoid adding the MAC address of the camera - that's reserved for real Protect devices, not synthetic ones we create.
     this.accessory.context.nvr = this.nvr.ufp.mac;
@@ -61,7 +72,7 @@ export class ProtectCameraPackage extends ProtectCamera {
     this.configureFlashlight();
 
     let hkResolutions: Resolution[] = [];
-    const validResolutions: Resolution[] = [ this.findRtsp()?.resolution ?? [ 1600, 1200, 2 ] ];
+    const validResolutions: Resolution[] = [this.findRtsp()?.resolution ?? [ 1600, 1200, 2 ]];
 
     // Ensure we have mandatory resolutions required by HomeKit, as well as special support for Apple TV and Apple Watch, while respecting aspect ratios.
     // We use the frame rate of the first entry, which should be our highest resolution option that's native to the camera as the upper bound for frame rate.
@@ -72,7 +83,7 @@ export class ProtectCameraPackage extends ProtectCamera {
       hkResolutions = [
 
         [ 3840, 2160, 15 ], [ 2560, 1440, 15 ],
-        [ 1920, 1080, 15], [ 1280, 720, 15 ],
+        [ 1920, 1080, 15 ], [ 1280, 720, 15 ],
         [ 640, 360, 15 ], [ 480, 270, 15 ],
         [ 320, 180, 15 ]
       ];
@@ -241,8 +252,8 @@ export class ProtectCameraPackage extends ProtectCamera {
 
       channel: channel,
       lens: 2,
-      name: this.getResolution([channel.width, channel.height, channel.fps]) + " (" + channel.name + ") [" + (this.ufp.videoCodec.replace("h265", "hevc")).toUpperCase() +
-        "]",
+      name: this.getResolution([ channel.width, channel.height, channel.fps ]) + " (" + channel.name + ") [" +
+        (this.ufp.videoCodec.replace("h265", "hevc")).toUpperCase() + "]",
       resolution: [ channel.width, channel.height, channel.fps ],
       url:  "rtsps://" + this.nvr.config.address + ":" + this.nvr.ufp.ports.rtsps.toString() + "/" + channel.rtspAlias + "?enableSrtp"
     };

@@ -50,6 +50,7 @@ export enum ProtectReservedNames {
   SWITCH_DOORBELL_CHIME_MECHANICAL = "DoorbellChime.mechanical",
   SWITCH_DOORBELL_CHIME_NONE = "DoorbellChime.none",
   SWITCH_DOORBELL_CHIME_SPEAKER = "DoorbellChime.speaker",
+  SWITCH_DOORBELL_MUTE = "DoorbellMute",
   SWITCH_DOORBELL_TRIGGER = "DoorbellTrigger",
   SWITCH_HKSV_RECORDING = "HKSVRecordingSwitch",
   SWITCH_MOTION_SENSOR = "MotionSensorSwitch",

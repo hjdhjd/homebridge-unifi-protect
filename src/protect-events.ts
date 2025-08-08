@@ -452,7 +452,7 @@ export class ProtectEvents extends EventEmitter {
           }
 
           // Look at the color and vehicle type.
-          for(const attribute of ["color", "vehicleType"] as const) {
+          for(const attribute of [ "color", "vehicleType" ] as const) {
 
             if(event.payload?.attributes?.[attribute]) {
 
@@ -554,9 +554,12 @@ export class ProtectEvents extends EventEmitter {
       return;
     }
 
-    // Trigger the doorbell event in HomeKit.
-    doorbellService.getCharacteristic(this.hap.Characteristic.ProgrammableSwitchEvent)
-      ?.sendEventNotification(this.hap.Characteristic.ProgrammableSwitchEvent.SINGLE_PRESS);
+    // Trigger the doorbell event in HomeKit, if we're configured to do so.
+    if(!protectDevice.accessory.context.doorbellMuted) {
+
+      doorbellService.getCharacteristic(this.hap.Characteristic.ProgrammableSwitchEvent)
+        ?.sendEventNotification(this.hap.Characteristic.ProgrammableSwitchEvent.SINGLE_PRESS);
+    }
 
     // Check to see if we have a doorbell trigger switch configured. If we do, update it.
     const triggerService = protectDevice.accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_DOORBELL_TRIGGER);

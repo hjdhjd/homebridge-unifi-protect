@@ -44,6 +44,8 @@ class PluginUiServer extends HomebridgePluginUiServer {
   // Register the getDevices() webUI server API endpoint.
   #registerGetDevices() {
 
+    let ufpApi;
+
     // Return the list of Protect devices.
     this.onRequest("/getDevices", async (controller) => {
 
@@ -65,7 +67,7 @@ class PluginUiServer extends HomebridgePluginUiServer {
         };
 
         // Connect to the Protect controller.
-        const ufpApi = new ProtectApi(log);
+        ufpApi = new ProtectApi(log);
 
         if(!(await ufpApi.login(controller.address, controller.username, controller.password))) {
 
@@ -135,6 +137,9 @@ class PluginUiServer extends HomebridgePluginUiServer {
 
         // Return nothing if we error out for some reason.
         return [];
+      } finally {
+
+        ufpApi?.logout();
       }
     });
   }

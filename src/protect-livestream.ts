@@ -16,6 +16,7 @@ export class LivestreamManager {
   private eventHandlers: { [index: string]: () => void };
   private livestreams: { [index: string]: FfmpegLivestreamProcess | ProtectLivestream };
   private protectCamera: ProtectCamera;
+  private restartCount: number;
   private restartDelay: { [index: string]: number };
   private restarting: { [index: string]: boolean };
   private subscriberCount: { [index: string]: number };
@@ -28,6 +29,7 @@ export class LivestreamManager {
     this.eventHandlers = {};
     this.livestreams = {};
     this.protectCamera = protectCamera;
+    this.restartCount = 0;
     this.restartDelay = {};
     this.restarting = {};
     this.segmentTimer = {};
@@ -153,6 +155,23 @@ export class LivestreamManager {
           return;
         }
 
+        if(++this.restartCount > 10) {
+
+          this.restartCount = 0;
+          this.protectCamera.log.warn("Restarting the camera to reset it's connection to the livestream API.");
+
+          // Restart now.
+          const response = await this.protectCamera.nvr.ufpApi.retrieve(this.protectCamera.nvr.ufpApi.getApiEndpoint(this.protectCamera.ufp.modelKey) + "/" +
+            this.protectCamera.ufp.id + "/reboot", { body: JSON.stringify({}), method: "POST" });
+
+          if(!this.protectCamera.nvr.ufpApi.responseOk(response?.statusCode)) {
+
+            this.protectCamera.log.error("Unable to restart the camera.");
+
+            return;
+          }
+        }
+
         this.protectCamera.log.warn("Reconnecting to the %s.", this.protectCamera.hasFeature("Debug.Video.HKSV.UseRtsp") ? "RTSP stream" : "livestream API");
 
         // Wait before we try to reconnect to the livestream. This accounts for reboots and other potential connection issues that can occur.
@@ -191,6 +210,7 @@ export class LivestreamManager {
           // Make sure we've got a good livestream before we reset our delay.
           if((Date.now() - this.startTime[index]) > (60 * 1000)) {
 
+            this.restartCount = 0;
             this.restartDelay[index] = LIVESTREAM_RESTART_INTERVAL;
           }
         }

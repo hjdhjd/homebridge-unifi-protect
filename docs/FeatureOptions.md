@@ -37,10 +37,10 @@ Feature options provide a rich mechanism for tailoring your `homebridge-unifi-pr
  * [Device](#device): Device feature options.
  * [Doorbell](#doorbell): Doorbell feature options.
  * [Log](#log): Logging feature options.
- * [Motion](#motion): Motion detection feature options.
+ * [Motion](#motion): Motion feature options.
  * [Nvr](#nvr): NVR feature options.
- * [SecuritySystem](#securitysystem): Security system feature options.
- * [UniFi.Access](#unifi.access): UniFi Access options.
+ * [SecuritySystem](#securitysystem): Security System feature options.
+ * [UniFi.Access](#unifi.access): UniFi Access feature options.
  * [Video](#video): Video feature options.
  * [Video.HKSV](#video.hksv): HomeKit Secure Video feature options.
 
@@ -79,12 +79,13 @@ These option(s) apply to: Protect cameras.
 | Option                                                                              | Description
 |-------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------
 | <A NAME="Doorbell.AuthSensor"></A>`Doorbell.AuthSensor`                             | Add a contact sensor that gets activates when a fingerprint or NFC successfully authenticates on a Protect doorbell. **(default: disabled)**. <BR>*Supported on Protect doorbells that have a fingerprint sensor.*
+| <A NAME="Doorbell.Mute"></A>`Doorbell.Mute`                                         | Add a switch accessory to control whether HomeKit will chime when the doorbell is pressed. **(default: disabled)**.
 | <A NAME="Doorbell.Messages"></A>`Doorbell.Messages`                                 | Enable the doorbell messages feature. **(default: disabled)**. <BR>*Supported on Protect devices that have a doorbell.*
 | <A NAME="Doorbell.Messages.FromDoorbell"></A>`Doorbell.Messages.FromDoorbell`       | Use messages saved to the Protect NVR as message switches. **(default: enabled)**. <BR>*Supported on Protect devices that have a doorbell.*
 | <A NAME="Doorbell.Volume.Dimmer"></A>`Doorbell.Volume.Dimmer`                       | Add a dimmer accessory to control the Protect chime volume in HomeKit. **(default: disabled)**. <BR>*Supported on Protect devices that have a doorbell.*
 | <A NAME="Doorbell.PhysicalChime"></A>`Doorbell.PhysicalChime`                       | Add switch accessories to control the physical chimes attached to a Protect doorbell. **(default: disabled)**. <BR>*Supported on Protect doorbells that have a physical chime.*
-| <A NAME="Doorbell.PackageCamera.Flashlight"></A>`Doorbell.PackageCamera.Flashlight`  | Add a light accessory to control the flashlight on a Protect doorbell package camera. **(default: enabled)**. <BR>*Supported on Protect doorbells that have a package camera.*
 | <A NAME="Doorbell.PhysicalChime.Duration.Digital"></A><CODE>Doorbell.PhysicalChime.Duration.Digital<I>.Value</I></CODE>  | Chime duration, in milliseconds, of a digital physical chime attached to a Protect doorbell. **(default: 1000)**. <BR>*Supported on Protect doorbells that have a physical chime.*
+| <A NAME="Doorbell.PackageCamera.Flashlight"></A>`Doorbell.PackageCamera.Flashlight`  | Add a light accessory to control the flashlight on a Protect doorbell package camera. **(default: enabled)**. <BR>*Supported on Protect doorbells that have a package camera.*
 | <A NAME="Doorbell.Trigger"></A>`Doorbell.Trigger`                                   | Add a switch accessory to trigger doorbell ring events on a Protect camera or doorbell. **(default: disabled)**.
 
 #### <A NAME="log"></A>Logging feature options.
@@ -97,7 +98,7 @@ These option(s) apply to: Protect cameras, Protect lights, and Protect sensors.
 | <A NAME="Log.HKSV"></A>`Log.HKSV`                                                   | Log HomeKit Secure Video recording events in Homebridge. **(default: disabled)**. <BR>*Supported on Protect cameras.*
 | <A NAME="Log.Motion"></A>`Log.Motion`                                               | Log motion events in Homebridge. **(default: disabled)**. <BR>*Supported on Protect devices that have a motion sensor.*
 
-#### <A NAME="motion"></A>Motion detection feature options.
+#### <A NAME="motion"></A>Motion feature options.
 
 These option(s) apply to: Protect cameras, Protect lights, and Protect sensors.
 
@@ -107,7 +108,7 @@ These option(s) apply to: Protect cameras, Protect lights, and Protect sensors.
 | <A NAME="Motion.OccupancySensor"></A>`Motion.OccupancySensor`                       | Add an occupancy sensor accessory using motion sensor activity to determine occupancy. By default, any motion will trigger occupancy. If the smart detection feature option is enabled, it will be used instead. **(default: disabled)**. <BR>*Supported on Protect devices that have a motion sensor.*
 | <A NAME="Motion.OccupancySensor.Duration"></A><CODE>Motion.OccupancySensor.Duration<I>.Value</I></CODE>  | Duration, in seconds, to wait without receiving a motion event to determine when occupancy is no longer detected. **(default: 300)**.
 | <A NAME="Motion.OccupancySensor.Animal"></A>`Motion.OccupancySensor.Animal`         | When using both the occupancy sensor and smart detection feature options, use UniFi Protect's animal detection to trigger occupancy. **(default: disabled)**. <BR>*Supported on Protect devices that support smart motion detection (e.g. G4-series cameras and better).*
-| <A NAME="Motion.OccupancySensor.Face"></A>`Motion.OccupancySensor.Face`             | When using both the occupancy sensor and smart detection feature options, use UniFi Protect's face detection to trigger occupancy. **(default: disabled)**. <BR>*Supported on Protect devices that support smart motion detection (e.g. G4-series cameras and better).*
+| <A NAME="Motion.OccupancySensor.Face"></A>`Motion.OccupancySensor.Face`             | When using both the occupancy sensor and smart detection feature options, use UniFi Protect's face detection to trigger occupancy. **(default: enabled)**. <BR>*Supported on Protect devices that support smart motion detection (e.g. G4-series cameras and better).*
 | <A NAME="Motion.OccupancySensor.LicensePlate"></A>`Motion.OccupancySensor.LicensePlate`  | When using both the occupancy sensor and smart detection feature options, use UniFi Protect's license plate detection to trigger occupancy. **(default: disabled)**. <BR>*Supported on Protect devices that support smart motion detection (e.g. G4-series cameras and better).*
 | <A NAME="Motion.OccupancySensor.Package"></A>`Motion.OccupancySensor.Package`       | When using both the occupancy sensor and smart detection feature options, use UniFi Protect's package detection to trigger occupancy. **(default: disabled)**. <BR>*Supported on Protect devices that support smart motion detection (e.g. G4-series cameras and better).*
 | <A NAME="Motion.OccupancySensor.Person"></A>`Motion.OccupancySensor.Person`         | When using both the occupancy sensor and smart detection feature options, use UniFi Protect's person detection to trigger occupancy. **(default: enabled)**. <BR>*Supported on Protect devices that support smart motion detection (e.g. G4-series cameras and better).*
@@ -140,7 +141,7 @@ These option(s) apply to: Protect cameras and Protect controllers.
 | <A NAME="Nvr.Recording.Switch"></A>`Nvr.Recording.Switch`                           | Add switch accessories to control the native recording capabilities of the UniFi Protect NVR. **(default: disabled)**. <BR>*Supported on Protect cameras.*
 | <A NAME="Nvr.SystemInfo"></A>`Nvr.SystemInfo`                                       | Add sensor accessories to display the Protect controller system information (currently only the temperature). **(default: disabled)**. <BR>*Supported on Protect controllers.*
 
-#### <A NAME="securitysystem"></A>Security system feature options.
+#### <A NAME="securitysystem"></A>Security System feature options.
 
 These option(s) apply to: Protect controllers.
 
@@ -148,7 +149,7 @@ These option(s) apply to: Protect controllers.
 |-------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------
 | <A NAME="SecuritySystem.Alarm"></A>`SecuritySystem.Alarm`                           | Add a switch accessory to trigger the security system accessory, when using the liveview feature option. **(default: disabled)**.
 
-#### <A NAME="unifi.access"></A>UniFi Access options.
+#### <A NAME="unifi.access"></A>UniFi Access feature options.
 
 These option(s) apply to: Protect cameras.
 

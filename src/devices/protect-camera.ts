@@ -43,7 +43,6 @@ export class ProtectCamera extends ProtectDevice {
   public messageSwitches: { [index: string]: MessageSwitchInterface };
   public packageCamera?: Nullable<ProtectCameraPackage>;
   private rtspEntries: RtspEntry[];
-  private rtspQuality: { [index: string]: string };
   public stream!: ProtectStreamingDelegate;
   public ufp: ProtectCameraConfig;
 
@@ -59,7 +58,6 @@ export class ProtectCamera extends ProtectDevice {
     this.livestream = new LivestreamManager(this);
     this.messageSwitches = {};
     this.rtspEntries = [];
-    this.rtspQuality = {};
     this.ufp = device;
 
     this.configureHints();
@@ -115,9 +113,25 @@ export class ProtectCamera extends ProtectDevice {
     // Clean out the context object in case it's been polluted somehow.
     this.accessory.context = {};
     this.accessory.context.detectMotion = savedContext.detectMotion as boolean ?? true;
-    this.accessory.context.hksvRecording = savedContext.hksvRecording as boolean ?? true;
     this.accessory.context.mac = this.ufp.mac;
     this.accessory.context.nvr = this.nvr.ufp.mac;
+
+    if(this.hasFeature("Video.HKSV.Recording.Switch")) {
+
+      // Compatibility with older releases. I'll remove this in the future.
+      if(savedContext.hksvRecording !== undefined) {
+
+        this.accessory.context.hksvRecordingDisabled = !savedContext.hksvRecording;
+      } else {
+
+        this.accessory.context.hksvRecordingDisabled = savedContext.hksvRecordingDisabled as boolean ?? false;
+      }
+    }
+
+    if(this.hasFeature("Doorbell.Mute")) {
+
+      this.accessory.context.doorbellMuted = savedContext.doorbellMuted as boolean ?? false;
+    }
 
     // Inform the user that motion detection will suck.
     if(this.ufp.recordingSettings.mode === "never") {
@@ -128,7 +142,7 @@ export class ProtectCamera extends ProtectDevice {
     // Check to see if we have smart motion events enabled on a supported camera.
     if(this.hints.smartDetect) {
 
-      const smartDetectTypes = [...this.ufp.featureFlags.smartDetectAudioTypes, ...this.ufp.featureFlags.smartDetectTypes];
+      const smartDetectTypes = [ ...this.ufp.featureFlags.smartDetectAudioTypes, ...this.ufp.featureFlags.smartDetectTypes ];
 
       // Inform the user of what smart detection object types we're configured for.
       this.log.info("Smart motion detection enabled%s.", smartDetectTypes.length ? ": " + smartDetectTypes.sort().join(", ") : "");
@@ -180,6 +194,9 @@ export class ProtectCamera extends ProtectDevice {
       // Configure the night vision indicator light switch.
       this.configureNightVisionDimmer();
 
+      // Configure the doorbell mute switch.
+      this.configureDoorbellMuteSwitch();
+
       // Configure the doorbell trigger.
       this.configureDoorbellTrigger();
 
@@ -221,7 +238,7 @@ export class ProtectCamera extends ProtectDevice {
     const hasProperty = (properties: string[]): boolean => properties.some(property => property in payload);
 
     // Process any RTSP stream or video codec updates.
-    if(hasProperty(["channels", "videoCodec"])) {
+    if(hasProperty([ "channels", "videoCodec" ])) {
 
       void this.configureVideoStream();
     }
@@ -269,7 +286,7 @@ export class ProtectCamera extends ProtectDevice {
     //   - camera night vision.
     //   - camera status light.
     //   - camera recording settings.
-    if(hasProperty(["isConnected", "ispSettings", "name", "ledSettings", "recordingSettings"])) {
+    if(hasProperty([ "isConnected", "ispSettings", "name", "ledSettings", "recordingSettings" ])) {
 
       this.updateDevice();
     }
@@ -317,13 +334,13 @@ export class ProtectCamera extends ProtectDevice {
     //   - We explicitly filter out events tagged as "motion". When users enable the "Create motion events" setting on a camera, Protect will create motion-specific
     //     thumbnail events. We're only interested in true smart detection events.
     if(!this.hints.smartDetect || !((packet.header.modelKey === "smartDetectObject") || ((packet.header.modelKey === "event") &&
-      ["smartDetectLine", "smartDetectZone"].includes(payload.type) && (payload.type !== "motion") && payload.smartDetectTypes.length))) {
+      [ "smartDetectLine", "smartDetectZone" ].includes(payload.type) && (payload.type !== "motion") && payload.smartDetectTypes.length))) {
 
       return;
     }
 
     // Process the motion event.
-    this.nvr.events.motionEventHandler(this, (packet.header.modelKey === "smartDetectObject") ? [ payload.type ] : payload.smartDetectTypes, payload.metadata);
+    this.nvr.events.motionEventHandler(this, (packet.header.modelKey === "smartDetectObject") ? [payload.type] : payload.smartDetectTypes, payload.metadata);
   }
 
   // Configure the ambient light sensor for HomeKit.
@@ -558,7 +575,7 @@ export class ProtectCamera extends ProtectDevice {
     // Add individual contact sensors for each object detection type, if needed.
     if(this.hints.smartDetectSensors) {
 
-      for(const smartDetectType of [...this.ufp.featureFlags.smartDetectAudioTypes, ...this.ufp.featureFlags.smartDetectTypes].sort()) {
+      for(const smartDetectType of [ ...this.ufp.featureFlags.smartDetectAudioTypes, ...this.ufp.featureFlags.smartDetectTypes ].sort()) {
 
         if(addSmartDetectContactSensor(this.accessoryName + " " + toCamelCase(smartDetectType),
           ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + "." + smartDetectType, "Unable to add smart motion contact sensor for " + smartDetectType + " detection.")) {
@@ -591,6 +608,47 @@ export class ProtectCamera extends ProtectDevice {
         this.log.info("Smart motion license plate contact sensor%s enabled: %s.", enabledContactSensors.length > 1 ? "s" : "", enabledContactSensors.join(", "));
       }
     }
+
+    return true;
+  }
+
+  // Configure a switch to mute doorbell ring events in HomeKit.
+  private configureDoorbellMuteSwitch(): boolean {
+
+    // Validate whether we should have this service enabled.
+    if(!this.validService(this.hap.Service.Switch, this.hasFeature("Doorbell.Mute"), ProtectReservedNames.SWITCH_DOORBELL_MUTE) ||
+      !this.accessory.getService(this.hap.Service.Doorbell)) {
+
+      delete this.accessory.context.doorbellMuted;
+
+      return false;
+    }
+
+    // Add the switch to the camera, if needed.
+    const service = this.acquireService(this.hap.Service.Switch, this.accessoryName + " Doorbell Mute", ProtectReservedNames.SWITCH_DOORBELL_MUTE);
+
+    // Fail gracefully.
+    if(!service) {
+
+      this.log.error("Unable to add the doorbell mute switch.");
+
+      return false;
+    }
+
+    // Configure the switch.
+    service.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => this.accessory.context.doorbellMuted as boolean);
+
+    service.getCharacteristic(this.hap.Characteristic.On)?.onSet((value: CharacteristicValue) => {
+
+      this.accessory.context.doorbellMuted = !!value;
+
+      this.log.info("Doorbell chime %s.", value ? "disabled" : "enabled");
+    });
+
+    // Initialize the switch.
+    service.updateCharacteristic(this.hap.Characteristic.On, this.accessory.context.doorbellMuted as boolean);
+
+    this.log.info("Enabling doorbell mute switch.");
 
     return true;
   }
@@ -643,10 +701,7 @@ export class ProtectCamera extends ProtectDevice {
     }
 
     // Trigger the doorbell.
-    triggerService.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => {
-
-      return this.isRinging;
-    });
+    triggerService.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => this.isRinging);
 
     triggerService.getCharacteristic(this.hap.Characteristic.On)?.onSet((value: CharacteristicValue) => {
 
@@ -849,7 +904,7 @@ export class ProtectCamera extends ProtectDevice {
       rtspEntries.push({
 
         channel: channel,
-        name: this.getResolution([channel.width, channel.height, channel.fps]) + " (" + channel.name + ") [" +
+        name: this.getResolution([ channel.width, channel.height, channel.fps ]) + " (" + channel.name + ") [" +
           (this.ufp.videoCodec.replace("h265", "hevc")).toUpperCase() + "]",
         resolution: [ channel.width, channel.height, channel.fps ],
         url: cameraUrl + channel.rtspAlias + "?enableSrtp"
@@ -922,7 +977,7 @@ export class ProtectCamera extends ProtectDevice {
     // Ensure we've got at least one entry that can be used for HomeKit Secure Video. Some Protect cameras (e.g. G3 Flex) don't have a native frame rate that maps to
     // HomeKit's specific requirements for event recording, so we ensure there's at least one. This doesn't directly affect which stream is used to actually record
     // something, but it does determine whether HomeKit even attempts to use the camera for HomeKit Secure Video.
-    if(![15, 24, 30].includes(rtspEntries[0].resolution[2])) {
+    if(![ 15, 24, 30 ].includes(rtspEntries[0].resolution[2])) {
 
       // Iterate through the list of RTSP entries we're providing to HomeKit and ensure we have at least one that will meet HomeKit's requirements for frame rate.
       for(let i = 0; i < rtspEntries.length; i++) {
@@ -1057,8 +1112,8 @@ export class ProtectCamera extends ProtectDevice {
     // Validate whether we should have this service enabled.
     if(!this.validService(this.hap.Service.Switch, this.hasFeature("Video.HKSV.Recording.Switch"), ProtectReservedNames.SWITCH_HKSV_RECORDING)) {
 
-      // We want to default this back to recording whenever we disable the recording switch.
-      this.accessory.context.hksvRecording = true;
+      // Remove our stateful context since it's unneeded.
+      delete this.accessory.context.hksvRecordingDisabled;
 
       return false;
     }
@@ -1075,23 +1130,20 @@ export class ProtectCamera extends ProtectDevice {
     }
 
     // Activate or deactivate HKSV recording.
-    service.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => {
-
-      return this.accessory.context.hksvRecording as boolean ?? true;
-    });
+    service.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => !this.accessory.context.hksvRecordingDisabled);
 
     service.getCharacteristic(this.hap.Characteristic.On)?.onSet((value: CharacteristicValue) => {
 
-      if(this.accessory.context.hksvRecording !== value) {
+      if(this.accessory.context.hksvRecordingDisabled !== !value) {
 
         this.log.info("HKSV event recording %s.", value ? "enabled" : "disabled");
       }
 
-      this.accessory.context.hksvRecording = !!value;
+      this.accessory.context.hksvRecordingDisabled = !value;
     });
 
     // Initialize the switch.
-    service.updateCharacteristic(this.hap.Characteristic.On, this.accessory.context.hksvRecording as boolean);
+    service.updateCharacteristic(this.hap.Characteristic.On, !(this.accessory.context.hksvRecordingDisabled as boolean));
 
     this.log.info("Enabling HKSV recording switch.");
 
@@ -1259,10 +1311,7 @@ export class ProtectCamera extends ProtectDevice {
       }
 
       // Activate or deactivate the appropriate recording mode on the Protect controller.
-      service.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => {
-
-        return this.ufp.recordingSettings.mode === ufpRecordingSetting;
-      });
+      service.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => this.ufp.recordingSettings.mode === ufpRecordingSetting);
 
       service.getCharacteristic(this.hap.Characteristic.On)?.onSet(async (value: CharacteristicValue) => {
 

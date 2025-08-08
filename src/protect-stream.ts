@@ -168,7 +168,7 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
               // various H.264 levels, ranging from Level 3 through Level 5.1 (G4 Pro at maximum resolution). However, HomeKit only supports Level 3.1, 3.2, and 4.0
               // currently.
               levels: [ H264Level.LEVEL3_1, H264Level.LEVEL3_2, H264Level.LEVEL4_0 ],
-              profiles: [ H264Profile.MAIN ]
+              profiles: [H264Profile.MAIN]
             },
 
             resolutions: resolutions,
@@ -205,7 +205,7 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
           twoWayAudio: this.protectCamera.hints.twoWayAudio
         },
 
-        supportedCryptoSuites: [ this.hap.SRTPCryptoSuites.AES_CM_128_HMAC_SHA1_80 ],
+        supportedCryptoSuites: [this.hap.SRTPCryptoSuites.AES_CM_128_HMAC_SHA1_80],
 
         video: {
 
@@ -215,7 +215,7 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
             // various H.264 levels, ranging from Level 3 through Level 5.1 (G4 Pro at maximum resolution). However, HomeKit only supports Level 3.1, 3.2, and 4.0
             // currently.
             levels: [ H264Level.LEVEL3_1, H264Level.LEVEL3_2, H264Level.LEVEL4_0 ],
-            profiles: [ H264Profile.MAIN ]
+            profiles: [H264Profile.MAIN]
           },
 
           // Retrieve the list of supported resolutions from the camera and apply our best guesses for how to map specific resolutions to the available RTSP streams on a
@@ -349,7 +349,7 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
       audioIncomingRtcpPort: audioIncomingRtcpPort,
       audioIncomingRtpPort: audioIncomingRtpPort,
       audioPort: request.audio.port,
-      audioSRTP: Buffer.concat([request.audio.srtp_key, request.audio.srtp_salt]),
+      audioSRTP: Buffer.concat([ request.audio.srtp_key, request.audio.srtp_salt ]),
       audioSSRC: audioSSRC,
 
       hasAudioSupport: hasAudioSupport,
@@ -360,7 +360,7 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
       videoCryptoSuite: request.video.srtpCryptoSuite,
       videoPort: request.video.port,
       videoReturnPort: videoReturnPort,
-      videoSRTP: Buffer.concat([request.video.srtp_key, request.video.srtp_salt]),
+      videoSRTP: Buffer.concat([ request.video.srtp_key, request.video.srtp_salt ]),
       videoSSRC: videoSSRC
     };
 
@@ -596,18 +596,24 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
     // Inform the user.
     const hinting = [];
 
-    hinting.push(...(isTranscoding && this.protectCamera.hints.hardwareTranscoding ? [ "⚡" ] : []));
-    hinting.push(...(isTranscoding ? [ "⚙️" ] : []));
-    hinting.push(...((request.audio.packet_time === 60) ? [ "⏳" ] : []));
-    hinting.push(...(hinting.length ? [ "" ] : []));
+    // Lightning bolt, using the default emoji presentation.
+    hinting.push(...(isTranscoding && this.protectCamera.hints.hardwareTranscoding ? ["\u26A1\uFE0F"] : []));
+
+    // Gear, using the text presentation modifier.
+    hinting.push(...(isTranscoding ? ["\u26ED\uFE0E"] : []));
+
+    // Hourglass, using the text presentation modifier.
+    hinting.push(...((request.audio.packet_time === 60) ? ["\u29D6\uFE0E"] : []));
+
+    hinting.push(...(hinting.length ? [""] : []));
 
     this.log.info("%sStreaming request: %sx%s@%sfps, %s. Using %s, %s [%s].", hinting.join(" "), request.video.width, request.video.height, request.video.fps,
       formatBps(targetBitrate * 1000), rtspEntry.name, formatBps(rtspEntry.channel.bitrate),
       useTsb ? "TSB/" + (this.protectCamera.hasFeature("Debug.Video.HKSV.UseRtsp") ? "RTSP" : "API") : "RTSP");
 
     // When on high-performance hardware like Apple Silicon, using the TSB, and we don't have low-FPS cameras like the package camera, enable the use of the CPU-intensive
-    // FFmpeg minterpolate filter to enable very smooth video, especially when there's motion involved. Currently, only Apple Silicon environments have been able to
-    // reliably use this filter in realtime and with great results. I'm hoping to be able to enable this in the future for other platforms.
+    // FFmpeg minterpolate filter to enable very smooth video, especially when there's motion involved. Apple Silicon environments are able to reliably use this filter in
+    // realtime and with great results. I'm hoping to be able to enable this in the future for other platforms.
     const useInterpolationFilter = useTsb && !("packageCamera" in this.protectCamera.accessory.context) && (this.platform.codecSupport.hostSystem === "macOS.Apple");
 
     // Check to see if we're transcoding. If we are, set the right FFmpeg encoder options. If not, copy the video stream.
@@ -889,7 +895,7 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
     // Some housekeeping for our FFmpeg and demuxer sessions.
     this.ongoingSessions[request.sessionID] = {
 
-      ffmpeg: [ ffmpegStream ],
+      ffmpeg: [ffmpegStream],
       rtpDemuxer: sessionInfo.rtpDemuxer,
       rtpPortReservations: sessionInfo.rtpPortReservations,
       toggleLight: flashlightService

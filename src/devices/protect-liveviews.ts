@@ -88,7 +88,7 @@ export class ProtectLiveviews extends ProtectBase {
         this.securityAccessory = new this.api.platformAccessory(sanitizeName(this.ufpApi.bootstrap.nvr.name), uuid);
 
         // Register this accessory with homebridge and add it to the platform accessory array so we can track it.
-        this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [ this.securityAccessory ]);
+        this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [this.securityAccessory]);
         this.platform.accessories.push(this.securityAccessory);
       }
 
@@ -148,7 +148,7 @@ export class ProtectLiveviews extends ProtectBase {
 
       // Unregister the accessory and delete it's remnants from HomeKit and the plugin.
       delete this.isConfigured[(accessory.context.liveview as string).toUpperCase()];
-      this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [ accessory ]);
+      this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
       this.platform.accessories.splice(this.platform.accessories.indexOf(accessory), 1);
     }
 
@@ -188,7 +188,7 @@ export class ProtectLiveviews extends ProtectBase {
         newAccessory = new this.api.platformAccessory(sanitizeName(this.ufpApi.bootstrap.nvr.name + " " + viewName), uuid);
 
         // Register this accessory with homebridge and add it to the platform accessory array so we can track it.
-        this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [ newAccessory ]);
+        this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [newAccessory]);
         this.platform.accessories.push(newAccessory);
       }
 
@@ -369,7 +369,7 @@ export class ProtectLiveviews extends ProtectBase {
   private getSwitchState(liveviewName: string): boolean {
 
     // Get the list of unique states that exist across all liveview-specified cameras.
-    const detectedStates = [ ...new Set(this.getLiveviewCameras(liveviewName).map(x => this.nvr.getDeviceById(x)?.accessory.context.detectMotion as boolean)) ];
+    const detectedStates = [...new Set(this.getLiveviewCameras(liveviewName).map(x => this.nvr.getDeviceById(x)?.accessory.context.detectMotion as boolean))];
 
     // If we have more than one element in the array or an empty array (meaning we don't have a liveview we know about),
     // we don't have consistent states across all the devices, so we assume it's false.

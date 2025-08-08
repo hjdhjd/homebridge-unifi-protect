@@ -565,7 +565,7 @@ export class ProtectNvr {
       device?.modelKey ?? "device",
       accessory._associatedHAPAccessory.bridged ? "" : " You will need to manually delete the device in the Home app to complete the removal.");
 
-    const deletingAccessories = [ accessory ];
+    const deletingAccessories = [accessory];
 
     // If it's an unknown device or a camera, look for a corresponding package camera if we have one and remove it as well.
     if(!device || (device?.modelKey === "camera")) {
@@ -591,7 +591,7 @@ export class ProtectNvr {
       // Unregister the accessory from HomeKit if we have a bridged accessory. Unbridged accessories are managed directly by users in the Home app.
       if(targetAccessory._associatedHAPAccessory.bridged) {
 
-        this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [ targetAccessory ]);
+        this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [targetAccessory]);
       }
 
       this.platform.accessories.splice(this.platform.accessories.indexOf(targetAccessory), 1);
@@ -739,7 +739,7 @@ export class ProtectNvr {
   // Utility for checking the scope of feature options on the NVR.
   public isNvrFeature(option: string, device?: ProtectDeviceConfigTypes | ProtectNvrConfig): boolean {
 
-    return ["global", "controller"].includes(this.platform.featureOptions.scope(option, device?.mac, this.ufp.mac));
+    return [ "global", "controller" ].includes(this.platform.featureOptions.scope(option, device?.mac, this.ufp.mac));
   }
 
   // Utility for checking feature options on the NVR.

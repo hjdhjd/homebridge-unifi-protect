@@ -290,7 +290,7 @@ export class ProtectSecuritySystem extends ProtectBase {
   public updateDevice(): boolean {
 
     // We always have a disarmed state available to us.
-    const availableSecurityStates = [ this.hap.Characteristic.SecuritySystemTargetState.DISARM ];
+    const availableSecurityStates = [this.hap.Characteristic.SecuritySystemTargetState.DISARM];
 
     // No liveviews configured - we're done.
     if(!this.nvr.ufpApi.bootstrap?.liveviews) {

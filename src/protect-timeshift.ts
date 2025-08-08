@@ -186,7 +186,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
     }
 
     // Transmit everything we have queued up to get started as quickly as possible.
-    this.emit("segment", Buffer.concat([this.livestream.initSegment, ...this._buffer]));
+    this.emit("segment", Buffer.concat([ this.livestream.initSegment, ...this._buffer ]));
 
     // Let our livestream listener know that we're now transmitting.
     this._isTransmitting = true;
@@ -217,19 +217,14 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
   // Get the fMP4 initialization segment from the livestream API.
   public async getInitSegment(): Promise<Nullable<Buffer>> {
 
-    // If we have the initialization segment, return it.
-    if(this.livestream?.initSegment) {
+    // No livestream - we're done.
+    if(!this.livestream) {
 
-      return this.livestream.initSegment;
+      return null;
     }
 
-    // We haven't seen it yet, wait for a couple of seconds and check an additional time.
-    if(this.livestream) {
-
-      return runWithTimeout(this.livestream.getInitSegment(), 2000);
-    }
-
-    return null;
+    // If we have the initialization segment, return it. If we haven't seen it yet, wait for a couple of seconds and check an additional time.
+    return this.livestream.initSegment ?? await runWithTimeout(this.livestream.getInitSegment(), 2000);
   }
 
   // Return the last duration milliseconds of the buffer, with an initialization segment.
@@ -251,7 +246,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
     }
 
     // If we don't have our fMP4 initialization segment, we're done. Otherwise, return the duration requested, starting from the end.
-    return (this.livestream?.initSegment && this._buffer.length) ? Buffer.concat([this.livestream.initSegment, ...this._buffer.slice(start * -1)]) : null;
+    return (this.livestream?.initSegment && this._buffer.length) ? Buffer.concat([ this.livestream.initSegment, ...this._buffer.slice(start * -1) ]) : null;
   }
 
   // Return the current timeshift buffer, in full.

@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 7.21.0 (2025-08-08)
+  * New feature: the ability to mute HomeKit doorbell chimes. It's available as a feature option under the `Doorbell` category. This will allow you to turn off having your HomePod chimes ring when someone rings your doorbell, selectively. Defaults to off.
+  * Improvement: complete overhaul of feature option webUI. Improved the user interface, added the ability to search for feature options, filter on what's changed, and reset options.
+  * Improvement: added additional resiliency to the livestream API connection to cameras. When cameras are continuously misbehaving, HBUP will attempt to restart them if their livestream API connection keeps timing out continuously. This should very rarely occur unless Ubiquiti releases a particularly problematic firmware release.
+  * Improvement: The occupancy sensor feature option will now use both person and face to detect presence now, by default, on cameras that support it. As always, you can adjust these to your heart's content.
+  * Housekeeping.
+
 ## 7.20.1 (2025-07-15)
   * Fix: address livestreaming regressions.
   * Housekeeping.
