@@ -30,19 +30,19 @@ export const PROTECT_DOORBELL_CHIME_SPEAKER_DURATION = 3500;
 export const PROTECT_DOORBELL_TRIGGER_DURATION = 5000;
 
 // FFmpeg afftdn audio filter defaults - this setting uses FFTs to reduce noise in an audio signal by the number of decibels below.
-export const PROTECT_FFMPEG_AUDIO_FILTER_FFTNR = 90;
+export const PROTECT_FFMPEG_AUDIO_FILTER_FFTNR = 14;
 
 // FFmpeg highpass audio filter defaults - this setting attenuates (eliminates) frequencies below the value.
-export const PROTECT_FFMPEG_AUDIO_FILTER_HIGHPASS = 200;
+export const PROTECT_FFMPEG_AUDIO_FILTER_HIGHPASS = 150;
 
 // FFmpeg lowpass audio filter defaults - this setting attenuates (eliminates) frequencies above the value.
-export const PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS = 1000;
+export const PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS = 9000;
 
 // Protect's native I-frame interval can vary, but the livestream API seems to default to 5 seconds at most, though it depends on camera type and stream quality selected.
 export const PROTECT_LIVESTREAM_API_IDR_INTERVAL = 5;
 
-// HomeKit Secure Video segment resolution, in milliseconds. This defines the resolution of our buffer. It should never be less than 100ms or greater than 1500ms.
-export const PROTECT_HKSV_SEGMENT_RESOLUTION = 100;
+// Protect fMP4 segment resolution, in milliseconds. This defines the resolution of our buffer. It should never be less than 100ms or greater than 1500ms.
+export const PROTECT_SEGMENT_RESOLUTION = 100;
 
 // HomeKit Secure Video communication timeout threshold, in milliseconds. HKSV has a strict 5 second threshold for communication, so we set this a little below that.
 export const PROTECT_HKSV_TIMEOUT = 4500;

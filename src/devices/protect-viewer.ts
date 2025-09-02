@@ -62,7 +62,7 @@ export class ProtectViewer extends ProtectDevice {
     const currentLiveviewSwitches = this.accessory.services.filter(x => (x.UUID === this.hap.Service.Switch.UUID) && x.subtype);
 
     // Grab the current list of liveview identifiers from Protect.
-    const nvrLiveviewIds = this.ufpApi.bootstrap?.liveviews?.map(x => x.id);
+    const nvrLiveviewIds = this.ufpApi.bootstrap?.liveviews.map(x => x.id);
 
     // Identify what's been removed on the NVR and remove it from the accessory as well.
     currentLiveviewSwitches.filter(x => !nvrLiveviewIds?.includes(x.subtype ?? "")).map(x => this.accessory.removeService(x));
@@ -108,12 +108,12 @@ export class ProtectViewer extends ProtectDevice {
     if(configureHandlers) {
 
       // Turn the liveview switch on or off.
-      switchService.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => {
+      switchService.getCharacteristic(this.hap.Characteristic.On).onGet(() => {
 
         return this.getLiveviewSwitchState(switchService);
       });
 
-      switchService.getCharacteristic(this.hap.Characteristic.On)?.onSet(async (value: CharacteristicValue) => {
+      switchService.getCharacteristic(this.hap.Characteristic.On).onSet(async (value: CharacteristicValue) => {
 
         return this.setLiveviewSwitchState(switchService, value);
       });
@@ -172,7 +172,7 @@ export class ProtectViewer extends ProtectDevice {
       }
 
       // Retrieve the name assigned to this liveview.
-      const liveviewName = this.ufpApi.bootstrap?.liveviews?.find(x => x.id === liveviewId)?.name;
+      const liveviewName = this.ufpApi.bootstrap?.liveviews.find(x => x.id === liveviewId)?.name;
 
       // Acquire the service.
       const service = this.acquireService(this.hap.Service.Switch, liveviewName, liveviewId);
@@ -192,13 +192,13 @@ export class ProtectViewer extends ProtectDevice {
   }
 
   // Set the liveview on a viewer device in UniFi Protect.
-  private async setViewer(newLiveview: Nullable<string>): Promise<ProtectViewerConfig> {
+  private async setViewer(newLiveview: Nullable<string>): Promise<Nullable<ProtectViewerConfig>> {
 
     // Set the liveview.
-    const newDevice = (await this.nvr.ufpApi.updateDevice(this.ufp, { liveview: newLiveview })) as ProtectViewerConfig;
+    const newDevice = await this.nvr.ufpApi.updateDevice(this.ufp, { liveview: newLiveview });
 
     // Find the liveview name for MQTT.
-    const liveview =  this.ufpApi.bootstrap?.liveviews?.find(x => x.id === newLiveview);
+    const liveview =  this.ufpApi.bootstrap?.liveviews.find(x => x.id === newLiveview);
 
     // Publish an MQTT event.
     if(liveview) {
@@ -215,13 +215,13 @@ export class ProtectViewer extends ProtectDevice {
     // Trigger a motion event in MQTT, if requested to do so.
     this.subscribeGet("liveview", "liveview", () => {
 
-      return this.ufpApi.bootstrap?.liveviews?.find(x => x.id === this.ufp.liveview)?.name ?? "None";
+      return this.ufpApi.bootstrap?.liveviews.find(x => x.id === this.ufp.liveview)?.name ?? "None";
     });
 
     // Trigger a motion event in MQTT, if requested to do so.
     this.subscribeSet("liveview", "liveview", async (value: string) => {
 
-      const liveview = this.ufpApi.bootstrap?.liveviews?.find(x => x.name.toLowerCase() === value);
+      const liveview = this.ufpApi.bootstrap?.liveviews.find(x => x.name.toLowerCase() === value);
 
       if(!liveview) {
 

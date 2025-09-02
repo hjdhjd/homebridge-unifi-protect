@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 7.22.0 (2025-09-01)
+  * Improvement: audio noise filters have been completely refactored (with [updated documentation](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/AudioOptions.md)). I would recommend folks use this in environments where you have your cameras outdoors. I've been testing and tweaking this for a few weeks and the defaults should work quite nicely for most.
+  * Improvement: if you have noise filters enabled, they'll be applied to HKSV events as well now.
+  * Improvement: the HBUP webUI will now remember which categories you've left collapsed and expanded.
+  * Fix: addressed regressions in audio latency.
+  * Housekeeping.
+
 ## 7.21.0 (2025-08-08)
   * New feature: the ability to mute HomeKit doorbell chimes. It's available as a feature option under the `Doorbell` category. This will allow you to turn off having your HomePod chimes ring when someone rings your doorbell, selectively. Defaults to off.
   * Improvement: complete overhaul of feature option webUI. Improved the user interface, added the ability to search for feature options, filter on what's changed, and reset options.

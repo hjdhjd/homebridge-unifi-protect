@@ -10,29 +10,29 @@ import type { FeatureOptionEntry } from "homebridge-plugin-utils";
 // Plugin configuration options.
 export type ProtectOptions = {
 
-  controllers: ProtectNvrOptions[],
-  debugAll: boolean,
-  options: string[],
-  ringDelay: number,
-  verboseFfmpeg: boolean,
-  videoProcessor: string
+  controllers: ProtectNvrOptions[];
+  debugAll: boolean;
+  options: string[];
+  ringDelay: number;
+  verboseFfmpeg: boolean;
+  videoProcessor: string;
 };
 
 // NVR configuration options.
 export interface ProtectNvrOptions {
 
-  address: string,
-  doorbellMessages: {
+  address: string;
+  doorbellMessages?: {
 
-    duration: number,
-    message: string
-  }[],
-  mqttTopic: string,
-  mqttUrl: string,
-  name: string,
-  overrideAddress: string,
-  username: string,
-  password: string
+    duration: number;
+    message: string;
+  }[];
+  mqttTopic: string;
+  mqttUrl?: string;
+  name?: string;
+  overrideAddress?: string;
+  username: string;
+  password: string;
 }
 
 // HBUP's webUI makes use of additional metadata to only surface the feature options relevant for a particular device. These properties provide that metadata.
@@ -48,15 +48,15 @@ export interface ProtectNvrOptions {
 // modelKey:            Device categories that the option applies to, or "all" for any device type.
 interface ProtectFeatureOption extends FeatureOptionEntry {
 
-  hasAccessFeature?: string[],
-  hasCameraFeature?: string[],
-  hasFeature?: string[],
-  hasLightProperty?: string[],
-  hasProperty?: string[],
-  hasSensorProperty?: string[],
-  hasSmartObjectType?: string[],
-  isNotProperty?: string[],
-  modelKey?: string[]
+  hasAccessFeature?: string[];
+  hasCameraFeature?: string[];
+  hasFeature?: string[];
+  hasLightProperty?: string[];
+  hasProperty?: string[];
+  hasSensorProperty?: string[];
+  hasSmartObjectType?: string[];
+  isNotProperty?: string[];
+  modelKey?: string[];
 }
 
 /* eslint-disable @stylistic/max-len */
@@ -84,8 +84,8 @@ export const featureOptions: { [index: string]: ProtectFeatureOption[] } = {
     { default: true, description: "Audio support.", hasFeature: ["hasMic"], name: "" },
     { default: false, description: "Audio filter for ambient noise suppression.", hasFeature: ["hasMic"], name: "Filter.Noise" },
     { default: true, defaultValue: PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, description: "Noise reduction amount, in decibels, for the FFmpeg afftdn filter.", group: "Filter.Noise", name: "Filter.Noise.FftNr" },
-    { default: false, defaultValue: PROTECT_FFMPEG_AUDIO_FILTER_HIGHPASS, description: "Frequency, in Hertz, for the FFmpeg highpass filter.", group: "Filter.Noise", name: "Filter.Noise.HighPass" },
-    { default: false, defaultValue: PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS, description: "Frequency, in Hertz, for the FFmpeg lowpass filter.", group: "Filter.Noise", name: "Filter.Noise.LowPass" },
+    { default: true, defaultValue: PROTECT_FFMPEG_AUDIO_FILTER_HIGHPASS, description: "Frequency, in Hertz, for the FFmpeg highpass filter.", group: "Filter.Noise", name: "Filter.Noise.HighPass" },
+    { default: true, defaultValue: PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS, description: "Frequency, in Hertz, for the FFmpeg lowpass filter.", group: "Filter.Noise", name: "Filter.Noise.LowPass" },
     { default: true, description: "Two-way audio support on supported cameras.", hasFeature: ["hasSpeaker"], name: "TwoWay" },
     { default: false, description: "Send two-way audio directly to supported cameras, bypassing the controller. Useful for working around bugs in some Protect controller firmware versions.", group: "TwoWay", hasFeature: ["hasSpeaker"], name: "TwoWay.Direct" }
   ],

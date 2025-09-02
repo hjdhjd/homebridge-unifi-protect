@@ -22,10 +22,10 @@ import util from "node:util";
 export class ProtectNvr {
 
   private api: API;
-  public config: ProtectNvrOptions;
+  public readonly config: ProtectNvrOptions;
   private deviceRemovalQueue: { [index: string]: number };
-  public readonly configuredDevices: { [index: string]: ProtectDevices };
-  public events!: ProtectEvents;
+  public readonly configuredDevices: { [index: string]: ProtectDevices | undefined };
+  public readonly events: ProtectEvents;
   private featureLog: { [index: string]: boolean };
   private hap: HAP;
   private liveviews: Nullable<ProtectLiveviews>;
@@ -33,10 +33,10 @@ export class ProtectNvr {
   public readonly log: HomebridgePluginLogging;
   public mqtt: Nullable<MqttClient>;
   private name: string;
-  public platform: ProtectPlatform;
+  public readonly platform: ProtectPlatform;
   public systemInfo: Nullable<ProtectNvrSystemInfo>;
   public ufp: ProtectNvrConfig;
-  public ufpApi!: ProtectApi;
+  public readonly ufpApi: ProtectApi;
   private unsupportedDevices: { [index: string]: boolean };
 
   constructor(platform: ProtectPlatform, nvrOptions: ProtectNvrOptions) {
@@ -56,14 +56,35 @@ export class ProtectNvr {
     this.ufp = {} as ProtectNvrConfig;
     this.unsupportedDevices = {};
 
-    // Configure our logging.
+    // Configure our API logging.
+    const ufpLog = {
+
+      debug: (message: string, ...parameters: unknown[]): void => this.platform.debug(util.format(message, ...parameters)),
+      error: (message: string, ...parameters: unknown[]): void => {
+
+        if(this.logApiErrors) {
+
+          this.platform.log.error(util.format(message, ...parameters));
+        }
+      },
+      info: (message: string, ...parameters: unknown[]): void => this.platform.log.info(util.format(message, ...parameters)),
+      warn: (message: string, ...parameters: unknown[]): void => this.platform.log.warn(util.format(message, ...parameters))
+    };
+
+    // Initialize our connection to the UniFi Protect API.
+    this.ufpApi = new ProtectApi(ufpLog);
+
+    // Configure our controller logging.
     this.log = {
 
-      debug: (message: string, ...parameters: unknown[]): void => this.platform.debug(util.format((this.ufpApi?.name ?? this.name) + ": " + message, ...parameters)),
-      error: (message: string, ...parameters: unknown[]): void => this.platform.log.error(util.format((this.ufpApi?.name ?? this.name) + ": " + message, ...parameters)),
-      info: (message: string, ...parameters: unknown[]): void => this.platform.log.info(util.format((this.ufpApi?.name ?? this.name) + ": " + message, ...parameters)),
-      warn: (message: string, ...parameters: unknown[]): void => this.platform.log.warn(util.format((this.ufpApi?.name ?? this.name) + ": " + message, ...parameters))
+      debug: (message: string, ...parameters: unknown[]): void => this.platform.debug(util.format(this.name + ": " + message, ...parameters)),
+      error: (message: string, ...parameters: unknown[]): void => this.platform.log.error(util.format(this.name + ": " + message, ...parameters)),
+      info: (message: string, ...parameters: unknown[]): void => this.platform.log.info(util.format(this.name + ": " + message, ...parameters)),
+      warn: (message: string, ...parameters: unknown[]): void => this.platform.log.warn(util.format(this.name + ": " + message, ...parameters))
     };
+
+    // Initialize our UniFi Protect event handler.
+    this.events = new ProtectEvents(this);
 
     // Validate our Protect address and login information.
     if(!nvrOptions.address || !nvrOptions.username || !nvrOptions.password) {
@@ -77,7 +98,7 @@ export class ProtectNvr {
       for(const protectCamera of this.devices("camera")) {
 
         protectCamera.log.debug("Shutting down all video stream processes.");
-        protectCamera.stream?.shutdown();
+        protectCamera.stream.shutdown();
       }
     });
   }
@@ -101,24 +122,6 @@ export class ProtectNvr {
 
       return;
     }
-
-    // Initialize our connection to the UniFi Protect API.
-    const ufpLog = {
-
-      debug: (message: string, ...parameters: unknown[]): void => this.platform.debug(util.format(message, ...parameters)),
-      error: (message: string, ...parameters: unknown[]): void => {
-
-        if(this.logApiErrors) {
-
-          this.platform.log.error(util.format(message, ...parameters));
-        }
-      },
-      info: (message: string, ...parameters: unknown[]): void => this.platform.log.info(util.format(message, ...parameters)),
-      warn: (message: string, ...parameters: unknown[]): void => this.platform.log.warn(util.format(message, ...parameters))
-    };
-
-    // Create our connection to the Protect API.
-    this.ufpApi = new ProtectApi(ufpLog);
 
     // Attempt to login to the Protect controller, retrying at reasonable intervals. This accounts for cases where the Protect controller or the network connection
     // may not be fully available when we startup.
@@ -146,7 +149,7 @@ export class ProtectNvr {
     this.ufp = bootstrap.nvr;
 
     // Assign our name if the user hasn't explicitly specified a preference.
-    this.name = this.config.name ?? (this.ufp.name ?? this.ufp.marketName);
+    this.name = this.config.name ?? this.ufpApi.name;
 
     // If we are running an unsupported version of UniFi Protect, we're done.
     if(!this.ufp.version.startsWith("6.")) {
@@ -176,9 +179,6 @@ export class ProtectNvr {
 
       return;
     }
-
-    // Initialize our UniFi Protect event handler.
-    this.events = new ProtectEvents(this);
 
     // Configure any NVR-specific settings.
     this.configureNvr();
@@ -257,11 +257,6 @@ export class ProtectNvr {
   // Create instances of Protect device types in our plugin.
   private addProtectDevice(accessory: PlatformAccessory, device: ProtectDeviceConfigTypes): Nullable<ProtectDevice> {
 
-    if(!accessory || !device) {
-
-      return null;
-    }
-
     switch(device.modelKey) {
 
       case "camera":
@@ -313,14 +308,14 @@ export class ProtectNvr {
     }
 
     // Return our newly created device.
-    return this.configuredDevices[accessory.UUID];
+    return this.configuredDevices[accessory.UUID] ?? null;
   }
 
   // Add a newly detected Protect device to HomeKit.
   public addHomeKitDevice(device: ProtectDeviceConfigTypes): boolean {
 
     // If we have no MAC address, name, or this camera isn't being managed by this Protect controller, we're done.
-    if(!this.ufp?.mac || !device || !device.mac || device.isAdoptedByOther || !device.isAdopted) {
+    if(!this.ufp.mac || !device.mac || device.isAdoptedByOther || !device.isAdopted) {
 
       return false;
     }
@@ -362,7 +357,7 @@ export class ProtectNvr {
     // We've got a new device, let's add it to HomeKit.
     if(!accessory) {
 
-      accessory = new this.api.platformAccessory(sanitizeName(device.name ?? device.marketName ?? ("Unknown Device" + (device.mac ? " " + device.mac : ""))), uuid);
+      accessory = new this.api.platformAccessory(sanitizeName(device.name ?? device.marketName), uuid);
 
       this.log.info("%s: Adding %s to HomeKit%s.", this.ufpApi.getDeviceName(device), device.modelKey,
         this.hasFeature("Device.Standalone", device) ? " as a standalone device" : "");
@@ -412,7 +407,7 @@ export class ProtectNvr {
 
     // Iterate through the list of device categories we know about and add them to HomeKit.
     ProtectDeviceCategories.map(category => this.ufpApi.bootstrap && this.ufpApi.bootstrap[category + "s"] &&
-      ((this.ufpApi.bootstrap[category + "s"] as ProtectDeviceConfigTypes[]) ?? []).map(device => this.addHomeKitDevice(device)));
+      ((this.ufpApi.bootstrap[category + "s"] as ProtectDeviceConfigTypes[] | undefined) ?? []).map(device => this.addHomeKitDevice(device)));
 
     // Remove Protect devices that are no longer found on this Protect NVR, but we still have in HomeKit.
     this.cleanupDevices();
@@ -439,7 +434,7 @@ export class ProtectNvr {
     this.platform.accessories.filter(accessory => Object.keys(this.deviceRemovalQueue).includes(accessory.UUID)).map(accessory =>
       // eslint-disable-next-line @stylistic/implicit-arrow-linebreak
       this.removeHomeKitDevice(accessory, !this.platform.featureOptions.test("Device",
-        (accessory.getService(this.hap.Service.AccessoryInformation)?.getCharacteristic(this.hap.Characteristic.SerialNumber).value as string) ?? "", this.ufp.mac)));
+        ((accessory.getService(this.hap.Service.AccessoryInformation)?.getCharacteristic(this.hap.Characteristic.SerialNumber).value) ?? "") as string, this.ufp.mac)));
 
     // Cleanup our accessories.
     for(const accessory of this.platform.accessories.filter(x => x.context.nvr === this.ufp.mac)) {
@@ -452,7 +447,7 @@ export class ProtectNvr {
       if(!protectDevice) {
 
         this.removeHomeKitDevice(accessory, !this.platform.featureOptions.test("Device",
-          (accessory.getService(this.hap.Service.AccessoryInformation)?.getCharacteristic(this.hap.Characteristic.SerialNumber).value as string) ?? ""));
+          ((accessory.getService(this.hap.Service.AccessoryInformation)?.getCharacteristic(this.hap.Characteristic.SerialNumber).value) ?? "") as string));
 
         continue;
       }
@@ -466,7 +461,7 @@ export class ProtectNvr {
 
       // Check to see if the device still exists on the Protect controller and the user has not chosen to hide it, or the user has chosen to make this a standalone
       // accessory rather than a bridged one.
-      if((this.ufpApi.bootstrap[protectDevice.ufp.modelKey + "s"] as ProtectDeviceConfigTypes[])?.some(x => x.mac === protectDevice.ufp.mac) &&
+      if((this.ufpApi.bootstrap[protectDevice.ufp.modelKey + "s"] as ProtectDeviceConfigTypes[] | undefined)?.some(x => x.mac === protectDevice.ufp.mac) &&
         protectDevice.hints.enabled && ((accessory._associatedHAPAccessory.bridged && !protectDevice.hints.standalone) ||
          (!accessory._associatedHAPAccessory.bridged && protectDevice.hints.standalone))) {
 
@@ -557,8 +552,9 @@ export class ProtectNvr {
     const protectDevice = this.configuredDevices[accessory.UUID];
 
     // See if we can pull the device's configuration details from our Protect device instance or the controller.
-    const device = protectDevice?.ufp ?? ProtectDeviceCategories.map(category => this.ufpApi.bootstrap && this.ufpApi.bootstrap[category + "s"] &&
-      ((this.ufpApi.bootstrap[category + "s"] as ProtectDeviceConfigTypes[]) ?? []).find(x => x.mac === accessory.context.mac)).reduce((acc, x) => x ?? acc, null);
+    const device = protectDevice?.ufp ??
+      ProtectDeviceCategories.flatMap<ProtectDeviceConfigTypes>(category => (this.ufpApi.bootstrap?.[category + "s"] as ProtectDeviceConfigTypes[] | undefined) ?? [])
+        .find(d => d.mac === accessory.context.mac);
 
     this.log.info("%s: Removing %s from HomeKit.%s",
       device ? this.ufpApi.getDeviceName(device) : protectDevice?.accessoryName ?? accessory.displayName,
@@ -568,6 +564,7 @@ export class ProtectNvr {
     const deletingAccessories = [accessory];
 
     // If it's an unknown device or a camera, look for a corresponding package camera if we have one and remove it as well.
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     if(!device || (device?.modelKey === "camera")) {
 
       const packageCameraAccessory = this.platform.accessories.find(x => x.context.packageCamera === accessory.context.mac);
@@ -621,6 +618,11 @@ export class ProtectNvr {
 
         // Find the RTSP aliases and publish them. We filter out any cameras that don't have RTSP aliases since they would be inaccessible in this context.
         for(const camera of this.ufpApi.bootstrap.cameras.filter(x => x.channels.some(channel => channel.isRtspEnabled)).sort((a, b) => {
+
+          if(!a.name || !b.name) {
+
+            return 0;
+          }
 
           if(a.name < b.name) {
 
@@ -708,20 +710,20 @@ export class ProtectNvr {
   // Return all configured devices.
   private get devicelist(): ProtectDevices[] {
 
-    return Object.values(this.configuredDevices);
+    return Object.values(this.configuredDevices) as ProtectDevices[];
   }
 
   // Return all devices of a particular modelKey.
   private devices<T extends keyof ProtectDeviceTypes>(model?: T): ProtectDeviceTypes[T][] {
 
-    return Object.values(this.configuredDevices).filter(device => device.ufp?.modelKey === model) as ProtectDeviceTypes[T][];
+    return Object.values(this.configuredDevices).filter(device => device?.ufp.modelKey === model) as ProtectDeviceTypes[T][];
   }
 
   // Return the Protect device object based on it's unique device identifier, if it exists.
   public getDeviceById(deviceId: string): Nullable<ProtectDevices> {
 
     // Find the device.
-    return Object.values(this.configuredDevices).find(device => device.ufp.id === deviceId) ?? null;
+    return Object.values(this.configuredDevices).find(device => device?.ufp.id === deviceId) ?? null;
   }
 
   // Utility function to return a floating point configuration parameter on a device.

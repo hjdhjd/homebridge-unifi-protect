@@ -2,7 +2,7 @@
  *
  * protect-nvr-systeminfo.ts: NVR System Information device class for UniFi Protect.
  */
-import { type Nullable, sanitizeName } from "homebridge-plugin-utils";
+import { type Nullable, acquireService, sanitizeName, validService } from "homebridge-plugin-utils";
 import { PLATFORM_NAME, PLUGIN_NAME } from "../settings.js";
 import type { PlatformAccessory } from "homebridge";
 import { ProtectBase } from "./protect-device.js";
@@ -14,7 +14,6 @@ export class ProtectNvrSystemInfo extends ProtectBase {
   private accessory: Nullable<PlatformAccessory> | undefined;
   private eventListener: Nullable<(packet: ProtectEventPacket) => void>;
   private isConfigured: boolean;
-  private lastTemp: number;
 
   // Configure our NVR sensor capability.
   constructor(nvr: ProtectNvr) {
@@ -26,7 +25,6 @@ export class ProtectNvrSystemInfo extends ProtectBase {
     this.accessory = null;
     this.eventListener = null;
     this.isConfigured = false;
-    this.lastTemp = 0;
 
     this.configureAccessory();
     this.configureMqtt();
@@ -78,14 +76,6 @@ export class ProtectNvrSystemInfo extends ProtectBase {
       // We will use the NVR MAC address + ".NVRSystemInfo" to create our UUID. That should provide the guaranteed uniqueness we need.
       this.accessory = new this.api.platformAccessory(sanitizeName(this.nvr.ufp.name ?? this.nvr.ufp.marketName), uuid);
 
-      if(!this.accessory) {
-
-        this.isConfigured = true;
-        this.log.error("Unable to create the system information accessory.");
-
-        return;
-      }
-
       // Register this accessory with homebridge and add it to the platform accessory array so we can track it.
       this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [this.accessory]);
       this.platform.accessories.push(this.accessory);
@@ -97,10 +87,9 @@ export class ProtectNvrSystemInfo extends ProtectBase {
     this.accessory.context.nvr = this.nvr.ufp.mac;
     this.accessory.context.systemInfo = true;
 
-    // Verify the NVR has been bootstrapped, and finish our configuration.
-    if(this.nvr.ufp.systemInfo) {
+    // Configure accessory information.
+    if(this.nvr.ufpApi.bootstrap) {
 
-      // Configure accessory information.
       this.setInfo(this.accessory, this.nvr.ufp);
     }
 
@@ -163,79 +152,39 @@ export class ProtectNvrSystemInfo extends ProtectBase {
       return false;
     }
 
-    // Find the service, if it exists.
-    let temperatureService = this.accessory.getService(this.hap.Service.TemperatureSensor);
-
-    // Have we disabled the temperature sensor?
-    if(!this.nvr?.hasFeature("NVR.SystemInfo.Temperature")) {
-
-      if(temperatureService) {
-
-        this.accessory.removeService(temperatureService);
-        this.log.info("Disabling CPU temperature sensor.");
-      }
+    // Validate the service.
+    if(!validService(this.accessory, this.hap.Service.TemperatureSensor, this.nvr.hasFeature("NVR.SystemInfo"))) {
 
       return false;
     }
 
-    // Add the service to the accessory, if needed.
-    if(!temperatureService) {
+    // Acquire the service.
+    const service = acquireService(this.accessory, this.hap.Service.TemperatureSensor, this.accessory.displayName + " CPU Temperature");
 
-      temperatureService = new this.hap.Service.TemperatureSensor("CPU Temperature");
+    if(!service) {
 
-      if(!temperatureService) {
+      this.log.error("Unable to add CPU temperature sensor.");
 
-        this.log.error("Unable to add CPU temperature sensor.");
-
-        return false;
-      }
-
-      this.accessory.addService(temperatureService);
+      return false;
     }
 
     // If we're configuring for the first time, we add our respective handlers.
     if(configureHandler) {
 
       // Retrieve the current temperature when requested.
-      temperatureService.getCharacteristic(this.hap.Characteristic.CurrentTemperature)?.onGet(() => {
-
-        return this.getCpuTemp();
-      });
+      service.getCharacteristic(this.hap.Characteristic.CurrentTemperature).onGet(() => this.nvr.ufp.systemInfo.cpu.temperature);
     }
 
     // Update the sensor.
-    temperatureService.updateCharacteristic(this.hap.Characteristic.CurrentTemperature, this.getCpuTemp());
+    service.updateCharacteristic(this.hap.Characteristic.CurrentTemperature, this.nvr.ufp.systemInfo.cpu.temperature);
 
     return true;
-  }
-
-  // Retrieve the CPU temperature of the Protect NVR for HomeKit.
-  private getCpuTemp(): number {
-
-    let cpuTemp = this.nvr.ufp?.systemInfo?.cpu?.temperature;
-
-    // No data available from the Protect NVR, so we default to a starting point.
-    if(cpuTemp === undefined) {
-
-      return this.lastTemp;
-    }
-
-    // HomeKit wants temperature values in Celsius, so we need to convert accordingly, if needed.
-    if(this.nvr.ufp.temperatureUnit === "F") {
-
-      cpuTemp = (cpuTemp - 32) * (5 / 9);
-    }
-
-    return this.lastTemp = cpuTemp;
   }
 
   // Configure MQTT capabilities for the security system.
   private configureMqtt(): void {
 
     // Return the current status of all sensors.
-    this.nvr.mqtt?.subscribeGet(this.nvr.ufp.mac, "systeminfo", "system information", () => {
-
-      return JSON.stringify(this.nvr.ufp.systemInfo);
-    });
+    this.nvr.mqtt?.subscribeGet(this.nvr.ufp.mac, "systeminfo", "system information", () => JSON.stringify(this.nvr.ufp.systemInfo));
   }
 }

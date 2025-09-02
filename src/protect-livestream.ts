@@ -3,7 +3,7 @@
  * protect-livestream.ts: Protect livestream API manager.
  */
 import { FfmpegLivestreamProcess, sleep } from "homebridge-plugin-utils";
-import { PROTECT_HKSV_SEGMENT_RESOLUTION } from "./settings.js";
+import { PROTECT_SEGMENT_RESOLUTION } from "./settings.js";
 import type { ProtectCamera } from "./devices/index.js";
 import type { ProtectLivestream } from "unifi-protect";
 import type { RtspEntry } from "./devices/protect-camera.js";
@@ -38,7 +38,7 @@ export class LivestreamManager {
   }
 
   // Utility to return an index into our livestream connection pool.
-  private getIndex(rtspEntry: RtspEntry): { channel: number, index: string, lens: number | undefined } {
+  private getIndex(rtspEntry: RtspEntry): { channel: number; index: string; lens: number | undefined } {
 
     // If we're using a secondary lens, the channel must always be 0 when using the livestream API.
     const channel = (rtspEntry.lens === undefined) ? rtspEntry.channel.id : 0;
@@ -53,6 +53,7 @@ export class LivestreamManager {
     const { index } = this.getIndex(rtspEntry);
 
     // Let's see if we have an existing livestream already open and reuse it if we can.
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     if(this.livestreams[index]) {
 
       return this.livestreams[index];
@@ -81,6 +82,7 @@ export class LivestreamManager {
 
     // Cleanup all the listeners and shutdown our livestreams.
     Object.values(this.segmentTimer).map(timer => clearTimeout(timer));
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     Object.values(this.livestreams).map(livestream => livestream.removeAllListeners() && livestream.stop());
 
     this.eventHandlers = {};
@@ -93,12 +95,13 @@ export class LivestreamManager {
   }
 
   // Access the livestream API, registering as a consumer.
-  public async start(rtspEntry: RtspEntry, segmentLength = PROTECT_HKSV_SEGMENT_RESOLUTION): Promise<boolean> {
+  public async start(rtspEntry: RtspEntry, segmentLength = PROTECT_SEGMENT_RESOLUTION): Promise<boolean> {
 
     const { channel, index, lens } = this.getIndex(rtspEntry);
 
     // If we don't have a livestream configured for this channel, we're done. We could just create it here, but given we listen to events on livestream listeners, this
     // is a safer option to ensure that we've acquired a livestream endpoint before trying to start it.
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     if(!this.livestreams[index]) {
 
       return false;
@@ -112,7 +115,7 @@ export class LivestreamManager {
         (this.livestreams[index] as FfmpegLivestreamProcess).segmentLength = segmentLength;
         (this.livestreams[index] as FfmpegLivestreamProcess).start();
       } else if(!(await (this.livestreams[index] as ProtectLivestream).start(this.protectCamera.ufp.id, channel,
-        { lens, requestId: this.protectCamera.name + ":" + index, segmentLength }))) {
+        { chunkSize: 16384, emitTimestamps: true, lens, requestId: this.protectCamera.name + ":" + index, segmentLength }))) {
 
         this.protectCamera.log.error("Unable to access the Protect livestream API: this is typically due to the Protect controller or camera rebooting.");
 
@@ -140,6 +143,7 @@ export class LivestreamManager {
         this.restarting[index] = true;
 
         // Clear out any existing timer.
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
         if(this.segmentTimer[index]) {
 
           clearTimeout(this.segmentTimer[index]);
@@ -203,6 +207,7 @@ export class LivestreamManager {
       this.livestreams[index].on("segment", this.eventHandlers[index] = (): void => {
 
         // Clear out any existing timer.
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
         if(this.segmentTimer[index]) {
 
           clearTimeout(this.segmentTimer[index]);
@@ -247,6 +252,7 @@ export class LivestreamManager {
     this.livestreams[index].off("restart", this.eventHandlers[index + ".restart"]);
     this.livestreams[index].off("segment", this.eventHandlers[index]);
 
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     if(this.segmentTimer[index]) {
 
       clearTimeout(this.segmentTimer[index]);

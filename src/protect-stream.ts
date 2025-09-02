@@ -11,7 +11,7 @@ import { AudioRecordingCodecType, AudioRecordingSamplerate, AudioStreamingCodecT
   StreamRequestTypes } from "homebridge";
 import { FfmpegOptions, FfmpegStreamingProcess, HKSV_FRAGMENT_LENGTH, HOMEKIT_IDR_INTERVAL, type HomebridgePluginLogging, type HomebridgeStreamingDelegate,
   type Nullable, RtpDemuxer, formatBps } from "homebridge-plugin-utils";
-import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION, PROTECT_LIVESTREAM_API_IDR_INTERVAL } from "./settings.js";
+import { PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION, PROTECT_LIVESTREAM_API_IDR_INTERVAL } from "./settings.js";
 import type { ProtectCamera } from "./devices/index.js";
 import type { ProtectNvr } from "./protect-nvr.js";
 import type { ProtectPlatform } from "./protect-platform.js";
@@ -22,10 +22,10 @@ import { once } from "node:events";
 
 type OngoingSessionEntry = {
 
-  ffmpeg: FfmpegStreamingProcess[],
-  rtpDemuxer: Nullable<RtpDemuxer>,
-  rtpPortReservations: number[],
-  toggleLight?: Service
+  ffmpeg: FfmpegStreamingProcess[];
+  rtpDemuxer: Nullable<RtpDemuxer>;
+  rtpPortReservations: number[];
+  toggleLight?: Service;
 };
 
 type SessionInfo = {
@@ -195,7 +195,8 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
               audioChannels: 1,
               bitrate: 0,
 
-              // Protect doorbells and the Opus audio track over RTSP both use a 48 kHz audio sampling rate. Otherwise, the livestream API uses a 16 kHz sampling rate.
+              // Protect doorbells and the Opus audio track over RTSP both use a 48 kHz audio sampling rate, which HomeKit doesn't support. Since both 16 and 24 will
+              // divide cleanly into 48, we allow HomeKit to choose it's preference. Otherwise, the livestream API uses a 16 kHz sampling rate.
               samplerate: (this.protectCamera.ufp.featureFlags.isDoorbell || !this.protectCamera.hints.tsbStreaming) ?
                 [ AudioStreamingSamplerate.KHZ_16, AudioStreamingSamplerate.KHZ_24 ] : AudioStreamingSamplerate.KHZ_16,
               type: AudioStreamingCodecType.AAC_ELD
@@ -335,6 +336,7 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
     const videoSSRC = this.hap.CameraController.generateSynchronisationSource();
 
     // If we've had failures to retrieve the UDP ports we're looking for, inform the user.
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     if(reservePortFailed) {
 
       this.log.error("Unable to reserve the UDP ports needed to begin streaming.");
@@ -364,9 +366,8 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
       videoSSRC: videoSSRC
     };
 
-    // Prepare the response stream. Here's where we figure out if we're doing two-way audio or not. For two-way audio,
-    // we need to use a demuxer to separate RTP and RTCP packets. For traditional video/audio streaming, we want to keep
-    // it simple and don't use a demuxer.
+    // Prepare the response stream. Here's where we figure out if we're doing two-way audio or not. For two-way audio, we need to use a demuxer to separate RTP and RTCP
+    // packets. For traditional video/audio streaming, we want to keep it simple and don't use a demuxer.
     const response: PrepareStreamResponse = {
 
       audio: {
@@ -553,12 +554,11 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
 
       "-hide_banner",
       "-nostats",
-      "-fflags", "+discardcorrupt+genpts+igndts",
+      "-fflags", "+discardcorrupt",
       "-err_detect", "ignore_err",
       ...this.ffmpegOptions.videoDecoder(this.protectCamera.ufp.videoCodec),
       "-max_delay", "500000",
       "-flags", "low_delay",
-      "-r", rtspEntry.channel.fps.toString(),
       "-probesize", this.probesize.toString()
     ];
 
@@ -596,14 +596,17 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
     // Inform the user.
     const hinting = [];
 
-    // Lightning bolt, using the default emoji presentation.
-    hinting.push(...(isTranscoding && this.protectCamera.hints.hardwareTranscoding ? ["\u26A1\uFE0F"] : []));
+    // Lightning bolt, using the default emoji presentation. We use this to indicate hardware acceleration.
+    hinting.push(...(isTranscoding && this.protectCamera.hints.hardwareTranscoding ? ["\u{26A1}\u{FE0F}"] : []));
 
-    // Gear, using the text presentation modifier.
-    hinting.push(...(isTranscoding ? ["\u26ED\uFE0E"] : []));
+    // Gear, using the text presentation modifier. We use this to indicate that we're transcoding.
+    hinting.push(...(isTranscoding ? ["\u{26ED}\u{FE0E}"] : []));
 
-    // Hourglass, using the text presentation modifier.
-    hinting.push(...((request.audio.packet_time === 60) ? ["\u29D6\uFE0E"] : []));
+    // Hourglass, using the text presentation modifier. We use this to indicate high latency connections.
+    hinting.push(...((request.audio.packet_time === 60) ? ["\u{29D6}\u{FE0E}"] : []));
+
+    // Speaker, using the text presentation modifier. We use this to indicate that we're applying audio filters for noise reduction.
+    hinting.push(...(sessionInfo.hasAudioSupport && (this.protectCamera.hasFeature("Audio.Filter.Noise")) ? ["\u{1F50A}\u{FE0E}"] : []));
 
     hinting.push(...(hinting.length ? [""] : []));
 
@@ -611,10 +614,11 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
       formatBps(targetBitrate * 1000), rtspEntry.name, formatBps(rtspEntry.channel.bitrate),
       useTsb ? "TSB/" + (this.protectCamera.hasFeature("Debug.Video.HKSV.UseRtsp") ? "RTSP" : "API") : "RTSP");
 
-    // When on high-performance hardware like Apple Silicon, using the TSB, and we don't have low-FPS cameras like the package camera, enable the use of the CPU-intensive
-    // FFmpeg minterpolate filter to enable very smooth video, especially when there's motion involved. Apple Silicon environments are able to reliably use this filter in
-    // realtime and with great results. I'm hoping to be able to enable this in the future for other platforms.
-    const useInterpolationFilter = useTsb && !("packageCamera" in this.protectCamera.accessory.context) && (this.platform.codecSupport.hostSystem === "macOS.Apple");
+    // When on high-performance hardware like Apple Silicon, using the TSB, and we don't have low-FPS cameras like the package camera, enable the use of the
+    // CPU-intensive FFmpeg minterpolate filter to enable very smooth video, especially when there's motion involved. M3+ Apple Silicon environments are able to reliably
+    // use this filter in realtime and with great results. I'm hoping to be able to enable this in the future for other platforms.
+    const useInterpolationFilter = useTsb && !("packageCamera" in this.protectCamera.accessory.context) &&
+      ((this.platform.codecSupport.hostSystem === "macOS.Apple") && (this.platform.codecSupport.cpuGeneration >= 3));
 
     // Check to see if we're transcoding. If we are, set the right FFmpeg encoder options. If not, copy the video stream.
     if(isTranscoding) {
@@ -632,11 +636,14 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
         width: request.video.width
       }));
 
-      // We augment our video filters to account for the timestamp quirkiness in FFmpeg when it comes to dealing with fMP4 inputs.
       if(useInterpolationFilter) {
 
         // Adjust our presentation timestamps for a smoother streaming experience.
-        const minterpolate = "minterpolate=fps=" + request.video.fps.toString() + ":mi_mode=mci:mc_mode=aobmc:me=fss:me_mode=bidir:vsbmc=1:scd=none";
+        const minterpolate =
+
+          ((this.protectCamera.hints.hardwareTranscoding && this.platform.codecSupport.ffmpegVersion.startsWith("8.")) ? "hwdownload, format=nv12, " : "") +
+          "fps=" + request.video.fps.toString() +
+          ", minterpolate=fps=" + request.video.fps.toString() + ":mi_mode=mci:mc_mode=aobmc:me=fss:me_mode=bidir:vsbmc=1:scd=none";
 
         const vf = ffmpegArgs.indexOf("-filter:v");
 
@@ -666,11 +673,9 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
       }
     }
 
-    // -fps_mode passthrough            Ensure FFmpeg uses the PTS values we've specified, unaltered.
     // -metadata                        Set the metadata to the name of the camera to distinguish between FFmpeg sessions.
     ffmpegArgs.push(
 
-      "-fps_mode", "passthrough",
       "-metadata", "comment=" + this.protectCamera.accessoryName + " Livestream"
     );
 
@@ -679,7 +684,7 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
     // -payload_type num                Payload type for the RTP stream. This is negotiated by HomeKit and is usually 99 for H.264 video.
     // -ssrc                            Synchronization source stream identifier. Random number negotiated by HomeKit to identify this stream.
     // -f rtp                           Specify that we're using the RTP protocol.
-    // -avioflags direct                Tell FFmpeg to minimize buffering to reduce latency for more realtime processing.
+    // -flush_packets 1                 Ensure we flush our write buffer after each muxed packet.
     // -packetsize 1200                 Use a packetsize of 1200 for compatibility across network environments. This should be no more than HomeKit livestreaming MTU
     //                                  (1378 for IPv4 and 1228 for IPv6).
     // -srtp_out_suite enc              Specify the output encryption encoding suites.
@@ -689,7 +694,7 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
       "-payload_type", request.video.pt.toString(),
       "-ssrc", sessionInfo.videoSSRC.toString(),
       "-f", "rtp",
-      "-avioflags", "direct",
+      "-flush_packets", "1",
       "-packetsize", "1200",
       "-srtp_out_suite", "AES_CM_128_HMAC_SHA1_80",
       "-srtp_out_params", sessionInfo.videoSRTP.toString("base64"),
@@ -704,11 +709,10 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
     //                                  Protect changes this in the future.
     // -codec:a                         Encode using the codecs available to us on given platforms.
     // -profile:a 38                    Specify enhanced, low-delay AAC for HomeKit.
-    // -flags +global_header            Sets the global header in the bitstream.
+    // -flags +global_header            Sets the global header in the bitstream. Needed for FDK-AAC to correctly initialize. For encoders like aac_at it becomes a no-op.
     // -ar samplerate                   Sample rate to use for this audio. This is specified by HomeKit.
     // -b:a bitrate                     Bitrate to use for this audio stream. This is specified by HomeKit.
     // -ac number                       Set the number of audio channels.
-    // -frame_size                      Set the number of samples per frame to match the requested frame size from HomeKit.
     if(sessionInfo.hasAudioSupport) {
 
       // Configure our audio parameters.
@@ -717,53 +721,19 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
         // Take advantage of the higher fidelity potentially available to us from the Opus track in the RTSP stream. The livestream API only provides an AAC track.
         "-map", useTsb ? "0:a:0?" : "0:a:1?",
         ...this.ffmpegOptions.audioEncoder(),
-        "-profile:a", "38",
         "-flags", "+global_header",
+        "-profile:a", "38",
         "-ar", request.audio.sample_rate.toString() + "k",
         "-b:a", request.audio.max_bit_rate.toString() + "k",
-        "-ac", request.audio.channel.toString(),
-        "-frame_size", (request.audio.packet_time * request.audio.sample_rate).toString()
+        "-ac", request.audio.channel.toString()
       );
 
       // If we are audio filtering, address it here.
-      if(this.protectCamera.hasFeature("Audio.Filter.Noise")) {
+      const afOptions = this.protectCamera.audioFilters;
 
-        const afOptions: string[] = [];
+      if(afOptions.length) {
 
-        // See what the user has set for the afftdn filter for this camera.
-        let fftNr = this.protectCamera.getFeatureFloat("Audio.Filter.Noise.FftNr") ?? PROTECT_FFMPEG_AUDIO_FILTER_FFTNR;
-
-        // If we have an invalid setting, use the defaults.
-        if((fftNr < 0.01) || (fftNr > 97)) {
-
-          fftNr = (fftNr > 97) ? 97 : ((fftNr < 0.01) ? 0.01 : fftNr);
-        }
-
-        // The afftdn filter options we use are:
-        //
-        // nt=w  Focus on eliminating white noise.
-        // om=o  Output the filtered audio.
-        // tn=1  Enable noise tracking.
-        // tr=1  Enable residual tracking.
-        // nr=X  Noise reduction value in decibels.
-        afOptions.push("afftdn=nt=w:om=o:tn=1:tr=1:nr=" + fftNr.toString());
-
-        const highpass = this.protectCamera.getFeatureNumber("Audio.Filter.Noise.HighPass");
-        const lowpass = this.protectCamera.getFeatureNumber("Audio.Filter.Noise.LowPass");
-
-        // Only set the highpass and lowpass filters if the user has explicitly enabled them.
-        if((highpass !== null) && (highpass !== undefined)) {
-
-          afOptions.push("highpass=f=" + highpass.toString());
-        }
-
-        if((lowpass !== null) && (lowpass !== undefined)) {
-
-          afOptions.push("lowpass=f=" + lowpass.toString());
-        }
-
-        // Return the assembled audio filter option.
-        ffmpegArgs.push("-af", afOptions.join(", "));
+        ffmpegArgs.push("-filter:a", afOptions.join(", "));
       }
 
       // Add the required RTP settings and encryption for the stream:
@@ -771,7 +741,7 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
       // -payload_type num                Payload type for the RTP stream. This is negotiated by HomeKit and is usually 110 for AAC-ELD audio.
       // -ssrc                            synchronization source stream identifier. Random number negotiated by HomeKit to identify this stream.
       // -f rtp                           Specify that we're using the RTP protocol.
-      // -avioflags direct                Tell FFmpeg to minimize buffering to reduce latency for more realtime processing.
+      // -flush_packets 1                 Ensure we flush our write buffer after each muxed packet.
       // -packetsize 384                  Use a packetsize as a multiple of the sample rate. HomeKit livestreaming wants a block size of 480 samples when using AAC-ELD.
       //                                  We loosely interpret that to mean less than 480 bytes per packet and use 384 since it's divisible by 16 kHz and 24 kHz.
       // -srtp_out_suite enc              Specify the output encryption encoding suites.
@@ -781,7 +751,7 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
         "-payload_type", request.audio.pt.toString(),
         "-ssrc", sessionInfo.audioSSRC.toString(),
         "-f", "rtp",
-        "-avioflags", "direct",
+        "-flush_packets", "1",
         "-packetsize", "384",
         "-srtp_out_suite", "AES_CM_128_HMAC_SHA1_80",
         "-srtp_out_params", sessionInfo.audioSRTP.toString("base64"),
@@ -790,7 +760,7 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
     }
 
     // Additional logging, but only if we're debugging.
-    if(this.platform.verboseFfmpeg || this.verboseFfmpeg) {
+    if(this.platform.verboseFfmpeg || this.verboseFfmpeg || this.protectCamera.hasFeature("Debug.Video.FFmpeg")) {
 
       ffmpegArgs.push("-loglevel", "level+verbose");
     }
@@ -859,7 +829,6 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
         if(!seenInitSegment) {
 
           processSegmentQueue(tsBuffer ?? (await livestream.getInitSegment()));
-
           seenInitSegment = true;
         }
 
@@ -1013,7 +982,7 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
         isTalkbackLive = true;
 
         // Catch any errors and inform the user, if needed.
-        ws?.addEventListener("error", (event: ErrorEvent) => {
+        ws.addEventListener("error", (event: ErrorEvent) => {
 
           // Ignore timeout errors, but notify the user about anything else.
           if((event.error as NodeJS.ErrnoException).code !== "ETIMEDOUT") {
@@ -1026,7 +995,7 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
         }, { once: true });
 
         // Catch any stray open events after we've closed.
-        ws?.addEventListener("open", openListener = (): void => {
+        ws.addEventListener("open", openListener = (): void => {
 
           // If we've somehow opened after we've wrapped up talkback, terminate the connection.
           if(!isTalkbackLive) {
@@ -1037,7 +1006,7 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
         });
 
         // Cleanup after ourselves on close.
-        ws?.addEventListener("close", () => {
+        ws.addEventListener("close", () => {
 
           ws?.removeEventListener("open", openListener);
         }, { once: true });
@@ -1127,6 +1096,7 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
     try {
 
       // Stop any FFmpeg instances we have running.
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
       if(this.ongoingSessions[sessionId]) {
 
         this.ongoingSessions[sessionId].ffmpeg.map(ffmpegProcess => ffmpegProcess.stop());
@@ -1145,6 +1115,7 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
       }
 
       // On the off chance we were signaled to prepare to start streaming, but never actually started streaming, cleanup after ourselves.
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
       if(this.pendingSessions[sessionId]) {
 
         // Release our port reservations.

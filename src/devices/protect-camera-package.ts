@@ -44,7 +44,7 @@ export class ProtectCameraPackage extends ProtectCamera {
     this.accessory.context = {};
 
     // Inherit our HKSV and motion awareness states from our parent camera.
-    this.accessory.context.detectMotion = savedContext.detectMotion as boolean ?? true;
+    this.accessory.context.detectMotion = savedContext.detectMotion as boolean | undefined ?? true;
 
     if(this.hasFeature("Video.HKSV.Recording.Switch")) {
 
@@ -54,7 +54,7 @@ export class ProtectCameraPackage extends ProtectCamera {
         this.accessory.context.hksvRecordingDisabled = !savedContext.hksvRecording;
       } else {
 
-        this.accessory.context.hksvRecordingDisabled = savedContext.hksvRecordingDisabled as boolean ?? false;
+        this.accessory.context.hksvRecordingDisabled = savedContext.hksvRecordingDisabled as boolean | undefined ?? false;
       }
     }
 
@@ -158,9 +158,9 @@ export class ProtectCameraPackage extends ProtectCamera {
     }
 
     // Activate or deactivate the package camera flashlight.
-    service.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => !!this.flashlightState);
+    service.getCharacteristic(this.hap.Characteristic.On).onGet(() => !!this.flashlightState);
 
-    service.getCharacteristic(this.hap.Characteristic.On)?.onSet(async (value: CharacteristicValue) => {
+    service.getCharacteristic(this.hap.Characteristic.On).onSet(async (value: CharacteristicValue) => {
 
       // Stop heartbeating the flashlight to allow it to turn off.
       if(!value) {
@@ -213,7 +213,7 @@ export class ProtectCameraPackage extends ProtectCamera {
       // If it's dark, we're done.
       if(!this.ufp.isDark) {
 
-        setTimeout(() => service?.updateCharacteristic(this.hap.Characteristic.On, false), 50);
+        setTimeout(() => service.updateCharacteristic(this.hap.Characteristic.On, false), 50);
 
         return;
       }

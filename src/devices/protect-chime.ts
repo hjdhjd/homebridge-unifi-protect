@@ -92,12 +92,12 @@ export class ProtectChime extends ProtectDevice {
     }
 
     // Turn the speaker on or off.
-    service.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => {
+    service.getCharacteristic(this.hap.Characteristic.On).onGet(() => {
 
       return !!this.eventTimers[endpoint];
     });
 
-    service.getCharacteristic(this.hap.Characteristic.On)?.onSet(async (value: CharacteristicValue) => {
+    service.getCharacteristic(this.hap.Characteristic.On).onSet(async (value: CharacteristicValue) => {
 
       // We only want to do something if we're being activated and we don't have an active speaker event inflight. Turning off the switch would really be a meaningless
       // state given you can't undo the play command to the chime.
@@ -155,6 +155,7 @@ export class ProtectChime extends ProtectDevice {
       const ringSettings = this.ufp.ringSettings.find(ring => ring.ringtoneId === tone) ?? this.ufp.ringSettings[0];
 
       // We couldn't find the playback settings for this ringtone, we're done.
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
       if(!ringSettings) {
 
         return false;

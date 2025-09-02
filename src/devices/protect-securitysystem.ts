@@ -3,6 +3,7 @@
  * protect-securitysystem.ts: Security system accessory for UniFi Protect.
  */
 import type { CharacteristicValue, PlatformAccessory } from "homebridge";
+import { acquireService, validService } from "homebridge-plugin-utils";
 import { ProtectBase } from "./protect-device.js";
 import type { ProtectNvr } from "../protect-nvr.js";
 import { ProtectReservedNames } from "../protect-types.js";
@@ -159,21 +160,13 @@ export class ProtectSecuritySystem extends ProtectBase {
   private configureSecuritySystem(): boolean {
 
     // Find any existing security system service.
-    let service = this.accessory.getService(this.hap.Service.SecuritySystem);
+    const service = acquireService(this.accessory, this.hap.Service.SecuritySystem, this.accessory.displayName);
 
-    // Add the security system service, if needed.
     if(!service) {
 
-      service = new this.hap.Service.SecuritySystem(this.accessory.displayName);
+      this.log.error("Unable to add security system.");
 
-      if(!service) {
-
-        this.log.error("Unable to add security system.");
-
-        return false;
-      }
-
-      this.accessory.addService(service);
+      return false;
     }
 
     const SecuritySystemCurrentState = this.hap.Characteristic.SecuritySystemCurrentState;
@@ -211,7 +204,7 @@ export class ProtectSecuritySystem extends ProtectBase {
 
     // Handlers to get our current state, and initialize on startup.
     service.updateCharacteristic(SecuritySystemCurrentState, this.accessory.context.securityState as CharacteristicValue)
-      .getCharacteristic(SecuritySystemCurrentState)?.onGet(() => {
+      .getCharacteristic(SecuritySystemCurrentState).onGet(() => {
 
         return this.isAlarmTriggered ? this.hap.Characteristic.SecuritySystemCurrentState.ALARM_TRIGGERED : (this.accessory.context.securityState as CharacteristicValue);
       });
@@ -231,57 +224,35 @@ export class ProtectSecuritySystem extends ProtectBase {
 
     this.isAlarmTriggered = false;
 
-    // Find the existing security alarm switch service.
-    let switchService = this.accessory.getService(this.hap.Service.Switch);
-
     // Have we enabled the security system alarm?
-    if(!this.nvr?.hasFeature("SecuritySystem.Alarm")) {
-
-      if(switchService) {
-
-        this.accessory.removeService(switchService);
-      }
+    if(!validService(this.accessory, this.hap.Service.Switch, this.nvr.hasFeature("SecuritySystem.Alarm"))) {
 
       return false;
-
     }
 
-    const switchName = this.accessory.displayName + " Security Alarm";
+    // Acquire the service.
+    const service = acquireService(this.accessory, this.hap.Service.Switch, this.accessory.displayName + " Security Alarm");
 
-    // Add the security alarm switch to the security system.
-    if(!switchService) {
+    if(!service) {
 
-      switchService = new this.hap.Service.Switch(switchName);
+      this.log.error("Unable to add security system alarm.");
 
-      if(!switchService) {
-
-        this.log.error("Unable to add security system alarm.");
-
-        return false;
-      }
-
-      switchService.addOptionalCharacteristic(this.hap.Characteristic.ConfiguredName);
-      this.accessory.addService(switchService);
+      return false;
     }
 
     // Notify the user that we're enabled.
     this.log.info("Enabling the security alarm switch on the security system accessory.");
 
     // Activate or deactivate the security alarm.
-    switchService.getCharacteristic(this.hap.Characteristic.On)
-      ?.onGet(() => {
+    service.getCharacteristic(this.hap.Characteristic.On).onGet(() => this.isAlarmTriggered === true);
+    service.getCharacteristic(this.hap.Characteristic.On).onSet((value: CharacteristicValue) => {
 
-        return this.isAlarmTriggered === true;
-      })
-      .onSet((value: CharacteristicValue) => {
-
-        this.setSecurityAlarm(value === true);
-        this.log.info("Security system alarm %s.", (value === true) ? "triggered" : "reset");
-      });
+      this.setSecurityAlarm(!!value);
+      this.log.info("Security system alarm %s.", value ? "triggered" : "reset");
+    });
 
     // Initialize the value.
-    switchService.updateCharacteristic(this.hap.Characteristic.ConfiguredName, switchName);
-    switchService.updateCharacteristic(this.hap.Characteristic.On, this.isAlarmTriggered);
+    service.updateCharacteristic(this.hap.Characteristic.On, this.isAlarmTriggered);
 
     return true;
   }
@@ -427,8 +398,7 @@ export class ProtectSecuritySystem extends ProtectBase {
 
       // If we're disarming, then all Protect cameras will disable motion detection in HomeKit. Otherwise, check to see if this is one of the cameras we want to turn on
       // motion detection for.
-      if(((newState !== SecuritySystemCurrentState.DISARMED) ||
-        ((newState === SecuritySystemCurrentState.DISARMED) && targetCameraIds.length)) && targetCameraIds.some(thisCameraId => thisCameraId === targetUfp?.id)) {
+      if(((newState !== SecuritySystemCurrentState.DISARMED) || targetCameraIds.length) && targetCameraIds.some(thisCameraId => thisCameraId === targetUfp.id)) {
 
         targetState = true;
       }

@@ -61,7 +61,7 @@ export class ProtectLiveviews extends ProtectBase {
     const uuid = this.hap.uuid.generate(this.nvr.ufp.mac + ".Security");
 
     // If the user removed the last Protect-centric liveview for the security system, we remove the security system accessory.
-    if(!this.liveviews?.some(x => regexSecuritySystemLiveview.test(x.name))) {
+    if(!this.liveviews.some(x => regexSecuritySystemLiveview.test(x.name))) {
 
       if(this.securityAccessory) {
 
@@ -85,35 +85,18 @@ export class ProtectLiveviews extends ProtectBase {
       if((this.securityAccessory = this.platform.accessories.find(x => x.UUID === uuid)) === undefined) {
 
         // We will use the NVR MAC address + ".Security" to create our UUID. That should provide the guaranteed uniqueness we need.
-        this.securityAccessory = new this.api.platformAccessory(sanitizeName(this.ufpApi.bootstrap.nvr.name), uuid);
+        this.securityAccessory = new this.api.platformAccessory(sanitizeName(this.ufpApi.bootstrap.nvr.name ?? this.ufpApi.bootstrap.nvr.marketName), uuid);
 
         // Register this accessory with homebridge and add it to the platform accessory array so we can track it.
         this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [this.securityAccessory]);
         this.platform.accessories.push(this.securityAccessory);
       }
 
-      if(!this.securityAccessory) {
-
-        this.log.error("Unable to create the security system accessory.");
-
-        return;
-      }
-
       this.log.info("Plugin-specific liveviews have been detected. Enabling the security system accessory.");
     }
 
     // We have the security system accessory, now let's configure it.
-    if(!this.securitySystem) {
-
-      this.securitySystem = new ProtectSecuritySystem(this.nvr, this.securityAccessory);
-
-      if(!this.securitySystem) {
-
-        this.log.error("Unable to configure the security system accessory.");
-
-        return;
-      }
-    }
+    this.securitySystem ??= new ProtectSecuritySystem(this.nvr, this.securityAccessory);
 
     // Update our NVR reference.
     this.securityAccessory.context.nvr = this.nvr.ufp.mac;
@@ -122,8 +105,8 @@ export class ProtectLiveviews extends ProtectBase {
   // Configure any liveview-associated switches.
   private configureSwitches(): void {
 
-    // If we don't have any liveviews or the bootstrap configuration, there's nothing to configure.
-    if(!this.liveviews || !this.ufpApi.bootstrap) {
+    // If we haven't bootstrapped the controller yet, we're done.
+    if(!this.ufpApi.bootstrap) {
 
       return;
     }
@@ -192,13 +175,6 @@ export class ProtectLiveviews extends ProtectBase {
         this.platform.accessories.push(newAccessory);
       }
 
-      if(!newAccessory) {
-
-        this.log.error("Unable to create the switch for liveview: %s.", viewName);
-
-        return;
-      }
-
       // Configure our accessory.
       if("liveviewState" in newAccessory.context) {
 
@@ -217,13 +193,6 @@ export class ProtectLiveviews extends ProtectBase {
       if(!switchService) {
 
         switchService = new this.hap.Service.Switch(newAccessory.displayName);
-
-        if(!switchService) {
-
-          this.log.error("Unable to create the switch for liveview: %s.", viewName);
-
-          return;
-        }
 
         newAccessory.addService(switchService);
       }
@@ -270,8 +239,8 @@ export class ProtectLiveviews extends ProtectBase {
 
       interface mqttLiveviewJSON {
 
-        name: string,
-        state: boolean
+        name: string;
+        state: boolean;
       }
 
       let incomingPayload;
@@ -289,7 +258,7 @@ export class ProtectLiveviews extends ProtectBase {
       }
 
       // Sanity check.
-      if(!incomingPayload || !incomingPayload.length) {
+      if(!incomingPayload.length) {
 
         this.log.error("Unable to process MQTT message: \"%s\".", incomingPayload);
 
@@ -319,7 +288,7 @@ export class ProtectLiveviews extends ProtectBase {
   private setSwitchState(liveviewSwitch: PlatformAccessory, targetState: CharacteristicValue): void {
 
     // We don't have any liveviews or we're already at this state - we're done.
-    if(!this.ufpApi.bootstrap || !this.liveviews || (this.getSwitchState(liveviewSwitch.context.liveview as string) === targetState)) {
+    if(!this.ufpApi.bootstrap || (this.getSwitchState(liveviewSwitch.context.liveview as string) === targetState)) {
 
       return;
     }
@@ -361,8 +330,7 @@ export class ProtectLiveviews extends ProtectBase {
     liveviewSwitch.context.liveviewState = targetState;
 
     // Publish to MQTT, if configured.
-    this.nvr.mqtt?.publish(this.nvr.ufp.mac ?? "", "liveviews",
-      JSON.stringify([{ name: liveviewSwitch.context.liveview as string, state: targetState }]));
+    this.nvr.mqtt?.publish(this.nvr.ufp.mac, "liveviews", JSON.stringify([{ name: liveviewSwitch.context.liveview as string, state: targetState }]));
   }
 
   // Get the current liveview switch state.

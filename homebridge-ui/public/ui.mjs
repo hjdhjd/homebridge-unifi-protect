@@ -228,7 +228,7 @@ const showProtectDetails = (device) => {
     return;
   }
 
-  // Populate the device details using the new CSS Grid layout. This provides a more flexible and responsive display than the previous table layout.
+  // Populate the infopanel.
   deviceStatsContainer.innerHTML =
     "<div class=\"device-stats-grid\">" +
       "<div class=\"stat-item\">" +

@@ -11,8 +11,8 @@ import { ProtectReservedNames } from "../protect-types.js";
 export class ProtectSensor extends ProtectDevice {
 
   private enabledSensors: string[];
-  private lastAlarm!: boolean;
-  private lastLeak!: boolean;
+  private lastAlarm?: boolean;
+  private lastLeak?: boolean;
   public ufp: ProtectSensorConfig;
 
   // Create an instance.
@@ -115,7 +115,7 @@ export class ProtectSensor extends ProtectDevice {
     }
 
     // Configure the motion sensor.
-    if(this.configureMotionSensor(this.ufp.motionSettings?.isEnabled, isInitialized)) {
+    if(this.configureMotionSensor(this.ufp.motionSettings.isEnabled, isInitialized)) {
 
       // Sensor accessories also support battery, connection, and tamper status...we need to handle those ourselves.
       const motionService = this.accessory.getService(this.hap.Service.MotionSensor);
@@ -130,7 +130,7 @@ export class ProtectSensor extends ProtectDevice {
     }
 
     // Configure the occupancy sensor.
-    this.configureOccupancySensor(this.ufp.motionSettings?.isEnabled, isInitialized);
+    this.configureOccupancySensor(this.ufp.motionSettings.isEnabled, isInitialized);
 
     // Configure the temperature sensor.
     if(this.configureTemperatureSensor()) {
@@ -161,7 +161,7 @@ export class ProtectSensor extends ProtectDevice {
   private configureAlarmSoundSensor(): boolean {
 
     // Validate whether we should have this service enabled.
-    if(!this.validService(this.hap.Service.ContactSensor, this.ufp.alarmSettings?.isEnabled, ProtectReservedNames.CONTACT_SENSOR_ALARM_SOUND)) {
+    if(!this.validService(this.hap.Service.ContactSensor, this.ufp.alarmSettings.isEnabled, ProtectReservedNames.CONTACT_SENSOR_ALARM_SOUND)) {
 
       return false;
     }
@@ -178,7 +178,7 @@ export class ProtectSensor extends ProtectDevice {
     }
 
     // Retrieve the current contact sensor state when requested.
-    service.getCharacteristic(this.hap.Characteristic.ContactSensorState)?.onGet(() => this.alarmDetected);
+    service.getCharacteristic(this.hap.Characteristic.ContactSensorState).onGet(() => this.alarmDetected);
 
     // Update the sensor.
     service.updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.alarmDetected);
@@ -196,7 +196,7 @@ export class ProtectSensor extends ProtectDevice {
   private configureAmbientLightSensor(): boolean {
 
     // Validate whether we should have this service enabled.
-    if(!this.validService(this.hap.Service.LightSensor, this.ufp.lightSettings?.isEnabled)) {
+    if(!this.validService(this.hap.Service.LightSensor, this.ufp.lightSettings.isEnabled)) {
 
       return false;
     }
@@ -213,7 +213,7 @@ export class ProtectSensor extends ProtectDevice {
     }
 
     // Retrieve the current light level when requested.
-    service.getCharacteristic(this.hap.Characteristic.CurrentAmbientLightLevel)?.onGet(() => {
+    service.getCharacteristic(this.hap.Characteristic.CurrentAmbientLightLevel).onGet(() => {
 
       // The minimum value for ambient light in HomeKit is 0.0001. I have no idea why...but it is. Honor it.
       return this.ambientLight >= 0.0001 ? this.ambientLight : 0.0001;
@@ -253,7 +253,7 @@ export class ProtectSensor extends ProtectDevice {
     }
 
     // Retrieve the current contact sensor state when requested.
-    service.getCharacteristic(this.hap.Characteristic.ContactSensorState)?.onGet(() => this.contact);
+    service.getCharacteristic(this.hap.Characteristic.ContactSensorState).onGet(() => this.contact);
 
     // Update the sensor.
     service.updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.contact);
@@ -271,7 +271,7 @@ export class ProtectSensor extends ProtectDevice {
   private configureHumiditySensor(): boolean {
 
     // Validate whether we should have this service enabled.
-    if(!this.validService(this.hap.Service.HumiditySensor, this.ufp.humiditySettings?.isEnabled)) {
+    if(!this.validService(this.hap.Service.HumiditySensor, this.ufp.humiditySettings.isEnabled)) {
 
       return false;
     }
@@ -288,7 +288,7 @@ export class ProtectSensor extends ProtectDevice {
     }
 
     // Retrieve the current humidity when requested.
-    service.getCharacteristic(this.hap.Characteristic.CurrentRelativeHumidity)?.onGet(() => {
+    service.getCharacteristic(this.hap.Characteristic.CurrentRelativeHumidity).onGet(() => {
 
       return this.humidity < 0 ? 0 : this.humidity;
     });
@@ -326,7 +326,7 @@ export class ProtectSensor extends ProtectDevice {
     }
 
     // Retrieve the current contact sensor state when requested.
-    service.getCharacteristic(this.hap.Characteristic.LeakDetected)?.onGet(() => {
+    service.getCharacteristic(this.hap.Characteristic.LeakDetected).onGet(() => {
 
       return this.leakDetected;
     });
@@ -347,7 +347,7 @@ export class ProtectSensor extends ProtectDevice {
   private configureTemperatureSensor(): boolean {
 
     // Validate whether we should have this service enabled.
-    if(!this.validService(this.hap.Service.TemperatureSensor, this.ufp.temperatureSettings?.isEnabled)) {
+    if(!this.validService(this.hap.Service.TemperatureSensor, this.ufp.temperatureSettings.isEnabled)) {
 
       return false;
     }
@@ -364,7 +364,7 @@ export class ProtectSensor extends ProtectDevice {
     }
 
     // Retrieve the current temperature when requested.
-    service.getCharacteristic(this.hap.Characteristic.CurrentTemperature)?.onGet(() => {
+    service.getCharacteristic(this.hap.Characteristic.CurrentTemperature).onGet(() => {
 
       return this.temperature < 0 ? 0 : this.temperature;
     });
@@ -388,8 +388,8 @@ export class ProtectSensor extends ProtectDevice {
     const batteryService = this.accessory.getService(this.hap.Service.Battery);
 
     // Update the battery status.
-    batteryService?.updateCharacteristic(this.hap.Characteristic.BatteryLevel, this.ufp.batteryStatus?.percentage ?? 0);
-    batteryService?.updateCharacteristic(this.hap.Characteristic.StatusLowBattery, this.ufp.batteryStatus?.isLow);
+    batteryService?.updateCharacteristic(this.hap.Characteristic.BatteryLevel, this.ufp.batteryStatus.percentage);
+    batteryService?.updateCharacteristic(this.hap.Characteristic.StatusLowBattery, this.ufp.batteryStatus.isLow);
 
     return true;
   }
@@ -398,13 +398,13 @@ export class ProtectSensor extends ProtectDevice {
   private configureStateCharacteristics(service: Service): boolean {
 
     // Retrieve the current connection status when requested.
-    service.getCharacteristic(this.hap.Characteristic.StatusActive)?.onGet(() => this.isOnline);
+    service.getCharacteristic(this.hap.Characteristic.StatusActive).onGet(() => this.isOnline);
 
     // Update the current connection status.
     service.updateCharacteristic(this.hap.Characteristic.StatusActive, this.isOnline);
 
     // Retrieve the current tamper status when requested.
-    service.getCharacteristic(this.hap.Characteristic.StatusTampered)?.onGet(() => this.ufp.tamperingDetectedAt !== null);
+    service.getCharacteristic(this.hap.Characteristic.StatusTampered).onGet(() => this.ufp.tamperingDetectedAt !== null);
 
     // Update the tamper status.
     service.updateCharacteristic(this.hap.Characteristic.StatusTampered, this.ufp.tamperingDetectedAt !== null);

@@ -74,12 +74,12 @@ export class ProtectLight extends ProtectDevice {
     }
 
     // Turn the light on or off.
-    service.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => {
+    service.getCharacteristic(this.hap.Characteristic.On).onGet(() => {
 
       return this.ufp.isLightOn === true;
     });
 
-    service.getCharacteristic(this.hap.Characteristic.On)?.onSet(async (value: CharacteristicValue) => {
+    service.getCharacteristic(this.hap.Characteristic.On).onSet(async (value: CharacteristicValue) => {
 
       const lightState = value === true;
       const newDevice = await this.nvr.ufpApi.updateDevice(this.ufp, { lightOnSettings: { isLedForceOn: lightState } });
@@ -99,13 +99,13 @@ export class ProtectLight extends ProtectDevice {
     });
 
     // Adjust the brightness of the light.
-    service.getCharacteristic(this.hap.Characteristic.Brightness)?.onGet(() => {
+    service.getCharacteristic(this.hap.Characteristic.Brightness).onGet(() => {
 
       // The Protect ledLevel settings goes from 1 - 6. HomeKit expects percentages, so we convert it like so.
       return (this.ufp.lightDeviceSettings.ledLevel - 1) * 20;
     });
 
-    service.getCharacteristic(this.hap.Characteristic.Brightness)?.onSet(async (value: CharacteristicValue) => {
+    service.getCharacteristic(this.hap.Characteristic.Brightness).onSet(async (value: CharacteristicValue) => {
 
       const brightness = Math.round(((value as number) / 20) + 1);
       const newDevice = await this.nvr.ufpApi.updateDevice(this.ufp, { lightDeviceSettings: { ledLevel: brightness } });
@@ -121,7 +121,7 @@ export class ProtectLight extends ProtectDevice {
       this.ufp = newDevice;
 
       // Make sure we properly reflect what brightness we're actually at, given the differences in setting granularity between Protect and HomeKit.
-      setTimeout(() => service?.updateCharacteristic(this.hap.Characteristic.Brightness, (brightness - 1) * 20), 50);
+      setTimeout(() => service.updateCharacteristic(this.hap.Characteristic.Brightness, (brightness - 1) * 20), 50);
 
       // Publish our state.
       this.publish("light/brightness", ((brightness - 1) * 20).toString());
@@ -216,6 +216,6 @@ export class ProtectLight extends ProtectDevice {
   // Utility function to return the current state of the status indicator light.
   public get statusLed(): boolean {
 
-    return this.ufp.lightDeviceSettings?.isIndicatorEnabled;
+    return this.ufp.lightDeviceSettings.isIndicatorEnabled;
   }
 }

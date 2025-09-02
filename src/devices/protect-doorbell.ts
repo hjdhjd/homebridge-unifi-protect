@@ -9,30 +9,43 @@ import type { ProtectCameraConfig, ProtectCameraConfigPayload, ProtectCameraLcdM
 import { ProtectReservedNames, toCamelCase } from "../protect-types.js";
 import { ProtectCamera } from "./protect-camera.js";
 import { ProtectCameraPackage } from "./protect-camera-package.js";
+import type { ProtectNvr } from "../protect-nvr.js";
 import { sanitizeName } from "homebridge-plugin-utils";
 
 // A doorbell message entry.
 interface MessageInterface {
 
-  duration: number,
-  text: string,
-  type: string,
+  duration: number;
+  text: string;
+  type: string;
 }
 
 // Extend the message interface to include a doorbell message switch.
 export interface MessageSwitchInterface extends MessageInterface {
 
-  service: Service,
-  state: boolean
+  service: Service;
+  state: boolean;
 }
 
 export class ProtectDoorbell extends ProtectCamera {
 
-  private chimeDigitalDuration!: number;
+  private chimeDigitalDuration: number;
   private contactAuthTimer?: NodeJS.Timeout;
-  private defaultMessageDuration!: number;
-  private isMessagesEnabled!: boolean;
-  private isMessagesFromControllerEnabled!: boolean;
+  private defaultMessageDuration: number;
+  private isMessagesEnabled: boolean;
+  private isMessagesFromControllerEnabled: boolean;
+
+  constructor(nvr: ProtectNvr, device: ProtectCameraConfig, accessory: PlatformAccessory) {
+
+    super(nvr, device, accessory);
+
+    /* eslint-disable @typescript-eslint/no-unnecessary-condition */
+    this.chimeDigitalDuration ??= PROTECT_DOORBELL_CHIME_DURATION_DIGITAL;
+    this.defaultMessageDuration ??= 60000;
+    this.isMessagesEnabled ??= false;
+    this.isMessagesFromControllerEnabled ??= false;
+    /* eslint-enable @typescript-eslint/no-unnecessary-condition */
+  }
 
   // Configure the doorbell for HomeKit.
   protected configureDevice(): boolean {
@@ -151,13 +164,13 @@ export class ProtectDoorbell extends ProtectCamera {
       this.messageSwitches[switchIndex] = { duration: duration, service: service, state: false, text: entry.text, type: entry.type };
 
       // Configure the message switch.
-      service.getCharacteristic(this.hap.Characteristic.On)?.onSet(async (value: CharacteristicValue) => {
+      service.getCharacteristic(this.hap.Characteristic.On).onSet(async (value: CharacteristicValue) => {
 
         // Lookup the message switch.
         const messageSwitch = this.messageSwitches[switchIndex];
 
         // If we're already in the state we want to be in, we're done.
-        if(messageSwitch.state === value) {
+        if(!messageSwitch || (messageSwitch.state === value)) {
 
           return;
         }
@@ -168,7 +181,10 @@ export class ProtectDoorbell extends ProtectCamera {
     }
 
     // Update the message switch state in HomeKit.
-    this.updateLcdSwitch(this.ufp.lcdMessage);
+    if(this.ufp.lcdMessage) {
+
+      this.updateLcdSwitch(this.ufp.lcdMessage);
+    }
 
     // Check to see if any of our existing doorbell messages have disappeared.
     this.validateMessageSwitches();
@@ -195,20 +211,13 @@ export class ProtectDoorbell extends ProtectCamera {
     const uuid = this.hap.uuid.generate(this.ufp.mac + ".PackageCamera");
 
     // Let's find it if we've already created it.
-    let packageCameraAccessory = this.platform.accessories.find((x: PlatformAccessory) => x.UUID === uuid) ?? (null as unknown as PlatformAccessory);
+    let packageCameraAccessory = this.platform.accessories.find((x: PlatformAccessory) => x.UUID === uuid);
 
     // We can't find the accessory. Let's create it.
     if(!packageCameraAccessory) {
 
       // We will use the NVR MAC address + ".NVRSystemInfo" to create our UUID. That should provide the guaranteed uniqueness we need.
       packageCameraAccessory = new this.api.platformAccessory(sanitizeName(this.accessoryName + " Package Camera"), uuid);
-
-      if(!packageCameraAccessory) {
-
-        this.log.error("Unable to create the package camera accessory.");
-
-        return false;
-      }
 
       // Register this accessory with homebridge and add it to the accessory array so we can track it.
       if(this.hasFeature("Device.Standalone")) {
@@ -260,13 +269,13 @@ export class ProtectDoorbell extends ProtectCamera {
       }
 
       // Get the current status of the physical chime mode on the doorbell.
-      service.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => {
+      service.getCharacteristic(this.hap.Characteristic.On).onGet(() => {
 
         return this.ufp.chimeDuration === this.getPhysicalChimeDuration(physicalChimeType);
       });
 
       // Activate the appropriate physical chime mode on the doorbell.
-      service.getCharacteristic(this.hap.Characteristic.On)?.onSet(async (value: CharacteristicValue) => {
+      service.getCharacteristic(this.hap.Characteristic.On).onSet(async (value: CharacteristicValue) => {
 
         // We only want to do something if we're being activated. Turning off the switch would really be an undefined state given that there are three different settings
         // one can choose from. Instead, we do nothing and leave it to the user to choose what state they really want to set.
@@ -342,9 +351,9 @@ export class ProtectDoorbell extends ProtectCamera {
     }
 
     // Turn the chime on or off.
-    service.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => this.chimeVolume > 0);
+    service.getCharacteristic(this.hap.Characteristic.On).onGet(() => this.chimeVolume > 0);
 
-    service.getCharacteristic(this.hap.Characteristic.On)?.onSet(async (value: CharacteristicValue) => {
+    service.getCharacteristic(this.hap.Characteristic.On).onSet(async (value: CharacteristicValue) => {
 
       // We really only want to act when the volume is zero. Otherwise, it's handled by the brightness event.
       if(value) {
@@ -356,10 +365,10 @@ export class ProtectDoorbell extends ProtectCamera {
     });
 
     // Return the volume level of the chime.
-    service.getCharacteristic(this.hap.Characteristic.Brightness)?.onGet(() => this.chimeVolume);
+    service.getCharacteristic(this.hap.Characteristic.Brightness).onGet(() => this.chimeVolume);
 
     // Adjust the volume of the chime by adjusting brightness of the light.
-    service.getCharacteristic(this.hap.Characteristic.Brightness)?.onSet(async (value: CharacteristicValue) => this.setChimeVolume(value as number));
+    service.getCharacteristic(this.hap.Characteristic.Brightness).onSet(async (value: CharacteristicValue) => this.setChimeVolume(value as number));
 
     // Initialize the chime.
     service.updateCharacteristic(this.hap.Characteristic.On, this.chimeVolume > 0);
@@ -432,11 +441,15 @@ export class ProtectDoorbell extends ProtectCamera {
     // Get the current message on the doorbell.
     this.subscribeGet("message", "doorbell message", (): string => {
 
-      const doorbellDuration = (("resetAt" in this.ufp.lcdMessage) && (this.ufp.lcdMessage.resetAt !== null)) ?
-        Math.round((this.ufp.lcdMessage.resetAt - Date.now()) / 1000) : 0;
+      if(!this.ufp.lcdMessage) {
+
+        return "";
+      }
+
+      const doorbellDuration = (typeof this.ufp.lcdMessage.resetAt === "number") ? Math.round((this.ufp.lcdMessage.resetAt - Date.now()) / 1000) : 0;
 
       // Return the current message.
-      return JSON.stringify({ duration: doorbellDuration, message: this.ufp.lcdMessage?.text ?? "" });
+      return JSON.stringify({ duration: doorbellDuration, message: this.ufp.lcdMessage.text ?? "" });
     });
 
     // We support the ability to set the doorbell message like so:
@@ -450,8 +463,8 @@ export class ProtectDoorbell extends ProtectCamera {
 
       interface mqttMessageJSON {
 
-        message: string,
-        duration: number
+        message: string;
+        duration: number;
       }
 
       let inboundPayload;
@@ -470,7 +483,7 @@ export class ProtectDoorbell extends ProtectCamera {
 
       // At a minimum, make sure a message was specified. If we have specified duration, make sure it's a number. Our NaN test may seem strange - that's because NaN is
       // the only JavaScript value that is treated as unequal to itself. Meaning, you can always test if a value is NaN by checking it for equality to itself. Weird huh?
-      if(!inboundPayload || !("message" in inboundPayload) || (("duration" in inboundPayload) && (inboundPayload.duration !== inboundPayload.duration))) {
+      if(!("message" in inboundPayload) || (("duration" in inboundPayload) && (inboundPayload.duration !== inboundPayload.duration))) {
 
         this.log.error("Unable to process MQTT message: \"%s\".", inboundPayload);
 
@@ -605,7 +618,7 @@ export class ProtectDoorbell extends ProtectCamera {
     for(const entry of Object.values(this.messageSwitches)) {
 
       // This exists on the doorbell...move along.
-      if(this.messageSwitches[entry.type + "." + entry.text]) {
+      if(!entry || this.messageSwitches[entry.type + "." + entry.text]) {
 
         continue;
       }
@@ -636,6 +649,11 @@ export class ProtectDoorbell extends ProtectCamera {
 
       for(const entry of Object.keys(this.messageSwitches)) {
 
+        if(!this.messageSwitches[entry]) {
+
+          continue;
+        }
+
         this.messageSwitches[entry].state = false;
         this.messageSwitches[entry].service.updateCharacteristic(this.hap.Characteristic.On, false);
       }
@@ -651,6 +669,11 @@ export class ProtectDoorbell extends ProtectCamera {
 
     // The message has been set on the doorbell. Update HomeKit accordingly.
     for(const entry of Object.keys(this.messageSwitches)) {
+
+      if(!this.messageSwitches[entry]) {
+
+        continue;
+      }
 
       // If it's not the message we're interested in, make sure it's off and keep going.
       if(entry !== ((payload.type as string) + "." + (payload.text as string))) {
@@ -721,7 +744,7 @@ export class ProtectDoorbell extends ProtectCamera {
     // If we have a package camera that has HKSV enabled, we'll trigger it's motion sensor here. Why? HKSV requires a motion sensor attached to that camera accessory,
     // and since a package camera is actually a secondary camera on a device with a single motion sensor, we use that motion sensor to trigger the package camera's HKSV
     // event recording.
-    if(payload.lastMotion && this.packageCamera?.stream?.hksv?.isRecording) {
+    if(payload.lastMotion && this.packageCamera?.stream.hksv?.isRecording) {
 
       this.nvr.events.motionEventHandler(this.packageCamera);
     }
@@ -770,7 +793,7 @@ export class ProtectDoorbell extends ProtectCamera {
       // We publish a bit more information if we have an NFC card.
       if(payload.type === "nfcCardScanned") {
 
-        authInfo.id = payload.metadata?.nfc?.nfcId ?? "";
+        authInfo.id = payload.metadata.nfc?.nfcId ?? "";
         authInfo.type = "nfc";
       }
 
@@ -794,7 +817,7 @@ export class ProtectDoorbell extends ProtectCamera {
     if(payload.doorbellSettings) {
 
       // We need to proactively update the allMessages object. This feels like a UniFi Protect bug, but all we can do is work around it.
-      if(payload.doorbellSettings.customMessages) {
+      if(payload.doorbellSettings.customMessages && this.nvr.ufp.doorbellSettings) {
 
         const builtinMessages = this.nvr.ufp.doorbellSettings.allMessages.filter(x => x.type !== "CUSTOM_MESSAGE");
         const customMessages = payload.doorbellSettings.customMessages.map(x => ({ text: x, type: "CUSTOM_MESSAGE" }));

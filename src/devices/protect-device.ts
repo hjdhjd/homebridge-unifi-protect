@@ -22,41 +22,41 @@ export interface ProtectDevice {
 // Device-specific options and settings.
 export interface ProtectHints {
 
-  crop: boolean,
+  crop: boolean;
   cropOptions: {
 
-    height: number,
-    width: number,
-    x: number,
-    y: number
-  },
-  enabled: boolean,
-  hardwareDecoding: boolean,
-  hardwareTranscoding: boolean,
-  highResSnapshots: boolean,
-  hksvRecordingIndicator: boolean,
-  ledStatus: boolean,
-  logDoorbell: boolean,
-  logHksv: boolean,
-  logMotion: boolean,
-  motionDuration: number,
-  nightVision: boolean,
-  occupancyDuration: number,
-  probesize: number,
-  recordingDefault: string,
-  smartDetect: boolean,
-  smartDetectSensors: boolean,
-  smartOccupancy: string[],
-  standalone: boolean,
-  streamingDefault: string,
-  syncName: boolean,
-  transcode: boolean,
-  transcodeBitrate: number,
-  transcodeHighLatency: boolean,
-  transcodeHighLatencyBitrate: number,
-  tsbStreaming: boolean,
-  twoWayAudio: boolean,
-  twoWayAudioDirect: boolean
+    height: number;
+    width: number;
+    x: number;
+    y: number;
+  };
+  enabled: boolean;
+  hardwareDecoding: boolean;
+  hardwareTranscoding: boolean;
+  highResSnapshots: boolean;
+  hksvRecordingIndicator: boolean;
+  ledStatus: boolean;
+  logDoorbell: boolean;
+  logHksv: boolean;
+  logMotion: boolean;
+  motionDuration: number;
+  nightVision: boolean;
+  occupancyDuration: number;
+  probesize: number;
+  recordingDefault: string;
+  smartDetect: boolean;
+  smartDetectSensors: boolean;
+  smartOccupancy: string[];
+  standalone: boolean;
+  streamingDefault: string;
+  syncName: boolean;
+  transcode: boolean;
+  transcodeBitrate: number;
+  transcodeHighLatency: boolean;
+  transcodeHighLatencyBitrate: number;
+  tsbStreaming: boolean;
+  twoWayAudio: boolean;
+  twoWayAudioDirect: boolean;
 }
 
 export abstract class ProtectBase {
@@ -91,16 +91,11 @@ export abstract class ProtectBase {
   // Configure the device information for HomeKit.
   protected setInfo(accessory: PlatformAccessory, device: ProtectDeviceConfigTypes | ProtectNvrConfig): boolean {
 
-    // If we don't have a device, we're done.
-    if(!device) {
-
-      return false;
-    }
-
     // Update the manufacturer information for this device.
     accessory.getService(this.hap.Service.AccessoryInformation)?.updateCharacteristic(this.hap.Characteristic.Manufacturer, "Ubiquiti Inc.");
 
     // Update the model information for this device.
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     const deviceModel = device.marketName ?? device.type;
 
     if(deviceModel.length) {
@@ -109,7 +104,7 @@ export abstract class ProtectBase {
     }
 
     // Update the serial number for this device.
-    if(device.mac?.length) {
+    if(device.mac.length) {
 
       accessory.getService(this.hap.Service.AccessoryInformation)?.updateCharacteristic(this.hap.Characteristic.SerialNumber, device.mac);
     }
@@ -129,7 +124,7 @@ export abstract class ProtectBase {
     return true;
   }
 
-  // Utility function to return the fully enumerated name of this device.
+  // Utility function to return the fully enumerated name of this device. We default it to the controller but expect it to be overridden downstream.
   public get name(): string {
 
     return this.nvr.ufpApi.name;
@@ -149,15 +144,10 @@ export abstract class ProtectDevice extends ProtectBase {
     // Call the constructor of our base class.
     super(nvr);
 
+    this.accessory = accessory;
     this.hints = {} as ProtectHints;
     this.listeners = {};
     this.ufp = {} as ProtectDeviceConfigTypes;
-
-    // Set the accessory, if we have it. Otherwise, we expect configureDevice to assign it.
-    if(accessory) {
-
-      this.accessory = accessory;
-    }
   }
 
   // Retrieve an existing service from an accessory, creating it if necessary.
@@ -224,7 +214,7 @@ export abstract class ProtectDevice extends ProtectBase {
     // Sync the Protect name with HomeKit, if configured.
     if(this.hints.syncName) {
 
-      this.accessoryName = this.ufp.name ?? this.ufp.marketName ?? ("Unknown Device" + (this.ufp.mac ? " " + this.ufp.mac : ""));
+      this.accessoryName = this.ufp.name ?? this.ufp.marketName;
     }
 
     return this.setInfo(this.accessory, this.ufp);
@@ -347,9 +337,9 @@ export abstract class ProtectDevice extends ProtectBase {
     }
 
     // Activate or deactivate motion detection.
-    service.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => !!this.accessory.context.detectMotion);
+    service.getCharacteristic(this.hap.Characteristic.On).onGet(() => !!this.accessory.context.detectMotion);
 
-    service.getCharacteristic(this.hap.Characteristic.On)?.onSet((value: CharacteristicValue) => {
+    service.getCharacteristic(this.hap.Characteristic.On).onSet((value: CharacteristicValue) => {
 
       if(this.accessory.context.detectMotion !== value) {
 
@@ -396,16 +386,16 @@ export abstract class ProtectDevice extends ProtectBase {
     const switchService = this.accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_MOTION_SENSOR);
 
     // Activate or deactivate motion detection.
-    triggerService.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => !!motionService?.getCharacteristic(this.hap.Characteristic.MotionDetected).value);
+    triggerService.getCharacteristic(this.hap.Characteristic.On).onGet(() => !!motionService?.getCharacteristic(this.hap.Characteristic.MotionDetected).value);
 
-    triggerService.getCharacteristic(this.hap.Characteristic.On)?.onSet((isOn: CharacteristicValue) => {
+    triggerService.getCharacteristic(this.hap.Characteristic.On).onSet((isOn: CharacteristicValue) => {
 
       if(isOn) {
 
         // Check to see if motion events are disabled.
         if(switchService && !switchService.getCharacteristic(this.hap.Characteristic.On).value) {
 
-          setTimeout(() => triggerService?.updateCharacteristic(this.hap.Characteristic.On, false), 50);
+          setTimeout(() => triggerService.updateCharacteristic(this.hap.Characteristic.On, false), 50);
 
         } else {
 
@@ -422,7 +412,7 @@ export abstract class ProtectDevice extends ProtectBase {
       // If the motion sensor is still on, we should be as well.
       if(motionService?.getCharacteristic(this.hap.Characteristic.MotionDetected).value) {
 
-        setTimeout(() => triggerService?.updateCharacteristic(this.hap.Characteristic.On, true), 50);
+        setTimeout(() => triggerService.updateCharacteristic(this.hap.Characteristic.On, true), 50);
       }
     });
 
@@ -522,9 +512,9 @@ export abstract class ProtectDevice extends ProtectBase {
     }
 
     // Enable or disable the status indicator light.
-    service.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => this.statusLed);
+    service.getCharacteristic(this.hap.Characteristic.On).onGet(() => this.statusLed);
 
-    service.getCharacteristic(this.hap.Characteristic.On)?.onSet(async (value: CharacteristicValue) => {
+    service.getCharacteristic(this.hap.Characteristic.On).onSet(async (value: CharacteristicValue) => {
 
       if(this.statusLed !== value) {
 
@@ -619,7 +609,7 @@ export abstract class ProtectDevice extends ProtectBase {
   // Utility function to determine whether or not a device is currently online.
   public get isOnline(): boolean {
 
-    return this.ufp?.isConnected;
+    return this.ufp.isConnected;
   }
 
   // Return a unique identifier for a Protect device. We need this for package cameras in particular, since they present multiple cameras in a single physical device.
@@ -637,8 +627,8 @@ export abstract class ProtectDevice extends ProtectBase {
   // Utility function to return the current accessory name of this device.
   public get accessoryName(): string {
 
-    return (this.accessory.getService(this.hap.Service.AccessoryInformation)?.getCharacteristic(this.hap.Characteristic.Name).value as string) ??
-      (this.ufp?.name ?? "Unknown");
+    return (this.accessory.getService(this.hap.Service.AccessoryInformation)?.getCharacteristic(this.hap.Characteristic.Name).value as string | undefined) ??
+      (this.ufp.name ?? "Unknown");
   }
 
   // Utility function to set the current accessory name of this device.
@@ -663,6 +653,11 @@ export abstract class ProtectDevice extends ProtectBase {
   // Utility function to return the current state of the device status indicator. This works for cameras and sensors, but Protect lights control it differently.
   public get statusLed(): boolean {
 
-    return (this.ufp as ProtectCameraConfig)?.ledSettings?.isEnabled;
+    if(!("ledSettings" in this.ufp)) {
+
+      return false;
+    }
+
+    return this.ufp.ledSettings.isEnabled;
   }
 }

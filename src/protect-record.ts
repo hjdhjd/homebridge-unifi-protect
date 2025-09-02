@@ -11,7 +11,6 @@ import { FfmpegRecordingProcess, type HomebridgePluginLogging, type Nullable, fo
 import type { ProtectCamera, RtspEntry } from "./devices/index.js";
 import { HDSProtocolSpecificErrorReason } from "homebridge";
 import { PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION } from "./settings.js";
-import type { ProtectNvr } from "./protect-nvr.js";
 import { ProtectTimeshiftBuffer } from "./protect-timeshift.js";
 
 // Camera recording delegate implementation for Protect.
@@ -25,7 +24,6 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
   private isInitialized: boolean;
   private isTransmitting: boolean;
   private readonly log: HomebridgePluginLogging;
-  private nvr: ProtectNvr;
   private readonly protectCamera: ProtectCamera;
   private recordingConfig?: CameraRecordingConfiguration;
   public rtspEntry: Nullable<RtspEntry>;
@@ -44,7 +42,6 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     this.isInitialized = false;
     this.isTransmitting = false;
     this.log = protectCamera.log;
-    this.nvr = protectCamera.nvr;
     this.protectCamera = protectCamera;
     this.timeshiftedSegments = 0;
     this.transmittedSegments = 0;
@@ -164,12 +161,6 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
         break;
       }
 
-      // No segment doesn't mean we're done necessarily, but it does mean we need to wait for FFmpeg to catch up.
-      if(!segment) {
-
-        continue;
-      }
-
       // Keep track of how many segments we're sending to HKSV.
       this.transmittedSegments++;
 
@@ -178,10 +169,12 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     }
 
     // If FFmpeg timed out it's typically due to issues with the video coming from the Protect controller. Restart the timeshift buffer to see if we can improve things.
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     if(this.ffmpegStream?.isTimedOut || !this.transmittedSegments) {
 
       this.timeshift.restart();
 
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
       if(this.ffmpegStream?.isTimedOut) {
 
         // Send HKSV a final segment to cleanly wrap up.
@@ -198,7 +191,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
   }
 
   // Process HomeKit requests to end the transmission of the recording stream.
-  public closeRecordingStream(streamId: number, reason?: HDSProtocolSpecificErrorReason): void {
+  public closeRecordingStream(_streamId: number, reason?: HDSProtocolSpecificErrorReason): void {
 
     this.stopTransmitting(reason);
   }
@@ -243,7 +236,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
 
     // If we haven't changed the camera channel or lens we're using, and we've already started timeshifting, we're done.
     if(this.timeshift.isStarted && (this.rtspEntry.channel.id === oldRtspEntry?.channel.id) &&
-      ((this.rtspEntry.lens === undefined) || (this.rtspEntry.lens === oldRtspEntry?.lens))) {
+      ((this.rtspEntry.lens === undefined) || (this.rtspEntry.lens === oldRtspEntry.lens))) {
 
       return true;
     }
@@ -292,6 +285,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     // Start a new FFmpeg instance to transcode using HomeKit's requirements.
     this.ffmpegStream = new FfmpegRecordingProcess(this.protectCamera.stream.ffmpegOptions, this.recordingConfig, {
 
+      audioFilters: this.protectCamera.audioFilters,
       audioStream: 0,
       codec: this.protectCamera.ufp.videoCodec,
       enableAudio: this.isAudioActive,
@@ -362,17 +356,13 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     if(!(await this.timeshift.transmitStart())) {
 
       // Stop our FFmpeg process and our timeshift buffer.
-      this.ffmpegStream?.stop();
+      this.ffmpegStream.stop();
       this.timeshift.stop();
-
-      if(this.transmitListener) {
-
-        this.timeshift.off("segment", this.transmitListener);
-        this.transmitListener = undefined;
-      }
+      this.timeshift.off("segment", this.transmitListener);
 
       // Ensure we cleanup.
       this.ffmpegStream = undefined;
+      this.transmitListener = undefined;
       this.isTransmitting = false;
 
       return false;
@@ -400,7 +390,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     // Kill any FFmpeg sessions.
     if(this.ffmpegStream) {
 
-      this.ffmpegStream.stop(((reason !== undefined) && (reason !== HDSProtocolSpecificErrorReason.NORMAL)) ? false : undefined);
+      this.ffmpegStream.stop((((reason !== undefined) && (reason !== HDSProtocolSpecificErrorReason.NORMAL)) || this.timeshift.isRestarting) ? false : undefined);
       this.ffmpegStream = undefined;
     }
 

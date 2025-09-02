@@ -20,7 +20,7 @@ export class ProtectEvents extends EventEmitter {
   private log: HomebridgePluginLogging;
   private mqttPublishTelemetry: boolean;
   private nvr: ProtectNvr;
-  private readonly eventTimers: { [index: string]: NodeJS.Timeout };
+  private readonly eventTimers: { [index: string]: NodeJS.Timeout | undefined };
   private ufpApi: ProtectApi;
   private ufpDeviceState: { [index: string]: ProtectDeviceConfigTypes };
   private platform: ProtectPlatform;
@@ -130,7 +130,7 @@ export class ProtectEvents extends EventEmitter {
 
           // If we have services on the accessory associated with the Protect device that have a StatusActive characteristic set, update our availability state.
           protectDevice.accessory.services.filter(x => x.testCharacteristic(this.hap.Characteristic.StatusActive))
-            ?.map(x => x.updateCharacteristic(this.hap.Characteristic.StatusActive, protectDevice?.isOnline ?? true));
+            .map(x => x.updateCharacteristic(this.hap.Characteristic.StatusActive, protectDevice?.isOnline ?? true));
         }
 
         // If this is a bootstrap-related update, we're done here. Anything beyond this point is intended for dynamic event updates.
@@ -165,7 +165,7 @@ export class ProtectEvents extends EventEmitter {
     }
 
     // Make sure we have the right information to process the event.
-    if(!("deviceId" in payload.metadata) || !("text" in (payload.metadata.deviceId as Record<string, unknown>))) {
+    if(!payload.metadata || !("deviceId" in payload.metadata) || !("text" in (payload.metadata.deviceId as Record<string, unknown>))) {
 
       return;
     }
@@ -187,20 +187,16 @@ export class ProtectEvents extends EventEmitter {
       return;
     }
 
-    // We're unadopting.
-    if(payload.type === "deviceUnadopted") {
-
-      // If it's already gone, we're done.
-      if(!protectDevice) {
-
-        return;
-      }
-
-      // Remove the device.
-      this.nvr.removeHomeKitDevice(protectDevice.accessory);
+    // We're unadopting. If it's already gone, we're done.
+    if(!protectDevice) {
 
       return;
     }
+
+    // Remove the device.
+    this.nvr.removeHomeKitDevice(protectDevice.accessory);
+
+    return;
   }
 
   // Listen to the UniFi Protect realtime updates API for updates we are interested in (e.g. motion).
@@ -273,11 +269,6 @@ export class ProtectEvents extends EventEmitter {
   // Motion event processing from UniFi Protect.
   public motionEventHandler(protectDevice: ProtectDevice, detectedObjects: string[] = [], metadata?: ProtectEventMetadata): void {
 
-    if(!protectDevice) {
-
-      return;
-    }
-
     // Only notify the user if we have a motion sensor and it's active.
     const motionService = protectDevice.accessory.getService(this.hap.Service.MotionSensor);
 
@@ -291,7 +282,7 @@ export class ProtectEvents extends EventEmitter {
   private motionEventDelivery(protectDevice: ProtectDevice, motionService: Service, detectedObjects: string[], metadata: ProtectEventMetadata = {}): void {
 
     // If we have disabled motion events, we're done here.
-    if(!protectDevice || protectDevice.accessory.context.detectMotion === false) {
+    if(protectDevice.accessory.context.detectMotion === false) {
 
       return;
     }
@@ -340,10 +331,10 @@ export class ProtectEvents extends EventEmitter {
     // We build a unified list of the object events we're interested in: legacy smart detections first, followed by thumbnail-based detections.
     type EventItem = {
 
-      type: string,
-      name?: string,
-      confidence?: number,
-      payload?: ProtectEventMetadataDetectedThumbnail
+      type: string;
+      name?: string;
+      confidence?: number;
+      payload?: ProtectEventMetadataDetectedThumbnail;
     };
 
     const smartEvents: EventItem[] = [];
@@ -355,7 +346,7 @@ export class ProtectEvents extends EventEmitter {
       smartEvents.push(...detectedObjects.map(type => ({ type })));
 
       // Now add our thumbnail-based detections.
-      if(metadata?.detectedThumbnails) {
+      if(metadata.detectedThumbnails) {
 
         smartEvents.push(...metadata.detectedThumbnails.filter(thumbnail => thumbnail.type).map(detection => ({
 
@@ -480,7 +471,7 @@ export class ProtectEvents extends EventEmitter {
 
     // If we don't have smart detection enabled, or if we do have it enabled and we have a smart detection event that's detected something of interest, let's process
     // our occupancy event updates.
-    if(!protectDevice.hints.smartDetect || (protectDevice.hints.smartDetect && detectedObjects.some(x => protectDevice.hints.smartOccupancy.includes(x)))) {
+    if(!protectDevice.hints.smartDetect || detectedObjects.some(x => protectDevice.hints.smartOccupancy.includes(x))) {
 
       // First, let's determine if the user has an occupancy sensor configured, before we process anything.
       const occupancyService = protectDevice.accessory.getService(this.hap.Service.OccupancySensor);
@@ -535,7 +526,7 @@ export class ProtectEvents extends EventEmitter {
   // Doorbell event processing from UniFi Protect and delivered to HomeKit.
   public doorbellEventHandler(protectDevice: ProtectCamera, lastRing: Nullable<number>): void {
 
-    if(!protectDevice || !lastRing) {
+    if(!lastRing) {
 
       return;
     }
@@ -558,7 +549,7 @@ export class ProtectEvents extends EventEmitter {
     if(!protectDevice.accessory.context.doorbellMuted) {
 
       doorbellService.getCharacteristic(this.hap.Characteristic.ProgrammableSwitchEvent)
-        ?.sendEventNotification(this.hap.Characteristic.ProgrammableSwitchEvent.SINGLE_PRESS);
+        .sendEventNotification(this.hap.Characteristic.ProgrammableSwitchEvent.SINGLE_PRESS);
     }
 
     // Check to see if we have a doorbell trigger switch configured. If we do, update it.

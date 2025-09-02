@@ -4,11 +4,9 @@
  */
 import { type FfmpegLivestreamProcess, type HomebridgePluginLogging, type Nullable, runWithTimeout } from "homebridge-plugin-utils";
 import { EventEmitter } from "node:events";
-import { PROTECT_HKSV_SEGMENT_RESOLUTION } from "./settings.js";
-import type { PlatformAccessory } from "homebridge";
+import { PROTECT_SEGMENT_RESOLUTION } from "./settings.js";
 import type { ProtectCamera } from "./devices/index.js";
 import type { ProtectLivestream } from "unifi-protect";
-import type { ProtectNvr } from "./protect-nvr.js";
 import type { RtspEntry } from "./devices/protect-camera.js";
 
 // UniFi Protect livestream timeshift buffer.
@@ -18,11 +16,9 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
   private _isStarted: boolean;
   private _isTransmitting: boolean;
   private _segmentLength: number;
-  private readonly accessory: PlatformAccessory;
   private eventHandlers: { [index: string]: ((segment: Buffer) => void) | (() => void) };
   private livestream?: FfmpegLivestreamProcess | ProtectLivestream;
   private readonly log: HomebridgePluginLogging;
-  private readonly nvr: ProtectNvr;
   private readonly protectCamera: ProtectCamera;
   private rtspEntry?: RtspEntry;
   private segmentCount: number;
@@ -35,16 +31,14 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
     this._buffer = [];
     this._isStarted = false;
     this._isTransmitting = false;
-    this.accessory = protectCamera.accessory;
     this.eventHandlers = {};
     this.log = protectCamera.log;
-    this.nvr = protectCamera.nvr;
     this.protectCamera = protectCamera;
     this.segmentCount = 1;
 
     // We use a small value for segment resolution in our timeshift buffer to ensure we provide an optimal timeshifting experience. It's a very small amount of additional
     // overhead for modern CPUs, but the result is a much better HKSV event recording experience.
-    this._segmentLength = PROTECT_HKSV_SEGMENT_RESOLUTION;
+    this._segmentLength = PROTECT_SEGMENT_RESOLUTION;
 
     // Now let's configure the timeshift buffer.
     this.configureTimeshiftBuffer();
@@ -98,9 +92,9 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
     if(this.protectCamera.stream.hksv?.recordingConfiguration?.mediaContainerConfiguration.fragmentLength) {
 
       if((this._segmentLength < 100) || (this._segmentLength > 1500) ||
-        (this._segmentLength > (this.protectCamera.stream.hksv?.recordingConfiguration?.mediaContainerConfiguration.fragmentLength / 2))) {
+        (this._segmentLength > (this.protectCamera.stream.hksv.recordingConfiguration.mediaContainerConfiguration.fragmentLength / 2))) {
 
-        this._segmentLength = PROTECT_HKSV_SEGMENT_RESOLUTION;
+        this._segmentLength = PROTECT_SEGMENT_RESOLUTION;
       }
     }
 
@@ -110,15 +104,9 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
     // Acquire our livestream.
     this.livestream = this.protectCamera.livestream.acquire(rtspEntry);
 
-    // Something went wrong.
-    if(!this.livestream) {
-
-      return false;
-    }
-
     // Setup our listeners.
-    this.livestream?.on("close", this.eventHandlers.close);
-    this.livestream?.on("segment", this.eventHandlers.segment);
+    this.livestream.on("close", this.eventHandlers.close);
+    this.livestream.on("segment", this.eventHandlers.segment);
 
     // Start the livestream and let's begin building our timeshift buffer.
     if(!(await this.protectCamera.livestream.start(rtspEntry, this._segmentLength))) {
@@ -259,7 +247,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
   // Return whether the underlying livestream connection is currently restarting itself.
   public get isRestarting(): boolean {
 
-    return this.rtspEntry ? this.protectCamera.livestream?.isRestarting(this.rtspEntry) : false;
+    return this.rtspEntry ? this.protectCamera.livestream.isRestarting(this.rtspEntry) : false;
   }
 
   // Return whether or not we have started the timeshift buffer.

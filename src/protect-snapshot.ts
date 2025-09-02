@@ -12,7 +12,7 @@ import type { ProtectPlatform } from "./protect-platform.js";
 // Camera snapshot class for Protect.
 export class ProtectSnapshot {
 
-  private _cachedSnapshot: Nullable<{ image: Buffer, time: number }>;
+  private _cachedSnapshot: Nullable<{ image: Buffer; time: number }>;
   private readonly api: API;
   private readonly hap: HAP;
   public readonly log: HomebridgePluginLogging;

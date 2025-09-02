@@ -4,7 +4,7 @@
  */
 import type { API, DynamicPlatformPlugin, Logging, PlatformAccessory, PlatformConfig } from "homebridge";
 import { FeatureOptions, FfmpegCodecs, RtpPortAllocator } from "homebridge-plugin-utils";
-import { type ProtectNvrOptions, type ProtectOptions, featureOptionCategories, featureOptions } from "./protect-options.js";
+import { type ProtectOptions, featureOptionCategories, featureOptions } from "./protect-options.js";
 import { APIEvent } from "homebridge";
 import { PROTECT_MQTT_TOPIC } from "./settings.js";
 import { ProtectNvr } from "./protect-nvr.js";
@@ -16,14 +16,14 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
   public accessories: PlatformAccessory[];
   public readonly api: API;
   public readonly codecSupport!: FfmpegCodecs;
-  public readonly config!: ProtectOptions;
+  public readonly config: ProtectOptions;
   private readonly controllers: ProtectNvr[];
   public readonly featureOptions: FeatureOptions;
   public readonly log: Logging;
   public readonly rtpPorts: RtpPortAllocator;
   public verboseFfmpeg: boolean;
 
-  constructor(log: Logging, config: PlatformConfig, api: API) {
+  constructor(log: Logging, config: PlatformConfig | undefined, api: API) {
 
     this.accessories = [];
     this.api = api;
@@ -33,25 +33,19 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
     this.rtpPorts = new RtpPortAllocator();
     this.verboseFfmpeg = false;
 
-    // We can't start without being configured.
-    if(!config) {
-
-      return;
-    }
-
     // Plugin options into our config variables.
     this.config = {
 
-      controllers: config.controllers as ProtectNvrOptions[],
-      debugAll: config.debug as boolean === true,
-      options: config.options as string[],
-      ringDelay: config.ringDelay as number ?? 0,
-      verboseFfmpeg: config.verboseFfmpeg === true,
-      videoProcessor: config.videoProcessor as string ?? ffmpegPath ?? "ffmpeg"
+      controllers: config?.controllers ?? [],
+      debugAll: config?.debug === true,
+      options: config?.options ?? [],
+      ringDelay: config?.ringDelay ?? 0,
+      verboseFfmpeg: config?.verboseFfmpeg === true,
+      videoProcessor: config?.videoProcessor ?? ffmpegPath ?? "ffmpeg"
     };
 
     // We need a UniFi Protect controller configured to do anything.
-    if(!this.config.controllers) {
+    if(!this.config.controllers.length) {
 
       this.log.info("No UniFi Protect controllers have been configured.");
 
@@ -88,10 +82,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
       }
 
       // MQTT topic to use.
-      if(!controllerConfig.mqttTopic) {
-
-        controllerConfig.mqttTopic = PROTECT_MQTT_TOPIC;
-      }
+      controllerConfig.mqttTopic ||= PROTECT_MQTT_TOPIC;
 
       this.controllers.push(new ProtectNvr(this, controllerConfig));
     }

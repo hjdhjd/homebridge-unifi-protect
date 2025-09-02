@@ -8,6 +8,7 @@ import { ProtectReservedNames, toCamelCase } from "../protect-types.js";
 import { LivestreamManager } from "../protect-livestream.js";
 import type { MessageSwitchInterface } from "./protect-doorbell.js";
 import type { Nullable } from "homebridge-plugin-utils";
+import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR } from "../settings.js";
 import type { ProtectCameraPackage } from "./protect-camera-package.js";
 import { ProtectDevice } from "./protect-device.js";
 import type { ProtectNvr } from "../protect-nvr.js";
@@ -15,20 +16,20 @@ import { ProtectStreamingDelegate } from "../protect-stream.js";
 
 export interface RtspEntry {
 
-  channel: ProtectCameraChannelConfig,
-  lens?: number,
-  name: string,
-  resolution: Resolution,
-  url: string
+  channel: ProtectCameraChannelConfig;
+  lens?: number;
+  name: string;
+  resolution: Resolution;
+  url: string;
 }
 
 // Options for tuning our RTSP lookups.
 type RtspOptions = Partial<{
 
-  biasHigher: boolean,
-  default: string,
-  maxPixels: number,
-  rtspEntries: RtspEntry[]
+  biasHigher: boolean;
+  default: string;
+  maxPixels: number;
+  rtspEntries: RtspEntry[];
 }>;
 
 export class ProtectCamera extends ProtectDevice {
@@ -40,7 +41,7 @@ export class ProtectCamera extends ProtectDevice {
   public isRinging: boolean;
   public detectLicensePlate: string[];
   public readonly livestream: LivestreamManager;
-  public messageSwitches: { [index: string]: MessageSwitchInterface };
+  public messageSwitches: { [index: string]: MessageSwitchInterface | undefined };
   public packageCamera?: Nullable<ProtectCameraPackage>;
   private rtspEntries: RtspEntry[];
   public stream!: ProtectStreamingDelegate;
@@ -91,12 +92,12 @@ export class ProtectCamera extends ProtectDevice {
     this.hints.twoWayAudioDirect = this.ufp.featureFlags.hasSpeaker && this.hasFeature("Audio") && this.hasFeature("Audio.TwoWay.Direct");
 
     // Sanity check our target transcoding bitrates, if defined.
-    if((this.hints.transcodeBitrate === null) || (this.hints.transcodeBitrate === undefined) || (this.hints.transcodeBitrate <= 0)) {
+    if(!this.hints.transcodeBitrate || (this.hints.transcodeBitrate <= 0)) {
 
       this.hints.transcodeBitrate = -1;
     }
 
-    if((this.hints.transcodeHighLatencyBitrate === null) || (this.hints.transcodeHighLatencyBitrate === undefined) || (this.hints.transcodeHighLatencyBitrate <= 0)) {
+    if(!this.hints.transcodeHighLatencyBitrate || (this.hints.transcodeHighLatencyBitrate <= 0)) {
 
       this.hints.transcodeHighLatencyBitrate = -1;
     }
@@ -112,7 +113,7 @@ export class ProtectCamera extends ProtectDevice {
 
     // Clean out the context object in case it's been polluted somehow.
     this.accessory.context = {};
-    this.accessory.context.detectMotion = savedContext.detectMotion as boolean ?? true;
+    this.accessory.context.detectMotion = savedContext.detectMotion as boolean | undefined ?? true;
     this.accessory.context.mac = this.ufp.mac;
     this.accessory.context.nvr = this.nvr.ufp.mac;
 
@@ -124,13 +125,13 @@ export class ProtectCamera extends ProtectDevice {
         this.accessory.context.hksvRecordingDisabled = !savedContext.hksvRecording;
       } else {
 
-        this.accessory.context.hksvRecordingDisabled = savedContext.hksvRecordingDisabled as boolean ?? false;
+        this.accessory.context.hksvRecordingDisabled = savedContext.hksvRecordingDisabled as boolean | undefined ?? false;
       }
     }
 
     if(this.hasFeature("Doorbell.Mute")) {
 
-      this.accessory.context.doorbellMuted = savedContext.doorbellMuted as boolean ?? false;
+      this.accessory.context.doorbellMuted = savedContext.doorbellMuted as boolean | undefined ?? false;
     }
 
     // Inform the user that motion detection will suck.
@@ -212,7 +213,7 @@ export class ProtectCamera extends ProtectDevice {
   public cleanup(): void {
 
     // If we've got HomeKit Secure Video enabled and recording, disable it.
-    if(this.stream?.hksv?.isRecording) {
+    if(this.stream.hksv?.isRecording) {
 
       void this.stream.hksv.updateRecordingActive(false);
     }
@@ -221,10 +222,7 @@ export class ProtectCamera extends ProtectDevice {
     this.livestream.shutdown();
 
     // Unregister our controller.
-    if(this.stream?.controller) {
-
-      this.accessory.removeController(this.stream.controller);
-    }
+    this.accessory.removeController(this.stream.controller);
 
     super.cleanup();
 
@@ -251,7 +249,7 @@ export class ProtectCamera extends ProtectDevice {
       //  - HKSV recording enabled.
       //  - No enabled smart motion detection capabilities on the Protect device.
       //  - Smart detection disabled.
-      if(this.stream?.hksv?.isRecording ||
+      if(this.stream.hksv?.isRecording ||
         !(this.ufp.featureFlags.smartDetectAudioTypes.length || this.ufp.featureFlags.smartDetectTypes.length) || !this.hints.smartDetect) {
 
         this.nvr.events.motionEventHandler(this);
@@ -268,9 +266,11 @@ export class ProtectCamera extends ProtectDevice {
     // create motion-specific thumbnail events. We're only interested in true smart detection events.
     if(this.hints.smartDetect) {
 
-      if((payload as ProtectEventAdd).metadata) {
+      const event = payload as ProtectEventAdd;
 
-        (payload as ProtectEventAdd).metadata.detectedThumbnails = (payload as ProtectEventAdd).metadata.detectedThumbnails?.filter(({ type }) => type !== "motion");
+      if(event.metadata?.detectedThumbnails) {
+
+        event.metadata.detectedThumbnails = event.metadata.detectedThumbnails.filter(({ type }) => type !== "motion");
       }
     }
 
@@ -298,7 +298,7 @@ export class ProtectCamera extends ProtectDevice {
     const payload = packet.payload as ProtectEventAdd;
 
     // Detect UniFi Access unlock events surfaced in Protect.
-    if((packet.header.modelKey === "event") && (payload.metadata?.action === "open_door") && payload.metadata?.openSuccess) {
+    if((packet.header.modelKey === "event") && (payload.metadata?.action === "open_door") && payload.metadata.openSuccess) {
 
       const lockService = this.accessory.getServiceById(this.hap.Service.LockMechanism, ProtectReservedNames.LOCK_ACCESS);
 
@@ -318,8 +318,8 @@ export class ProtectCamera extends ProtectDevice {
 
       this.accessUnlockTimer = setTimeout(() => {
 
-        lockService?.updateCharacteristic(this.hap.Characteristic.LockTargetState, this.hap.Characteristic.LockTargetState.SECURED);
-        lockService?.updateCharacteristic(this.hap.Characteristic.LockCurrentState, this.hap.Characteristic.LockCurrentState.SECURED);
+        lockService.updateCharacteristic(this.hap.Characteristic.LockTargetState, this.hap.Characteristic.LockTargetState.SECURED);
+        lockService.updateCharacteristic(this.hap.Characteristic.LockCurrentState, this.hap.Characteristic.LockCurrentState.SECURED);
 
         this.accessUnlockTimer = undefined;
       }, 2000);
@@ -334,7 +334,7 @@ export class ProtectCamera extends ProtectDevice {
     //   - We explicitly filter out events tagged as "motion". When users enable the "Create motion events" setting on a camera, Protect will create motion-specific
     //     thumbnail events. We're only interested in true smart detection events.
     if(!this.hints.smartDetect || !((packet.header.modelKey === "smartDetectObject") || ((packet.header.modelKey === "event") &&
-      [ "smartDetectLine", "smartDetectZone" ].includes(payload.type) && (payload.type !== "motion") && payload.smartDetectTypes.length))) {
+      [ "smartDetectLine", "smartDetectZone" ].includes(payload.type) && (payload.type !== "motion") && payload.smartDetectTypes?.length))) {
 
       return;
     }
@@ -382,13 +382,10 @@ export class ProtectCamera extends ProtectDevice {
 
       try {
 
-        let lux = (await response?.body.json() as Record<string, number>).illuminance ?? -1;
+        let lux = (await response?.body.json() as Record<string, number | undefined>).illuminance ?? 0;
 
         // The minimum value for ambient light in HomeKit is 0.0001. I have no idea why...but it is. Honor it.
-        if(!lux) {
-
-          lux = 0.0001;
-        }
+        lux ||= 0.0001;
 
         return lux;
       // eslint-disable-next-line @stylistic/keyword-spacing
@@ -428,7 +425,7 @@ export class ProtectCamera extends ProtectDevice {
     }, 60 * 1000);
 
     // Retrieve the active state when requested.
-    service.getCharacteristic(this.hap.Characteristic.StatusActive)?.onGet(() => this.isOnline);
+    service.getCharacteristic(this.hap.Characteristic.StatusActive).onGet(() => this.isOnline);
 
     // Initialize the sensor.
     this.ambientLight = await getLux();
@@ -439,7 +436,7 @@ export class ProtectCamera extends ProtectDevice {
     }
 
     // Retrieve the current light level when requested.
-    service.getCharacteristic(this.hap.Characteristic.CurrentAmbientLightLevel)?.onGet(() => this.ambientLight);
+    service.getCharacteristic(this.hap.Characteristic.CurrentAmbientLightLevel).onGet(() => this.ambientLight);
 
     service.updateCharacteristic(this.hap.Characteristic.CurrentAmbientLightLevel, this.ambientLight);
     service.updateCharacteristic(this.hap.Characteristic.StatusActive, this.isOnline);
@@ -451,7 +448,7 @@ export class ProtectCamera extends ProtectDevice {
   private configureAccessFeatures(): boolean {
 
     // If the Access device doesn't have unlock capabilities, we're done.
-    if(!this.ufp.accessDeviceMetadata?.featureFlags?.supportUnlock) {
+    if(!this.ufp.accessDeviceMetadata?.featureFlags.supportUnlock) {
 
       return false;
     }
@@ -482,8 +479,8 @@ export class ProtectCamera extends ProtectDevice {
         // Let's make sure we revert the lock to it's prior state.
         setTimeout(() => {
 
-          service?.updateCharacteristic(this.hap.Characteristic.LockTargetState, this.hap.Characteristic.LockTargetState.UNSECURED);
-          service?.updateCharacteristic(this.hap.Characteristic.LockCurrentState, this.hap.Characteristic.LockCurrentState.UNSECURED);
+          service.updateCharacteristic(this.hap.Characteristic.LockTargetState, this.hap.Characteristic.LockTargetState.UNSECURED);
+          service.updateCharacteristic(this.hap.Characteristic.LockCurrentState, this.hap.Characteristic.LockCurrentState.UNSECURED);
         }, 50);
 
         return;
@@ -497,8 +494,8 @@ export class ProtectCamera extends ProtectDevice {
         // Something went wrong, revert to our prior state.
         setTimeout(() => {
 
-          service?.updateCharacteristic(this.hap.Characteristic.LockTargetState, this.hap.Characteristic.LockTargetState.UNSECURED);
-          service?.updateCharacteristic(this.hap.Characteristic.LockCurrentState, this.hap.Characteristic.LockCurrentState.UNSECURED);
+          service.updateCharacteristic(this.hap.Characteristic.LockTargetState, this.hap.Characteristic.LockTargetState.UNSECURED);
+          service.updateCharacteristic(this.hap.Characteristic.LockCurrentState, this.hap.Characteristic.LockCurrentState.UNSECURED);
         }, 50);
 
         return;
@@ -529,7 +526,7 @@ export class ProtectCamera extends ProtectDevice {
 
       // We don't have this contact sensor enabled, remove it.
       this.accessory.removeService(objectService);
-      this.log.info("Disabling smart motion license plate contact sensor: %s.", objectService.subtype?.slice(objectService.subtype?.indexOf(".") + 1));
+      this.log.info("Disabling smart motion license plate contact sensor: %s.", objectService.subtype?.slice(objectService.subtype.indexOf(".") + 1));
     }
 
     // If we don't have smart motion detection available or we have smart motion object contact sensors disabled, let's remove them.
@@ -540,7 +537,7 @@ export class ProtectCamera extends ProtectDevice {
 
         // We don't have this contact sensor enabled, remove it.
         this.accessory.removeService(objectService);
-        this.log.info("Disabling smart motion contact sensor: %s.", objectService.subtype?.slice(objectService.subtype?.indexOf(".") + 1));
+        this.log.info("Disabling smart motion contact sensor: %s.", objectService.subtype?.slice(objectService.subtype.indexOf(".") + 1));
       }
     }
 
@@ -636,9 +633,9 @@ export class ProtectCamera extends ProtectDevice {
     }
 
     // Configure the switch.
-    service.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => this.accessory.context.doorbellMuted as boolean);
+    service.getCharacteristic(this.hap.Characteristic.On).onGet(() => this.accessory.context.doorbellMuted as boolean);
 
-    service.getCharacteristic(this.hap.Characteristic.On)?.onSet((value: CharacteristicValue) => {
+    service.getCharacteristic(this.hap.Characteristic.On).onSet((value: CharacteristicValue) => {
 
       this.accessory.context.doorbellMuted = !!value;
 
@@ -701,9 +698,9 @@ export class ProtectCamera extends ProtectDevice {
     }
 
     // Trigger the doorbell.
-    triggerService.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => this.isRinging);
+    triggerService.getCharacteristic(this.hap.Characteristic.On).onGet(() => this.isRinging);
 
-    triggerService.getCharacteristic(this.hap.Characteristic.On)?.onSet((value: CharacteristicValue) => {
+    triggerService.getCharacteristic(this.hap.Characteristic.On).onSet((value: CharacteristicValue) => {
 
       if(value) {
 
@@ -716,7 +713,7 @@ export class ProtectCamera extends ProtectDevice {
         // If the doorbell ring event is still going, we should be as well.
         if(this.isRinging) {
 
-          setTimeout(() => triggerService?.updateCharacteristic(this.hap.Characteristic.On, true), 50);
+          setTimeout(() => triggerService.updateCharacteristic(this.hap.Characteristic.On, true), 50);
         }
       }
     });
@@ -795,7 +792,7 @@ export class ProtectCamera extends ProtectDevice {
 
           this.log.error("Unable to set night vision to %s. Please ensure this username has the Administrator role in UniFi Protect.", value ? "auto" : "off");
 
-          setTimeout(() => service?.updateCharacteristic(this.hap.Characteristic.NightVision, !value), 50);
+          setTimeout(() => service.updateCharacteristic(this.hap.Characteristic.NightVision, !value), 50);
 
           return;
         }
@@ -869,7 +866,7 @@ export class ProtectCamera extends ProtectDevice {
     const rtspEntries: RtspEntry[] = [];
 
     // No channels exist on this camera or we don't have access to the bootstrap configuration.
-    if(!this.ufp.channels) {
+    if(!this.ufp.channels.length) {
 
       return false;
     }
@@ -881,7 +878,7 @@ export class ProtectCamera extends ProtectDevice {
     const cameraChannels = this.ufp.channels.filter(channel => channel.isRtspEnabled && (channel.name !== "Package Camera"));
 
     // Set the camera and shapshot URLs.
-    const cameraUrl = "rtsps://" + (this.nvr.config.overrideAddress ?? this.ufp.connectionHost ?? this.nvr.ufp.host) + ":" + this.nvr.ufp.ports.rtsps.toString() + "/";
+    const cameraUrl = "rtsps://" + (this.nvr.config.overrideAddress ?? this.ufp.connectionHost) + ":" + this.nvr.ufp.ports.rtsps.toString() + "/";
 
     // No RTSP streams are available that meet our criteria - we're done.
     if(!cameraChannels.length) {
@@ -1008,6 +1005,7 @@ export class ProtectCamera extends ProtectDevice {
     this.rtspEntries = rtspEntries;
 
     // If we've already configured the HomeKit video streaming delegate, we're done here.
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     if(this.stream) {
 
       return true;
@@ -1130,9 +1128,9 @@ export class ProtectCamera extends ProtectDevice {
     }
 
     // Activate or deactivate HKSV recording.
-    service.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => !this.accessory.context.hksvRecordingDisabled);
+    service.getCharacteristic(this.hap.Characteristic.On).onGet(() => !this.accessory.context.hksvRecordingDisabled);
 
-    service.getCharacteristic(this.hap.Characteristic.On)?.onSet((value: CharacteristicValue) => {
+    service.getCharacteristic(this.hap.Characteristic.On).onSet((value: CharacteristicValue) => {
 
       if(this.accessory.context.hksvRecordingDisabled !== !value) {
 
@@ -1172,9 +1170,9 @@ export class ProtectCamera extends ProtectDevice {
     }
 
     // Adjust night vision capabilities.
-    service.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => this.nightVision);
+    service.getCharacteristic(this.hap.Characteristic.On).onGet(() => this.nightVision);
 
-    service.getCharacteristic(this.hap.Characteristic.On)?.onSet(async (value: CharacteristicValue) => {
+    service.getCharacteristic(this.hap.Characteristic.On).onSet(async (value: CharacteristicValue) => {
 
       if(this.nightVision !== value) {
 
@@ -1190,7 +1188,7 @@ export class ProtectCamera extends ProtectDevice {
 
         this.log.error("Unable to set night vision to %s. Please ensure this username has the Administrator role in UniFi Protect.", value ? "custom" : "off");
 
-        setTimeout(() => service?.updateCharacteristic(this.hap.Characteristic.On, !value), 50);
+        setTimeout(() => service.updateCharacteristic(this.hap.Characteristic.On, !value), 50);
 
         return;
       }
@@ -1200,9 +1198,9 @@ export class ProtectCamera extends ProtectDevice {
     });
 
     // Adjust the sensitivity of night vision.
-    service.getCharacteristic(this.hap.Characteristic.Brightness)?.onGet(() => this.nightVisionBrightness);
+    service.getCharacteristic(this.hap.Characteristic.Brightness).onGet(() => this.nightVisionBrightness);
 
-    service.getCharacteristic(this.hap.Characteristic.Brightness)?.onSet(async (value: CharacteristicValue) => {
+    service.getCharacteristic(this.hap.Characteristic.Brightness).onSet(async (value: CharacteristicValue) => {
 
       let level = value as number;
       let nightvision = {};
@@ -1268,7 +1266,7 @@ export class ProtectCamera extends ProtectDevice {
       this.ufp = newUfp;
 
       // Make sure we properly reflect what brightness we're actually at, given the differences in setting granularity between Protect and HomeKit.
-      setTimeout(() => service?.updateCharacteristic(this.hap.Characteristic.Brightness, level), 50);
+      setTimeout(() => service.updateCharacteristic(this.hap.Characteristic.Brightness, level), 50);
     });
 
     // Initialize the dimmer state.
@@ -1311,9 +1309,9 @@ export class ProtectCamera extends ProtectDevice {
       }
 
       // Activate or deactivate the appropriate recording mode on the Protect controller.
-      service.getCharacteristic(this.hap.Characteristic.On)?.onGet(() => this.ufp.recordingSettings.mode === ufpRecordingSetting);
+      service.getCharacteristic(this.hap.Characteristic.On).onGet(() => this.ufp.recordingSettings.mode === ufpRecordingSetting);
 
-      service.getCharacteristic(this.hap.Characteristic.On)?.onSet(async (value: CharacteristicValue) => {
+      service.getCharacteristic(this.hap.Characteristic.On).onSet(async (value: CharacteristicValue) => {
 
         // We only want to do something if we're being activated. Turning off the switch would really be an undefined state given that there are three different
         // settings one can choose from. Instead, we do nothing and leave it to the user to choose what state they really want to set.
@@ -1379,7 +1377,7 @@ export class ProtectCamera extends ProtectDevice {
 
       // Grab all the available RTSP channels and return them as a JSON.
       return JSON.stringify(Object.assign({}, ...this.ufp.channels.filter(channel => channel.isRtspEnabled)
-        .map(channel => ({ [channel.name]: "rtsps://" + (this.nvr.config.overrideAddress ?? this.ufp.connectionHost ?? this.nvr.ufp.host) + ":" +
+        .map(channel => ({ [channel.name]: "rtsps://" + (this.nvr.config.overrideAddress ?? this.ufp.connectionHost) + ":" +
           this.nvr.ufp.ports.rtsp + "/" + channel.rtspAlias + "?enableSrtp" }))));
     });
 
@@ -1392,6 +1390,7 @@ export class ProtectCamera extends ProtectDevice {
         return;
       }
 
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
       void this.stream?.handleSnapshotRequest();
     });
 
@@ -1473,7 +1472,7 @@ export class ProtectCamera extends ProtectDevice {
     const rtspEntries = options?.rtspEntries ?? this.rtspEntries;
 
     // No RTSP entries to choose from, we're done.
-    if(!rtspEntries || !rtspEntries.length) {
+    if(!rtspEntries.length) {
 
       return null;
     }
@@ -1509,13 +1508,13 @@ export class ProtectCamera extends ProtectDevice {
   public findRtsp(width: number, height: number, options?: RtspOptions): Nullable<RtspEntry> {
 
     // Create our options JSON if needed.
-    options = options ?? {};
+    options ??= {};
 
     // Set our default stream, if we've configured one.
     options.default = this.hints.streamingDefault;
 
     // See if we've been given RTSP entries or whether we should default to our own.
-    options.rtspEntries = options.rtspEntries ?? this.rtspEntries;
+    options.rtspEntries ??= this.rtspEntries;
 
     // If we've imposed a constraint on the maximum dimensions of what we want due to a hardware limitation, filter out those entries.
     if(options.maxPixels !== undefined) {
@@ -1586,7 +1585,7 @@ export class ProtectCamera extends ProtectDevice {
   // Utility property to return the current night vision state of a camera. It's a blunt instrument due to HomeKit constraints.
   private get nightVision(): boolean {
 
-    return (this.ufp as ProtectCameraConfig)?.ispSettings?.irLedMode !== "off";
+    return (this.ufp as ProtectCameraConfig).ispSettings.irLedMode !== "off";
   }
 
   // Utility property to return the current night vision state of a camera, mapped to a brightness characteristic.
@@ -1616,5 +1615,48 @@ export class ProtectCamera extends ProtectDevice {
 
         return 0;
     }
+  }
+
+  // Utility to return our audio filter pipeline for this camera.
+  public get audioFilters(): string[] {
+
+    // If we don't have audio filtering enabled, we're done.
+    if(!this.hasFeature("Audio.Filter.Noise")) {
+
+      return [];
+    }
+
+    const afOptions: string[] = [];
+
+    // See what the user has set for the afftdn filter for this camera.
+    let fftNr = this.getFeatureFloat("Audio.Filter.Noise.FftNr") ?? PROTECT_FFMPEG_AUDIO_FILTER_FFTNR;
+
+    // If we have an invalid setting, use the defaults.
+    fftNr = Math.max(0.01, Math.min(97, fftNr));
+
+    const highpass = this.getFeatureNumber("Audio.Filter.Noise.HighPass");
+    const lowpass = this.getFeatureNumber("Audio.Filter.Noise.LowPass");
+
+    // We use the following order of operations for our filter: highpass, then lowpass, and finally afftdn.
+
+    // Only set the highpass and lowpass filters if the user has explicitly enabled them.
+    if(typeof highpass === "number") {
+
+      afOptions.push("highpass=p=2:f=" + highpass.toString());
+    }
+
+    if(typeof lowpass === "number") {
+
+      afOptions.push("lowpass=p=2:f=" + lowpass.toString());
+    }
+
+    // The afftdn filter options we use are:
+    //
+    // nt=c  Use the custom noise profile that we've measured for two seconds at the beginning of our session.
+    // tn=1  Enable noise tracking.
+    // nr=X  Noise reduction value in decibels.
+    afOptions.push("asendcmd=c='1.0 afftdn sn start ; 3.0 afftdn sn stop', afftdn=nt=c:tn=1:nr=" + fftNr.toString());
+
+    return afOptions;
   }
 }
