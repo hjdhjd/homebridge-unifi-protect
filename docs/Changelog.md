@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 7.23.0 (2025-09-04)
+  * New feature: support for the new SuperLink sensors.
+  * Breaking change: for those using UniFi sensors as leak sensors, you may need to disable and re-enable the leak sensor in the Protect webUI, or disable the device in HBUP prior to upgrading and then re-enable it. Due to the new SuperLink sensors, the way HBUP makes leak sensors available had to change in a way that might break for prior versions. Sorry about that!
+  * New feature: this has been in place in HBUP for a few releases, but you now have the ability to disable HBUP's self-healing abilities per-device. By default, if a camera is misbehaving for an extended period of time under certain, limited circumstances, HBUP will attempt to restart the camera to get it working properly. Found under device feature options.
+  * Housekeeping.
+
 ## 7.22.0 (2025-09-01)
   * Improvement: audio noise filters have been completely refactored (with [updated documentation](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/AudioOptions.md)). I would recommend folks use this in environments where you have your cameras outdoors. I've been testing and tweaking this for a few weeks and the defaults should work quite nicely for most.
   * Improvement: if you have noise filters enabled, they'll be applied to HKSV events as well now.

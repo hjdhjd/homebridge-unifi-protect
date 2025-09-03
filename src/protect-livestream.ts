@@ -159,7 +159,7 @@ export class LivestreamManager {
           return;
         }
 
-        if(++this.restartCount > 10) {
+        if(this.protectCamera.hasFeature("Device.SelfHealing") && (++this.restartCount > 10)) {
 
           this.restartCount = 0;
           this.protectCamera.log.warn("Restarting the camera to reset it's connection to the livestream API.");

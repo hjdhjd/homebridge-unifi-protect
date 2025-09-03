@@ -99,6 +99,7 @@ export const featureOptions: { [index: string]: ProtectFeatureOption[] } = {
     { default: true, description: "Enable the night vision indicator light for this device in HomeKit.", hasFeature: ["hasLedIr"], modelKey: ["camera"], name: "NightVision" },
     { default: false, description: "Add a dimmer accessory to control the night vision state in HomeKit.", hasFeature: ["hasLedIr"], modelKey: ["camera"], name: "NightVision.Dimmer" },
     { default: false, description: "Make this a standalone device in HomeKit that will need to be added to HomeKit through the Home app.", name: "Standalone" },
+    { default: true, description: "Attempt to restart misbehaving devices. This is always done very conservatively and only after periods of extended device-specific issues.", modelKey: ["camera"], name: "SelfHealing" },
     { default: false, description: "Synchronize the UniFi Protect name of this device with HomeKit. Synchronization is one-way only, syncing the device name from UniFi Protect to HomeKit.", name: "SyncName" }
   ],
 

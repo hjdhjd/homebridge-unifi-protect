@@ -36,6 +36,10 @@ export enum ProtectReservedNames {
   CONTACT_SENSOR = "ContactSensor",
   CONTACT_SENSOR_ALARM_SOUND = "ContactAlarmSound",
 
+  // Manage our leak sensor types.
+  LEAKSENSOR_EXTERNAL = "External",
+  LEAKSENSOR_INTERNAL = "Internal",
+
   // Manage our lightbulb types.
   LIGHTBULB_DOORBELL_VOLUME = "ChimeVolume",
   LIGHTBULB_NIGHTVISION = "NightVision",

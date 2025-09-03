@@ -2,8 +2,8 @@
  *
  * protect-sensor.ts: Sensor device class for UniFi Protect.
  */
+import type { DeepIndexable, ProtectEventPacket, ProtectSensorConfig, ProtectSensorConfigPayload } from "unifi-protect";
 import type { PlatformAccessory, Service } from "homebridge";
-import type { ProtectEventPacket, ProtectSensorConfig, ProtectSensorConfigPayload } from "unifi-protect";
 import { ProtectDevice } from "./protect-device.js";
 import type { ProtectNvr } from "../protect-nvr.js";
 import { ProtectReservedNames } from "../protect-types.js";
@@ -12,8 +12,8 @@ export class ProtectSensor extends ProtectDevice {
 
   private enabledSensors: string[];
   private lastAlarm?: boolean;
-  private lastLeak?: boolean;
-  public ufp: ProtectSensorConfig;
+  private lastLeak: { [index: string]: boolean | undefined };
+  public ufp: DeepIndexable<ProtectSensorConfig>;
 
   // Create an instance.
   constructor(nvr: ProtectNvr, device: ProtectSensorConfig, accessory: PlatformAccessory) {
@@ -21,7 +21,8 @@ export class ProtectSensor extends ProtectDevice {
     super(nvr, accessory);
 
     this.enabledSensors = [];
-    this.ufp = device;
+    this.lastLeak = {};
+    this.ufp = device as DeepIndexable<ProtectSensorConfig>;
 
     this.configureHints();
     this.configureDevice();
@@ -108,10 +109,18 @@ export class ProtectSensor extends ProtectDevice {
       currentEnabledSensors.push("humidity");
     }
 
-    // Configure the alarm sound sensor.
+    // Configure the leak sensor.
     if(this.configureLeakSensor()) {
 
-      currentEnabledSensors.push("leak");
+      if(this.ufp.leakSettings.isInternalEnabled) {
+
+        currentEnabledSensors.push("leak");
+      }
+
+      if(this.ufp.leakSettings.isExternalEnabled) {
+
+        currentEnabledSensors.push("leak (external)");
+      }
     }
 
     // Configure the motion sensor.
@@ -308,39 +317,48 @@ export class ProtectSensor extends ProtectDevice {
   // Configure the leak sensor for HomeKit.
   private configureLeakSensor(): boolean {
 
-    // Validate whether we should have this service enabled.
-    if(!this.validService(this.hap.Service.LeakSensor, this.ufp.mountType === "leak")) {
+    let count = 0;
 
-      return false;
+    for(const sensor of [
+
+      { isDetected: "externalLeakDetectedAt", isEnabled: "isExternalEnabled", mqtt: "leak-enternal", name: " External Leak Sensor",
+        subtype: ProtectReservedNames.LEAKSENSOR_EXTERNAL },
+      { isDetected: "leakDetectedAt", isEnabled: "isInternalEnabled", mqtt: "leak", subtype: ProtectReservedNames.LEAKSENSOR_INTERNAL }
+    ]) {
+
+      // Validate whether we should have this service enabled.
+      if(!this.validService(this.hap.Service.LeakSensor, this.ufp.leakSettings[sensor.isEnabled], sensor.subtype)) {
+
+        continue;
+      }
+
+      // Acquire the service.
+      const service = this.acquireService(this.hap.Service.LeakSensor, this.accessoryName + (sensor.name ?? ""), sensor.subtype);
+
+      // Fail gracefully.
+      if(!service) {
+
+        this.log.error("Unable to add leak sensor.");
+
+        continue;
+      }
+
+      // Retrieve the current contact sensor state when requested.
+      service.getCharacteristic(this.hap.Characteristic.LeakDetected).onGet(() => this.leakDetected(sensor.isDetected));
+
+      // Update the sensor.
+      service.updateCharacteristic(this.hap.Characteristic.LeakDetected, this.leakDetected(sensor.isDetected));
+
+      // Update the state characteristics.
+      this.configureStateCharacteristics(service);
+
+      // Publish the state.
+      this.publish(sensor.mqtt, this.leakDetected.toString());
+
+      count++;
     }
 
-    // Acquire the service.
-    const service = this.acquireService(this.hap.Service.LeakSensor);
-
-    // Fail gracefully.
-    if(!service) {
-
-      this.log.error("Unable to add leak sensor.");
-
-      return false;
-    }
-
-    // Retrieve the current contact sensor state when requested.
-    service.getCharacteristic(this.hap.Characteristic.LeakDetected).onGet(() => {
-
-      return this.leakDetected;
-    });
-
-    // Update the sensor.
-    service.updateCharacteristic(this.hap.Characteristic.LeakDetected, this.leakDetected);
-
-    // Update the state characteristics.
-    this.configureStateCharacteristics(service);
-
-    // Publish the state.
-    this.publish("leak", this.leakDetected.toString());
-
-    return true;
+    return count > 0;
   }
 
   // Configure the temperature sensor for HomeKit.
@@ -388,7 +406,7 @@ export class ProtectSensor extends ProtectDevice {
     const batteryService = this.accessory.getService(this.hap.Service.Battery);
 
     // Update the battery status.
-    batteryService?.updateCharacteristic(this.hap.Characteristic.BatteryLevel, this.ufp.batteryStatus.percentage);
+    batteryService?.updateCharacteristic(this.hap.Characteristic.BatteryLevel, this.ufp.batteryStatus.percentage ?? 0);
     batteryService?.updateCharacteristic(this.hap.Characteristic.StatusLowBattery, this.ufp.batteryStatus.isLow);
 
     return true;
@@ -448,23 +466,23 @@ export class ProtectSensor extends ProtectDevice {
   }
 
   // Get the current leak sensor information.
-  private get leakDetected(): boolean {
+  private leakDetected(type = "leakDetectedAt"): boolean {
 
     // Return true if we are not null, meaning a leak has been detected.
-    const value = this.ufp.leakDetectedAt !== null;
+    const value = this.ufp[type] !== null;
 
     // If it's our first run, just save the state and we're done if we don't have a leak. If we do have a leak, make sure we inform the user.
-    if((this.lastLeak === undefined) && !value) {
+    if((this.lastLeak[type] === undefined) && !value) {
 
-      this.lastLeak = value;
+      this.lastLeak[type] = value;
 
       return value;
     }
 
     // Save the state change and publish to MQTT.
-    if(value !== this.lastLeak) {
+    if(value !== this.lastLeak[type]) {
 
-      this.lastLeak = value;
+      this.lastLeak[type] = value;
 
       this.log.info("Leak %sdetected.", value ? "" : "no longer ");
     }

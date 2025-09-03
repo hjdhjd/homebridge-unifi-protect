@@ -52,9 +52,9 @@ These option(s) apply to: Protect cameras.
 |-------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------
 | <A NAME="Audio"></A>`Audio`                                                         | Audio support. **(default: enabled)**. <BR>*Supported on Protect cameras that have a microphone.*
 | <A NAME="Audio.Filter.Noise"></A>`Audio.Filter.Noise`                               | Audio filter for ambient noise suppression. **(default: disabled)**. <BR>*Supported on Protect cameras that have a microphone.*
-| <A NAME="Audio.Filter.Noise.FftNr"></A><CODE>Audio.Filter.Noise.FftNr<I>.Value</I></CODE>  | Noise reduction amount, in decibels, for the FFmpeg afftdn filter. **(default: 90)**.
-| <A NAME="Audio.Filter.Noise.HighPass"></A><CODE>Audio.Filter.Noise.HighPass<I>.Value</I></CODE>  | Frequency, in Hertz, for the FFmpeg highpass filter. **(default: 200)**.
-| <A NAME="Audio.Filter.Noise.LowPass"></A><CODE>Audio.Filter.Noise.LowPass<I>.Value</I></CODE>  | Frequency, in Hertz, for the FFmpeg lowpass filter. **(default: 1000)**.
+| <A NAME="Audio.Filter.Noise.FftNr"></A><CODE>Audio.Filter.Noise.FftNr<I>.Value</I></CODE>  | Noise reduction amount, in decibels, for the FFmpeg afftdn filter. **(default: 14)**.
+| <A NAME="Audio.Filter.Noise.HighPass"></A><CODE>Audio.Filter.Noise.HighPass<I>.Value</I></CODE>  | Frequency, in Hertz, for the FFmpeg highpass filter. **(default: 150)**.
+| <A NAME="Audio.Filter.Noise.LowPass"></A><CODE>Audio.Filter.Noise.LowPass<I>.Value</I></CODE>  | Frequency, in Hertz, for the FFmpeg lowpass filter. **(default: 9000)**.
 | <A NAME="Audio.TwoWay"></A>`Audio.TwoWay`                                           | Two-way audio support on supported cameras. **(default: enabled)**. <BR>*Supported on Protect devices that have a speaker (e.g. Protect doorbells).*
 | <A NAME="Audio.TwoWay.Direct"></A>`Audio.TwoWay.Direct`                             | Send two-way audio directly to supported cameras, bypassing the controller. Useful for working around bugs in some Protect controller firmware versions. **(default: disabled)**. <BR>*Supported on Protect devices that have a speaker (e.g. Protect doorbells).*
 
@@ -70,6 +70,7 @@ These option(s) apply to: all Protect device types.
 | <A NAME="Device.NightVision"></A>`Device.NightVision`                               | Enable the night vision indicator light for this device in HomeKit. **(default: enabled)**. <BR>*Supported on Protect cameras that have infrared LEDs.*
 | <A NAME="Device.NightVision.Dimmer"></A>`Device.NightVision.Dimmer`                 | Add a dimmer accessory to control the night vision state in HomeKit. **(default: disabled)**. <BR>*Supported on Protect cameras that have infrared LEDs.*
 | <A NAME="Device.Standalone"></A>`Device.Standalone`                                 | Make this a standalone device in HomeKit that will need to be added to HomeKit through the Home app. **(default: disabled)**.
+| <A NAME="Device.SelfHealing"></A>`Device.SelfHealing`                               | Attempt to restart misbehaving devices to correct errors. This is always done very conservatively and only after periods of extended device-specific issues. **(default: enabled)**. <BR>*Supported on Protect cameras.*
 | <A NAME="Device.SyncName"></A>`Device.SyncName`                                     | Synchronize the UniFi Protect name of this device with HomeKit. Synchronization is one-way only, syncing the device name from UniFi Protect to HomeKit. **(default: disabled)**.
 
 #### <A NAME="doorbell"></A>Doorbell feature options.
