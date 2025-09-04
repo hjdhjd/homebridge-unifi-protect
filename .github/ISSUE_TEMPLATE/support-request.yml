@@ -82,7 +82,7 @@ body:
     id: logs
     attributes:
       label: HBUP log output
-      description: Please copy and paste **the complete Homebridge HBUP startup log output in addition to any specific errors you'd like to highlight. Without this, your support request may be closed without comment**. This will be automatically formatted into code, so no need for backticks.
+      description: Please copy and paste ***the complete Homebridge HBUP startup log output in addition to any specific errors you'd like to highlight. Without this, your support request may be closed without comment***. This will be automatically formatted into code, so no need for backticks.
       placeholder: Please paste the complete HBUP startup logs and any other relevant log entries here. Remember to redact any sensitive information.
       render: shell
     validations:
