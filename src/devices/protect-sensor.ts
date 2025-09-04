@@ -524,6 +524,11 @@ export class ProtectSensor extends ProtectDevice {
       return this.leakDetected.toString();
     });
 
+    this.subscribeGet("leak-external", "leak detected", () => {
+
+      return this.leakDetected("externalLeakDetectedAt").toString();
+    });
+
     this.subscribeGet("temperature", "temperature", () => {
 
       return this.temperature.toString();

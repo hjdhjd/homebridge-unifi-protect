@@ -878,7 +878,7 @@ export class ProtectCamera extends ProtectDevice {
     const cameraChannels = this.ufp.channels.filter(channel => channel.isRtspEnabled && (channel.name !== "Package Camera"));
 
     // Set the camera and shapshot URLs.
-    const cameraUrl = "rtsps://" + (this.nvr.config.overrideAddress ?? this.ufp.connectionHost) + ":" + this.nvr.ufp.ports.rtsps.toString() + "/";
+    const cameraUrl = "rtsps://" + (this.nvr.config.overrideAddress ?? this.ufp.connectionHost ?? this.nvr.ufp.host) + ":" + this.nvr.ufp.ports.rtsps.toString() + "/";
 
     // No RTSP streams are available that meet our criteria - we're done.
     if(!cameraChannels.length) {
@@ -1377,7 +1377,7 @@ export class ProtectCamera extends ProtectDevice {
 
       // Grab all the available RTSP channels and return them as a JSON.
       return JSON.stringify(Object.assign({}, ...this.ufp.channels.filter(channel => channel.isRtspEnabled)
-        .map(channel => ({ [channel.name]: "rtsps://" + (this.nvr.config.overrideAddress ?? this.ufp.connectionHost) + ":" +
+        .map(channel => ({ [channel.name]: "rtsps://" + (this.nvr.config.overrideAddress ?? this.ufp.connectionHost ?? this.nvr.ufp.host) + ":" +
           this.nvr.ufp.ports.rtsp + "/" + channel.rtspAlias + "?enableSrtp" }))));
     });
 

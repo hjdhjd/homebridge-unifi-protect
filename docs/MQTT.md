@@ -66,6 +66,7 @@ The topics and messages that `homebridge-unifi-protect` publishes are:
 | `doorbell`            | Camera              | `true` when the doorbell is rung. Each press of the doorbell will trigger a new event.
 | `humidity`            | Sensor              | Humidity percentage level on a UniFi Protect sensor.
 | `leak`                | Sensor              | `true` or `false` when a UniFi Protect sensor detects a leak.
+| `leak-external`       | Sensor              | `true` or `false` when a UniFi Protect sensor detects a leak using the external leak sensor.
 | `light`               | Light               | `true` or `false` when a UniFi Protect light is on or off.
 | `light/brightness`    | Light               | A number between 0 and 100 that represents the current brightness as a percentage.
 | `liveview`            | Viewport            | The current liveview being displayed on a UniFi Protect Viewport.
