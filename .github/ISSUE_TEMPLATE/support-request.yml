@@ -4,7 +4,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        ### Before opening a support request, please ensure you have read the [documentation](https://github.com/hjdhjd/homebridge-unifi-protect#documentation), especially the [best practices](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/BestPractices.md) and [troubleshooting](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Troubleshooting.md) pages. Questions and topics already addressed in the documentation, or in prior issue reports, will be closed without a response.
+        ### Before opening a support request, please ensure you have read the [documentation](https://github.com/hjdhjd/homebridge-unifi-protect#documentation), especially the [best practices](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/BestPractices.md) and [troubleshooting](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Troubleshooting.md) pages. ***Questions and topics already addressed in the documentation, or in prior issue reports, will be closed without a response.***
 
   - type: input
     id: hbupversion
@@ -55,7 +55,7 @@ body:
     id: protect
     attributes:
       label: UniFi Protect Controller Version
-      description: "Which version of the UniFi Protect Controller are you running on? **Note: beta/EA versions are completely unsupported by HBUP, and your request will be closed.**"
+      description: "Which version of the UniFi Protect Controller are you running on? ***Note: beta/EA versions are completely unsupported by HBUP, and your request will be closed.***"
       placeholder: e.g. v2.9.33
     validations:
       required: true
