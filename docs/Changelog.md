@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
-## 7.23.2 (2025-09-04)
+## 7.23.2 (2025-09-05)
   * Fix: address a streaming regression for Raspberry Pi 4 users.
   * Housekeeping.
 
