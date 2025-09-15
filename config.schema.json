@@ -156,12 +156,11 @@
       "videoProcessor": {
 
         "type": "string",
-        "title": "Video Processor",
+        "title": "FFmpeg Location",
         "required": false,
-        "placeholder": "e.g. ffmpeg",
-        "description": "Location of ffmpeg or your preferred video processor. Default: builtin or in your local path."
+        "placeholder": "e.g. /usr/local/bin/ffmpeg",
+        "description": "Path to the FFmpeg executable. Most users should not use this setting - FFmpeg is already bundled in the plugin for many platforms. Default: bundled build or the first ffmpeg found in PATH."
       }
-
     }
   },
 
