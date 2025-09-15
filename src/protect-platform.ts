@@ -108,6 +108,9 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
     // First things first - ensure we've got a working video processor before we do anything else.
     if(!(await this.codecSupport.probe())) {
 
+      this.log.error("This plugin requires a working version of FFmpeg. " +
+        "If you need to specify a path to your FFmpeg, you can do so under 'Settings | Additional Settings' in the plugin configuration webUI.");
+
       return;
     }
 
