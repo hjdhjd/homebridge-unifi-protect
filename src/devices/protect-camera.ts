@@ -39,6 +39,7 @@ export class ProtectCamera extends ProtectDevice {
   private ambientLightTimer?: NodeJS.Timeout;
   private isDeleted: boolean;
   public isRinging: boolean;
+  private isTampered: boolean;
   public detectLicensePlate: string[];
   public readonly livestream: LivestreamManager;
   public messageSwitches: { [index: string]: MessageSwitchInterface | undefined };
@@ -55,6 +56,7 @@ export class ProtectCamera extends ProtectDevice {
     this.ambientLight = 0;
     this.isDeleted = false;
     this.isRinging = false;
+    this.isTampered = false;
     this.detectLicensePlate = [];
     this.livestream = new LivestreamManager(this);
     this.messageSwitches = {};
@@ -158,6 +160,9 @@ export class ProtectCamera extends ProtectDevice {
     // Configure the motion sensor.
     this.configureMotionSensor(this.isHksvCapable);
 
+    // Configure tamper detection.
+    this.configureTamperDetection();
+
     // Configure smart motion contact sensors.
     this.configureMotionSmartSensor();
 
@@ -233,7 +238,7 @@ export class ProtectCamera extends ProtectDevice {
   protected eventHandler(packet: ProtectEventPacket): void {
 
     const payload = packet.payload as ProtectCameraConfigPayload;
-    const hasProperty = (properties: string[]): boolean => properties.some(property => property in payload);
+    const hasProperty = (properties: string | string[]): boolean => (Array.isArray(properties) ? properties : [properties]).some(p => p in payload);
 
     // Process any RTSP stream or video codec updates.
     if(hasProperty([ "channels", "videoCodec" ])) {
@@ -280,7 +285,14 @@ export class ProtectCamera extends ProtectDevice {
       this.nvr.events.motionEventHandler(this, (payload as ProtectEventAdd).smartDetectTypes, (payload as ProtectEventAdd).metadata);
     }
 
+    // Process updates to the tamper detection setting.
+    if(hasProperty("smartDetectSettings")) {
+
+      this.configureTamperDetection();
+    }
+
     // Process camera details updates:
+    //
     //   - availability state.
     //   - name change.
     //   - camera night vision.
@@ -325,6 +337,15 @@ export class ProtectCamera extends ProtectDevice {
       }, 2000);
 
       return;
+    }
+
+    // If we've been tampered, flag it accordingly.
+    if(payload.type === "smartDetectTamper") {
+
+      this.isTampered = true;
+      this.accessory.getService(this.hap.Service.MotionSensor)?.updateCharacteristic(this.hap.Characteristic.StatusTampered, this.isTampered);
+
+      this.log.info("Tamper event detected. To clear the indicator, toggle tamper detection in the Protect web UI or restart HBUP.");
     }
 
     // We're only interested in smart motion detection events here. Our rules are:
@@ -605,6 +626,30 @@ export class ProtectCamera extends ProtectDevice {
         this.log.info("Smart motion license plate contact sensor%s enabled: %s.", enabledContactSensors.length > 1 ? "s" : "", enabledContactSensors.join(", "));
       }
     }
+
+    return true;
+  }
+
+  // Configure tampering detection for devices that support it.
+  private configureTamperDetection(): boolean {
+
+    const service = this.accessory.getService(this.hap.Service.MotionSensor);
+    const characteristic = service?.getCharacteristic(this.hap.Characteristic.StatusTampered);
+
+    if(!this.ufp.featureFlags.hasTamperDetection || !this.ufp.smartDetectSettings.enableTamperDetection) {
+
+      if(characteristic) {
+
+        service?.removeCharacteristic(characteristic);
+      }
+
+      this.isTampered = false;
+
+      return false;
+    }
+
+    // Retrieve the current tamper status when requested.
+    characteristic?.onGet(() => this.isTampered);
 
     return true;
   }
@@ -1418,6 +1463,7 @@ export class ProtectCamera extends ProtectDevice {
 
     // Update the camera state.
     this.accessory.getService(this.hap.Service.MotionSensor)?.updateCharacteristic(this.hap.Characteristic.StatusActive, this.isOnline);
+    this.accessory.getService(this.hap.Service.MotionSensor)?.updateCharacteristic(this.hap.Characteristic.StatusTampered, this.isTampered);
     this.accessory.getService(this.hap.Service.LightSensor)?.updateCharacteristic(this.hap.Characteristic.StatusActive, this.isOnline);
 
     // Check to see if this device has a status light.
