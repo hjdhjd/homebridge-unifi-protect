@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 7.24.1 (2025-09-27)
+  * Housekeeping.
+
 ## 7.24.0 (2025-09-15)
   * New feature: HBUP now supports tamper detection for Protect cameras (Ubiquiti has enabled this currently AI and G6 series it seems). Unlike Protect sensors, cameras only log a tamper event without flagging the device as “tampered.” In HBUP, if a tamper event is detected, you can clear it by either disabling and re-enabling tamper detection in the Protect web UI (under Recording Settings) or by restarting HBUP. Tampering status can be seen by pulling up the detail view of the motion sensor on the Protect camera (unfortunately the only place one can do this in HomeKit that makes sense for HBUP).
   * Improvement: FFmpeg 8 is now bundled in with HBUP, providing some additional (minor) performance improvements when using hardware acceleration.
