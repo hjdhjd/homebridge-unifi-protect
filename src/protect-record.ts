@@ -267,6 +267,11 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
       this.transmitListener = undefined;
     }
 
+    if(!this.protectCamera.stream) {
+
+      return false;
+    }
+
     // If we don't have a recording configuration from HomeKit, a valid RTSP profile, or not enough time in our timeshift buffer, we can't continue.
     if(!this.recordingConfig || !this.rtspEntry || this.timeshift.isRestarting ||
       ((this.protectCamera.stream.hksv?.timeshift.time ?? -1) < this.recordingConfig.prebufferLength)) {
@@ -410,7 +415,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     }
 
     // If we have intentionally declined to respond to a recording event, we're done.
-    if(this.transmittedSegments === -1) {
+    if(!this.protectCamera.stream || (this.transmittedSegments === -1)) {
 
       return;
     }
@@ -539,7 +544,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
   public get isAudioActive(): boolean {
 
     return (this.protectCamera.ufp.featureFlags.hasMic && this.protectCamera.hasFeature("Audio") &&
-      (this.protectCamera.stream.controller.recordingManagement?.recordingManagementService
+      (this.protectCamera.stream?.controller.recordingManagement?.recordingManagementService
         .getCharacteristic(this.api.hap.Characteristic.RecordingAudioActive).value === 1)) ? true : false;
   }
 

@@ -89,7 +89,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
 
     // Ensure we have sane values configured for the segment resolution. We check this here instead of in the constructor because we may not have an HKSV recording
     // configuration available to us immediately upon startup.
-    if(this.protectCamera.stream.hksv?.recordingConfiguration?.mediaContainerConfiguration.fragmentLength) {
+    if(this.protectCamera.stream?.hksv?.recordingConfiguration?.mediaContainerConfiguration.fragmentLength) {
 
       if((this._segmentLength < 100) || (this._segmentLength > 1500) ||
         (this._segmentLength > (this.protectCamera.stream.hksv.recordingConfiguration.mediaContainerConfiguration.fragmentLength / 2))) {

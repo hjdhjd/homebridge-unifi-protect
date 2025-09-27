@@ -115,7 +115,7 @@ export class ProtectSnapshot {
   private async snapFromTimeshift(request?: SnapshotRequest): Promise<Nullable<Buffer>> {
 
     // If we aren't generating high resolution snapshots, we're done.
-    if(!this.protectCamera.hints.highResSnapshots) {
+    if(!this.protectCamera.stream || !this.protectCamera.hints.highResSnapshots) {
 
       return null;
     }
@@ -148,7 +148,7 @@ export class ProtectSnapshot {
   private async snapFromRtsp(request?: SnapshotRequest): Promise<Nullable<Buffer>> {
 
     // If we aren't generating high resolution snapshots, we're done.
-    if(!this.protectCamera.hints.highResSnapshots) {
+    if(!this.protectCamera.stream || !this.protectCamera.hints.highResSnapshots) {
 
       return null;
     }
@@ -182,6 +182,11 @@ export class ProtectSnapshot {
 
   // Generate a snapshot using FFmpeg.
   private async snapFromFfmpeg(ffmpegInputOptions: string[], request?: SnapshotRequest, buffer?: Buffer): Promise<Nullable<Buffer>> {
+
+    if(!this.protectCamera.stream) {
+
+      return null;
+    }
 
     // Options we use to generate an image based on our MP4 input are:
     //
@@ -259,6 +264,11 @@ export class ProtectSnapshot {
 
   // Image snapshot crop handler.
   private async cropSnapshot(snapshot: Buffer): Promise<Nullable<Buffer>> {
+
+    if(!this.protectCamera.stream) {
+
+      return null;
+    }
 
     // Crop the snapshot using the FFmpeg with crop filter. Options we use are:
     //

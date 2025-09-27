@@ -45,7 +45,7 @@ export class ProtectCamera extends ProtectDevice {
   public messageSwitches: { [index: string]: MessageSwitchInterface | undefined };
   public packageCamera?: Nullable<ProtectCameraPackage>;
   private rtspEntries: RtspEntry[];
-  public stream!: ProtectStreamingDelegate;
+  public stream?: ProtectStreamingDelegate;
   public ufp: ProtectCameraConfig;
 
   // Create an instance.
@@ -218,7 +218,7 @@ export class ProtectCamera extends ProtectDevice {
   public cleanup(): void {
 
     // If we've got HomeKit Secure Video enabled and recording, disable it.
-    if(this.stream.hksv?.isRecording) {
+    if(this.stream?.hksv?.isRecording) {
 
       void this.stream.hksv.updateRecordingActive(false);
     }
@@ -227,7 +227,10 @@ export class ProtectCamera extends ProtectDevice {
     this.livestream.shutdown();
 
     // Unregister our controller.
-    this.accessory.removeController(this.stream.controller);
+    if(this.stream) {
+
+      this.accessory.removeController(this.stream.controller);
+    }
 
     super.cleanup();
 
@@ -254,7 +257,7 @@ export class ProtectCamera extends ProtectDevice {
       //  - HKSV recording enabled.
       //  - No enabled smart motion detection capabilities on the Protect device.
       //  - Smart detection disabled.
-      if(this.stream.hksv?.isRecording ||
+      if(this.stream?.hksv?.isRecording ||
         !(this.ufp.featureFlags.smartDetectAudioTypes.length || this.ufp.featureFlags.smartDetectTypes.length) || !this.hints.smartDetect) {
 
         this.nvr.events.motionEventHandler(this);
@@ -1050,7 +1053,6 @@ export class ProtectCamera extends ProtectDevice {
     this.rtspEntries = rtspEntries;
 
     // If we've already configured the HomeKit video streaming delegate, we're done here.
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     if(this.stream) {
 
       return true;
@@ -1435,7 +1437,6 @@ export class ProtectCamera extends ProtectDevice {
         return;
       }
 
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
       void this.stream?.handleSnapshotRequest();
     });
 

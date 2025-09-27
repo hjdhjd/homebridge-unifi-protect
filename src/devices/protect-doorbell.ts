@@ -744,7 +744,7 @@ export class ProtectDoorbell extends ProtectCamera {
     // If we have a package camera that has HKSV enabled, we'll trigger it's motion sensor here. Why? HKSV requires a motion sensor attached to that camera accessory,
     // and since a package camera is actually a secondary camera on a device with a single motion sensor, we use that motion sensor to trigger the package camera's HKSV
     // event recording.
-    if(payload.lastMotion && this.packageCamera?.stream.hksv?.isRecording) {
+    if(payload.lastMotion && this.packageCamera?.stream?.hksv?.isRecording) {
 
       this.nvr.events.motionEventHandler(this.packageCamera);
     }

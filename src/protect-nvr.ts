@@ -98,7 +98,7 @@ export class ProtectNvr {
       for(const protectCamera of this.devices("camera")) {
 
         protectCamera.log.debug("Shutting down all video stream processes.");
-        protectCamera.stream.shutdown();
+        protectCamera.stream?.shutdown();
       }
     });
   }
