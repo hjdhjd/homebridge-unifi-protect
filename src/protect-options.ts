@@ -71,6 +71,7 @@ export const featureOptionCategories = [
   { description: "Motion", isNotProperty: [ "isAdoptedByAccessApp", "isThirdPartyCamera" ], modelKey: [ "camera", "light", "sensor" ], name: "Motion" },
   { description: "NVR", modelKey: [ "camera", "nvr" ], name: "Nvr" },
   { description: "Security System", modelKey: ["nvr"], name: "SecuritySystem" },
+  { description: "Sensor", modelKey: ["sensor"], name: "Sensor" },
   { description: "UniFi Access", modelKey: ["camera"], name: "UniFi.Access" },
   { description: "Video", modelKey: ["camera"], name: "Video" },
   { description: "HomeKit Secure Video", isNotProperty: ["isThirdPartyCamera"], modelKey: ["camera"], name: "Video.HKSV" }
@@ -168,6 +169,12 @@ export const featureOptions: { [index: string]: ProtectFeatureOption[] } = {
   "SecuritySystem": [
 
     { default: false, description: "Add a switch accessory to trigger the security system accessory, when using the liveview feature option.", name: "Alarm" }
+  ],
+
+  // Sensor options.
+  "Sensor": [
+
+    { default: false, description: "Use the Protect leak sensor as a moisture sensor instead and expose it as a contact sensor.", name: "MoistureSensor" }
   ],
 
   // HomeKit Secure Video options.
