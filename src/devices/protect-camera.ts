@@ -343,7 +343,7 @@ export class ProtectCamera extends ProtectDevice {
     }
 
     // If we've been tampered, flag it accordingly.
-    if(payload.type === "smartDetectTamper") {
+    if(!this.isTampered && (payload.type === "smartDetectTamper")) {
 
       this.isTampered = true;
       this.accessory.getService(this.hap.Service.MotionSensor)?.updateCharacteristic(this.hap.Characteristic.StatusTampered, this.isTampered);
@@ -1658,7 +1658,7 @@ export class ProtectCamera extends ProtectDevice {
 
       default:
 
-        this.log.error("Unknown night vision value detected.");
+        this.log.error("Unknown night vision value detected: %s.", this.ufp.ispSettings.irLedMode);
 
         return 0;
     }
