@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 7.25.0 (2025-11-10)
+  * New feature: you can now configure the leak sensors to be exposed as moisture sensors. This makes them available as contact sensors rather than leak sensors in HomeKit, allowing you to use them for various automation scenarios.
+  * Housekeeping.
+
 ## 7.24.1 (2025-09-27)
   * Housekeeping.
 

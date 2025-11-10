@@ -40,6 +40,7 @@ Feature options provide a rich mechanism for tailoring your `homebridge-unifi-pr
  * [Motion](#motion): Motion feature options.
  * [Nvr](#nvr): NVR feature options.
  * [SecuritySystem](#securitysystem): Security System feature options.
+ * [Sensor](#sensor): Sensor feature options.
  * [UniFi.Access](#unifi.access): UniFi Access feature options.
  * [Video](#video): Video feature options.
  * [Video.HKSV](#video.hksv): HomeKit Secure Video feature options.
@@ -70,7 +71,7 @@ These option(s) apply to: all Protect device types.
 | <A NAME="Device.NightVision"></A>`Device.NightVision`                               | Enable the night vision indicator light for this device in HomeKit. **(default: enabled)**. <BR>*Supported on Protect cameras that have infrared LEDs.*
 | <A NAME="Device.NightVision.Dimmer"></A>`Device.NightVision.Dimmer`                 | Add a dimmer accessory to control the night vision state in HomeKit. **(default: disabled)**. <BR>*Supported on Protect cameras that have infrared LEDs.*
 | <A NAME="Device.Standalone"></A>`Device.Standalone`                                 | Make this a standalone device in HomeKit that will need to be added to HomeKit through the Home app. **(default: disabled)**.
-| <A NAME="Device.SelfHealing"></A>`Device.SelfHealing`                               | Attempt to restart misbehaving devices to correct errors. This is always done very conservatively and only after periods of extended device-specific issues. **(default: enabled)**. <BR>*Supported on Protect cameras.*
+| <A NAME="Device.SelfHealing"></A>`Device.SelfHealing`                               | Attempt to restart misbehaving devices. This is always done very conservatively and only after periods of extended device-specific issues. **(default: enabled)**. <BR>*Supported on Protect cameras.*
 | <A NAME="Device.SyncName"></A>`Device.SyncName`                                     | Synchronize the UniFi Protect name of this device with HomeKit. Synchronization is one-way only, syncing the device name from UniFi Protect to HomeKit. **(default: disabled)**.
 
 #### <A NAME="doorbell"></A>Doorbell feature options.
@@ -149,6 +150,14 @@ These option(s) apply to: Protect controllers.
 | Option                                                                              | Description
 |-------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------
 | <A NAME="SecuritySystem.Alarm"></A>`SecuritySystem.Alarm`                           | Add a switch accessory to trigger the security system accessory, when using the liveview feature option. **(default: disabled)**.
+
+#### <A NAME="sensor"></A>Sensor feature options.
+
+These option(s) apply to: Protect sensors.
+
+| Option                                                                              | Description
+|-------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------
+| <A NAME="Sensor.MoistureSensor"></A>`Sensor.MoistureSensor`                         | Use the Protect leak sensor as a moisture sensor instead and expose it as a contact sensor. **(default: disabled)**.
 
 #### <A NAME="unifi.access"></A>UniFi Access feature options.
 
