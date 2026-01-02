@@ -984,8 +984,8 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
         // Catch any errors and inform the user, if needed.
         ws.addEventListener("error", (event: ErrorEvent) => {
 
-          // Ignore timeout errors, but notify the user about anything else.
-          if((event.error as NodeJS.ErrnoException).code !== "ETIMEDOUT") {
+          // Ignore timeout errors and TypeErrors, but notify the user about anything else.
+          if(!(event.error instanceof TypeError) && ((event.error as NodeJS.ErrnoException).code !== "ETIMEDOUT")) {
 
             this.log.error("Error in communicating with the return audio channel: %s - %s", (event.error.cause as NodeJS.ErrnoException).code, event.error.cause);
           }

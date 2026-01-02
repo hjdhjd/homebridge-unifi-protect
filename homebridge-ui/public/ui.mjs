@@ -241,7 +241,8 @@ const showProtectDetails = (device) => {
       "</div>" +
       "<div class=\"stat-item\">" +
         "<span class=\"stat-label\">IP Address</span>" +
-        "<span class=\"stat-value font-monospace\">" + (device.host ?? (device.modelKey === "sensor" ? "Bluetooth Device" : "None")) + "</span>" +
+        "<span class=\"stat-value font-monospace\">" +
+          (device.host ?? (device.modelKey === "sensor" ? (device.connectionType === "lora" ? "SuperLink" : "Bluetooth") + " Device" : "None")) + "</span>" +
       "</div>" +
       "<div class=\"stat-item\">" +
         "<span class=\"stat-label\">Status</span>" +
