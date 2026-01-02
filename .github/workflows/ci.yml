@@ -10,6 +10,11 @@ on:
     types: [ published ]
   workflow_dispatch:
 
+# OIDC-related permissions for trusted publishing to NPMJS.
+permissions:
+  contents: read
+  id-token: write
+
 jobs:
 
   # Run a validation build on LTS versions of node.
@@ -54,10 +59,6 @@ jobs:
     # Specify the environment we're going to build in.
     runs-on: ubuntu-latest
 
-    # Ensure we have permissions to provide our provenance attestation.
-    permissions:
-       id-token: write
-
     # Execute the build and publish activities.
     steps:
     - name: Checkout the repository.
@@ -73,10 +74,11 @@ jobs:
         # Use the NPM registry.
         registry-url: 'https://registry.npmjs.org/'
 
+    - name: Update npm (required for trusted publishing).
+      run: npm install -g npm@latest
+
     - name: Install the package with a clean slate.
       run: npm ci
 
     - name: Publish the package to NPM.
       run: npm publish --access public --provenance
-      env:
-        NODE_AUTH_TOKEN: ${{ secrets.npm_token }}

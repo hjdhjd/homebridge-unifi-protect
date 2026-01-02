@@ -42,7 +42,6 @@ export default ts.config(
       parserOptions: {
 
         ecmaVersion: "latest",
-        project: "./tsconfig.json",
 
         projectService: {
 
