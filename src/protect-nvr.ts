@@ -617,7 +617,7 @@ export class ProtectNvr {
       if(this.ufpApi.bootstrap) {
 
         // Find the RTSP aliases and publish them. We filter out any cameras that don't have RTSP aliases since they would be inaccessible in this context.
-        for(const camera of this.ufpApi.bootstrap.cameras.filter(x => x.channels.some(channel => channel.isRtspEnabled)).sort((a, b) => {
+        for(const camera of this.ufpApi.bootstrap.cameras.filter(x => (x.videoCodec !== "av1") && x.channels.some(channel => channel.isRtspEnabled)).sort((a, b) => {
 
           if(!a.name || !b.name) {
 
