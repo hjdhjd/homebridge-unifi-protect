@@ -402,13 +402,10 @@ export class ProtectSensor extends ProtectDevice {
     }
 
     // Retrieve the current temperature when requested.
-    service.getCharacteristic(this.hap.Characteristic.CurrentTemperature).onGet(() => {
-
-      return this.temperature < 0 ? 0 : this.temperature;
-    });
+    service.getCharacteristic(this.hap.Characteristic.CurrentTemperature).onGet(() => this.temperature);
 
     // Update the sensor.
-    service.updateCharacteristic(this.hap.Characteristic.CurrentTemperature, this.temperature < 0 ? 0 : this.temperature);
+    service.updateCharacteristic(this.hap.Characteristic.CurrentTemperature, this.temperature);
 
     // Update the state characteristics.
     this.configureStateCharacteristics(service);
@@ -519,40 +516,13 @@ export class ProtectSensor extends ProtectDevice {
   // Configure MQTT capabilities for sensors.
   private configureMqtt(): void {
 
-    this.subscribeGet("alarm", "alarm detected", () => {
-
-      return this.alarmDetected.toString();
-    });
-
-    this.subscribeGet("ambientlight", "ambient light", () => {
-
-      return this.ambientLight.toString();
-    });
-
-    this.subscribeGet("contact", "contact sensor", () => {
-
-      return this.contact.toString();
-    });
-
-    this.subscribeGet("humidity", "humidity", () => {
-
-      return this.humidity.toString();
-    });
-
-    this.subscribeGet("leak", "leak detected", () => {
-
-      return this.leakDetected().toString();
-    });
-
-    this.subscribeGet("leak-external", "leak detected", () => {
-
-      return this.leakDetected("externalLeakDetectedAt").toString();
-    });
-
-    this.subscribeGet("temperature", "temperature", () => {
-
-      return this.temperature.toString();
-    });
+    this.subscribeGet("alarm", "alarm detected", () => this.alarmDetected.toString());
+    this.subscribeGet("ambientlight", "ambient light", () => this.ambientLight.toString());
+    this.subscribeGet("contact", "contact sensor", () => this.contact.toString());
+    this.subscribeGet("humidity", "humidity", () => this.humidity.toString());
+    this.subscribeGet("leak", "leak detected", () => this.leakDetected().toString());
+    this.subscribeGet("leak-external", "leak detected", () => this.leakDetected("externalLeakDetectedAt").toString());
+    this.subscribeGet("temperature", "temperature", () => this.temperature.toString());
   }
 
   // Handle sensor-related events.
