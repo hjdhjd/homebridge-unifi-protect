@@ -25,9 +25,8 @@ This is a complete reference of the HBUP settings JSON. The defaults should work
   {
     "platform": "UniFi Protect",
     "videoProcessor": "/usr/local/bin/ffmpeg",
-    "ffmpegOptions": [
-    ]
     "verboseFfmpeg": false,
+    "ringDelay": 0,
 
     "options": [
       "Disable.Video.Stream.High"
@@ -62,8 +61,8 @@ This is a complete reference of the HBUP settings JSON. The defaults should work
 | password               | Your UniFi Protect password.                            |                                                                                       | Yes      |
 | addressOverride        | Override the address used when HBUP accesses camera URLs.|                                                                                      | No       |
 | doorbellMessages       | Configure [doorbell messages](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Doorbell.md) for your UniFi Protect controller. | [] | No |
-| videoProcessor         | Specify path of ffmpeg or avconv.                       | "ffmpeg"                                                                              | No       |
-| ffmpegOptions          | Additional parameters to pass ffmpeg to render video.   |                                                                                       | No       |
+| ringDelay              | Delay between doorbell rings. Setting this to a non-zero value will prevent multiple rings of a doorbell over the specified duration. | 0                                                                                     | No       |
+| videoProcessor         | Specify path of ffmpeg. HBUP uses it's own ffmpeg version, and in general you should not specify a different one unless there is a specific need. | builtin or falling back to "ffmpeg" in your PATH. | No       |
 | options                | Configure plugin [feature options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md).   | []                 | No       |
 | name                   | Controller name to use for homebridge logging purposes. | UniFi Protect controller name                                                         | No       |
 | mqttUrl                | The URL of your MQTT broker. **This must be in URL form**, e.g.: `mqtt://user:password@1.2.3.4`. |                                              | No       |
