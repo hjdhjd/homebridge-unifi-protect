@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 7.26.0 (2026-01-02)
+  * Improvement: handle infrared filter-only use cases for night vision automation dimmer. You can use the dimmer to adjust the sensitivity level of when Protect will trigger infrared settings. 0% disables infrared, 5% sets it to infrared filter-only (no infrared LEDs), 10% sets it to auto, 20-90% reflect the states you would find through the Protect webUI at increasing levels of sensitivity, 100% sets infrared always on.
+  * Improvement: when using the playlist feature, HBUP now filters out AV1 streams that can't be played by Channels DVR.
+  * Improvement: minor webUI enhancements.
+  * Fix: temperature sensors now correctly report temperatures below 0C/32F. I missed the behavior change by Ubiquiti in Protect v6 - sorry about that!
+  * Housekeeping.
+
 ## 7.25.0 (2025-11-10)
   * New feature: you can now configure the leak sensors to be exposed as moisture sensors. This makes them available as contact sensors rather than leak sensors in HomeKit, allowing you to use them for various automation scenarios.
   * Housekeeping.
