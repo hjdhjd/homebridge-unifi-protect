@@ -68,7 +68,7 @@ export const featureOptionCategories = [
   { description: "Device", modelKey: ["all"], name: "Device" },
   { description: "Doorbell", modelKey: ["camera"], name: "Doorbell" },
   { description: "Logging", modelKey: [ "camera", "light", "sensor" ], name: "Log" },
-  { description: "Motion", isNotProperty: [ "isAdoptedByAccessApp", "isThirdPartyCamera" ], modelKey: [ "camera", "light", "sensor" ], name: "Motion" },
+  { description: "Motion", hasSensorFeature: ["motion"], isNotProperty: [ "isAdoptedByAccessApp", "isThirdPartyCamera" ], modelKey: [ "camera", "light", "sensor" ], name: "Motion" },
   { description: "NVR", modelKey: [ "camera", "nvr" ], name: "Nvr" },
   { description: "Security System", modelKey: ["nvr"], name: "SecuritySystem" },
   { description: "Sensor", modelKey: ["sensor"], name: "Sensor" },

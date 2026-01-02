@@ -212,6 +212,12 @@ const validOptionCategory = (device, category) => {
     return false;
   }
 
+  // Test for the feature availability on a specific device type.
+  if(category["has" + device.modelKey.charAt(0).toUpperCase() + device.modelKey.slice(1) + "Feature"]?.some(x => !device.featureFlags?.[x])) {
+
+    return false;
+  }
+
   return true;
 };
 
