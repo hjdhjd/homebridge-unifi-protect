@@ -1226,14 +1226,35 @@ export class ProtectCamera extends ProtectDevice {
         this.log.info("Night vision %s.", value ? "enabled" : "disabled");
       }
 
-      const mode = service.getCharacteristic(this.hap.Characteristic.Brightness).value === 10 ? "auto" : "custom";
+      let mode;
+
+      switch(service.getCharacteristic(this.hap.Characteristic.Brightness).value) {
+
+        case 5:
+
+          mode = "autoFilterOnly";
+
+          break;
+
+        case 10:
+
+          mode = "auto";
+
+          break;
+
+        default:
+
+          mode = [ "autoFilterOnly", "customFilterOnly" ].includes(this.ufp.ispSettings.irLedMode) ? "customFilterOnly" : "custom";
+
+          break;
+      }
 
       // Update the night vision setting in Protect.
       const newUfp = await this.nvr.ufpApi.updateDevice(this.ufp, { ispSettings: { irLedMode: value ? mode : "off" } });
 
       if(!newUfp) {
 
-        this.log.error("Unable to set night vision to %s. Please ensure this username has the Administrator role in UniFi Protect.", value ? "custom" : "off");
+        this.log.error("Unable to set night vision to %s. Please ensure this username has the Administrator role in UniFi Protect.", value ? mode : "off");
 
         setTimeout(() => service.updateCharacteristic(this.hap.Characteristic.On, !value), 50);
 
@@ -1252,10 +1273,16 @@ export class ProtectCamera extends ProtectDevice {
       let level = value as number;
       let nightvision = {};
 
-      // If we're less than 10% in brightness, assume we want to disable night vision.
-      if(level < 10) {
+      // If we're less than 5% in brightness, assume we want to disable night vision.
+      if(level < 5) {
 
         level = 0;
+      }
+
+      // If we're greater than 5%, but less than 10%, assume we want to set night vision to autoFilterOnly.
+      if((level > 5) && (level < 10)) {
+
+        level = 5;
       }
 
       // If we're greater than 10%, but less than 20%, assume we want to set night vision to auto.
@@ -1279,6 +1306,12 @@ export class ProtectCamera extends ProtectDevice {
 
           break;
 
+        case 5:
+
+          nightvision = { ispSettings:{ irLedMode: "autoFilterOnly" } };
+
+          break;
+
         case 10:
 
           nightvision = { ispSettings:{ irLedMode: "auto" } };
@@ -1294,7 +1327,14 @@ export class ProtectCamera extends ProtectDevice {
         default:
 
           level = Math.round((level - 20) / 7);
-          nightvision = { ispSettings:{ icrCustomValue: level, irLedMode: "custom" } };
+          nightvision = {
+
+            ispSettings: {
+
+              icrCustomValue: level,
+              irLedMode: [ "autoFilterOnly", "customFilterOnly" ].includes(this.ufp.ispSettings.irLedMode) ? "customFilterOnly" : "custom"
+            }
+          };
           level = (level * 7) + 20;
 
           break;
@@ -1644,7 +1684,12 @@ export class ProtectCamera extends ProtectDevice {
 
         return 0;
 
+      case "autoFilterOnly":
+
+        return 5;
+
       case "auto":
+
         return 10;
 
       case "on":
@@ -1652,6 +1697,7 @@ export class ProtectCamera extends ProtectDevice {
         return 100;
 
       case "custom":
+      case "customFilterOnly":
 
         // The Protect infrared cutoff removal setting ranges from 0 - 10. HomeKit expects percentages, so we convert it like so.
         return (this.ufp.ispSettings.icrCustomValue * 7) + 20;
