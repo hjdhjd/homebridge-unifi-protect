@@ -534,7 +534,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
 
     // Inform the user when things stopped unexpectedly, accounting for known factors like the camera being online or the timeshift buffer restarting.
     if((reason !== undefined) && (reason !== HDSProtocolSpecificErrorReason.NORMAL) && !this.timeshift.isRestarting && this.protectCamera.isOnline &&
-      (this.protectCamera.stream.hksv?.timeshift.time ?? -1) >= (this.recordingConfig?.prebufferLength ?? 0)) {
+      ((this.protectCamera.stream.hksv?.timeshift.time ?? -1) >= (this.recordingConfig?.prebufferLength ?? 0))) {
 
       this.log.error("HKSV recording event ended early: %s", reasonDescription);
     }

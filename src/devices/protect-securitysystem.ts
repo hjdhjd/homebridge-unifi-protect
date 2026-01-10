@@ -371,7 +371,7 @@ export class ProtectSecuritySystem extends ProtectBase {
     const targetCameraIds = liveviews.filter(view => view.name.toLowerCase() === viewScene).map(view => view.slots.map(slots => slots.cameras)).flat(2);
 
     // We don't have a liveview for this state and we aren't disarming - update state for the user and we're done.
-    if(newState !== SecuritySystemCurrentState.DISARMED && !targetCameraIds.length) {
+    if((newState !== SecuritySystemCurrentState.DISARMED) && !targetCameraIds.length) {
 
       this.log.info("No liveview configured for this security system state. Create a liveview named %s in the Protect webUI to use this feature.", viewScene);
 

@@ -269,7 +269,7 @@ export class ProtectLiveviews extends ProtectBase {
       for(const entry of incomingPayload) {
 
         // Lookup this liveview.
-        const accessory = this.platform.accessories.find(x => ("liveview" in x.context) && (x.context.liveview as string).toUpperCase() === entry.name.toUpperCase());
+        const accessory = this.platform.accessories.find(x => ("liveview" in x.context) && ((x.context.liveview as string).toUpperCase() === entry.name.toUpperCase()));
 
         // If we can't find it, move on.
         if(!accessory) {
