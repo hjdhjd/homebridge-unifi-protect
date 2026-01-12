@@ -29,14 +29,14 @@ This is a complete reference of the HBUP settings JSON. The defaults should work
     "ringDelay": 0,
 
     "options": [
-      "Disable.Video.Stream.High"
+      "Enable.Motion.Switch"
     ],
 
     "controllers": [
       {
         "name": "My UniFi Protect Controller",
         "address": "1.2.3.4",
-        "addressOverride": "a.b.c.d",
+        "overrideAddress": "a.b.c.d",
         "username": "some-homebridge-user (or create a new one just for homebridge)",
         "password": "some-password",
         "doorbellMessages": [
@@ -59,7 +59,7 @@ This is a complete reference of the HBUP settings JSON. The defaults should work
 | address                | Host or IP address of your UniFi Protect controller.    |                                                                                       | Yes      |
 | username               | Your UniFi Protect username.                            |                                                                                       | Yes      |
 | password               | Your UniFi Protect password.                            |                                                                                       | Yes      |
-| addressOverride        | Override the address used when HBUP accesses camera URLs.|                                                                                      | No       |
+| overrideAddress        | Override the address used when HBUP accesses camera URLs.|                                                                                      | No       |
 | doorbellMessages       | Configure [doorbell messages](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Doorbell.md) for your UniFi Protect controller. | [] | No |
 | ringDelay              | Delay between doorbell rings. Setting this to a non-zero value will prevent multiple rings of a doorbell over the specified duration. | 0                                                                                     | No       |
 | videoProcessor         | Specify path of ffmpeg. HBUP uses it's own ffmpeg version, and in general you should not specify a different one unless there is a specific need. | builtin or falling back to "ffmpeg" in your PATH. | No       |

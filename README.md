@@ -25,9 +25,11 @@ For the more technically inclined - this plugin has continued to pioneer the Hom
 ### Features
 - ***Easy* configuration - all you need is your UniFi Protect controller IP address, username, and password to get started.** The defaults work quite well for the vast majority of users. When you want more, there are [additional options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md) you can play with, if you choose.
 
-- **Full HomeKit support for the UniFi Protect ecosystem.** All generally available UniFi Protect devices are supported, including cameras, chimes, doorbells, lights, sensors, and Viewports.
+- **Full HomeKit support for the UniFi Protect ecosystem.** All generally available UniFi Protect devices are supported, including cameras (with tamper detection on supported models), chimes, doorbells, lights, sensors (including SuperLink sensors), and Viewports.
 
 - **[Complete HomeKit Secure Video support for all UniFi Protect cameras.](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/HomeKitSecureVideo.md)** Complete HomeKit Secure Video support, without the need for additional plugins or software beyond FFmpeg. Another community first - all without the need for additional tools to get a complete solution. Third party cameras using an AI Port are also fully supported.
+
+- **Third-party camera support.** ONVIF-compatible third-party cameras added to Protect are supported with some constraints: no motion sensor is exposed by the Protect controller, which means HKSV is unavailable for these cameras. However, if a third-party camera is paired with an AI Port, full HKSV support becomes available as the AI Port provides the necessary motion detection capabilities.
 
 - **Incredibly high performance.** I've spent the time to optimize the video streaming experience to ensure it feels very responsive, and *just works*. For those that have hardware-accelerated CPUs and GPUs, live video stream load times using the Home app on iOS average at 0.2-0.3 seconds on a day-to-day basis, which is often better than the native UniFi Protect app! Supported hardware-accelerated platforms are currently: Apple Macs (both Intel and Apple Silicon), Intel Quick Sync Video-enabled CPUs, and Raspberry Pi 4. When not using hardware acceleration, or on slower systems, you can expect live video streams to load within 1-2 seconds.
 
@@ -48,6 +50,8 @@ For the more technically inclined - this plugin has continued to pioneer the Hom
 - **Create scenes or presets for groups of cameras.** If you choose to [create specific liveviews](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Liveviews.md), a security system accessory will appear in HomeKit, enabling you to have motion-detection scenes or presets a tap away. For even more customization, you can create liveview-based switches that will allow you to enable or disable motion detection on groups of cameras. They're easy and intuitive to create and can amplify your user experience in HomeKit.
 
 - **MQTT support.** [MQTT](https://mqtt.org) support is available for those that want to [make UniFi Protect accessible to an MQTT broker](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/MQTT.md).
+
+- **UniFi Access integration.** For UniFi Access readers that are paired with a Protect camera on the same controller, HBUP exposes a lock accessory allowing you to unlock the door from HomeKit. Note: due to Protect API limitations, only unlocking is supported - locking must be done through the Access app or automatically by the Access system.
 
 - **And more...**
 
@@ -85,6 +89,7 @@ I hope to continue to work on this one to get AEC working for two-way audio. [Yo
 >     * Click ***Add Admin*** located near the top right of the ***OS Settings*** page.
 >     * Click ***Restrict to local access only*** and then enter in a username and password for the new local user.
 >     * Optionally customize the role of the user to adjust the roles. HBUP requires the ***Full Management*** role for all of it's capabilities to work, although it will work in a more limited form without administrative privileges.
+>   * **UniFi Protect v6 or later is required.** Earlier versions of Protect are no longer supported.
 >
 > ### Getting Started
 > To install `homebridge-unifi-protect`:

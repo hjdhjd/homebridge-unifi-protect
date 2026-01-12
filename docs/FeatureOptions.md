@@ -157,7 +157,7 @@ These option(s) apply to: Protect sensors.
 
 | Option                                                                              | Description
 |-------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------
-| <A NAME="Sensor.MoistureSensor"></A>`Sensor.MoistureSensor`                         | Use the Protect leak sensor as a moisture sensor instead and expose it as a contact sensor. **(default: disabled)**.
+| <A NAME="Sensor.MoistureSensor"></A>`Sensor.MoistureSensor`                         | Expose the Protect leak sensor as a contact sensor instead of a leak sensor. This is useful for automation scenarios since HomeKit contact sensors offer more flexible automation options than leak sensors, which are primarily designed for alerts. **(default: disabled)**.
 
 #### <A NAME="unifi.access"></A>UniFi Access feature options.
 

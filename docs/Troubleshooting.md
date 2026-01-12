@@ -115,3 +115,22 @@ You can tune when HBUP chooses to transcode by adjusting the options under the v
 
 ##### Final Thoughts
 For quickly trying to get things up and running when you're struggling, always start by forcing the stream quality to `Low`. From there, experiment with the options to tune it to your environment.
+
+### Self-Healing and Camera Restarts
+
+HBUP includes a self-healing feature that monitors camera connectivity. If a camera's livestream API connection continuously times out over an extended period, HBUP will attempt to restart the camera to restore functionality. This behavior is:
+
+  * **Conservative**: Restarts only occur after sustained, repeated failures - not for occasional timeouts or brief network issues.
+  * **Logged**: Any restart will be logged so you can see when it occurs.
+  * **Configurable**: You can disable self-healing per-device using the `Device.SelfHealing` feature option if you prefer manual control.
+
+If you're seeing frequent camera restarts, this may indicate an underlying issue with your network, the camera firmware, or the Protect controller. Check your Homebridge logs for patterns.
+
+### Tamper Detection
+
+Protect cameras with tamper detection capability (currently AI and G6 series) can have their tamper status reflected in HomeKit. Tamper detection must first be enabled in the Protect webUI under Recording Settings for the camera - HBUP will then expose this status in HomeKit. You can view the tamper status by opening the detail view of the camera's motion sensor.
+
+Unlike Protect sensors which maintain a persistent tampered state, cameras only log tamper events. To clear a tamper event:
+
+  * Disable and re-enable tamper detection in the Protect webUI, or
+  * Restart HBUP.

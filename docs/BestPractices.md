@@ -76,7 +76,7 @@ Put the time into setting up and adjusting motion zones in UniFi Protect. Spend 
 You'll find this pays dividends and spending 30 minutes or an hour setting something like this up once pays off in the long run and gives you a better experience overall.
 
 ##### Enabling Notifications (non-HKSV recommendations)
-Go into iOS, iPadOS, or macOS and turn on notifications for all your cameras, *and leave them on*. No, I haven't lost my mind. :smile: Let me explain...
+Go into iOS, iPadOS, or macOS and turn on notifications for all your cameras, *and leave them on*. No, I haven't lost my mind. 😄 Let me explain...
 
 Enabling notifications on all your cameras will ensure that iOS is alerted to when motion occurs and, crucially, *updates the snapshots of the cameras in the background*. What this means for you is that your HomeKit experience will feel more responsive and faster, because anytime there's a motion event, the Home app will refresh that image automatically in the background.
 
