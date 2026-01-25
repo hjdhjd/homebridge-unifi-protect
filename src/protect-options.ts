@@ -1,4 +1,4 @@
-/* Copyright(C) 2020-2025, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2020-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * protect-options.ts: Feature option and type definitions for UniFi Protect.
  */
@@ -174,7 +174,7 @@ export const featureOptions: { [index: string]: ProtectFeatureOption[] } = {
   // Sensor options.
   "Sensor": [
 
-    { default: false, description: "Use the Protect leak sensor as a moisture sensor instead and expose it as a contact sensor.", name: "MoistureSensor" }
+    { default: false, description: "Expose the Protect leak sensor as a contact sensor instead of a leak sensor. This is useful for automation scenarios since HomeKit contact sensors offer more flexible automation options than leak sensors, which are primarily designed for alerts.", name: "MoistureSensor" }
   ],
 
   // HomeKit Secure Video options.

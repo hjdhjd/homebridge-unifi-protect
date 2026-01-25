@@ -1,4 +1,4 @@
-/* Copyright(C) 2019-2025, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * protect-camera.ts: Camera device class for UniFi Protect.
  */
@@ -412,7 +412,7 @@ export class ProtectCamera extends ProtectDevice {
         lux ||= 0.0001;
 
         return lux;
-      // eslint-disable-next-line @stylistic/keyword-spacing
+
       } catch {
 
         // We're intentionally ignoring any errors parsing a response and will fall through.

@@ -1,4 +1,4 @@
-/* Copyright(C) 2017-2025, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * protect-record.ts: Homebridge camera recording delegate implementation for UniFi Protect to support HomeKit Secure Video.
  *

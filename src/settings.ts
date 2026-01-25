@@ -1,4 +1,4 @@
-/* Copyright(C) 2022-2025, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2022-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * settings.ts: Settings and constants for homebridge-unifi-protect.
  */
