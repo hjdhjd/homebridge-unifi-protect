@@ -182,11 +182,8 @@ export class ProtectCamera extends ProtectDevice {
     // We use an IIFE here since we can't make the enclosing function asynchronous.
     (async (): Promise<void> => {
 
-      // Configure the ambient light sensor.
-      await this.configureAmbientLightSensor();
-
-      // Configure our video stream.
-      await this.configureVideoStream();
+      // Configure the ambient light sensor and video stream in parallel since they are independent operations.
+      await Promise.all([ this.configureAmbientLightSensor(), this.configureVideoStream() ]);
 
       // Configure our camera details.
       this.configureCameraDetails();
