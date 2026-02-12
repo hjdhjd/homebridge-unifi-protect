@@ -443,8 +443,8 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
 
     this.abTest = !this.abTest;
 
-    // FFmpeg doesn't support AV1 over RTSP yet.
-    if((this.protectCamera.ufp.videoCodec === "av1") && !useTsb) {
+    // FFmpeg 8 is required for AV1 over RTSP.
+    if((this.protectCamera.ufp.videoCodec === "av1" && ! this.platform.codecSupport.ffmpegVersion.startsWith("8.")) && !useTsb) {
 
       if(!this.hksv?.isRecording) {
 
