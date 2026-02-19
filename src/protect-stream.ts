@@ -97,7 +97,7 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
       codecSupport: this.platform.codecSupport,
       crop: this.protectCamera.hints.cropOptions,
       debug: this.platform.config.debugAll,
-      decodeCodec: this.protectCamera.ufp.videoCodec,
+      decodeCodec: (): string => this.protectCamera.ufp.videoCodec,
       hardwareDecoding: this.protectCamera.hints.hardwareDecoding,
       hardwareTranscoding: this.protectCamera.hints.hardwareTranscoding,
       log: this.log,

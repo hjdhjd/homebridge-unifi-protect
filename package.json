@@ -81,7 +81,7 @@
   "dependencies": {
     "@homebridge/plugin-ui-utils": "2.1.2",
     "ffmpeg-for-homebridge": "2.2.1",
-    "homebridge-plugin-utils": "1.31.0",
+    "homebridge-plugin-utils": "file:../homebridge-plugin-utils",
     "undici": "7.19.1",
     "unifi-protect": "4.27.7"
   },
