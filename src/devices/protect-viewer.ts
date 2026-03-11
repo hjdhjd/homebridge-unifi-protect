@@ -41,7 +41,7 @@ export class ProtectViewer extends ProtectDevice {
     this.configureMqtt();
 
     // Listen for events.
-    this.nvr.events.on("updateEvent." + this.ufp.id, this.listeners["updateEvent." + this.ufp.id] = this.eventHandler.bind(this));
+    this.registerListener("updateEvent." + this.ufp.id, this.eventHandler.bind(this));
 
     // Inform the user what we're enabling on startup.
     if(enabledLiveviews.length) {
@@ -65,7 +65,7 @@ export class ProtectViewer extends ProtectDevice {
     const nvrLiveviewIds = this.ufpApi.bootstrap?.liveviews.map(x => x.id);
 
     // Identify what's been removed on the NVR and remove it from the accessory as well.
-    currentLiveviewSwitches.filter(x => !nvrLiveviewIds?.includes(x.subtype ?? "")).map(x => this.accessory.removeService(x));
+    currentLiveviewSwitches.filter(x => !nvrLiveviewIds?.includes(x.subtype ?? "")).map(x => { this.accessory.removeService(x); });
 
     // Identify what needs to be added to HomeKit that isn't already there, and add them.
     this.addLiveviewSwitch(nvrLiveviewIds?.filter(x => !currentLiveviewSwitches.filter(liveviewSwitch => liveviewSwitch.subtype === x).length) ?? []);
@@ -134,7 +134,7 @@ export class ProtectViewer extends ProtectDevice {
   // Set the current state of the liveview switch.
   private async setLiveviewSwitchState(switchService: Service, value: CharacteristicValue): Promise<void> {
 
-    const viewState = value === true ? switchService.subtype as string : null;
+    const viewState = value === true ? switchService.subtype ?? null : null;
     const newDevice = await this.setViewer(viewState);
 
     if(!newDevice) {

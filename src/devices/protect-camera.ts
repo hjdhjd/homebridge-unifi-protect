@@ -42,7 +42,7 @@ export class ProtectCamera extends ProtectDevice {
   private isTampered: boolean;
   public detectLicensePlate: string[];
   public readonly livestream: LivestreamManager;
-  public messageSwitches: { [index: string]: MessageSwitchInterface | undefined };
+  public messageSwitches: Map<string, MessageSwitchInterface>;
   public packageCamera?: Nullable<ProtectCameraPackage>;
   private rtspEntries: RtspEntry[];
   public stream?: ProtectStreamingDelegate;
@@ -59,7 +59,7 @@ export class ProtectCamera extends ProtectDevice {
     this.isTampered = false;
     this.detectLicensePlate = [];
     this.livestream = new LivestreamManager(this);
-    this.messageSwitches = {};
+    this.messageSwitches = new Map();
     this.rtspEntries = [];
     this.ufp = device;
 
@@ -87,9 +87,9 @@ export class ProtectCamera extends ProtectDevice {
     this.hints.smartDetect = this.ufp.featureFlags.hasSmartDetect && this.hasFeature("Motion.SmartDetect");
     this.hints.smartDetectSensors = this.hints.smartDetect && this.hasFeature("Motion.SmartDetect.ObjectSensors");
     this.hints.transcode = this.hasFeature("Video.Transcode");
-    this.hints.transcodeBitrate = this.getFeatureNumber("Video.Transcode.Bitrate") as number;
+    this.hints.transcodeBitrate = this.getFeatureNumber("Video.Transcode.Bitrate") ?? -1;
     this.hints.transcodeHighLatency = this.hasFeature("Video.Transcode.HighLatency");
-    this.hints.transcodeHighLatencyBitrate = this.getFeatureNumber("Video.Transcode.HighLatency.Bitrate") as number;
+    this.hints.transcodeHighLatencyBitrate = this.getFeatureNumber("Video.Transcode.HighLatency.Bitrate") ?? -1;
     this.hints.twoWayAudio = this.ufp.featureFlags.hasSpeaker && this.hasFeature("Audio") && this.hasFeature("Audio.TwoWay");
     this.hints.twoWayAudioDirect = this.ufp.featureFlags.hasSpeaker && this.hasFeature("Audio") && this.hasFeature("Audio.TwoWay.Direct");
 
@@ -204,8 +204,8 @@ export class ProtectCamera extends ProtectDevice {
       this.configureDoorbellTrigger();
 
       // Listen for events.
-      this.nvr.events.on("addEvent." + this.ufp.id, this.listeners["addEvent." + this.ufp.id] = this.addEventHandler.bind(this));
-      this.nvr.events.on("updateEvent." + this.ufp.id, this.listeners["updateEvent." + this.ufp.id] = this.eventHandler.bind(this));
+      this.registerListener("addEvent." + this.ufp.id, this.addEventHandler.bind(this));
+      this.registerListener("updateEvent." + this.ufp.id, this.eventHandler.bind(this));
     })();
 
     return true;
@@ -264,7 +264,7 @@ export class ProtectCamera extends ProtectDevice {
     // Process ring events.
     if(hasProperty(["lastRing"])) {
 
-      this.nvr.events.doorbellEventHandler(this, payload.lastRing as number);
+      this.nvr.events.doorbellEventHandler(this, payload.lastRing ?? null);
     }
 
     // If smart detection is enabled, we need to filter out any events tagged as "motion". When users enable the "Create motion events" setting on a camera, Protect will
@@ -418,8 +418,8 @@ export class ProtectCamera extends ProtectDevice {
       return -1;
     };
 
-    // Update the ambient light sensor at regular intervals
-    this.ambientLightTimer = setInterval(async () => {
+    // Update the ambient light sensor at regular intervals.
+    const updateAmbientLight = async (): Promise<void> => {
 
       // Stop updating if we no longer exist.
       if(this.isDeleted) {
@@ -443,7 +443,9 @@ export class ProtectCamera extends ProtectDevice {
 
       // Publish the state.
       this.publish("ambientlight", this.ambientLight.toString());
-    }, 60 * 1000);
+    };
+
+    this.ambientLightTimer = setInterval(() => void updateAmbientLight(), 60 * 1000);
 
     // Retrieve the active state when requested.
     service.getCharacteristic(this.hap.Characteristic.StatusActive).onGet(() => this.isOnline);
@@ -1022,24 +1024,24 @@ export class ProtectCamera extends ProtectDevice {
     if(![ 15, 24, 30 ].includes(rtspEntries[0].resolution[2])) {
 
       // Iterate through the list of RTSP entries we're providing to HomeKit and ensure we have at least one that will meet HomeKit's requirements for frame rate.
-      for(let i = 0; i < rtspEntries.length; i++) {
+      for(const entry of rtspEntries) {
 
         // We're only interested in the first 1080p or 1440p entry.
-        if((rtspEntries[i].resolution[0] !== 1920) || ![ 1080, 1440 ].includes(rtspEntries[i].resolution[1])) {
+        if((entry.resolution[0] !== 1920) || ![ 1080, 1440 ].includes(entry.resolution[1])) {
 
           continue;
         }
 
         // Determine the best frame rate to use that's closest to what HomeKit wants to see.
-        if(rtspEntries[i].resolution[2] > 24) {
+        if(entry.resolution[2] > 24) {
 
-          rtspEntries[i].resolution[2] = 30;
-        } else if(rtspEntries[i].resolution[2] > 15) {
+          entry.resolution[2] = 30;
+        } else if(entry.resolution[2] > 15) {
 
-          rtspEntries[i].resolution[2] = 24;
+          entry.resolution[2] = 24;
         } else {
 
-          rtspEntries[i].resolution[2] = 15;
+          entry.resolution[2] = 15;
         }
 
         break;
@@ -1104,14 +1106,14 @@ export class ProtectCamera extends ProtectDevice {
 
           // For constrained CPU environments like Raspberry Pi, we default to recording from the highest quality channel we can, that's at or below 1080p. That provides
           // a reasonable default, while still allowing users who really want to, to be able to specify something else.
-          this.hints.recordingDefault = (this.findRtsp(1920, 1080, { maxPixels: this.stream.ffmpegOptions.hostSystemMaxPixels })?.channel.name ?? undefined) as string;
+          this.hints.recordingDefault = this.findRtsp(1920, 1080, { maxPixels: this.stream.ffmpegOptions.hostSystemMaxPixels })?.channel.name ?? "";
 
           break;
 
         default:
 
           // We default to no preference for the default Protect camera channel.
-          this.hints.recordingDefault = (this.hints.hardwareTranscoding ? "High" : undefined) as string;
+          this.hints.recordingDefault = this.hints.hardwareTranscoding ? "High" : "";
 
           break;
       }
@@ -1462,7 +1464,7 @@ export class ProtectCamera extends ProtectDevice {
       // Grab all the available RTSP channels and return them as a JSON.
       return JSON.stringify(Object.assign({}, ...this.ufp.channels.filter(channel => channel.isRtspEnabled)
         .map(channel => ({ [channel.name]: "rtsps://" + (this.nvr.config.overrideAddress ?? this.ufp.connectionHost ?? this.nvr.ufp.host) + ":" +
-          this.nvr.ufp.ports.rtsp + "/" + channel.rtspAlias + "?enableSrtp" }))));
+          this.nvr.ufp.ports.rtsp.toString() + "/" + channel.rtspAlias + "?enableSrtp" }))));
     });
 
     // Trigger snapshots when requested.
@@ -1669,7 +1671,7 @@ export class ProtectCamera extends ProtectDevice {
   // Utility property to return the current night vision state of a camera. It's a blunt instrument due to HomeKit constraints.
   private get nightVision(): boolean {
 
-    return (this.ufp as ProtectCameraConfig).ispSettings.irLedMode !== "off";
+    return this.ufp.ispSettings.irLedMode !== "off";
   }
 
   // Utility property to return the current night vision state of a camera, mapped to a brightness characteristic.

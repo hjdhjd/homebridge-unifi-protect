@@ -50,6 +50,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
   }
 
   // Process HomeKit requests to activate or deactivate HKSV recording capabilities for a camera.
+  // eslint-disable-next-line @typescript-eslint/no-misused-promises -- Async implementation of a void-returning Homebridge interface method.
   public async updateRecordingActive(active: boolean): Promise<void> {
 
     // If we are no longer recording, stop the livestream.
@@ -462,7 +463,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
           recordedTime += minutes.toString() + ":";
         } else if(minutes > 0) {
 
-          recordedTime += (hours > 0) ? "0" : "" + minutes.toString() + ":";
+          recordedTime += ((hours > 0) ? "0" : "") + minutes.toString() + ":";
         }
 
         if(recordedTime.length && (seconds < 10)) {

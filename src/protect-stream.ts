@@ -20,15 +20,15 @@ import { ProtectReservedNames } from "./protect-types.js";
 import { ProtectSnapshot } from "./protect-snapshot.js";
 import { once } from "node:events";
 
-type OngoingSessionEntry = {
+interface OngoingSessionEntry {
 
   ffmpeg: FfmpegStreamingProcess[];
   rtpDemuxer: Nullable<RtpDemuxer>;
   rtpPortReservations: number[];
   toggleLight?: Service;
-};
+}
 
-type SessionInfo = {
+interface SessionInfo {
 
   address: string; // Address of the HomeKit client.
   addressVersion: string;
@@ -52,7 +52,7 @@ type SessionInfo = {
   videoReturnPort: number;
   videoSRTP: Buffer; // Key and salt concatenated.
   videoSSRC: number; // RTP synchronisation source.
-};
+}
 
 // Camera streaming delegate implementation for Protect.
 export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
@@ -64,8 +64,8 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
   public hksv: Nullable<ProtectRecordingDelegate>;
   public readonly log: HomebridgePluginLogging;
   private readonly nvr: ProtectNvr;
-  private ongoingSessions: { [index: string]: OngoingSessionEntry };
-  private pendingSessions: { [index: string]: SessionInfo };
+  private ongoingSessions: Map<string, OngoingSessionEntry>;
+  private pendingSessions: Map<string, SessionInfo>;
   public readonly platform: ProtectPlatform;
   public readonly protectCamera: ProtectCamera;
   private probesizeOverride: number;
@@ -83,9 +83,9 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
     this.hksv = null;
     this.log = protectCamera.log;
     this.nvr = protectCamera.nvr;
-    this.ongoingSessions = {};
+    this.ongoingSessions = new Map();
     this.protectCamera = protectCamera;
-    this.pendingSessions = {};
+    this.pendingSessions = new Map();
     this.platform = protectCamera.platform;
     this.probesizeOverride = 0;
     this.probesizeOverrideCount = 0;
@@ -130,9 +130,9 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
       delegate: this,
 
       // Our recording capabilities for HomeKit Secure Video.
-      recording: !this.protectCamera.isHksvCapable ? undefined : {
+      recording: !this.protectCamera.isHksvCapable || !this.hksv ? undefined : {
 
-        delegate: this.hksv as ProtectRecordingDelegate,
+        delegate: this.hksv,
 
         options: {
 
@@ -231,6 +231,7 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
   }
 
   // HomeKit image snapshot request handler.
+  // eslint-disable-next-line @typescript-eslint/no-misused-promises -- Async implementation of a void-returning Homebridge interface method.
   public async handleSnapshotRequest(request?: SnapshotRequest, callback?: SnapshotRequestCallback): Promise<void> {
 
     const snapshot = await this.snapshot.getSnapshot(request);
@@ -257,6 +258,7 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
   }
 
   // Prepare to launch the video stream.
+  // eslint-disable-next-line @typescript-eslint/no-misused-promises -- Async implementation of a void-returning Homebridge interface method.
   public async prepareStream(request: PrepareStreamRequest, callback: PrepareStreamCallback): Promise<void> {
 
     let reservePortFailed = false;
@@ -392,14 +394,22 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
     };
 
     // Add it to the pending session queue so we're ready to start when we're called upon.
-    this.pendingSessions[request.sessionID] = sessionInfo;
+    this.pendingSessions.set(request.sessionID, sessionInfo);
     callback(undefined, response);
   }
 
   // Launch the Protect video (and audio) stream.
   private async startStream(request: StartStreamRequest, callback: StreamRequestCallback): Promise<void> {
 
-    const sessionInfo = this.pendingSessions[request.sessionID];
+    const sessionInfo = this.pendingSessions.get(request.sessionID);
+
+    if(!sessionInfo) {
+
+      callback(new Error("Unable to find the pending session."));
+
+      return;
+    }
+
     const sdpIpVersion = sessionInfo.addressVersion === "ipv6" ? "IP6" : "IP4";
 
     // If we aren't connected, we're done.
@@ -824,7 +834,7 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
 
       // If we're using a timeshift buffer, let's use that to livestream. It has the dual benefit of reducing the workload on the Protect controller since it's already
       // providing a livestream to us and it also improves performance by ensuring there's several seconds of video ready to immediately transmit.
-      const livestreamListener = async (segment: Buffer): Promise<void> => {
+      const livestreamListener = (segment: Buffer): void => void (async (): Promise<void> => {
 
         if(!seenInitSegment) {
 
@@ -834,7 +844,7 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
 
         // Send the segment to FFmpeg for processing.
         processSegmentQueue(segment);
-      };
+      })();
 
       const closeListener = (): void => void ffmpegStream.ffmpegProcess?.stdin.end();
 
@@ -862,15 +872,15 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
     }
 
     // Some housekeeping for our FFmpeg and demuxer sessions.
-    this.ongoingSessions[request.sessionID] = {
+    this.ongoingSessions.set(request.sessionID, {
 
       ffmpeg: [ffmpegStream],
       rtpDemuxer: sessionInfo.rtpDemuxer,
       rtpPortReservations: sessionInfo.rtpPortReservations,
       toggleLight: flashlightService
-    };
+    });
 
-    delete this.pendingSessions[request.sessionID];
+    this.pendingSessions.delete(request.sessionID);
 
     // If we aren't doing two-way audio, we're done here. For two-way audio...we have some more plumbing to do.
     if(!sessionInfo.hasAudioSupport || !this.protectCamera.hints.twoWayAudio) {
@@ -1031,7 +1041,7 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
       const ffmpegReturnAudio = new FfmpegStreamingProcess(this, request.sessionID, this.ffmpegOptions, ffmpegReturnAudioCmd);
 
       // Setup housekeeping for the twoway FFmpeg session.
-      this.ongoingSessions[request.sessionID].ffmpeg.push(ffmpegReturnAudio);
+      this.ongoingSessions.get(request.sessionID)?.ffmpeg.push(ffmpegReturnAudio);
 
       // Feed the SDP session description to FFmpeg on stdin.
       ffmpegReturnAudio.stdin?.end(sdpReturnAudio + "\n");
@@ -1060,6 +1070,7 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
   }
 
   // Process incoming stream requests.
+  // eslint-disable-next-line @typescript-eslint/no-misused-promises -- Async implementation of a void-returning Homebridge interface method.
   public async handleStreamRequest(request: StreamingRequest, callback: StreamRequestCallback): Promise<void> {
 
     switch(request.type) {
@@ -1096,35 +1107,37 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
     try {
 
       // Stop any FFmpeg instances we have running.
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-      if(this.ongoingSessions[sessionId]) {
+      const ongoingSession = this.ongoingSessions.get(sessionId);
 
-        this.ongoingSessions[sessionId].ffmpeg.map(ffmpegProcess => ffmpegProcess.stop());
+      if(ongoingSession) {
+
+        ongoingSession.ffmpeg.map(ffmpegProcess => { ffmpegProcess.stop(); });
 
         // Close the demuxer, if we have one.
-        this.ongoingSessions[sessionId].rtpDemuxer?.close();
+        ongoingSession.rtpDemuxer?.close();
 
         // Turn off the flashlight on package cameras, if enabled. We explicitly want to call the set handler for the flashlight.
-        this.ongoingSessions[sessionId].toggleLight?.setCharacteristic(this.hap.Characteristic.On, false);
+        ongoingSession.toggleLight?.setCharacteristic(this.hap.Characteristic.On, false);
 
         // Inform the user.
         this.log.info("Stopped video streaming session.");
 
         // Release our port reservations.
-        this.ongoingSessions[sessionId].rtpPortReservations.map(x => this.platform.rtpPorts.cancel(x));
+        ongoingSession.rtpPortReservations.map(x => { this.platform.rtpPorts.cancel(x); });
       }
 
       // On the off chance we were signaled to prepare to start streaming, but never actually started streaming, cleanup after ourselves.
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-      if(this.pendingSessions[sessionId]) {
+      const pendingSession = this.pendingSessions.get(sessionId);
+
+      if(pendingSession) {
 
         // Release our port reservations.
-        this.pendingSessions[sessionId].rtpPortReservations.map(x => this.platform.rtpPorts.cancel(x));
+        pendingSession.rtpPortReservations.map(x => { this.platform.rtpPorts.cancel(x); });
       }
 
       // Delete the entries.
-      delete this.pendingSessions[sessionId];
-      delete this.ongoingSessions[sessionId];
+      this.pendingSessions.delete(sessionId);
+      this.ongoingSessions.delete(sessionId);
     } catch(error) {
 
       this.log.error("Error occurred while ending the FFmpeg video processes: %s.", error);
@@ -1134,7 +1147,7 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
   // Shutdown all our video streams.
   public shutdown(): void {
 
-    for(const session of Object.keys(this.ongoingSessions)) {
+    for(const session of this.ongoingSessions.keys()) {
 
       this.stopStream(session);
     }

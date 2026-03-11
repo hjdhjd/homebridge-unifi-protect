@@ -16,7 +16,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
   private _isStarted: boolean;
   private _isTransmitting: boolean;
   private _segmentLength: number;
-  private eventHandlers: { [index: string]: ((segment: Buffer) => void) | (() => void) };
+  private eventHandlers: Record<string, ((segment: Buffer) => void) | (() => void)>;
   private livestream?: FfmpegLivestreamProcess | ProtectLivestream;
   private readonly log: HomebridgePluginLogging;
   private readonly protectCamera: ProtectCamera;

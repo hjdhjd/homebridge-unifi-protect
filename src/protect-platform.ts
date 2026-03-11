@@ -4,7 +4,7 @@
  */
 import type { API, DynamicPlatformPlugin, Logging, PlatformAccessory, PlatformConfig } from "homebridge";
 import { FeatureOptions, FfmpegCodecs, RtpPortAllocator } from "homebridge-plugin-utils";
-import { type ProtectOptions, featureOptionCategories, featureOptions } from "./protect-options.js";
+import { type ProtectNvrOptions, type ProtectOptions, featureOptionCategories, featureOptions } from "./protect-options.js";
 import { APIEvent } from "homebridge";
 import { PROTECT_MQTT_TOPIC } from "./settings.js";
 import { ProtectNvr } from "./protect-nvr.js";
@@ -28,7 +28,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
     this.accessories = [];
     this.api = api;
     this.controllers = [];
-    this.featureOptions = new FeatureOptions(featureOptionCategories, featureOptions, config?.options ?? []);
+    this.featureOptions = new FeatureOptions(featureOptionCategories, featureOptions, (config?.options as string[] | undefined) ?? []);
     this.log = log;
     this.rtpPorts = new RtpPortAllocator();
     this.verboseFfmpeg = false;
@@ -36,12 +36,12 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
     // Plugin options into our config variables.
     this.config = {
 
-      controllers: config?.controllers ?? [],
+      controllers: (config?.controllers as ProtectNvrOptions[] | undefined) ?? [],
       debugAll: config?.debug === true,
-      options: config?.options ?? [],
-      ringDelay: config?.ringDelay ?? 0,
+      options: (config?.options as string[] | undefined) ?? [],
+      ringDelay: (config?.ringDelay as number | undefined) ?? 0,
       verboseFfmpeg: config?.verboseFfmpeg === true,
-      videoProcessor: config?.videoProcessor ?? ffmpegPath ?? "ffmpeg"
+      videoProcessor: (config?.videoProcessor as string | undefined) ?? ffmpegPath ?? "ffmpeg"
     };
 
     // We need a UniFi Protect controller configured to do anything.
@@ -92,7 +92,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
 
     // Avoid a prospective race condition by waiting to configure our controllers until Homebridge is done loading all the cached accessories it knows about, and calling
     // configureAccessory() on each.
-    api.on(APIEvent.DID_FINISH_LAUNCHING, this.launchControllers.bind(this));
+    api.on(APIEvent.DID_FINISH_LAUNCHING, () => void this.launchControllers());
   }
 
   // This gets called when homebridge restores cached accessories at startup. We intentionally avoid doing anything significant here, and save it for device discovery.

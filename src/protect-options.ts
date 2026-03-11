@@ -8,7 +8,7 @@ import { PROTECT_DEVICE_REMOVAL_DELAY_INTERVAL, PROTECT_DOORBELL_CHIME_DURATION_
 import type { FeatureOptionEntry } from "homebridge-plugin-utils";
 
 // Plugin configuration options.
-export type ProtectOptions = {
+export interface ProtectOptions {
 
   controllers: ProtectNvrOptions[];
   debugAll: boolean;
@@ -16,7 +16,7 @@ export type ProtectOptions = {
   ringDelay: number;
   verboseFfmpeg: boolean;
   videoProcessor: string;
-};
+}
 
 // NVR configuration options.
 export interface ProtectNvrOptions {
@@ -77,7 +77,7 @@ export const featureOptionCategories = [
   { description: "HomeKit Secure Video", isNotProperty: ["isThirdPartyCamera"], modelKey: ["camera"], name: "Video.HKSV" }
 ];
 
-export const featureOptions: { [index: string]: ProtectFeatureOption[] } = {
+export const featureOptions: Record<string, ProtectFeatureOption[]> = {
 
   // Audio options.
   "Audio": [

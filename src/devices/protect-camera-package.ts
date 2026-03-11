@@ -222,7 +222,7 @@ export class ProtectCameraPackage extends ProtectCamera {
       await activateFlashlight();
 
       // Heartbeat the flashlight at regular intervals to keep it on.
-      this.flashlightTimer = setInterval(async () => activateFlashlight(), 20 * 1000);
+      this.flashlightTimer = setInterval(() => void activateFlashlight(), 20 * 1000);
     });
 
     // Initialize the flashlight.

@@ -54,7 +54,7 @@ export class ProtectLight extends ProtectDevice {
     this.configureMqtt();
 
     // Listen for events.
-    this.nvr.events.on("updateEvent." + this.ufp.id, this.listeners["updateEvent." + this.ufp.id] = this.eventHandler.bind(this));
+    this.registerListener("updateEvent." + this.ufp.id, this.eventHandler.bind(this));
 
     return true;
   }
@@ -76,7 +76,7 @@ export class ProtectLight extends ProtectDevice {
     // Turn the light on or off.
     service.getCharacteristic(this.hap.Characteristic.On).onGet(() => {
 
-      return this.ufp.isLightOn === true;
+      return this.ufp.isLightOn;
     });
 
     service.getCharacteristic(this.hap.Characteristic.On).onSet(async (value: CharacteristicValue) => {
@@ -140,7 +140,7 @@ export class ProtectLight extends ProtectDevice {
     // Get the light state.
     this.subscribeGet("light", "light status", () => {
 
-      return (this.ufp.isLightOn === true).toString();
+      return (this.ufp.isLightOn).toString();
     });
 
     this.subscribeGet("light/brightness", "light brightness", () => {
@@ -185,7 +185,7 @@ export class ProtectLight extends ProtectDevice {
     if("isLightOn" in payload) {
 
       // Update our power state.
-      this.accessory.getService(this.hap.Service.Lightbulb)?.updateCharacteristic(this.hap.Characteristic.On, payload.isLightOn as boolean);
+      this.accessory.getService(this.hap.Service.Lightbulb)?.updateCharacteristic(this.hap.Characteristic.On, payload.isLightOn ?? false);
     }
 
     // It's light brightness event - process it accordingly.
@@ -195,7 +195,7 @@ export class ProtectLight extends ProtectDevice {
 
         // Update our brightness.
         this.accessory.getService(this.hap.Service.Lightbulb)?.
-          updateCharacteristic(this.hap.Characteristic.Brightness, ((payload.lightDeviceSettings.ledLevel as number) - 1) * 20);
+          updateCharacteristic(this.hap.Characteristic.Brightness, ((payload.lightDeviceSettings.ledLevel ?? 1) - 1) * 20);
       }
 
       if("isIndicatorEnabled" in payload.lightDeviceSettings) {
@@ -210,7 +210,7 @@ export class ProtectLight extends ProtectDevice {
   // Utility to return the command to set the device LED status on a Protect light.
   protected statusLedCommand(value: boolean): object {
 
-    return { lightDeviceSettings: { isIndicatorEnabled: value === true } };
+    return { lightDeviceSettings: { isIndicatorEnabled: value } };
   }
 
   // Utility function to return the current state of the status indicator light.

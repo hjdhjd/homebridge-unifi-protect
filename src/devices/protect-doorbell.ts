@@ -54,7 +54,7 @@ export class ProtectDoorbell extends ProtectCamera {
     this.defaultMessageDuration = this.nvr.ufp.doorbellSettings?.defaultMessageResetTimeoutMs ?? 60000;
     this.isMessagesEnabled = this.hasFeature("Doorbell.Messages");
     this.isMessagesFromControllerEnabled = this.hasFeature("Doorbell.Messages.FromDoorbell");
-    this.messageSwitches = {};
+    this.messageSwitches = new Map();
     this.packageCamera = null;
 
     // Ensure physical chimes that are digital have sane durations.
@@ -94,8 +94,8 @@ export class ProtectDoorbell extends ProtectCamera {
     this.configureProtectChimeLightbulb();
 
     // Register our event handlers.
-    this.nvr.events.on("updateEvent." + this.nvr.ufp.id, this.listeners["updateEvent." + this.nvr.ufp.id] = this.nvrEventHandler.bind(this));
-    this.nvr.events.on("updateEvent.chime", this.listeners["updateEvent.chime"] = this.chimeEventHandler.bind(this));
+    this.registerListener("updateEvent." + this.nvr.ufp.id, this.nvrEventHandler.bind(this));
+    this.registerListener("updateEvent.chime", this.chimeEventHandler.bind(this));
 
     return true;
   }
@@ -140,7 +140,7 @@ export class ProtectDoorbell extends ProtectCamera {
       }
 
       // Check to see if we already have this message switch configured.
-      if(this.messageSwitches[switchIndex]) {
+      if(this.messageSwitches.has(switchIndex)) {
 
         continue;
       }
@@ -161,13 +161,13 @@ export class ProtectDoorbell extends ProtectCamera {
       const duration = "duration" in entry ? entry.duration : this.defaultMessageDuration;
 
       // Save the message switch in the list we maintain.
-      this.messageSwitches[switchIndex] = { duration: duration, service: service, state: false, text: entry.text, type: entry.type };
+      this.messageSwitches.set(switchIndex, { duration: duration, service: service, state: false, text: entry.text, type: entry.type });
 
       // Configure the message switch.
       service.getCharacteristic(this.hap.Characteristic.On).onSet(async (value: CharacteristicValue) => {
 
         // Lookup the message switch.
-        const messageSwitch = this.messageSwitches[switchIndex];
+        const messageSwitch = this.messageSwitches.get(switchIndex);
 
         // If we're already in the state we want to be in, we're done.
         if(!messageSwitch || (messageSwitch.state === value)) {
@@ -423,7 +423,7 @@ export class ProtectDoorbell extends ProtectCamera {
 
     this.subscribeSet("chime", "chime volume", (value: string) => {
 
-      const volume = parseInt(value.toString());
+      const volume = parseInt(value);
 
       // Unknown message - ignore it.
       if(isNaN(volume) || (volume < 0) || (volume > 100)) {
@@ -615,10 +615,10 @@ export class ProtectDoorbell extends ProtectCamera {
   private validateMessageSwitches(): void {
 
     // Figure out if there's anything that's disappeared in the canonical list from the doorbell.
-    for(const entry of Object.values(this.messageSwitches)) {
+    for(const [ key, entry ] of this.messageSwitches) {
 
       // This exists on the doorbell...move along.
-      if(!entry || this.messageSwitches[entry.type + "." + entry.text]) {
+      if(this.messageSwitches.has(entry.type + "." + entry.text)) {
 
         continue;
       }
@@ -627,13 +627,13 @@ export class ProtectDoorbell extends ProtectCamera {
 
       // The message has been deleted on the doorbell, remove it in HomeKit.
       this.accessory.removeService(entry.service);
-      delete this.messageSwitches[entry.type + "." + entry.text];
+      this.messageSwitches.delete(key);
     }
 
     // Loop through the list of services on our doorbell accessory and sync the message switches. We do this to catch the scenario where Homebridge was shutdown, and the
     // list of saved messages on the controller changes.
     for(const switchService of this.accessory.services.filter(service => (service.UUID === this.hap.Service.Switch.UUID) && service.subtype &&
-      !this.isReservedName(service.subtype) && !this.messageSwitches[service.subtype])) {
+      !this.isReservedName(service.subtype) && !this.messageSwitches.has(service.subtype))) {
 
       // The message has been deleted on the doorbell - remove it from HomeKit and inform the user about it.
       this.log.info("Removing saved doorbell message: %s.", switchService.subtype?.slice(switchService.subtype.indexOf(".") + 1));
@@ -647,15 +647,10 @@ export class ProtectDoorbell extends ProtectCamera {
     // The message has been cleared on the doorbell, turn off all message switches in HomeKit.
     if(!Object.keys(payload).length) {
 
-      for(const entry of Object.keys(this.messageSwitches)) {
+      for(const entry of this.messageSwitches.values()) {
 
-        if(!this.messageSwitches[entry]) {
-
-          continue;
-        }
-
-        this.messageSwitches[entry].state = false;
-        this.messageSwitches[entry].service.updateCharacteristic(this.hap.Characteristic.On, false);
+        entry.state = false;
+        entry.service.updateCharacteristic(this.hap.Characteristic.On, false);
       }
 
       return;
@@ -668,37 +663,32 @@ export class ProtectDoorbell extends ProtectCamera {
     }
 
     // The message has been set on the doorbell. Update HomeKit accordingly.
-    for(const entry of Object.keys(this.messageSwitches)) {
-
-      if(!this.messageSwitches[entry]) {
-
-        continue;
-      }
+    for(const [ key, entry ] of this.messageSwitches) {
 
       // If it's not the message we're interested in, make sure it's off and keep going.
-      if(entry !== ((payload.type as string) + "." + (payload.text as string))) {
+      if(key !== ((payload.type ?? "") + "." + (payload.text ?? ""))) {
 
-        this.messageSwitches[entry].state = false;
-        this.messageSwitches[entry].service.updateCharacteristic(this.hap.Characteristic.On, false);
+        entry.state = false;
+        entry.service.updateCharacteristic(this.hap.Characteristic.On, false);
 
         continue;
       }
 
       // If the message switch is already on, we're done.
-      if(this.messageSwitches[entry].state) {
+      if(entry.state) {
 
         continue;
       }
 
       // Set the message state and update HomeKit.
-      this.messageSwitches[entry].state = true;
-      this.messageSwitches[entry].service.updateCharacteristic(this.hap.Characteristic.On, true);
+      entry.state = true;
+      entry.service.updateCharacteristic(this.hap.Characteristic.On, true);
 
       this.log.info("Doorbell message set%s: %s.",
         payload.resetAt !== null ? " (" + Math.round(((payload.resetAt ?? 0) - Date.now()) / 1000).toString() + " seconds)" : "", payload.text);
 
       // Publish to MQTT, if the user has configured it.
-      this.publish("message", JSON.stringify({ duration: this.messageSwitches[entry].duration / 1000, message: this.messageSwitches[entry].text }));
+      this.publish("message", JSON.stringify({ duration: entry.duration / 1000, message: entry.text }));
     }
   }
 
@@ -852,8 +842,8 @@ export class ProtectDoorbell extends ProtectCamera {
 
         const service = this.accessory.getServiceById(this.hap.Service.Lightbulb, ProtectReservedNames.LIGHTBULB_DOORBELL_VOLUME);
 
-        service?.updateCharacteristic(this.hap.Characteristic.Brightness, ring.volume as number);
-        service?.updateCharacteristic(this.hap.Characteristic.On, (ring.volume as number) > 0);
+        service?.updateCharacteristic(this.hap.Characteristic.Brightness, ring.volume ?? 0);
+        service?.updateCharacteristic(this.hap.Characteristic.On, (ring.volume ?? 0) > 0);
       }
     }
   }

@@ -20,11 +20,11 @@ export class ProtectEvents extends EventEmitter {
   private log: HomebridgePluginLogging;
   private mqttPublishTelemetry: boolean;
   private nvr: ProtectNvr;
-  private readonly eventTimers: { [index: string]: NodeJS.Timeout | undefined };
+  private readonly eventTimers: Map<string, NodeJS.Timeout>;
   private ufpApi: ProtectApi;
-  private ufpDeviceState: { [index: string]: ProtectDeviceConfigTypes };
+  private ufpDeviceState: Record<string, ProtectDeviceConfigTypes>;
   private platform: ProtectPlatform;
-  private unsupportedDevices: { [index: string]: boolean };
+  private unsupportedDevices: Record<string, boolean>;
 
   // Initialize an instance of our Protect events handler.
   constructor(nvr: ProtectNvr) {
@@ -32,7 +32,7 @@ export class ProtectEvents extends EventEmitter {
     super();
 
     this.api = nvr.platform.api;
-    this.eventTimers = {};
+    this.eventTimers = new Map();
     this.hap = nvr.platform.api.hap;
     this.log = nvr.log;
     this.mqttPublishTelemetry = nvr.hasFeature("Nvr.Publish.Telemetry");
@@ -244,7 +244,7 @@ export class ProtectEvents extends EventEmitter {
           this.emit("updateEvent." + packet.header.id, packet);
           this.emit("updateEvent." + packet.header.modelKey, packet);
 
-          if("recordId" in packet.header) {
+          if(("recordId" in packet.header) && (typeof packet.header.recordId === "string")) {
 
             this.emit("updateEvent." + packet.header.recordId, packet);
           }
@@ -288,7 +288,7 @@ export class ProtectEvents extends EventEmitter {
     }
 
     // Only update HomeKit if we don't have a motion event inflight.
-    if(!this.eventTimers[protectDevice.id]) {
+    if(!this.eventTimers.has(protectDevice.id)) {
 
       // Trigger the motion event in HomeKit.
       motionService.updateCharacteristic(this.hap.Characteristic.MotionDetected, true);
@@ -307,11 +307,11 @@ export class ProtectEvents extends EventEmitter {
     } else {
 
       // Clear out the inflight motion event timer.
-      clearTimeout(this.eventTimers[protectDevice.id]);
+      clearTimeout(this.eventTimers.get(protectDevice.id));
     }
 
     // Reset our motion event after motionDuration.
-    this.eventTimers[protectDevice.id] = setTimeout(() => {
+    this.eventTimers.set(protectDevice.id, setTimeout(() => {
 
       motionService.updateCharacteristic(this.hap.Characteristic.MotionDetected, false);
 
@@ -325,17 +325,17 @@ export class ProtectEvents extends EventEmitter {
       this.nvr.mqtt?.publish(protectDevice.ufp.mac, "motion", "false");
 
       // Delete the timer from our motion event tracker.
-      delete this.eventTimers[protectDevice.id];
-    }, protectDevice.hints.motionDuration * 1000);
+      this.eventTimers.delete(protectDevice.id);
+    }, protectDevice.hints.motionDuration * 1000));
 
     // We build a unified list of the object events we're interested in: legacy smart detections first, followed by thumbnail-based detections.
-    type EventItem = {
+    interface EventItem {
 
       type: string;
       name?: string;
       confidence?: number;
       payload?: ProtectEventMetadataDetectedThumbnail;
-    };
+    }
 
     const smartEvents: EventItem[] = [];
 
@@ -353,7 +353,7 @@ export class ProtectEvents extends EventEmitter {
           confidence: detection.confidence,
           name: detection.name,
           payload: detection as ProtectEventMetadataDetectedThumbnail,
-          type: detection.type as string
+          type: detection.type ?? ""
         })));
       }
     }
@@ -364,7 +364,7 @@ export class ProtectEvents extends EventEmitter {
       const key = protectDevice.id + ".Motion.SmartDetect.ObjectSensors." + event.type;
 
       // We hae a new event, let's make sure we trigger our sensors only once.
-      if(!this.eventTimers[key]) {
+      if(!this.eventTimers.has(key)) {
 
         // These sensors only get triggered if they actually exist on the accessory.
         protectDevice.accessory.getServiceById(this.hap.Service.ContactSensor, ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + "." + event.type)?.
@@ -381,11 +381,11 @@ export class ProtectEvents extends EventEmitter {
       } else {
 
         // Clear out the inflight motion event timer.
-        clearTimeout(this.eventTimers[key]);
+        clearTimeout(this.eventTimers.get(key));
       }
 
       // Reset our smart detection contact sensors after motionDuration.
-      this.eventTimers[key] = setTimeout(() => {
+      this.eventTimers.set(key, setTimeout(() => {
 
         // Reset our smart detection contact sensor.
         protectDevice.accessory.getServiceById(this.hap.Service.ContactSensor, ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + "." + event.type)?.
@@ -396,8 +396,8 @@ export class ProtectEvents extends EventEmitter {
         protectDevice.log.debug("Resetting smart object motion event.");
 
         // Delete the timer from our motion event tracker.
-        delete this.eventTimers[key];
-      }, protectDevice.hints.motionDuration * 1000);
+        this.eventTimers.delete(key);
+      }, protectDevice.hints.motionDuration * 1000));
 
       // Vehicles have additional attributes that can be associated with their smart detections. We process those here.
       if(event.type === "vehicle") {
@@ -409,26 +409,26 @@ export class ProtectEvents extends EventEmitter {
           const plateKey = key + "." + plate;
 
           // We have a new plate detection.
-          if(!this.eventTimers[plateKey]) {
+          if(!this.eventTimers.has(plateKey)) {
 
             protectDevice.accessory.getServiceById(this.hap.Service.ContactSensor,
               ProtectReservedNames.CONTACT_MOTION_SMARTDETECT_LICENSE + "." + plate)?.
               updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.hap.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED);
           } else {
 
-            clearTimeout(this.eventTimers[plateKey]);
+            clearTimeout(this.eventTimers.get(plateKey));
           }
 
           // Reset our license plate smart detection contact sensor after motionDuration.
-          this.eventTimers[plateKey] = setTimeout(() => {
+          this.eventTimers.set(plateKey, setTimeout(() => {
 
             protectDevice.accessory.getServiceById(this.hap.Service.ContactSensor,
               ProtectReservedNames.CONTACT_MOTION_SMARTDETECT_LICENSE + "." + plate)?.
               updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.hap.Characteristic.ContactSensorState.CONTACT_DETECTED);
 
             // Delete the timer from our motion event tracker.
-            delete this.eventTimers[plateKey];
-          }, protectDevice.hints.motionDuration * 1000);
+            this.eventTimers.delete(plateKey);
+          }, protectDevice.hints.motionDuration * 1000));
         }
 
         // Publish event metadata when we see it. Currently, Protect publishes additional telemetry for vehicle types.
@@ -439,7 +439,7 @@ export class ProtectEvents extends EventEmitter {
           // We have a license plate.
           if(event.name) {
 
-            attributes.push("license plate: " + event.name + " [" + event.confidence + "% confidence]");
+            attributes.push("license plate: " + event.name + " [" + String(event.confidence ?? 0) + "% confidence]");
           }
 
           // Look at the color and vehicle type.
@@ -447,7 +447,8 @@ export class ProtectEvents extends EventEmitter {
 
             if(event.payload?.attributes?.[attribute]) {
 
-              attributes.push(attribute + ": " + event.payload.attributes[attribute].val + " [" + event.payload.attributes[attribute].confidence + "% confidence]");
+              attributes.push(attribute + ": " + (event.payload.attributes[attribute].val ?? "") + " [" + String(event.payload.attributes[attribute].confidence ?? 0) +
+                "% confidence]");
             }
           }
 
@@ -479,9 +480,9 @@ export class ProtectEvents extends EventEmitter {
       if(occupancyService) {
 
         // Kill any inflight reset timer.
-        if(this.eventTimers[protectDevice.id + ".Motion.OccupancySensor"]) {
+        if(this.eventTimers.has(protectDevice.id + ".Motion.OccupancySensor")) {
 
-          clearTimeout(this.eventTimers[protectDevice.id + ".Motion.OccupancySensor"]);
+          clearTimeout(this.eventTimers.get(protectDevice.id + ".Motion.OccupancySensor"));
         }
 
         // If the occupancy sensor isn't already triggered, let's do so now.
@@ -502,7 +503,7 @@ export class ProtectEvents extends EventEmitter {
         }
 
         // Reset our occupancy state after occupancyDuration.
-        this.eventTimers[protectDevice.id + ".Motion.OccupancySensor"] = setTimeout(() => {
+        this.eventTimers.set(protectDevice.id + ".Motion.OccupancySensor", setTimeout(() => {
 
           // Reset the occupancy sensor.
           occupancyService.updateCharacteristic(this.hap.Characteristic.OccupancyDetected, false);
@@ -516,9 +517,9 @@ export class ProtectEvents extends EventEmitter {
             protectDevice.log.info("Occupancy no longer detected.");
           }
 
-          // Delete the timer from our motion event tracker.
-          delete this.eventTimers[protectDevice.id];
-        }, protectDevice.hints.occupancyDuration * 1000);
+          // Delete the timer from our occupancy event tracker.
+          this.eventTimers.delete(protectDevice.id + ".Motion.OccupancySensor");
+        }, protectDevice.hints.occupancyDuration * 1000));
       }
     }
   }
@@ -532,7 +533,7 @@ export class ProtectEvents extends EventEmitter {
     }
 
     // If we have an inflight ring event, and we're enforcing a ring duration, we're done.
-    if(this.eventTimers[protectDevice.id + ".Doorbell.Ring"]) {
+    if(this.eventTimers.has(protectDevice.id + ".Doorbell.Ring")) {
 
       return;
     }
@@ -558,10 +559,10 @@ export class ProtectEvents extends EventEmitter {
     if(triggerService) {
 
       // Kill any inflight trigger reset.
-      if(this.eventTimers[protectDevice.id + ".Doorbell.Ring.Trigger"]) {
+      if(this.eventTimers.has(protectDevice.id + ".Doorbell.Ring.Trigger")) {
 
-        clearTimeout(this.eventTimers[protectDevice.id + ".Doorbell.Ring.Trigger"]);
-        delete this.eventTimers[protectDevice.id + ".Doorbell.Ring.Trigger"];
+        clearTimeout(this.eventTimers.get(protectDevice.id + ".Doorbell.Ring.Trigger"));
+        this.eventTimers.delete(protectDevice.id + ".Doorbell.Ring.Trigger");
       }
 
       // Flag that we're ringing.
@@ -571,7 +572,7 @@ export class ProtectEvents extends EventEmitter {
       triggerService.updateCharacteristic(this.hap.Characteristic.On, true);
 
       // Reset our doorbell trigger.
-      this.eventTimers[protectDevice.id + ".Doorbell.Ring.Trigger"] = setTimeout(() => {
+      this.eventTimers.set(protectDevice.id + ".Doorbell.Ring.Trigger", setTimeout(() => {
 
         protectDevice.isRinging = false;
 
@@ -579,8 +580,8 @@ export class ProtectEvents extends EventEmitter {
         this.log.debug("Resetting doorbell ring trigger.");
 
         // Delete the timer from our motion event tracker.
-        delete this.eventTimers[protectDevice.id + ".Doorbell.Ring.Trigger"];
-      }, PROTECT_DOORBELL_TRIGGER_DURATION);
+        this.eventTimers.delete(protectDevice.id + ".Doorbell.Ring.Trigger");
+      }, PROTECT_DOORBELL_TRIGGER_DURATION));
     }
 
     // Publish to MQTT, if the user has configured it.
@@ -592,20 +593,20 @@ export class ProtectEvents extends EventEmitter {
     }
 
     // Kill any inflight MQTT reset.
-    if(this.eventTimers[protectDevice.id + ".Doorbell.Ring.MQTT"]) {
+    if(this.eventTimers.has(protectDevice.id + ".Doorbell.Ring.MQTT")) {
 
-      clearTimeout(this.eventTimers[protectDevice.id + ".Doorbell.Ring.MQTT"]);
-      delete this.eventTimers[protectDevice.id + ".Doorbell.Ring.MQTT"];
+      clearTimeout(this.eventTimers.get(protectDevice.id + ".Doorbell.Ring.MQTT"));
+      this.eventTimers.delete(protectDevice.id + ".Doorbell.Ring.MQTT");
     }
 
     // Fire off our MQTT doorbell ring event.
-    this.eventTimers[protectDevice.id + ".Doorbell.Ring.MQTT"] = setTimeout(() => {
+    this.eventTimers.set(protectDevice.id + ".Doorbell.Ring.MQTT", setTimeout(() => {
 
       this.nvr.mqtt?.publish(protectDevice.ufp.mac, "doorbell", "false");
 
       // Delete the timer from our event tracker.
-      delete this.eventTimers[protectDevice.id + ".Doorbell.Ring.MQTT"];
-    }, PROTECT_DOORBELL_TRIGGER_DURATION);
+      this.eventTimers.delete(protectDevice.id + ".Doorbell.Ring.MQTT");
+    }, PROTECT_DOORBELL_TRIGGER_DURATION));
 
     // If we don't have a ring duration defined, we're done.
     if(!this.nvr.platform.config.ringDelay) {
@@ -614,10 +615,10 @@ export class ProtectEvents extends EventEmitter {
     }
 
     // Reset our ring threshold.
-    this.eventTimers[protectDevice.id + ".Doorbell.Ring"] = setTimeout(() => {
+    this.eventTimers.set(protectDevice.id + ".Doorbell.Ring", setTimeout(() => {
 
       // Delete the timer from our event tracker.
-      delete this.eventTimers[protectDevice.id + ".Doorbell.Ring"];
-    }, this.nvr.platform.config.ringDelay * 1000);
+      this.eventTimers.delete(protectDevice.id + ".Doorbell.Ring");
+    }, this.nvr.platform.config.ringDelay * 1000));
   }
 }

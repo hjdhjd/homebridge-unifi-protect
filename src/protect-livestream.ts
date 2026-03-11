@@ -13,15 +13,15 @@ const LIVESTREAM_RESTART_INTERVAL = 10;
 
 export class LivestreamManager {
 
-  private eventHandlers: { [index: string]: () => void };
-  private livestreams: { [index: string]: FfmpegLivestreamProcess | ProtectLivestream };
+  private eventHandlers: Record<string, () => void>;
+  private livestreams: Record<string, FfmpegLivestreamProcess | ProtectLivestream>;
   private protectCamera: ProtectCamera;
   private restartCount: number;
-  private restartDelay: { [index: string]: number };
-  private restarting: { [index: string]: boolean };
-  private subscriberCount: { [index: string]: number };
-  private segmentTimer: { [index: string]: NodeJS.Timeout };
-  private startTime: { [index: string]: number };
+  private restartDelay: Record<string, number>;
+  private restarting: Record<string, boolean>;
+  private subscriberCount: Record<string, number>;
+  private segmentTimer: Record<string, NodeJS.Timeout>;
+  private startTime: Record<string, number>;
 
   // Create an instance.
   constructor(protectCamera: ProtectCamera) {
@@ -81,9 +81,16 @@ export class LivestreamManager {
   public shutdown(): void {
 
     // Cleanup all the listeners and shutdown our livestreams.
-    Object.values(this.segmentTimer).map(timer => clearTimeout(timer));
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-    Object.values(this.livestreams).map(livestream => livestream.removeAllListeners() && livestream.stop());
+    for(const timer of Object.values(this.segmentTimer)) {
+
+      clearTimeout(timer);
+    }
+
+    for(const livestream of Object.values(this.livestreams)) {
+
+      livestream.removeAllListeners();
+      livestream.stop();
+    }
 
     this.eventHandlers = {};
     this.livestreams = {};
@@ -132,6 +139,7 @@ export class LivestreamManager {
       this.startTime[index] = Date.now();
 
       // Configure a restart event for the livestream API session so we can restart the session in case of problems.
+      // eslint-disable-next-line @typescript-eslint/no-misused-promises -- Intentional fire-and-forget async event handler.
       this.livestreams[index].on("restart", this.eventHandlers[index + ".restart"] = async (retryRestart = false): Promise<void> => {
 
         // If we have a restart inflight and this restart trigger isn't internally triggered, we're done.

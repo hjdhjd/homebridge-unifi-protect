@@ -244,7 +244,7 @@ export class ProtectSecuritySystem extends ProtectBase {
     this.log.info("Enabling the security alarm switch on the security system accessory.");
 
     // Activate or deactivate the security alarm.
-    service.getCharacteristic(this.hap.Characteristic.On).onGet(() => this.isAlarmTriggered === true);
+    service.getCharacteristic(this.hap.Characteristic.On).onGet(() => this.isAlarmTriggered);
     service.getCharacteristic(this.hap.Characteristic.On).onSet((value: CharacteristicValue) => {
 
       this.setSecurityAlarm(!!value);
@@ -300,7 +300,7 @@ export class ProtectSecuritySystem extends ProtectBase {
   // Utility to translate security system states.
   private get currentSecuritySystemState(): string {
 
-    const securitySystemCurrentState: { [index: number]: string } = {
+    const securitySystemCurrentState: Record<number, string> = {
 
       [this.hap.Characteristic.SecuritySystemCurrentState.ALARM_TRIGGERED]: "Alarm",
       [this.hap.Characteristic.SecuritySystemCurrentState.AWAY_ARM]: "Away",
@@ -386,7 +386,7 @@ export class ProtectSecuritySystem extends ProtectBase {
     // Iterate through the list of accessories and set the Protect scene.
     for(const targetAccessory of this.platform.accessories) {
 
-      const targetUfp = this.nvr.configuredDevices[targetAccessory.UUID]?.ufp;
+      const targetUfp = this.nvr.configuredDevices.get(targetAccessory.UUID)?.ufp;
 
       // We only want accessories associated with this Protect controller.
       if(!targetUfp || (targetAccessory.context.nvr !== this.nvr.ufp.mac)) {
@@ -447,7 +447,7 @@ export class ProtectSecuritySystem extends ProtectBase {
     }
 
     // Update the alarm state.
-    this.isAlarmTriggered = value === true;
+    this.isAlarmTriggered = value;
 
     // Update the security system state.
     this.accessory.getService(this.hap.Service.SecuritySystem)?.updateCharacteristic(this.hap.Characteristic.SecuritySystemCurrentState,

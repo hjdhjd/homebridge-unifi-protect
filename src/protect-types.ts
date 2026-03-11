@@ -13,14 +13,14 @@ export function toCamelCase(input: string): string {
 }
 
 // Protect device categories that we support and the classes they correspond to.
-export type ProtectDeviceTypes = {
+export interface ProtectDeviceTypes {
 
   camera: ProtectCamera;
   chime: ProtectChime;
   light: ProtectLight;
   sensor: ProtectSensor;
   viewer: ProtectViewer;
-};
+}
 
 export const ProtectDeviceCategories = [ "camera", "chime", "light", "sensor", "viewer" ];
 export type ProtectDeviceConfigTypes = ProtectCameraConfig | ProtectChimeConfig | ProtectLightConfig | ProtectSensorConfig | ProtectViewerConfig;

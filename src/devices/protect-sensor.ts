@@ -12,7 +12,7 @@ export class ProtectSensor extends ProtectDevice {
 
   private enabledSensors: string[];
   private lastAlarm?: boolean;
-  private lastLeak: { [index: string]: boolean | undefined };
+  private lastLeak: Record<string, boolean | undefined>;
   public ufp: DeepIndexable<ProtectSensorConfig>;
 
   // Create an instance.
@@ -52,7 +52,7 @@ export class ProtectSensor extends ProtectDevice {
     this.configureMqtt();
 
     // Listen for events.
-    this.nvr.events.on("updateEvent." + this.ufp.id, this.listeners["updateEvent." + this.ufp.id] = this.eventHandler.bind(this));
+    this.registerListener("updateEvent." + this.ufp.id, this.eventHandler.bind(this));
 
     return true;
   }
@@ -473,7 +473,7 @@ export class ProtectSensor extends ProtectDevice {
   // Get the current contact sensor information.
   private get contact(): boolean {
 
-    return !!this.ufp.isOpened;
+    return this.ufp.isOpened;
   }
 
   // Get the current humidity information.

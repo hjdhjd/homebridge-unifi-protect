@@ -12,7 +12,7 @@ import { ProtectSecuritySystem } from "./protect-securitysystem.js";
 
 export class ProtectLiveviews extends ProtectBase {
 
-  private isConfigured: { [index: string]: boolean };
+  private isConfigured: Set<string>;
   private isMqttConfigured: boolean;
   private liveviews: ProtectNvrLiveviewConfig[];
   private securityAccessory: Nullable<PlatformAccessory> | undefined;
@@ -25,7 +25,7 @@ export class ProtectLiveviews extends ProtectBase {
     super(nvr);
 
     // Initialize the class.
-    this.isConfigured = {};
+    this.isConfigured = new Set();
     this.isMqttConfigured = false;
     this.liveviews = this.ufpApi.bootstrap?.liveviews ?? [];
     this.securityAccessory = null;
@@ -130,7 +130,7 @@ export class ProtectLiveviews extends ProtectBase {
       this.log.info("Removing plugin-specific liveview switch: %s. The liveview has been either removed or renamed in UniFi Protect.", accessory.context.liveview);
 
       // Unregister the accessory and delete it's remnants from HomeKit and the plugin.
-      delete this.isConfigured[(accessory.context.liveview as string).toUpperCase()];
+      this.isConfigured.delete((accessory.context.liveview as string).toUpperCase());
       this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
       this.platform.accessories.splice(this.platform.accessories.indexOf(accessory), 1);
     }
@@ -154,7 +154,7 @@ export class ProtectLiveviews extends ProtectBase {
       const viewName = viewMatch[1];
 
       // By design, we want to avoid configuring multiple liveview switches with the same name. Instead we combine all liveviews of the same name into a single switch.
-      if(this.isConfigured[viewName.toUpperCase()]) {
+      if(this.isConfigured.has(viewName.toUpperCase())) {
 
         continue;
       }
@@ -168,7 +168,7 @@ export class ProtectLiveviews extends ProtectBase {
 
       if((newAccessory = this.platform.accessories.find(x => x.UUID === uuid)) === undefined) {
 
-        newAccessory = new this.api.platformAccessory(sanitizeName(this.ufpApi.bootstrap.nvr.name + " " + viewName), uuid);
+        newAccessory = new this.api.platformAccessory(sanitizeName((this.ufpApi.bootstrap.nvr.name ?? "") + " " + viewName), uuid);
 
         // Register this accessory with homebridge and add it to the platform accessory array so we can track it.
         this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [newAccessory]);
@@ -207,7 +207,7 @@ export class ProtectLiveviews extends ProtectBase {
       // motion-related accessories at startup as having motion enabled, and explicitly disable them here at startup when we restore state.
       switchService.updateCharacteristic(this.hap.Characteristic.On, newAccessory.context.liveviewState as boolean);
       this.setSwitchState(newAccessory, newAccessory.context.liveviewState as boolean);
-      this.isConfigured[(newAccessory.context.liveview as string).toUpperCase()] = true;
+      this.isConfigured.add((newAccessory.context.liveview as string).toUpperCase());
 
       // Inform the user.
       this.log.info("Configuring plugin-specific liveview switch: %s.", viewName);
@@ -248,7 +248,7 @@ export class ProtectLiveviews extends ProtectBase {
       // Catch any errors in parsing what we get over MQTT.
       try {
 
-        incomingPayload = JSON.parse(rawValue.toString()) as mqttLiveviewJSON[];
+        incomingPayload = JSON.parse(rawValue) as mqttLiveviewJSON[];
       } catch(error) {
 
         this.log.error("Unable to process MQTT message: \"%s\". Invalid JSON.", rawValue);
@@ -278,7 +278,7 @@ export class ProtectLiveviews extends ProtectBase {
         }
 
         // Set the switch state and update the switch in HomeKit.
-        accessory.getService(this.hap.Service.Switch)?.updateCharacteristic(this.hap.Characteristic.On, entry.state === true);
+        accessory.getService(this.hap.Service.Switch)?.updateCharacteristic(this.hap.Characteristic.On, entry.state);
         this.log.info("Liveview scene updated via MQTT: %s.", accessory.context.liveview);
       }
     });

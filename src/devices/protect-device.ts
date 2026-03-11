@@ -81,10 +81,10 @@ export abstract class ProtectBase {
 
     this.log = {
 
-      debug: (message: string, ...parameters: unknown[]): void => nvr.platform.debug(util.format(this.name + ": " + message, ...parameters)),
-      error: (message: string, ...parameters: unknown[]): void => nvr.platform.log.error(util.format(this.name + ": " + message, ...parameters)),
-      info: (message: string, ...parameters: unknown[]): void => nvr.platform.log.info(util.format(this.name + ": " + message, ...parameters)),
-      warn: (message: string, ...parameters: unknown[]): void => nvr.platform.log.warn(util.format(this.name + ": " + message, ...parameters))
+      debug: (message: string, ...parameters: unknown[]): void => { nvr.platform.debug(util.format(this.name + ": " + message, ...parameters)); },
+      error: (message: string, ...parameters: unknown[]): void => { nvr.platform.log.error(util.format(this.name + ": " + message, ...parameters)); },
+      info: (message: string, ...parameters: unknown[]): void => { nvr.platform.log.info(util.format(this.name + ": " + message, ...parameters)); },
+      warn: (message: string, ...parameters: unknown[]): void => { nvr.platform.log.warn(util.format(this.name + ": " + message, ...parameters)); }
     };
   }
 
@@ -135,7 +135,7 @@ export abstract class ProtectDevice extends ProtectBase {
 
   public accessory!: PlatformAccessory;
   public hints: ProtectHints;
-  protected listeners: { [index: string]: (packet: ProtectEventPacket) => void };
+  protected listeners: Map<string, (packet: ProtectEventPacket) => void>;
   public ufp: ProtectDeviceConfigTypes;
 
   // The constructor initializes key variables and calls configureDevice().
@@ -146,7 +146,7 @@ export abstract class ProtectDevice extends ProtectBase {
 
     this.accessory = accessory;
     this.hints = {} as ProtectHints;
-    this.listeners = {};
+    this.listeners = new Map();
     this.ufp = {} as ProtectDeviceConfigTypes;
   }
 
@@ -223,11 +223,19 @@ export abstract class ProtectDevice extends ProtectBase {
   // Cleanup our event handlers and any other activities as needed.
   public cleanup(): void {
 
-    for(const eventName of Object.keys(this.listeners)) {
+    for(const [ eventName, listener ] of this.listeners) {
 
-      this.nvr.events.off(eventName, this.listeners[eventName]);
-      delete this.listeners[eventName];
+      this.nvr.events.off(eventName, listener);
     }
+
+    this.listeners.clear();
+  }
+
+  // Register an event listener, storing it for later cleanup.
+  protected registerListener(event: string, handler: (packet: ProtectEventPacket) => void): void {
+
+    this.listeners.set(event, handler);
+    this.nvr.events.on(event, handler);
   }
 
   // Utility to ease publishing of MQTT events.
