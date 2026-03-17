@@ -4,7 +4,8 @@
  */
 import type { API, HAP, PlatformAccessory } from "homebridge";
 import { type HomebridgePluginLogging, MqttClient, type Nullable, retry, sanitizeName, sleep } from "homebridge-plugin-utils";
-import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_CONTROLLER_REFRESH_INTERVAL, PROTECT_CONTROLLER_RETRY_INTERVAL, PROTECT_M3U_PLAYLIST_PORT } from "./settings.js";
+import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_CONTROLLER_REFRESH_INTERVAL, PROTECT_CONTROLLER_RETRY_INTERVAL, PROTECT_M3U_PLAYLIST_PORT,
+  PROTECT_NVR_REBOOT_INTERVAL, PROTECT_NVR_REBOOT_MIN_INTERVAL, PROTECT_NVR_REBOOT_RECONNECT_DELAY } from "./settings.js";
 import { ProtectCamera, ProtectChime, type ProtectDevice, ProtectDoorbell, ProtectLight, ProtectLiveviews, ProtectNvrSystemInfo, ProtectSensor,
   ProtectViewer } from "./devices/index.js";
 import type { ProtectCameraConfig, ProtectChimeConfig, ProtectLightConfig, ProtectNvrBootstrap, ProtectNvrConfig, ProtectSensorConfig,
@@ -22,17 +23,19 @@ import util from "node:util";
 export class ProtectNvr {
 
   private api: API;
+  private bootstrapRefreshTimer: Nullable<NodeJS.Timeout>;
   public readonly config: ProtectNvrOptions;
-  private deviceRemovalQueue: Map<string, number>;
   public readonly configuredDevices: Map<string, ProtectDevices>;
+  private deviceRemovalQueue: Map<string, number>;
   public readonly events: ProtectEvents;
   private featureLog: Record<string, boolean>;
   private hap: HAP;
   private liveviews: Nullable<ProtectLiveviews>;
-  public logApiErrors: boolean;
   public readonly log: HomebridgePluginLogging;
+  public logApiErrors: boolean;
   public mqtt: Nullable<MqttClient>;
   private name: string;
+  private nvrRebootTimer: Nullable<NodeJS.Timeout>;
   public readonly platform: ProtectPlatform;
   public systemInfo: Nullable<ProtectNvrSystemInfo>;
   public ufp: ProtectNvrConfig;
@@ -42,6 +45,7 @@ export class ProtectNvr {
   constructor(platform: ProtectPlatform, nvrOptions: ProtectNvrOptions) {
 
     this.api = platform.api;
+    this.bootstrapRefreshTimer = null;
     this.config = nvrOptions;
     this.configuredDevices = new Map();
     this.deviceRemovalQueue = new Map();
@@ -51,6 +55,7 @@ export class ProtectNvr {
     this.logApiErrors = true;
     this.mqtt = null;
     this.name = nvrOptions.name ?? nvrOptions.address;
+    this.nvrRebootTimer = null;
     this.platform = platform;
     this.systemInfo = null;
     this.ufp = {} as ProtectNvrConfig;
@@ -92,14 +97,18 @@ export class ProtectNvr {
       return;
     }
 
-    // Make sure we cleanup any remaining streaming sessions on shutdown.
+    // Cleanly shut down on Homebridge exit.
     this.api.on(APIEvent.SHUTDOWN, () => {
 
-      for(const protectCamera of this.devices("camera")) {
+      // Clear the scheduled reboot timer if it's running.
+      if(this.nvrRebootTimer) {
 
-        protectCamera.log.debug("Shutting down all video stream processes.");
-        protectCamera.stream?.shutdown();
+        clearTimeout(this.nvrRebootTimer);
+        this.nvrRebootTimer = null;
       }
+
+      // Disconnect from the controller. This tears down active HomeKit streams, HKSV timeshift buffers, the bootstrap refresh timer, and the API connection.
+      this.disconnect();
     });
   }
 
@@ -112,19 +121,12 @@ export class ProtectNvr {
     return !!this.ufpApi.bootstrap;
   }
 
-  // Initialize our connection to the UniFi Protect controller.
-  public async login(): Promise<void> {
+  // Establish a connection to the Protect controller. This method is safe to call multiple times — it handles authentication, bootstrap retrieval, and basic validation
+  // without creating any one-time infrastructure (playlist servers, MQTT, etc.).
+  private async connect(): Promise<boolean> {
 
-    // The plugin has been disabled globally. Let the user know that we're done here.
-    if(!this.hasFeature("Device")) {
-
-      this.log.info("Disabling this UniFi Protect controller.");
-
-      return;
-    }
-
-    // Attempt to login to the Protect controller, retrying at reasonable intervals. This accounts for cases where the Protect controller or the network connection
-    // may not be fully available when we startup.
+    // Attempt to login to the Protect controller, retrying at reasonable intervals. This accounts for cases where the Protect controller or the network connection may
+    // not be fully available when we startup.
     await retry(async () => this.ufpApi.login(this.config.address, this.config.username, this.config.password), PROTECT_CONTROLLER_RETRY_INTERVAL * 1000);
 
     // Now, let's get the bootstrap configuration from the Protect controller.
@@ -137,9 +139,9 @@ export class ProtectNvr {
     // Failsafe against an unresponsive controller.
     if(!this.ufpApi.bootstrap) {
 
-      this.log.error("Unable to initialize. This may be due to the Protect controller rebooting or becoming unavailable.");
+      this.log.error("Unable to connect to the Protect controller. This may be due to the controller rebooting or becoming unavailable.");
 
-      return;
+      return false;
     }
 
     // Save the bootstrap to ease our device initialization below.
@@ -152,16 +154,62 @@ export class ProtectNvr {
     this.name = this.config.name ?? this.ufpApi.name;
 
     // If we are running an unsupported version of UniFi Protect, we're done.
-    if(!this.ufp.version.startsWith("6.")) {
+    if(![ "6.", "7." ].some(v => this.ufp.version.startsWith(v))) {
 
       this.log.error("This version of HBUP requires running UniFi Protect v6.0 or above using the official Protect release channel only.");
       this.ufpApi.logout();
 
+      return false;
+    }
+
+    // We successfully connected.
+    this.log.info("Connected to %s (UniFi Protect %s running on UniFi OS %s).", this.config.address, this.ufp.version, this.ufp.firmwareVersion);
+
+    return true;
+  }
+
+  // Cleanly disconnect from the Protect controller. This tears down all connection-dependent resources — active HomeKit streams, HKSV timeshift buffers, the bootstrap
+  // refresh cycle, and the API connection — while preserving one-time infrastructure (playlist servers, MQTT, event listeners) and registered ProtectApi event listeners.
+  private disconnect(): void {
+
+    // Tear down all connection-dependent camera resources. Active HomeKit streaming sessions and HKSV timeshift buffers both depend on the controller connection.
+    // Shutting them down proactively prevents error noise from livestream self-healing and FFmpeg processes communicating with a disconnected controller.
+    for(const protectCamera of this.devices("camera")) {
+
+      protectCamera.stream?.shutdown();
+      protectCamera.stream?.hksv?.timeshift.stop();
+      protectCamera.packageCamera?.stream?.shutdown();
+      protectCamera.packageCamera?.stream?.hksv?.timeshift.stop();
+    }
+
+    // Clear the bootstrap refresh timer if it's running.
+    if(this.bootstrapRefreshTimer) {
+
+      clearTimeout(this.bootstrapRefreshTimer);
+      this.bootstrapRefreshTimer = null;
+    }
+
+    // Disconnect from the Protect controller.
+    this.ufpApi.reset();
+  }
+
+  // Initialize our connection to the UniFi Protect controller. This is the one-time entry point called at startup that establishes the connection, creates all
+  // infrastructure, and starts the bootstrap refresh cycle.
+  public async login(): Promise<void> {
+
+    // The plugin has been disabled globally. Let the user know that we're done here.
+    if(!this.hasFeature("Device")) {
+
+      this.log.info("Disabling this UniFi Protect controller.");
+
       return;
     }
 
-    // We successfully logged in.
-    this.log.info("Connected to %s (UniFi Protect %s running on UniFi OS %s).", this.config.address, this.ufp.version, this.ufp.firmwareVersion);
+    // Establish our connection to the Protect controller.
+    if(!(await this.connect())) {
+
+      return;
+    }
 
     // Now that we know the NVR configuration, check to see if this Protect controller is disabled.
     if(!this.hasFeature("Device")) {
@@ -202,6 +250,8 @@ export class ProtectNvr {
     }
 
     // Inform the user about the devices we see.
+    const bootstrap = this.ufpApi.bootstrap as ProtectNvrBootstrap;
+
     for(const device of [ this.ufp, ...bootstrap.cameras, ...bootstrap.chimes, ...bootstrap.lights, ...bootstrap.sensors, ...bootstrap.viewers ]) {
 
       // Filter out any devices that aren't adopted by this Protect controller.
@@ -214,44 +264,140 @@ export class ProtectNvr {
       this.log.info("Discovered %s: %s.", device.modelKey, this.ufpApi.getDeviceName(device, device.name ?? device.marketName, true));
     }
 
-    // Bootstrap refresh loop.
-    const bootstrapRefresh = (): void => {
-
-      // Sleep until it's time to bootstrap again.
-      setTimeout(() => void this.bootstrapNvr(), PROTECT_CONTROLLER_REFRESH_INTERVAL * 1000);
-    };
-
-    // Sync the Protect controller's devices with HomeKit.
-    const syncUfpHomeKit = (): void => {
-
-      // Sync status and check for any new or removed accessories.
-      this.discoverAndSyncAccessories();
-
-      // Refresh the accessory cache.
-      this.api.updatePlatformAccessories(this.platform.accessories);
-    };
-
     // Initialize our Protect controller device sync.
-    syncUfpHomeKit();
+    this.syncDevices();
 
-    // Let's set a listener to wait for bootstrap events to occur so we can keep ourselves in sync with the Protect controller.
+    // Set a listener to wait for bootstrap events to occur so we can keep ourselves in sync with the Protect controller. This listener is registered once and persists
+    // across disconnect/connect cycles since ProtectApi does not remove event listeners on reset.
     this.ufpApi.on("bootstrap", () => {
 
       // Sync our device view.
-      syncUfpHomeKit();
+      this.syncDevices();
 
-      // Refresh our bootstrap.
-      bootstrapRefresh();
+      // Clear any existing bootstrap refresh timer before scheduling the next one.
+      if(this.bootstrapRefreshTimer) {
+
+        clearTimeout(this.bootstrapRefreshTimer);
+      }
+
+      // Schedule the next bootstrap refresh.
+      this.bootstrapRefreshTimer = setTimeout(() => void this.bootstrapNvr(), PROTECT_CONTROLLER_REFRESH_INTERVAL * 1000);
     });
 
     // Kickoff our first round of bootstrap refreshes to ensure we stay in sync.
-    bootstrapRefresh();
+    this.bootstrapRefreshTimer = setTimeout(() => void this.bootstrapNvr(), PROTECT_CONTROLLER_REFRESH_INTERVAL * 1000);
   }
 
   // Configure NVR-specific settings.
   private configureNvr(): boolean {
 
+    // Configure scheduled reboots if enabled.
+    this.configureScheduledReboot();
+
     return true;
+  }
+
+  // Configure scheduled reboots of the Protect controller.
+  private configureScheduledReboot(): void {
+
+    // Retrieve the reboot interval. A null return means the option is explicitly disabled.
+    const rebootInterval = this.getFeatureFloat("Nvr.Reboot");
+
+    if(rebootInterval === null) {
+
+      return;
+    }
+
+    // Apply the reboot interval, defaulting to the configured default if the option is enabled without an explicit value. We enforce a minimum interval to prevent the
+    // controller from entering a reboot loop.
+    const intervalHours = Math.max(rebootInterval ?? PROTECT_NVR_REBOOT_INTERVAL, PROTECT_NVR_REBOOT_MIN_INTERVAL);
+
+    this.log.info("Scheduled controller reboot enabled every %s hour%s.", intervalHours, (intervalHours === 1) ? "" : "s");
+
+    // Schedule the reboot.
+    this.nvrRebootTimer = setTimeout(() => void this.executeScheduledReboot(intervalHours), intervalHours * 60 * 60 * 1000);
+  }
+
+  // Execute a scheduled reboot of the Protect controller.
+  private async executeScheduledReboot(intervalHours: number): Promise<void> {
+
+    // Check if any cameras are actively recording HKSV events. If so, defer the reboot and check again in 60 seconds.
+    const activeRecordings = this.devices("camera").filter(camera => camera.stream?.hksv?.isTransmitting);
+
+    if(activeRecordings.length > 0) {
+
+      this.log.info("Deferring scheduled controller reboot: %s camera%s actively recording HKSV events.", activeRecordings.length,
+        (activeRecordings.length === 1) ? " is" : "s are");
+
+      this.nvrRebootTimer = setTimeout(() => void this.executeScheduledReboot(intervalHours), 60 * 1000);
+
+      return;
+    }
+
+    // Suppress API error logging and send the reboot command while we still have a valid authenticated session.
+    this.logApiErrors = false;
+
+    try {
+
+      await this.ufpApi.retrieve("https://" + (this.config.overrideAddress ?? this.config.address) + "/api/system/reboot", { method: "POST" });
+    } catch(error) {
+
+      // The reboot command failed. Restore error logging and schedule the next attempt — there's no reboot in progress, so we don't need to disconnect or wait.
+      this.logApiErrors = true;
+      this.log.error("Unable to send reboot command to the Protect controller: %s.", error);
+
+      this.nvrRebootTimer = setTimeout(() => void this.executeScheduledReboot(intervalHours), intervalHours * 60 * 60 * 1000);
+
+      return;
+    }
+
+    this.log.info("Executing scheduled reboot of the Protect controller. Will resume connectivity in %s minutes.",
+      parseFloat((PROTECT_NVR_REBOOT_RECONNECT_DELAY / 60).toFixed(1)));
+
+    // Cleanly disconnect from the controller. This tears down active HomeKit streams, HKSV timeshift buffers, the bootstrap refresh timer, and the API connection,
+    // preventing error noise during the reboot.
+    this.disconnect();
+
+    // Wait for the controller to reboot and come back online, then restore API error logging.
+    await sleep(PROTECT_NVR_REBOOT_RECONNECT_DELAY * 1000);
+
+    this.logApiErrors = true;
+
+    // Reconnect to the controller. We attempt up to 5 times, since each connect() call already retries login indefinitely and makes up to 5 bootstrap attempts
+    // internally. If we still can't reconnect after 5 attempts, something more fundamental is wrong and we fall through to the next scheduled reboot cycle as a natural
+    // recovery opportunity.
+    let reconnected = false;
+
+    for(let attempt = 0; attempt < 5; attempt++) {
+
+      // eslint-disable-next-line no-await-in-loop
+      if(await this.connect()) {
+
+        reconnected = true;
+
+        break;
+      }
+
+      this.log.error("Reconnection attempt %s of 5 failed. Retrying.", attempt + 1);
+    }
+
+    if(!reconnected) {
+
+      this.log.error("Unable to reconnect to the Protect controller after the scheduled reboot. Will attempt to reconnect on the next reboot cycle.");
+    }
+
+    // Schedule the next reboot. If we failed to reconnect, the next cycle will attempt to connect again before issuing the reboot command.
+    this.nvrRebootTimer = setTimeout(() => void this.executeScheduledReboot(intervalHours), intervalHours * 60 * 60 * 1000);
+  }
+
+  // Sync the Protect controller's devices with HomeKit.
+  private syncDevices(): void {
+
+    // Sync status and check for any new or removed accessories.
+    this.discoverAndSyncAccessories();
+
+    // Refresh the accessory cache.
+    this.api.updatePlatformAccessories(this.platform.accessories);
   }
 
   // Create instances of Protect device types in our plugin.
@@ -608,7 +754,7 @@ export class ProtectNvr {
     const server = http.createServer();
 
     // Respond to requests for a Protect camera playlist.
-    server.on("request", (request, response) => {
+    server.on("request", (_request, response) => {
 
       // Set the right MIME type for M3U playlists.
       response.writeHead(200, { "Content-Type": "application/x-mpegURL" });

@@ -3,8 +3,8 @@
  * protect-options.ts: Feature option and type definitions for UniFi Protect.
  */
 import { PROTECT_DEVICE_REMOVAL_DELAY_INTERVAL, PROTECT_DOORBELL_CHIME_DURATION_DIGITAL, PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_FFMPEG_AUDIO_FILTER_HIGHPASS,
-  PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS, PROTECT_M3U_PLAYLIST_PORT, PROTECT_MOTION_DURATION, PROTECT_OCCUPANCY_DURATION, PROTECT_TRANSCODE_BITRATE,
-  PROTECT_TRANSCODE_HIGH_LATENCY_BITRATE } from "./settings.js";
+  PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS, PROTECT_M3U_PLAYLIST_PORT, PROTECT_MOTION_DURATION, PROTECT_NVR_REBOOT_INTERVAL, PROTECT_OCCUPANCY_DURATION,
+  PROTECT_TRANSCODE_BITRATE, PROTECT_TRANSCODE_HIGH_LATENCY_BITRATE } from "./settings.js";
 import type { FeatureOptionEntry } from "homebridge-plugin-utils";
 
 // Plugin configuration options.
@@ -161,6 +161,7 @@ export const featureOptions: Record<string, ProtectFeatureOption[]> = {
     { default: false, defaultValue: PROTECT_M3U_PLAYLIST_PORT, description: "Publish an M3U playlist of Protect cameras on the specified port of this Homebridge server that is suitable for use in apps (e.g. Channels DVR) that can make camera livestreams available through them.", modelKey: ["nvr"], name: "Service.Playlist" },
     { default: true, defaultValue: PROTECT_DEVICE_REMOVAL_DELAY_INTERVAL, description: "Delay, in seconds, before removing devices that are no longer detected on the Protect controller. If disabled, devices are removed in realtime when the Protect controller does so.", modelKey: ["nvr"], name: "DelayDeviceRemoval" },
     { default: false, description: "Publish all the realtime telemetry received from the Protect controller to MQTT.", modelKey: ["nvr"], name: "Publish.Telemetry" },
+    { default: false, defaultValue: PROTECT_NVR_REBOOT_INTERVAL, description: "Proactively reboot the UniFi Protect controller on a scheduled interval, in hours. Active HomeKit Secure Video recording events will be allowed to complete before rebooting. Use with care.", modelKey: ["nvr"], name: "Reboot" },
     { default: false, description: "Add switch accessories to control the native recording capabilities of the UniFi Protect NVR.", modelKey: ["camera"], name: "Recording.Switch" },
     { default: false, description: "Add sensor accessories to display the Protect controller system information (currently only the temperature).", modelKey: ["nvr"], name: "SystemInfo" }
   ],

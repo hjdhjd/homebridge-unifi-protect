@@ -22,7 +22,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
   private readonly hap: HAP;
   private ffmpegStream?: FfmpegRecordingProcess;
   private isInitialized: boolean;
-  private isTransmitting: boolean;
+  public isTransmitting: boolean;
   private readonly log: HomebridgePluginLogging;
   private readonly protectCamera: ProtectCamera;
   private recordingConfig?: CameraRecordingConfiguration;
@@ -198,7 +198,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
   }
 
   // Maintain a timeshift buffer and which Protect streams to use for HKSV.
-  private async configureTimeshifting(): Promise<boolean> {
+  public async configureTimeshifting(): Promise<boolean> {
 
     // We have no recording configuration available yet. Even though HKSV recording is technically active, we can't do anything without a valid HKSV recording
     // configuration, which HomeKit hasn't sent us yet.

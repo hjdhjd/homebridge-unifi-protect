@@ -1549,6 +1549,14 @@ export class ProtectCamera extends ProtectDevice {
       }
     }
 
+    // Self-heal the HKSV timeshift buffer. If HKSV recording is active but the timeshift buffer isn't running, restart it. This handles recovery after controller
+    // reboots, network interruptions, or any scenario where the connection was lost and restored. The prebuffer must be re-established as quickly as possible so that
+    // HKSV recordings capture the seconds before a motion event.
+    if(this.isOnline && this.stream?.hksv?.isRecording && !this.stream.hksv.timeshift.isStarted) {
+
+      void this.stream.hksv.configureTimeshifting();
+    }
+
     return true;
   }
 

@@ -71,5 +71,14 @@ export const PROTECT_SNAPSHOT_CACHE_MAXAGE = 90;
 // Bitrate, in kilobits per second, to use when transcoding to local clients.
 export const PROTECT_TRANSCODE_BITRATE = 2000;
 
+// Default interval, in hours, for scheduled NVR reboots when enabled.
+export const PROTECT_NVR_REBOOT_INTERVAL = 6;
+
+// Minimum interval, in hours, allowed for scheduled NVR reboots.
+export const PROTECT_NVR_REBOOT_MIN_INTERVAL = 1;
+
+// Duration, in seconds, to wait after sending a reboot command before attempting to reconnect.
+export const PROTECT_NVR_REBOOT_RECONNECT_DELAY = 420;
+
 // Bitrate, in kilobits per second, to use when transcoding to high-latency clients.
 export const PROTECT_TRANSCODE_HIGH_LATENCY_BITRATE = 1000;
