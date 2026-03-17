@@ -79,22 +79,19 @@
   },
   "main": "dist/index.js",
   "dependencies": {
-    "@homebridge/plugin-ui-utils": "2.1.2",
+    "@homebridge/plugin-ui-utils": "2.2.1",
     "ffmpeg-for-homebridge": "2.2.1",
-    "homebridge-plugin-utils": "1.31.0",
-    "undici": "7.19.1",
-    "unifi-protect": "4.27.7"
+    "homebridge-plugin-utils": "1.32.0",
+    "undici": "7.24.4",
+    "unifi-protect": "4.28.0"
   },
   "devDependencies": {
-    "@stylistic/eslint-plugin": "5.7.1",
-    "@types/node": "25.0.10",
+    "@stylistic/eslint-plugin": "5.10.0",
+    "@types/node": "25.5.0",
     "eslint": "9.39.2",
-    "homebridge": "1.11.1",
+    "homebridge": "1.11.2",
     "shx": "0.4.0",
     "typescript": "5.9.3",
-    "typescript-eslint": "8.53.1"
-  },
-  "overrides": {
-    "@types/readable-stream": "4.0.23"
+    "typescript-eslint": "8.57.1"
   }
 }

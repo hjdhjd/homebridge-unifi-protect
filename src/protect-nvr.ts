@@ -406,8 +406,8 @@ export class ProtectNvr {
     }
 
     // Iterate through the list of device categories we know about and add them to HomeKit.
-    ProtectDeviceCategories.map(category => this.ufpApi.bootstrap && this.ufpApi.bootstrap[category + "s"] &&
-      ((this.ufpApi.bootstrap[category + "s"] as ProtectDeviceConfigTypes[] | undefined) ?? []).map(device => this.addHomeKitDevice(device)));
+    ProtectDeviceCategories.map(category => ((this.ufpApi.bootstrap?.[category + "s"] as ProtectDeviceConfigTypes[] | undefined) ?? [])
+      .map(device => this.addHomeKitDevice(device)));
 
     // Remove Protect devices that are no longer found on this Protect NVR, but we still have in HomeKit.
     this.cleanupDevices();
