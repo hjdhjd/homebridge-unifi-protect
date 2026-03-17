@@ -1,6 +1,13 @@
 # Changelog
 
-All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
+All notable changes to this project will be documented in this file.
+
+## 7.27.0 (2026-03-17)
+  * New feature: UniFi Protect v7 support.
+  * New feature: scheduled controller reboots. You can configure HBUP to periodically reboot your Protect controller to maintain system health. Found under NVR feature options. Defaults to every 6 hours when enabled, with a configurable interval. HBUP will defer reboots when HKSV events are actively recording, and automatically reconnect after the controller comes back online. Disabled by default.
+  * Improvement: significantly improved HKSV recording resilience. HBUP now paces segment delivery to HomeKit, building an output buffer that absorbs Protect controller livestream API stalls that would previously cause recording failures. Combined with faster stall detection and optimized livestream recovery, recordings now survive controller hiccups that previously resulted in lost events.
+  * **Note: you may occasionally see messages like `[HDS ...] Delegate yielded fragment after stream X was already closed!` in your Homebridge logs. These are harmless - they're a cosmetic issue in Homebridge's HDS implementation related to an inherent race condition when ending HKSV events. No recording data is lost. A fix is in the works for a future Homebridge release.**
+  * Housekeeping.
 
 ## 7.26.1 (2026-01-24)
   * Housekeeping.
