@@ -7,10 +7,10 @@
  * deeply appreciated.
  */
 import type { API, CameraRecordingConfiguration, CameraRecordingDelegate, HAP, PlatformAccessory, RecordingPacket } from "homebridge";
-import { FfmpegRecordingProcess, type HomebridgePluginLogging, type Nullable, formatBps } from "homebridge-plugin-utils";
+import { FfmpegRecordingProcess, type HomebridgePluginLogging, type Nullable, formatBps, sleep } from "homebridge-plugin-utils";
+import { PROTECT_HKSV_TIMEOUT, PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION } from "./settings.js";
 import type { ProtectCamera, RtspEntry } from "./devices/index.js";
 import { HDSProtocolSpecificErrorReason } from "homebridge";
-import { PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION } from "./settings.js";
 import { ProtectTimeshiftBuffer } from "./protect-timeshift.js";
 
 // Camera recording delegate implementation for Protect.
@@ -22,8 +22,11 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
   private readonly hap: HAP;
   private ffmpegStream?: FfmpegRecordingProcess;
   private isInitialized: boolean;
-  public isTransmitting: boolean;
+  private _isTransmitting: boolean;
+  private lastPacingDelay: number;
   private readonly log: HomebridgePluginLogging;
+  private maxPacingDelay: number;
+  private pacingStartTime: number;
   private readonly protectCamera: ProtectCamera;
   private recordingConfig?: CameraRecordingConfiguration;
   public rtspEntry: Nullable<RtspEntry>;
@@ -40,8 +43,11 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     this.api = protectCamera.api;
     this.hap = protectCamera.api.hap;
     this.isInitialized = false;
-    this.isTransmitting = false;
+    this._isTransmitting = false;
+    this.lastPacingDelay = 0;
     this.log = protectCamera.log;
+    this.maxPacingDelay = 0;
+    this.pacingStartTime = 0;
     this.protectCamera = protectCamera;
     this.timeshiftedSegments = 0;
     this.transmittedSegments = 0;
@@ -136,10 +142,10 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     // If we've explicitly disabled HKSV recording, or we have issues setting up our timeshift buffer, we're done right now. Otherwise, start transmitting our timeshift
     // buffer and process it through FFmpeg.
     if(this.accessory.context.hksvRecordingDisabled || !this.isInitialized || this.timeshift.isRestarting || !this.protectCamera.isOnline ||
-      (this.timeshift.time < (this.recordingConfig?.prebufferLength ?? -1)) || !(await this.startTransmitting()) || !this.ffmpegStream) {
+      (this.timeshift.time < this.timeshift.configuredDuration) || !(await this.startTransmitting()) || !this.ffmpegStream) {
 
       // Stop transmitting.
-      if(this.isTransmitting) {
+      if(this._isTransmitting) {
 
         this.stopTransmitting();
       }
@@ -153,11 +159,21 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
       return;
     }
 
+    // We pace our segment yields to HKSV to build a buffer of pre-produced segments from FFmpeg. By yielding one segment every ~4 seconds - just
+    // under the 4.5-second HKSV timeout - FFmpeg's output accumulates ahead of what we've delivered. When the Protect controller's livestream API
+    // stalls, we continue yielding pre-produced segments, absorbing stalls that would otherwise cause recording timeouts. While we wait between
+    // yields, segmentGenerator() is paused and FFmpeg's output accumulates in its internal recording buffer.
+    const pacingInterval = PROTECT_HKSV_TIMEOUT - 500;
+
+    this.lastPacingDelay = 0;
+    this.maxPacingDelay = 0;
+    this.pacingStartTime = Date.now();
+
     // Process our FFmpeg-generated segments and send them back to HKSV.
     for await (const segment of this.ffmpegStream.segmentGenerator()) {
 
       // If we've not transmitting, we're done.
-      if(!this.isTransmitting) {
+      if(!this._isTransmitting) {
 
         break;
       }
@@ -165,22 +181,36 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
       // Keep track of how many segments we're sending to HKSV.
       this.transmittedSegments++;
 
+      // Wait until our pacing schedule allows this segment to be yielded. Each segment is spaced pacingInterval apart from the recording start.
+      this.lastPacingDelay = (this.pacingStartTime + (this.transmittedSegments * pacingInterval)) - Date.now();
+      this.maxPacingDelay = Math.max(this.maxPacingDelay, this.lastPacingDelay);
+
+      if(this.lastPacingDelay > 0) {
+
+        await sleep(this.lastPacingDelay);
+      }
+
+      // If the recording stream was closed while we were waiting on our pacing schedule, we're done.
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+      if(!this._isTransmitting) {
+
+        break;
+      }
+
       // Send HKSV the fMP4 segment.
       yield { data: segment, isLast: false };
     }
 
     // If FFmpeg timed out it's typically due to issues with the video coming from the Protect controller. Restart the timeshift buffer to see if we can improve things.
+    // We only restart on genuine FFmpeg timeouts (stall-related), not on zero-segment exits (HomeKit closing early or bad data). Restarting on zero-segment
+    // exits tears down a healthy livestream connection and empties the timeshift buffer, causing a cascading failure cycle for subsequent recording requests.
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-    if(this.ffmpegStream?.isTimedOut || !this.transmittedSegments) {
+    if(this.ffmpegStream?.isTimedOut) {
 
       this.timeshift.restart();
 
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-      if(this.ffmpegStream?.isTimedOut) {
-
-        // Send HKSV a final segment to cleanly wrap up.
-        yield { data: Buffer.alloc(1, 0), isLast: true };
-      }
+      // Send HKSV a final segment to cleanly wrap up.
+      yield { data: Buffer.alloc(1, 0), isLast: true };
     }
   }
 
@@ -197,7 +227,8 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     this.stopTransmitting(reason);
   }
 
-  // Maintain a timeshift buffer and which Protect streams to use for HKSV.
+  // Maintain a timeshift buffer and which Protect streams to use for HKSV. This is safe to call at any time — it validates recording state and avoids restarting the
+  // timeshift buffer if it's already running on the correct channel and lens.
   public async configureTimeshifting(): Promise<boolean> {
 
     // We have no recording configuration available yet. Even though HKSV recording is technically active, we can't do anything without a valid HKSV recording
@@ -275,7 +306,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
 
     // If we don't have a recording configuration from HomeKit, a valid RTSP profile, or not enough time in our timeshift buffer, we can't continue.
     if(!this.recordingConfig || !this.rtspEntry || this.timeshift.isRestarting ||
-      ((this.protectCamera.stream.hksv?.timeshift.time ?? -1) < this.recordingConfig.prebufferLength)) {
+      ((this.protectCamera.stream.hksv?.timeshift.time ?? -1) < (this.protectCamera.stream.hksv?.timeshift.configuredDuration ?? 0))) {
 
       return false;
     }
@@ -301,7 +332,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     }, this.protectCamera.hasFeature("Debug.Video.HKSV"));
 
     this.ffmpegStream.start();
-    this.isTransmitting = true;
+    this._isTransmitting = true;
 
     // We maintain a queue to manage segment writes to FFmpeg. Why? We need to be prepared for backpressure when writing to FFmpeg.
     const segmentQueue: Buffer[] = [];
@@ -369,7 +400,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
       // Ensure we cleanup.
       this.ffmpegStream = undefined;
       this.transmitListener = undefined;
-      this.isTransmitting = false;
+      this._isTransmitting = false;
 
       return false;
     }
@@ -393,14 +424,16 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     // We're done transmitting, so we can go back to maintaining our timeshift buffer for HomeKit.
     this.timeshift.transmitStop();
 
-    // Kill any FFmpeg sessions.
+    // Kill any FFmpeg sessions, capturing the timeout state before we clear the reference.
+    const ffmpegTimedOut = this.ffmpegStream?.isTimedOut ?? false;
+
     if(this.ffmpegStream) {
 
       this.ffmpegStream.stop((((reason !== undefined) && (reason !== HDSProtocolSpecificErrorReason.NORMAL)) || this.timeshift.isRestarting) ? false : undefined);
       this.ffmpegStream = undefined;
     }
 
-    this.isTransmitting = false;
+    this._isTransmitting = false;
 
     if(this.transmitListener) {
 
@@ -537,7 +570,13 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     if((reason !== undefined) && (reason !== HDSProtocolSpecificErrorReason.NORMAL) && !this.timeshift.isRestarting && this.protectCamera.isOnline &&
       ((this.protectCamera.stream.hksv?.timeshift.time ?? -1) >= (this.recordingConfig?.prebufferLength ?? 0))) {
 
-      this.log.error("HKSV recording event ended early: %s", reasonDescription);
+      const telemetry = this.protectCamera.hasFeature("Debug.Video.HKSV.Telemetry") ?
+        " (duration: " + ((Date.now() - this.pacingStartTime) / 1000).toFixed(1) + "s, segments yielded: " +
+        this.transmittedSegments.toString() + ", segments to FFmpeg: " + this.timeshiftedSegments.toString() +
+        ", FFmpeg timeout: " + ffmpegTimedOut.toString() + ", pacing delay: " + Math.round(this.lastPacingDelay).toString() +
+        "/" + Math.round(this.maxPacingDelay).toString() + "ms last/peak)" : "";
+
+      this.log.error("HKSV recording event ended early: %s%s", reasonDescription, telemetry);
     }
   }
 
@@ -547,6 +586,12 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     return (this.protectCamera.ufp.featureFlags.hasMic && this.protectCamera.hasFeature("Audio") &&
       (this.protectCamera.stream?.controller.recordingManagement?.recordingManagementService
         .getCharacteristic(this.api.hap.Characteristic.RecordingAudioActive).value === 1)) ? true : false;
+  }
+
+  // Return whether we are actively transmitting an HKSV recording event to HomeKit.
+  public get isTransmitting(): boolean {
+
+    return this._isTransmitting;
   }
 
   // Return our HomeKit Secure Video recording state. This effectively tells us if HKSV has been configured and is on.

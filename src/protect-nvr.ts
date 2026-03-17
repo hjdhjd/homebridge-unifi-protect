@@ -176,8 +176,10 @@ export class ProtectNvr {
     // Shutting them down proactively prevents error noise from livestream self-healing and FFmpeg processes communicating with a disconnected controller.
     for(const protectCamera of this.devices("camera")) {
 
+      protectCamera.stream?.hksv?.closeRecordingStream(0);
       protectCamera.stream?.shutdown();
       protectCamera.stream?.hksv?.timeshift.stop();
+      protectCamera.packageCamera?.stream?.hksv?.closeRecordingStream(0);
       protectCamera.packageCamera?.stream?.shutdown();
       protectCamera.packageCamera?.stream?.hksv?.timeshift.stop();
     }

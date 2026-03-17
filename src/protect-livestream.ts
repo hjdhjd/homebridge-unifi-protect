@@ -8,12 +8,13 @@ import type { ProtectCamera } from "./devices/index.js";
 import type { ProtectLivestream } from "unifi-protect";
 import type { RtspEntry } from "./devices/protect-camera.js";
 
-const LIVESTREAM_TIMEOUT = 3500;
+const LIVESTREAM_TIMEOUT = 3000;
 const LIVESTREAM_RESTART_INTERVAL = 10;
 
 export class LivestreamManager {
 
   private eventHandlers: Record<string, () => void>;
+  private lastSegmentTime: Record<string, number>;
   private livestreams: Record<string, FfmpegLivestreamProcess | ProtectLivestream>;
   private protectCamera: ProtectCamera;
   private restartCount: number;
@@ -27,6 +28,7 @@ export class LivestreamManager {
   constructor(protectCamera: ProtectCamera) {
 
     this.eventHandlers = {};
+    this.lastSegmentTime = {};
     this.livestreams = {};
     this.protectCamera = protectCamera;
     this.restartCount = 0;
@@ -93,6 +95,7 @@ export class LivestreamManager {
     }
 
     this.eventHandlers = {};
+    this.lastSegmentTime = {};
     this.livestreams = {};
     this.restartDelay = {};
     this.restarting = {};
@@ -134,7 +137,7 @@ export class LivestreamManager {
     // Keep track of any issues in the livestream.
     if(!this.subscriberCount[index]) {
 
-      this.restartDelay[index] = LIVESTREAM_RESTART_INTERVAL;
+      this.restartDelay[index] = 0;
       this.restarting[index] = false;
       this.startTime[index] = Date.now();
 
@@ -184,10 +187,17 @@ export class LivestreamManager {
           }
         }
 
-        this.protectCamera.log.warn("Reconnecting to the %s.", this.protectCamera.hasFeature("Debug.Video.HKSV.UseRtsp") ? "RTSP stream" : "livestream API");
+        this.protectCamera.log.warn("Reconnecting to the %s%s.",
+          this.protectCamera.hasFeature("Debug.Video.HKSV.UseRtsp") ? "RTSP stream" : "livestream API",
+          (this.protectCamera.hasFeature("Debug.Video.HKSV.Telemetry") && this.lastSegmentTime[index]) ?
+            " after a " + ((Date.now() - this.lastSegmentTime[index]) / 1000).toFixed(1) + "s stall" : "");
 
-        // Wait before we try to reconnect to the livestream. This accounts for reboots and other potential connection issues that can occur.
-        await sleep((((Math.random() * 3) + this.restartDelay[index]) * 1000));
+        // On the first restart attempt after a healthy period, reconnect immediately to maximize our chances of staying within the HKSV timeout
+        // window. We only apply a backoff delay on subsequent attempts to account for persistent controller or camera issues.
+        if(this.restartDelay[index]) {
+
+          await sleep((((Math.random() * 3) + this.restartDelay[index]) * 1000));
+        }
 
         if(this.protectCamera.hasFeature("Debug.Video.HKSV.UseRtsp")) {
 
@@ -214,6 +224,9 @@ export class LivestreamManager {
       // Set a regular heartbeat for the livestream API.
       this.livestreams[index].on("segment", this.eventHandlers[index] = (): void => {
 
+        // Track when we last received a segment so we can measure stall durations when restarts occur.
+        this.lastSegmentTime[index] = Date.now();
+
         // Clear out any existing timer.
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
         if(this.segmentTimer[index]) {
@@ -224,7 +237,7 @@ export class LivestreamManager {
           if((Date.now() - this.startTime[index]) > (60 * 1000)) {
 
             this.restartCount = 0;
-            this.restartDelay[index] = LIVESTREAM_RESTART_INTERVAL;
+            this.restartDelay[index] = 0;
           }
         }
 
