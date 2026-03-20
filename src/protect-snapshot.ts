@@ -13,6 +13,7 @@ import type { ProtectPlatform } from "./protect-platform.js";
 export class ProtectSnapshot {
 
   private _cachedSnapshot: Nullable<{ image: Buffer; time: number }>;
+  private _snapshotInFlight: Nullable<Promise<Nullable<Buffer>>>;
   private readonly api: API;
   private readonly hap: HAP;
   public readonly log: HomebridgePluginLogging;
@@ -30,9 +31,10 @@ export class ProtectSnapshot {
     this.protectCamera = protectCamera;
     this.platform = protectCamera.platform;
     this._cachedSnapshot = null;
+    this._snapshotInFlight = null;
   }
 
-  // Return a snapshot for use by HomeKit.
+  // Return a snapshot for use by HomeKit. Concurrent requests for the same camera are coalesced into a single acquisition to avoid spawning duplicate FFmpeg pipelines.
   public async getSnapshot(request?: SnapshotRequest): Promise<Nullable<Buffer>> {
 
     // If we aren't connected, we're done.
@@ -40,6 +42,29 @@ export class ProtectSnapshot {
 
       return null;
     }
+
+    // If there's already a snapshot acquisition in flight for this camera, share its result rather than spawning a duplicate pipeline. This commonly occurs with
+    // multi-hub setups or when HomeKit and MQTT request snapshots simultaneously.
+    if(this._snapshotInFlight) {
+
+      return this._snapshotInFlight;
+    }
+
+    // Create the acquisition promise and store it for coalescing. The finally block clears the reference once the promise settles, so subsequent requests after this
+    // one completes will trigger a fresh acquisition.
+    this._snapshotInFlight = this.acquireSnapshot(request);
+
+    try {
+
+      return await this._snapshotInFlight;
+    } finally {
+
+      this._snapshotInFlight = null;
+    }
+  }
+
+  // Acquire a snapshot by trying each source in priority order, applying crop if needed, and falling back to the cache on timeout.
+  private async acquireSnapshot(request?: SnapshotRequest): Promise<Nullable<Buffer>> {
 
     // See if we have an image cached that we can use, if needed.
     const cachedSnapshot = this.cachedSnapshot;
@@ -57,19 +82,36 @@ export class ProtectSnapshot {
     const snapshotPromise = (async (): Promise<Nullable<Buffer>> => {
 
       let snapAttempt = await this.snapFromTimeshift(request);
+      let needsExternalCrop = false;
 
       // No snapshot yet, let's try again.
       if(!snapAttempt) {
 
-        // We treat package cameras uniquely.
+        // We treat package cameras uniquely - the Protect API is tried before RTSP because the lower frame rate of package cameras causes a lengthier RTSP response.
         if("packageCamera" in this.protectCamera.accessory.context) {
 
-          snapAttempt = (await this.nvr.ufpApi.getSnapshot(this.protectCamera.ufp, { height: request?.height, usePackageCamera: true, width: request?.width })) ??
-            (await this.snapFromRtsp(request));
+          snapAttempt = await this.nvr.ufpApi.getSnapshot(this.protectCamera.ufp, { height: request?.height, usePackageCamera: true, width: request?.width });
+
+          if(snapAttempt) {
+
+            needsExternalCrop = true;
+          } else {
+
+            snapAttempt = await this.snapFromRtsp(request);
+          }
         } else {
 
-          snapAttempt = (await this.snapFromRtsp(request)) ?? (await this.nvr.ufpApi.getSnapshot(this.protectCamera.ufp,
-            { height: request?.height, width: request?.width }));
+          snapAttempt = await this.snapFromRtsp(request);
+
+          if(!snapAttempt) {
+
+            snapAttempt = await this.nvr.ufpApi.getSnapshot(this.protectCamera.ufp, { height: request?.height, width: request?.width });
+
+            if(snapAttempt) {
+
+              needsExternalCrop = true;
+            }
+          }
         }
       }
 
@@ -78,8 +120,8 @@ export class ProtectSnapshot {
         return null;
       }
 
-      // Crop the snapshot, if we're configured to do so.
-      if(this.protectCamera.hints.crop) {
+      // Snapshots from the Protect API need a standalone crop pass since they bypass the FFmpeg pipeline where crop is now integrated into the filter chain.
+      if(needsExternalCrop && this.protectCamera.hints.crop) {
 
         snapAttempt = await this.cropSnapshot(snapAttempt) ?? snapAttempt;
       }
@@ -120,7 +162,10 @@ export class ProtectSnapshot {
       return null;
     }
 
-    const buffer = this.protectCamera.stream.hksv?.timeshift.getLast(PROTECT_LIVESTREAM_API_IDR_INTERVAL * 1000);
+    // Try the keyframe cache first for a minimal buffer (init segment + single keyframe fragment), falling back to the full timeshift window if no keyframe has been
+    // detected yet or the cache is stale.
+    const buffer = this.protectCamera.stream.hksv?.timeshift.getLastKeyframe() ??
+      this.protectCamera.stream.hksv?.timeshift.getLast(PROTECT_LIVESTREAM_API_IDR_INTERVAL * 1000);
 
     if(!buffer) {
 
@@ -199,12 +244,14 @@ export class ProtectSnapshot {
     // -fps_mode vfr        Ensure we deal with any variable frame rates that might occur.
     // -frames:v 1          Extract a single video frame for the output.
     // -q:v 2               Set the quality output of the JPEG output.
+    const decoderOptions = this.protectCamera.stream.ffmpegOptions.videoDecoder(this.protectCamera.ufp.videoCodec);
+
     const commandLineOptions = [
 
       "-hide_banner",
       "-nostats",
       "-fflags", "+discardcorrupt+genpts",
-      ...this.protectCamera.stream.ffmpegOptions.videoDecoder(this.protectCamera.ufp.videoCodec),
+      ...decoderOptions,
       "-max_delay", "500000",
       "-flags", "low_delay",
       "-skip_frame", "nointra",
@@ -214,21 +261,35 @@ export class ProtectSnapshot {
       "-q:v", "2"
     ];
 
-    // If we've specified dimensions, scale the snapshot.
+    // Build the video filter chain. We assemble it as an array of individual filters and join them with commas. When cropping is enabled, we apply it before scaling so
+    // the crop coordinates (which use relative iw/ih multipliers) operate on the source resolution, and the subsequent scale+pad fits the cropped region into HomeKit's
+    // requested dimensions.
+    const filters: string[] = [];
+
+    // If hardware decoding produces GPU-resident frames, we need to transfer them to system memory before any CPU-based filters can operate on them.
+    filters.push(...this.protectCamera.stream.ffmpegOptions.hardwareDownloadFilters);
+
+    // Apply the crop filter if configured. The crop coordinates use relative iw/ih multipliers, making them resolution-independent and safe to apply at any point in the
+    // filter chain. We place it before scale so the aspect ratio calculations in scale+pad reflect the cropped region rather than the full frame.
+    if(this.protectCamera.hints.crop) {
+
+      filters.push(this.protectCamera.stream.ffmpegOptions.cropFilter);
+    }
+
+    // Scale to the requested dimensions, preserving the aspect ratio and letterboxing where needed.
     if(request) {
 
-      // Video filter options we use for -filter:v are:
-      //
-      // select             Select only keyframes. These will be full images and avoid potential image corruption, especially in HEVC use cases.
-      // scale=             Scale the image down, if needed, but never upscale it, preserving aspect ratios and letterboxing where needed.
-      commandLineOptions.push("-filter:v", [
+      filters.push(
 
-        (this.protectCamera.stream.ffmpegOptions.videoDecoder(this.protectCamera.ufp.videoCodec).some(decoder => [ "h264_qsv", "hevc_qsv" ].includes(decoder)) ?
-          "hwdownload,format=nv12," : "") +
-        "scale=" + request.width.toString(), request.height.toString(),
-        "force_original_aspect_ratio=decrease,pad=" + request.width.toString(), request.height.toString(),
-        "(ow-iw)/2", "(oh-ih)/2"
-      ].join(":"));
+        [ "scale=" + request.width.toString(), request.height.toString(), "force_original_aspect_ratio=decrease" ].join(":"),
+        [ "pad=" + request.width.toString(), request.height.toString(), "(ow-iw)/2", "(oh-ih)/2" ].join(":")
+      );
+    }
+
+    // Apply the filter chain if we have any filters.
+    if(filters.length) {
+
+      commandLineOptions.push("-filter:v", filters.join(","));
     }
 
     // -f image2pipe        Specifies the output format to use a pipe, since we are outputting to stdout and want to consume the data directly.
@@ -262,7 +323,8 @@ export class ProtectSnapshot {
     return null;
   }
 
-  // Image snapshot crop handler.
+  // Image snapshot crop handler for Protect API snapshots. The input is a JPEG image, so we use minimal FFmpeg options - the hardware video decoder flags and stream
+  // analysis options used in snapFromFfmpeg are unnecessary here since FFmpeg natively decodes JPEG without hardware assistance.
   private async cropSnapshot(snapshot: Buffer): Promise<Nullable<Buffer>> {
 
     if(!this.protectCamera.stream) {
@@ -270,7 +332,7 @@ export class ProtectSnapshot {
       return null;
     }
 
-    // Crop the snapshot using the FFmpeg with crop filter. Options we use are:
+    // Crop the snapshot using FFmpeg with the crop filter. Options we use are:
     //
     // -hide_banner         Suppress printing the startup banner in FFmpeg.
     // -nostats             Suppress printing progress reports while encoding in FFmpeg.
@@ -283,10 +345,6 @@ export class ProtectSnapshot {
 
       "-hide_banner",
       "-nostats",
-      "-fflags", "+discardcorrupt+genpts",
-      ...this.protectCamera.stream.ffmpegOptions.videoDecoder(this.protectCamera.ufp.videoCodec),
-      "-max_delay", "500000",
-      "-flags", "low_delay",
       "-i", "pipe:0",
       "-filter:v", this.protectCamera.stream.ffmpegOptions.cropFilter,
       "-f", "image2pipe",
