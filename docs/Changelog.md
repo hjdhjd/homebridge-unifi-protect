@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## 7.28.0 (2026-03-20)
+  * Improvement: further HKSV recording improvements. HBUP now starts recordings from clean video boundaries in the timeshift buffer, improving video quality from the very first frame. Recording stream teardown is also faster and more reliable.
+  * Improvement: snapshot performance improvements. Concurrent snapshot requests from multiple HomeKit hubs are now handled by a single operation instead of spawning duplicates, and snapshots sourced from the timeshift buffer are now extracted more efficiently.
+  * Housekeeping.
+
 ## 7.27.0 (2026-03-17)
   * New feature: UniFi Protect v7 support.
   * New feature: scheduled controller reboots. You can configure HBUP to periodically reboot your Protect controller to maintain system health. Found under NVR feature options. Defaults to every 6 hours when enabled, with a configurable interval. HBUP will defer reboots when HKSV events are actively recording, and automatically reconnect after the controller comes back online. Disabled by default.

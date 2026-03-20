@@ -1,6 +1,6 @@
 {
   "name": "homebridge-unifi-protect",
-  "version": "7.27.0",
+  "version": "7.28.0",
   "displayName": "UniFi Protect",
   "description": "Homebridge UniFi Protect plugin providing complete HomeKit integration for the entire UniFi Protect ecosystem with full support for most features including HomeKit Secure Video, multiple controllers, blazing fast performance, and much more.",
   "author": {
@@ -81,8 +81,8 @@
   "dependencies": {
     "@homebridge/plugin-ui-utils": "2.2.1",
     "ffmpeg-for-homebridge": "2.2.1",
-    "homebridge-plugin-utils": "1.32.0",
-    "undici": "7.24.4",
+    "homebridge-plugin-utils": "1.33.0",
+    "undici": "7.24.5",
     "unifi-protect": "4.28.0"
   },
   "devDependencies": {
