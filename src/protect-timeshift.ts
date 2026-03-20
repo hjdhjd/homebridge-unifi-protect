@@ -2,9 +2,9 @@
  *
  * protect-timeshift.ts: UniFi Protect livestream timeshift buffer implementation to support HomeKit Secure Video.
  */
-import { type FfmpegLivestreamProcess, type HomebridgePluginLogging, type Nullable, runWithTimeout } from "homebridge-plugin-utils";
+import { type FfmpegLivestreamProcess, type HomebridgePluginLogging, type Nullable, isKeyframe, runWithTimeout } from "homebridge-plugin-utils";
+import { PROTECT_LIVESTREAM_API_IDR_INTERVAL, PROTECT_SEGMENT_RESOLUTION } from "./settings.js";
 import { EventEmitter } from "node:events";
-import { PROTECT_SEGMENT_RESOLUTION } from "./settings.js";
 import type { ProtectCamera } from "./devices/index.js";
 import type { ProtectLivestream } from "unifi-protect";
 import type { RtspEntry } from "./devices/protect-camera.js";
@@ -15,6 +15,8 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
   private _buffer: Buffer[];
   private _isStarted: boolean;
   private _isTransmitting: boolean;
+  private _keyframes: boolean[];
+  private _lastKeyframeTime: number;
   private _segmentLength: number;
   private eventHandlers: Record<string, ((segment: Buffer) => void) | (() => void)>;
   private livestream?: FfmpegLivestreamProcess | ProtectLivestream;
@@ -31,6 +33,8 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
     this._buffer = [];
     this._isStarted = false;
     this._isTransmitting = false;
+    this._keyframes = [];
+    this._lastKeyframeTime = 0;
     this.eventHandlers = {};
     this.log = protectCamera.log;
     this.protectCamera = protectCamera;
@@ -67,13 +71,24 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
         this.emit("segment", segment);
       }
 
-      // Add the livestream segment to the end of the timeshift buffer.
+      // Add the livestream segment to the end of the timeshift buffer and track whether it's a keyframe. We parse the fMP4 TRUN sample flags to detect sync samples
+      // rather than relying on timing heuristics, giving us a definitive answer on every segment.
+      const isKeyframeSegment = isKeyframe(segment);
+
       this._buffer.push(segment);
+      this._keyframes.push(isKeyframeSegment);
 
       // Trim the beginning of the buffer to our configured size.
-      if(this._buffer.length >  this.segmentCount) {
+      if(this._buffer.length > this.segmentCount) {
 
         this._buffer.shift();
+        this._keyframes.shift();
+      }
+
+      // Track when we last saw a keyframe for staleness detection in snapshot extraction.
+      if(isKeyframeSegment) {
+
+        this._lastKeyframeTime = Date.now();
       }
     };
   }
@@ -99,7 +114,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
     }
 
     // Clear out the timeshift buffer, if it's been previously filled, and then fire up the timeshift buffer.
-    this._buffer = [];
+    this.clearBuffer();
 
     // Acquire our livestream.
     this.livestream = this.protectCamera.livestream.acquire(rtspEntry);
@@ -147,7 +162,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
       Object.keys(this.eventHandlers).map(eventName => this.livestream?.off(eventName, this.eventHandlers[eventName]));
     }
 
-    this._buffer = [];
+    this.clearBuffer();
     this._isStarted = false;
     this.livestream = undefined;
     this.rtspEntry = undefined;
@@ -159,11 +174,20 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
   public restart(): void {
 
     this.livestream?.emit("restart");
-    this._buffer = [];
+    this.clearBuffer();
   }
 
-  // Start transmitting our timeshift buffer.
-  public async transmitStart(): Promise<boolean> {
+  // Clear the timeshift buffer and associated keyframe tracking state.
+  private clearBuffer(): void {
+
+    this._buffer = [];
+    this._keyframes = [];
+    this._lastKeyframeTime = 0;
+  }
+
+  // Start transmitting our timeshift buffer. When startIndex is provided, we emit only the buffer slice from that index forward rather than the entire buffer. This
+  // enables keyframe-aligned emission...we send FFmpeg data starting from a known keyframe boundary for clean decoder initialization.
+  public async transmitStart(startIndex?: number): Promise<boolean> {
 
     // If we haven't started the livestream, or it was closed for some reason, let's start it now.
     if((!this.isStarted && this.rtspEntry && !(await this.start(this.rtspEntry))) || !this.livestream?.initSegment) {
@@ -173,8 +197,10 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
       return false;
     }
 
-    // Transmit everything we have queued up to get started as quickly as possible.
-    this.emit("segment", Buffer.concat([ this.livestream.initSegment, ...this._buffer ]));
+    // Transmit the timeshift buffer, starting from the keyframe-aligned index if provided, or the entire buffer otherwise.
+    const slicedBuffer = ((startIndex !== undefined) && (startIndex > 0) && (startIndex < this._buffer.length)) ? this._buffer.slice(startIndex) : this._buffer;
+
+    this.emit("segment", Buffer.concat([ this.livestream.initSegment, ...slicedBuffer ]));
 
     // Let our livestream listener know that we're now transmitting.
     this._isTransmitting = true;
@@ -235,6 +261,57 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
 
     // If we don't have our fMP4 initialization segment, we're done. Otherwise, return the duration requested, starting from the end.
     return (this.livestream?.initSegment && this._buffer.length) ? Buffer.concat([ this.livestream.initSegment, ...this._buffer.slice(start * -1) ]) : null;
+  }
+
+  // Return the most recent keyframe segment with its initialization segment, for efficient snapshot extraction. This produces a minimal buffer (init segment + one
+  // fMP4 fragment) instead of the multi-second buffer from getLast(). Returns null if no keyframe has been detected yet or if the last keyframe is stale (older than
+  // 2x the IDR interval), indicating the livestream may have stalled.
+  public getLastKeyframe(): Nullable<Buffer> {
+
+    if(!this._lastKeyframeTime || !this.livestream?.initSegment) {
+
+      return null;
+    }
+
+    // If the last keyframe is older than 2x the IDR interval, the livestream is likely stalled and we should let the caller fall through to other snapshot sources.
+    if((Date.now() - this._lastKeyframeTime) > (PROTECT_LIVESTREAM_API_IDR_INTERVAL * 2 * 1000)) {
+
+      return null;
+    }
+
+    // Walk backwards through the keyframe tracking array to find the most recent keyframe segment in the buffer.
+    for(let i = this._keyframes.length - 1; i >= 0; i--) {
+
+      if(this._keyframes[i]) {
+
+        return Buffer.concat([ this.livestream.initSegment, this._buffer[i] ]);
+      }
+    }
+
+    return null;
+  }
+
+  // Find the nearest keyframe at or before the prebuffer start point in the timeshift buffer. This enables keyframe-aligned emission to FFmpeg...instead of sending
+  // the entire buffer and relying solely on -ss to seek past excess data, we identify the optimal starting point where FFmpeg's decoder can initialize from a clean
+  // keyframe. Returns the buffer index to start from and the seek offset (time from the keyframe to the prebuffer start point) for FFmpeg's -ss parameter, or null
+  // if no keyframe is found in the buffer.
+  public getKeyframeAlignedStart(prebufferMs: number): { seekOffsetMs: number; startIndex: number } | null {
+
+    // Calculate where the prebuffer window begins in the buffer. Everything from this index to the end of the buffer is the prebuffer that HKSV expects. We clamp to
+    // zero to handle the case where the buffer is shorter than the requested prebuffer duration.
+    const prebufferStartIndex = Math.max(this._buffer.length - Math.ceil(prebufferMs / this._segmentLength), 0);
+
+    // Walk backwards from the prebuffer start to find the nearest keyframe. Starting from a keyframe gives FFmpeg a clean decoder state from the very first frame.
+    for(let i = prebufferStartIndex; i >= 0; i--) {
+
+      if(this._keyframes[i]) {
+
+        return { seekOffsetMs: (prebufferStartIndex - i) * this._segmentLength, startIndex: i };
+      }
+    }
+
+    // No keyframe found before the prebuffer start point...the caller should fall back to the current behavior of emitting the full buffer.
+    return null;
   }
 
   // Return the current timeshift buffer, in full.
