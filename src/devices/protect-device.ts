@@ -136,6 +136,7 @@ export abstract class ProtectDevice extends ProtectBase {
   public accessory!: PlatformAccessory;
   public hints: ProtectHints;
   protected listeners: Map<string, (packet: ProtectEventPacket) => void>;
+  protected timers: Map<string, NodeJS.Timeout>;
   public ufp: ProtectDeviceConfigTypes;
 
   // The constructor initializes key variables and calls configureDevice().
@@ -147,6 +148,7 @@ export abstract class ProtectDevice extends ProtectBase {
     this.accessory = accessory;
     this.hints = {} as ProtectHints;
     this.listeners = new Map();
+    this.timers = new Map();
     this.ufp = {} as ProtectDeviceConfigTypes;
   }
 
@@ -220,7 +222,7 @@ export abstract class ProtectDevice extends ProtectBase {
     return this.setInfo(this.accessory, this.ufp);
   }
 
-  // Cleanup our event handlers and any other activities as needed.
+  // Cleanup our event handlers, timers, and any other activities as needed.
   public cleanup(): void {
 
     for(const [ eventName, listener ] of this.listeners) {
@@ -229,6 +231,13 @@ export abstract class ProtectDevice extends ProtectBase {
     }
 
     this.listeners.clear();
+
+    for(const timer of this.timers.values()) {
+
+      clearTimeout(timer);
+    }
+
+    this.timers.clear();
   }
 
   // Register an event listener, storing it for later cleanup.
@@ -236,6 +245,48 @@ export abstract class ProtectDevice extends ProtectBase {
 
     this.listeners.set(event, handler);
     this.nvr.events.on(event, handler);
+  }
+
+  // Register a timeout, storing it for cleanup on device removal. If a timer with the same key already exists, it is cleared before the new one is set.
+  protected registerTimeout(key: string, callback: () => void, delay: number): void {
+
+    const existing = this.timers.get(key);
+
+    if(existing) {
+
+      clearTimeout(existing);
+    }
+
+    this.timers.set(key, setTimeout(() => {
+
+      this.timers.delete(key);
+      callback();
+    }, delay));
+  }
+
+  // Register an interval, storing it for cleanup on device removal. If an interval with the same key already exists, it is cleared before the new one is set.
+  protected registerInterval(key: string, callback: () => void, interval: number): void {
+
+    const existing = this.timers.get(key);
+
+    if(existing) {
+
+      clearInterval(existing);
+    }
+
+    this.timers.set(key, setInterval(callback, interval));
+  }
+
+  // Clear a previously registered timer by key.
+  protected clearTimer(key: string): void {
+
+    const timer = this.timers.get(key);
+
+    if(timer) {
+
+      clearTimeout(timer);
+      this.timers.delete(key);
+    }
   }
 
   // Utility to ease publishing of MQTT events.

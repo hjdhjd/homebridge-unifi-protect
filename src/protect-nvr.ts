@@ -8,12 +8,11 @@ import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_CONTROLLER_REFRESH_INTERVAL, PROTEC
   PROTECT_NVR_REBOOT_INTERVAL, PROTECT_NVR_REBOOT_MIN_INTERVAL, PROTECT_NVR_REBOOT_RECONNECT_DELAY } from "./settings.js";
 import { ProtectCamera, ProtectChime, type ProtectDevice, ProtectDoorbell, ProtectLight, ProtectLiveviews, ProtectNvrSystemInfo, ProtectSensor,
   ProtectViewer } from "./devices/index.js";
-import type { ProtectCameraConfig, ProtectChimeConfig, ProtectLightConfig, ProtectNvrBootstrap, ProtectNvrConfig, ProtectSensorConfig,
-  ProtectViewerConfig } from "unifi-protect";
+import { ProtectDeviceCategories, exhaustiveGuard } from "./protect-types.js";
 import type { ProtectDeviceConfigTypes, ProtectDeviceTypes, ProtectDevices } from "./protect-types.js";
+import type { ProtectNvrBootstrap, ProtectNvrConfig } from "unifi-protect";
 import { APIEvent } from "homebridge";
 import { ProtectApi } from "unifi-protect";
-import { ProtectDeviceCategories } from "./protect-types.js";
 import { ProtectEvents } from "./protect-events.js";
 import type { ProtectNvrOptions } from "./protect-options.js";
 import type { ProtectPlatform } from "./protect-platform.js";
@@ -223,7 +222,10 @@ export class ProtectNvr {
 
       // Unregister all the accessories for this controller from Homebridge that may have been restored already. Any additional ones will be automatically caught when
       // they are restored.
-      this.platform.accessories.filter(accessory => accessory.context.nvr === this.ufp.mac).map(accessory => { this.removeHomeKitDevice(accessory, true); });
+      for(const accessory of this.platform.accessories.filter(x => x.context.nvr === this.ufp.mac)) {
+
+        this.removeHomeKitDevice(accessory, true);
+      }
 
       return;
     }
@@ -403,17 +405,19 @@ export class ProtectNvr {
   // Create instances of Protect device types in our plugin.
   private addProtectDevice(accessory: PlatformAccessory, device: ProtectDeviceConfigTypes): Nullable<ProtectDevice> {
 
+    const deviceName = device.name ?? device.marketName;
+
     switch(device.modelKey) {
 
       case "camera":
 
         // We have a UniFi Protect camera or doorbell.
-        if((device as ProtectCameraConfig).featureFlags.isDoorbell) {
+        if(device.featureFlags.isDoorbell) {
 
-          this.configuredDevices.set(accessory.UUID, new ProtectDoorbell(this, device as ProtectCameraConfig, accessory));
+          this.configuredDevices.set(accessory.UUID, new ProtectDoorbell(this, device, accessory));
         } else {
 
-          this.configuredDevices.set(accessory.UUID, new ProtectCamera(this, device as ProtectCameraConfig, accessory));
+          this.configuredDevices.set(accessory.UUID, new ProtectCamera(this, device, accessory));
         }
 
         break;
@@ -421,34 +425,37 @@ export class ProtectNvr {
       case "chime":
 
         // We have a UniFi Protect chime.
-        this.configuredDevices.set(accessory.UUID, new ProtectChime(this, device as ProtectChimeConfig, accessory));
+        this.configuredDevices.set(accessory.UUID, new ProtectChime(this, device, accessory));
 
         break;
 
       case "light":
 
         // We have a UniFi Protect light.
-        this.configuredDevices.set(accessory.UUID, new ProtectLight(this, device as ProtectLightConfig, accessory));
+        this.configuredDevices.set(accessory.UUID, new ProtectLight(this, device, accessory));
 
         break;
 
       case "sensor":
 
         // We have a UniFi Protect sensor.
-        this.configuredDevices.set(accessory.UUID, new ProtectSensor(this, device as ProtectSensorConfig, accessory));
+        this.configuredDevices.set(accessory.UUID, new ProtectSensor(this, device, accessory));
 
         break;
 
       case "viewer":
 
         // We have a UniFi Protect viewer.
-        this.configuredDevices.set(accessory.UUID, new ProtectViewer(this, device as ProtectViewerConfig, accessory));
+        this.configuredDevices.set(accessory.UUID, new ProtectViewer(this, device, accessory));
 
         break;
 
       default:
 
-        this.log.error("Unknown device class %s detected for %s.", device.modelKey, device.name ?? device.marketName);
+        // Ensure we handle every device type the Protect API can send us. If a new device category is added upstream, this will flag it at compile time rather
+        // than silently ignoring it at runtime.
+        exhaustiveGuard(device);
+        this.log.error("Unknown device class detected for %s.", deviceName);
 
         return null;
     }
@@ -552,23 +559,37 @@ export class ProtectNvr {
     }
 
     // Iterate through the list of device categories we know about and add them to HomeKit.
-    ProtectDeviceCategories.map(category => ((this.ufpApi.bootstrap?.[category + "s"] as ProtectDeviceConfigTypes[] | undefined) ?? [])
-      .map(device => this.addHomeKitDevice(device)));
+    for(const category of ProtectDeviceCategories) {
+
+      for(const device of ((this.ufpApi.bootstrap[category + "s"] as ProtectDeviceConfigTypes[] | undefined) ?? [])) {
+
+        this.addHomeKitDevice(device);
+      }
+    }
 
     // Remove Protect devices that are no longer found on this Protect NVR, but we still have in HomeKit.
     this.cleanupDevices();
 
     // Configure our chime accessories.
-    this.devices("chime").map(chime => { chime.updateDevice(); });
+    for(const chime of this.devices("chime")) {
+
+      chime.updateDevice();
+    }
 
     // Configure our liveview-based accessories.
     this.liveviews?.configureLiveviews();
 
     // Update our viewer accessories.
-    this.devices("viewer").map(viewer => viewer.updateDevice());
+    for(const viewer of this.devices("viewer")) {
+
+      viewer.updateDevice();
+    }
 
     // Update our device information.
-    this.devicelist.map(device => device.configureInfo());
+    for(const device of this.devicelist) {
+
+      device.configureInfo();
+    }
 
     return true;
   }
@@ -577,11 +598,11 @@ export class ProtectNvr {
   private cleanupDevices(): void {
 
     // Process the device removal queue before we do anything else.
-    this.platform.accessories.filter(accessory => this.deviceRemovalQueue.has(accessory.UUID)).map(accessory => {
+    for(const accessory of this.platform.accessories.filter(x => this.deviceRemovalQueue.has(x.UUID))) {
 
       this.removeHomeKitDevice(accessory, !this.platform.featureOptions.test("Device",
         ((accessory.getService(this.hap.Service.AccessoryInformation)?.getCharacteristic(this.hap.Characteristic.SerialNumber).value) ?? "") as string, this.ufp.mac));
-    });
+    }
 
     // Cleanup our accessories.
     for(const accessory of this.platform.accessories.filter(x => x.context.nvr === this.ufp.mac)) {

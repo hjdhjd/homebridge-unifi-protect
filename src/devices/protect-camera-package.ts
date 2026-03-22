@@ -12,7 +12,6 @@ import { ProtectStreamingDelegate } from "../protect-stream.js";
 export class ProtectCameraPackage extends ProtectCamera {
 
   private flashlightState?: boolean;
-  private flashlightTimer?: NodeJS.Timeout;
 
   // Configure the package camera.
   protected configureDevice(): boolean {
@@ -165,8 +164,7 @@ export class ProtectCameraPackage extends ProtectCamera {
       // Stop heartbeating the flashlight to allow it to turn off.
       if(!value) {
 
-        clearInterval(this.flashlightTimer);
-        this.flashlightTimer = undefined;
+        this.clearTimer("flashlight");
         this.flashlightState = false;
 
         return;
@@ -200,15 +198,14 @@ export class ProtectCameraPackage extends ProtectCamera {
         // Stop if we've been told to turn off.
         if(!this.flashlightState) {
 
-          clearInterval(this.flashlightTimer);
-          this.flashlightTimer = undefined;
+          this.clearTimer("flashlight");
         }
 
         return this.flashlightState;
       };
 
       // Clear out any interval we have.
-      clearInterval(this.flashlightTimer);
+      this.clearTimer("flashlight");
 
       // If it's dark, we're done.
       if(!this.ufp.isDark) {
@@ -222,7 +219,7 @@ export class ProtectCameraPackage extends ProtectCamera {
       await activateFlashlight();
 
       // Heartbeat the flashlight at regular intervals to keep it on.
-      this.flashlightTimer = setInterval(() => void activateFlashlight(), 20 * 1000);
+      this.registerInterval("flashlight", () => void activateFlashlight(), 20 * 1000);
     });
 
     // Initialize the flashlight.

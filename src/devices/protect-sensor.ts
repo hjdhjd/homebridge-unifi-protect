@@ -330,7 +330,7 @@ export class ProtectSensor extends ProtectDevice {
 
     for(const sensor of [
 
-      { isDetected: "externalLeakDetectedAt", isEnabled: "isExternalEnabled", mqtt: "leak-enternal",
+      { isDetected: "externalLeakDetectedAt", isEnabled: "isExternalEnabled", mqtt: "leak-external",
         name: " External " + (isMoistureSensor ? "Moisture" : "Leak") + " Sensor", subtype: ProtectReservedNames.LEAKSENSOR_EXTERNAL },
       { isDetected: "leakDetectedAt", isEnabled: "isInternalEnabled", mqtt: "leak", subtype: ProtectReservedNames.LEAKSENSOR_INTERNAL }
     ]) {

@@ -11,7 +11,6 @@ import type { ProtectNvr } from "../protect-nvr.js";
 
 export class ProtectChime extends ProtectDevice {
 
-  private readonly eventTimers: Map<string, NodeJS.Timeout>;
   public ufp: ProtectChimeConfig;
 
   // Create an instance.
@@ -19,7 +18,6 @@ export class ProtectChime extends ProtectDevice {
 
     super(nvr, accessory);
 
-    this.eventTimers = new Map();
     this.ufp = device;
 
     this.configureHints();
@@ -70,12 +68,20 @@ export class ProtectChime extends ProtectDevice {
 
     const ringtones = this.nvr.ufpApi.bootstrap?.ringtones.filter(tone => tone.nvrMac === this.nvr.ufp.mac);
 
-    ringtones?.map(track => this.configureChimeSwitch(track.name, "play-speaker", ProtectReservedNames.SWITCH_DOORBELL_CHIME_SPEAKER + "." + track.id));
+    if(ringtones) {
+
+      for(const track of ringtones) {
+
+        this.configureChimeSwitch(track.name, "play-speaker", ProtectReservedNames.SWITCH_DOORBELL_CHIME_SPEAKER + "." + track.id);
+      }
+    }
 
     // Remove ringtones that no longer exist.
-    this.accessory.services.filter(service => service.subtype?.startsWith(ProtectReservedNames.SWITCH_DOORBELL_CHIME_SPEAKER + ".") &&
-      !ringtones?.some(tone => tone.id === service.subtype?.slice(ProtectReservedNames.SWITCH_DOORBELL_CHIME_SPEAKER.length + 1)))
-      .map(service => { this.accessory.removeService(service); });
+    for(const service of this.accessory.services.filter(x => x.subtype?.startsWith(ProtectReservedNames.SWITCH_DOORBELL_CHIME_SPEAKER + ".") &&
+      !ringtones?.some(tone => tone.id === x.subtype?.slice(ProtectReservedNames.SWITCH_DOORBELL_CHIME_SPEAKER.length + 1)))) {
+
+      this.accessory.removeService(service);
+    }
   }
 
   // Configure chime speaker switches for HomeKit.
@@ -94,7 +100,7 @@ export class ProtectChime extends ProtectDevice {
     // Turn the speaker on or off.
     service.getCharacteristic(this.hap.Characteristic.On).onGet(() => {
 
-      return this.eventTimers.has(endpoint);
+      return this.timers.has(endpoint);
     });
 
     service.getCharacteristic(this.hap.Characteristic.On).onSet(async (value: CharacteristicValue) => {
@@ -103,7 +109,7 @@ export class ProtectChime extends ProtectDevice {
       // state given you can't undo the play command to the chime.
       if(!value) {
 
-        setTimeout(() => service.updateCharacteristic(this.hap.Characteristic.On, this.eventTimers.has(endpoint)), 50);
+        setTimeout(() => service.updateCharacteristic(this.hap.Characteristic.On, this.timers.has(endpoint)), 50);
 
         return;
       }
@@ -121,14 +127,11 @@ export class ProtectChime extends ProtectDevice {
 
         this.log.error("Unable to play " + name + ".");
 
-        setTimeout(() => service.updateCharacteristic(this.hap.Characteristic.On, this.eventTimers.has(endpoint)), 50);
+        setTimeout(() => service.updateCharacteristic(this.hap.Characteristic.On, this.timers.has(endpoint)), 50);
       }
 
-      this.eventTimers.set(endpoint, setTimeout(() => {
-
-        this.eventTimers.delete(endpoint);
-        service.updateCharacteristic(this.hap.Characteristic.On, this.eventTimers.has(endpoint));
-      }, PROTECT_DOORBELL_CHIME_SPEAKER_DURATION));
+      this.registerTimeout(endpoint,
+        () => service.updateCharacteristic(this.hap.Characteristic.On, this.timers.has(endpoint)), PROTECT_DOORBELL_CHIME_SPEAKER_DURATION);
 
       // Inform the user.
       this.log.info("Playing %s.", name);

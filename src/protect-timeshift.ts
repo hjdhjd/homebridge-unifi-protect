@@ -2,8 +2,9 @@
  *
  * protect-timeshift.ts: UniFi Protect livestream timeshift buffer implementation to support HomeKit Secure Video.
  */
-import { type FfmpegLivestreamProcess, type HomebridgePluginLogging, type Nullable, isKeyframe, runWithTimeout } from "homebridge-plugin-utils";
+import type { FfmpegLivestreamProcess, HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
 import { PROTECT_LIVESTREAM_API_IDR_INTERVAL, PROTECT_SEGMENT_RESOLUTION } from "./settings.js";
+import { isKeyframe, runWithTimeout } from "homebridge-plugin-utils";
 import { EventEmitter } from "node:events";
 import type { ProtectCamera } from "./devices/index.js";
 import type { ProtectLivestream } from "unifi-protect";
@@ -127,7 +128,10 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
     if(!(await this.protectCamera.livestream.start(rtspEntry, this._segmentLength))) {
 
       // Something went wrong, let's cleanup our event handlers and we're done.
-      Object.keys(this.eventHandlers).map(eventName => this.livestream?.off(eventName, this.eventHandlers[eventName]));
+      for(const eventName of Object.keys(this.eventHandlers)) {
+
+        this.livestream.off(eventName, this.eventHandlers[eventName]);
+      }
 
       return false;
     }
@@ -159,7 +163,10 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
         this.protectCamera.livestream.stop(this.rtspEntry);
       }
 
-      Object.keys(this.eventHandlers).map(eventName => this.livestream?.off(eventName, this.eventHandlers[eventName]));
+      for(const eventName of Object.keys(this.eventHandlers)) {
+
+        this.livestream?.off(eventName, this.eventHandlers[eventName]);
+      }
     }
 
     this.clearBuffer();

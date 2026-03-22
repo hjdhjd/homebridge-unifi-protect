@@ -65,7 +65,10 @@ export class ProtectViewer extends ProtectDevice {
     const nvrLiveviewIds = this.ufpApi.bootstrap?.liveviews.map(x => x.id);
 
     // Identify what's been removed on the NVR and remove it from the accessory as well.
-    currentLiveviewSwitches.filter(x => !nvrLiveviewIds?.includes(x.subtype ?? "")).map(x => { this.accessory.removeService(x); });
+    for(const service of currentLiveviewSwitches.filter(x => !nvrLiveviewIds?.includes(x.subtype ?? ""))) {
+
+      this.accessory.removeService(service);
+    }
 
     // Identify what needs to be added to HomeKit that isn't already there, and add them.
     this.addLiveviewSwitch(nvrLiveviewIds?.filter(x => !currentLiveviewSwitches.filter(liveviewSwitch => liveviewSwitch.subtype === x).length) ?? []);

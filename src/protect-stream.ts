@@ -1111,7 +1111,10 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
 
       if(ongoingSession) {
 
-        ongoingSession.ffmpeg.map(ffmpegProcess => { ffmpegProcess.stop(); });
+        for(const ffmpegProcess of ongoingSession.ffmpeg) {
+
+          ffmpegProcess.stop();
+        }
 
         // Close the demuxer, if we have one.
         ongoingSession.rtpDemuxer?.close();
@@ -1123,7 +1126,10 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
         this.log.info("Stopped video streaming session.");
 
         // Release our port reservations.
-        ongoingSession.rtpPortReservations.map(x => { this.platform.rtpPorts.cancel(x); });
+        for(const reservation of ongoingSession.rtpPortReservations) {
+
+          this.platform.rtpPorts.cancel(reservation);
+        }
       }
 
       // On the off chance we were signaled to prepare to start streaming, but never actually started streaming, cleanup after ourselves.
@@ -1132,7 +1138,10 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
       if(pendingSession) {
 
         // Release our port reservations.
-        pendingSession.rtpPortReservations.map(x => { this.platform.rtpPorts.cancel(x); });
+        for(const reservation of pendingSession.rtpPortReservations) {
+
+          this.platform.rtpPorts.cancel(reservation);
+        }
       }
 
       // Delete the entries.

@@ -34,9 +34,7 @@ type RtspOptions = Partial<{
 
 export class ProtectCamera extends ProtectDevice {
 
-  private accessUnlockTimer?: NodeJS.Timeout;
   private ambientLight: number;
-  private ambientLightTimer?: NodeJS.Timeout;
   private isDeleted: boolean;
   public isRinging: boolean;
   private isTampered: boolean;
@@ -323,17 +321,10 @@ export class ProtectCamera extends ProtectDevice {
       lockService.updateCharacteristic(this.hap.Characteristic.LockCurrentState, this.hap.Characteristic.LockCurrentState.UNSECURED);
       this.log.info("Unlocked.");
 
-      if(this.accessUnlockTimer) {
-
-        clearTimeout(this.accessUnlockTimer);
-      }
-
-      this.accessUnlockTimer = setTimeout(() => {
+      this.registerTimeout("accessUnlock", () => {
 
         lockService.updateCharacteristic(this.hap.Characteristic.LockTargetState, this.hap.Characteristic.LockTargetState.SECURED);
         lockService.updateCharacteristic(this.hap.Characteristic.LockCurrentState, this.hap.Characteristic.LockCurrentState.SECURED);
-
-        this.accessUnlockTimer = undefined;
       }, 2000);
 
       return;
@@ -424,7 +415,7 @@ export class ProtectCamera extends ProtectDevice {
       // Stop updating if we no longer exist.
       if(this.isDeleted) {
 
-        clearInterval(this.ambientLightTimer);
+        this.clearTimer("ambientLight");
 
         return;
       }
@@ -445,7 +436,7 @@ export class ProtectCamera extends ProtectDevice {
       this.publish("ambientlight", this.ambientLight.toString());
     };
 
-    this.ambientLightTimer = setInterval(() => void updateAmbientLight(), 60 * 1000);
+    this.registerInterval("ambientLight", () => void updateAmbientLight(), 60 * 1000);
 
     // Retrieve the active state when requested.
     service.getCharacteristic(this.hap.Characteristic.StatusActive).onGet(() => this.isOnline);

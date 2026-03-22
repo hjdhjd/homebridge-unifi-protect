@@ -30,7 +30,6 @@ export interface MessageSwitchInterface extends MessageInterface {
 export class ProtectDoorbell extends ProtectCamera {
 
   private chimeDigitalDuration: number;
-  private contactAuthTimer?: NodeJS.Timeout;
   private defaultMessageDuration: number;
   private isMessagesEnabled: boolean;
   private isMessagesFromControllerEnabled: boolean;
@@ -115,8 +114,8 @@ export class ProtectDoorbell extends ProtectCamera {
   // Configure our access to the doorbell LCD screen.
   private configureDoorbellLcdSwitch(): boolean {
 
-    // Make sure we're configuring a camera device with an LCD screen (aka a doorbell).
-    if((this.ufp.modelKey !== "camera") || !this.ufp.featureFlags.hasLcdScreen) {
+    // Make sure we're configuring a doorbell with an LCD screen.
+    if(!this.ufp.featureFlags.hasLcdScreen) {
 
       return false;
     }
@@ -757,11 +756,7 @@ export class ProtectDoorbell extends ProtectCamera {
     if(payload.type && [ "fingerprintIdentified", "nfcCardScanned" ].includes(payload.type)) {
 
       // Clear out the contact sensor timer.
-      if(this.contactAuthTimer) {
-
-        clearTimeout(this.contactAuthTimer);
-        this.contactAuthTimer = undefined;
-      }
+      this.clearTimer("contactAuth");
 
       // Grab the service, if we've configured it.
       const service = this.accessory.getServiceById(this.hap.Service.ContactSensor, ProtectReservedNames.CONTACT_AUTHSENSOR);
@@ -790,11 +785,9 @@ export class ProtectDoorbell extends ProtectCamera {
       this.publish("authenticate", JSON.stringify(authInfo));
 
       // Reset our contact sensor after our auth sensor duration.
-      this.contactAuthTimer = setTimeout(() => {
-
-        service?.updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.hap.Characteristic.ContactSensorState.CONTACT_DETECTED);
-        this.contactAuthTimer = undefined;
-      }, PROTECT_DOORBELL_AUTHSENSOR_DURATION);
+      this.registerTimeout("contactAuth",
+        () => service?.updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.hap.Characteristic.ContactSensorState.CONTACT_DETECTED),
+        PROTECT_DOORBELL_AUTHSENSOR_DURATION);
     }
   }
 
