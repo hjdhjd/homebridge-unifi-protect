@@ -19,7 +19,6 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
 
   private _isRecording: boolean;
   private _isTransmitting: boolean;
-  private abortController?: AbortController;
   private readonly accessory: PlatformAccessory;
   private readonly api: API;
   private eventId: number;
@@ -133,10 +132,9 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     void this.updateRecordingActive(this.isRecording);
   }
 
-  // Handle the actual recording stream request. The optional signal parameter is for forward compatibility with an upcoming HAP-nodejs release that will pass an
-  // AbortSignal when the recording stream closes, allowing us to interrupt pending async operations (like pacing delays) immediately rather than waiting for
-  // closeRecordingStream to propagate through our code. Until then, signal is undefined and the abort wiring below is a no-op.
-  public async *handleRecordingStreamRequest(_streamId: number, signal?: AbortSignal): AsyncGenerator<RecordingPacket> {
+  // Handle the actual recording stream request. HAP-nodejs provides an AbortSignal that fires when the recording stream closes, allowing us to interrupt pending async
+  // operations (like pacing delays) immediately rather than waiting for closeRecordingStream to propagate through our code.
+  public async *handleRecordingStreamRequest(_streamId: number, signal: AbortSignal): AsyncGenerator<RecordingPacket> {
 
     // Track when the recording request arrived from HomeKit's perspective. This is used for pacing calculations below...we set it here rather than at the
     // start of the pacing loop because HomeKit's timeout clock starts when it sends the request, not when we finish our setup.
@@ -178,12 +176,6 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     // yields, segmentGenerator() is paused and FFmpeg's output accumulates in its internal recording buffer.
     const pacingInterval = PROTECT_HKSV_TIMEOUT - 500;
 
-    this.abortController = new AbortController();
-
-    // If HAP-nodejs provides an AbortSignal, wire it to our own AbortController. HAP aborts in handleClosed() before calling closeRecordingStream, so this
-    // gives us the earliest possible notification that the recording stream is closing...our pacing sleep is interrupted before stopTransmitting even runs.
-    signal?.addEventListener("abort", () => this.abortController?.abort(), { once: true });
-
     this.lastPacingDelay = 0;
     this.maxPacingDelay = 0;
 
@@ -200,14 +192,14 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
       this.transmittedSegments++;
 
       // Wait until our pacing schedule allows this segment to be yielded. Each segment is spaced pacingInterval apart from the recording start. The sleep is
-      // abortable via the AbortController so that stopTransmitting() can interrupt it immediately when HomeKit closes the recording stream, rather than
-      // waiting for the full pacing delay to expire.
+      // abortable via HAP's AbortSignal so the pacing delay is interrupted immediately when HomeKit closes the recording stream, rather than waiting for the
+      // full delay to expire.
       this.lastPacingDelay = (this.pacingStartTime + (this.transmittedSegments * pacingInterval)) - Date.now();
       this.maxPacingDelay = Math.max(this.maxPacingDelay, this.lastPacingDelay);
 
       if(this.lastPacingDelay > 0) {
 
-        await delay(this.lastPacingDelay, undefined, { signal: this.abortController.signal }).catch(() => { /* Expected when recording stream closes. */ });
+        await delay(this.lastPacingDelay, undefined, { signal }).catch(() => { /* Expected when recording stream closes. */ });
       }
 
       // If the recording stream was closed while we were waiting on our pacing schedule, we're done.
@@ -453,14 +445,12 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
       return;
     }
 
-    // Abort any in-progress pacing sleep so the recording generator can exit immediately without yielding to a closed stream.
-    this.abortController?.abort();
-
     // We're done transmitting, so we can go back to maintaining our timeshift buffer for HomeKit.
     this.timeshift.transmitStop();
 
     // Kill any FFmpeg sessions, capturing process state before we clear the reference.
     const ffmpegEnded = this.ffmpegStream?.isEnded ?? true;
+    const ffmpegStderrLog = this.ffmpegStream?.stderrLog ?? [];
     const ffmpegTimedOut = this.ffmpegStream?.isTimedOut ?? false;
 
     if(this.ffmpegStream) {
@@ -620,6 +610,15 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
         "/" + Math.round(this.maxPacingDelay).toString() + "ms last/peak)" : "";
 
       this.log.error("HKSV recording event ended early: %s%s", reasonDescription, telemetry);
+
+      // Dump FFmpeg's stderr output for post-mortem analysis. This is gated behind the telemetry feature flag to avoid log noise for normal users.
+      if(this.protectCamera.hasFeature("Debug.Video.HKSV.Telemetry") && ffmpegStderrLog.length) {
+
+        for(const line of ffmpegStderrLog) {
+
+          this.log.error("FFmpeg: %s", line);
+        }
+      }
     }
   }
 

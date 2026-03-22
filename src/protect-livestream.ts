@@ -8,7 +8,7 @@ import type { ProtectCamera } from "./devices/index.js";
 import type { ProtectLivestream } from "unifi-protect";
 import type { RtspEntry } from "./devices/protect-camera.js";
 
-const LIVESTREAM_TIMEOUT = 3000;
+const LIVESTREAM_TIMEOUT = 2000;
 const LIVESTREAM_RESTART_INTERVAL = 10;
 
 export class LivestreamManager {
