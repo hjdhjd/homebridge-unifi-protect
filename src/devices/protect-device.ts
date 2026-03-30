@@ -709,10 +709,17 @@ export abstract class ProtectDevice extends ProtectBase {
     return { ledSettings: { isEnabled: value } };
   }
 
+  // Structural type guard for devices that have LED settings. We check structurally rather than by device type so that future devices with ledSettings are handled
+  // automatically.
+  private hasLedSettings(): this is { ufp: { ledSettings: { isEnabled: boolean } } } {
+
+    return "ledSettings" in this.ufp;
+  }
+
   // Utility function to return the current state of the device status indicator. This works for cameras and sensors, but Protect lights control it differently.
   public get statusLed(): boolean {
 
-    if(!("ledSettings" in this.ufp)) {
+    if(!this.hasLedSettings()) {
 
       return false;
     }

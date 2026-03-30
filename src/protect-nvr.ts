@@ -752,8 +752,7 @@ export class ProtectNvr {
     const deletingAccessories = [accessory];
 
     // If it's an unknown device or a camera, look for a corresponding package camera if we have one and remove it as well.
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-    if(!device || (device?.modelKey === "camera")) {
+    if(!device || (device.modelKey === "camera")) {
 
       const packageCameraAccessory = this.platform.accessories.find(x => x.context.packageCamera === accessory.context.mac);
 

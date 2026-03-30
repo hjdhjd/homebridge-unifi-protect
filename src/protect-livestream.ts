@@ -187,10 +187,17 @@ export class LivestreamManager {
           }
         }
 
-        this.protectCamera.log.warn("Reconnecting to the %s%s.",
-          this.protectCamera.hasFeature("Debug.Video.HKSV.UseRtsp") ? "RTSP stream" : "livestream API",
-          (this.protectCamera.hasFeature("Debug.Video.HKSV.Telemetry") && this.lastSegmentTime[index]) ?
-            " after a " + ((Date.now() - this.lastSegmentTime[index]) / 1000).toFixed(1) + "s stall" : "");
+        const streamType = this.protectCamera.hasFeature("Debug.Video.HKSV.UseRtsp") ? "RTSP stream" : "livestream API";
+        const elapsed = (this.protectCamera.hasFeature("Debug.Video.HKSV.Telemetry") && this.lastSegmentTime[index]) ?
+          ((Date.now() - this.lastSegmentTime[index]) / 1000).toFixed(1) : "";
+
+        if(this.restartDelay[index]) {
+
+          this.protectCamera.log.warn("Retrying %s connection%s.", streamType, elapsed ? " (last segment " + elapsed + "s ago)" : "");
+        } else {
+
+          this.protectCamera.log.warn("Reconnecting to the %s%s.", streamType, elapsed ? " after a " + elapsed + "s stall" : "");
+        }
 
         // On the first restart attempt after a healthy period, reconnect immediately to maximize our chances of staying within the HKSV timeout
         // window. We only apply a backoff delay on subsequent attempts to account for persistent controller or camera issues.

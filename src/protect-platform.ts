@@ -41,7 +41,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
       options: (config?.options as string[] | undefined) ?? [],
       ringDelay: (config?.ringDelay as number | undefined) ?? 0,
       verboseFfmpeg: config?.verboseFfmpeg === true,
-      videoProcessor: (config?.videoProcessor as string | undefined) ?? (ffmpegPath as unknown as string | undefined) ?? "ffmpeg"
+      videoProcessor: (config?.videoProcessor as string | undefined) ?? ffmpegPath ?? "ffmpeg"
     };
 
     // We need a UniFi Protect controller configured to do anything.
