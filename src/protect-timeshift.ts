@@ -18,6 +18,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
   private _isTransmitting: boolean;
   private _keyframes: boolean[];
   private _lastKeyframeTime: number;
+  private _pendingDiscontinuity: boolean;
   private _segmentLength: number;
   private eventHandlers: Record<string, ((segment: Buffer) => void) | (() => void)>;
   private livestream?: FfmpegLivestreamProcess | ProtectLivestream;
@@ -36,6 +37,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
     this._isTransmitting = false;
     this._keyframes = [];
     this._lastKeyframeTime = 0;
+    this._pendingDiscontinuity = false;
     this.eventHandlers = {};
     this.log = protectCamera.log;
     this.protectCamera = protectCamera;
@@ -52,25 +54,26 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
   // Configure the timeshift buffer.
   private configureTimeshiftBuffer(): void {
 
-    // If the API connection has closed, let the user know.
+    // When the livestream connection closes during an active recording, the resumed stream will have discontinuous timestamps that corrupt FFmpeg's decoder reference
+    // state. We flag the discontinuity so the segment handler can suppress forwarding until a clean keyframe arrives, giving the recording delegate a chance to restart
+    // FFmpeg with valid data.
     this.eventHandlers.close = (): void => {
 
-      if(this.isRestarting) {
+      if(this._isTransmitting) {
 
-        return;
+        this._pendingDiscontinuity = true;
+        this.clearBuffer();
       }
 
-      this.log.error("%s connection closed by the controller. Retrying shortly.", this.protectCamera.hasFeature("Debug.Video.HKSV.UseRtsp") ? "RTSP" : "Livestream API");
+      if(!this.isRestarting) {
+
+        this.log.error("%s connection closed by the controller. Retrying shortly.",
+          this.protectCamera.hasFeature("Debug.Video.HKSV.UseRtsp") ? "RTSP" : "Livestream API");
+      }
     };
 
     // Listen for any segments sent by the UniFi Protect livestream in order to create our timeshift buffer.
     this.eventHandlers.segment = (segment: Buffer): void => {
-
-      // If we're transmitting, send the segment as quickly as we can so FFmpeg can consume it.
-      if(this.isTransmitting) {
-
-        this.emit("segment", segment);
-      }
 
       // Add the livestream segment to the end of the timeshift buffer and track whether it's a keyframe. We parse the fMP4 TRUN sample flags to detect sync samples
       // rather than relying on timing heuristics, giving us a definitive answer on every segment.
@@ -90,6 +93,19 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
       if(isKeyframeSegment) {
 
         this._lastKeyframeTime = Date.now();
+
+        // If we were waiting for a keyframe after a discontinuity, the buffer now has a clean starting point. Signal the recording delegate to restart FFmpeg.
+        if(this._pendingDiscontinuity) {
+
+          this._pendingDiscontinuity = false;
+          this.emit("discontinuity");
+        }
+      }
+
+      // If we're transmitting and not suppressing due to a pending discontinuity, forward the segment to the recording delegate for FFmpeg consumption.
+      if(this._isTransmitting && !this._pendingDiscontinuity) {
+
+        this.emit("segment", segment);
       }
     };
   }
@@ -171,15 +187,18 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
 
     this.clearBuffer();
     this._isStarted = false;
+    this._pendingDiscontinuity = false;
     this.livestream = undefined;
     this.rtspEntry = undefined;
 
     return true;
   }
 
-  // Restart the timeshift buffer and underlying livestream.
+  // Restart the timeshift buffer and underlying livestream. This is called by the recording delegate when FFmpeg times out, not during discontinuity recovery...we
+  // clear the discontinuity flag to prevent a spurious "discontinuity" event from firing after the recording has already ended.
   public restart(): void {
 
+    this._pendingDiscontinuity = false;
     this.livestream?.emit("restart");
     this.clearBuffer();
   }
@@ -220,6 +239,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
 
     // We're done transmitting, flag it, and allow our buffer to resume maintaining itself.
     this._isTransmitting = false;
+    this._pendingDiscontinuity = false;
 
     return true;
   }

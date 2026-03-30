@@ -19,6 +19,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
 
   private _isRecording: boolean;
   private _isTransmitting: boolean;
+  private abortController?: AbortController;
   private readonly accessory: PlatformAccessory;
   private readonly api: API;
   private eventId: number;
@@ -136,13 +137,15 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
   // operations (like pacing delays) immediately rather than waiting for closeRecordingStream to propagate through our code.
   public async *handleRecordingStreamRequest(_streamId: number, signal: AbortSignal): AsyncGenerator<RecordingPacket> {
 
-    // Track when the recording request arrived from HomeKit's perspective. This is used for pacing calculations below...we set it here rather than at the
-    // start of the pacing loop because HomeKit's timeout clock starts when it sends the request, not when we finish our setup.
+    // Track when the recording request arrived from HomeKit's perspective. HomeKit's timeout clock starts when it sends the request, so we initialize lastYieldTime here
+    // to represent the moment HomeKit's timer began...the first segment will be due pacingInterval after this point.
     this.eventId++;
     this.pacingStartTime = Date.now();
 
+    let lastYieldTime = this.pacingStartTime;
+
     // The first transmitted segment in an fMP4 stream is always the initialization segment and contains no video, so we don't count it.
-    this.transmittedSegments = 0;
+    this.transmittedSegments = this.timeshiftedSegments = 0;
 
     // If we are recording HKSV events and we haven't fully initialized our timeshift buffer (e.g. offline cameras preventing us from doing so), then do so now.
     if(!this.accessory.context.hksvRecordingDisabled && this.isRecording && !this.isInitialized) {
@@ -170,48 +173,116 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
       return;
     }
 
-    // We pace our segment yields to HKSV to build a buffer of pre-produced segments from FFmpeg. By yielding one segment every ~4 seconds - just
-    // under the 4.5-second HKSV timeout - FFmpeg's output accumulates ahead of what we've delivered. When the Protect controller's livestream API
-    // stalls, we continue yielding pre-produced segments, absorbing stalls that would otherwise cause recording timeouts. While we wait between
-    // yields, segmentGenerator() is paused and FFmpeg's output accumulates in its internal recording buffer.
+    // We pace our segment yields to HKSV relative to the last delivery...each segment is yielded pacingInterval after the previous one was actually sent. This ensures
+    // HomeKit's timeout is satisfied while building a buffer of pre-produced segments from FFmpeg. When the Protect controller's livestream API stalls, we continue
+    // yielding pre-produced segments, absorbing stalls that would otherwise cause recording timeouts. While we wait between yields, segmentGenerator() is paused and
+    // FFmpeg's output accumulates in its internal recording buffer.
     const pacingInterval = PROTECT_HKSV_TIMEOUT - 500;
 
     this.lastPacingDelay = 0;
     this.maxPacingDelay = 0;
 
-    // Process our FFmpeg-generated segments and send them back to HKSV.
-    for await (const segment of this.ffmpegStream.segmentGenerator()) {
+    // Create an AbortController for interrupting pacing delays. HAP's signal handles stream closure, but we also need to abort when a livestream discontinuity is
+    // detected so we can restart FFmpeg without waiting for the current pacing delay to expire.
+    this.abortController = new AbortController();
 
-      // If we've not transmitting, we're done.
-      if(!this._isTransmitting) {
+    let combinedSignal = AbortSignal.any([ signal, this.abortController.signal ]);
 
-        break;
+    // Listen for livestream discontinuity events from the timeshift buffer. When the livestream connection drops and reconnects, the resumed segments have discontinuous
+    // timestamps that corrupt FFmpeg's decoder state. The timeshift buffer detects this, suppresses forwarding until a clean keyframe arrives, then signals us to
+    // restart FFmpeg with valid data.
+    let isDiscontinuity = false;
+
+    const discontinuityListener = (): void => {
+
+      if(this.protectCamera.hasFeature("Debug.Video.HKSV.Telemetry")) {
+
+        this.log.warn("Livestream discontinuity detected during recording event %s. Restarting FFmpeg with clean data.", this.eventId.toString());
       }
 
-      // Keep track of how many segments we're sending to HKSV.
-      this.transmittedSegments++;
+      isDiscontinuity = true;
+      this.ffmpegStream?.stop(false);
+      this.abortController?.abort();
+    };
 
-      // Wait until our pacing schedule allows this segment to be yielded. Each segment is spaced pacingInterval apart from the recording start. The sleep is
-      // abortable via HAP's AbortSignal so the pacing delay is interrupted immediately when HomeKit closes the recording stream, rather than waiting for the
-      // full delay to expire.
-      this.lastPacingDelay = (this.pacingStartTime + (this.transmittedSegments * pacingInterval)) - Date.now();
-      this.maxPacingDelay = Math.max(this.maxPacingDelay, this.lastPacingDelay);
+    this.timeshift.on("discontinuity", discontinuityListener);
 
-      if(this.lastPacingDelay > 0) {
+    // Outer loop to handle FFmpeg restarts on livestream discontinuity. Under normal operation this executes once. When a discontinuity is detected, we stop the current
+    // FFmpeg instance and restart it with clean data from the timeshift buffer, preserving the recording session across the livestream reconnection.
+    do {
 
-        await delay(this.lastPacingDelay, undefined, { signal }).catch(() => { /* Expected when recording stream closes. */ });
+      // If this is a discontinuity restart, reinitialize FFmpeg. The timeshift buffer has already accumulated fresh post-reconnection data starting from a keyframe, so
+      // startTransmitting will create a new FFmpeg instance with keyframe-aligned input.
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- isDiscontinuity is mutated asynchronously by the discontinuity event listener.
+      if(isDiscontinuity) {
+
+        isDiscontinuity = false;
+        this.abortController = new AbortController();
+        combinedSignal = AbortSignal.any([ signal, this.abortController.signal ]);
+
+        this.timeshift.transmitStop();
+
+        // eslint-disable-next-line no-await-in-loop, @typescript-eslint/no-unnecessary-condition -- Intentional await; defensive ffmpegStream guard.
+        if(!(await this.startTransmitting(true)) || !this.ffmpegStream) {
+
+          if(this.protectCamera.hasFeature("Debug.Video.HKSV.Telemetry")) {
+
+            this.log.warn("Discontinuity recovery failed for recording event %s. Unable to restart FFmpeg.", this.eventId.toString());
+          }
+
+          break;
+        }
+
+        if(this.protectCamera.hasFeature("Debug.Video.HKSV.Telemetry")) {
+
+          this.log.warn("Discontinuity recovery succeeded for recording event %s. Resuming HKSV recording.", this.eventId.toString());
+        }
       }
 
-      // If the recording stream was closed while we were waiting on our pacing schedule, we're done.
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-      if(!this._isTransmitting) {
+      // Process our FFmpeg-generated segments and send them back to HKSV.
+      // eslint-disable-next-line no-await-in-loop -- Intentional: the outer loop handles FFmpeg restarts on discontinuity.
+      for await (const segment of this.ffmpegStream.segmentGenerator()) {
 
-        break;
+        // If we've stopped transmitting or a discontinuity was detected, exit the segment loop.
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- isDiscontinuity is mutated asynchronously by the discontinuity event listener.
+        if(!this._isTransmitting || isDiscontinuity) {
+
+          break;
+        }
+
+        // Keep track of how many segments we're sending to HKSV.
+        this.transmittedSegments++;
+
+        // Wait until pacingInterval has elapsed since the last segment we yielded to HomeKit. This is relative pacing...HomeKit resets its timeout each time it receives
+        // a segment, so the only thing that matters is the interval since our last delivery, not an absolute schedule from the recording start. The sleep is abortable
+        // via the combined signal so that either an HKSV stream closure or a livestream discontinuity can interrupt it immediately.
+        this.lastPacingDelay = (lastYieldTime + pacingInterval) - Date.now();
+        this.maxPacingDelay = Math.max(this.maxPacingDelay, this.lastPacingDelay);
+
+        if(this.lastPacingDelay > 0) {
+
+          await delay(this.lastPacingDelay, undefined, { signal: combinedSignal }).catch(() => { /* Expected on stream close or discontinuity. */ });
+        }
+
+        // If the recording stream was closed while we were waiting on our pacing schedule, we're done. We check HAP's signal directly rather than the combined signal
+        // because a discontinuity abort should not prevent yielding...the current segment is valid pre-stall data that must be delivered before restarting FFmpeg.
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+        if(!this._isTransmitting || signal.aborted) {
+
+          break;
+        }
+
+        // Send HKSV the fMP4 segment. The delivery time anchors the next pacing delay.
+        yield { data: segment, isLast: false };
+
+        lastYieldTime = Date.now();
       }
 
-      // Send HKSV the fMP4 segment.
-      yield { data: segment, isLast: false };
-    }
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- isDiscontinuity is mutated asynchronously by the discontinuity event listener.
+    } while(isDiscontinuity && this._isTransmitting);
+
+    // Clean up the discontinuity listener.
+    this.timeshift.off("discontinuity", discontinuityListener);
 
     // If FFmpeg timed out it's typically due to issues with the video coming from the Protect controller. Restart the timeshift buffer to see if we can improve things.
     // We only restart on genuine FFmpeg timeouts (stall-related), not on zero-segment exits (HomeKit closing early or bad data). Restarting on zero-segment
@@ -295,8 +366,9 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     return true;
   }
 
-  // Start transmitting to the HomeKit hub our timeshifted fMP4 stream.
-  private async startTransmitting(): Promise<boolean> {
+  // Start transmitting to the HomeKit hub our timeshifted fMP4 stream. When isRestart is true, the buffer duration check is skipped because the buffer was recently
+  // cleared by a discontinuity and only contains fresh post-reconnection data starting from a keyframe.
+  private async startTransmitting(isRestart = false): Promise<boolean> {
 
     // If there's a prior instance of FFmpeg, clean up after ourselves.
     if(this.ffmpegStream) {
@@ -317,9 +389,10 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
       return false;
     }
 
-    // If we don't have a recording configuration from HomeKit, a valid RTSP profile, or not enough time in our timeshift buffer, we can't continue.
+    // If we don't have a recording configuration from HomeKit, a valid RTSP profile, or not enough time in our timeshift buffer, we can't continue. On a discontinuity
+    // restart, we skip the buffer duration check because the buffer was recently cleared and only contains fresh post-reconnection data.
     if(!this.recordingConfig || !this.rtspEntry || this.timeshift.isRestarting ||
-      ((this.protectCamera.stream.hksv?.timeshift.time ?? -1) < (this.protectCamera.stream.hksv?.timeshift.configuredDuration ?? 0))) {
+      (!isRestart && ((this.protectCamera.stream.hksv?.timeshift.time ?? -1) < (this.protectCamera.stream.hksv?.timeshift.configuredDuration ?? 0)))) {
 
       return false;
     }
@@ -327,10 +400,8 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     // So how do we feed HKSV what it's looking for and how does timeshifting work in practice?
     //
     // We want to keep feeding HomeKit until it tells us it's finished, or we decide we don't want to send anymore fMP4 packets. We treat this in a similar way to how a
-    // DVR works where you can pause live television, but it continues to buffer what's being broadcast until you're ready to watch it. This is the same idea.
-
-    // Keep track of how many fMP4 segments we are feeding FFmpeg.
-    this.transmittedSegments = this.timeshiftedSegments = 0;
+    // DVR works where you can pause live television, but it continues to buffer what's being broadcast until you're ready to watch it. This is the same idea. Segment
+    // counters accumulate across the full recording session for telemetry...pacing lives in handleRecordingStreamRequest and doesn't care about FFmpeg's lifecycle.
 
     // Find the nearest keyframe at or before the prebuffer start point. By starting FFmpeg's input from a keyframe boundary, the decoder initializes cleanly rather than
     // having to recover from mid-GOP data. The seek offset tells FFmpeg's -ss exactly how far to advance from the keyframe to the prebuffer start point.
