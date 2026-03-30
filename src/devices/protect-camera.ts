@@ -1708,8 +1708,9 @@ export class ProtectCamera extends ProtectDevice {
     }
   }
 
-  // Utility to return our audio filter pipeline for this camera.
-  public get audioFilters(): string[] {
+  // Return the audio filter pipeline for this camera. The optional sampleRate parameter (in Hz) is used to validate that filter frequencies don't exceed the Nyquist
+  // limit (half the sample rate)...filters above Nyquist are physically impossible to apply and cause FFmpeg to reject them.
+  public getAudioFilters(sampleRate?: number): string[] {
 
     // If we don't have audio filtering enabled, we're done.
     if(!this.hasFeature("Audio.Filter.Noise")) {
@@ -1718,6 +1719,7 @@ export class ProtectCamera extends ProtectDevice {
     }
 
     const afOptions: string[] = [];
+    const nyquist = sampleRate ? sampleRate / 2 : undefined;
 
     // See what the user has set for the afftdn filter for this camera.
     let fftNr = this.getFeatureFloat("Audio.Filter.Noise.FftNr") ?? PROTECT_FFMPEG_AUDIO_FILTER_FFTNR;
@@ -1728,15 +1730,14 @@ export class ProtectCamera extends ProtectDevice {
     const highpass = this.getFeatureNumber("Audio.Filter.Noise.HighPass");
     const lowpass = this.getFeatureNumber("Audio.Filter.Noise.LowPass");
 
-    // We use the following order of operations for our filter: highpass, then lowpass, and finally afftdn.
-
-    // Only set the highpass and lowpass filters if the user has explicitly enabled them.
-    if(typeof highpass === "number") {
+    // We use the following order of operations for our filter: highpass, then lowpass, and finally afftdn. Filters at or above the Nyquist limit are skipped...there's no
+    // representable frequency content to operate on.
+    if((typeof highpass === "number") && (!nyquist || (highpass < nyquist))) {
 
       afOptions.push("highpass=p=2:f=" + highpass.toString());
     }
 
-    if(typeof lowpass === "number") {
+    if((typeof lowpass === "number") && (!nyquist || (lowpass < nyquist))) {
 
       afOptions.push("lowpass=p=2:f=" + lowpass.toString());
     }

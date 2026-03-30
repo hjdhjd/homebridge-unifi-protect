@@ -410,7 +410,8 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     // Start a new FFmpeg instance to transcode using HomeKit's requirements.
     this.ffmpegStream = new FfmpegRecordingProcess(this.protectCamera.stream.ffmpegOptions, this.recordingConfig, {
 
-      audioFilters: this.protectCamera.audioFilters,
+      // The Protect livestream API delivers audio at 16000 Hz (16-bit mono AAC). This is the input sample rate that FFmpeg's audio filters operate on.
+      audioFilters: this.protectCamera.getAudioFilters(16000),
       audioStream: 0,
       codec: this.protectCamera.ufp.videoCodec,
       enableAudio: this.isAudioActive,

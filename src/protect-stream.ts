@@ -739,7 +739,9 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
       );
 
       // If we are audio filtering, address it here.
-      const afOptions = this.protectCamera.audioFilters;
+      // Protect cameras deliver audio at 16000 Hz across both the livestream API (AAC) and RTSP (AAC + Opus) paths. This is the input sample rate that FFmpeg's
+      // audio filters operate on, independent of the output sample rate HomeKit requests.
+      const afOptions = this.protectCamera.getAudioFilters(16000);
 
       if(afOptions.length) {
 
