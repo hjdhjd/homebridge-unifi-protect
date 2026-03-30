@@ -981,9 +981,9 @@ export class ProtectCamera extends ProtectDevice {
     // Validate and add our entries to the list of what we make available to HomeKit. We map these resolutions to the channels we have available to us on the camera.
     for(const entry of validResolutions) {
 
-      // This resolution is larger than the highest resolution on the camera, natively. We make an exception for 1080p and 720p resolutions since HomeKit explicitly
-      // requires them.
-      if((entry[0] >= rtspEntries[0].resolution[0]) && ![ 1920, 1280 ].includes(entry[0])) {
+      // This resolution is larger than the highest resolution on the camera, natively. We compare max dimensions so portrait-oriented cameras (where width < height) use
+      // their longer dimension as the threshold. We make an exception for 1080p and 720p resolutions since HomeKit explicitly requires them.
+      if((Math.max(entry[0], entry[1]) >= Math.max(rtspEntries[0].resolution[0], rtspEntries[0].resolution[1])) && ![ 1920, 1280 ].includes(entry[0])) {
 
         continue;
       }
@@ -1009,16 +1009,16 @@ export class ProtectCamera extends ProtectDevice {
       rtspEntries.sort(this.sortByResolutions.bind(this));
     }
 
-    // Ensure we've got at least one entry that can be used for HomeKit Secure Video. Some Protect cameras (e.g. G3 Flex) don't have a native frame rate that maps to
-    // HomeKit's specific requirements for event recording, so we ensure there's at least one. This doesn't directly affect which stream is used to actually record
+    // Ensure we've got entries that can be used for HomeKit Secure Video. Some Protect cameras (e.g. G3 Flex) don't have a native frame rate that maps to HomeKit's
+    // specific requirements for event recording, so we normalize all non-conforming entries. This doesn't directly affect which stream is used to actually record
     // something, but it does determine whether HomeKit even attempts to use the camera for HomeKit Secure Video.
     if(![ 15, 24, 30 ].includes(rtspEntries[0].resolution[2])) {
 
-      // Iterate through the list of RTSP entries we're providing to HomeKit and ensure we have at least one that will meet HomeKit's requirements for frame rate.
+      // Iterate through the list of RTSP entries we're providing to HomeKit and ensure they all meet HomeKit's requirements for frame rate.
       for(const entry of rtspEntries) {
 
-        // We're only interested in the first 1080p or 1440p entry.
-        if((entry.resolution[0] !== 1920) || ![ 1080, 1440 ].includes(entry.resolution[1])) {
+        // This entry already has a conforming frame rate.
+        if([ 15, 24, 30 ].includes(entry.resolution[2])) {
 
           continue;
         }
@@ -1034,8 +1034,6 @@ export class ProtectCamera extends ProtectDevice {
 
           entry.resolution[2] = 15;
         }
-
-        break;
       }
     }
 
