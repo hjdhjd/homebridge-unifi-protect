@@ -955,14 +955,14 @@ export class ProtectCamera extends ProtectDevice {
     // We use the frame rate of the first entry, which should be our highest resolution option that's native to the camera as the upper bound for frame rate.
     //
     // Our supported resolutions range from 4K through 320p.
-    if((rtspEntries[0].resolution[0] / rtspEntries[0].resolution[1]) === (4 / 3)) {
+    if(this.is4x3AspectRatio(rtspEntries[0].resolution[0], rtspEntries[0].resolution[1])) {
 
       validResolutions = [
 
         [ 3840, 2880 ], [ 2560, 1920 ],
         [ 1920, 1440 ], [ 1280, 960 ],
-        [ 640, 480 ], [ 480, 360 ],
-        [ 320, 240 ]
+        [ 1024, 768 ], [ 640, 480 ],
+        [ 480, 360 ], [ 320, 240 ]
       ];
     } else {
 
@@ -1612,6 +1612,16 @@ export class ProtectCamera extends ProtectDevice {
   public findRecordingRtsp(width: number, height: number): Nullable<RtspEntry> {
 
     return this.findRtspEntry(width, height, { biasHigher: true, default: this.hints.recordingDefault });
+  }
+
+  // Determine whether a resolution belongs to the 4:3 aspect ratio family. HomeKit only recognizes 16:9 and 4:3 families...we normalize for portrait-oriented cameras
+  // (where width < height) so they map to the correct landscape resolution table.
+  protected is4x3AspectRatio(width: number, height: number): boolean {
+
+    const maxDim = Math.max(width, height);
+    const minDim = Math.min(width, height);
+
+    return (maxDim * 3) === (minDim * 4);
   }
 
   // Utility function for sorting by resolution.

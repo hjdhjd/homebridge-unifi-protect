@@ -74,10 +74,9 @@ export class ProtectCameraPackage extends ProtectCamera {
     const validResolutions: Resolution[] = [this.findRtsp()?.resolution ?? [ 1600, 1200, 2 ]];
 
     // Ensure we have mandatory resolutions required by HomeKit, as well as special support for Apple TV and Apple Watch, while respecting aspect ratios.
-    // We use the frame rate of the first entry, which should be our highest resolution option that's native to the camera as the upper bound for frame rate.
     //
     // Our supported resolutions range from 4K through 320p...even for package cameras.
-    if((validResolutions[0][0] / validResolutions[0][1]) === (16 / 9)) {
+    if(!this.is4x3AspectRatio(validResolutions[0][0], validResolutions[0][1])) {
 
       hkResolutions = [
 
@@ -92,17 +91,17 @@ export class ProtectCameraPackage extends ProtectCamera {
 
         [ 3840, 2880, 15 ], [ 2560, 1920, 15 ],
         [ 1920, 1440, 15 ], [ 1280, 960, 15 ],
-        [ 640, 480, 15 ], [ 480, 360, 15 ],
-        [ 320, 240, 15 ]
+        [ 1024, 768, 15 ], [ 640, 480, 15 ],
+        [ 480, 360, 15 ], [ 320, 240, 15 ]
       ];
     }
 
     // Validate and add our entries to the list of what we make available to HomeKit.
     for(const entry of hkResolutions) {
 
-      // This resolution is larger than the highest resolution on the camera, natively. We make an exception for
-      // 1080p and 720p resolutions since HomeKit explicitly requires them.
-      if((entry[0] >= validResolutions[0][0]) && ![ 1920, 1280 ].includes(entry[0])) {
+      // This resolution is larger than the highest resolution on the camera, natively. We compare max dimensions so portrait-oriented cameras (where width < height) use
+      // their longer dimension as the threshold. We make an exception for 1080p and 720p resolutions since HomeKit explicitly requires them.
+      if((Math.max(entry[0], entry[1]) >= Math.max(validResolutions[0][0], validResolutions[0][1])) && ![ 1920, 1280 ].includes(entry[0])) {
 
         continue;
       }
