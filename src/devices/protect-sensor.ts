@@ -2,7 +2,7 @@
  *
  * protect-sensor.ts: Sensor device class for UniFi Protect.
  */
-import type { DeepIndexable, ProtectEventPacket, ProtectSensorConfig, ProtectSensorConfigPayload } from "unifi-protect";
+import type { DeepPartial, ProtectEventPacket, ProtectSensorConfig } from "unifi-protect";
 import type { PlatformAccessory, Service } from "homebridge";
 import { ProtectDevice } from "./protect-device.js";
 import type { ProtectNvr } from "../protect-nvr.js";
@@ -13,7 +13,7 @@ export class ProtectSensor extends ProtectDevice {
   private enabledSensors: string[];
   private lastAlarm?: boolean;
   private lastLeak: Record<string, boolean | undefined>;
-  public ufp: DeepIndexable<ProtectSensorConfig>;
+  public ufp: ProtectSensorConfig;
 
   // Create an instance.
   constructor(nvr: ProtectNvr, device: ProtectSensorConfig, accessory: PlatformAccessory) {
@@ -22,7 +22,7 @@ export class ProtectSensor extends ProtectDevice {
 
     this.enabledSensors = [];
     this.lastLeak = {};
-    this.ufp = device as DeepIndexable<ProtectSensorConfig>;
+    this.ufp = device;
 
     this.configureHints();
     this.configureDevice();
@@ -330,9 +330,9 @@ export class ProtectSensor extends ProtectDevice {
 
     for(const sensor of [
 
-      { isDetected: "externalLeakDetectedAt", isEnabled: "isExternalEnabled", mqtt: "leak-external",
+      { isDetected: "externalLeakDetectedAt", isEnabled: "isExternalEnabled" as const, mqtt: "leak-external",
         name: " External " + (isMoistureSensor ? "Moisture" : "Leak") + " Sensor", subtype: ProtectReservedNames.LEAKSENSOR_EXTERNAL },
-      { isDetected: "leakDetectedAt", isEnabled: "isInternalEnabled", mqtt: "leak", subtype: ProtectReservedNames.LEAKSENSOR_INTERNAL }
+      { isDetected: "leakDetectedAt", isEnabled: "isInternalEnabled" as const, mqtt: "leak", subtype: ProtectReservedNames.LEAKSENSOR_INTERNAL }
     ]) {
 
       // Remove the opposite sensor type if it exists since we are switching between sensor configurations.
@@ -473,7 +473,7 @@ export class ProtectSensor extends ProtectDevice {
   // Get the current contact sensor information.
   private get contact(): boolean {
 
-    return this.ufp.isOpened;
+    return this.ufp.isOpened ?? false;
   }
 
   // Get the current humidity information.
@@ -528,7 +528,7 @@ export class ProtectSensor extends ProtectDevice {
   // Handle sensor-related events.
   private eventHandler(packet: ProtectEventPacket): void {
 
-    const payload = packet.payload as ProtectSensorConfigPayload;
+    const payload = packet.payload as DeepPartial<ProtectSensorConfig>;
 
     // It's a motion event - process it accordingly.
     if(payload.motionDetectedAt) {

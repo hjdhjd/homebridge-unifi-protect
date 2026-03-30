@@ -3,7 +3,7 @@
  * protect-light.ts: Light device class for UniFi Protect.
  */
 import type { CharacteristicValue, PlatformAccessory } from "homebridge";
-import type { ProtectEventPacket, ProtectLightConfig, ProtectLightConfigPayload } from "unifi-protect";
+import type { DeepPartial, ProtectEventPacket, ProtectLightConfig } from "unifi-protect";
 import { ProtectDevice } from "./protect-device.js";
 import type { ProtectNvr } from "../protect-nvr.js";
 import { ProtectReservedNames } from "../protect-types.js";
@@ -173,7 +173,7 @@ export class ProtectLight extends ProtectDevice {
   // Handle light-related events.
   private eventHandler(packet: ProtectEventPacket): void {
 
-    const payload = packet.payload as ProtectLightConfigPayload;
+    const payload = packet.payload as DeepPartial<ProtectLightConfig>;
 
     // It's a motion event - process it accordingly.
     if(payload.lastMotion) {

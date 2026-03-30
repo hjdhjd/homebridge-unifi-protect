@@ -3,15 +3,15 @@
  * protect-camera.ts: Camera device class for UniFi Protect.
  */
 import type { CharacteristicValue, PlatformAccessory, Resolution, Service } from "homebridge";
-import type { ProtectCameraChannelConfig, ProtectCameraConfig, ProtectCameraConfigPayload, ProtectEventAdd, ProtectEventPacket } from "unifi-protect";
-import { ProtectReservedNames, toCamelCase } from "../protect-types.js";
+import type { DeepPartial, ProtectCameraChannelConfig, ProtectCameraConfig, ProtectEventAdd, ProtectEventPacket } from "unifi-protect";
+import { type Nullable, toStartCase } from "homebridge-plugin-utils";
 import { LivestreamManager } from "../protect-livestream.js";
 import type { MessageSwitchInterface } from "./protect-doorbell.js";
-import type { Nullable } from "homebridge-plugin-utils";
 import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR } from "../settings.js";
 import type { ProtectCameraPackage } from "./protect-camera-package.js";
 import { ProtectDevice } from "./protect-device.js";
 import type { ProtectNvr } from "../protect-nvr.js";
+import { ProtectReservedNames } from "../protect-types.js";
 import { ProtectStreamingDelegate } from "../protect-stream.js";
 
 export interface RtspEntry {
@@ -235,7 +235,7 @@ export class ProtectCamera extends ProtectDevice {
   // Handle update-related events from the controller.
   protected eventHandler(packet: ProtectEventPacket): void {
 
-    const payload = packet.payload as ProtectCameraConfigPayload;
+    const payload = packet.payload as DeepPartial<ProtectCameraConfig>;
     const hasProperty = (properties: string | string[]): boolean => (Array.isArray(properties) ? properties : [properties]).some(p => p in payload);
 
     // Process any RTSP stream or video codec updates.
@@ -269,7 +269,7 @@ export class ProtectCamera extends ProtectDevice {
     // create motion-specific thumbnail events. We're only interested in true smart detection events.
     if(this.hints.smartDetect) {
 
-      const event = payload as ProtectEventAdd;
+      const event = packet.payload as ProtectEventAdd;
 
       if(event.metadata?.detectedThumbnails) {
 
@@ -278,9 +278,11 @@ export class ProtectCamera extends ProtectDevice {
     }
 
     // Process smart detection events that have occurred on a non-realtime basis. Generally, this includes audio and video events that require more analysis by Protect.
-    if(this.hints.smartDetect && ((payload as ProtectEventAdd).smartDetectTypes?.length || (payload as ProtectEventAdd).metadata?.detectedThumbnails?.length)) {
+    const eventAdd = packet.payload as ProtectEventAdd;
 
-      this.nvr.events.motionEventHandler(this, (payload as ProtectEventAdd).smartDetectTypes, (payload as ProtectEventAdd).metadata);
+    if(this.hints.smartDetect && (eventAdd.smartDetectTypes?.length || eventAdd.metadata?.detectedThumbnails?.length)) {
+
+      this.nvr.events.motionEventHandler(this, eventAdd.smartDetectTypes, eventAdd.metadata);
     }
 
     // Process updates to the tamper detection setting.
@@ -588,7 +590,7 @@ export class ProtectCamera extends ProtectDevice {
 
       for(const smartDetectType of [ ...this.ufp.featureFlags.smartDetectAudioTypes, ...this.ufp.featureFlags.smartDetectTypes ].sort()) {
 
-        if(addSmartDetectContactSensor(this.accessoryName + " " + toCamelCase(smartDetectType),
+        if(addSmartDetectContactSensor(this.accessoryName + " " + toStartCase(smartDetectType),
           ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + "." + smartDetectType, "Unable to add smart motion contact sensor for " + smartDetectType + " detection.")) {
 
           enabledContactSensors.push(smartDetectType);
@@ -1074,7 +1076,7 @@ export class ProtectCamera extends ProtectDevice {
     // Inform the user if we've set a streaming default.
     if(this.hints.streamingDefault) {
 
-      this.log.info("Video streaming configured to use only: %s.", toCamelCase(this.hints.streamingDefault.toLowerCase()));
+      this.log.info("Video streaming configured to use only: %s.", toStartCase(this.hints.streamingDefault.toLowerCase()));
     }
 
     // Inform the user if they've selected the legacy snapshot API.
@@ -1109,7 +1111,7 @@ export class ProtectCamera extends ProtectDevice {
     } else {
 
       // Inform the user if we've set a recording default.
-      this.log.info("HomeKit Secure Video event recording configured to use only: %s.", toCamelCase(this.hints.recordingDefault.toLowerCase()));
+      this.log.info("HomeKit Secure Video event recording configured to use only: %s.", toStartCase(this.hints.recordingDefault.toLowerCase()));
     }
 
     // Fire up the controller and inform HomeKit about it.
@@ -1370,7 +1372,7 @@ export class ProtectCamera extends ProtectDevice {
         continue;
       }
 
-      const switchName = this.accessoryName + " UFP Recording " + toCamelCase(ufpRecordingSetting);
+      const switchName = this.accessoryName + " UFP Recording " + toStartCase(ufpRecordingSetting);
 
       // Acquire the service.
       const service = this.acquireService(this.hap.Service.Switch, switchName, ufpRecordingSwitchType);

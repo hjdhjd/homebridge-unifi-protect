@@ -3,14 +3,14 @@
  * protect-doorbell.ts: Doorbell device class for UniFi Protect.
  */
 import type { CharacteristicValue, PlatformAccessory, Service } from "homebridge";
+import type { DeepPartial, ProtectCameraConfig, ProtectCameraLcdMessageConfig, ProtectChimeConfig, ProtectEventAdd, ProtectEventPacket,
+  ProtectNvrConfig } from "unifi-protect";
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_DOORBELL_AUTHSENSOR_DURATION, PROTECT_DOORBELL_CHIME_DURATION_DIGITAL } from "../settings.js";
-import type { ProtectCameraConfig, ProtectCameraConfigPayload, ProtectCameraLcdMessagePayload, ProtectChimeConfigPayload, ProtectEventAdd, ProtectEventPacket,
-  ProtectNvrConfigPayload } from "unifi-protect";
-import { ProtectReservedNames, toCamelCase } from "../protect-types.js";
+import { sanitizeName, toStartCase } from "homebridge-plugin-utils";
 import { ProtectCamera } from "./protect-camera.js";
 import { ProtectCameraPackage } from "./protect-camera-package.js";
 import type { ProtectNvr } from "../protect-nvr.js";
-import { sanitizeName } from "homebridge-plugin-utils";
+import { ProtectReservedNames } from "../protect-types.js";
 
 // A doorbell message entry.
 interface MessageInterface {
@@ -257,7 +257,7 @@ export class ProtectDoorbell extends ProtectCamera {
       }
 
       // Acquire the service.
-      const service = this.acquireService(this.hap.Service.Switch, this.accessoryName + " Physical Chime " + toCamelCase(chimeSetting), physicalChimeType);
+      const service = this.acquireService(this.hap.Service.Switch, this.accessoryName + " Physical Chime " + toStartCase(chimeSetting), physicalChimeType);
 
       // Fail gracefully.
       if(!service) {
@@ -641,7 +641,7 @@ export class ProtectDoorbell extends ProtectCamera {
   }
 
   // Update the message switch state in HomeKit.
-  private updateLcdSwitch(payload: ProtectCameraLcdMessagePayload): void {
+  private updateLcdSwitch(payload: DeepPartial<ProtectCameraLcdMessageConfig>): void {
 
     // The message has been cleared on the doorbell, turn off all message switches in HomeKit.
     if(!Object.keys(payload).length) {
@@ -692,7 +692,7 @@ export class ProtectDoorbell extends ProtectCamera {
   }
 
   // Set the message on the doorbell.
-  private async setMessage(payload: ProtectCameraLcdMessagePayload = {}): Promise<boolean> {
+  private async setMessage(payload: DeepPartial<ProtectCameraLcdMessageConfig> = {}): Promise<boolean> {
 
     // We take the duration and save it for MQTT and then translate the payload into what Protect is expecting from us.
     if("duration" in payload) {
@@ -798,7 +798,7 @@ export class ProtectDoorbell extends ProtectCamera {
   // Handle doorbell saved message updates on the Protect controller.
   private nvrEventHandler(packet: ProtectEventPacket): void {
 
-    const payload = packet.payload as ProtectNvrConfigPayload;
+    const payload = packet.payload as DeepPartial<ProtectNvrConfig>;
 
     // Process doorbell message save events.
     if(payload.doorbellSettings) {
@@ -819,7 +819,7 @@ export class ProtectDoorbell extends ProtectCamera {
   // Handle chime volume updates on the Protect controller.
   private chimeEventHandler(packet: ProtectEventPacket): void {
 
-    const payload = packet.payload as ProtectChimeConfigPayload;
+    const payload = packet.payload as DeepPartial<ProtectChimeConfig>;
 
     // We're only interested in events for this Protect controller and this doorbell.
     if(!this.nvr.ufpApi.bootstrap || (payload.nvrMac !== this.nvr.ufp.mac) || !payload.cameraIds?.includes(this.ufp.id) || !("ringSettings" in payload)) {

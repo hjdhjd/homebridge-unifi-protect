@@ -6,12 +6,6 @@
 import type { ProtectCamera, ProtectChime, ProtectDoorbell, ProtectLight, ProtectSensor, ProtectViewer } from "./devices/index.js";
 import type { ProtectCameraConfig, ProtectChimeConfig, ProtectLightConfig, ProtectSensorConfig, ProtectViewerConfig } from "unifi-protect";
 
-// Useful utilities.
-export function toCamelCase(input: string): string {
-
-  return input.replace(/(^\w|\s+\w)/g, match => match.toUpperCase());
-}
-
 // Compile-time exhaustiveness check for discriminated unions. When all cases of a union are handled in a switch statement, TypeScript narrows the remaining type to
 // `never`. Passing it to this function ensures the compiler will flag an error if a new variant is added to the union without a corresponding case. At runtime this is a
 // no-op...the call site is responsible for graceful degradation (logging, returning null, etc.).

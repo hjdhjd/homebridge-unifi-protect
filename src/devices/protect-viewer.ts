@@ -3,7 +3,7 @@
  * protect-viewer.ts: Viewer device class for UniFi Protect.
  */
 import type { CharacteristicValue, PlatformAccessory, Service } from "homebridge";
-import type { ProtectEventPacket, ProtectViewerConfig, ProtectViewerConfigPayload } from "unifi-protect";
+import type { DeepPartial, ProtectEventPacket, ProtectViewerConfig } from "unifi-protect";
 import type { Nullable } from "homebridge-plugin-utils";
 import { ProtectDevice } from "./protect-device.js";
 import type { ProtectNvr } from "../protect-nvr.js";
@@ -252,7 +252,7 @@ export class ProtectViewer extends ProtectDevice {
   // Handle viewer-related events.
   private eventHandler(packet: ProtectEventPacket): void {
 
-    const payload = packet.payload as ProtectViewerConfigPayload;
+    const payload = packet.payload as DeepPartial<ProtectViewerConfig>;
 
     // It's a liveview update event - process it accordingly.
     if(payload.liveview) {

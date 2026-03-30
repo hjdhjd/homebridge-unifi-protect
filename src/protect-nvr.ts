@@ -10,10 +10,10 @@ import { ProtectCamera, ProtectChime, type ProtectDevice, ProtectDoorbell, Prote
   ProtectViewer } from "./devices/index.js";
 import { ProtectDeviceCategories, exhaustiveGuard } from "./protect-types.js";
 import type { ProtectDeviceConfigTypes, ProtectDeviceTypes, ProtectDevices } from "./protect-types.js";
-import type { ProtectNvrBootstrap, ProtectNvrConfig } from "unifi-protect";
 import { APIEvent } from "homebridge";
 import { ProtectApi } from "unifi-protect";
 import { ProtectEvents } from "./protect-events.js";
+import type { ProtectNvrConfig } from "unifi-protect";
 import type { ProtectNvrOptions } from "./protect-options.js";
 import type { ProtectPlatform } from "./protect-platform.js";
 import http from "node:http";
@@ -144,7 +144,7 @@ export class ProtectNvr {
     }
 
     // Save the bootstrap to ease our device initialization below.
-    const bootstrap = this.ufpApi.bootstrap as ProtectNvrBootstrap;
+    const bootstrap = this.ufpApi.bootstrap;
 
     // Set our NVR configuration from the controller.
     this.ufp = bootstrap.nvr;
@@ -252,7 +252,12 @@ export class ProtectNvr {
     }
 
     // Inform the user about the devices we see.
-    const bootstrap = this.ufpApi.bootstrap as ProtectNvrBootstrap;
+    const bootstrap = this.ufpApi.bootstrap;
+
+    if(!bootstrap) {
+
+      return;
+    }
 
     for(const device of [ this.ufp, ...bootstrap.cameras, ...bootstrap.chimes, ...bootstrap.lights, ...bootstrap.sensors, ...bootstrap.viewers ]) {
 

@@ -3,11 +3,12 @@
  * protect-chime.ts: Chime device class for UniFi Protect.
  */
 import type { CharacteristicValue, PlatformAccessory } from "homebridge";
-import { ProtectReservedNames, toCamelCase } from "../protect-types.js";
 import { PROTECT_DOORBELL_CHIME_SPEAKER_DURATION } from "../settings.js";
 import type { ProtectChimeConfig } from "unifi-protect";
 import { ProtectDevice } from "./protect-device.js";
 import type { ProtectNvr } from "../protect-nvr.js";
+import { ProtectReservedNames } from "../protect-types.js";
+import { toStartCase } from "homebridge-plugin-utils";
 
 export class ProtectChime extends ProtectDevice {
 
@@ -88,7 +89,7 @@ export class ProtectChime extends ProtectDevice {
   private configureChimeSwitch(name: string, endpoint: string, subtype: string): boolean {
 
     // Acquire the service.
-    const service = this.acquireService(this.hap.Service.Switch, this.accessoryName + " " + toCamelCase(name), subtype);
+    const service = this.acquireService(this.hap.Service.Switch, this.accessoryName + " " + toStartCase(name), subtype);
 
     if(!service) {
 
