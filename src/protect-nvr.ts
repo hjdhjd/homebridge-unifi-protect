@@ -402,6 +402,18 @@ export class ProtectNvr {
     this.api.updatePlatformAccessories(this.platform.accessories);
   }
 
+  // Reconfigure a camera as a doorbell. Cameras and doorbells share the same modelKey in Protect...the only differentiator is featureFlags.isDoorbell, which may not be
+  // populated when the device is first adopted. We tear down the ProtectCamera instance and replace it with a ProtectDoorbell against the same HomeKit accessory.
+  public reconfigureAsDoorbell(protectDevice: ProtectDevice): void {
+
+    // Tear down the existing device instance...listeners, timers, HKSV, and livestream resources.
+    protectDevice.cleanup();
+
+    // Remove the old instance from our configured devices and recreate it with the correct class.
+    this.configuredDevices.delete(protectDevice.accessory.UUID);
+    this.addProtectDevice(protectDevice.accessory, protectDevice.ufp);
+  }
+
   // Create instances of Protect device types in our plugin.
   private addProtectDevice(accessory: PlatformAccessory, device: ProtectDeviceConfigTypes): Nullable<ProtectDevice> {
 

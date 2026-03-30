@@ -720,14 +720,18 @@ export class ProtectDoorbell extends ProtectCamera {
   // Handle doorbell-related events.
   protected eventHandler(packet: ProtectEventPacket): void {
 
-    const payload = packet.payload as ProtectCameraConfigPayload;
+    const payload = packet.payload as DeepPartial<ProtectCameraConfig>;
 
     super.eventHandler(packet);
 
-    // Update the package camera, if we have one.
+    // Update the package camera, if we have one. If the package camera capability has appeared since initial configuration (e.g. a newly adopted doorbell that wasn't
+    // fully provisioned yet), create it now.
     if(this.packageCamera) {
 
       this.packageCamera.ufp = Object.assign({}, this.ufp, { name: (this.ufp.name ?? this.ufp.marketName) + " Package Camera"}) as ProtectCameraConfig;
+    } else if(payload.featureFlags && this.ufp.featureFlags.hasPackageCamera) {
+
+      this.configurePackageCamera();
     }
 
     // If we have a package camera that has HKSV enabled, we'll trigger it's motion sensor here. Why? HKSV requires a motion sensor attached to that camera accessory,

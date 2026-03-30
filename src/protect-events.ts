@@ -6,7 +6,7 @@ import type { API, HAP, Service } from "homebridge";
 import type { HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
 import type { ProtectApi, ProtectEventAdd, ProtectEventMetadata, ProtectEventMetadataDetectedThumbnail, ProtectEventPacket,
   ProtectKnownDeviceTypes } from "unifi-protect";
-import type { ProtectCamera, ProtectDevice } from "./devices/index.js";
+import { ProtectCamera, type ProtectDevice, ProtectDoorbell } from "./devices/index.js";
 import { type ProtectDeviceConfigTypes, ProtectReservedNames } from "./protect-types.js";
 import { EventEmitter } from "node:events";
 import { PROTECT_DOORBELL_TRIGGER_DURATION } from "./settings.js";
@@ -123,6 +123,15 @@ export class ProtectEvents extends EventEmitter {
 
         // Update our device state. If we're refreshing the bootstrap, we set it as the full payload rather than update the UFP configuration.
         protectDevice.ufp = packet.header.hbupBootstrap ? payload : this.updateUfp(protectDevice.ufp, payload);
+
+        // Detect when a camera needs to be reconfigured as a doorbell. Cameras and doorbells share the same modelKey...the isDoorbell flag in featureFlags is the only
+        // differentiator, and it may not be populated when the device is first adopted. Once it arrives, we tear down the camera and recreate it as a doorbell.
+        if((protectDevice instanceof ProtectCamera) && !(protectDevice instanceof ProtectDoorbell) && protectDevice.ufp.featureFlags.isDoorbell) {
+
+          this.nvr.reconfigureAsDoorbell(protectDevice);
+
+          break;
+        }
 
         // Detect device availability changes. This ensures we capture the true availability state of a Protect device since it appears that Protect occasionally fails
         // to send an event out indicating state changes. We catch anything that's been missed dynamically when the bootstrap update occurs.
