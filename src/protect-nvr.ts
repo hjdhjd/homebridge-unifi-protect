@@ -644,9 +644,10 @@ export class ProtectNvr {
         continue;
       }
 
-      // Check to see if the device still exists on the Protect controller and the user has not chosen to hide it, or the user has chosen to make this a standalone
-      // accessory rather than a bridged one.
-      if((this.ufpApi.bootstrap[protectDevice.ufp.modelKey + "s"] as ProtectDeviceConfigTypes[] | undefined)?.some(x => x.mac === protectDevice.ufp.mac) &&
+      // Check to see if the device still exists on the Protect controller, is properly adopted, and the user has not chosen to hide it, or the user has chosen to make
+      // this a standalone accessory rather than a bridged one.
+      if((this.ufpApi.bootstrap[protectDevice.ufp.modelKey + "s"] as ProtectDeviceConfigTypes[] | undefined)
+        ?.some(x => (x.mac === protectDevice.ufp.mac) && x.isAdopted && !x.isAdoptedByOther) &&
         protectDevice.hints.enabled && ((accessory._associatedHAPAccessory.bridged && !protectDevice.hints.standalone) ||
          (!accessory._associatedHAPAccessory.bridged && protectDevice.hints.standalone))) {
 
