@@ -473,7 +473,7 @@ export class ProtectSensor extends ProtectDevice {
   // Get the current contact sensor information.
   private get contact(): boolean {
 
-    return this.ufp.isOpened;
+    return this.ufp.isOpened ?? false;
   }
 
   // Get the current humidity information.
