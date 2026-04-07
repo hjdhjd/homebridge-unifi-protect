@@ -7,7 +7,7 @@
  * deeply appreciated.
  */
 import type { API, CameraRecordingConfiguration, CameraRecordingDelegate, HAP, PlatformAccessory, RecordingPacket } from "homebridge";
-import { FfmpegRecordingProcess, type HomebridgePluginLogging, type Nullable, formatBps } from "homebridge-plugin-utils";
+import { BackpressureWriter, FfmpegRecordingProcess, type HomebridgePluginLogging, type Nullable, formatBps } from "homebridge-plugin-utils";
 import { PROTECT_HKSV_TIMEOUT, PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION } from "./settings.js";
 import type { ProtectCamera, RtspEntry } from "./devices/index.js";
 import { HDSProtocolSpecificErrorReason } from "homebridge";
@@ -34,6 +34,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
   private readonly protectCamera: ProtectCamera;
   private recordingConfig?: CameraRecordingConfiguration;
   public rtspEntry: Nullable<RtspEntry>;
+  private segmentWriter?: BackpressureWriter;
   public readonly timeshift: ProtectTimeshiftBuffer;
   private timeshiftedSegments: number;
   private transmitListener?: ((segment: Buffer) => void);
@@ -105,9 +106,9 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
 
     this.isInitialized = true;
 
-    this.log.info("HKSV: %s%s, %s.",
+    this.log.info("HKSV: %s%s [%s], %s.",
       (this.protectCamera.hints.hardwareTranscoding && (this.protectCamera.platform.codecSupport.hostSystem !== "raspbian")) ? "\u26A1\uFE0F " : "",
-      this.rtspEntry?.name, formatBps((this.recordingConfig?.videoCodec.parameters.bitRate ?? 0) * 1000));
+      this.rtspEntry?.name, this.protectCamera.videoCodecName, formatBps((this.recordingConfig?.videoCodec.parameters.bitRate ?? 0) * 1000));
   }
 
   // Process updated recording configuration settings from HomeKit Secure Video.
@@ -378,6 +379,9 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     }
 
     // If there's a prior instance of our transmit handler, clean it up.
+    this.segmentWriter?.close();
+    this.segmentWriter = undefined;
+
     if(this.transmitListener) {
 
       this.timeshift.off("segment", this.transmitListener);
@@ -423,71 +427,24 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     this.ffmpegStream.start();
     this._isTransmitting = true;
 
-    // We maintain a queue to manage segment writes to FFmpeg. Why? We need to be prepared for backpressure when writing to FFmpeg.
-    const segmentQueue: Buffer[] = [];
-    let isWriting = false;
+    // Feed segments to FFmpeg with backpressure handling...if FFmpeg can't keep up, segments are queued and written when it's ready.
+    this.segmentWriter = new BackpressureWriter(() => this.ffmpegStream?.stdin ?? null, () => this.timeshiftedSegments++);
 
-    // Segment queue manager.
-    const processSegmentQueue = (segment?: Buffer): void => {
-
-      // Add the segment to the queue.
-      if(segment) {
-
-        segmentQueue.push(segment);
-      }
-
-      // If we already have a write in progress, or nothing left to write, we're done.
-      if(isWriting || !segmentQueue.length) {
-
-        return;
-      }
-
-      // Dequeue and write.
-      isWriting = true;
-      segment = segmentQueue.shift();
-
-      // Send the segment to FFmpeg for processing.
-      if(!this.ffmpegStream?.stdin?.write(segment)) {
-
-        // FFmpeg isn't ready to read more data yet, queue the segment until we are.
-        this.ffmpegStream?.stdin?.once("drain", () => {
-
-          // Mark us available to write and process the write queue.
-          isWriting = false;
-          processSegmentQueue();
-        });
-      } else {
-
-        // Update our statistics and process the next segment.
-        this.timeshiftedSegments++;
-        isWriting = false;
-        processSegmentQueue();
-      }
-    };
-
-    // Listen in for events from the timeshift buffer and feed FFmpeg. This looks simple, conceptually, but there's a lot going on here.
-    this.timeshift.on("segment", this.transmitListener = (segment: Buffer): void => {
-
-      // If stdin has been closed, we're done.
-      if(!this.ffmpegStream?.stdin?.writable) {
-
-        return;
-      }
-
-      // Queue the segment for processing.
-      processSegmentQueue(segment);
-    });
+    // Listen in for events from the timeshift buffer and feed FFmpeg.
+    this.timeshift.on("segment", this.transmitListener = (segment: Buffer): void => { this.segmentWriter?.write(segment); });
 
     // Check to make sure something didn't go wrong when we start transmitting the stream. If there is, we're resetting our connectivity to the Protect controller.
     if(!(await this.timeshift.transmitStart(alignment?.startIndex))) {
 
       // Stop our FFmpeg process and our timeshift buffer.
+      this.segmentWriter.close();
       this.ffmpegStream.stop();
       this.timeshift.stop();
       this.timeshift.off("segment", this.transmitListener);
 
       // Ensure we cleanup.
       this.ffmpegStream = undefined;
+      this.segmentWriter = undefined;
       this.transmitListener = undefined;
       this._isTransmitting = false;
 
@@ -533,6 +490,9 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
 
     this._isTransmitting = false;
 
+    this.segmentWriter?.close();
+    this.segmentWriter = undefined;
+
     if(this.transmitListener) {
 
       this.timeshift.off("segment", this.transmitListener);
@@ -561,72 +521,35 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     if(!this.accessory.context.hksvRecordingDisabled && this.timeshiftedSegments && this.transmittedSegments && this.rtspEntry) {
 
       // Calculate approximately how many seconds we've recorded. We have more accuracy in timeshifted segments, so we'll use the more accurate statistics when we can.
-      // Otherwise, we use the number of segments transmitted to HomeKit as a close proxy.
       const recordedSeconds = (this.timeshiftedSegments * this.timeshift.segmentLength) / 1000;
 
-      let recordedTime = "";
+      let recordedTime;
+      let timeUnit;
 
-      // Calculate the time elements.
-      const hours = Math.floor(recordedSeconds / 3600);
-      const minutes = Math.floor((recordedSeconds % 3600) / 60);
-      const seconds = Math.floor((recordedSeconds % 3600) % 60);
-
-      // Create a nicely formatted string for end users. Yes, the author recognizes this isn't essential, but it does bring a smile to their face.
+      // Format the duration for the user...we show raw seconds for sub-second durations, rounded seconds for short events, and a clock-style format for longer ones.
       if(recordedSeconds < 1) {
 
         recordedTime = recordedSeconds.toString();
+        timeUnit = "second";
       } else if(recordedSeconds < 60) {
 
         recordedTime = Math.round(recordedSeconds).toString();
+        timeUnit = "second";
       } else {
 
-        // Build the string.
-        if(hours > 9) {
+        const hours = Math.floor(recordedSeconds / 3600);
+        const minutes = Math.floor((recordedSeconds % 3600) / 60);
+        const seconds = Math.floor(recordedSeconds % 60);
 
-          recordedTime = hours.toString() + ":";
-        } else if(hours > 0) {
+        if(hours > 0) {
 
-          recordedTime = "0" + hours.toString() + ":";
-        }
-
-        if(minutes > 9) {
-
-          recordedTime += minutes.toString() + ":";
-        } else if(minutes > 0) {
-
-          recordedTime += ((hours > 0) ? "0" : "") + minutes.toString() + ":";
-        }
-
-        if(recordedTime.length && (seconds < 10)) {
-
-          recordedTime += "0" + seconds.toString();
+          recordedTime = hours.toString().padStart(2, "0") + ":" + minutes.toString().padStart(2, "0") + ":" + seconds.toString().padStart(2, "0");
+          timeUnit = "hour";
         } else {
 
-          recordedTime += seconds ? seconds.toString() : recordedSeconds.toString();
-        }
-      }
-
-      let timeUnit;
-
-      switch(recordedTime.split(":").length - 1) {
-
-        case 1:
-
+          recordedTime = minutes.toString() + ":" + seconds.toString().padStart(2, "0");
           timeUnit = "minute";
-
-          break;
-
-        case 2:
-
-          timeUnit = "hour";
-
-          break;
-
-        default:
-
-          timeUnit = "second";
-
-          break;
+        }
       }
 
       // Inform the user if they've enabled logging.
@@ -697,9 +620,9 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
   // Return whether the user has audio enabled or disabled for recordings.
   public get isAudioActive(): boolean {
 
-    return (this.protectCamera.ufp.featureFlags.hasMic && this.protectCamera.hasFeature("Audio") &&
+    return this.protectCamera.ufp.featureFlags.hasMic && this.protectCamera.hasFeature("Audio") &&
       (this.protectCamera.stream?.controller.recordingManagement?.recordingManagementService
-        .getCharacteristic(this.api.hap.Characteristic.RecordingAudioActive).value === 1)) ? true : false;
+        .getCharacteristic(this.api.hap.Characteristic.RecordingAudioActive).value === 1);
   }
 
   // Return whether we are actively transmitting an HKSV recording event to HomeKit.

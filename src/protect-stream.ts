@@ -9,8 +9,8 @@ import type { API, CameraController, CameraControllerOptions, HAP, PrepareStream
 import { Agent, type ErrorEvent, WebSocket } from "undici";
 import { AudioRecordingCodecType, AudioRecordingSamplerate, AudioStreamingCodecType, AudioStreamingSamplerate, H264Level, H264Profile, MediaContainerType,
   StreamRequestTypes } from "homebridge";
-import { FfmpegOptions, FfmpegStreamingProcess, HKSV_FRAGMENT_LENGTH, HOMEKIT_IDR_INTERVAL, type HomebridgePluginLogging, type HomebridgeStreamingDelegate,
-  type Nullable, RtpDemuxer, formatBps } from "homebridge-plugin-utils";
+import { BackpressureWriter, FfmpegOptions, FfmpegStreamingProcess, HKSV_FRAGMENT_LENGTH, HOMEKIT_IDR_INTERVAL, type HomebridgePluginLogging,
+  type HomebridgeStreamingDelegate, type Nullable, RtpDemuxer, formatBps } from "homebridge-plugin-utils";
 import { PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION, PROTECT_LIVESTREAM_API_IDR_INTERVAL } from "./settings.js";
 import type { ProtectCamera } from "./devices/index.js";
 import type { ProtectNvr } from "./protect-nvr.js";
@@ -620,9 +620,9 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
 
     hinting.push(...(hinting.length ? [""] : []));
 
-    this.log.info("%sStreaming request: %sx%s@%sfps, %s. Using %s, %s [%s].", hinting.join(" "), request.video.width, request.video.height, request.video.fps,
-      formatBps(targetBitrate * 1000), rtspEntry.name, formatBps(rtspEntry.channel.bitrate),
-      useTsb ? "TSB/" + (this.protectCamera.hasFeature("Debug.Video.HKSV.UseRtsp") ? "RTSP" : "API") : "RTSP");
+    this.log.info("%sStreaming request: %sx%s@%sfps, %s. Using %s [%s], %s [%s].", hinting.join(" "), request.video.width, request.video.height, request.video.fps,
+      formatBps(targetBitrate * 1000), rtspEntry.name, this.protectCamera.videoCodecName,
+      formatBps(rtspEntry.channel.bitrate), useTsb ? "TSB/" + (this.protectCamera.hasFeature("Debug.Video.HKSV.UseRtsp") ? "RTSP" : "API") : "RTSP");
 
     // When on high-performance hardware like Apple Silicon, using the TSB, and we don't have low-FPS cameras like the package camera, enable the use of the
     // CPU-intensive FFmpeg minterpolate filter to enable very smooth video, especially when there's motion involved. M3+ Apple Silicon environments are able to reliably
@@ -793,46 +793,8 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
       const livestream = this.protectCamera.livestream.acquire(rtspEntry);
       let seenInitSegment = false;
 
-      // We maintain a queue to manage segment writes to FFmpeg. Why? We need to account for backpressure when writing to FFmpeg.
-      const segmentQueue: Buffer[] = [];
-      let isWriting = false;
-
-      // Segment queue manager.
-      const processSegmentQueue = (segment?: Buffer): void => {
-
-        // Add the segment to the queue.
-        if(segment) {
-
-          segmentQueue.push(segment);
-        }
-
-        // If we already have a write in progress, or nothing left to write, we're done.
-        if(isWriting || !segmentQueue.length) {
-
-          return;
-        }
-
-        // Dequeue and write.
-        isWriting = true;
-        segment = segmentQueue.shift();
-
-        // Send the segment to FFmpeg for processing.
-        if(!ffmpegStream.stdin?.write(segment)) {
-
-          // FFmpeg isn't ready to read more data yet, queue the segment until we are.
-          ffmpegStream.stdin?.once("drain", () => {
-
-            // Mark us available to write and process the write queue.
-            isWriting = false;
-            processSegmentQueue();
-          });
-        } else {
-
-          // Process the next segment.
-          isWriting = false;
-          processSegmentQueue();
-        }
-      };
+      // Feed segments to FFmpeg with backpressure handling...if FFmpeg can't keep up, segments are queued and written when it's ready.
+      const segmentWriter = new BackpressureWriter(() => ffmpegStream.stdin ?? null);
 
       // If we're using a timeshift buffer, let's use that to livestream. It has the dual benefit of reducing the workload on the Protect controller since it's already
       // providing a livestream to us and it also improves performance by ensuring there's several seconds of video ready to immediately transmit.
@@ -840,12 +802,12 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
 
         if(!seenInitSegment) {
 
-          processSegmentQueue(tsBuffer ?? (await livestream.getInitSegment()));
+          segmentWriter.write(tsBuffer ?? (await livestream.getInitSegment()));
           seenInitSegment = true;
         }
 
         // Send the segment to FFmpeg for processing.
-        processSegmentQueue(segment);
+        segmentWriter.write(segment);
       })();
 
       const closeListener = (): void => void ffmpegStream.ffmpegProcess?.stdin.end();
@@ -855,6 +817,7 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
       // Ensure we cleanup on exit.
       ffmpegStream.ffmpegProcess?.once("exit", () => {
 
+        segmentWriter.close();
         this.protectCamera.livestream.stop(rtspEntry);
         livestream.off("segment", livestreamListener);
         livestream.off("close", closeListener);
@@ -990,7 +953,7 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
       if(sessionInfo.talkBack && !this.protectCamera.hints.twoWayAudioDirect) {
 
         // Open the talkback connection.
-        ws = new WebSocket(sessionInfo.talkBack, { dispatcher: new Agent({ connect: { rejectUnauthorized: false } }) });
+        ws = new WebSocket(sessionInfo.talkBack, { dispatcher: new Agent({ allowH2: false, connect: { rejectUnauthorized: false } }) });
         isTalkbackLive = true;
 
         // Catch any errors and inform the user, if needed.

@@ -199,7 +199,12 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
   public restart(): void {
 
     this._pendingDiscontinuity = false;
-    this.livestream?.emit("restart");
+
+    if(this.rtspEntry) {
+
+      this.protectCamera.livestream.restart(this.rtspEntry);
+    }
+
     this.clearBuffer();
   }
 
@@ -218,7 +223,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
     // If we haven't started the livestream, or it was closed for some reason, let's start it now.
     if((!this.isStarted && this.rtspEntry && !(await this.start(this.rtspEntry))) || !this.livestream?.initSegment) {
 
-      this.log.error("Unable to connect to the Protect livestream API — usually occurs when the Protect controller or devices reboot. Retrying shortly.");
+      this.log.error("Unable to connect to the Protect livestream API - usually occurs when the Protect controller or devices reboot. Retrying shortly.");
 
       return false;
     }
@@ -265,7 +270,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
     }
 
     // If we have the initialization segment, return it. If we haven't seen it yet, wait for a couple of seconds and check an additional time.
-    return this.livestream.initSegment ?? await runWithTimeout(this.livestream.getInitSegment(), 2000);
+    return this.livestream.initSegment ?? await runWithTimeout(this.livestream.getInitSegment(), 2000).catch(() => null);
   }
 
   // Return the last duration milliseconds of the buffer, with an initialization segment.
