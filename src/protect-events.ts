@@ -67,10 +67,7 @@ export class ProtectEvents extends EventEmitter {
       // Process each object in the input array
       for(const object of objects) {
 
-        // Iterate through the keys that belong to this object while explicitly filter out any keys that are inherited. This could ostensibly be done using reduce, but we
-        // take a more performance-conscious view of things here given that this code will be called quite frequently due to the number of Protect events we typically
-        // process.
-        for(const key of Object.keys(object).filter(key => Object.hasOwn(object, key))) {
+        for(const key of Object.keys(object)) {
 
           // Initialize.
           const existingValue = result[key];

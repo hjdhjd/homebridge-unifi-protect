@@ -11,13 +11,7 @@ import type { ProtectNvr } from "../protect-nvr.js";
 import type { ProtectPlatform } from "../protect-platform.js";
 import util from "node:util";
 
-/*
-// List the optional methods of our subclasses that we want to expose commonly.
-export interface ProtectDevice {
-
-  eventHandler?(): void;
-}
-/* */
+const RESERVED_NAMES = new Set(Object.values(ProtectReservedNames).map(x => x.toUpperCase()));
 
 // Device-specific options and settings.
 export interface ProtectHints {
@@ -91,8 +85,10 @@ export abstract class ProtectBase {
   // Configure the device information for HomeKit.
   protected setInfo(accessory: PlatformAccessory, device: ProtectDeviceConfigTypes | ProtectNvrConfig): boolean {
 
+    const infoService = accessory.getService(this.hap.Service.AccessoryInformation);
+
     // Update the manufacturer information for this device.
-    accessory.getService(this.hap.Service.AccessoryInformation)?.updateCharacteristic(this.hap.Characteristic.Manufacturer, "Ubiquiti Inc.");
+    infoService?.updateCharacteristic(this.hap.Characteristic.Manufacturer, "Ubiquiti Inc.");
 
     // Update the model information for this device.
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
@@ -100,25 +96,25 @@ export abstract class ProtectBase {
 
     if(deviceModel.length) {
 
-      accessory.getService(this.hap.Service.AccessoryInformation)?.updateCharacteristic(this.hap.Characteristic.Model, deviceModel);
+      infoService?.updateCharacteristic(this.hap.Characteristic.Model, deviceModel);
     }
 
     // Update the serial number for this device.
     if(device.mac.length) {
 
-      accessory.getService(this.hap.Service.AccessoryInformation)?.updateCharacteristic(this.hap.Characteristic.SerialNumber, device.mac);
+      infoService?.updateCharacteristic(this.hap.Characteristic.SerialNumber, device.mac);
     }
 
     // Update the hardware revision for this device, if available.
     if(device.hardwareRevision?.length) {
 
-      accessory.getService(this.hap.Service.AccessoryInformation)?.updateCharacteristic(this.hap.Characteristic.HardwareRevision, device.hardwareRevision);
+      infoService?.updateCharacteristic(this.hap.Characteristic.HardwareRevision, device.hardwareRevision);
     }
 
     // Update the firmware revision for this device.
     if(device.firmwareVersion?.length) {
 
-      accessory.getService(this.hap.Service.AccessoryInformation)?.updateCharacteristic(this.hap.Characteristic.FirmwareRevision, device.firmwareVersion);
+      infoService?.updateCharacteristic(this.hap.Characteristic.FirmwareRevision, device.firmwareVersion);
     }
 
     return true;
@@ -662,7 +658,7 @@ export abstract class ProtectDevice extends ProtectBase {
   // Utility function for reserved identifiers for switches.
   public isReservedName(name?: string): boolean {
 
-    return name ? Object.values(ProtectReservedNames).map(x => x.toUpperCase()).includes(name.toUpperCase()) : false;
+    return name ? RESERVED_NAMES.has(name.toUpperCase()) : false;
   }
 
   // Utility function to determine whether or not a device is currently online.

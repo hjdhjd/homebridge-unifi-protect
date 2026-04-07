@@ -82,51 +82,15 @@ class PluginUiServer extends HomebridgePluginUiServer {
 
         const bootstrap = ufpApi.bootstrap;
 
-        bootstrap.cameras = bootstrap.cameras.filter(x => !x.isAdoptedByOther && x.isAdopted);
-        bootstrap.chimes = bootstrap.chimes.filter(x => !x.isAdoptedByOther && x.isAdopted);
-        bootstrap.lights = bootstrap.lights.filter(x => !x.isAdoptedByOther && x.isAdopted);
-        bootstrap.sensors = bootstrap.sensors.filter(x => !x.isAdoptedByOther && x.isAdopted);
-        bootstrap.viewers = bootstrap.viewers.filter(x => !x.isAdoptedByOther && x.isAdopted);
+        // Filter and sort each device category...we only want adopted devices, sorted by name.
+        const prepareDevices = (devices) => devices.filter(x => !x.isAdoptedByOther && x.isAdopted)
+          .sort((a, b) => (a.name ?? a.marketName).localeCompare(b.name ?? b.marketName));
 
-        bootstrap.cameras.sort((a, b) => {
-
-          const aCase = (a.name ?? a.marketName).toLowerCase();
-          const bCase = (b.name ?? b.marketName).toLowerCase();
-
-          return aCase > bCase ? 1 : (bCase > aCase ? -1 : 0);
-        });
-
-        bootstrap.chimes.sort((a, b) => {
-
-          const aCase = (a.name ?? a.marketName).toLowerCase();
-          const bCase = (b.name ?? b.marketName).toLowerCase();
-
-          return aCase > bCase ? 1 : (bCase > aCase ? -1 : 0);
-        });
-
-        bootstrap.lights.sort((a, b) => {
-
-          const aCase = (a.name ?? a.marketName).toLowerCase();
-          const bCase = (b.name ?? b.marketName).toLowerCase();
-
-          return aCase > bCase ? 1 : (bCase > aCase ? -1 : 0);
-        });
-
-        bootstrap.sensors.sort((a, b) => {
-
-          const aCase = (a.name ?? a.marketName).toLowerCase();
-          const bCase = (b.name ?? b.marketName).toLowerCase();
-
-          return aCase > bCase ? 1 : (bCase > aCase ? -1 : 0);
-        });
-
-        bootstrap.viewers.sort((a, b) => {
-
-          const aCase = (a.name ?? a.marketName).toLowerCase();
-          const bCase = (b.name ?? b.marketName).toLowerCase();
-
-          return aCase > bCase ? 1 : (bCase > aCase ? -1 : 0);
-        });
+        bootstrap.cameras = prepareDevices(bootstrap.cameras);
+        bootstrap.chimes = prepareDevices(bootstrap.chimes);
+        bootstrap.lights = prepareDevices(bootstrap.lights);
+        bootstrap.sensors = prepareDevices(bootstrap.sensors);
+        bootstrap.viewers = prepareDevices(bootstrap.viewers);
 
         return [ ufpApi.bootstrap.nvr, ...ufpApi.bootstrap.cameras, ...ufpApi.bootstrap.chimes, ...ufpApi.bootstrap.lights, ...ufpApi.bootstrap.sensors,
           ...ufpApi.bootstrap.viewers ];

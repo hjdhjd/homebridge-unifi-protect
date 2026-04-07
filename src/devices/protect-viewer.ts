@@ -215,13 +215,13 @@ export class ProtectViewer extends ProtectDevice {
   // Configure MQTT capabilities of this viewer.
   private configureMqtt(): boolean {
 
-    // Trigger a motion event in MQTT, if requested to do so.
+    // Get the current liveview state via MQTT.
     this.subscribeGet("liveview", "liveview", () => {
 
       return this.ufpApi.bootstrap?.liveviews.find(x => x.id === this.ufp.liveview)?.name ?? "None";
     });
 
-    // Trigger a motion event in MQTT, if requested to do so.
+    // Set the liveview state via MQTT.
     this.subscribeSet("liveview", "liveview", async (value: string) => {
 
       const liveview = this.ufpApi.bootstrap?.liveviews.find(x => x.name.toLowerCase() === value);

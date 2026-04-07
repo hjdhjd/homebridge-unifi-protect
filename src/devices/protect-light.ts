@@ -101,13 +101,12 @@ export class ProtectLight extends ProtectDevice {
     // Adjust the brightness of the light.
     service.getCharacteristic(this.hap.Characteristic.Brightness).onGet(() => {
 
-      // The Protect ledLevel settings goes from 1 - 6. HomeKit expects percentages, so we convert it like so.
-      return (this.ufp.lightDeviceSettings.ledLevel - 1) * 20;
+      return this.ledLevelToBrightness(this.ufp.lightDeviceSettings.ledLevel);
     });
 
     service.getCharacteristic(this.hap.Characteristic.Brightness).onSet(async (value: CharacteristicValue) => {
 
-      const brightness = Math.round(((value as number) / 20) + 1);
+      const brightness = this.brightnessToLedLevel(value as number);
       const newDevice = await this.nvr.ufpApi.updateDevice(this.ufp, { lightDeviceSettings: { ledLevel: brightness } });
 
       if(!newDevice) {
@@ -121,15 +120,15 @@ export class ProtectLight extends ProtectDevice {
       this.ufp = newDevice;
 
       // Make sure we properly reflect what brightness we're actually at, given the differences in setting granularity between Protect and HomeKit.
-      setTimeout(() => service.updateCharacteristic(this.hap.Characteristic.Brightness, (brightness - 1) * 20), 50);
+      setTimeout(() => service.updateCharacteristic(this.hap.Characteristic.Brightness, this.ledLevelToBrightness(brightness)), 50);
 
       // Publish our state.
-      this.publish("light/brightness", ((brightness - 1) * 20).toString());
+      this.publish("light/brightness", this.ledLevelToBrightness(brightness).toString());
     });
 
     // Initialize the light.
     service.updateCharacteristic(this.hap.Characteristic.On, this.ufp.isLightOn);
-    service.updateCharacteristic(this.hap.Characteristic.Brightness, (this.ufp.lightDeviceSettings.ledLevel - 1) * 20);
+    service.updateCharacteristic(this.hap.Characteristic.Brightness, this.ledLevelToBrightness(this.ufp.lightDeviceSettings.ledLevel));
 
     return true;
   }
@@ -145,7 +144,7 @@ export class ProtectLight extends ProtectDevice {
 
     this.subscribeGet("light/brightness", "light brightness", () => {
 
-      return ((this.ufp.lightDeviceSettings.ledLevel - 1) * 20).toString();
+      return this.ledLevelToBrightness(this.ufp.lightDeviceSettings.ledLevel).toString();
     });
 
     // Control the light.
@@ -217,5 +216,17 @@ export class ProtectLight extends ProtectDevice {
   public get statusLed(): boolean {
 
     return this.ufp.lightDeviceSettings.isIndicatorEnabled;
+  }
+
+  // Convert a HomeKit brightness percentage (0-100) to a Protect LED level (1-6).
+  private brightnessToLedLevel(brightness: number): number {
+
+    return Math.round((brightness / 20) + 1);
+  }
+
+  // Convert a Protect LED level (1-6) to a HomeKit brightness percentage (0-100).
+  private ledLevelToBrightness(ledLevel: number): number {
+
+    return (ledLevel - 1) * 20;
   }
 }

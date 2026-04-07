@@ -31,8 +31,8 @@ export interface ProtectNvrOptions {
   mqttUrl?: string;
   name?: string;
   overrideAddress?: string;
-  username: string;
   password: string;
+  username: string;
 }
 
 // HBUP's webUI makes use of additional metadata to only surface the feature options relevant for a particular device. These properties provide that metadata.
@@ -178,7 +178,7 @@ export const featureOptions: Record<string, ProtectFeatureOption[]> = {
     { default: false, description: "Expose the Protect leak sensor as a contact sensor instead of a leak sensor. This is useful for automation scenarios since HomeKit contact sensors offer more flexible automation options than leak sensors, which are primarily designed for alerts.", name: "MoistureSensor" }
   ],
 
-  // HomeKit Secure Video options.
+  // UniFi Access options.
   "UniFi.Access": [
 
     { default: true, description: "Add a lock accessory to unlock. Currently, Protect only supports unlocking Access readers with a camera on the same controller as Protect.", hasAccessFeature: ["supportUnlock"], name: "Lock" }

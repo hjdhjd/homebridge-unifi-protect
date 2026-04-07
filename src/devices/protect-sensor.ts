@@ -372,7 +372,7 @@ export class ProtectSensor extends ProtectDevice {
       // Publish the state.
       if(this.ufp.isConnected) {
 
-        this.publish(sensor.mqtt, this.leakDetected.toString());
+        this.publish(sensor.mqtt, this.leakDetected(sensor.isDetected).toString());
       }
 
       count++;
@@ -396,7 +396,7 @@ export class ProtectSensor extends ProtectDevice {
     // Fail gracefully.
     if(!service) {
 
-      this.log.error("Unable to add humidity sensor.");
+      this.log.error("Unable to add temperature sensor.");
 
       return false;
     }
