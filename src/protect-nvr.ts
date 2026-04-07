@@ -181,6 +181,9 @@ export class ProtectNvr {
       protectCamera.packageCamera?.stream?.hksv?.timeshift.stop();
     }
 
+    // Cleanup the NVR system information listener so it doesn't accumulate across reconnect cycles.
+    this.systemInfo?.cleanup();
+
     // Clear the bootstrap refresh timer if it's running.
     if(this.bootstrapRefreshTimer) {
 
@@ -318,11 +321,17 @@ export class ProtectNvr {
     // Apply the reboot interval, defaulting to the configured default if the option is enabled without an explicit value. We enforce a minimum interval to prevent the
     // controller from entering a reboot loop.
     const intervalHours = Math.max(rebootInterval ?? PROTECT_NVR_REBOOT_INTERVAL, PROTECT_NVR_REBOOT_MIN_INTERVAL);
+    const intervalMs = intervalHours * 60 * 60 * 1000;
+
+    // Anchor the schedule to the controller's actual uptime so HBUP restarts don't reset the reboot cadence. If the controller has been up longer than the interval,
+    // we schedule a reboot shortly after startup to let everything settle first.
+    const uptimeMs = this.ufp.upSince ? (Date.now() - this.ufp.upSince) : 0;
+    const delayMs = Math.max(intervalMs - uptimeMs, 60 * 1000);
 
     this.log.info("Scheduled controller reboot enabled every %s hour%s.", intervalHours, (intervalHours === 1) ? "" : "s");
 
     // Schedule the reboot.
-    this.nvrRebootTimer = setTimeout(() => void this.executeScheduledReboot(intervalHours), intervalHours * 60 * 60 * 1000);
+    this.nvrRebootTimer = setTimeout(() => void this.executeScheduledReboot(intervalHours), delayMs);
   }
 
   // Execute a scheduled reboot of the Protect controller.
@@ -804,25 +813,8 @@ export class ProtectNvr {
       if(this.ufpApi.bootstrap) {
 
         // Find the RTSP aliases and publish them. We filter out any cameras that don't have RTSP aliases since they would be inaccessible in this context.
-        for(const camera of this.ufpApi.bootstrap.cameras.filter(x => (x.videoCodec !== "av1") && x.channels.some(channel => channel.isRtspEnabled)).sort((a, b) => {
-
-          if(!a.name || !b.name) {
-
-            return 0;
-          }
-
-          if(a.name < b.name) {
-
-            return -1;
-          }
-
-          if(a.name > b.name) {
-
-            return 1;
-          }
-
-          return 0;
-        })) {
+        for(const camera of this.ufpApi.bootstrap.cameras.filter(x => (x.videoCodec !== "av1") && x.channels.some(channel => channel.isRtspEnabled))
+          .sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""))) {
 
           // Publish a playlist entry, including guide information that's suitable for apps that support it, such as Channels DVR.
           const publishEntry = (name = camera.name, description = "camera", rtspAlias = camera.channels[0].rtspAlias): void => {

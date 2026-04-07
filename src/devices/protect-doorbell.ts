@@ -215,7 +215,7 @@ export class ProtectDoorbell extends ProtectCamera {
     // We can't find the accessory. Let's create it.
     if(!packageCameraAccessory) {
 
-      // We will use the NVR MAC address + ".NVRSystemInfo" to create our UUID. That should provide the guaranteed uniqueness we need.
+      // We use the camera's MAC address + ".PackageCamera" to create our UUID. That should provide the guaranteed uniqueness we need.
       packageCameraAccessory = new this.api.platformAccessory(sanitizeName(this.accessoryName + " Package Camera"), uuid);
 
       // Register this accessory with homebridge and add it to the accessory array so we can track it.
@@ -292,7 +292,7 @@ export class ProtectDoorbell extends ProtectCamera {
 
           this.log.error("Unable to set the physical chime mode to %s.", chimeSetting);
 
-          return false;
+          return;
         }
 
         // Save our updated device context.
@@ -480,9 +480,8 @@ export class ProtectDoorbell extends ProtectCamera {
         return;
       }
 
-      // At a minimum, make sure a message was specified. If we have specified duration, make sure it's a number. Our NaN test may seem strange - that's because NaN is
-      // the only JavaScript value that is treated as unequal to itself. Meaning, you can always test if a value is NaN by checking it for equality to itself. Weird huh?
-      if(!("message" in inboundPayload) || (("duration" in inboundPayload) && (inboundPayload.duration !== inboundPayload.duration))) {
+      // At a minimum, make sure a message was specified. If we have a duration, make sure it's a valid number.
+      if(!("message" in inboundPayload) || (("duration" in inboundPayload) && Number.isNaN(inboundPayload.duration))) {
 
         this.log.error("Unable to process MQTT message: \"%s\".", inboundPayload);
 
@@ -754,7 +753,7 @@ export class ProtectDoorbell extends ProtectCamera {
 
     const payload = packet.payload as ProtectEventAdd;
 
-    super.eventHandler(packet);
+    super.addEventHandler(packet);
 
     // Process any authentication events.
     if(payload.type && [ "fingerprintIdentified", "nfcCardScanned" ].includes(payload.type)) {

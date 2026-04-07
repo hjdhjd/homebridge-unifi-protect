@@ -120,7 +120,7 @@ export class ProtectNvrSystemInfo extends ProtectBase {
   }
 
   // Cleanup our listeners.
-  private cleanupEvents(): void {
+  public cleanup(): void {
 
     if(this.eventListener) {
 

@@ -34,6 +34,10 @@ type RtspOptions = Partial<{
 
 export class ProtectCamera extends ProtectDevice {
 
+  // HomeKit resolution tables for the two standard aspect ratios. These are the base resolutions we advertise...consumers apply their own FPS logic.
+  protected static readonly RESOLUTIONS_4X3 = [ [ 3840, 2880 ], [ 2560, 1920 ], [ 1920, 1440 ], [ 1280, 960 ], [ 1024, 768 ], [ 640, 480 ], [ 480, 360 ], [ 320, 240 ] ];
+  protected static readonly RESOLUTIONS_16X9 = [ [ 3840, 2160 ], [ 2560, 1440 ], [ 1920, 1080 ], [ 1280, 720 ], [ 640, 360 ], [ 480, 270 ], [ 320, 180 ] ];
+
   private ambientLight: number;
   private isDeleted: boolean;
   public isRinging: boolean;
@@ -119,14 +123,7 @@ export class ProtectCamera extends ProtectDevice {
 
     if(this.hasFeature("Video.HKSV.Recording.Switch")) {
 
-      // Compatibility with older releases. I'll remove this in the future.
-      if(savedContext.hksvRecording !== undefined) {
-
-        this.accessory.context.hksvRecordingDisabled = !savedContext.hksvRecording;
-      } else {
-
-        this.accessory.context.hksvRecordingDisabled = savedContext.hksvRecordingDisabled as boolean | undefined ?? false;
-      }
+      this.accessory.context.hksvRecordingDisabled = savedContext.hksvRecordingDisabled as boolean | undefined ?? false;
     }
 
     if(this.hasFeature("Doorbell.Mute")) {
@@ -242,6 +239,13 @@ export class ProtectCamera extends ProtectDevice {
     if(hasProperty([ "channels", "videoCodec" ])) {
 
       void this.configureVideoStream();
+    }
+
+    // When a camera comes back online, retry HKSV initialization if we have recording enabled but the timeshift buffer never started...this happens when the camera was
+    // offline at startup and configureTimeshifting() couldn't connect.
+    if(hasProperty("isConnected") && this.isOnline && this.stream?.hksv?.isRecording && !this.stream.hksv.timeshift.isStarted) {
+
+      void this.stream.hksv.updateRecordingActive(true);
     }
 
     // Process motion events.
@@ -492,7 +496,7 @@ export class ProtectCamera extends ProtectDevice {
       // Protect currently only supports unlocking.
       if(value === this.hap.Characteristic.LockTargetState.SECURED) {
 
-        // Let's make sure we revert the lock to it's prior state.
+        // Let's make sure we revert the lock to its prior state.
         setTimeout(() => {
 
           service.updateCharacteristic(this.hap.Characteristic.LockTargetState, this.hap.Characteristic.LockTargetState.UNSECURED);
@@ -505,17 +509,23 @@ export class ProtectCamera extends ProtectDevice {
       // Unlock the Access device.
       const response = await this.nvr.ufpApi.retrieve(this.nvr.ufpApi.getApiEndpoint(this.ufp.modelKey) + "/" + this.ufp.id + "/unlock", { method: "POST" });
 
-      if(this.nvr.ufpApi.responseOk(response?.statusCode)) {
+      if(!this.nvr.ufpApi.responseOk(response?.statusCode)) {
 
-        // Something went wrong, revert to our prior state.
-        setTimeout(() => {
+        this.log.error("Unable to unlock the Access device.");
 
-          service.updateCharacteristic(this.hap.Characteristic.LockTargetState, this.hap.Characteristic.LockTargetState.UNSECURED);
-          service.updateCharacteristic(this.hap.Characteristic.LockCurrentState, this.hap.Characteristic.LockCurrentState.UNSECURED);
-        }, 50);
+        // Revert the lock to its resting state so the user sees the unlock failed.
+        service.updateCharacteristic(this.hap.Characteristic.LockTargetState, this.hap.Characteristic.LockTargetState.SECURED);
+        service.updateCharacteristic(this.hap.Characteristic.LockCurrentState, this.hap.Characteristic.LockCurrentState.SECURED);
 
         return;
       }
+
+      // Show a momentary unlock in the UI and then re-secure...this is the expected behavior for access control.
+      setTimeout(() => {
+
+        service.updateCharacteristic(this.hap.Characteristic.LockTargetState, this.hap.Characteristic.LockTargetState.UNSECURED);
+        service.updateCharacteristic(this.hap.Characteristic.LockCurrentState, this.hap.Characteristic.LockCurrentState.UNSECURED);
+      }, 50);
     });
 
     service.updateCharacteristic(this.hap.Characteristic.LockTargetState, this.hap.Characteristic.LockTargetState.SECURED);
@@ -941,8 +951,7 @@ export class ProtectCamera extends ProtectDevice {
       rtspEntries.push({
 
         channel: channel,
-        name: this.getResolution([ channel.width, channel.height, channel.fps ]) + " (" + channel.name + ") [" +
-          (this.ufp.videoCodec.replace("h265", "hevc")).toUpperCase() + "]",
+        name: this.getResolution([ channel.width, channel.height, channel.fps ]) + " (" + channel.name + ")",
         resolution: [ channel.width, channel.height, channel.fps ],
         url: cameraUrl + channel.rtspAlias + "?enableSrtp"
       });
@@ -959,22 +968,10 @@ export class ProtectCamera extends ProtectDevice {
     // Our supported resolutions range from 4K through 320p.
     if(this.is4x3AspectRatio(rtspEntries[0].resolution[0], rtspEntries[0].resolution[1])) {
 
-      validResolutions = [
-
-        [ 3840, 2880 ], [ 2560, 1920 ],
-        [ 1920, 1440 ], [ 1280, 960 ],
-        [ 1024, 768 ], [ 640, 480 ],
-        [ 480, 360 ], [ 320, 240 ]
-      ];
+      validResolutions = [...ProtectCamera.RESOLUTIONS_4X3];
     } else {
 
-      validResolutions = [
-
-        [ 3840, 2160 ], [ 2560, 1440 ],
-        [ 1920, 1080 ], [ 1280, 720 ],
-        [ 640, 360 ], [ 480, 270 ],
-        [ 320, 180 ]
-      ];
+      validResolutions = [...ProtectCamera.RESOLUTIONS_16X9];
     }
 
     // Generate a list of valid resolutions that support both 30 and 15fps.
@@ -1053,7 +1050,7 @@ export class ProtectCamera extends ProtectDevice {
 
       for(const entry of this.rtspEntries) {
 
-        this.log.info("Mapping resolution: %s.", this.getResolution(entry.resolution) + " => " + entry.name);
+        this.log.info("Mapping resolution: %s.", this.getResolution(entry.resolution) + " => " + entry.name + " [" + this.videoCodecName + "]");
       }
     }
 
@@ -1669,6 +1666,12 @@ export class ProtectCamera extends ProtectDevice {
   protected getResolution(resolution: Resolution): string {
 
     return resolution[0].toString() + "x" + resolution[1].toString() + "@" + resolution[2].toString() + "fps";
+  }
+
+  // Utility property to return the camera's current video codec, formatted for display.
+  public get videoCodecName(): string {
+
+    return (this.ufp.videoCodec.replace("h265", "hevc")).toUpperCase();
   }
 
   // Utility property to return whether the camera is HKSV capable or not.
