@@ -2,9 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## 7.29.0 (2026-04-09)
+  * Improvement: continued HKSV recording resilience improvements. HBUP now recovers from livestream discontinuities during active recordings, detects livestream stalls faster, and automatically resumes HKSV on cameras that were offline at HBUP startup once they come back online - resulting in fewer missed or incomplete HKSV events.
+  * Improvement: HKSV recordings now gracefully handle the non-standard frame rates that some Protect cameras advertise, which can shift across firmware updates.
+  * Improvement: scheduled controller reboots now anchor to the controller's actual uptime rather than restarting the countdown every time HBUP restarts, so the reboot cadence you configure is the cadence you get.
+  * Improvement: audio noise filters now validate frequency settings against the Nyquist limit of the audio stream, preventing misconfigured filters from producing distorted audio.
+  * Fix: doorbells that report their feature flags after initial device discovery are now correctly reclassified, fixing cases where a doorbell could initially appear as a regular camera.
+  * Fix: UniFi Access locks now properly show the momentary unlock in HomeKit and automatically re-lock after the unlock window, instead of getting stuck in an unlocked state.
+  * Fix: leak sensors now report their current state accurately over MQTT.
+  * Housekeeping.
+
 ## 7.28.0 (2026-03-20)
   * Improvement: further HKSV recording improvements. HBUP now starts recordings from clean video boundaries in the timeshift buffer, improving video quality from the very first frame. Recording stream teardown is also faster and more reliable.
-  * Improvement: snapshot performance improvements. Concurrent snapshot requests from multiple HomeKit hubs are now handled by a single operation instead of spawning duplicates, and snapshots sourced from the timeshift buffer are now extracted more efficiently.
+  * Improvement: snapshot performance improvements. Concurrent snapshot requests from multiple HomeKit client requests are now handled by a single operation instead of spawning duplicates, and snapshots sourced from the timeshift buffer are now extracted more efficiently.
   * Housekeeping.
 
 ## 7.27.0 (2026-03-17)
