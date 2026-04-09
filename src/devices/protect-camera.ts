@@ -493,11 +493,17 @@ export class ProtectCamera extends ProtectDevice {
     // Configure the lock current and target state characteristics.
     service.getCharacteristic(this.hap.Characteristic.LockTargetState).onSet(async (value: CharacteristicValue) => {
 
-      // Protect currently only supports unlocking.
+      // Protect only supports unlocking. If the user taps lock while we're in the momentary unlock window, revert the optimistic SECURED target back to UNSECURED. We
+      // guard on the auto re-lock timer being pending so we don't stomp a SECURED state that our own timer just wrote...registerTimeout deletes the timer map entry
+      // before invoking its callback, so by the time we check, a just-fired timer is already gone and we correctly become a no-op.
       if(value === this.hap.Characteristic.LockTargetState.SECURED) {
 
-        // Let's make sure we revert the lock to its prior state.
         setTimeout(() => {
+
+          if(!this.timers.has("accessUnlock")) {
+
+            return;
+          }
 
           service.updateCharacteristic(this.hap.Characteristic.LockTargetState, this.hap.Characteristic.LockTargetState.UNSECURED);
           service.updateCharacteristic(this.hap.Characteristic.LockCurrentState, this.hap.Characteristic.LockCurrentState.UNSECURED);
@@ -511,21 +517,27 @@ export class ProtectCamera extends ProtectDevice {
 
       if(!this.nvr.ufpApi.responseOk(response?.statusCode)) {
 
+        // Something went wrong, revert to our prior state.
         this.log.error("Unable to unlock the Access device.");
 
-        // Revert the lock to its resting state so the user sees the unlock failed.
-        service.updateCharacteristic(this.hap.Characteristic.LockTargetState, this.hap.Characteristic.LockTargetState.SECURED);
-        service.updateCharacteristic(this.hap.Characteristic.LockCurrentState, this.hap.Characteristic.LockCurrentState.SECURED);
+        setTimeout(() => {
+
+          service.updateCharacteristic(this.hap.Characteristic.LockTargetState, this.hap.Characteristic.LockTargetState.SECURED);
+          service.updateCharacteristic(this.hap.Characteristic.LockCurrentState, this.hap.Characteristic.LockCurrentState.SECURED);
+        }, 50);
 
         return;
       }
 
-      // Show a momentary unlock in the UI and then re-secure...this is the expected behavior for access control.
-      setTimeout(() => {
+      // The unlock succeeded. Protect v7 no longer fires a feedback event for user-directed Access unlocks, so we drive the auto re-lock from here. HomeKit already
+      // set the lock to UNSECURED as part of the set request that brought us into this handler, so we just need to schedule the re-lock.
+      this.log.info("Unlocked.");
 
-        service.updateCharacteristic(this.hap.Characteristic.LockTargetState, this.hap.Characteristic.LockTargetState.UNSECURED);
-        service.updateCharacteristic(this.hap.Characteristic.LockCurrentState, this.hap.Characteristic.LockCurrentState.UNSECURED);
-      }, 50);
+      this.registerTimeout("accessUnlock", () => {
+
+        service.updateCharacteristic(this.hap.Characteristic.LockTargetState, this.hap.Characteristic.LockTargetState.SECURED);
+        service.updateCharacteristic(this.hap.Characteristic.LockCurrentState, this.hap.Characteristic.LockCurrentState.SECURED);
+      }, 2000);
     });
 
     service.updateCharacteristic(this.hap.Characteristic.LockTargetState, this.hap.Characteristic.LockTargetState.SECURED);
