@@ -367,6 +367,52 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     return true;
   }
 
+  // Maintain a live-view timeshift buffer via the Protect livestream API, independent of HKSV recording. This lets rapid HomeKit live-view opens reuse a warm timeshift
+  // buffer rather than re-establishing an RTSP session each time, which is otherwise costly on the controller side.
+  public async startLiveViewPrebuffer(): Promise<boolean> {
+
+    if(!this.protectCamera.isOnline) {
+
+      this.log.error("Unable to start live-view prebuffer: camera is offline.");
+
+      return false;
+    }
+
+    const oldRtspEntry = this.rtspEntry;
+
+    // Pick the RTSP entry matching the live-view streaming preference (honors Video.Stream.Only.*).
+    this.rtspEntry = this.protectCamera.findRtsp(3840, 2160, { biasHigher: true });
+
+    if(!this.rtspEntry) {
+
+      this.log.error("Unable to start live-view prebuffer: no valid RTSP profile was found for this camera.");
+
+      return false;
+    }
+
+    // No-op if we're already running on the correct channel and lens.
+    if(this.timeshift.isStarted && (this.rtspEntry.channel.id === oldRtspEntry?.channel.id) &&
+      ((this.rtspEntry.lens === undefined) || (this.rtspEntry.lens === oldRtspEntry.lens))) {
+
+      return true;
+    }
+
+    this.timeshift.configuredDuration = PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION;
+
+    if(!(await this.timeshift.start(this.rtspEntry))) {
+
+      this.log.error("Unable to start live-view prebuffer.");
+
+      return false;
+    }
+
+    this.isInitialized = true;
+
+    this.log.info("Live-view prebuffer active: %s [%s].", this.rtspEntry.name, this.protectCamera.videoCodecName);
+
+    return true;
+  }
+
   // Start transmitting to the HomeKit hub our timeshifted fMP4 stream. When isRestart is true, the buffer duration check is skipped because the buffer was recently
   // cleared by a discontinuity and only contains fresh post-reconnection data starting from a keyframe.
   private async startTransmitting(isRestart = false): Promise<boolean> {

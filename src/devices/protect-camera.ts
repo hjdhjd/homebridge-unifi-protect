@@ -198,6 +198,12 @@ export class ProtectCamera extends ProtectDevice {
       // Configure the doorbell trigger.
       this.configureDoorbellTrigger();
 
+      // If the live-view prebuffer is enabled and HKSV isn't already driving the timeshift buffer, kick it off so live-view opens land on a warm buffer.
+      if(this.hasFeature("Video.Stream.AlwaysPrebuffer") && this.stream?.hksv && !this.stream.hksv.isRecording) {
+
+        void this.stream.hksv.startLiveViewPrebuffer();
+      }
+
       // Listen for events.
       this.registerListener("addEvent." + this.ufp.id, this.addEventHandler.bind(this));
       this.registerListener("updateEvent." + this.ufp.id, this.eventHandler.bind(this));
@@ -246,6 +252,14 @@ export class ProtectCamera extends ProtectDevice {
     if(hasProperty("isConnected") && this.isOnline && this.stream?.hksv?.isRecording && !this.stream.hksv.timeshift.isStarted) {
 
       void this.stream.hksv.updateRecordingActive(true);
+    }
+
+    // When a camera comes back online, restart the live-view prebuffer if it's enabled but the timeshift buffer isn't running. This mirrors the HKSV recovery above
+    // for users who rely on the prebuffer without HKSV recording.
+    if(hasProperty("isConnected") && this.isOnline && this.hasFeature("Video.Stream.AlwaysPrebuffer") &&
+      this.stream?.hksv && !this.stream.hksv.isRecording && !this.stream.hksv.timeshift.isStarted) {
+
+      void this.stream.hksv.startLiveViewPrebuffer();
     }
 
     // Process motion events.
@@ -1555,6 +1569,14 @@ export class ProtectCamera extends ProtectDevice {
     if(this.isOnline && this.stream?.hksv?.isRecording && !this.stream.hksv.timeshift.isStarted) {
 
       void this.stream.hksv.configureTimeshifting();
+    }
+
+    // Self-heal the live-view prebuffer alongside the HKSV recovery above. If the prebuffer is enabled but the timeshift buffer isn't running after a controller or
+    // network blip, restart it so live-view opens stay on the warm path.
+    if(this.isOnline && this.hasFeature("Video.Stream.AlwaysPrebuffer") &&
+      this.stream?.hksv && !this.stream.hksv.isRecording && !this.stream.hksv.timeshift.isStarted) {
+
+      void this.stream.hksv.startLiveViewPrebuffer();
     }
 
     return true;

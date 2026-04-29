@@ -442,8 +442,9 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
     // Set the initial bitrate we should use for this request based on what HomeKit is requesting.
     let targetBitrate = request.video.max_bit_rate;
 
-    // Only use API livestreaming if we have an active timeshift buffer. Otherwise, we'll fallback to RTSP streaming.
-    let useTsb = this.protectCamera.hints.tsbStreaming && this.hksv?.isRecording;
+    // Only use API livestreaming if we have an active timeshift buffer. The buffer may be running because HKSV is recording or because the live-view prebuffer is
+    // enabled. Otherwise, we'll fallback to RTSP streaming.
+    let useTsb = this.protectCamera.hints.tsbStreaming && ((this.hksv?.isRecording ?? false) || (this.hksv?.timeshift.isStarted ?? false));
 
     // If we're A/B testing, switch our streaming types. This is intended for internal development purposes only.
     if(this.abTest && this.protectCamera.hasFeature("Debug.Video.Stream.ABTest")) {
@@ -470,8 +471,9 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
       useTsb = true;
     }
 
-    // Always try to use API livestreaming if we are looking at the package camera.
-    if(("packageCamera" in this.protectCamera.accessory.context) && !useTsb && this.hksv?.isRecording) {
+    // Always try to use API livestreaming if we are looking at the package camera and a timeshift buffer is available, whether driven by HKSV recording or the live-view
+    // prebuffer.
+    if(("packageCamera" in this.protectCamera.accessory.context) && !useTsb && ((this.hksv?.isRecording ?? false) || (this.hksv?.timeshift.isStarted ?? false))) {
 
       useTsb = true;
     }

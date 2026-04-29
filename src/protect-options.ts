@@ -189,6 +189,7 @@ export const featureOptions: Record<string, ProtectFeatureOption[]> = {
 
     { default: true, description: "Use hardware-accelerated transcoding when available (Apple Macs, Intel Quick Sync Video-enabled CPUs, Raspberry Pi 4).", name: "Transcode.Hardware" },
     { default: true, description: "Use the native Protect livestream API to view livestreams.", isNotProperty: ["isThirdPartyCamera"], name: "Stream.UseApi" },
+    { default: false, description: "Maintain a continuous live-view prebuffer via the Protect livestream API, independent of HKSV. Speeds up rapid HomeKit live-view opens by eliminating RTSP session re-establishment, at the cost of a persistent livestream connection per camera.", isNotProperty: ["isThirdPartyCamera"], name: "Stream.AlwaysPrebuffer" },
     { default: true, description: "When streaming to low-latency clients (e.g. at home), transcode livestreams, instead of transmuxing them.", name: "Transcode" },
     { default: true, defaultValue: PROTECT_TRANSCODE_BITRATE, description: "Bitrate, in kilobits per second, to use when transcoding to low-latency (e.g. at home) clients, ignoring the bitrate HomeKit requests. HomeKit typically requests lower video quality than you may desire in your environment.", group: "Transcode", name: "Transcode.Bitrate" },
     { default: true, description: "When streaming to high-latency clients (e.g. cellular connections), transcode livestreams instead of transmuxing them.", name: "Transcode.HighLatency" },
