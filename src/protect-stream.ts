@@ -1132,8 +1132,9 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
   // FFmpeg error checking when abnormal exits occur so we don't fill logs up with known occasional issues.
   public ffmpegErrorCheck(stderrLog: string[]): string | undefined {
 
-    // We're using API-based livestreaming. Be attentive to the unique errors they may present.
-    if(this.protectCamera.hints.tsbStreaming && this.hksv?.isRecording) {
+    // We're using API-based livestreaming. Be attentive to the unique errors they may present. The buffer may be running because HKSV is recording or because the
+    // live-view prebuffer is enabled — both surface the same class of livestream-API errors that should be suppressed.
+    if(this.protectCamera.hints.tsbStreaming && ((this.hksv?.isRecording ?? false) || (this.hksv?.timeshift.isStarted ?? false))) {
 
       // Test for known errors due to occasional inconsistencies in the Protect livestream API.
       const timeshiftLivestreamRegex = new RegExp([

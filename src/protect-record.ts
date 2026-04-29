@@ -84,6 +84,13 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
       // That said, we play it safe just the same.
       this.accessory.getService(this.hap.Service.MotionSensor)?.updateCharacteristic(this.hap.Characteristic.MotionDetected, false);
 
+      // If the user has opted into the live-view prebuffer, restart the timeshift buffer against the live-view profile so HKSV deactivation doesn't take the prebuffer
+      // down with it. We re-pick the RTSP profile here because HKSV may have been running on a different channel/lens than the live-view path prefers.
+      if(this.protectCamera.hasFeature("Video.Stream.AlwaysPrebuffer")) {
+
+        void this.startLiveViewPrebuffer();
+      }
+
       // We're done.
       return;
     }
