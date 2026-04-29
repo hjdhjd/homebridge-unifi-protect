@@ -198,10 +198,17 @@ export class ProtectCamera extends ProtectDevice {
       // Configure the doorbell trigger.
       this.configureDoorbellTrigger();
 
-      // If the live-view prebuffer is enabled and HKSV isn't already driving the timeshift buffer, kick it off so live-view opens land on a warm buffer.
+      // If the live-view prebuffer is enabled and HKSV isn't already driving the timeshift buffer, kick it off so live-view opens land on a warm buffer. The prebuffer
+      // requires API livestreaming (Video.Stream.UseApi); warn once at startup if the user enabled the prebuffer without it so the option doesn't silently no-op.
       if(this.hasFeature("Video.Stream.AlwaysPrebuffer") && this.stream?.hksv && !this.stream.hksv.isRecording) {
 
-        void this.stream.hksv.startLiveViewPrebuffer();
+        if(this.hints.tsbStreaming) {
+
+          void this.stream.hksv.startLiveViewPrebuffer();
+        } else {
+
+          this.log.warn("The live-view prebuffer requires the Protect livestream API. Enable Video.Stream.UseApi to use this option.");
+        }
       }
 
       // Listen for events.
@@ -256,7 +263,7 @@ export class ProtectCamera extends ProtectDevice {
 
     // When a camera comes back online, restart the live-view prebuffer if it's enabled but the timeshift buffer isn't running. This mirrors the HKSV recovery above
     // for users who rely on the prebuffer without HKSV recording.
-    if(hasProperty("isConnected") && this.isOnline && this.hasFeature("Video.Stream.AlwaysPrebuffer") &&
+    if(hasProperty("isConnected") && this.isOnline && this.hints.tsbStreaming && this.hasFeature("Video.Stream.AlwaysPrebuffer") &&
       this.stream?.hksv && !this.stream.hksv.isRecording && !this.stream.hksv.timeshift.isStarted) {
 
       void this.stream.hksv.startLiveViewPrebuffer();
@@ -1573,7 +1580,7 @@ export class ProtectCamera extends ProtectDevice {
 
     // Self-heal the live-view prebuffer alongside the HKSV recovery above. If the prebuffer is enabled but the timeshift buffer isn't running after a controller or
     // network blip, restart it so live-view opens stay on the warm path.
-    if(this.isOnline && this.hasFeature("Video.Stream.AlwaysPrebuffer") &&
+    if(this.isOnline && this.hints.tsbStreaming && this.hasFeature("Video.Stream.AlwaysPrebuffer") &&
       this.stream?.hksv && !this.stream.hksv.isRecording && !this.stream.hksv.timeshift.isStarted) {
 
       void this.stream.hksv.startLiveViewPrebuffer();

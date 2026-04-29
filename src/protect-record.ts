@@ -371,6 +371,13 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
   // buffer rather than re-establishing an RTSP session each time, which is otherwise costly on the controller side.
   public async startLiveViewPrebuffer(): Promise<boolean> {
 
+    // The prebuffer is only useful when the livestream API is the live-view path. If the user has disabled API streaming, opening a continuous websocket would consume
+    // resources without any user-visible benefit since launchLivestream would still take the RTSP path.
+    if(!this.protectCamera.hints.tsbStreaming) {
+
+      return false;
+    }
+
     if(!this.protectCamera.isOnline) {
 
       this.log.error("Unable to start live-view prebuffer: camera is offline.");
