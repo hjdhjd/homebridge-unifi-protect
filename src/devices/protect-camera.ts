@@ -143,7 +143,7 @@ export class ProtectCamera extends ProtectDevice {
       const smartDetectTypes = [ ...this.ufp.featureFlags.smartDetectAudioTypes, ...this.ufp.featureFlags.smartDetectTypes ];
 
       // Inform the user of what smart detection object types we're configured for.
-      this.log.info("Smart motion detection enabled%s.", smartDetectTypes.length ? ": " + smartDetectTypes.sort().join(", ") : "");
+      this.log.info("Smart motion detection enabled%s.", smartDetectTypes.length ? ": " + smartDetectTypes.toSorted().join(", ") : "");
     }
 
     // Configure accessory information.
@@ -248,45 +248,42 @@ export class ProtectCamera extends ProtectDevice {
       void this.stream.hksv.updateRecordingActive(true);
     }
 
-    // Process motion events.
-    if(hasProperty(["lastMotion"])) {
+    // Transient event processing (motion, ring, smart detect) only applies to real delta events from the controller's websocket. Bootstrap refresh emits the full
+    // device payload as a state-sync signal and would re-trigger these notifications every refresh cycle if not gated here.
+    if(!packet.header.hbupBootstrap) {
 
-      // We only want to process the motion event if we have either:
-      //
-      //  - HKSV recording enabled.
-      //  - No enabled smart motion detection capabilities on the Protect device.
-      //  - Smart detection disabled.
-      if(this.stream?.hksv?.isRecording ||
-        !(this.ufp.featureFlags.smartDetectAudioTypes.length || this.ufp.featureFlags.smartDetectTypes.length) || !this.hints.smartDetect) {
+      // Fire the motion handler when HKSV recording is on, the camera has no enabled smart-motion capability, or the user has smart detection disabled. In every
+      // other case, smart-detect events are the source of truth for motion and the raw lastMotion timestamp would double-fire.
+      if(hasProperty(["lastMotion"]) && (this.stream?.hksv?.isRecording ||
+        !(this.ufp.featureFlags.smartDetectAudioTypes.length || this.ufp.featureFlags.smartDetectTypes.length) || !this.hints.smartDetect)) {
 
         this.nvr.events.motionEventHandler(this);
       }
-    }
 
-    // Process ring events.
-    if(hasProperty(["lastRing"])) {
+      if(hasProperty(["lastRing"])) {
 
-      this.nvr.events.doorbellEventHandler(this, payload.lastRing ?? null);
-    }
-
-    // If smart detection is enabled, we need to filter out any events tagged as "motion". When users enable the "Create motion events" setting on a camera, Protect will
-    // create motion-specific thumbnail events. We're only interested in true smart detection events.
-    if(this.hints.smartDetect) {
-
-      const event = packet.payload as ProtectEventAdd;
-
-      if(event.metadata?.detectedThumbnails) {
-
-        event.metadata.detectedThumbnails = event.metadata.detectedThumbnails.filter(({ type }) => type !== "motion");
+        this.nvr.events.doorbellEventHandler(this, payload.lastRing ?? null);
       }
-    }
 
-    // Process smart detection events that have occurred on a non-realtime basis. Generally, this includes audio and video events that require more analysis by Protect.
-    const eventAdd = packet.payload as ProtectEventAdd;
+      // If smart detection is enabled, we need to filter out any events tagged as "motion". When users enable the "Create motion events" setting on a camera,
+      // Protect will create motion-specific thumbnail events. We're only interested in true smart detection events.
+      if(this.hints.smartDetect) {
 
-    if(this.hints.smartDetect && (eventAdd.smartDetectTypes?.length || eventAdd.metadata?.detectedThumbnails?.length)) {
+        const event = packet.payload as ProtectEventAdd;
 
-      this.nvr.events.motionEventHandler(this, eventAdd.smartDetectTypes, eventAdd.metadata);
+        if(event.metadata?.detectedThumbnails) {
+
+          event.metadata.detectedThumbnails = event.metadata.detectedThumbnails.filter(({ type }) => type !== "motion");
+        }
+      }
+
+      // Process smart detection events that have occurred on a non-realtime basis. Generally, this includes audio and video events that require more analysis by Protect.
+      const eventAdd = packet.payload as ProtectEventAdd;
+
+      if(this.hints.smartDetect && (eventAdd.smartDetectTypes?.length || eventAdd.metadata?.detectedThumbnails?.length)) {
+
+        this.nvr.events.motionEventHandler(this, eventAdd.smartDetectTypes, eventAdd.metadata);
+      }
     }
 
     // Process updates to the tamper detection setting.
@@ -610,7 +607,7 @@ export class ProtectCamera extends ProtectDevice {
     // Add individual contact sensors for each object detection type, if needed.
     if(this.hints.smartDetectSensors) {
 
-      for(const smartDetectType of [ ...this.ufp.featureFlags.smartDetectAudioTypes, ...this.ufp.featureFlags.smartDetectTypes ].sort()) {
+      for(const smartDetectType of [ ...this.ufp.featureFlags.smartDetectAudioTypes, ...this.ufp.featureFlags.smartDetectTypes ].toSorted()) {
 
         if(addSmartDetectContactSensor(this.accessoryName + " " + toStartCase(smartDetectType),
           ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + "." + smartDetectType, "Unable to add smart motion contact sensor for " + smartDetectType + " detection.")) {
@@ -1539,7 +1536,7 @@ export class ProtectCamera extends ProtectDevice {
 
       // Update all the switch states.
       for(const ufpRecordingSwitchType of
-        [  ProtectReservedNames.SWITCH_UFP_RECORDING_ALWAYS, ProtectReservedNames.SWITCH_UFP_RECORDING_DETECTIONS, ProtectReservedNames.SWITCH_UFP_RECORDING_NEVER ]) {
+        [ ProtectReservedNames.SWITCH_UFP_RECORDING_ALWAYS, ProtectReservedNames.SWITCH_UFP_RECORDING_DETECTIONS, ProtectReservedNames.SWITCH_UFP_RECORDING_NEVER ]) {
 
         const ufpRecordingSetting = ufpRecordingSwitchType.slice(ufpRecordingSwitchType.lastIndexOf(".") + 1);
 
@@ -1547,14 +1544,6 @@ export class ProtectCamera extends ProtectDevice {
         this.accessory.getServiceById(this.hap.Service.Switch, ufpRecordingSwitchType)?.
           updateCharacteristic(this.hap.Characteristic.On, ufpRecordingSetting === this.ufp.recordingSettings.mode);
       }
-    }
-
-    // Self-heal the HKSV timeshift buffer. If HKSV recording is active but the timeshift buffer isn't running, restart it. This handles recovery after controller
-    // reboots, network interruptions, or any scenario where the connection was lost and restored. The prebuffer must be re-established as quickly as possible so that
-    // HKSV recordings capture the seconds before a motion event.
-    if(this.isOnline && this.stream?.hksv?.isRecording && !this.stream.hksv.timeshift.isStarted) {
-
-      void this.stream.hksv.configureTimeshifting();
     }
 
     return true;

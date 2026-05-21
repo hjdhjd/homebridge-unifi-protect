@@ -8,7 +8,7 @@ import { ProtectCamera, type RtspEntry } from "./protect-camera.js";
 import { ProtectReservedNames } from "../protect-types.js";
 import { ProtectStreamingDelegate } from "../protect-stream.js";
 
-// Package camera class. To avoid circular dependencies, this has to be declared in the same file as ProtectCamera, given the ProtectCamera class references it.
+// Package camera class. Extends ProtectCamera and represents the secondary camera channel on Protect doorbells that ship with one.
 export class ProtectCameraPackage extends ProtectCamera {
 
   private flashlightState?: boolean;

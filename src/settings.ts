@@ -68,6 +68,10 @@ export const PROTECT_RPI_GPU_MINIMUM = 128;
 // Maximum age of a snapshot in seconds.
 export const PROTECT_SNAPSHOT_CACHE_MAXAGE = 90;
 
+// Timeout for snapshot acquisition, in milliseconds. HomeKit enforces a 5000ms hard limit on snapshot requests. We budget 10ms of overhead for the response to
+// reach HomeKit after our code produces the snapshot.
+export const PROTECT_SNAPSHOT_TIMEOUT = 4990;
+
 // Bitrate, in kilobits per second, to use when transcoding to local clients.
 export const PROTECT_TRANSCODE_BITRATE = 2000;
 
@@ -79,6 +83,10 @@ export const PROTECT_NVR_REBOOT_MIN_INTERVAL = 1;
 
 // Duration, in seconds, to wait after sending a reboot command before attempting to reconnect.
 export const PROTECT_NVR_REBOOT_RECONNECT_DELAY = 420;
+
+// Maximum cumulative duration, in seconds, that a scheduled reboot may be deferred while cameras are actively recording HKSV events. Once this elapses, the
+// reboot fires regardless of in-flight recordings - we cannot let an open-ended series of HKSV events postpone a controller reboot indefinitely.
+export const PROTECT_NVR_REBOOT_DEFERRAL_MAX = 15 * 60;
 
 // Bitrate, in kilobits per second, to use when transcoding to high-latency clients.
 export const PROTECT_TRANSCODE_HIGH_LATENCY_BITRATE = 1000;

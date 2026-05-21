@@ -2,34 +2,27 @@
  *
  * protect-snapshot.ts: UniFi Protect HomeKit snapshot class.
  */
-import type { API, HAP, SnapshotRequest } from "homebridge";
 import { FfmpegExec, type HomebridgePluginLogging, type Nullable, runWithTimeout } from "homebridge-plugin-utils";
-import { PROTECT_LIVESTREAM_API_IDR_INTERVAL, PROTECT_SNAPSHOT_CACHE_MAXAGE } from "./settings.js";
+import { PROTECT_LIVESTREAM_API_IDR_INTERVAL, PROTECT_SNAPSHOT_CACHE_MAXAGE, PROTECT_SNAPSHOT_TIMEOUT } from "./settings.js";
 import type { ProtectCamera } from "./devices/index.js";
 import type { ProtectNvr } from "./protect-nvr.js";
-import type { ProtectPlatform } from "./protect-platform.js";
+import type { SnapshotRequest } from "homebridge";
 
 // Camera snapshot class for Protect.
 export class ProtectSnapshot {
 
   private _cachedSnapshot: Nullable<{ image: Buffer; time: number }>;
   private _snapshotInFlight: Nullable<Promise<Nullable<Buffer>>>;
-  private readonly api: API;
-  private readonly hap: HAP;
   public readonly log: HomebridgePluginLogging;
   private readonly nvr: ProtectNvr;
-  public readonly platform: ProtectPlatform;
   public readonly protectCamera: ProtectCamera;
 
   // Create an instance of a HomeKit streaming delegate.
   constructor(protectCamera: ProtectCamera) {
 
-    this.api = protectCamera.api;
-    this.hap = protectCamera.api.hap;
     this.log = protectCamera.log;
     this.nvr = protectCamera.nvr;
     this.protectCamera = protectCamera;
-    this.platform = protectCamera.platform;
     this._cachedSnapshot = null;
     this._snapshotInFlight = null;
   }
@@ -133,7 +126,7 @@ export class ProtectSnapshot {
     })();
 
     // Get a snapshot, but ensure we constrain it so we can return in a responsive manner.
-    const snapshot = await runWithTimeout(snapshotPromise, 4990);
+    const snapshot = await runWithTimeout(snapshotPromise, PROTECT_SNAPSHOT_TIMEOUT);
 
     // Occasional snapshot failures will happen. The controller isn't always able to generate them if one is already inflight or if it's too soon after the last one.
     if(!snapshot) {

@@ -373,7 +373,7 @@ export abstract class ProtectDevice extends ProtectBase {
     // Validate whether we should have this service enabled.
     if(!this.validService(this.hap.Service.Switch, isEnabled && this.hasFeature("Motion.Switch"), ProtectReservedNames.SWITCH_MOTION_SENSOR)) {
 
-      // If we disable the switch, make sure we fully reset it's state. Otherwise, we can end up in a situation (e.g. liveview switches) where we have disabled motion
+      // If we disable the switch, make sure we fully reset its state. Otherwise, we can end up in a situation (e.g. liveview switches) where we have disabled motion
       // detection with no meaningful way to enable it again.
       this.accessory.context.detectMotion = true;
 

@@ -67,7 +67,7 @@ export class ProtectLiveviews extends ProtectBase {
 
         this.log.info("No plugin-specific liveviews found. Disabling the security system accessory associated with this UniFi Protect controller.");
 
-        // Unregister the accessory and delete it's remnants from HomeKit and the plugin.
+        // Unregister the accessory and delete its remnants from HomeKit and the plugin.
         this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [this.securityAccessory]);
         this.platform.accessories.splice(this.platform.accessories.indexOf(this.securityAccessory), 1);
       }
@@ -129,7 +129,7 @@ export class ProtectLiveviews extends ProtectBase {
       // The switch has no associated liveview - let's get rid of it.
       this.log.info("Removing plugin-specific liveview switch: %s. The liveview has been either removed or renamed in UniFi Protect.", accessory.context.liveview);
 
-      // Unregister the accessory and delete it's remnants from HomeKit and the plugin.
+      // Unregister the accessory and delete its remnants from HomeKit and the plugin.
       this.isConfigured.delete((accessory.context.liveview as string).toUpperCase());
       this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
       this.platform.accessories.splice(this.platform.accessories.indexOf(accessory), 1);

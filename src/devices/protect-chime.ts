@@ -218,7 +218,7 @@ export class ProtectChime extends ProtectDevice {
     return true;
   }
 
-  // Update device settings when Protect refreshes it's configuration.
+  // Update device settings when Protect refreshes its configuration.
   public updateDevice(): void {
 
     this.configureRingtoneSwitches();

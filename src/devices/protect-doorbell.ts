@@ -700,7 +700,7 @@ export class ProtectDoorbell extends ProtectCamera {
       delete payload.duration;
     }
 
-    // Push the update to the doorbell. If we have an empty payload, it means we're resetting the LCD message back to it's default.
+    // Push the update to the doorbell. If we have an empty payload, it means we're resetting the LCD message back to its default.
     const newDevice = await this.nvr.ufpApi.updateDevice(this.ufp, { lcdMessage: payload });
 
     if(!newDevice) {
@@ -733,10 +733,11 @@ export class ProtectDoorbell extends ProtectCamera {
       this.configurePackageCamera();
     }
 
-    // If we have a package camera that has HKSV enabled, we'll trigger it's motion sensor here. Why? HKSV requires a motion sensor attached to that camera accessory,
+    // If we have a package camera that has HKSV enabled, we'll trigger its motion sensor here. Why? HKSV requires a motion sensor attached to that camera accessory,
     // and since a package camera is actually a secondary camera on a device with a single motion sensor, we use that motion sensor to trigger the package camera's HKSV
-    // event recording.
-    if(payload.lastMotion && this.packageCamera?.stream?.hksv?.isRecording) {
+    // event recording. Gated on !hbupBootstrap so bootstrap-refresh payloads (which always carry lastMotion as static state) do not re-trigger the package camera's
+    // motion event every refresh cycle.
+    if(!packet.header.hbupBootstrap && payload.lastMotion && this.packageCamera?.stream?.hksv?.isRecording) {
 
       this.nvr.events.motionEventHandler(this.packageCamera);
     }

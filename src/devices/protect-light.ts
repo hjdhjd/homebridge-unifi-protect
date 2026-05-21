@@ -174,8 +174,8 @@ export class ProtectLight extends ProtectDevice {
 
     const payload = packet.payload as DeepPartial<ProtectLightConfig>;
 
-    // It's a motion event - process it accordingly.
-    if(payload.lastMotion) {
+    // Gated on !hbupBootstrap so bootstrap-refresh payloads (which always carry lastMotion as static state) do not re-trigger motion every refresh cycle.
+    if(!packet.header.hbupBootstrap && payload.lastMotion) {
 
       this.nvr.events.motionEventHandler(this);
     }

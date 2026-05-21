@@ -11,6 +11,7 @@ import { AudioRecordingCodecType, AudioRecordingSamplerate, AudioStreamingCodecT
   StreamRequestTypes } from "homebridge";
 import { BackpressureWriter, FfmpegOptions, FfmpegStreamingProcess, HKSV_FRAGMENT_LENGTH, HOMEKIT_IDR_INTERVAL, type HomebridgePluginLogging,
   type HomebridgeStreamingDelegate, type Nullable, RtpDemuxer, formatBps } from "homebridge-plugin-utils";
+import { type LivestreamSubscription, logLivestreamIterationError } from "./protect-livestream.js";
 import { PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION, PROTECT_LIVESTREAM_API_IDR_INTERVAL } from "./settings.js";
 import type { ProtectCamera } from "./devices/index.js";
 import type { ProtectNvr } from "./protect-nvr.js";
@@ -30,28 +31,41 @@ interface OngoingSessionEntry {
 
 interface SessionInfo {
 
-  address: string; // Address of the HomeKit client.
+  // Address of the HomeKit client.
+  address: string;
   addressVersion: string;
 
   audioCryptoSuite: SRTPCryptoSuites;
   audioIncomingRtcpPort: number;
-  audioIncomingRtpPort: number; // Port to receive audio from the HomeKit microphone.
+
+  // Port to receive audio from the HomeKit microphone.
+  audioIncomingRtpPort: number;
   audioPort: number;
   audioSRTP: Buffer;
   audioSSRC: number;
 
-  hasAudioSupport: boolean; // Does the user have a version of FFmpeg that supports AAC-ELD?
+  // Does the user have a version of FFmpeg that supports AAC-ELD?
+  hasAudioSupport: boolean;
 
-  rtpDemuxer: Nullable<RtpDemuxer>; // RTP demuxer needed for two-way audio.
-  rtpPortReservations: number[]; // RTP port reservations.
+  // RTP demuxer needed for two-way audio.
+  rtpDemuxer: Nullable<RtpDemuxer>;
 
-  talkBack: Nullable<string>; // Talkback websocket needed for two-way audio.
+  // RTP port reservations.
+  rtpPortReservations: number[];
 
-  videoCryptoSuite: SRTPCryptoSuites; // This should be saved if multiple suites are supported.
+  // Talkback websocket needed for two-way audio.
+  talkBack: Nullable<string>;
+
+  // This should be saved if multiple suites are supported.
+  videoCryptoSuite: SRTPCryptoSuites;
   videoPort: number;
   videoReturnPort: number;
-  videoSRTP: Buffer; // Key and salt concatenated.
-  videoSSRC: number; // RTP synchronisation source.
+
+  // Key and salt concatenated.
+  videoSRTP: Buffer;
+
+  // RTP synchronization source.
+  videoSSRC: number;
 }
 
 // Camera streaming delegate implementation for Protect.
@@ -196,7 +210,7 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
               bitrate: 0,
 
               // Protect doorbells and the Opus audio track over RTSP both use a 48 kHz audio sampling rate, which HomeKit doesn't support. Since both 16 and 24 will
-              // divide cleanly into 48, we allow HomeKit to choose it's preference. Otherwise, the livestream API uses a 16 kHz sampling rate.
+              // divide cleanly into 48, we allow HomeKit to choose its preference. Otherwise, the livestream API uses a 16 kHz sampling rate.
               samplerate: (this.protectCamera.ufp.featureFlags.isDoorbell || !this.protectCamera.hints.tsbStreaming) ?
                 [ AudioStreamingSamplerate.KHZ_16, AudioStreamingSamplerate.KHZ_24 ] : AudioStreamingSamplerate.KHZ_16,
               type: AudioStreamingCodecType.AAC_ELD
@@ -221,7 +235,7 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
 
           // Retrieve the list of supported resolutions from the camera and apply our best guesses for how to map specific resolutions to the available RTSP streams on a
           // camera. Unfortunately, this creates challenges in doing on-the-fly RTSP changes in UniFi Protect. Once the list of supported resolutions is set here, there's
-          // no going back unless a user retarts HBUP. Homebridge doesn't have a way to dynamically adjust the list of supported resolutions at this time.
+          // no going back unless a user restarts HBUP. Homebridge doesn't have a way to dynamically adjust the list of supported resolutions at this time.
           resolutions: resolutions
         }
       }
@@ -398,6 +412,52 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
     callback(undefined, response);
   }
 
+  // Consume segments from a livestream subscription and write them through to FFmpeg via the supplied BackpressureWriter. FFmpeg needs a valid fMP4 header
+  // before any MOOF/MDAT data, so the first iteration prepends either the pre-existing timeshift buffer slice (which already contains the init segment followed
+  // by recent frames) or the subscription's init segment on its own. Subsequent iterations just write each segment as it arrives. Error classification is
+  // centralised in logLivestreamIterationError so every livestream consumer uses identical phrasing and suppression rules.
+  private async consumeStreamSegments(ffmpegStream: FfmpegStreamingProcess, subscription: LivestreamSubscription, segmentWriter: BackpressureWriter,
+    tsBuffer: Nullable<Buffer>): Promise<void> {
+
+    let firstSegment = true;
+
+    try {
+
+      for await (const segment of subscription) {
+
+        if(firstSegment) {
+
+          firstSegment = false;
+
+          // The whenEstablished contract guarantees subscription.initSegment is non-null inside the loop body...the unifi-protect library delivers the init
+          // segment before the first regular segment. If the library ever violates this contract and we see a null init here, fail the stream cleanly rather
+          // than feeding FFmpeg MOOF/MDAT chunks without a header (which would silently corrupt the output).
+          const init = tsBuffer ?? subscription.initSegment;
+
+          if(!init) {
+
+            this.log.error("Live streaming aborted: the livestream API delivered its first segment before the initialization segment.");
+            ffmpegStream.ffmpegProcess?.stdin.end();
+
+            return;
+          }
+
+          segmentWriter.write(init);
+        }
+
+        segmentWriter.write(segment);
+      }
+    } catch(error) {
+
+      logLivestreamIterationError(error, this.log, "Live streaming");
+
+      // The iterator terminated out-of-band (the subscription is disposed, no more segments will arrive). Ending FFmpeg's stdin lets the process wrap up cleanly
+      // on its own schedule rather than waiting for its internal stall timeout to fire. Mirrors the init-segment-null path above so both terminal cases end
+      // stdin symmetrically.
+      ffmpegStream.ffmpegProcess?.stdin.end();
+    }
+  }
+
   // Launch the Protect video (and audio) stream.
   private async startStream(request: StartStreamRequest, callback: StreamRequestCallback): Promise<void> {
 
@@ -483,7 +543,7 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
     if(isTranscoding) {
 
       // If we have hardware transcoding enabled, we treat it uniquely and get the highest quality stream we can. Fixed-function hardware transcoders tend to perform
-      // better with higher bitrate sources. Wel also want to generally bias ourselves toward higher quality streams where possible.
+      // better with higher bitrate sources. We also want to generally bias ourselves toward higher quality streams where possible.
       rtspEntry ??= this.protectCamera.findRtsp(
         (this.protectCamera.hints.hardwareTranscoding) ? 3840 : request.video.width,
         (this.protectCamera.hints.hardwareTranscoding) ? 2160 : request.video.height,
@@ -594,7 +654,7 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
       );
     }
 
-    // -map 0:v:0                       selects the first available video track from the stream. Protect actually maps audio
+    // -map 0:v:0                       Selects the first available video track from the stream. Protect actually maps audio
     //                                  and video tracks in opposite locations from where FFmpeg typically expects them. This
     //                                  setting is a more general solution than naming the track locations directly in case
     //                                  Protect changes this in the future.
@@ -669,7 +729,7 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
 
       // Configure our video parameters for just copying the input stream from Protect - it tends to be quite solid in most cases:
       //
-      // -codec:v copy                  Copy the stream withour reencoding it.
+      // -codec:v copy                  Copy the stream without reencoding it.
       ffmpegArgs.push(
 
         "-codec:v", "copy"
@@ -711,7 +771,7 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
       "srtp://" + sessionInfo.address + ":" + sessionInfo.videoPort.toString() + "?rtcpport=" + sessionInfo.videoPort.toString()
     );
 
-    // Configure the audio portion of the command line, if we have a version of FFmpeg supports the audio codecs we need. Options we use are:
+    // Configure the audio portion of the command line, if we have a version of FFmpeg that supports the audio codecs we need. Options we use are:
     //
     // -map 0:a:0?                      Selects the first available audio track from the stream, if it exists. Protect actually maps audio
     //                                  and video tracks in opposite locations from where FFmpeg typically expects them. This
@@ -751,7 +811,7 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
       // Add the required RTP settings and encryption for the stream:
       //
       // -payload_type num                Payload type for the RTP stream. This is negotiated by HomeKit and is usually 110 for AAC-ELD audio.
-      // -ssrc                            synchronization source stream identifier. Random number negotiated by HomeKit to identify this stream.
+      // -ssrc                            Synchronization source stream identifier. Random number negotiated by HomeKit to identify this stream.
       // -f rtp                           Specify that we're using the RTP protocol.
       // -flush_packets 1                 Ensure we flush our write buffer after each muxed packet.
       // -packetsize 384                  Use a packetsize as a multiple of the sample rate. HomeKit livestreaming wants a block size of 480 samples when using AAC-ELD.
@@ -790,47 +850,39 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
 
     if(useTsb) {
 
-      const livestream = this.protectCamera.livestream.acquire(rtspEntry);
-      let seenInitSegment = false;
-
       // Feed segments to FFmpeg with backpressure handling...if FFmpeg can't keep up, segments are queued and written when it's ready.
       const segmentWriter = new BackpressureWriter(() => ffmpegStream.stdin ?? null);
 
-      // If we're using a timeshift buffer, let's use that to livestream. It has the dual benefit of reducing the workload on the Protect controller since it's already
-      // providing a livestream to us and it also improves performance by ensuring there's several seconds of video ready to immediately transmit.
-      const livestreamListener = (segment: Buffer): void => void (async (): Promise<void> => {
+      // Subscribe to the pooled livestream. This call is synchronous and returns the subscription handle immediately; the underlying connection begins starting
+      // in the background. We attach our disconnect handler and start consuming segments below within the same synchronous frame, before any asynchronous event
+      // can fire on the subscription.
+      const subscription = this.protectCamera.livestream.subscribe(rtspEntry);
 
-        if(!seenInitSegment) {
+      // Elevate the subscription's criticality for the duration of this active HomeKit live-stream session. The livestream manager treats any active criticality
+      // as a reason to reconnect immediately on stall...HomeKit streams are latency-sensitive and a deferred reconnect would degrade the user-visible experience.
+      // The handle is released on FFmpeg exit alongside the subscription's own disposal.
+      const criticalityElevation = subscription.elevateCriticality();
 
-          segmentWriter.write(tsBuffer ?? (await livestream.getInitSegment()));
-          seenInitSegment = true;
-        }
+      // On a visible disconnect, end FFmpeg's stdin so it wraps up the current output cleanly. The exit handler below takes care of releasing the subscription.
+      subscription.onDisconnect((): void => void ffmpegStream.ffmpegProcess?.stdin.end());
 
-        // Send the segment to FFmpeg for processing.
-        segmentWriter.write(segment);
-      })();
+      // Drive the segment iterator in the background.
+      void this.consumeStreamSegments(ffmpegStream, subscription, segmentWriter, tsBuffer);
 
-      const closeListener = (): void => void ffmpegStream.ffmpegProcess?.stdin.end();
+      // Ensure we clean up on FFmpeg exit. Disposing the subscription releases our reference on the pooled session; if we were the last subscriber, the session
+      // is torn down and the underlying connection stopped. Disposal closes the iterator's queue, which in turn unblocks the for-await loop in consumeStreamSegments.
+      ffmpegStream.ffmpegProcess?.once("exit", (): void => {
 
-      livestream.on("close", closeListener);
-
-      // Ensure we cleanup on exit.
-      ffmpegStream.ffmpegProcess?.once("exit", () => {
-
+        criticalityElevation[Symbol.dispose]();
         segmentWriter.close();
-        this.protectCamera.livestream.stop(rtspEntry);
-        livestream.off("segment", livestreamListener);
-        livestream.off("close", closeListener);
+        void subscription[Symbol.asyncDispose]();
       });
 
-      // Transmit video from our livestream as soon as it arrives.
-      livestream.on("segment", livestreamListener);
+      // Wait for the session to establish. If it fails (provisioning deadline expired), dispose and bail.
+      if(!(await subscription.whenEstablished())) {
 
-      // Kickoff our livestream.
-      if(!(await this.protectCamera.livestream.start(rtspEntry))) {
-
-        livestream.off("segment", livestreamListener);
-        livestream.off("close", closeListener);
+        criticalityElevation[Symbol.dispose]();
+        void subscription[Symbol.asyncDispose]();
 
         return;
       }
@@ -883,7 +935,7 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
       "a=crypto:1 AES_CM_128_HMAC_SHA1_80 inline:" + sessionInfo.audioSRTP.toString("base64")
     ].join("\n");
 
-    // Configure the audio portion of the command line, if we have a version of FFmpeg supports the audio codecs we need. Options we use are:
+    // Configure the audio portion of the command line, if we have a version of FFmpeg that supports the audio codecs we need. Options we use are:
     //
     // -hide_banner           Suppress printing the startup banner in FFmpeg.
     // -nostats               Suppress printing progress reports while encoding in FFmpeg.
@@ -1164,7 +1216,7 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
     // Maintain statistics on how often we need to adjust our probesize. If this happens too frequently, we will default to a working value.
     this.probesizeOverrideCount++;
 
-    // Increase the probesize by a factor of two each time we need to do something about it. This idea is to balance the latency implications
+    // Increase the probesize by a factor of two each time we need to do something about it. The idea is to balance the latency implications
     // for the user, but also ensuring we have a functional streaming experience.
     this.probesizeOverride = this.probesize * 2;
 

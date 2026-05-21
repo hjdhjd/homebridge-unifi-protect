@@ -51,10 +51,11 @@ export class ProtectEvents extends EventEmitter {
     this.configureEvents();
   }
 
-  // Merge Protect JSON update payloads into the Protect configuration JSON for a device while dealing with deep objects. Protect has specific quirks in how it deals
-  // with object merges and we've accounted for those in this deep merge / deep patch utility.
-  //
-  // Thanks to https://stackoverflow.com/a/48218209 for the foundation for this one in thinking about how to do deep object merges in JavaScript.
+  /* Merge Protect JSON update payloads into the Protect configuration JSON for a device while dealing with deep objects. Protect has specific quirks in how it deals
+   * with object merges and we've accounted for those in this deep merge / deep patch utility.
+   *
+   * Thanks to https://stackoverflow.com/a/48218209 for the foundation for this one in thinking about how to do deep object merges in JavaScript.
+   */
   private updateUfp<DeviceType extends ProtectKnownDeviceTypes>(ufp: DeviceType, payload: unknown): DeviceType {
 
     const mergeJson = (...objects: Record<string, unknown>[]): Record<string, unknown> => {
@@ -369,7 +370,7 @@ export class ProtectEvents extends EventEmitter {
 
       const key = protectDevice.id + ".Motion.SmartDetect.ObjectSensors." + event.type;
 
-      // We hae a new event, let's make sure we trigger our sensors only once.
+      // We have a new event, let's make sure we trigger our sensors only once.
       if(!this.eventTimers.has(key)) {
 
         // These sensors only get triggered if they actually exist on the accessory.

@@ -59,7 +59,7 @@ export class ProtectNvrSystemInfo extends ProtectBase {
 
         this.log.info("Removing UniFi Protect controller system information sensors.");
 
-        // Unregister the accessory and delete it's remnants from HomeKit and the plugin.
+        // Unregister the accessory and delete its remnants from HomeKit and the plugin.
         this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [this.accessory]);
         this.platform.accessories.splice(this.platform.accessories.indexOf(this.accessory), 1);
       }

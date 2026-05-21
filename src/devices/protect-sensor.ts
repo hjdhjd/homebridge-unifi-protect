@@ -530,8 +530,8 @@ export class ProtectSensor extends ProtectDevice {
 
     const payload = packet.payload as DeepPartial<ProtectSensorConfig>;
 
-    // It's a motion event - process it accordingly.
-    if(payload.motionDetectedAt) {
+    // Gated on !hbupBootstrap so bootstrap-refresh payloads (which always carry motionDetectedAt as static state) do not re-trigger motion every refresh cycle.
+    if(!packet.header.hbupBootstrap && payload.motionDetectedAt) {
 
       this.nvr.events.motionEventHandler(this);
     }
