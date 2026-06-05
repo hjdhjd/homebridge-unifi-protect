@@ -3,16 +3,15 @@
  * protect-nvr-systeminfo.ts: NVR System Information device class for UniFi Protect.
  */
 import { type Nullable, acquireService, sanitizeName, validService } from "homebridge-plugin-utils";
-import { PLATFORM_NAME, PLUGIN_NAME } from "../settings.js";
+import { PLATFORM_NAME, PLUGIN_NAME } from "../settings.ts";
 import type { PlatformAccessory } from "homebridge";
-import { ProtectBase } from "./protect-device.js";
-import type { ProtectEventPacket } from "unifi-protect";
-import type { ProtectNvr } from "../protect-nvr.js";
+import { ProtectBase } from "./device.ts";
+import type { ProtectNvr } from "../nvr.ts";
+import { selectNvr } from "unifi-protect";
 
 export class ProtectNvrSystemInfo extends ProtectBase {
 
   private accessory: Nullable<PlatformAccessory> | undefined;
-  private eventListener: Nullable<(packet: ProtectEventPacket) => void>;
   private isConfigured: boolean;
 
   // Configure our NVR sensor capability.
@@ -21,15 +20,18 @@ export class ProtectNvrSystemInfo extends ProtectBase {
     // Let the base class get us set up.
     super(nvr);
 
-    // Initialize the class.
+    // Initialize the class. The constructor owns the initial configuration; subsequent refreshes are driven by this owner's own narrow observer below.
     this.accessory = null;
-    this.eventListener = null;
     this.isConfigured = false;
 
     this.configureAccessory();
     this.configureMqtt();
 
-    this.nvr.events.on("updateEvent." + this.nvr.ufp.id, this.eventListener = this.eventHandler.bind(this));
+    // Subject owns its reactivity: observe the controller record's systemInfo slice and refresh the temperature sensor on each change. The narrow selector wakes only on
+    // a systemInfo change - never on the lastSeen/storage churn the whole NVR record carries - and the store yields only on change, so the constructor's initial pass
+    // above stands on its own and this loop handles only subsequent updates. It binds to the controller lifetime (ProtectBase.observeSignal) and re-reads through
+    // this.nvr.ufp rather than trusting the yielded slice.
+    this.observeState({ key: "nvr.systemInfo", selector: state => selectNvr(state)?.systemInfo, title: "system information" }, () => this.updateDevice(false));
   }
 
   // Configure the NVR system information accessory.
@@ -88,10 +90,7 @@ export class ProtectNvrSystemInfo extends ProtectBase {
     this.accessory.context.systemInfo = true;
 
     // Configure accessory information.
-    if(this.nvr.ufpApi.bootstrap) {
-
-      this.setInfo(this.accessory, this.nvr.ufp);
-    }
+    this.setInfo(this.accessory, this.nvr.ufp);
 
     // Configure accessory services.
     const enabledSensors = this.updateDevice(true);
@@ -108,28 +107,8 @@ export class ProtectNvrSystemInfo extends ProtectBase {
     this.isConfigured = true;
   }
 
-  // Configure the events we're interested in from the Protect controller.
-  private eventHandler(packet: ProtectEventPacket): void {
-
-    // Filter out payloads we aren't interested in. We only want NVR system information updates.
-    if("systemInfo" in (packet.payload as JSON)) {
-
-      // Process it.
-      this.updateDevice(false);
-    }
-  }
-
-  // Cleanup our listeners.
-  public cleanup(): void {
-
-    if(this.eventListener) {
-
-      this.nvr.events.off("updateEvent." + this.nvr.ufp.id, this.eventListener);
-      this.eventListener = null;
-    }
-  }
-
-  // Update accessory services and characteristics.
+  // Update accessory services and characteristics. Private: both callers are this class - the constructor's initial pass (handler flag set) and this owner's own
+  // systemInfo observer (handler flag clear, for the per-change characteristic refresh).
   private updateDevice(configureHandler = false): string[] {
 
     const enabledSensors: string[] = [];
@@ -185,6 +164,6 @@ export class ProtectNvrSystemInfo extends ProtectBase {
   private configureMqtt(): void {
 
     // Return the current status of all sensors.
-    this.nvr.mqtt?.subscribeGet(this.nvr.ufp.mac, "systeminfo", "system information", () => JSON.stringify(this.nvr.ufp.systemInfo));
+    this.subscribeGet("systeminfo", "system information", () => JSON.stringify(this.nvr.ufp.systemInfo));
   }
 }

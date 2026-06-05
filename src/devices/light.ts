@@ -3,32 +3,35 @@
  * protect-light.ts: Light device class for UniFi Protect.
  */
 import type { CharacteristicValue, PlatformAccessory } from "homebridge";
-import type { DeepPartial, ProtectEventPacket, ProtectLightConfig } from "unifi-protect";
-import { ProtectDevice } from "./protect-device.js";
-import type { ProtectNvr } from "../protect-nvr.js";
-import { ProtectReservedNames } from "../protect-types.js";
+import type { Light, ProtectLightConfig } from "unifi-protect";
+import { ProtectDevice } from "./device.ts";
+import type { ProtectNvr } from "../nvr.ts";
+import { ProtectReservedNames } from "../types.ts";
+import { selectLight } from "unifi-protect";
 
 export class ProtectLight extends ProtectDevice {
 
-  private lightState: boolean;
-  public ufp: ProtectLightConfig;
+  // Narrow the inherited projection handle to the light projection so the read-through config getter resolves to ProtectLightConfig.
+  declare protected readonly device: Light;
 
   // Create an instance.
-  constructor(nvr: ProtectNvr, device: ProtectLightConfig, accessory: PlatformAccessory) {
+  constructor(nvr: ProtectNvr, accessory: PlatformAccessory, device: Light) {
 
-    super(nvr, accessory);
-
-    this.lightState = false;
-    this.ufp = device;
+    super(nvr, accessory, device);
 
     this.configureHints();
     this.configureDevice();
+    this.spawnObservers();
+  }
+
+  // Read-through config, narrowed to the light projection's config record.
+  public override get ufp(): Readonly<ProtectLightConfig> {
+
+    return this.device.config;
   }
 
   // Initialize and configure the light accessory for HomeKit.
   private configureDevice(): boolean {
-
-    this.lightState = false;
 
     // Clean out the context object in case it's been polluted somehow.
     this.accessory.context = {};
@@ -52,9 +55,6 @@ export class ProtectLight extends ProtectDevice {
 
     // Configure MQTT services.
     this.configureMqtt();
-
-    // Listen for events.
-    this.registerListener("updateEvent." + this.ufp.id, this.eventHandler.bind(this));
 
     return true;
   }
@@ -82,17 +82,12 @@ export class ProtectLight extends ProtectDevice {
     service.getCharacteristic(this.hap.Characteristic.On).onSet(async (value: CharacteristicValue) => {
 
       const lightState = value === true;
-      const newDevice = await this.nvr.ufpApi.updateDevice(this.ufp, { lightOnSettings: { isLedForceOn: lightState } });
 
-      if(!newDevice) {
-
-        this.log.error("Unable to turn the light %s. Please ensure this username has the Administrator role in UniFi Protect.", lightState ? "on" : "off");
+      // Push the new power state to the controller, reporting any failure through the shared command-error helper.
+      if(!(await this.runDeviceCommand("turn the light " + (lightState ? "on" : "off"), () => this.device.update({ lightOnSettings: { isLedForceOn: lightState } })))) {
 
         return;
       }
-
-      // Set the context to our updated device configuration.
-      this.ufp = newDevice;
 
       // Publish our state.
       this.publish("light", lightState ? "true" : "false");
@@ -107,17 +102,13 @@ export class ProtectLight extends ProtectDevice {
     service.getCharacteristic(this.hap.Characteristic.Brightness).onSet(async (value: CharacteristicValue) => {
 
       const brightness = this.brightnessToLedLevel(value as number);
-      const newDevice = await this.nvr.ufpApi.updateDevice(this.ufp, { lightDeviceSettings: { ledLevel: brightness } });
 
-      if(!newDevice) {
-
-        this.log.error("Unable to adjust the brightness to %s%. Please ensure this username has the Administrator role in UniFi Protect.", value);
+      // Push the new brightness to the controller, reporting any failure through the shared command-error helper.
+      if(!(await this.runDeviceCommand("adjust the brightness to " + (value as number).toString() + "%",
+        () => this.device.update({ lightDeviceSettings: { ledLevel: brightness } })))) {
 
         return;
       }
-
-      // Set the context to our updated device configuration.
-      this.ufp = newDevice;
 
       // Make sure we properly reflect what brightness we're actually at, given the differences in setting granularity between Protect and HomeKit.
       setTimeout(() => service.updateCharacteristic(this.hap.Characteristic.Brightness, this.ledLevelToBrightness(brightness)), 50);
@@ -169,51 +160,54 @@ export class ProtectLight extends ProtectDevice {
     return true;
   }
 
-  // Handle light-related events.
-  private eventHandler(packet: ProtectEventPacket): void {
+  // Spawn the light's narrow-selector observers (Fork B). super spawns the universal name-sync observer; the light adds its four reactions, each waking only on its own
+  // slice through the store's reference dedup.
+  protected override spawnObservers(): void {
 
-    const payload = packet.payload as DeepPartial<ProtectLightConfig>;
+    super.spawnObservers();
 
-    // Gated on !hbupBootstrap so bootstrap-refresh payloads (which always carry lastMotion as static state) do not re-trigger motion every refresh cycle.
-    if(!packet.header.hbupBootstrap && payload.lastMotion) {
+    const light = selectLight(this.ufp.id);
 
-      this.nvr.events.motionEventHandler(this);
-    }
+    // Light motion, like sensor motion, is a device-state field (lastMotion) rather than a firehose occurrence - v5's motionDetected is camera-only - so observing the
+    // timestamp is the single source for this device, firing only on a real (truthy) detection rather than re-synthesizing it from a held prior value.
+    this.observeState({ key: "light.lastMotion", selector: state => light(state)?.lastMotion, title: "motion detection" }, lastMotion => {
 
-    // It's a light power event - process it accordingly.
-    if("isLightOn" in payload) {
+      if(lastMotion) {
 
-      // Update our power state.
-      this.accessory.getService(this.hap.Service.Lightbulb)?.updateCharacteristic(this.hap.Characteristic.On, payload.isLightOn ?? false);
-    }
-
-    // It's light brightness event - process it accordingly.
-    if(payload.lightDeviceSettings) {
-
-      if("ledLevel" in payload.lightDeviceSettings) {
-
-        // Update our brightness.
-        this.accessory.getService(this.hap.Service.Lightbulb)?.
-          updateCharacteristic(this.hap.Characteristic.Brightness, ((payload.lightDeviceSettings.ledLevel ?? 1) - 1) * 20);
+        this.nvr.events.motionEventHandler(this);
       }
+    });
 
-      if("isIndicatorEnabled" in payload.lightDeviceSettings) {
+    // The light's power state drives the Lightbulb On characteristic.
+    this.observeState({ key: "light.isLightOn", selector: state => light(state)?.isLightOn, title: "the light" }, () => {
 
-        // Update our status indicator light.
-        this.accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_STATUS_LED)?.
-          updateCharacteristic(this.hap.Characteristic.On, payload.lightDeviceSettings.isIndicatorEnabled === true);
-      }
-    }
+      this.accessory.getService(this.hap.Service.Lightbulb)?.updateCharacteristic(this.hap.Characteristic.On, this.ufp.isLightOn);
+    });
+
+    // The light's LED level drives the Lightbulb Brightness, mapped from Protect's 1-6 scale to a HomeKit percentage.
+    this.observeState({ key: "light.ledLevel", selector: state => light(state)?.lightDeviceSettings.ledLevel, title: "brightness" }, () => {
+
+      const brightness = this.ledLevelToBrightness(this.ufp.lightDeviceSettings.ledLevel);
+
+      this.accessory.getService(this.hap.Service.Lightbulb)?.updateCharacteristic(this.hap.Characteristic.Brightness, brightness);
+    });
+
+    // The light's indicator setting drives the status-indicator switch, when that switch is configured.
+    this.observeState({ key: "light.isIndicatorEnabled", selector: state => light(state)?.lightDeviceSettings.isIndicatorEnabled, title: "the status light" }, () => {
+
+      this.accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_STATUS_LED)?.updateCharacteristic(this.hap.Characteristic.On, this.statusLed);
+    });
   }
 
-  // Utility to return the command to set the device LED status on a Protect light.
-  protected statusLedCommand(value: boolean): object {
+  // Build the write-through command that sets the status indicator on a Protect light, which uses lightDeviceSettings.isIndicatorEnabled rather than the ledSettings
+  // field cameras and sensors expose. this.device is the narrowed Light projection here, so the update typechecks against the light config directly.
+  protected override statusLedCommand(value: boolean): () => Promise<unknown> {
 
-    return { lightDeviceSettings: { isIndicatorEnabled: value } };
+    return () => this.device.update({ lightDeviceSettings: { isIndicatorEnabled: value } });
   }
 
   // Utility function to return the current state of the status indicator light.
-  public get statusLed(): boolean {
+  public override get statusLed(): boolean {
 
     return this.ufp.lightDeviceSettings.isIndicatorEnabled;
   }

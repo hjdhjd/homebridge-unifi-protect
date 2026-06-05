@@ -2,15 +2,15 @@
  *
  * index.ts: Protect device classes.
  */
-export * from "./protect-camera.js";
-export * from "./protect-camera-package.js";
-export * from "./protect-chime.js";
-export * from "./protect-device.js";
-export * from "./protect-doorbell.js";
-export * from "./protect-light.js";
-export * from "./protect-liveviews.js";
-export * from "./protect-nvr-systeminfo.js";
-export * from "./protect-securitysystem.js";
-export * from "./protect-sensor.js";
-export * from "./protect-viewer.js";
+export * from "./camera.ts";
+export * from "./camera-package.ts";
+export * from "./chime.ts";
+export * from "./device.ts";
+export * from "./doorbell.ts";
+export * from "./light.ts";
+export * from "./liveviews.ts";
+export * from "./nvr-systeminfo.ts";
+export * from "./security-system.ts";
+export * from "./sensor.ts";
+export * from "./viewer.ts";
 

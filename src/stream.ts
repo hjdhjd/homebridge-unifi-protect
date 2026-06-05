@@ -4,21 +4,21 @@
  *
  * This module is heavily inspired by the homebridge and homebridge-camera-ffmpeg source code. Thank you for your contributions to the HomeKit world.
  */
-import type { API, CameraController, CameraControllerOptions, HAP, PrepareStreamCallback, PrepareStreamRequest, PrepareStreamResponse, SRTPCryptoSuites, Service,
-  SnapshotRequest, SnapshotRequestCallback, StartStreamRequest, StreamRequestCallback, StreamingRequest } from "homebridge";
+import type { API, CameraController, CameraControllerOptions, HAP, PrepareStreamCallback, PrepareStreamRequest, PrepareStreamResponse, Service, SnapshotRequest,
+  SnapshotRequestCallback, StartStreamRequest, StreamRequestCallback, StreamingRequest } from "homebridge";
 import { Agent, type ErrorEvent, WebSocket } from "undici";
-import { AudioRecordingCodecType, AudioRecordingSamplerate, AudioStreamingCodecType, AudioStreamingSamplerate, H264Level, H264Profile, MediaContainerType,
-  StreamRequestTypes } from "homebridge";
-import { BackpressureWriter, FfmpegOptions, FfmpegStreamingProcess, HKSV_FRAGMENT_LENGTH, HOMEKIT_IDR_INTERVAL, type HomebridgePluginLogging,
-  type HomebridgeStreamingDelegate, type Nullable, RtpDemuxer, formatBps } from "homebridge-plugin-utils";
-import { type LivestreamSubscription, logLivestreamIterationError } from "./protect-livestream.js";
-import { PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION, PROTECT_LIVESTREAM_API_IDR_INTERVAL } from "./settings.js";
-import type { ProtectCamera } from "./devices/index.js";
-import type { ProtectNvr } from "./protect-nvr.js";
-import type { ProtectPlatform } from "./protect-platform.js";
-import { ProtectRecordingDelegate } from "./protect-record.js";
-import { ProtectReservedNames } from "./protect-types.js";
-import { ProtectSnapshot } from "./protect-snapshot.js";
+import { AudioRecordingCodecType, AudioRecordingSamplerate, AudioStreamingCodecType, AudioStreamingSamplerate, BackpressureWriter, FfmpegOptions,
+  FfmpegStreamingProcess, H264Level, H264Profile, HKSV_FRAGMENT_LENGTH, HOMEKIT_IDR_INTERVAL, type HomebridgePluginLogging, type HomebridgeStreamingDelegate,
+  MediaContainerType, type Nullable, RtpDemuxer, SRTPCryptoSuites, StreamRequestTypes, VideoCodecType, formatBps } from "homebridge-plugin-utils";
+import { type LivestreamSubscription, logLivestreamIterationError } from "./protect-livestream.ts";
+import { PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION, PROTECT_LIVESTREAM_API_IDR_INTERVAL } from "./settings.ts";
+import type { ProtectCamera } from "./devices/index.ts";
+import type { ProtectNvr } from "./nvr.ts";
+import type { ProtectPlatform } from "./platform.ts";
+import { ProtectRecordingDelegate } from "./record.ts";
+import { ProtectReservedNames } from "./types.ts";
+import { ProtectSnapshot } from "./snapshot.ts";
+import { mqttTopic } from "./mqtt.ts";
 import { once } from "node:events";
 
 interface OngoingSessionEntry {
@@ -187,7 +187,7 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
 
             resolutions: resolutions,
 
-            type: this.api.hap.VideoCodecType.H264
+            type: VideoCodecType.H264
           }
         }
       },
@@ -220,7 +220,7 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
           twoWayAudio: this.protectCamera.hints.twoWayAudio
         },
 
-        supportedCryptoSuites: [this.hap.SRTPCryptoSuites.AES_CM_128_HMAC_SHA1_80],
+        supportedCryptoSuites: [SRTPCryptoSuites.AES_CM_128_HMAC_SHA1_80],
 
         video: {
 
@@ -268,7 +268,7 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
     }
 
     // Publish the snapshot as a data URL to MQTT, if configured.
-    this.nvr.mqtt?.publish(this.protectCamera.ufp.mac, "snapshot", "data:image/jpeg;base64," + snapshot.toString("base64"));
+    void this.nvr.mqtt?.publish(mqttTopic(this.protectCamera.ufp.mac, "snapshot"), "data:image/jpeg;base64," + snapshot.toString("base64"));
   }
 
   // Prepare to launch the video stream.
@@ -473,7 +473,7 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
     const sdpIpVersion = sessionInfo.addressVersion === "ipv6" ? "IP6" : "IP4";
 
     // If we aren't connected, we're done.
-    if(!this.protectCamera.isOnline) {
+    if(!this.protectCamera.isReachable) {
 
       const errorMessage = "Unable to start video stream: the camera is offline or unavailable.";
 

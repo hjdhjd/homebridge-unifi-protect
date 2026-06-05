@@ -8,11 +8,12 @@ export const PLUGIN_NAME = "homebridge-unifi-protect";
 // The platform the plugin creates.
 export const PLATFORM_NAME = "UniFi Protect";
 
-// How often, in seconds, should we check Protect controllers for new or removed devices.
-export const PROTECT_CONTROLLER_REFRESH_INTERVAL = 120;
-
-// How often, in seconds, should we retry getting our bootstrap configuration from the Protect controller.
-export const PROTECT_CONTROLLER_RETRY_INTERVAL = 10;
+// Maximum number of consecutive authentication failures tolerated while establishing the initial connection before we stop retrying. A controller that is still
+// sorting out its own authentication state at startup recovers within this budget, while genuinely-incorrect credentials fail fast instead of looping forever (the
+// v4 defect). Any non-authentication fault (network, transient) resets the budget, so a slow-to-appear controller is retried without bound until it answers. The
+// periodic device refresh and the connection backoff that the two former controller-interval constants governed now live inside the unifi-protect client (its
+// StateStore refresh failsafe and the retry() default exponential backoff, respectively), so HBUP no longer schedules either.
+export const PROTECT_AUTH_FAILURE_LIMIT = 3;
 
 // Default delay, in seconds, before removing Protect devices that no longer exist.
 export const PROTECT_DEVICE_REMOVAL_DELAY_INTERVAL = 60;

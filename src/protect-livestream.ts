@@ -34,11 +34,11 @@
  *     subscribers are unaffected. The original design's synchronous fan-out had no isolation...one slow handler blocked every other subscriber.
  */
 import { FfmpegLivestreamProcess, type HomebridgePluginLogging } from "homebridge-plugin-utils";
-import type { NvrHealthState } from "./protect-nvr-health.js";
-import { PROTECT_SEGMENT_RESOLUTION } from "./settings.js";
-import type { ProtectCamera } from "./devices/index.js";
+import type { NvrHealthState } from "./nvr-health.ts";
+import { PROTECT_SEGMENT_RESOLUTION } from "./settings.ts";
+import type { ProtectCamera } from "./devices/index.ts";
 import type { ProtectLivestream } from "unifi-protect";
-import type { RtspEntry } from "./devices/protect-camera.js";
+import type { RtspEntry } from "./devices/camera.ts";
 
 // Options passed to the ProtectLivestream.start() call. We ask for timestamps and a reasonable websocket chunk size.
 const LIVESTREAM_OPTIONS = { chunkSize: 16384, emitTimestamps: true };
@@ -1291,7 +1291,7 @@ export class LivestreamManager {
     session.connection.stop();
 
     // If the controller is unreachable or throttled or the camera is offline, back off and retry later.
-    if(!this.protectCamera.nvr.ufpApi.bootstrap || this.protectCamera.nvr.ufpApi.isThrottled || !this.protectCamera.isOnline) {
+    if(!this.protectCamera.nvr.ufpApi.bootstrap || this.protectCamera.nvr.ufpApi.isThrottled || !this.protectCamera.isReachable) {
 
       this.enterLiveBackoff(session, recoveryAttempts + 1);
 

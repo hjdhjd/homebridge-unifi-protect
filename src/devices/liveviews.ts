@@ -4,17 +4,17 @@
  */
 import type { CharacteristicValue, PlatformAccessory } from "homebridge";
 import { type Nullable, sanitizeName } from "homebridge-plugin-utils";
-import { PLATFORM_NAME, PLUGIN_NAME } from "../settings.js";
-import { ProtectBase } from "./protect-device.js";
-import type { ProtectNvr } from "../protect-nvr.js";
+import { PLATFORM_NAME, PLUGIN_NAME } from "../settings.ts";
+import { ProtectBase } from "./device.ts";
+import type { ProtectNvr } from "../nvr.ts";
 import type { ProtectNvrLiveviewConfig } from "unifi-protect";
-import { ProtectSecuritySystem } from "./protect-securitysystem.js";
+import { ProtectSecuritySystem } from "./security-system.ts";
+import { selectLiveviews } from "unifi-protect";
 
 export class ProtectLiveviews extends ProtectBase {
 
   private isConfigured: Set<string>;
   private isMqttConfigured: boolean;
-  private liveviews: ProtectNvrLiveviewConfig[];
   private securityAccessory: Nullable<PlatformAccessory> | undefined;
   private securitySystem: Nullable<ProtectSecuritySystem>;
 
@@ -27,21 +27,25 @@ export class ProtectLiveviews extends ProtectBase {
     // Initialize the class.
     this.isConfigured = new Set();
     this.isMqttConfigured = false;
-    this.liveviews = this.ufpApi.bootstrap?.liveviews ?? [];
     this.securityAccessory = null;
     this.securitySystem = null;
+
+    // Subject owns its reactivity: observe the controller's liveview collection and reconcile the liveview-derived accessories on each change. The store yields only on
+    // change, so the initial population is seeded once by the NVR after device discovery (a liveview switch restores motion state onto its member cameras, which must
+    // exist first); this observer handles every subsequent edit. It binds to the controller lifetime via ProtectBase.observeSignal.
+    this.observeState({ key: "nvr.liveviews", selector: selectLiveviews, title: "live views" }, () => this.configureLiveviews());
   }
 
-  // Update security system accessory.
+  // Read-through of the controller's live liveview collection. This replaces the held bootstrap snapshot: every read reflects the current v5 projection, so a liveview
+  // added, renamed, or removed in Protect is visible the moment the NVR-level observe loop reconciles, with no field to reassign. Always an array post-connect.
+  private get liveviews(): readonly ProtectNvrLiveviewConfig[] {
+
+    return this.nvr.client.liveviews;
+  }
+
+  // Reconcile the liveview-derived accessories against the controller's current liveview collection. The NVR-level observe loop drives this on each change to the live
+  // liveview projection, and once at startup for the initial population.
   public configureLiveviews(): void {
-
-    // Do we have controller access?
-    if(!this.ufpApi.bootstrap?.nvr) {
-
-      return;
-    }
-
-    this.liveviews = this.ufpApi.bootstrap.liveviews;
 
     this.configureSecuritySystem();
     this.configureSwitches();
@@ -50,12 +54,6 @@ export class ProtectLiveviews extends ProtectBase {
 
   // Configure the security system accessory.
   private configureSecuritySystem(): void {
-
-    // If we don't have the bootstrap configuration, we're done here.
-    if(!this.ufpApi.bootstrap) {
-
-      return;
-    }
 
     const regexSecuritySystemLiveview = /^Protect-(Away|Home|Night|Off)$/i;
     const uuid = this.hap.uuid.generate(this.nvr.ufp.mac + ".Security");
@@ -85,7 +83,7 @@ export class ProtectLiveviews extends ProtectBase {
       if((this.securityAccessory = this.platform.accessories.find(x => x.UUID === uuid)) === undefined) {
 
         // We will use the NVR MAC address + ".Security" to create our UUID. That should provide the guaranteed uniqueness we need.
-        this.securityAccessory = new this.api.platformAccessory(sanitizeName(this.ufpApi.bootstrap.nvr.name ?? this.ufpApi.bootstrap.nvr.marketName), uuid);
+        this.securityAccessory = new this.api.platformAccessory(sanitizeName(this.nvr.ufp.name ?? this.nvr.ufp.marketName), uuid);
 
         // Register this accessory with homebridge and add it to the platform accessory array so we can track it.
         this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [this.securityAccessory]);
@@ -100,16 +98,14 @@ export class ProtectLiveviews extends ProtectBase {
 
     // Update our NVR reference.
     this.securityAccessory.context.nvr = this.nvr.ufp.mac;
+
+    // Refresh the available arm states from the current liveview collection, so adding or removing a Protect-Away/Home/Night liveview re-scopes the security system's
+    // valid target states. The owner drives this on every reconcile because it owns the security accessory's lifecycle and its refresh.
+    this.securitySystem.updateDevice();
   }
 
   // Configure any liveview-associated switches.
   private configureSwitches(): void {
-
-    // If we haven't bootstrapped the controller yet, we're done.
-    if(!this.ufpApi.bootstrap) {
-
-      return;
-    }
 
     // Iterate through the list of accessories and remove any orphan liveviews due to removal or renaming on the Protect controller.
     for(const accessory of this.platform.accessories) {
@@ -168,7 +164,7 @@ export class ProtectLiveviews extends ProtectBase {
 
       if((newAccessory = this.platform.accessories.find(x => x.UUID === uuid)) === undefined) {
 
-        newAccessory = new this.api.platformAccessory(sanitizeName((this.ufpApi.bootstrap.nvr.name ?? "") + " " + viewName), uuid);
+        newAccessory = new this.api.platformAccessory(sanitizeName((this.nvr.ufp.name ?? "") + " " + viewName), uuid);
 
         // Register this accessory with homebridge and add it to the platform accessory array so we can track it.
         this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [newAccessory]);
@@ -225,7 +221,7 @@ export class ProtectLiveviews extends ProtectBase {
     this.isMqttConfigured = true;
 
     // Return the current status of all the liveviews.
-    this.nvr.mqtt?.subscribeGet(this.nvr.ufp.mac, "liveviews", "liveview scenes", () => {
+    this.subscribeGet("liveviews", "liveview scenes", () => {
 
       // Get the list of liveviews.
       const liveviews = this.platform.accessories.filter(x => "liveview" in x.context)
@@ -235,7 +231,7 @@ export class ProtectLiveviews extends ProtectBase {
     });
 
     // Set the status of one or more liveviews.
-    this.nvr.mqtt?.subscribeSet(this.nvr.ufp.mac, "liveviews", "liveview scenes", (value: string, rawValue: string) => {
+    this.subscribeSet("liveviews", "liveview scenes", (value: string, rawValue: string) => {
 
       interface mqttLiveviewJSON {
 
@@ -288,7 +284,7 @@ export class ProtectLiveviews extends ProtectBase {
   private setSwitchState(liveviewSwitch: PlatformAccessory, targetState: CharacteristicValue): void {
 
     // We don't have any liveviews or we're already at this state - we're done.
-    if(!this.ufpApi.bootstrap || (this.getSwitchState(liveviewSwitch.context.liveview as string) === targetState)) {
+    if(!this.liveviews.length || (this.getSwitchState(liveviewSwitch.context.liveview as string) === targetState)) {
 
       return;
     }
@@ -330,7 +326,7 @@ export class ProtectLiveviews extends ProtectBase {
     liveviewSwitch.context.liveviewState = targetState;
 
     // Publish to MQTT, if configured.
-    this.nvr.mqtt?.publish(this.nvr.ufp.mac, "liveviews", JSON.stringify([{ name: liveviewSwitch.context.liveview as string, state: targetState }]));
+    this.publish("liveviews", JSON.stringify([{ name: liveviewSwitch.context.liveview as string, state: targetState }]));
   }
 
   // Get the current liveview switch state.

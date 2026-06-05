@@ -2,17 +2,18 @@
  *
  * protect-camera.ts: Camera device class for UniFi Protect.
  */
+import type { Camera, DeepPartial, ProtectCameraChannelConfig, ProtectCameraConfig, SnapshotOptions } from "unifi-protect";
 import type { CharacteristicValue, PlatformAccessory, Resolution, Service } from "homebridge";
-import type { DeepPartial, ProtectCameraChannelConfig, ProtectCameraConfig, ProtectEventAdd, ProtectEventPacket } from "unifi-protect";
 import { type Nullable, toStartCase } from "homebridge-plugin-utils";
-import { LivestreamManager } from "../protect-livestream.js";
-import type { MessageSwitchInterface } from "./protect-doorbell.js";
-import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR } from "../settings.js";
-import type { ProtectCameraPackage } from "./protect-camera-package.js";
-import { ProtectDevice } from "./protect-device.js";
-import type { ProtectNvr } from "../protect-nvr.js";
-import { ProtectReservedNames } from "../protect-types.js";
-import { ProtectStreamingDelegate } from "../protect-stream.js";
+import { ProtectReservedNames, shouldReconfigureAsDoorbell } from "../types.ts";
+import { LivestreamManager } from "../protect-livestream.ts";
+import type { MessageSwitchInterface } from "./doorbell.ts";
+import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR } from "../settings.ts";
+import type { ProtectCameraPackage } from "./camera-package.ts";
+import { ProtectDevice } from "./device.ts";
+import type { ProtectNvr } from "../nvr.ts";
+import { ProtectStreamingDelegate } from "../stream.ts";
+import { selectCamera } from "unifi-protect";
 
 export interface RtspEntry {
 
@@ -41,19 +42,22 @@ export class ProtectCamera extends ProtectDevice {
   private ambientLight: number;
   private isDeleted: boolean;
   public isRinging: boolean;
-  private isTampered: boolean;
+  // The latched tamper state, set by the firehose router's tamper delivery (a one-way latch, like isRinging is set by the doorbell delivery) and read back by the
+  // tamper-detection onGet and the availability projection. Public because its single writer is the NVR-level event dispatch, not this class.
+  public isTampered: boolean;
   public detectLicensePlate: string[];
   public readonly livestream: LivestreamManager;
   public messageSwitches: Map<string, MessageSwitchInterface>;
   public packageCamera?: Nullable<ProtectCameraPackage>;
   private rtspEntries: RtspEntry[];
   public stream?: ProtectStreamingDelegate;
-  public ufp: ProtectCameraConfig;
+  // Narrow the inherited projection handle to the camera projection so the read-through config getter and every this.ufp.<field> read resolve to ProtectCameraConfig.
+  declare protected readonly device: Camera;
 
   // Create an instance.
-  constructor(nvr: ProtectNvr, device: ProtectCameraConfig, accessory: PlatformAccessory) {
+  constructor(nvr: ProtectNvr, accessory: PlatformAccessory, device: Camera) {
 
-    super(nvr, accessory);
+    super(nvr, accessory, device);
 
     this.ambientLight = 0;
     this.isDeleted = false;
@@ -63,10 +67,23 @@ export class ProtectCamera extends ProtectDevice {
     this.livestream = new LivestreamManager(this);
     this.messageSwitches = new Map();
     this.rtspEntries = [];
-    this.ufp = device;
 
     this.configureHints();
     this.configureDevice();
+    this.spawnObservers();
+  }
+
+  // Read-through config, narrowed to the camera projection's config record.
+  public override get ufp(): Readonly<ProtectCameraConfig> {
+
+    return this.device.config;
+  }
+
+  // Whether this accessory is running as a doorbell. The base camera is not; ProtectDoorbell overrides this to true. The reclassification observer reads it so a
+  // device already running as a doorbell is never reconfigured again, and so the camera-only reclassification reaction is a no-op once promoted.
+  protected get isDoorbellAccessory(): boolean {
+
+    return false;
   }
 
   // Configure device-specific settings for this device.
@@ -197,10 +214,6 @@ export class ProtectCamera extends ProtectDevice {
 
       // Configure the doorbell trigger.
       this.configureDoorbellTrigger();
-
-      // Listen for events.
-      this.registerListener("addEvent." + this.ufp.id, this.addEventHandler.bind(this));
-      this.registerListener("updateEvent." + this.ufp.id, this.eventHandler.bind(this));
     })();
 
     return true;
@@ -229,133 +242,56 @@ export class ProtectCamera extends ProtectDevice {
     this.isDeleted = true;
   }
 
-  // Handle update-related events from the controller.
-  protected eventHandler(packet: ProtectEventPacket): void {
+  // Spawn the camera's narrow-selector state observers (Fork B). Each loop fires only when its watched slice changes by reference - the store's Object.is dedup is the
+  // trigger, so there is no hand-diff and no held snapshot. super spawns the universal name-sync observer. Activity (motion, ring, smart detection, tamper) is delivered
+  // by the NVR firehose router and is deliberately never re-synthesized here from device-state.
+  protected override spawnObservers(): void {
 
-    const payload = packet.payload as DeepPartial<ProtectCameraConfig>;
-    const hasProperty = (properties: string | string[]): boolean => (Array.isArray(properties) ? properties : [properties]).some(p => p in payload);
+    super.spawnObservers();
 
-    // Process any RTSP stream or video codec updates.
-    if(hasProperty([ "channels", "videoCodec" ])) {
+    // Bind the by-id camera selector once and read fields off it, so each per-dispatch selector evaluation reuses the same closure rather than re-deriving it.
+    const cam = selectCamera(this.ufp.id);
 
-      void this.configureVideoStream();
-    }
+    // The RTSP channel set and the negotiated video codec both shape the HomeKit streaming surface, so a change to either re-derives it. Two observers, not one tuple: a
+    // fresh tuple would never dedup on Object.is, whereas each field dedups natively as its own slice.
+    this.observeState({ key: "camera.channels", selector: state => cam(state)?.channels, title: "video streaming" }, () => void this.configureVideoStream());
+    this.observeState({ key: "camera.videoCodec", selector: state => cam(state)?.videoCodec, title: "video streaming" }, () => void this.configureVideoStream());
 
-    // When a camera comes back online, retry HKSV initialization if we have recording enabled but the timeshift buffer never started...this happens when the camera was
-    // offline at startup and configureTimeshifting() couldn't connect.
-    if(hasProperty("isConnected") && this.isOnline && this.stream?.hksv?.isRecording && !this.stream.hksv.timeshift.isStarted) {
+    // The lifecycle state enum drives two independent reactions, so each gets its own observer on the same slice. We watch state because isOnline - and therefore the
+    // device-online half of isReachable - derives from it; the controller-health half is pushed by the NVR connection loop, not observed here.
+    this.observeState({ key: "camera.state", selector: state => cam(state)?.state, title: "availability" }, () => this.updateAvailability());
+    this.observeState({ key: "camera.state.hksv", selector: state => cam(state)?.state, title: "HKSV" }, () => {
 
-      void this.stream.hksv.updateRecordingActive(true);
-    }
+      // A camera offline at startup could not start its timeshift buffer; when it comes back online with HKSV recording still enabled, retry the buffer init the initial
+      // configure could not complete. This replaces the v4 synthetic-bootstrap self-heal with a reaction to the actual online transition.
+      if(this.isReachable && this.stream?.hksv?.isRecording && !this.stream.hksv.timeshift.isStarted) {
 
-    // Transient event processing (motion, ring, smart detect) only applies to real delta events from the controller's websocket. Bootstrap refresh emits the full
-    // device payload as a state-sync signal and would re-trigger these notifications every refresh cycle if not gated here.
-    if(!packet.header.hbupBootstrap) {
-
-      // Fire the motion handler when HKSV recording is on, the camera has no enabled smart-motion capability, or the user has smart detection disabled. In every
-      // other case, smart-detect events are the source of truth for motion and the raw lastMotion timestamp would double-fire.
-      if(hasProperty(["lastMotion"]) && (this.stream?.hksv?.isRecording ||
-        !(this.ufp.featureFlags.smartDetectAudioTypes.length || this.ufp.featureFlags.smartDetectTypes.length) || !this.hints.smartDetect)) {
-
-        this.nvr.events.motionEventHandler(this);
+        void this.stream.hksv.updateRecordingActive(true);
       }
+    });
 
-      if(hasProperty(["lastRing"])) {
+    // The tamper-detection setting governs whether the StatusTampered characteristic exists at all; the tamper occurrence itself is a firehose event the router delivers.
+    this.observeState({ key: "camera.smartDetectSettings", selector: state => cam(state)?.smartDetectSettings, title: "tamper detection" },
+      () => void this.configureTamperDetection());
 
-        this.nvr.events.doorbellEventHandler(this, payload.lastRing ?? null);
-      }
+    // The remaining device-detail reactions, decomposed per field so each updates only its own characteristics and wakes only on its own slice.
+    this.observeState({ key: "camera.ispSettings", selector: state => cam(state)?.ispSettings, title: "night vision" }, () => this.updateNightVision());
+    this.observeState({ key: "camera.ledSettings", selector: state => cam(state)?.ledSettings, title: "the status light" }, () => this.updateStatusIndicator());
+    this.observeState({ key: "camera.recordingSettings", selector: state => cam(state)?.recordingSettings, title: "recording" },
+      () => this.updateRecordingSwitches());
 
-      // If smart detection is enabled, we need to filter out any events tagged as "motion". When users enable the "Create motion events" setting on a camera,
-      // Protect will create motion-specific thumbnail events. We're only interested in true smart detection events.
-      if(this.hints.smartDetect) {
+    // A camera can become a doorbell after adoption (the controller provisions featureFlags.isDoorbell late); when it flips, tear down and recreate this accessory as a
+    // doorbell. A device already running as a doorbell never spawns this observer, so the reaction is camera-only.
+    if(!this.isDoorbellAccessory) {
 
-        const event = packet.payload as ProtectEventAdd;
+      this.observeState({ key: "camera.isDoorbell", selector: state => cam(state)?.featureFlags.isDoorbell, title: "doorbell status" }, () => {
 
-        if(event.metadata?.detectedThumbnails) {
+        if(shouldReconfigureAsDoorbell({ isDoorbell: this.ufp.featureFlags.isDoorbell, isDoorbellAccessory: this.isDoorbellAccessory })) {
 
-          event.metadata.detectedThumbnails = event.metadata.detectedThumbnails.filter(({ type }) => type !== "motion");
+          this.nvr.reconfigureAsDoorbell(this);
         }
-      }
-
-      // Process smart detection events that have occurred on a non-realtime basis. Generally, this includes audio and video events that require more analysis by Protect.
-      const eventAdd = packet.payload as ProtectEventAdd;
-
-      if(this.hints.smartDetect && (eventAdd.smartDetectTypes?.length || eventAdd.metadata?.detectedThumbnails?.length)) {
-
-        this.nvr.events.motionEventHandler(this, eventAdd.smartDetectTypes, eventAdd.metadata);
-      }
+      });
     }
-
-    // Process updates to the tamper detection setting.
-    if(hasProperty("smartDetectSettings")) {
-
-      this.configureTamperDetection();
-    }
-
-    // Process camera details updates:
-    //
-    //   - availability state.
-    //   - name change.
-    //   - camera night vision.
-    //   - camera status light.
-    //   - camera recording settings.
-    if(hasProperty([ "isConnected", "ispSettings", "name", "ledSettings", "recordingSettings" ])) {
-
-      this.updateDevice();
-    }
-  }
-
-  // Handle add-related events from the controller.
-  protected addEventHandler(packet: ProtectEventPacket): void {
-
-    const payload = packet.payload as ProtectEventAdd;
-
-    // Detect UniFi Access unlock events surfaced in Protect.
-    if((packet.header.modelKey === "event") && (payload.metadata?.action === "open_door") && payload.metadata.openSuccess) {
-
-      const lockService = this.accessory.getServiceById(this.hap.Service.LockMechanism, ProtectReservedNames.LOCK_ACCESS);
-
-      if(!lockService) {
-
-        return;
-      }
-
-      lockService.updateCharacteristic(this.hap.Characteristic.LockTargetState, this.hap.Characteristic.LockTargetState.UNSECURED);
-      lockService.updateCharacteristic(this.hap.Characteristic.LockCurrentState, this.hap.Characteristic.LockCurrentState.UNSECURED);
-      this.log.info("Unlocked.");
-
-      this.registerTimeout("accessUnlock", () => {
-
-        lockService.updateCharacteristic(this.hap.Characteristic.LockTargetState, this.hap.Characteristic.LockTargetState.SECURED);
-        lockService.updateCharacteristic(this.hap.Characteristic.LockCurrentState, this.hap.Characteristic.LockCurrentState.SECURED);
-      }, 2000);
-
-      return;
-    }
-
-    // If we've been tampered, flag it accordingly.
-    if(!this.isTampered && (payload.type === "smartDetectTamper")) {
-
-      this.isTampered = true;
-      this.accessory.getService(this.hap.Service.MotionSensor)?.updateCharacteristic(this.hap.Characteristic.StatusTampered, this.isTampered);
-
-      this.log.info("Tamper event detected. To clear the indicator, toggle tamper detection in the Protect web UI or restart HBUP.");
-    }
-
-    // We're only interested in smart motion detection events here. Our rules are:
-    //
-    //   - We have a smartDetectObject identified.
-    //   - We have an event that involves crossing lines or a smart detection zone with specific smart detection types.
-    //   - We explicitly filter out events tagged as "motion". When users enable the "Create motion events" setting on a camera, Protect will create motion-specific
-    //     thumbnail events. We're only interested in true smart detection events.
-    if(!this.hints.smartDetect || !((packet.header.modelKey === "smartDetectObject") || ((packet.header.modelKey === "event") &&
-      [ "smartDetectLine", "smartDetectZone" ].includes(payload.type) && (payload.type !== "motion") && payload.smartDetectTypes?.length))) {
-
-      return;
-    }
-
-    // Process the motion event.
-    this.nvr.events.motionEventHandler(this, (packet.header.modelKey === "smartDetectObject") ? [payload.type] : payload.smartDetectTypes, payload.metadata);
   }
 
   // Configure the ambient light sensor for HomeKit.
@@ -383,33 +319,25 @@ export class ProtectCamera extends ProtectDevice {
 
     const getLux = async (): Promise<number> => {
 
-      if(!this.isOnline) {
-
-        return -1;
-      }
-
-      const response = await this.nvr.ufpApi.retrieve(this.nvr.ufpApi.getApiEndpoint(this.ufp.modelKey) + "/" + this.ufp.id + "/lux");
-
-      if(!this.nvr.ufpApi.responseOk(response?.statusCode)) {
+      // Skip the query when the controller or camera is unreachable; the request would only fail.
+      if(!this.isReachable) {
 
         return -1;
       }
 
       try {
 
-        let lux = (await response?.body.json() as Record<string, number | undefined>).illuminance ?? 0;
+        // The library validates the reading and throws on a malformed body, so any failure - unreachable mid-flight, a non-2xx, or a non-numeric reading - means "no
+        // reading" and we skip the update; a genuine zero reading is floored to HomeKit's 0.0001 minimum.
+        let lux = await this.device.lux();
 
-        // The minimum value for ambient light in HomeKit is 0.0001. I have no idea why...but it is. Honor it.
         lux ||= 0.0001;
 
         return lux;
-
       } catch {
 
-        // We're intentionally ignoring any errors parsing a response and will fall through.
+        return -1;
       }
-
-      return -1;
     };
 
     // Update the ambient light sensor at regular intervals.
@@ -442,7 +370,7 @@ export class ProtectCamera extends ProtectDevice {
     this.registerInterval("ambientLight", () => void updateAmbientLight(), 60 * 1000);
 
     // Retrieve the active state when requested.
-    service.getCharacteristic(this.hap.Characteristic.StatusActive).onGet(() => this.isOnline);
+    service.getCharacteristic(this.hap.Characteristic.StatusActive).onGet(() => this.isReachable);
 
     // Initialize the sensor.
     this.ambientLight = await getLux();
@@ -456,9 +384,18 @@ export class ProtectCamera extends ProtectDevice {
     service.getCharacteristic(this.hap.Characteristic.CurrentAmbientLightLevel).onGet(() => this.ambientLight);
 
     service.updateCharacteristic(this.hap.Characteristic.CurrentAmbientLightLevel, this.ambientLight);
-    service.updateCharacteristic(this.hap.Characteristic.StatusActive, this.isOnline);
+    service.updateCharacteristic(this.hap.Characteristic.StatusActive, this.isReachable);
 
     return true;
+  }
+
+  // Capture a JPEG snapshot of this camera from the controller. This is the narrow public seam onto the v5 camera projection's snapshot command - the camera owns "take a
+  // snapshot of me" while keeping the device projection encapsulated. ProtectSnapshot calls this as the Protect-API source in its multi-source acquisition. The command
+  // throws on failure (a non-2xx, or a ProtectUnsupportedError when a package snapshot is requested on a camera without a package sensor); the caller treats a throw as
+  // "this source failed" and falls through to the next source.
+  public async snapshotFromController(opts: SnapshotOptions = {}): Promise<Buffer> {
+
+    return this.device.snapshot(opts);
   }
 
   // Configure UniFi Access specific features for devices that are made available in Protect.
@@ -509,14 +446,10 @@ export class ProtectCamera extends ProtectDevice {
         return;
       }
 
-      // Unlock the Access device.
-      const response = await this.nvr.ufpApi.retrieve(this.nvr.ufpApi.getApiEndpoint(this.ufp.modelKey) + "/" + this.ufp.id + "/unlock", { method: "POST" });
+      // Unlock the Access device through the shared command-error helper.
+      if(!(await this.runDeviceCommand("unlock the Access device", () => this.device.unlock()))) {
 
-      if(!this.nvr.ufpApi.responseOk(response?.statusCode)) {
-
-        // Something went wrong, revert to our prior state.
-        this.log.error("Unable to unlock the Access device.");
-
+        // The command failed (the helper already reported it); revert HomeKit to its prior locked state.
         setTimeout(() => {
 
           service.updateCharacteristic(this.hap.Characteristic.LockTargetState, this.hap.Characteristic.LockTargetState.SECURED);
@@ -844,20 +777,14 @@ export class ProtectCamera extends ProtectDevice {
       service?.getCharacteristic(this.hap.Characteristic.NightVision)?.onGet(() => this.nightVision);
       service?.getCharacteristic(this.hap.Characteristic.NightVision)?.onSet(async (value: CharacteristicValue) => {
 
-        // Update the night vision setting in Protect.
-        const newUfp = await this.nvr.ufpApi.updateDevice(this.ufp, { ispSettings: { irLedMode: value ? "auto" : "off" } });
-
-        if(!newUfp) {
-
-          this.log.error("Unable to set night vision to %s. Please ensure this username has the Administrator role in UniFi Protect.", value ? "auto" : "off");
+        // Push the new night vision setting to the controller, reporting any failure through the shared command-error helper and reverting the characteristic on failure.
+        if(!(await this.runDeviceCommand("set night vision to " + (value ? "auto" : "off"),
+          () => this.device.update({ ispSettings: { irLedMode: value ? "auto" : "off" } })))) {
 
           setTimeout(() => service.updateCharacteristic(this.hap.Characteristic.NightVision, !value), 50);
 
           return;
         }
-
-        // Update our internal view of the device configuration.
-        this.ufp = newUfp;
       });
 
       // Initialize the status light state.
@@ -930,8 +857,17 @@ export class ProtectCamera extends ProtectDevice {
       return false;
     }
 
-    // Enable RTSP on the camera if needed and get the list of RTSP streams we have ultimately configured.
-    this.ufp = await this.nvr.ufpApi.enableRtsp(this.ufp) ?? this.ufp;
+    // Ensure RTSP is enabled on every channel. This is a write-through config change with no read-after-write: if any channel still needs RTSP, enable them all and
+    // return, then let the channels observer (wired in spawnObservers) re-run this method once the change reconciles, at which point every channel reads back enabled
+    // and we build the stream entries below. When RTSP is already on - the common case for any existing camera and every restart - we skip the PATCH and fall through
+    // synchronously, exactly as before. The reducer dedups a no-op patch, so a redundant enable could never loop the observer regardless.
+    if(this.ufp.channels.some(channel => !channel.isRtspEnabled)) {
+
+      await this.runDeviceCommand("enable RTSP on the camera's channels",
+        () => this.device.update({ channels: this.ufp.channels.map(channel => ({ ...channel, isRtspEnabled: true })) }));
+
+      return false;
+    }
 
     // Figure out which camera channels are RTSP-enabled, and user-enabled. We also filter out any package camera entries. We deal with those independently elsewhere.
     const cameraChannels = this.ufp.channels.filter(channel => channel.isRtspEnabled && (channel.name !== "Package Camera"));
@@ -1222,7 +1158,7 @@ export class ProtectCamera extends ProtectDevice {
         this.log.info("Night vision %s.", value ? "enabled" : "disabled");
       }
 
-      let mode;
+      let mode: string;
 
       switch(service.getCharacteristic(this.hap.Characteristic.Brightness).value) {
 
@@ -1245,20 +1181,14 @@ export class ProtectCamera extends ProtectDevice {
           break;
       }
 
-      // Update the night vision setting in Protect.
-      const newUfp = await this.nvr.ufpApi.updateDevice(this.ufp, { ispSettings: { irLedMode: value ? mode : "off" } });
-
-      if(!newUfp) {
-
-        this.log.error("Unable to set night vision to %s. Please ensure this username has the Administrator role in UniFi Protect.", value ? mode : "off");
+      // Push the new night vision setting to the controller, reporting any failure through the shared command-error helper and reverting the characteristic on failure.
+      if(!(await this.runDeviceCommand("set night vision to " + (value ? mode : "off"),
+        () => this.device.update({ ispSettings: { irLedMode: value ? mode : "off" } })))) {
 
         setTimeout(() => service.updateCharacteristic(this.hap.Characteristic.On, !value), 50);
 
         return;
       }
-
-      // Update our internal view of the device configuration.
-      this.ufp = newUfp;
     });
 
     // Adjust the sensitivity of night vision.
@@ -1267,7 +1197,7 @@ export class ProtectCamera extends ProtectDevice {
     service.getCharacteristic(this.hap.Characteristic.Brightness).onSet(async (value: CharacteristicValue) => {
 
       let level = value as number;
-      let nightvision = {};
+      let nightvision: DeepPartial<ProtectCameraConfig> = {};
 
       // If we're less than 5% in brightness, assume we want to disable night vision.
       if(level < 5) {
@@ -1336,17 +1266,11 @@ export class ProtectCamera extends ProtectDevice {
           break;
       }
 
-      const newUfp = await this.nvr.ufpApi.updateDevice(this.ufp, nightvision);
-
-      if(!newUfp) {
-
-        this.log.error("Unable to adjust night vision settings. Please ensure this username has the Administrator role in UniFi Protect.");
+      // Push the new night vision settings to the controller, reporting any failure through the shared command-error helper.
+      if(!(await this.runDeviceCommand("adjust the night vision settings", () => this.device.update(nightvision)))) {
 
         return;
       }
-
-      // Set the context to our updated device configuration.
-      this.ufp = newUfp;
 
       // Make sure we properly reflect what brightness we're actually at, given the differences in setting granularity between Protect and HomeKit.
       setTimeout(() => service.updateCharacteristic(this.hap.Characteristic.Brightness, level), 50);
@@ -1405,21 +1329,13 @@ export class ProtectCamera extends ProtectDevice {
           return;
         }
 
-        // Set our recording mode.
-        this.ufp.recordingSettings.mode = ufpRecordingSetting;
+        // Push the new recording mode to the controller, reporting any failure through the shared command-error helper. We build the payload immutably - spreading the
+        // read-through recordingSettings with mode overridden preserves the exact wire shape the controller expects without mutating the live (read-only) config record.
+        if(!(await this.runDeviceCommand("set the recording mode to " + ufpRecordingSetting,
+          () => this.device.update({ recordingSettings: { ...this.ufp.recordingSettings, mode: ufpRecordingSetting } })))) {
 
-        // Tell Protect about it.
-        const newDevice = await this.nvr.ufpApi.updateDevice(this.ufp, { recordingSettings: this.ufp.recordingSettings });
-
-        if(!newDevice) {
-
-          this.log.error("Unable to set the UniFi Protect recording mode to %s.", ufpRecordingSetting);
-
-          return false;
+          return;
         }
-
-        // Save our updated device context.
-        this.ufp = newDevice;
 
         // Update all the other recording switches.
         for(const otherUfpSwitch of
@@ -1495,21 +1411,32 @@ export class ProtectCamera extends ProtectDevice {
     return true;
   }
 
-  // Refresh camera-specific characteristics.
+  // Refresh camera-specific characteristics. Composes the per-concern updaters below; retained as the public entry point for external callers (the recording-switch and
+  // physical-chime onSet handlers) and as the "refresh everything" sweep. The per-field observers call the individual updaters directly, so each wakes and writes only
+  // its own slice; this composition re-applies them all at once.
   public updateDevice(): boolean {
 
-    // Update the camera state.
-    this.accessory.getService(this.hap.Service.MotionSensor)?.updateCharacteristic(this.hap.Characteristic.StatusActive, this.isOnline);
+    this.updateAvailability();
+    this.updateNightVision();
+    this.updateStatusIndicator();
+    this.updateRecordingSwitches();
+
+    return true;
+  }
+
+  // Push the availability projection: StatusActive on the motion and light sensors (the device-online half of reachability), plus a re-apply of the latched tamper
+  // state. Driven by the lifecycle-state observer; doorbells extend this to fan StatusActive out to their package camera.
+  protected updateAvailability(): void {
+
+    this.accessory.getService(this.hap.Service.MotionSensor)?.updateCharacteristic(this.hap.Characteristic.StatusActive, this.isReachable);
     this.accessory.getService(this.hap.Service.MotionSensor)?.updateCharacteristic(this.hap.Characteristic.StatusTampered, this.isTampered);
-    this.accessory.getService(this.hap.Service.LightSensor)?.updateCharacteristic(this.hap.Characteristic.StatusActive, this.isOnline);
+    this.accessory.getService(this.hap.Service.LightSensor)?.updateCharacteristic(this.hap.Characteristic.StatusActive, this.isReachable);
+  }
 
-    // Check to see if this device has a status light.
-    if(this.hints.ledStatus) {
+  // Push the night-vision characteristics from the camera's ISP settings: the operating-mode indicator and, when the dimmer is enabled, its on/brightness state. Driven
+  // by the ispSettings observer.
+  protected updateNightVision(): void {
 
-      this.accessory.getService(this.hap.Service.CameraOperatingMode)?.updateCharacteristic(this.hap.Characteristic.CameraOperatingModeIndicator, this.statusLed);
-    }
-
-    // Check to see if this device has a status light.
     if(this.hints.nightVision) {
 
       this.accessory.getService(this.hap.Service.CameraOperatingMode)?.updateCharacteristic(this.hap.Characteristic.NightVision, this.nightVision);
@@ -1523,30 +1450,42 @@ export class ProtectCamera extends ProtectDevice {
       this.accessory.getServiceById(this.hap.Service.Lightbulb, ProtectReservedNames.LIGHTBULB_NIGHTVISION)?.
         updateCharacteristic(this.hap.Characteristic.Brightness, this.nightVisionBrightness);
     }
+  }
 
-    // Update the status indicator light switch.
+  // Push the status-indicator state from the camera's LED settings: the operating-mode indicator and the standalone status-LED switch. Driven by the ledSettings
+  // observer.
+  protected updateStatusIndicator(): void {
+
+    if(this.hints.ledStatus) {
+
+      this.accessory.getService(this.hap.Service.CameraOperatingMode)?.updateCharacteristic(this.hap.Characteristic.CameraOperatingModeIndicator, this.statusLed);
+    }
+
     if(this.hasFeature("Device.StatusLed.Switch")) {
 
       this.accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_STATUS_LED)?.
         updateCharacteristic(this.hap.Characteristic.On, this.statusLed);
     }
+  }
 
-    // Check for updates to the recording state, if we have the switches configured.
-    if(this.hasFeature("Nvr.Recording.Switch")) {
+  // Push the UniFi Protect recording-mode switch states from the camera's recording settings, when those switches are configured. Driven by the recordingSettings
+  // observer.
+  protected updateRecordingSwitches(): void {
 
-      // Update all the switch states.
-      for(const ufpRecordingSwitchType of
-        [ ProtectReservedNames.SWITCH_UFP_RECORDING_ALWAYS, ProtectReservedNames.SWITCH_UFP_RECORDING_DETECTIONS, ProtectReservedNames.SWITCH_UFP_RECORDING_NEVER ]) {
+    if(!this.hasFeature("Nvr.Recording.Switch")) {
 
-        const ufpRecordingSetting = ufpRecordingSwitchType.slice(ufpRecordingSwitchType.lastIndexOf(".") + 1);
-
-        // Update state based on the recording mode.
-        this.accessory.getServiceById(this.hap.Service.Switch, ufpRecordingSwitchType)?.
-          updateCharacteristic(this.hap.Characteristic.On, ufpRecordingSetting === this.ufp.recordingSettings.mode);
-      }
+      return;
     }
 
-    return true;
+    // Reflect the active recording mode across the three mutually-exclusive switches.
+    for(const ufpRecordingSwitchType of
+      [ ProtectReservedNames.SWITCH_UFP_RECORDING_ALWAYS, ProtectReservedNames.SWITCH_UFP_RECORDING_DETECTIONS, ProtectReservedNames.SWITCH_UFP_RECORDING_NEVER ]) {
+
+      const ufpRecordingSetting = ufpRecordingSwitchType.slice(ufpRecordingSwitchType.lastIndexOf(".") + 1);
+
+      this.accessory.getServiceById(this.hap.Service.Switch, ufpRecordingSwitchType)?.
+        updateCharacteristic(this.hap.Characteristic.On, ufpRecordingSetting === this.ufp.recordingSettings.mode);
+    }
   }
 
   // Find an RTSP configuration for a given target resolution.

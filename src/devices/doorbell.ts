@@ -2,15 +2,16 @@
  *
  * protect-doorbell.ts: Doorbell device class for UniFi Protect.
  */
+import type { Camera, DeepPartial, ProtectCameraLcdMessageConfig, ProtectChimeConfig } from "unifi-protect";
 import type { CharacteristicValue, PlatformAccessory, Service } from "homebridge";
-import type { DeepPartial, ProtectCameraConfig, ProtectCameraLcdMessageConfig, ProtectChimeConfig, ProtectEventAdd, ProtectEventPacket,
-  ProtectNvrConfig } from "unifi-protect";
-import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_DOORBELL_AUTHSENSOR_DURATION, PROTECT_DOORBELL_CHIME_DURATION_DIGITAL } from "../settings.js";
+import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_DOORBELL_CHIME_DURATION_DIGITAL } from "../settings.ts";
 import { sanitizeName, toStartCase } from "homebridge-plugin-utils";
-import { ProtectCamera } from "./protect-camera.js";
-import { ProtectCameraPackage } from "./protect-camera-package.js";
-import type { ProtectNvr } from "../protect-nvr.js";
-import { ProtectReservedNames } from "../protect-types.js";
+import { selectCamera, selectChimes } from "unifi-protect";
+import type { Nullable } from "homebridge-plugin-utils";
+import { ProtectCamera } from "./camera.ts";
+import { ProtectCameraPackage } from "./camera-package.ts";
+import type { ProtectNvr } from "../nvr.ts";
+import { ProtectReservedNames } from "../types.ts";
 
 // A doorbell message entry.
 interface MessageInterface {
@@ -27,6 +28,29 @@ export interface MessageSwitchInterface extends MessageInterface {
   state: boolean;
 }
 
+// Compute a doorbell's effective chime volume: the mean of the per-doorbell ring volume across every chime assigned to it (a chime can serve multiple doorbells), or 0
+// when none is assigned. Pure over config records so the read-through getter and the volume observer share one definition of "this doorbell's volume".
+const chimeVolumeFor = (chimes: readonly ProtectChimeConfig[], cameraId: string): number => {
+
+  let total = 0;
+  let count = 0;
+
+  for(const chime of chimes) {
+
+    const ring = chime.cameraIds.includes(cameraId) ? chime.ringSettings.find(setting => setting.cameraId === cameraId) : undefined;
+
+    if(!ring) {
+
+      continue;
+    }
+
+    total += ring.volume;
+    count++;
+  }
+
+  return count ? (total / count) : 0;
+};
+
 export class ProtectDoorbell extends ProtectCamera {
 
   private chimeDigitalDuration: number;
@@ -34,9 +58,9 @@ export class ProtectDoorbell extends ProtectCamera {
   private isMessagesEnabled: boolean;
   private isMessagesFromControllerEnabled: boolean;
 
-  constructor(nvr: ProtectNvr, device: ProtectCameraConfig, accessory: PlatformAccessory) {
+  constructor(nvr: ProtectNvr, accessory: PlatformAccessory, device: Camera) {
 
-    super(nvr, device, accessory);
+    super(nvr, accessory, device);
 
     /* eslint-disable @typescript-eslint/no-unnecessary-condition */
     this.chimeDigitalDuration ??= PROTECT_DOORBELL_CHIME_DURATION_DIGITAL;
@@ -92,10 +116,6 @@ export class ProtectDoorbell extends ProtectCamera {
     // Configure volume control, if enabled.
     this.configureProtectChimeLightbulb();
 
-    // Register our event handlers.
-    this.registerListener("updateEvent." + this.nvr.ufp.id, this.nvrEventHandler.bind(this));
-    this.registerListener("updateEvent.chime", this.chimeEventHandler.bind(this));
-
     return true;
   }
 
@@ -109,6 +129,50 @@ export class ProtectDoorbell extends ProtectCamera {
     }
 
     super.cleanup();
+  }
+
+  // This accessory already runs as a doorbell, so the inherited camera-to-doorbell reclassification reaction is a no-op for us and does not spawn.
+  protected override get isDoorbellAccessory(): boolean {
+
+    return true;
+  }
+
+  // Spawn the doorbell's narrow-selector observers on top of the camera's. The camera reactions (video, availability, night vision, status indicator, recording, tamper
+  // setting) are inherited through super; the doorbell adds its own device-state reactions. Doorbell-ring delivery and the package camera's motion are firehose
+  // occurrences the router handles, not observed here.
+  protected override spawnObservers(): void {
+
+    super.spawnObservers();
+
+    const cam = selectCamera(this.ufp.id);
+
+    // Reflect the controller's current LCD message across the doorbell's message switches.
+    this.observeState({ key: "doorbell.lcdMessage", selector: state => cam(state)?.lcdMessage, title: "the doorbell message" }, () => {
+
+      if(this.ufp.lcdMessage) {
+
+        this.updateLcdSwitch(this.ufp.lcdMessage);
+      }
+    });
+
+    // The package camera capability can be provisioned after adoption (a doorbell that was not fully provisioned when first adopted); bring the package camera into
+    // being the first time the controller reports it.
+    this.observeState({ key: "doorbell.hasPackageCamera", selector: state => cam(state)?.featureFlags.hasPackageCamera, title: "the package camera" }, () => {
+
+      if(!this.packageCamera && this.ufp.featureFlags.hasPackageCamera) {
+
+        this.configurePackageCamera();
+      }
+    });
+
+    // Reflect the active physical-chime mode across the chime switches.
+    this.observeState({ key: "doorbell.chimeDuration", selector: state => cam(state)?.chimeDuration, title: "the chime" }, () => this.updatePhysicalChimes());
+
+    // Restore the cross-device volume reactivity v4's chimeEventHandler provided: when this doorbell's effective chime volume changes on the controller (a ring-volume
+    // edit on any assigned chime), push it to the volume Lightbulb. The selector returns the computed volume, so the store's value dedup wakes this only on a real
+    // change, not on every unrelated chime patch. A blessed refinement over v4, which pushed one chime's volume, not the mean - now consistent with the onGet.
+    this.observeState({ key: "doorbell.chimeVolume", selector: state => chimeVolumeFor(selectChimes(state), this.ufp.id), title: "the chime volume" },
+      () => this.updateChimeVolume());
   }
 
   // Configure our access to the doorbell LCD screen.
@@ -231,9 +295,11 @@ export class ProtectDoorbell extends ProtectCamera {
       this.api.updatePlatformAccessories(this.platform.accessories);
     }
 
-    // Now create the package camera accessory. We do want to modify the camera name to ensure things look pretty.
-    this.packageCamera = new ProtectCameraPackage(this.nvr,
-      Object.assign({}, this.ufp, { name: (this.ufp.name ?? this.ufp.marketName) + " Package Camera"}), packageCameraAccessory);
+    // Now create the package camera accessory. The package camera is a HomeKit sub-view of this same physical device, so it shares our live camera projection rather
+    // than holding a synthesized config snapshot. Its display name is the parent's name plus a " Package Camera" suffix, single-sourced from that projection and applied
+    // by the package camera's own configureInfo override, then fanned out from this doorbell's configureInfo (firmware) and syncNameFromController (rename) so it tracks
+    // the parent live, replacing v4's synthesized-suffixed-config snapshot.
+    this.packageCamera = new ProtectCameraPackage(this.nvr, packageCameraAccessory, this.device);
 
     return true;
   }
@@ -285,18 +351,12 @@ export class ProtectDoorbell extends ProtectCamera {
           return;
         }
 
-        // Set our physical chime duration.
-        const newDevice = await this.nvr.ufpApi.updateDevice(this.ufp, { chimeDuration: this.getPhysicalChimeDuration(physicalChimeType) });
-
-        if(!newDevice) {
-
-          this.log.error("Unable to set the physical chime mode to %s.", chimeSetting);
+        // Push the new physical chime duration to the controller, reporting any failure through the shared command-error helper.
+        if(!(await this.runDeviceCommand("set the physical chime mode to " + chimeSetting,
+          () => this.device.update({ chimeDuration: this.getPhysicalChimeDuration(physicalChimeType) })))) {
 
           return;
         }
-
-        // Save our updated device context.
-        this.ufp = newDevice;
 
         // Update all the other physical chime switches.
         for(const otherChimeSwitch of [ ProtectReservedNames.SWITCH_DOORBELL_CHIME_NONE, ProtectReservedNames.SWITCH_DOORBELL_CHIME_MECHANICAL,
@@ -519,31 +579,78 @@ export class ProtectDoorbell extends ProtectCamera {
     return true;
   }
 
-  // Refresh doorbell-specific characteristics.
-  public updateDevice(): boolean {
+  // Refresh doorbell-specific characteristics. Composes the inherited camera updaters (through super) with the doorbell's physical-chime update; the package camera's
+  // availability is fanned out by the updateAvailability override below, which super.updateDevice() invokes.
+  public override updateDevice(): boolean {
 
     super.updateDevice();
 
-    // Update the package camera state, if we have one.
-    if(this.packageCamera) {
-
-      this.packageCamera.accessory.getService(this.hap.Service.MotionSensor)?.updateCharacteristic(this.hap.Characteristic.StatusActive, this.isOnline);
-    }
-
-    // Check for updates to the physical chime state, if we have the switches configured on doorbell that supports chimes.
-    if(this.ufp.featureFlags.hasChime && this.hasFeature("Doorbell.PhysicalChime")) {
-
-      // Update all the switch states.
-      for(const physicalChimeType of
-        [ ProtectReservedNames.SWITCH_DOORBELL_CHIME_NONE, ProtectReservedNames.SWITCH_DOORBELL_CHIME_MECHANICAL, ProtectReservedNames.SWITCH_DOORBELL_CHIME_DIGITAL ]) {
-
-        // Update state based on the physical chime mode.
-        this.accessory.getServiceById(this.hap.Service.Switch, physicalChimeType)?.
-          updateCharacteristic(this.hap.Characteristic.On, this.ufp.chimeDuration === this.getPhysicalChimeDuration(physicalChimeType));
-      }
-    }
+    this.updatePhysicalChimes();
 
     return true;
+  }
+
+  // Push the doorbell's availability projection: the inherited camera/light-sensor StatusActive plus the package camera's StatusActive, since the package camera is a
+  // HomeKit sub-view of this same physical device and shares its reachability. Driven (through super.updateDevice / the lifecycle-state observer) by a connection change.
+  protected override updateAvailability(): void {
+
+    super.updateAvailability();
+
+    this.packageCamera?.accessory.getService(this.hap.Service.MotionSensor)?.updateCharacteristic(this.hap.Characteristic.StatusActive, this.isReachable);
+  }
+
+  // Fan controller-health reachability out to the package camera as well as this accessory's own services. The package camera is a separate HomeKit accessory not held
+  // in the NVR's configuredDevices, so the NVR connection-observe loop only ever calls this on the doorbell; we forward the same reachability to the package camera here
+  // so a controller outage drives its StatusActive inactive too, matching the device-state fan-out in updateAvailability. We return the doorbell's own transition
+  // unchanged for the reachability-fanout diagnostics.
+  public override refreshReachability(): Nullable<{ now: boolean; was: boolean }> {
+
+    const transition = super.refreshReachability();
+
+    this.packageCamera?.accessory.getService(this.hap.Service.MotionSensor)?.updateCharacteristic(this.hap.Characteristic.StatusActive, this.isReachable);
+
+    return transition;
+  }
+
+  // Fan the information refresh out to the package-camera sub-view, exactly as updateAvailability and refreshReachability fan out reachability. The base firmware-version
+  // observer drives configureInfo on a controller firmware update; because the package camera shares this doorbell's physical device (and firmware) and observes nothing
+  // itself, we drive its own configureInfo here so its suffixed display name and AccessoryInformation firmware revision track the shared device without a restart.
+  // Null-safe for the construction window before configurePackageCamera runs - the package camera also refreshes its own info in its constructor.
+  public override configureInfo(): boolean {
+
+    const result = super.configureInfo();
+
+    this.packageCamera?.configureInfo();
+
+    return result;
+  }
+
+  // Fan a controller-side name change out to the package-camera sub-view - the fourth parent-to-sub-view fan-out alongside configureInfo, updateAvailability, and
+  // refreshReachability. The base name observer drives syncNameFromController on the doorbell; the package camera re-derives its own suffixed name from the shared
+  // projection in its configureInfo, so re-running it here keeps the sub-view's display name tracking parent renames live, without the package camera observing anything.
+  protected override syncNameFromController(): void {
+
+    super.syncNameFromController();
+
+    this.packageCamera?.configureInfo();
+  }
+
+  // Push the physical-chime switch states from the doorbell's current chime duration, when the doorbell has a chime and the switches are configured. Driven by the
+  // chimeDuration observer.
+  private updatePhysicalChimes(): void {
+
+    if(!this.ufp.featureFlags.hasChime || !this.hasFeature("Doorbell.PhysicalChime")) {
+
+      return;
+    }
+
+    // Reflect the active physical-chime mode across the three mutually-exclusive switches.
+    for(const physicalChimeType of
+      [ ProtectReservedNames.SWITCH_DOORBELL_CHIME_NONE, ProtectReservedNames.SWITCH_DOORBELL_CHIME_MECHANICAL, ProtectReservedNames.SWITCH_DOORBELL_CHIME_DIGITAL ]) {
+
+      this.accessory.getServiceById(this.hap.Service.Switch, physicalChimeType)?.
+        updateCharacteristic(this.hap.Characteristic.On, this.ufp.chimeDuration === this.getPhysicalChimeDuration(physicalChimeType));
+    }
   }
 
   // Return the physical chime duration, in milliseconds.
@@ -700,220 +807,53 @@ export class ProtectDoorbell extends ProtectCamera {
       delete payload.duration;
     }
 
-    // Push the update to the doorbell. If we have an empty payload, it means we're resetting the LCD message back to its default.
-    const newDevice = await this.nvr.ufpApi.updateDevice(this.ufp, { lcdMessage: payload });
-
-    if(!newDevice) {
-
-      this.log.error("Unable to set doorbell message. Please ensure this username has the Administrator role in UniFi Protect.");
-
-      return false;
-    }
-
-    // Set our updated device configuration.
-    this.ufp = newDevice;
-
-    return true;
+    // Push the update to the doorbell, reporting any failure through the shared command-error helper. An empty payload resets the LCD message back to its default.
+    return this.runDeviceCommand("set the doorbell message", () => this.device.update({ lcdMessage: payload }));
   }
 
-  // Handle doorbell-related events.
-  protected eventHandler(packet: ProtectEventPacket): void {
-
-    const payload = packet.payload as DeepPartial<ProtectCameraConfig>;
-
-    super.eventHandler(packet);
-
-    // Update the package camera, if we have one. If the package camera capability has appeared since initial configuration (e.g. a newly adopted doorbell that wasn't
-    // fully provisioned yet), create it now.
-    if(this.packageCamera) {
-
-      this.packageCamera.ufp = Object.assign({}, this.ufp, { name: (this.ufp.name ?? this.ufp.marketName) + " Package Camera"}) as ProtectCameraConfig;
-    } else if(payload.featureFlags && this.ufp.featureFlags.hasPackageCamera) {
-
-      this.configurePackageCamera();
-    }
-
-    // If we have a package camera that has HKSV enabled, we'll trigger its motion sensor here. Why? HKSV requires a motion sensor attached to that camera accessory,
-    // and since a package camera is actually a secondary camera on a device with a single motion sensor, we use that motion sensor to trigger the package camera's HKSV
-    // event recording. Gated on !hbupBootstrap so bootstrap-refresh payloads (which always carry lastMotion as static state) do not re-trigger the package camera's
-    // motion event every refresh cycle.
-    if(!packet.header.hbupBootstrap && payload.lastMotion && this.packageCamera?.stream?.hksv?.isRecording) {
-
-      this.nvr.events.motionEventHandler(this.packageCamera);
-    }
-
-    // Process LCD message events.
-    if(payload.lcdMessage) {
-
-      this.updateLcdSwitch(payload.lcdMessage);
-    }
-  }
-
-  // Handle add-related events from the controller.
-  protected addEventHandler(packet: ProtectEventPacket): void {
-
-    const payload = packet.payload as ProtectEventAdd;
-
-    super.addEventHandler(packet);
-
-    // Process any authentication events.
-    if(payload.type && [ "fingerprintIdentified", "nfcCardScanned" ].includes(payload.type)) {
-
-      // Clear out the contact sensor timer.
-      this.clearTimer("contactAuth");
-
-      // Grab the service, if we've configured it.
-      const service = this.accessory.getServiceById(this.hap.Service.ContactSensor, ProtectReservedNames.CONTACT_AUTHSENSOR);
-
-      // We've failed to authenticate, we're done.
-      if(!payload.metadata?.fingerprint?.ulpId && !payload.metadata?.nfc?.ulpId) {
-
-        service?.updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.hap.Characteristic.ContactSensorState.CONTACT_DETECTED);
-
-        return;
-      }
-
-      // We've successfully authenticated either a fingerprint or an NFC card.
-      service?.updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.hap.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED);
-
-      // Publish to MQTT, if the user has configured it.
-      const authInfo: Record<string, string> = { type: "fingerprint" };
-
-      // We publish a bit more information if we have an NFC card.
-      if(payload.type === "nfcCardScanned") {
-
-        authInfo.id = payload.metadata.nfc?.nfcId ?? "";
-        authInfo.type = "nfc";
-      }
-
-      this.publish("authenticate", JSON.stringify(authInfo));
-
-      // Reset our contact sensor after our auth sensor duration.
-      this.registerTimeout("contactAuth",
-        () => service?.updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.hap.Characteristic.ContactSensorState.CONTACT_DETECTED),
-        PROTECT_DOORBELL_AUTHSENSOR_DURATION);
-    }
-  }
-
-  // Handle doorbell saved message updates on the Protect controller.
-  private nvrEventHandler(packet: ProtectEventPacket): void {
-
-    const payload = packet.payload as DeepPartial<ProtectNvrConfig>;
-
-    // Process doorbell message save events.
-    if(payload.doorbellSettings) {
-
-      // We need to proactively update the allMessages object. This feels like a UniFi Protect bug, but all we can do is work around it.
-      if(payload.doorbellSettings.customMessages && this.nvr.ufp.doorbellSettings) {
-
-        const builtinMessages = this.nvr.ufp.doorbellSettings.allMessages.filter(x => x.type !== "CUSTOM_MESSAGE");
-        const customMessages = payload.doorbellSettings.customMessages.map(x => ({ text: x, type: "CUSTOM_MESSAGE" }));
-
-        this.nvr.ufp.doorbellSettings.allMessages = builtinMessages.concat(customMessages);
-      }
-
-      this.configureDoorbellLcdSwitch();
-    }
-  }
-
-  // Handle chime volume updates on the Protect controller.
-  private chimeEventHandler(packet: ProtectEventPacket): void {
-
-    const payload = packet.payload as DeepPartial<ProtectChimeConfig>;
-
-    // We're only interested in events for this Protect controller and this doorbell.
-    if(!this.nvr.ufpApi.bootstrap || (payload.nvrMac !== this.nvr.ufp.mac) || !payload.cameraIds?.includes(this.ufp.id) || !("ringSettings" in payload)) {
-
-      return;
-    }
-
-    const chime = this.nvr.ufpApi.bootstrap.chimes.find(device => packet.header.id === device.id);
-
-    if(chime) {
-
-      this.nvr.ufpApi.bootstrap.chimes = [ ...this.nvr.ufpApi.bootstrap.chimes.filter(device => payload.id !== device.id), Object.assign(chime, payload) ];
-
-      const ring = payload.ringSettings?.find(tone => tone.cameraId === this.ufp.id);
-
-      if(ring && ("volume" in ring)) {
-
-        const service = this.accessory.getServiceById(this.hap.Service.Lightbulb, ProtectReservedNames.LIGHTBULB_DOORBELL_VOLUME);
-
-        service?.updateCharacteristic(this.hap.Characteristic.Brightness, ring.volume ?? 0);
-        service?.updateCharacteristic(this.hap.Characteristic.On, (ring.volume ?? 0) > 0);
-      }
-    }
-  }
-
+  // This doorbell's effective chime volume, read through the live v5 chime projections. We delegate to the shared chimeVolumeFor helper over selectChimes of the current
+  // snapshot - the identical input the volume observer reduces - so the read-through getter and the reactive push share one definition of "this doorbell's volume".
+  // selectChimes is always an array post-connect, so the old bootstrap-missing guard is gone.
   private get chimeVolume(): number {
 
-    let volume = 0;
-    let chimes = 0;
-
-    // If the bootstrap is missing, we're done.
-    if(!this.nvr.ufpApi.bootstrap) {
-
-      return 0;
-    }
-
-    for(const chime of this.nvr.ufpApi.bootstrap.chimes.filter(chime => chime.cameraIds.includes(this.ufp.id))) {
-
-      const ring = chime.ringSettings.find(ring => ring.cameraId === this.ufp.id);
-
-      if(!ring) {
-
-        continue;
-      }
-
-      volume += ring.volume;
-      chimes++;
-    }
-
-    return chimes ? (volume / chimes) : 0;
+    return chimeVolumeFor(selectChimes(this.nvr.client.state.snapshot()), this.ufp.id);
   }
 
   private async setChimeVolume(value: number): Promise<void> {
 
-    // If the bootstrap is missing, we're done.
-    if(!this.nvr.ufpApi.bootstrap) {
-
-      return;
-    }
-
-    // Ensure we don't have any negative values.
+    // Clamp to a non-negative volume.
     value = Math.max(value, 0);
 
-    // Find all the chimes configured for this doorbell so we can sync their volume.
-    for(const chime of this.nvr.ufpApi.bootstrap.chimes.filter(chime => chime.cameraIds.includes(this.ufp.id))) {
+    // A chime can be assigned to multiple doorbells, so update the ring entry for THIS doorbell on every chime that serves it. Write-through: each update PATCHes the
+    // controller and the change is reflected once the reducer's stream delivers it - we no longer fold the response back into local state (v5 state is immutable and
+    // single-sourced in the reducer), nor mutate the ring in place. We send a single-entry ringSettings array carrying only the modified ring, matching v4's payload.
+    for(const chime of this.nvr.client.chimes.filter(chime => chime.config.cameraIds.includes(this.ufp.id))) {
 
-      // Given that chimes can be assigned to multiple doorbells, find the specific entry for this doorbell.
-      const ring = chime.ringSettings.find(ring => ring.cameraId === this.ufp.id);
+      const ring = chime.config.ringSettings.find(setting => setting.cameraId === this.ufp.id);
 
       if(!ring) {
 
         continue;
       }
 
-      // Set the volume and update the chime device.
-      ring.volume = value;
-
       // eslint-disable-next-line no-await-in-loop
-      const newDevice = await this.nvr.ufpApi.updateDevice(chime, { ringSettings: [ring] });
-
-      if(!newDevice) {
-
-        this.log.error("Unable to turn the volume off. Please ensure this username has the Administrator role in UniFi Protect.");
+      if(!(await this.runDeviceCommand("set the chime volume", () => chime.update({ ringSettings: [{ ...ring, volume: value }] })))) {
 
         return;
       }
-
-      // Set the context to our updated device configuration.
-      const newChimes = this.nvr.ufpApi.bootstrap.chimes.filter(newChime => newChime.mac !== chime.mac);
-
-      newChimes.push(newDevice);
-      this.nvr.ufpApi.bootstrap.chimes = newChimes;
     }
 
     this.publish("chime", value.toString());
+  }
+
+  // Push the chime-volume projection onto the doorbell's volume Lightbulb. Shares the read path (chimeVolume / chimeVolumeFor) with the onGet handlers, so the displayed
+  // volume and the live value never disagree. Idempotent - HomeKit coalesces an unchanged write.
+  private updateChimeVolume(): void {
+
+    const volume = this.chimeVolume;
+    const service = this.accessory.getServiceById(this.hap.Service.Lightbulb, ProtectReservedNames.LIGHTBULB_DOORBELL_VOLUME);
+
+    service?.updateCharacteristic(this.hap.Characteristic.Brightness, volume);
+    service?.updateCharacteristic(this.hap.Characteristic.On, volume > 0);
   }
 }

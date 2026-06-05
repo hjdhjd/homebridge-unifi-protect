@@ -7,11 +7,11 @@
  * deeply appreciated.
  */
 import type { API, CameraRecordingConfiguration, CameraRecordingDelegate, HAP, PlatformAccessory, RecordingPacket } from "homebridge";
-import { BackpressureWriter, FfmpegRecordingProcess, type HomebridgePluginLogging, type Nullable, formatBps } from "homebridge-plugin-utils";
-import { PROTECT_HKSV_TIMEOUT, PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION } from "./settings.js";
-import type { ProtectCamera, RtspEntry } from "./devices/index.js";
-import { HDSProtocolSpecificErrorReason } from "homebridge";
-import { ProtectTimeshiftBuffer } from "./protect-timeshift.js";
+import { BackpressureWriter, FfmpegRecordingProcess, HDSProtocolSpecificErrorReason, type HomebridgePluginLogging, type Nullable, formatBps }
+  from "homebridge-plugin-utils";
+import { PROTECT_HKSV_TIMEOUT, PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION } from "./settings.ts";
+import type { ProtectCamera, RtspEntry } from "./devices/index.ts";
+import { ProtectTimeshiftBuffer } from "./timeshift.ts";
 import { setTimeout as delay } from "node:timers/promises";
 
 // HKSV end-of-stream marker. A single zero byte yielded with `isLast=true` signals the end of a recording stream to HomeKit. Module-scoped so we allocate once
@@ -169,7 +169,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     // If HKSV is disabled, the camera is offline, the buffer isn't full, or transmission setup fails, we're done. The timeshift.time check covers both "timeshift
     // never started" (time is zero) and "timeshift started but prebuffer not yet filled". The trailing !this.ffmpegStream is load-bearing for TypeScript narrowing
     // at subsequent direct accesses (segmentGenerator invocation)...TypeScript does not track field assignments across method calls.
-    if(this.accessory.context.hksvRecordingDisabled || this.timeshift.isRestarting || !this.protectCamera.isOnline ||
+    if(this.accessory.context.hksvRecordingDisabled || this.timeshift.isRestarting || !this.protectCamera.isReachable ||
       (this.timeshift.time < this.timeshift.configuredDuration) || !this.startTransmitting() || !this.ffmpegStream) {
 
       // Stop transmitting.
@@ -419,12 +419,12 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     // Desired state is "running with the correct rtspEntry" iff we have a configuration, the camera is online, and HomeKit has asked us to record. The local
     // binding of recordingConfig gives TypeScript a non-null reference to work with (instance field narrowing does not survive async boundaries).
     const recordingConfig = this.recordingConfig;
-    const shouldRun = this._isRecording && (recordingConfig !== undefined) && this.protectCamera.isOnline;
+    const shouldRun = this._isRecording && (recordingConfig !== undefined) && this.protectCamera.isReachable;
 
     // Observability for the "user asked us to record but the camera is offline" case. isDeferredOffline is derived purely from current inputs (single source of
     // truth); comparing against the previous observation detects the transition edge so we log exactly once per offline episode. The flag is updated after the
     // check and is naturally reset by any reconcile where we are no longer deferred (e.g. recording succeeds, user disables HKSV, camera comes back online).
-    const isDeferredOffline = this._isRecording && !this.protectCamera.isOnline;
+    const isDeferredOffline = this._isRecording && !this.protectCamera.isReachable;
 
     if(isDeferredOffline && !this.wasDeferredOffline) {
 
@@ -718,7 +718,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     const recordingDuration = Date.now() - this.pacingStartTime;
 
     if((reason !== undefined) && (reason !== HDSProtocolSpecificErrorReason.NORMAL) && (recordingDuration >= 100) &&
-      !this.timeshift.isRestarting && this.protectCamera.isOnline && (this.protectCamera.nvr.phase === "running") &&
+      !this.timeshift.isRestarting && this.protectCamera.isReachable && (this.protectCamera.nvr.phase === "running") &&
       (this.timeshift.time >= (this.recordingConfig?.prebufferLength ?? 0))) {
 
       const telemetry = this.protectCamera.hasFeature("Debug.Video.HKSV.Telemetry") ?

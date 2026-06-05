@@ -4,9 +4,9 @@
  */
 import type { CharacteristicValue, PlatformAccessory } from "homebridge";
 import { acquireService, validService } from "homebridge-plugin-utils";
-import { ProtectBase } from "./protect-device.js";
-import type { ProtectNvr } from "../protect-nvr.js";
-import { ProtectReservedNames } from "../protect-types.js";
+import { ProtectBase } from "./device.ts";
+import type { ProtectNvr } from "../nvr.ts";
+import { ProtectReservedNames } from "../types.ts";
 
 export class ProtectSecuritySystem extends ProtectBase {
 
@@ -77,13 +77,13 @@ export class ProtectSecuritySystem extends ProtectBase {
   private configureMqtt(): boolean {
 
     // Get the current status of the security system.
-    this.nvr.mqtt?.subscribeGet(this.nvr.ufp.mac, "securitysystem", "security system state", () => {
+    this.subscribeGet("securitysystem", "security system state", () => {
 
       return this.currentSecuritySystemState;
     });
 
     // Set the security system state.
-    this.nvr.mqtt?.subscribeSet(this.nvr.ufp.mac, "securitysystem", "security system state", (value: string) => {
+    this.subscribeSet("securitysystem", "security system state", (value: string) => {
 
       const SecuritySystemCurrentState = this.hap.Characteristic.SecuritySystemCurrentState;
       const SecuritySystemTargetState = this.hap.Characteristic.SecuritySystemTargetState;
@@ -262,9 +262,10 @@ export class ProtectSecuritySystem extends ProtectBase {
 
     // We always have a disarmed state available to us.
     const availableSecurityStates = [this.hap.Characteristic.SecuritySystemTargetState.DISARM];
+    const liveviews = this.nvr.client.liveviews;
 
     // No liveviews configured - we're done.
-    if(!this.nvr.ufpApi.bootstrap?.liveviews) {
+    if(!liveviews.length) {
 
       return false;
     }
@@ -276,7 +277,7 @@ export class ProtectSecuritySystem extends ProtectBase {
     ]) {
 
       // If we don't have this liveview configured, don't add it to the property list for the security system accessory.
-      if(!this.nvr.ufpApi.bootstrap.liveviews.some(x => x.name.toLowerCase() === securityState[0])) {
+      if(!liveviews.some(x => x.name.toLowerCase() === securityState[0])) {
 
         continue;
       }
@@ -315,14 +316,14 @@ export class ProtectSecuritySystem extends ProtectBase {
   // Change the security system state, and enable or disable motion detection accordingly.
   private setSecurityState(value: CharacteristicValue): void {
 
-    const liveviews = this.nvr.ufpApi.bootstrap?.liveviews;
+    const liveviews = this.nvr.client.liveviews;
     let newState: CharacteristicValue;
     const SecuritySystemCurrentState = this.hap.Characteristic.SecuritySystemCurrentState;
     const SecuritySystemTargetState = this.hap.Characteristic.SecuritySystemTargetState;
     let viewScene = "";
 
     // If we don't have any liveviews, there's nothing for us to do.
-    if(!liveviews) {
+    if(!liveviews.length) {
 
       return;
     }
@@ -434,7 +435,7 @@ export class ProtectSecuritySystem extends ProtectBase {
     }
 
     // Publish to MQTT, if configured.
-    this.nvr.mqtt?.publish(this.nvr.ufp.mac, "securitysystem", this.currentSecuritySystemState);
+    this.publish("securitysystem", this.currentSecuritySystemState);
   }
 
   // Set the security alarm.
@@ -457,6 +458,6 @@ export class ProtectSecuritySystem extends ProtectBase {
     this.accessory.getService(this.hap.Service.Switch)?.updateCharacteristic(this.hap.Characteristic.On, this.isAlarmTriggered);
 
     // Publish to MQTT, if configured.
-    this.nvr.mqtt?.publish(this.nvr.ufp.mac, "securitysystem", this.currentSecuritySystemState);
+    this.publish("securitysystem", this.currentSecuritySystemState);
   }
 }

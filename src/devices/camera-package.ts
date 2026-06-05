@@ -4,14 +4,38 @@
  */
 import type { CharacteristicValue, Resolution } from "homebridge";
 import { type Nullable , retry} from "homebridge-plugin-utils";
-import { ProtectCamera, type RtspEntry } from "./protect-camera.js";
-import { ProtectReservedNames } from "../protect-types.js";
-import { ProtectStreamingDelegate } from "../protect-stream.js";
+import { ProtectCamera, type RtspEntry } from "./camera.ts";
+import { ProtectReservedNames } from "../types.ts";
+import { ProtectStreamingDelegate } from "../stream.ts";
 
 // Package camera class. Extends ProtectCamera and represents the secondary camera channel on Protect doorbells that ship with one.
 export class ProtectCameraPackage extends ProtectCamera {
 
   private flashlightState?: boolean;
+
+  // The package camera is a HomeKit sub-view of its parent doorbell's shared camera projection, not a Protect device of its own: it has no independent state to observe,
+  // its availability, information, and name are fanned out by the parent doorbell, and its motion is delivered by the firehose router when the parent fires. So it spawns
+  // no observers - in particular it must not inherit the camera reactions (it would re-derive the parent's video stream and could trip the doorbell reclassification) nor
+  // the base name-sync observer, which would write the bare parent name; its own configureInfo override applies the suffixed name instead (see below).
+  protected override spawnObservers(): void {
+
+    return;
+  }
+
+  // The package camera's display name is the parent's name plus a " Package Camera" suffix, single-sourced from the shared live parent projection. v4 synthesized a
+  // pre-suffixed ufp.name for the sub-view; the v5 shared-projection move reads the parent's bare name, so we re-add the suffix here when name-sync is on, restoring the
+  // v4 behavior the migration regressed (the base configureInfo would otherwise overwrite the suffix with the bare parent name). With name-sync off we leave the
+  // creation-time name, exactly as v4 did. The parent doorbell fans this out from its configureInfo (on a firmware change) and syncNameFromController (on a rename), so
+  // the sub-view's name and firmware track the parent live, without the package camera observing anything itself.
+  public override configureInfo(): boolean {
+
+    if(this.hints.syncName) {
+
+      this.accessoryName = (this.ufp.name ?? this.ufp.marketName) + " Package Camera";
+    }
+
+    return this.setInfo(this.accessory, this.ufp);
+  }
 
   // Configure the package camera.
   protected configureDevice(): boolean {
@@ -153,24 +177,21 @@ export class ProtectCameraPackage extends ProtectCamera {
       // Utility function to activate the package camera's flashlight.
       const activateFlashlight = async (): Promise<boolean> => {
 
-        // Retry the heartbeat up to three times before giving up.
-        this.flashlightState = await retry(async (): Promise<boolean> => {
+        // The flashlight is momentary, so this heartbeat re-issues the pulse on a timer. We assume the pulse lands and unset only if every attempt fails.
+        // turnOnFlashlight throws on a failed pulse (a non-2xx, or an unreachable controller), so a failure drives a re-attempt directly - reachability is the
+        // command's to report, not a second check here. We retry up to three times at a fixed one-second cadence, swallow a persistent failure to a reflected-off
+        // switch (the timer re-issues), and bind this.signal so a teardown aborts an in-flight backoff and pulse.
+        let lit = true;
 
-          if(!this.isOnline) {
+        try {
 
-            return false;
-          }
+          await retry((signal) => this.device.turnOnFlashlight({ signal }), { attempts: 3, backoff: () => 1000, signal: this.signal });
+        } catch {
 
-          const response = await this.nvr.ufpApi.retrieve(this.nvr.ufpApi.getApiEndpoint(this.ufp.modelKey) + "/" + this.ufp.id + "/turnon-flashlight",
-            { method: "POST" });
+          lit = false;
+        }
 
-          if(!this.nvr.ufpApi.responseOk(response?.statusCode)) {
-
-            return false;
-          }
-
-          return true;
-        }, 1000, 3);
+        this.flashlightState = lit;
 
         // Update the sensor.
         service.updateCharacteristic(this.hap.Characteristic.On, this.flashlightState);

@@ -2,30 +2,52 @@
  *
  * protect-sensor.ts: Sensor device class for UniFi Protect.
  */
-import type { DeepPartial, ProtectEventPacket, ProtectSensorConfig } from "unifi-protect";
 import type { PlatformAccessory, Service } from "homebridge";
-import { ProtectDevice } from "./protect-device.js";
-import type { ProtectNvr } from "../protect-nvr.js";
-import { ProtectReservedNames } from "../protect-types.js";
+import type { ProtectSensorConfig, Sensor } from "unifi-protect";
+import { ProtectDevice } from "./device.ts";
+import type { ProtectNvr } from "../nvr.ts";
+import { ProtectReservedNames } from "../types.ts";
+import { selectSensor } from "unifi-protect";
+
+/**
+ * Map a sensor's tampering timestamp to its HomeKit StatusTampered state: tampered when the controller has recorded a tampering time, clear when it has not. The single
+ * source of truth is the projection's tamperingDetectedAt; this pure mapping is shared by the StatusTampered onGet, the initial write, and the reactive tamper observer,
+ * so the read-through and the push can never disagree on what "tampered" means.
+ *
+ * @param tamperingDetectedAt - The sensor's tamperingDetectedAt: the epoch-ms time tampering was last detected, or null when none has been.
+ *
+ * @returns true when the sensor should report tampering to HomeKit.
+ */
+export function sensorTamperState(tamperingDetectedAt: number | null): boolean {
+
+  return tamperingDetectedAt !== null;
+}
 
 export class ProtectSensor extends ProtectDevice {
 
   private enabledSensors: string[];
   private lastAlarm?: boolean;
   private lastLeak: Record<string, boolean | undefined>;
-  public ufp: ProtectSensorConfig;
+  // Narrow the inherited projection handle to the sensor projection so the read-through config getter resolves to ProtectSensorConfig.
+  declare protected readonly device: Sensor;
 
   // Create an instance.
-  constructor(nvr: ProtectNvr, device: ProtectSensorConfig, accessory: PlatformAccessory) {
+  constructor(nvr: ProtectNvr, accessory: PlatformAccessory, device: Sensor) {
 
-    super(nvr, accessory);
+    super(nvr, accessory, device);
 
     this.enabledSensors = [];
     this.lastLeak = {};
-    this.ufp = device;
 
     this.configureHints();
     this.configureDevice();
+    this.spawnObservers();
+  }
+
+  // Read-through config, narrowed to the sensor projection's config record.
+  public override get ufp(): Readonly<ProtectSensorConfig> {
+
+    return this.device.config;
   }
 
   // Initialize and configure the sensor accessory for HomeKit.
@@ -50,9 +72,6 @@ export class ProtectSensor extends ProtectDevice {
 
     // Configure MQTT services.
     this.configureMqtt();
-
-    // Listen for events.
-    this.registerListener("updateEvent." + this.ufp.id, this.eventHandler.bind(this));
 
     return true;
   }
@@ -433,16 +452,16 @@ export class ProtectSensor extends ProtectDevice {
   private configureStateCharacteristics(service: Service): boolean {
 
     // Retrieve the current connection status when requested.
-    service.getCharacteristic(this.hap.Characteristic.StatusActive).onGet(() => this.isOnline);
+    service.getCharacteristic(this.hap.Characteristic.StatusActive).onGet(() => this.isReachable);
 
     // Update the current connection status.
-    service.updateCharacteristic(this.hap.Characteristic.StatusActive, this.isOnline);
+    service.updateCharacteristic(this.hap.Characteristic.StatusActive, this.isReachable);
 
     // Retrieve the current tamper status when requested.
-    service.getCharacteristic(this.hap.Characteristic.StatusTampered).onGet(() => this.ufp.tamperingDetectedAt !== null);
+    service.getCharacteristic(this.hap.Characteristic.StatusTampered).onGet(() => sensorTamperState(this.ufp.tamperingDetectedAt));
 
     // Update the tamper status.
-    service.updateCharacteristic(this.hap.Characteristic.StatusTampered, this.ufp.tamperingDetectedAt !== null);
+    service.updateCharacteristic(this.hap.Characteristic.StatusTampered, sensorTamperState(this.ufp.tamperingDetectedAt));
 
     return true;
   }
@@ -525,18 +544,50 @@ export class ProtectSensor extends ProtectDevice {
     this.subscribeGet("temperature", "temperature", () => this.temperature.toString());
   }
 
-  // Handle sensor-related events.
-  private eventHandler(packet: ProtectEventPacket): void {
+  // Spawn the sensor's narrow-selector observers (Fork B). super spawns the universal name-sync observer; the sensor adds three reactions, each waking only on its own
+  // slice through the store's reference dedup.
+  protected override spawnObservers(): void {
 
-    const payload = packet.payload as DeepPartial<ProtectSensorConfig>;
+    super.spawnObservers();
 
-    // Gated on !hbupBootstrap so bootstrap-refresh payloads (which always carry motionDetectedAt as static state) do not re-trigger motion every refresh cycle.
-    if(!packet.header.hbupBootstrap && payload.motionDetectedAt) {
+    const sensor = selectSensor(this.ufp.id);
 
-      this.nvr.events.motionEventHandler(this);
+    // Sensor motion is a device-state field, not a firehose occurrence: the controller surfaces a UP Sense motion as a fresh motionDetectedAt timestamp on the sensor
+    // record, with no `event`-channel counterpart (v5's firehose motionDetected is camera-only). So the single source for "did this sensor see motion?" is the timestamp
+    // itself, and observing it is the honest single-source reaction - the selector's dedup is the diff, with no held #prev snapshot and nothing re-synthesized. We
+    // deliver only on a truthy timestamp (a real detection), never on a clear back to null.
+    this.observeState({ key: "sensor.motionDetectedAt", selector: state => sensor(state)?.motionDetectedAt, title: "motion detection" }, motionDetectedAt => {
+
+      if(motionDetectedAt) {
+
+        this.nvr.events.motionEventHandler(this);
+      }
+    });
+
+    // The reactive tamper push: when the controller's tamperingDetectedAt changes, re-write StatusTampered across every state-bearing sensor service. The onGet already
+    // reads through, so this is purely the push that keeps HomeKit current between reads.
+    this.observeState({ key: "sensor.tamperingDetectedAt", selector: state => sensor(state)?.tamperingDetectedAt, title: "tamper detection" },
+      () => this.updateTamperState());
+
+    // The remaining sensor reactions are a full service reconciliation (battery, the per-mode sensor services, the status indicator, StatusActive). They key off many
+    // settings sub-objects and live stat values, so we observe the whole sensor record and re-derive - matching v4's refresh-on-any-change, but now structurally silent
+    // when nothing changed (the store's reference dedup). Decomposing this into per-service observers, which would also retire the idempotent StatusTampered re-apply the
+    // dedicated tamper observer above already owns, is a tracked follow-up.
+    this.observeState({ key: "sensor.config", selector: sensor, title: "sensor settings" }, () => this.updateDevice());
+  }
+
+  // Push the tamper state across every sensor service that carries StatusTampered, mirroring how refreshReachability fans StatusActive out. One read of the projection
+  // field, one write per state-bearing service; no second copy of "are we tampered?" is held anywhere.
+  private updateTamperState(): void {
+
+    const tampered = sensorTamperState(this.ufp.tamperingDetectedAt);
+
+    for(const service of this.accessory.services) {
+
+      if(service.testCharacteristic(this.hap.Characteristic.StatusTampered)) {
+
+        service.updateCharacteristic(this.hap.Characteristic.StatusTampered, tampered);
+      }
     }
-
-    // Process it.
-    this.updateDevice();
   }
 }

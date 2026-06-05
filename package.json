@@ -75,23 +75,25 @@
     "prelint": "npm run build-ui",
     "lint": "eslint --max-warnings=${ESLINT_MAX_WARNINGS:-\"-1\"} eslint.config.mjs src homebridge-ui/*.js homebridge-ui/public/**.mjs",
     "postpublish": "npm run clean",
-    "prepublishOnly": "npm run lint && npm run build"
+    "prepublishOnly": "npm run lint && npm run build",
+    "test": "node --strip-types --test --experimental-test-coverage --test-timeout=15000 \"src/**/*.test.ts\"",
+    "test:watch": "node --strip-types --test --watch \"src/**/*.test.ts\""
   },
   "main": "dist/index.js",
   "dependencies": {
-    "@homebridge/plugin-ui-utils": "2.2.3",
+    "@homebridge/plugin-ui-utils": "2.2.4",
     "ffmpeg-for-homebridge": "2.2.2",
-    "homebridge-plugin-utils": "1.35.0",
-    "undici": "8.0.2",
-    "unifi-protect": "4.29.0"
+    "homebridge-plugin-utils": "file:../homebridge-plugin-utils",
+    "undici": "8.3.0",
+    "unifi-protect": "file:../unifi-protect"
   },
   "devDependencies": {
     "@stylistic/eslint-plugin": "5.10.0",
-    "@types/node": "25.5.2",
+    "@types/node": "25.9.1",
     "eslint": "9.39.2",
-    "homebridge": "1.11.4",
+    "homebridge": "2.0.2",
     "shx": "0.4.0",
     "typescript": "5.9.3",
-    "typescript-eslint": "8.58.1"
+    "typescript-eslint": "8.60.0"
   }
 }

@@ -2,11 +2,24 @@
  *
  * protect-snapshot.ts: UniFi Protect HomeKit snapshot class.
  */
-import { FfmpegExec, type HomebridgePluginLogging, type Nullable, runWithTimeout } from "homebridge-plugin-utils";
-import { PROTECT_LIVESTREAM_API_IDR_INTERVAL, PROTECT_SNAPSHOT_CACHE_MAXAGE, PROTECT_SNAPSHOT_TIMEOUT } from "./settings.js";
-import type { ProtectCamera } from "./devices/index.js";
-import type { ProtectNvr } from "./protect-nvr.js";
+import { FfmpegExec, runWithAbort } from "homebridge-plugin-utils";
+import type { HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
+import { PROTECT_LIVESTREAM_API_IDR_INTERVAL, PROTECT_SNAPSHOT_CACHE_MAXAGE, PROTECT_SNAPSHOT_TIMEOUT } from "./settings.ts";
+import type { ProtectCamera } from "./devices/index.ts";
+import type { SnapshotOptions } from "unifi-protect";
 import type { SnapshotRequest } from "homebridge";
+
+// A snapshot-source FFmpeg pipeline whose non-zero exits are routine, not exceptional: each source (timeshift, RTSP) is attempted in turn and a miss simply falls through
+// to the next source, so a failed exit is expected. We override the base class's ERROR teardown dump - which would otherwise spam the log on every routine miss - with a
+// single debug line, restoring the deliberate suppression the pre-v5 `logErrors: false` constructor argument provided; the v2 base exposes logFailedTeardown as exactly
+// this hook for known-benign failure shapes. The separate crop pipeline keeps the default ERROR logging, since a crop failure is genuinely noteworthy.
+class SnapshotFfmpegExec extends FfmpegExec {
+
+  protected override logFailedTeardown(): void {
+
+    this.log.debug("A snapshot source FFmpeg pipeline exited without producing an image; falling through to the next source.");
+  }
+}
 
 // Camera snapshot class for Protect.
 export class ProtectSnapshot {
@@ -14,14 +27,12 @@ export class ProtectSnapshot {
   private _cachedSnapshot: Nullable<{ image: Buffer; time: number }>;
   private _snapshotInFlight: Nullable<Promise<Nullable<Buffer>>>;
   public readonly log: HomebridgePluginLogging;
-  private readonly nvr: ProtectNvr;
   public readonly protectCamera: ProtectCamera;
 
   // Create an instance of a HomeKit streaming delegate.
   constructor(protectCamera: ProtectCamera) {
 
     this.log = protectCamera.log;
-    this.nvr = protectCamera.nvr;
     this.protectCamera = protectCamera;
     this._cachedSnapshot = null;
     this._snapshotInFlight = null;
@@ -30,8 +41,9 @@ export class ProtectSnapshot {
   // Return a snapshot for use by HomeKit. Concurrent requests for the same camera are coalesced into a single acquisition to avoid spawning duplicate FFmpeg pipelines.
   public async getSnapshot(request?: SnapshotRequest): Promise<Nullable<Buffer>> {
 
-    // If we aren't connected, we're done.
-    if(!this.protectCamera.ufpApi.bootstrap || this.protectCamera.ufpApi.isThrottled || !this.protectCamera.isOnline) {
+    // If we aren't connected, we're done. Reachability is the single honest fact here: it composes the controller's connection health with this camera's online state, so
+    // a pre-bootstrap or throttled controller already reads as unreachable (its connection is not healthy). One check replaces the former bootstrap/throttle/online trio.
+    if(!this.protectCamera.isReachable) {
 
       return null;
     }
@@ -72,9 +84,12 @@ export class ProtectSnapshot {
     //
     // The exception to this is package cameras - we try the Protect API before the RTSP stream there because the lower frame rate of the camera causes a lengthier
     // response time.
-    const snapshotPromise = (async (): Promise<Nullable<Buffer>> => {
+    //
+    // We run the whole acquisition under an abort signal so the timeout below actually cancels in-flight work - the controller snapshot request and every FFmpeg pipeline
+    // receive the same signal and tear down the moment the deadline lapses, rather than leaking until they complete on their own.
+    const snapshot = await runWithAbort(async (signal): Promise<Nullable<Buffer>> => {
 
-      let snapAttempt = await this.snapFromTimeshift(request);
+      let snapAttempt = await this.snapFromTimeshift(request, signal);
       let needsExternalCrop = false;
 
       // No snapshot yet, let's try again.
@@ -83,22 +98,22 @@ export class ProtectSnapshot {
         // We treat package cameras uniquely - the Protect API is tried before RTSP because the lower frame rate of package cameras causes a lengthier RTSP response.
         if("packageCamera" in this.protectCamera.accessory.context) {
 
-          snapAttempt = await this.nvr.ufpApi.getSnapshot(this.protectCamera.ufp, { height: request?.height, usePackageCamera: true, width: request?.width });
+          snapAttempt = await this.snapFromController({ height: request?.height, packageCamera: true, signal, width: request?.width });
 
           if(snapAttempt) {
 
             needsExternalCrop = true;
           } else {
 
-            snapAttempt = await this.snapFromRtsp(request);
+            snapAttempt = await this.snapFromRtsp(request, signal);
           }
         } else {
 
-          snapAttempt = await this.snapFromRtsp(request);
+          snapAttempt = await this.snapFromRtsp(request, signal);
 
           if(!snapAttempt) {
 
-            snapAttempt = await this.nvr.ufpApi.getSnapshot(this.protectCamera.ufp, { height: request?.height, width: request?.width });
+            snapAttempt = await this.snapFromController({ height: request?.height, signal, width: request?.width });
 
             if(snapAttempt) {
 
@@ -116,17 +131,14 @@ export class ProtectSnapshot {
       // Snapshots from the Protect API need a standalone crop pass since they bypass the FFmpeg pipeline where crop is now integrated into the filter chain.
       if(needsExternalCrop && this.protectCamera.hints.crop) {
 
-        snapAttempt = await this.cropSnapshot(snapAttempt) ?? snapAttempt;
+        snapAttempt = await this.cropSnapshot(snapAttempt, signal) ?? snapAttempt;
       }
 
       // Cache the image before returning it.
       this._cachedSnapshot = { image: snapAttempt, time: Date.now() };
 
       return snapAttempt;
-    })();
-
-    // Get a snapshot, but ensure we constrain it so we can return in a responsive manner.
-    const snapshot = await runWithTimeout(snapshotPromise, PROTECT_SNAPSHOT_TIMEOUT);
+    }, { timeout: PROTECT_SNAPSHOT_TIMEOUT });
 
     // Occasional snapshot failures will happen. The controller isn't always able to generate them if one is already inflight or if it's too soon after the last one.
     if(!snapshot) {
@@ -147,7 +159,7 @@ export class ProtectSnapshot {
   }
 
   // Snapshots using the timeshift buffer as the source.
-  private async snapFromTimeshift(request?: SnapshotRequest): Promise<Nullable<Buffer>> {
+  private async snapFromTimeshift(request: SnapshotRequest | undefined, signal: AbortSignal): Promise<Nullable<Buffer>> {
 
     // If we aren't generating high resolution snapshots, we're done.
     if(!this.protectCamera.stream || !this.protectCamera.hints.highResSnapshots) {
@@ -179,11 +191,11 @@ export class ProtectSnapshot {
       "-i", "pipe:0"
     ];
 
-    return this.snapFromFfmpeg(ffmpegOptions, request, buffer);
+    return this.snapFromFfmpeg(ffmpegOptions, signal, request, buffer);
   }
 
   // Snapshots using the Protect RTSP endpoints as the source.
-  private async snapFromRtsp(request?: SnapshotRequest): Promise<Nullable<Buffer>> {
+  private async snapFromRtsp(request: SnapshotRequest | undefined, signal: AbortSignal): Promise<Nullable<Buffer>> {
 
     // If we aren't generating high resolution snapshots, we're done.
     if(!this.protectCamera.stream || !this.protectCamera.hints.highResSnapshots) {
@@ -215,11 +227,26 @@ export class ProtectSnapshot {
       "-i", rtspEntry.url
     ];
 
-    return this.snapFromFfmpeg(ffmpegOptions, request);
+    return this.snapFromFfmpeg(ffmpegOptions, signal, request);
+  }
+
+  // Snapshots using the Protect controller's snapshot command as the source. This is the v5 camera projection's snapshot, exposed through ProtectCamera's narrow public
+  // seam. Unlike the FFmpeg-based sources, the controller command throws on failure rather than returning null - a non-2xx response, or a ProtectUnsupportedError when a
+  // package snapshot is requested on a camera without a package sensor. We translate that throw into a null so the multi-source acquisition falls through to the next
+  // source exactly as it always has, and so a snapshot failure never escapes acquireSnapshot.
+  private async snapFromController(opts: SnapshotOptions): Promise<Nullable<Buffer>> {
+
+    try {
+
+      return await this.protectCamera.snapshotFromController(opts);
+    } catch {
+
+      return null;
+    }
   }
 
   // Generate a snapshot using FFmpeg.
-  private async snapFromFfmpeg(ffmpegInputOptions: string[], request?: SnapshotRequest, buffer?: Buffer): Promise<Nullable<Buffer>> {
+  private async snapFromFfmpeg(ffmpegInputOptions: string[], signal: AbortSignal, request?: SnapshotRequest, buffer?: Buffer): Promise<Nullable<Buffer>> {
 
     if(!this.protectCamera.stream) {
 
@@ -301,14 +328,24 @@ export class ProtectSnapshot {
       commandLineOptions.unshift("-loglevel", "level+verbose");
     }
 
-    // Instantiate FFmpeg.
-    const ffmpeg = new FfmpegExec(this.protectCamera.stream.ffmpegOptions, commandLineOptions, false);
+    // Instantiate and spawn FFmpeg. The composed signal ties this pipeline's lifetime to the acquisition deadline, so a timeout kills the child rather than leaving it
+    // running. When we have a timeshift buffer it is fed as canned stdin; the RTSP source reads from its input URL and supplies no stdin.
+    const ffmpeg = new SnapshotFfmpegExec(this.protectCamera.stream.ffmpegOptions, { args: commandLineOptions, signal, stdin: buffer });
 
-    // Retrieve the snapshot.
-    const ffmpegResult = await ffmpeg.exec(buffer);
+    // Retrieve the snapshot. The result accessor rejects only when the child never spawned (e.g., a missing FFmpeg binary), which we treat as this source failing so the
+    // acquisition falls through to the next source rather than letting the error escape.
+    let ffmpegResult;
+
+    try {
+
+      ffmpegResult = await ffmpeg.result();
+    } catch {
+
+      return null;
+    }
 
     // We're done. If we produced an empty image, we couldn't utilize the output.
-    if(ffmpegResult?.exitCode === 0) {
+    if(ffmpegResult.exitCode === 0) {
 
       return ffmpegResult.stdout.length ? ffmpegResult.stdout : null;
     }
@@ -318,14 +355,15 @@ export class ProtectSnapshot {
 
   // Image snapshot crop handler for Protect API snapshots. The input is a JPEG image, so we use minimal FFmpeg options - the hardware video decoder flags and stream
   // analysis options used in snapFromFfmpeg are unnecessary here since FFmpeg natively decodes JPEG without hardware assistance.
-  private async cropSnapshot(snapshot: Buffer): Promise<Nullable<Buffer>> {
+  private async cropSnapshot(snapshot: Buffer, signal: AbortSignal): Promise<Nullable<Buffer>> {
 
     if(!this.protectCamera.stream) {
 
       return null;
     }
 
-    // Crop the snapshot using FFmpeg with the crop filter. Options we use are:
+    // Crop the snapshot using FFmpeg with the crop filter. The JPEG to crop is fed as canned stdin, and the composed signal ties this pipeline to the acquisition
+    // deadline. Options we use are:
     //
     // -hide_banner         Suppress printing the startup banner in FFmpeg.
     // -nostats             Suppress printing progress reports while encoding in FFmpeg.
@@ -334,7 +372,7 @@ export class ProtectSnapshot {
     // -f image2pipe        Specifies the output format to use a pipe, since we are outputting to stdout and want to consume the data directly.
     // -c:v mjpeg           Specify the MJPEG encoder to get a JPEG file.
     // pipe:1               Output the cropped snapshot to standard output.
-    const ffmpeg = new FfmpegExec(this.protectCamera.stream.ffmpegOptions, [
+    const ffmpeg = new FfmpegExec(this.protectCamera.stream.ffmpegOptions, { args: [
 
       "-hide_banner",
       "-nostats",
@@ -343,13 +381,23 @@ export class ProtectSnapshot {
       "-f", "image2pipe",
       "-c:v", "mjpeg",
       "pipe:1"
-    ]);
+    ], signal, stdin: snapshot });
 
-    // Retrieve the snapshot.
-    const ffmpegResult = await ffmpeg.exec(snapshot);
+    // Retrieve the cropped snapshot. The result accessor rejects only when the child never spawned, which we treat as a crop failure.
+    let ffmpegResult;
+
+    try {
+
+      ffmpegResult = await ffmpeg.result();
+    } catch {
+
+      this.log.error("Unable to crop snapshot.");
+
+      return null;
+    }
 
     // Crop succeeded, we're done.
-    if(ffmpegResult?.exitCode === 0) {
+    if(ffmpegResult.exitCode === 0) {
 
       return ffmpegResult.stdout;
     }
