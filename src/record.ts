@@ -9,7 +9,8 @@
 import type { API, CameraRecordingConfiguration, CameraRecordingDelegate, HAP, PlatformAccessory, RecordingPacket } from "homebridge";
 import { BackpressureWriter, FfmpegRecordingProcess, HDSProtocolSpecificErrorReason, type HomebridgePluginLogging, type Nullable, formatBps }
   from "homebridge-plugin-utils";
-import { PROTECT_HKSV_TIMEOUT, PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION } from "./settings.ts";
+import { PROTECT_HKSV_SHADOW_FLOOR_MS, PROTECT_HKSV_SHADOW_RECONNECT_MS, PROTECT_HKSV_SHADOW_SAFETY_MS, PROTECT_HKSV_TIMEOUT, PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION }
+  from "./settings.ts";
 import type { ProtectCamera, RtspEntry } from "./devices/index.ts";
 import { ProtectTimeshiftBuffer } from "./timeshift.ts";
 import { setTimeout as delay } from "node:timers/promises";
@@ -21,6 +22,28 @@ const HKSV_END_OF_STREAM_MARKER = Buffer.alloc(1, 0);
 // Lightning-bolt emoji (U+26A1 HIGH VOLTAGE SIGN + U+FE0F VARIATION SELECTOR-16) used to prefix the HKSV configuration log when the host supports
 // hardware-accelerated transcoding.
 const HKSV_HARDWARE_TRANSCODE_MARKER = "\u26A1\uFE0F ";
+
+// Reproduce the HBPU-v1 segmentGenerator contract on top of the v2 split surface. In v1 the FFmpeg process yielded the fMP4 initialization segment as the first item of
+// a single generator, so the recording loop counted, paced, and break-checked it like any media segment (then discounted it once at teardown). The v2 surface splits
+// getInitSegment() from segments(), so we re-stitch them here: yield the init first, then stream the media. The guard is load-bearing - v1's generator returned cleanly
+// when the stream aborted before the init arrived (it never threw out of the HAP generator), but v2's getInitSegment() rejects with signal.reason on a pre-init abort.
+// We catch that rejection and return, ending the for-await cleanly so the post-loop teardown yields its end-of-stream marker exactly as v1 did on a HAP-close or a thin
+// discontinuity restart. Re-created per do-while pass, so a discontinuity restart re-yields the fresh process's new init as the loop's first counted item.
+async function *initThenMedia(proc: FfmpegRecordingProcess, signal: AbortSignal): AsyncGenerator<Buffer> {
+
+  let init: Buffer;
+
+  try {
+
+    init = await proc.getInitSegment();
+  } catch {
+
+    return;
+  }
+
+  yield init;
+  yield* proc.segments({ signal });
+}
 
 // Camera recording delegate implementation for Protect.
 export class ProtectRecordingDelegate implements CameraRecordingDelegate {
@@ -44,6 +67,10 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
   private readonly protectCamera: ProtectCamera;
   private recordingConfig?: CameraRecordingConfiguration;
   private recordingDeclined: boolean;
+  private reserveCount: number;
+  private reserveMax: number;
+  private reserveMin: number;
+  private reserveSum: number;
   public rtspEntry: Nullable<RtspEntry>;
   private segmentWriter?: BackpressureWriter;
   public readonly timeshift: ProtectTimeshiftBuffer;
@@ -70,6 +97,10 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     this.pacingStartTime = 0;
     this.protectCamera = protectCamera;
     this.recordingDeclined = false;
+    this.reserveCount = 0;
+    this.reserveMax = 0;
+    this.reserveMin = 0;
+    this.reserveSum = 0;
     this.rtspEntry = null;
     this.timeshift = new ProtectTimeshiftBuffer(protectCamera);
     this.timeshiftedSegments = 0;
@@ -168,7 +199,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
 
     // If HKSV is disabled, the camera is offline, the buffer isn't full, or transmission setup fails, we're done. The timeshift.time check covers both "timeshift
     // never started" (time is zero) and "timeshift started but prebuffer not yet filled". The trailing !this.ffmpegStream is load-bearing for TypeScript narrowing
-    // at subsequent direct accesses (segmentGenerator invocation)...TypeScript does not track field assignments across method calls.
+    // at the subsequent direct access (the initThenMedia invocation)...TypeScript does not track field assignments across method calls.
     if(this.accessory.context.hksvRecordingDisabled || this.timeshift.isRestarting || !this.protectCamera.isReachable ||
       (this.timeshift.time < this.timeshift.configuredDuration) || !this.startTransmitting() || !this.ffmpegStream) {
 
@@ -189,14 +220,23 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
 
     // We pace our segment yields to HKSV relative to the last delivery...each segment is yielded pacingInterval after the previous one was actually sent. This ensures
     // HomeKit's timeout is satisfied while building a buffer of pre-produced segments from FFmpeg. When the Protect controller's livestream API stalls, we continue
-    // yielding pre-produced segments, absorbing stalls that would otherwise cause recording timeouts. While we wait between yields, segmentGenerator() is paused and
-    // FFmpeg's output accumulates in its internal recording buffer.
+    // yielding pre-produced segments, absorbing stalls that would otherwise cause recording timeouts. While we wait between yields, the initThenMedia generator is
+    // paused and FFmpeg's output accumulates in the assembler's internal segment reserve.
     const pacingInterval = PROTECT_HKSV_TIMEOUT - 500;
 
     // Reset per-event pacing telemetry. lastPacingDelay and maxPacingDelay accumulate across the life of a single recording event and are surfaced in the
     // HKSV.Telemetry teardown log, so they need a clean slate here rather than carrying residual values from the previous event.
     this.lastPacingDelay = 0;
     this.maxPacingDelay = 0;
+
+    // Reset per-event reserve-depth telemetry. We sample the FFmpeg-produced-but-unpulled segment reserve once per pace iteration (see paceSegmentDelivery) and
+    // accumulate its min, max, and a running sum-and-count for the mean, all surfaced in the HKSV.Telemetry teardown log. reserveMin starts at positive infinity so the
+    // first sample wins the Math.min comparison; the teardown reads it only when reserveCount is non-zero, so the sentinel never reaches the log. These mirror the
+    // pacing accumulators above and likewise need a clean slate per event rather than carrying residual values from the previous event.
+    this.reserveCount = 0;
+    this.reserveMax = 0;
+    this.reserveMin = Number.POSITIVE_INFINITY;
+    this.reserveSum = 0;
 
     // Create an AbortController for interrupting pacing delays. HAP's signal handles stream closure, but we also need to abort when a livestream discontinuity is
     // detected so we can restart FFmpeg without waiting for the current pacing delay to expire.
@@ -211,7 +251,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     //   - "terminated": the subscription died out-of-band (e.g., SubscriberLagError). Terminal...we stop FFmpeg and exit the event. The timeshift has already
     //     self-cleaned its state, so there is no subscription to recover onto.
     //
-    // Both handlers call ffmpegStream.stop(false) and abort the combined signal to interrupt any in-flight pacing delay. The discriminator between "restart the
+    // Both handlers call ffmpegStream.abort() and abort the combined signal to interrupt any in-flight pacing delay. The discriminator between "restart the
     // loop" and "exit the loop" is which local flag the handler sets...the outer do-while's condition gates on isDiscontinuity, not isTerminated.
     let isDiscontinuity = false;
     let isTerminated = false;
@@ -224,7 +264,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
       }
 
       isDiscontinuity = true;
-      this.ffmpegStream?.stop(false);
+      this.ffmpegStream?.abort();
       this.abortController?.abort();
     };
 
@@ -238,7 +278,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
       }
 
       isTerminated = true;
-      this.ffmpegStream?.stop(false);
+      this.ffmpegStream?.abort();
       this.abortController?.abort();
     };
 
@@ -284,9 +324,9 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
           }
         }
 
-        // Process our FFmpeg-generated segments and send them back to HKSV.
+        // Process our FFmpeg-generated segments and send them back to HKSV. The init segment is yielded first (counted, paced, then discounted at teardown), then media.
         // eslint-disable-next-line no-await-in-loop -- Intentional: the outer loop handles FFmpeg restarts on discontinuity.
-        for await (const segment of this.ffmpegStream.segmentGenerator()) {
+        for await (const segment of initThenMedia(this.ffmpegStream, combinedSignal)) {
 
           // If we've stopped transmitting, a discontinuity fired, or the recording is terminating, exit the segment loop. isDiscontinuity and isTerminated
           // are mutated asynchronously by the event listeners above.
@@ -332,8 +372,9 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     //   - isTerminated: the recording event ended abnormally - either the subscription died while we were transmitting (timeshift emitted `terminated`) or
     //     the discontinuity-recovery restart attempt failed. In both cases the timeshift is either self-cleaned or unrecoverable for this event, so there's
     //     nothing to restart...just yield a final marker so HAP sees a clean close rather than an abrupt generator end.
-    //   - FFmpeg timed out: typically a Protect controller stall. Restart the timeshift's underlying connection to try to clear whatever upstream issue
-    //     triggered the timeout, then yield the final marker.
+    //   - FFmpeg timed out: typically a Protect controller stall. Wire recovery is v5's job now - the livestream subscription is still alive and the pool's
+    //     media-stall watchdog and recovery policy are already working the upstream issue (and self-healing a wedged camera through the give-up), so we no longer
+    //     kick the wire from here. We just end this event with its final marker; the next event re-establishes a fresh FFmpeg pipeline.
     //
     // Normal completion (HAP-initiated close via signal.aborted or _isTransmitting false) falls through both branches...HAP already knows the stream is done
     // and doesn't need a marker. The optional chain on ffmpegStream is load-bearing: the discontinuity-recovery path's startTransmitting(true) call inside
@@ -343,8 +384,6 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
       yield { data: HKSV_END_OF_STREAM_MARKER, isLast: true };
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     } else if(this.ffmpegStream?.isTimedOut) {
-
-      this.timeshift.restart();
 
       yield { data: HKSV_END_OF_STREAM_MARKER, isLast: true };
     }
@@ -485,12 +524,12 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     // If there's a prior instance of FFmpeg, clean up after ourselves.
     if(this.ffmpegStream) {
 
-      this.ffmpegStream.stop(false);
+      this.ffmpegStream.abort();
       this.ffmpegStream = undefined;
     }
 
     // If there's a prior instance of our transmit handler, clean it up.
-    this.segmentWriter?.close();
+    this.segmentWriter?.abort();
     this.segmentWriter = undefined;
 
     if(this.transmitListener) {
@@ -522,34 +561,46 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     // having to recover from mid-GOP data. The seek offset tells FFmpeg's -ss exactly how far to advance from the keyframe to the prebuffer start point.
     const alignment = this.timeshift.getKeyframeAlignedStart(this.recordingConfig.prebufferLength);
 
-    // Start a new FFmpeg instance to transcode using HomeKit's requirements.
-    this.ffmpegStream = new FfmpegRecordingProcess(this.protectCamera.stream.ffmpegOptions, this.recordingConfig, {
+    // Start a new FFmpeg instance to transcode using HomeKit's requirements. The HBPU-v2 process spawns the child synchronously on construction, so there is no separate
+    // start() step...by the time the constructor returns the FFmpeg child is already running. The recording options move into init.recording, the HomeKit recording
+    // configuration into init.recordingConfig, and the debug flag into init.verbose.
+    this.ffmpegStream = new FfmpegRecordingProcess(this.protectCamera.stream.ffmpegOptions, {
 
-      // The Protect livestream API delivers audio at 16000 Hz (16-bit mono AAC). This is the input sample rate that FFmpeg's audio filters operate on.
-      audioFilters: this.protectCamera.getAudioFilters(16000),
-      audioStream: 0,
-      codec: this.protectCamera.ufp.videoCodec,
-      enableAudio: this.isAudioActive,
-      fps: this.rtspEntry.channel.fps,
-      timeshift: alignment?.seekOffsetMs ?? Math.max(this.timeshift.time - this.recordingConfig.prebufferLength, 0),
-      transcodeAudio: false
-    }, this.protectCamera.hasFeature("Debug.Video.HKSV"));
+      recording: {
 
-    this.ffmpegStream.start();
+        // The Protect livestream API delivers audio at 16000 Hz (16-bit mono AAC). This is the input sample rate that FFmpeg's audio filters operate on.
+        audioFilters: this.protectCamera.getAudioFilters(16000),
+        audioStream: 0,
+        codec: this.protectCamera.ufp.videoCodec,
+        enableAudio: this.isAudioActive,
+        fps: this.rtspEntry.channel.fps,
+        timeshift: alignment?.seekOffsetMs ?? Math.max(this.timeshift.time - this.recordingConfig.prebufferLength, 0),
+        transcodeAudio: false
+      },
+      recordingConfig: this.recordingConfig,
+      verbose: this.protectCamera.hasFeature("Debug.Video.HKSV")
+    });
+
     this._isTransmitting = true;
 
-    // Feed segments to FFmpeg with backpressure handling...if FFmpeg can't keep up, segments are queued and written when it's ready.
-    this.segmentWriter = new BackpressureWriter(() => this.ffmpegStream?.stdin ?? null, () => this.timeshiftedSegments++);
+    // Feed segments to FFmpeg with backpressure handling...if FFmpeg can't keep up, segments are queued and written when it's ready. The HBPU-v2 writer takes no count
+    // callback, so we count successful writes in the write's success continuation below rather than at construction time.
+    this.segmentWriter = new BackpressureWriter(() => this.ffmpegStream?.stdin ?? null, {});
 
-    // Listen in for events from the timeshift buffer and feed FFmpeg.
-    this.timeshift.on("segment", this.transmitListener = (segment: Buffer): void => { this.segmentWriter?.write(segment); });
+    // Listen in for events from the timeshift buffer and feed FFmpeg. The write() promise resolves on a successful flush and rejects on a typed teardown error
+    // (BackpressureClosedStreamError or the abort reason). We count the timeshifted segment only on the success continuation - matching v1's onWrite semantics, which
+    // fired solely after a successful write - and quietly absorb a benign teardown rejection so there is no floating rejection.
+    this.timeshift.on("segment", this.transmitListener = (segment: Buffer): void => {
+
+      this.segmentWriter?.write(segment).then(() => this.timeshiftedSegments++, (error: unknown) => this.log.debug("Backpressure write dropped.", { error }));
+    });
 
     // Check to make sure something didn't go wrong when we start transmitting the stream. If there is, we're resetting our connectivity to the Protect controller.
     if(!this.timeshift.transmitStart(alignment?.startIndex)) {
 
       // Stop our FFmpeg process and our timeshift buffer.
-      this.segmentWriter.close();
-      this.ffmpegStream.stop();
+      this.segmentWriter.abort();
+      this.ffmpegStream.abort();
       this.timeshift.stop();
       this.timeshift.off("segment", this.transmitListener);
 
@@ -583,10 +634,51 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     this.lastPacingDelay = (lastYieldTime + pacingInterval) - Date.now();
     this.maxPacingDelay = Math.max(this.maxPacingDelay, this.lastPacingDelay);
 
+    // Sample the reserve depth - the count of FFmpeg-produced-but-unpulled fMP4 segments queued in the assembler. This is the natural off-the-hot-path sampling site:
+    // the pacing loop calls us exactly once per yield (at roughly the pacing cadence of a few seconds, not per FFmpeg segment), so a single read here gives us one
+    // reserve sample per paced delivery without touching the per-segment ingest path. We accumulate min, max, and a running sum-and-count for the mean, gated entirely
+    // behind the telemetry flag so it costs nothing for normal users. We read the getter only once and stash it locally so the comparisons see a consistent value.
+    if(this.protectCamera.hasFeature("Debug.Video.HKSV.Telemetry")) {
+
+      const reserve = this.ffmpegStream?.bufferedSegments ?? 0;
+
+      this.reserveCount++;
+      this.reserveMax = Math.max(this.reserveMax, reserve);
+      this.reserveMin = Math.min(this.reserveMin, reserve);
+      this.reserveSum += reserve;
+    }
+
     if(this.lastPacingDelay > 0) {
 
       await delay(this.lastPacingDelay, undefined, { signal }).catch((): void => { /* Expected on stream close or discontinuity. */ });
     }
+  }
+
+  // Compose the reserve-depth telemetry fragment appended to the HKSV.Telemetry teardown log. We report the per-event reserve min, mean, and max - both as raw segment
+  // counts and as the milliseconds they represent at the timeshift segment length - alongside a shadow-computed adaptive-urgency-B value. The shadow value answers a
+  // forward-looking design question: if the livestream recovery tolerance were derived from how deep the reserve ran during this event, what would it have been? We
+  // model that as B = clamp(reserveMs - reconnectTime - safety, FLOOR, reserveMs), where reserveMs is the mean reserve expressed in milliseconds. The intuition is that
+  // a deeper reserve means the recording could absorb a longer upstream stall, so the pool could be granted more tolerance before it forces a reconnect; we subtract the
+  // pool's reconnect floor and a jitter margin because any tolerance must first cover the time the pool itself needs to re-establish the wire. This is a SHADOW estimate
+  // computed offline at teardown purely for a maintainer to compare against the shipped fixed urgency (C3) - it NEVER feeds the live recovery-await derivation. When no
+  // reserve sample was taken (a very short event that never paced), we report nothing rather than divide by zero.
+  private reserveTelemetry(): string {
+
+    if(this.reserveCount === 0) {
+
+      return "";
+    }
+
+    const segmentLength = this.timeshift.segmentLength;
+    const meanReserve = this.reserveSum / this.reserveCount;
+    const reserveMs = meanReserve * segmentLength;
+
+    // The shadow adaptive-urgency-B value, clamped into [FLOOR, reserveMs] so it never goes negative and never exceeds the reserve it was derived from.
+    const shadowUrgencyB = Math.min(Math.max(reserveMs - PROTECT_HKSV_SHADOW_RECONNECT_MS - PROTECT_HKSV_SHADOW_SAFETY_MS, PROTECT_HKSV_SHADOW_FLOOR_MS), reserveMs);
+
+    return ", reserve: " + this.reserveMin.toString() + "/" + meanReserve.toFixed(1) + "/" + this.reserveMax.toString() + " segments (" +
+      Math.round(this.reserveMin * segmentLength).toString() + "/" + Math.round(reserveMs).toString() + "/" + Math.round(this.reserveMax * segmentLength).toString() +
+      "ms min/mean/max), shadow urgency B: " + Math.round(shadowUrgencyB).toString() + "ms";
   }
 
   // Stop transmitting the HomeKit hub our timeshifted fMP4 stream.
@@ -602,20 +694,24 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     // We're done transmitting, so we can go back to maintaining our timeshift buffer for HomeKit.
     this.timeshift.transmitStop();
 
-    // Kill any FFmpeg sessions, capturing process state before we clear the reference.
-    const ffmpegEnded = this.ffmpegStream?.isEnded ?? true;
+    // Kill any FFmpeg sessions, capturing process state before we clear the reference. The HBPU-v2 process signal aborts exactly once when the child exits or is
+    // aborted, so signal.aborted is the v2 read for "has FFmpeg ended?".
+    const ffmpegEnded = this.ffmpegStream?.signal.aborted ?? true;
     const ffmpegStderrLog = this.ffmpegStream?.stderrLog ?? [];
     const ffmpegTimedOut = this.ffmpegStream?.isTimedOut ?? false;
 
     if(this.ffmpegStream) {
 
-      this.ffmpegStream.stop((((reason !== undefined) && (reason !== HDSProtocolSpecificErrorReason.NORMAL)) || this.timeshift.isRestarting) ? false : undefined);
+      // The HBPU-v2 abort() is a clean teardown that does not error-log, which subsumes the v1 logErrors=false flag the conditional formerly computed. v1 SIGKILLed
+      // without a graceful flush, and HKSV is fragmented MP4 (each moof/mdat pair is self-contained, with no moov trailer to finalize), so aborting loses no clean
+      // output - the assembler's swap-drain preserves every already-assembled segment.
+      this.ffmpegStream.abort();
       this.ffmpegStream = undefined;
     }
 
     this._isTransmitting = false;
 
-    this.segmentWriter?.close();
+    this.segmentWriter?.abort();
     this.segmentWriter = undefined;
 
     if(this.transmitListener) {
@@ -727,7 +823,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
         "s, segments yielded: " + this.transmittedSegments.toString() + ", segments to FFmpeg: " + this.timeshiftedSegments.toString() +
         ", FFmpeg ended: " + ffmpegEnded.toString() + ", FFmpeg timeout: " + ffmpegTimedOut.toString() +
         ", pacing delay: " + Math.round(this.lastPacingDelay).toString() +
-        "/" + Math.round(this.maxPacingDelay).toString() + "ms last/peak)" : "";
+        "/" + Math.round(this.maxPacingDelay).toString() + "ms last/peak" + this.reserveTelemetry() + ")" : "";
 
       this.log.error("HKSV recording event ended early: %s%s", reasonDescription, telemetry);
 

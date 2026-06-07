@@ -2,17 +2,18 @@
  *
  * protect-camera.ts: Camera device class for UniFi Protect.
  */
-import type { Camera, DeepPartial, ProtectCameraChannelConfig, ProtectCameraConfig, SnapshotOptions } from "unifi-protect";
+import type { Camera, DeepPartial, LivestreamSource, ProtectCameraChannelConfig, ProtectCameraConfig, SnapshotOptions, TalkbackSession } from "unifi-protect";
 import type { CharacteristicValue, PlatformAccessory, Resolution, Service } from "homebridge";
 import { type Nullable, toStartCase } from "homebridge-plugin-utils";
+import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_SEGMENT_RESOLUTION } from "../settings.ts";
 import { ProtectReservedNames, shouldReconfigureAsDoorbell } from "../types.ts";
-import { LivestreamManager } from "../protect-livestream.ts";
+import type { LivestreamSubscription } from "../livestream.ts";
 import type { MessageSwitchInterface } from "./doorbell.ts";
-import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR } from "../settings.ts";
 import type { ProtectCameraPackage } from "./camera-package.ts";
 import { ProtectDevice } from "./device.ts";
 import type { ProtectNvr } from "../nvr.ts";
 import { ProtectStreamingDelegate } from "../stream.ts";
+import { RtspLivestreamSubscription } from "../livestream.ts";
 import { selectCamera } from "unifi-protect";
 
 export interface RtspEntry {
@@ -46,7 +47,6 @@ export class ProtectCamera extends ProtectDevice {
   // tamper-detection onGet and the availability projection. Public because its single writer is the NVR-level event dispatch, not this class.
   public isTampered: boolean;
   public detectLicensePlate: string[];
-  public readonly livestream: LivestreamManager;
   public messageSwitches: Map<string, MessageSwitchInterface>;
   public packageCamera?: Nullable<ProtectCameraPackage>;
   private rtspEntries: RtspEntry[];
@@ -64,7 +64,6 @@ export class ProtectCamera extends ProtectDevice {
     this.isRinging = false;
     this.isTampered = false;
     this.detectLicensePlate = [];
-    this.livestream = new LivestreamManager(this);
     this.messageSwitches = new Map();
     this.rtspEntries = [];
 
@@ -228,8 +227,11 @@ export class ProtectCamera extends ProtectDevice {
       void this.stream.hksv.updateRecordingActive(false);
     }
 
-    // Cleanup our livestream manager.
-    this.livestream.shutdown();
+    // Tear down this camera's livestream consumers so their v5 pool subscriptions are released on deletion. The camera no longer owns livestream sessions - the
+    // stream (live) and timeshift (HKSV) consumers own the subscriptions, and disposing them decrements the pool refcount to zero. Mirrors nvr.disconnect()'s
+    // per-camera teardown; replaces the old LivestreamManager.shutdown().
+    this.stream?.shutdown();
+    this.stream?.hksv?.timeshift.stop();
 
     // Unregister our controller.
     if(this.stream) {
@@ -396,6 +398,57 @@ export class ProtectCamera extends ProtectDevice {
   public async snapshotFromController(opts: SnapshotOptions = {}): Promise<Buffer> {
 
     return this.device.snapshot(opts);
+  }
+
+  // The narrow public seam onto the v5 camera projection's pooled livestream, mirroring snapshotFromController. We map our RtspEntry to the v5 `source` selector
+  // (the lens=>channel-0 coercion now lives in v5), default the segment length to our 100 ms resolution (matching the old subscribe default - the native pool
+  // also floors at 100, but the RTSP adapter would otherwise default to 1000), declare HBUP's livestream defaults (a 16384-byte chunk for lower fragmentation and
+  // per-segment timestamps - both enter the pool's sharing key, so they must be passed explicitly or two HBUP subscribers would silently fail to share a session),
+  // preserve the friendly controller-side request label (the camera name + channel/lens, as the old manager sent), and pass the consumer's urgency closure straight
+  // through to the pool's recovery/detection policy. The RTSP-debug variant is a pure-FFmpeg HBUP path that produces the same Segment stream behind the same interface.
+  public livestream(rtspEntry: RtspEntry, opts: { segmentLength?: number; signal?: AbortSignal; urgency?: () => number } = {}): LivestreamSubscription {
+
+    const segmentLength = opts.segmentLength ?? PROTECT_SEGMENT_RESOLUTION;
+
+    // The RTSP-debug path (Debug.Video.HKSV.UseRtsp) transcodes the camera's RTSP stream through FFmpeg instead of the controller's native livestream. The
+    // hksv.recordingConfiguration guard establishes the precondition the adapter needs; within this block this.stream and this.stream.hksv are non-null.
+    if(this.hasFeature("Debug.Video.HKSV.UseRtsp") && this.stream?.hksv?.recordingConfiguration) {
+
+      return new RtspLivestreamSubscription({
+
+        enableAudio: this.stream.hksv.isAudioActive,
+        ffmpegOptions: this.stream.ffmpegOptions,
+        recordingConfig: this.stream.hksv.recordingConfiguration,
+        segmentLength: segmentLength,
+        signal: opts.signal,
+        url: rtspEntry.url,
+        videoCodec: this.ufp.videoCodec
+      });
+    }
+
+    // The native v5 pooled livestream. requestId preserves the old friendly label the controller logs (name + channel, or name + "0." + lens for a secondary lens).
+    const source: LivestreamSource = (rtspEntry.lens !== undefined) ? { lens: rtspEntry.lens, type: "lens" } : { channel: rtspEntry.channel.id, type: "channel" };
+    const requestId = this.name + ":" + ((rtspEntry.lens !== undefined) ? "0." + rtspEntry.lens.toString() : rtspEntry.channel.id.toString());
+
+    return this.device.livestream({ chunkSize: 16384, requestId: requestId, segmentLength: segmentLength, signal: opts.signal, source: source, timestamps: true,
+      urgency: opts.urgency });
+  }
+
+  // Reboot this camera through the controller. This is the narrow public seam onto the v5 camera projection's reboot command, mirroring snapshotFromController - the
+  // camera owns "reboot me" while keeping the device projection encapsulated. The HKSV timeshift's livestream self-heal calls this to reset a wedged camera's
+  // livestream endpoint after the recovery policy gives up. The command throws on failure; the caller decides how to handle a failed reboot.
+  public async reboot(): Promise<void> {
+
+    return this.device.reboot();
+  }
+
+  // Open a send-direction two-way-audio (talkback) channel to this camera's speaker. The narrow public seam onto the v5 camera projection's talkback command, mirroring
+  // snapshotFromController - the camera owns "talk to me" while keeping the device projection encapsulated. The streaming delegate's two-way-audio path opens this, then
+  // drains the return-audio FFmpeg's stdout into the returned session. The command negotiates the WebSocket and connects atomically (returns a live session or throws),
+  // and throws a ProtectUnsupportedError for a camera with no speaker; the caller treats a throw as "no talkback" and tears down its return-audio plumbing.
+  public async talkback(opts: { signal?: AbortSignal } = {}): Promise<TalkbackSession> {
+
+    return this.device.talkback(opts);
   }
 
   // Configure UniFi Access specific features for devices that are made available in Protect.

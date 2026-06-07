@@ -9,6 +9,7 @@
  * transitively imports the entire device and media graph (cameras, streaming, snapshots); a 5-line set diff should never have to stand that up to be exercised. This
  * module imports only the auth-error type it branches on and the shared failure-limit constant, so it loads and tests in isolation.
  */
+import type { Nullable } from "homebridge-plugin-utils";
 import { PROTECT_AUTH_FAILURE_LIMIT } from "./settings.ts";
 import { ProtectAuthError } from "unifi-protect";
 
@@ -72,4 +73,22 @@ export function membershipDelta(adoptedIds: readonly string[], configuredIds: re
 export function isSuccessfulRequest(payload: { error?: string; statusCode?: number }): boolean {
 
   return (payload.error === undefined) && (payload.statusCode !== undefined) && (payload.statusCode >= 200) && (payload.statusCode < 300);
+}
+
+// Compute the timestamp from which the controller's current continuous good-state period should be counted for the removal stability gate. On the very first good-state
+// entry of the plugin's life (no prior observation) we trust the controller's own uptime: a controller already up longer than the window is treated as immediately
+// stable. On every later recovery we count from now, because a disruption we observed resets our trust regardless of how long the controller process has been up.
+export function computeStableSince(options: { hasStabilizedBefore: boolean; nowMs: number; uptimeMs: number; windowMs: number }): number {
+
+  const { hasStabilizedBefore, nowMs, uptimeMs, windowMs } = options;
+
+  return hasStabilizedBefore ? nowMs : (nowMs - Math.min(uptimeMs, windowMs));
+}
+
+// Whether the controller has been continuously good for at least the stability window - the gate every destructive removal must pass. Null means "not currently good".
+export function isStabilityWindowElapsed(options: { nowMs: number; stableSinceMs: Nullable<number>; windowMs: number }): boolean {
+
+  const { nowMs, stableSinceMs, windowMs } = options;
+
+  return (stableSinceMs !== null) && ((nowMs - stableSinceMs) >= windowMs);
 }

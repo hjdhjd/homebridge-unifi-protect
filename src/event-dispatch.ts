@@ -64,10 +64,10 @@ export class ProtectEventDispatch {
   constructor(nvr: ProtectNvr) {
 
     // Structural wiring only. The controller-state-dependent setup the v4 constructor did here - reading the telemetry feature option (which resolves against the
-    // controller mac, unknown before connect()) and binding the realtime packet listener on ufpApi - is gone: this constructor runs inside ProtectNvr's constructor,
-    // before connect(), where neither the controller mac nor a live client exists yet. The realtime consumers it used to wire are now the NVR's loops - the typed
-    // firehose router (run) and the telemetry publisher (publishTelemetry) below, both spawned post-connect and bound to the shutdown signal - so this stays a plain
-    // field-initializer and the controller-scoped work happens when those loops start.
+    // controller mac, unknown before connect()) and binding the realtime packet listener on the legacy controller API - is gone: this constructor runs inside
+    // ProtectNvr's constructor, before connect(), where neither the controller mac nor a live client exists yet. The realtime consumers it used to wire are now the
+    // NVR's loops - the typed firehose router (run) and the telemetry publisher (publishTelemetry) below, both spawned post-connect and bound to the shutdown signal -
+    // so this stays a plain field-initializer and the controller-scoped work happens when those loops start.
     this.eventTimers = new Map();
     this.hap = nvr.platform.api.hap;
     this.log = nvr.log;

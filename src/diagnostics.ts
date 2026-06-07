@@ -48,11 +48,11 @@ export interface FirehoseDispatchPayload {
 
 /**
  * Payload published on {@link channels.nvrLifecycle}. `event` names the lifecycle milestone: `connected` after a successful connect, `shuttingDown` at the terminal
- * abort chokepoint, and `controllerLost` / `controllerRecovered` as forwarded from the connection monitor's blessed events.
+ * abort chokepoint, and `controllerLost` / `controllerRebooted` / `controllerRecovered` as forwarded from the connection monitor's blessed events.
  */
 export interface NvrLifecyclePayload {
 
-  event: "connected" | "controllerLost" | "controllerRecovered" | "shuttingDown";
+  event: "connected" | "controllerLost" | "controllerRebooted" | "controllerRecovered" | "shuttingDown";
 }
 
 /**

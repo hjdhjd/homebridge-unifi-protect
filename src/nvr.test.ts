@@ -9,7 +9,7 @@
  * The connection-input mapping is verified against the real NvrHealth with an injected clock, so the test proves both the new mapping and that the reducer/window
  * behavior it feeds is unchanged.
  */
-import { createConnectRetryPolicy, isSuccessfulRequest, membershipDelta } from "./nvr-policy.ts";
+import { computeStableSince, createConnectRetryPolicy, isStabilityWindowElapsed, isSuccessfulRequest, membershipDelta } from "./nvr-policy.ts";
 import { describe, test } from "node:test";
 import { NvrHealth } from "./nvr-health.ts";
 import { ProtectAuthError } from "unifi-protect";
@@ -224,5 +224,57 @@ describe("NvrHealth connection-input mapping", () => {
     }
 
     assert.equal(health.state, "healthy");
+  });
+});
+
+describe("removal stability arithmetic", () => {
+
+  // The stability window the production gate uses, restated here as a plain literal so these clock-free cases read independently of the settings constant.
+  const windowMs = 600000;
+  const nowMs = 1000000;
+
+  test("a long-up controller at first good-state is trusted immediately", () => {
+
+    // First good-state entry (hasStabilizedBefore false) with an uptime well past the window: the backdate clamps to exactly one window, so the window has already
+    // elapsed at now and a removal is permitted right away.
+    const stableSinceMs = computeStableSince({ hasStabilizedBefore: false, nowMs, uptimeMs: windowMs + 500000, windowMs });
+
+    assert.equal(stableSinceMs, nowMs - windowMs);
+    assert.equal(isStabilityWindowElapsed({ nowMs, stableSinceMs, windowMs }), true);
+  });
+
+  test("a short-up controller at first good-state must still wait out the remainder", () => {
+
+    // First good-state entry with an uptime shorter than the window: the backdate counts from boot, so the gate stays closed now and opens only once the full window has
+    // elapsed since boot (now + the uncovered remainder).
+    const uptimeMs = 180000;
+    const stableSinceMs = computeStableSince({ hasStabilizedBefore: false, nowMs, uptimeMs, windowMs });
+
+    assert.equal(stableSinceMs, nowMs - uptimeMs);
+    assert.equal(isStabilityWindowElapsed({ nowMs, stableSinceMs, windowMs }), false);
+    assert.equal(isStabilityWindowElapsed({ nowMs: stableSinceMs + windowMs, stableSinceMs, windowMs }), true);
+  });
+
+  test("a recovery counts from now and ignores uptime", () => {
+
+    // A later good-state entry (hasStabilizedBefore true) always counts from now regardless of how long the controller process has been up - a disruption we observed
+    // resets our trust - so even a huge uptime leaves the gate closed until a fresh full window elapses.
+    const stableSinceMs = computeStableSince({ hasStabilizedBefore: true, nowMs, uptimeMs: windowMs * 10, windowMs });
+
+    assert.equal(stableSinceMs, nowMs);
+    assert.equal(isStabilityWindowElapsed({ nowMs, stableSinceMs, windowMs }), false);
+  });
+
+  test("the window is elapsed at exactly the boundary", () => {
+
+    // The gate is a >= comparison, so the instant the elapsed time equals the window the controller is stable; one millisecond before it is not.
+    assert.equal(isStabilityWindowElapsed({ nowMs, stableSinceMs: nowMs - windowMs, windowMs }), true);
+    assert.equal(isStabilityWindowElapsed({ nowMs, stableSinceMs: nowMs - windowMs + 1, windowMs }), false);
+  });
+
+  test("a null stable-since is never elapsed", () => {
+
+    // Null means the controller is not currently good (mid-disruption), so the gate is closed no matter the window.
+    assert.equal(isStabilityWindowElapsed({ nowMs, stableSinceMs: null, windowMs }), false);
   });
 });
