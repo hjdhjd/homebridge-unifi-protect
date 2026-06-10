@@ -2,19 +2,20 @@
  *
  * protect-securitysystem.ts: Security system accessory for UniFi Protect.
  */
-import type { CharacteristicValue, PlatformAccessory } from "homebridge";
 import { acquireService, validService } from "homebridge-plugin-utils";
+import type { CharacteristicValue } from "homebridge";
+import type { ProtectAccessory } from "../types.ts";
 import { ProtectBase } from "./device.ts";
 import type { ProtectNvr } from "../nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
 
 export class ProtectSecuritySystem extends ProtectBase {
 
-  public accessory: PlatformAccessory;
+  public accessory: ProtectAccessory;
   private isAlarmTriggered: boolean;
 
   // Create an instance.
-  constructor(nvr: ProtectNvr, accessory: PlatformAccessory) {
+  constructor(nvr: ProtectNvr, accessory: ProtectAccessory) {
 
     super(nvr);
 
@@ -32,7 +33,7 @@ export class ProtectSecuritySystem extends ProtectBase {
     // Save the security system state before we wipeout the context.
     if(this.accessory.context.securityState !== undefined) {
 
-      securityState = this.accessory.context.securityState as CharacteristicValue;
+      securityState = this.accessory.context.securityState;
     }
 
     // Clean out the context object in case it's been polluted somehow.
@@ -203,10 +204,11 @@ export class ProtectSecuritySystem extends ProtectBase {
     }
 
     // Handlers to get our current state, and initialize on startup.
-    service.updateCharacteristic(SecuritySystemCurrentState, this.accessory.context.securityState as CharacteristicValue)
+    service.updateCharacteristic(SecuritySystemCurrentState, this.accessory.context.securityState ?? SecuritySystemCurrentState.DISARMED)
       .getCharacteristic(SecuritySystemCurrentState).onGet(() => {
 
-        return this.isAlarmTriggered ? this.hap.Characteristic.SecuritySystemCurrentState.ALARM_TRIGGERED : (this.accessory.context.securityState as CharacteristicValue);
+        return this.isAlarmTriggered ? this.hap.Characteristic.SecuritySystemCurrentState.ALARM_TRIGGERED :
+          (this.accessory.context.securityState ?? SecuritySystemCurrentState.DISARMED);
       });
 
     // Handlers for triggering a change in the security system state.
@@ -310,7 +312,7 @@ export class ProtectSecuritySystem extends ProtectBase {
       [this.hap.Characteristic.SecuritySystemCurrentState.STAY_ARM]: "Home"
     };
 
-    return this.isAlarmTriggered ? "Alarm" : securitySystemCurrentState[this.accessory.context.securityState as number] ?? "Off";
+    return this.isAlarmTriggered ? "Alarm" : securitySystemCurrentState[Number(this.accessory.context.securityState)] ?? "Off";
   }
 
   // Change the security system state, and enable or disable motion detection accordingly.
@@ -414,11 +416,11 @@ export class ProtectSecuritySystem extends ProtectBase {
 
         if(motionSwitch) {
 
-          motionSwitch.updateCharacteristic(this.hap.Characteristic.On, targetAccessory.context.detectMotion as boolean);
+          motionSwitch.updateCharacteristic(this.hap.Characteristic.On, targetAccessory.context.detectMotion);
         }
 
         this.log.info("%s -> %s: Motion detection %s.", viewScene, targetAccessory.displayName,
-          targetAccessory.context.detectMotion === true ? "enabled" : "disabled");
+          targetAccessory.context.detectMotion ? "enabled" : "disabled");
       }
     }
 
@@ -452,7 +454,8 @@ export class ProtectSecuritySystem extends ProtectBase {
 
     // Update the security system state.
     this.accessory.getService(this.hap.Service.SecuritySystem)?.updateCharacteristic(this.hap.Characteristic.SecuritySystemCurrentState,
-      this.isAlarmTriggered ? this.hap.Characteristic.SecuritySystemCurrentState.ALARM_TRIGGERED : this.accessory.context.securityState as CharacteristicValue);
+      this.isAlarmTriggered ? this.hap.Characteristic.SecuritySystemCurrentState.ALARM_TRIGGERED :
+        (this.accessory.context.securityState ?? this.hap.Characteristic.SecuritySystemCurrentState.DISARMED));
 
     // Update the security alarm state.
     this.accessory.getService(this.hap.Service.Switch)?.updateCharacteristic(this.hap.Characteristic.On, this.isAlarmTriggered);

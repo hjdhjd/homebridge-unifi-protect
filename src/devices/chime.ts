@@ -2,9 +2,10 @@
  *
  * protect-chime.ts: Chime device class for UniFi Protect.
  */
-import type { CharacteristicValue, PlatformAccessory } from "homebridge";
 import type { Chime, PlaySpeakerOptions, ProtectChimeConfig } from "unifi-protect";
+import type { CharacteristicValue } from "homebridge";
 import { PROTECT_DOORBELL_CHIME_SPEAKER_DURATION } from "../settings.ts";
+import type { ProtectAccessory } from "../types.ts";
 import { ProtectDevice } from "./device.ts";
 import type { ProtectNvr } from "../nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
@@ -17,7 +18,7 @@ export class ProtectChime extends ProtectDevice {
   declare protected readonly device: Chime;
 
   // Create an instance.
-  constructor(nvr: ProtectNvr, accessory: PlatformAccessory, device: Chime) {
+  constructor(nvr: ProtectNvr, accessory: ProtectAccessory, device: Chime) {
 
     super(nvr, accessory, device);
 

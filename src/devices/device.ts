@@ -2,14 +2,16 @@
  *
  * protect-device.ts: Base class for all UniFi Protect devices.
  */
-import type { API, CharacteristicValue, HAP, PlatformAccessory, Service, WithUUID } from "homebridge";
+import type { API, CharacteristicValue, HAP, Service, WithUUID } from "homebridge";
+import type { AcquireServiceTarget, HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
 import type { Camera, Chime, Light, ProtectCameraConfig, ProtectNvrConfig, ProtectState, Sensor, Viewer } from "unifi-protect";
-import type { HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
 import { PROTECT_MOTION_DURATION, PROTECT_OCCUPANCY_DURATION} from "../settings.ts";
 import { ProtectAuthorizationError, selectCamera, selectChime, selectLight, selectSensor, selectViewer } from "unifi-protect";
-import { type ProtectDeviceConfigTypes, ProtectReservedNames, exhaustiveGuard } from "../types.ts";
+import { ProtectReservedNames, exhaustiveGuard } from "../types.ts";
 import { acquireService, composeSignals, loopFaultReporter, sanitizeName, superviseLoop, validService } from "homebridge-plugin-utils";
 import type { ObserverWakePayload } from "../diagnostics.ts";
+import type { ProtectAccessory } from "../types.ts";
+import type { ProtectDeviceConfigTypes } from "../types.ts";
 import type { ProtectNvr } from "../nvr.ts";
 import type { ProtectPlatform } from "../platform.ts";
 import { channels } from "../diagnostics.ts";
@@ -97,7 +99,7 @@ export abstract class ProtectBase {
   }
 
   // Configure the device information for HomeKit.
-  protected setInfo(accessory: PlatformAccessory, device: ProtectDeviceConfigTypes | ProtectNvrConfig): boolean {
+  protected setInfo(accessory: ProtectAccessory, device: ProtectDeviceConfigTypes | ProtectNvrConfig): boolean {
 
     const infoService = accessory.getService(this.hap.Service.AccessoryInformation);
 
@@ -229,7 +231,7 @@ export abstract class ProtectBase {
 
 export abstract class ProtectDevice extends ProtectBase {
 
-  public accessory!: PlatformAccessory;
+  public accessory: ProtectAccessory;
   // Per-accessory abort controller, composed against the NVR signal via composeSignals (the HBPU primitive). Aborting it (cleanup, device removal,
   // reconfigureAsDoorbell teardown) tears down every observe loop this accessory spawned. Replaces the listeners Map plus nvr.events.off bookkeeping that the
   // EventEmitter model required.
@@ -245,7 +247,7 @@ export abstract class ProtectDevice extends ProtectBase {
   protected timers: Map<string, NodeJS.Timeout>;
 
   // The constructor initializes key variables and calls configureDevice().
-  constructor(nvr: ProtectNvr, accessory: PlatformAccessory, device: Camera | Light | Sensor | Chime | Viewer) {
+  constructor(nvr: ProtectNvr, accessory: ProtectAccessory, device: Camera | Light | Sensor | Chime | Viewer) {
 
     // Call the constructor of our base class.
     super(nvr);
@@ -268,7 +270,7 @@ export abstract class ProtectDevice extends ProtectBase {
   }
 
   // Retrieve an existing service from an accessory, creating it if necessary.
-  protected acquireService(serviceType: WithUUID<typeof Service>, name = this.accessoryName, subtype?: string, onServiceCreate?: (svc: Service) => void):
+  protected acquireService(serviceType: AcquireServiceTarget, name = this.accessoryName, subtype?: string, onServiceCreate?: (svc: Service) => void):
   Nullable<Service> {
 
     return acquireService(this.accessory, serviceType, name, subtype, onServiceCreate);
@@ -508,7 +510,7 @@ export abstract class ProtectDevice extends ProtectBase {
       this.accessory.context.detectMotion = true;
     }
 
-    service.updateCharacteristic(this.hap.Characteristic.On, this.accessory.context.detectMotion as boolean);
+    service.updateCharacteristic(this.hap.Characteristic.On, this.accessory.context.detectMotion ?? true);
 
     this.log.info("Enabling motion sensor switch.");
 

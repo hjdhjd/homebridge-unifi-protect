@@ -2,8 +2,9 @@
  *
  * protect-light.ts: Light device class for UniFi Protect.
  */
-import type { CharacteristicValue, PlatformAccessory } from "homebridge";
 import type { Light, ProtectLightConfig } from "unifi-protect";
+import type { CharacteristicValue } from "homebridge";
+import type { ProtectAccessory } from "../types.ts";
 import { ProtectDevice } from "./device.ts";
 import type { ProtectNvr } from "../nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
@@ -15,7 +16,7 @@ export class ProtectLight extends ProtectDevice {
   declare protected readonly device: Light;
 
   // Create an instance.
-  constructor(nvr: ProtectNvr, accessory: PlatformAccessory, device: Light) {
+  constructor(nvr: ProtectNvr, accessory: ProtectAccessory, device: Light) {
 
     super(nvr, accessory, device);
 

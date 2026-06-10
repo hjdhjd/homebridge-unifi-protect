@@ -3,8 +3,9 @@
  * protect-doorbell.ts: Doorbell device class for UniFi Protect.
  */
 import type { Camera, DeepPartial, ProtectCameraLcdMessageConfig, ProtectChimeConfig } from "unifi-protect";
-import type { CharacteristicValue, PlatformAccessory, Service } from "homebridge";
+import type { CharacteristicValue, Service } from "homebridge";
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_DOORBELL_CHIME_DURATION_DIGITAL } from "../settings.ts";
+import type { ProtectAccessory, ProtectAccessoryContext } from "../types.ts";
 import { sanitizeName, toStartCase } from "homebridge-plugin-utils";
 import { selectCamera, selectChimes } from "unifi-protect";
 import type { Nullable } from "homebridge-plugin-utils";
@@ -58,7 +59,7 @@ export class ProtectDoorbell extends ProtectCamera {
   private isMessagesEnabled: boolean;
   private isMessagesFromControllerEnabled: boolean;
 
-  constructor(nvr: ProtectNvr, accessory: PlatformAccessory, device: Camera) {
+  constructor(nvr: ProtectNvr, accessory: ProtectAccessory, device: Camera) {
 
     super(nvr, accessory, device);
 
@@ -71,7 +72,7 @@ export class ProtectDoorbell extends ProtectCamera {
   }
 
   // Configure the doorbell for HomeKit.
-  protected configureDevice(): boolean {
+  protected override configureDevice(): boolean {
 
     this.chimeDigitalDuration = this.getFeatureNumber("Doorbell.PhysicalChime.Duration.Digital") ?? PROTECT_DOORBELL_CHIME_DURATION_DIGITAL;
     this.defaultMessageDuration = this.nvr.ufp.doorbellSettings?.defaultMessageResetTimeoutMs ?? 60000;
@@ -120,7 +121,7 @@ export class ProtectDoorbell extends ProtectCamera {
   }
 
   // Cleanup after ourselves if we're being deleted.
-  public cleanup(): void {
+  public override cleanup(): void {
 
     if(this.packageCamera) {
 
@@ -274,13 +275,13 @@ export class ProtectDoorbell extends ProtectCamera {
     const uuid = this.hap.uuid.generate(this.ufp.mac + ".PackageCamera");
 
     // Let's find it if we've already created it.
-    let packageCameraAccessory = this.platform.accessories.find((x: PlatformAccessory) => x.UUID === uuid);
+    let packageCameraAccessory = this.platform.accessories.find(x => x.UUID === uuid);
 
     // We can't find the accessory. Let's create it.
     if(!packageCameraAccessory) {
 
       // We use the camera's MAC address + ".PackageCamera" to create our UUID. That should provide the guaranteed uniqueness we need.
-      packageCameraAccessory = new this.api.platformAccessory(sanitizeName(this.accessoryName + " Package Camera"), uuid);
+      packageCameraAccessory = new this.api.platformAccessory<ProtectAccessoryContext>(sanitizeName(this.accessoryName + " Package Camera"), uuid);
 
       // Register this accessory with homebridge and add it to the accessory array so we can track it.
       if(this.hasFeature("Device.Standalone")) {
@@ -469,7 +470,7 @@ export class ProtectDoorbell extends ProtectCamera {
   }
 
   // Configure MQTT capabilities for the doorbell.
-  protected configureMqtt(): boolean {
+  protected override configureMqtt(): boolean {
 
     // Call our parent to setup the general camera MQTT capabilities.
     super.configureMqtt();
@@ -532,7 +533,7 @@ export class ProtectDoorbell extends ProtectCamera {
       try {
 
         inboundPayload = JSON.parse(rawValue) as mqttMessageJSON;
-      } catch(error) {
+      } catch {
 
         this.log.error("Unable to process MQTT message: \"%s\". Invalid JSON.", rawValue);
 

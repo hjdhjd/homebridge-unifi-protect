@@ -4,7 +4,7 @@
  */
 "use strict";
 
-import { webUi } from "./lib/webUi.mjs";
+import { webUi } from "homebridge-plugin-utils/webUi.mjs";
 
 // Execute our first run screen if we don't have valid Protect login credentials and a controller.
 const firstRunIsRequired = () => {
@@ -50,27 +50,37 @@ const firstRunOnSubmit = async () => {
 
   const ufpDevices = await homebridge.request("/getDevices", { address: address, password: password, username: username });
 
-  // Couldn't connect to the Protect controller for some reason.
+  // Couldn't connect to the Protect controller for some reason. Render the guidance as DOM nodes and place the controller-sourced error string via textContent so it
+  // is shown as text, never interpreted as markup.
   if(!ufpDevices?.length) {
 
-    tdLoginError.innerHTML = "Unable to login to the UniFi Protect controller.<br>Please check your controller address, username, and password.<br>" +
-      "<code class=\"text-danger\">" + (await homebridge.request("/getErrorMessage")) + "</code>";
+    const errorCode = document.createElement("code");
+
+    errorCode.className = "text-danger";
+    errorCode.textContent = (await homebridge.request("/getErrorMessage")) ?? "";
+
+    tdLoginError.replaceChildren(
+
+      document.createTextNode("Unable to login to the UniFi Protect controller."), document.createElement("br"),
+      document.createTextNode("Please check your controller address, username, and password."), document.createElement("br"), errorCode
+    );
+
     homebridge.hideSpinner();
 
     return false;
   }
 
-  // Save the login credentials to our configuration.
-  if(!ui.featureOptions.currentConfig[0].controllers?.length) {
+  // Snapshot the live configuration once - currentConfig rebuilds a fresh copy on every read, so we capture a single reference to mutate and persist rather than
+  // re-reading it per line (re-reading mutates throwaway copies and loses the write). We shallow-copy the controllers array so we preserve any additional controllers,
+  // and merge onto the existing primary entry rather than discarding its other fields. On a true first run controllers[0] is undefined; object spread of undefined is
+  // a safe no-op (it yields just the three credential fields), so no separate initialization is needed.
+  const pluginConfig = ui.featureOptions.currentConfig;
+  const controllers = [...(pluginConfig[0].controllers ?? [])];
 
-    ui.featureOptions.currentConfig[0].controllers = [{}];
-  }
+  controllers[0] = { ...controllers[0], address, password, username };
+  pluginConfig[0].controllers = controllers;
 
-  ui.featureOptions.currentConfig[0].controllers[0].address = address;
-  ui.featureOptions.currentConfig[0].controllers[0].username = username;
-  ui.featureOptions.currentConfig[0].controllers[0].password = password;
-
-  await homebridge.updatePluginConfig(ui.featureOptions.currentConfig);
+  await homebridge.updatePluginConfig(pluginConfig);
 
   return true;
 };
@@ -221,6 +231,31 @@ const validOptionCategory = (device, category) => {
   return true;
 };
 
+/* Build one row of the device-stats grid. We construct DOM nodes directly via createElement / textContent rather than concatenating into innerHTML so any HTML
+ * metacharacter in a device field (model, MAC address, IP address) renders as text instead of being interpreted as markup. The discovery boundary is the trust line,
+ * and treating controller-reported strings as data rather than HTML is the cleanest place to enforce it.
+ */
+const buildStatRow = (label, value, valueClassName) => {
+
+  const item = document.createElement("div");
+
+  item.className = "stat-item";
+
+  const labelSpan = document.createElement("span");
+
+  labelSpan.className = "stat-label";
+  labelSpan.textContent = label;
+
+  const valueSpan = document.createElement("span");
+
+  valueSpan.className = valueClassName;
+  valueSpan.textContent = value ?? "";
+
+  item.append(labelSpan, valueSpan);
+
+  return item;
+};
+
 // Show the details for this device.
 const showProtectDetails = (device) => {
 
@@ -229,32 +264,30 @@ const showProtectDetails = (device) => {
   // No device specified, we must be in a global context.
   if(!device) {
 
-    deviceStatsContainer.innerHTML = "";
+    deviceStatsContainer.textContent = "";
 
     return;
   }
 
-  // Populate the infopanel.
-  deviceStatsContainer.innerHTML =
-    "<div class=\"device-stats-grid\">" +
-      "<div class=\"stat-item\">" +
-        "<span class=\"stat-label\">Model</span>" +
-        "<span class=\"stat-value\">" + (device.marketName ?? device.type) + "</span>" +
-      "</div>" +
-      "<div class=\"stat-item\">" +
-        "<span class=\"stat-label\">MAC Address</span>" +
-        "<span class=\"stat-value font-monospace\">" + device.mac + "</span>" +
-      "</div>" +
-      "<div class=\"stat-item\">" +
-        "<span class=\"stat-label\">IP Address</span>" +
-        "<span class=\"stat-value font-monospace\">" +
-          (device.host ?? (device.modelKey === "sensor" ? (device.connectionType === "lora" ? "SuperLink" : "Bluetooth") + " Device" : "None")) + "</span>" +
-      "</div>" +
-      "<div class=\"stat-item\">" +
-        "<span class=\"stat-label\">Status</span>" +
-        "<span class=\"stat-value\">" + (("state" in device) ? (device.state.charAt(0).toUpperCase() + device.state.slice(1).toLowerCase()) : "Connected") + "</span>" +
-      "</div>" +
-    "</div>";
+  // Compute the IP-address value: cameras and most devices report a host; sensors without one are reached over LoRa (SuperLink) or Bluetooth.
+  const ipValue = device.host ?? ((device.modelKey === "sensor") ? ((device.connectionType === "lora") ? "SuperLink" : "Bluetooth") + " Device" : "None");
+
+  // Compute the status value: title-case the device state when present, otherwise report a connected controller.
+  const statusValue = ("state" in device) ? (device.state.charAt(0).toUpperCase() + device.state.slice(1).toLowerCase()) : "Connected";
+
+  // Build the device-details grid fresh so successive selections do not stack stale rows.
+  const grid = document.createElement("div");
+
+  grid.className = "device-stats-grid";
+  grid.append(
+
+    buildStatRow("Model", device.marketName ?? device.type, "stat-value"),
+    buildStatRow("MAC Address", device.mac, "stat-value font-monospace"),
+    buildStatRow("IP Address", ipValue, "stat-value font-monospace"),
+    buildStatRow("Status", statusValue, "stat-value")
+  );
+
+  deviceStatsContainer.replaceChildren(grid);
 };
 
 // Parameters for our feature options webUI.

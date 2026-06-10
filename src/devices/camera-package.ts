@@ -3,10 +3,12 @@
  * protect-camera-package.ts: Package camera device class for UniFi Protect.
  */
 import type { CharacteristicValue, Resolution } from "homebridge";
-import { type Nullable , retry} from "homebridge-plugin-utils";
-import { ProtectCamera, type RtspEntry } from "./camera.ts";
+import { PACKAGE_DEFAULT_RESOLUTION, buildAdvertisedResolutions, buildChannelProfile, formatResolution, isPackageChannel } from "./resolution.ts";
+import type { ChannelProfile } from "./resolution.ts";
+import type { Nullable } from "homebridge-plugin-utils";
+import { ProtectCamera } from "./camera.ts";
 import { ProtectReservedNames } from "../types.ts";
-import { ProtectStreamingDelegate } from "../stream.ts";
+import { retry } from "homebridge-plugin-utils";
 
 // Package camera class. Extends ProtectCamera and represents the secondary camera channel on Protect doorbells that ship with one.
 export class ProtectCameraPackage extends ProtectCamera {
@@ -38,7 +40,7 @@ export class ProtectCameraPackage extends ProtectCamera {
   }
 
   // Configure the package camera.
-  protected configureDevice(): boolean {
+  protected override configureDevice(): boolean {
 
     // Get our parent camera.
     const parentCamera = this.nvr.getDeviceById(this.ufp.id);
@@ -67,11 +69,11 @@ export class ProtectCameraPackage extends ProtectCamera {
     this.accessory.context = {};
 
     // Inherit our HKSV and motion awareness states from our parent camera.
-    this.accessory.context.detectMotion = savedContext.detectMotion as boolean | undefined ?? true;
+    this.accessory.context.detectMotion = savedContext.detectMotion ?? true;
 
     if(this.hasFeature("Video.HKSV.Recording.Switch")) {
 
-      this.accessory.context.hksvRecordingDisabled = savedContext.hksvRecordingDisabled as boolean | undefined ?? false;
+      this.accessory.context.hksvRecordingDisabled = savedContext.hksvRecordingDisabled ?? false;
     }
 
     // We explicitly avoid adding the MAC address of the camera - that's reserved for real Protect devices, not synthetic ones we create.
@@ -87,51 +89,25 @@ export class ProtectCameraPackage extends ProtectCamera {
     // Configure the flashlight.
     this.configureFlashlight();
 
-    let hkResolutions: Resolution[] = [];
-    const validResolutions: Resolution[] = [this.findRtsp()?.resolution ?? [ 1600, 1200, 2 ]];
+    // The package camera's native resolution, the seed for the HomeKit resolution list. The annotation contextually types the fallback tuple - no cast.
+    const primaryResolution: Resolution = this.selectChannel()?.resolution ?? PACKAGE_DEFAULT_RESOLUTION;
 
-    // Ensure we have mandatory resolutions required by HomeKit, as well as special support for Apple TV and Apple Watch, while respecting aspect ratios.
-    //
-    // Our supported resolutions range from 4K through 320p...even for package cameras.
-    if(!this.is4x3AspectRatio(validResolutions[0][0], validResolutions[0][1])) {
-
-      hkResolutions = ProtectCamera.RESOLUTIONS_16X9.map(([ width, height ]) => [ width, height, 15 ]);
-    } else {
-
-      hkResolutions = ProtectCamera.RESOLUTIONS_4X3.map(([ width, height ]) => [ width, height, 15 ]);
-    }
-
-    // Validate and add our entries to the list of what we make available to HomeKit.
-    for(const entry of hkResolutions) {
-
-      // This resolution is larger than the highest resolution on the camera, natively. We compare max dimensions so portrait-oriented cameras (where width < height) use
-      // their longer dimension as the threshold. We make an exception for 1080p and 720p resolutions since HomeKit explicitly requires them.
-      if((Math.max(entry[0], entry[1]) >= Math.max(validResolutions[0][0], validResolutions[0][1])) && ![ 1920, 1280 ].includes(entry[0])) {
-
-        continue;
-      }
-
-      // We already have this resolution in our list.
-      if(validResolutions.some(x => (x[0] === entry[0]) && (x[1] === entry[1]) && (x[2] === entry[2]))) {
-
-        continue;
-      }
-
-      validResolutions.push(entry);
-    }
+    // Synthesize the HomeKit resolution list from the package channel's fixed native top. The package camera is a single fixed channel - the resolution module seeds the
+    // list with the native top itself and appends the aspect-appropriate mandated resolutions at the package frame rate, so we pass the seed once and do NOT prepend it.
+    const validResolutions = buildAdvertisedResolutions({ fpsSet: [15], nativeTop: primaryResolution });
 
     // Inform users about our RTSP entry mapping, if we're debugging.
     if(this.hasFeature("Debug.Video.Startup")) {
 
       for(const entry of validResolutions) {
 
-        this.log.info("Mapping resolution: %s.", this.getResolution(entry) + " => " + this.getResolution(validResolutions[0]));
+        this.log.info("Mapping resolution: %s.", formatResolution(entry) + " => " + formatResolution(primaryResolution));
       }
     }
 
     // Configure the video stream with our required resolutions. No, package cameras don't really support any of these resolutions, but they're required
     // by HomeKit in order to stream video.
-    this.stream = new ProtectStreamingDelegate(this, validResolutions);
+    this.stream = this.platform.streamingDelegateFactory.create(this, validResolutions);
 
     // Fire up the controller and inform HomeKit about it.
     this.accessory.configureController(this.stream.controller);
@@ -230,35 +206,29 @@ export class ProtectCameraPackage extends ProtectCamera {
   }
 
   // Return a unique identifier for package cameras based on the parent device's MAC address.
-  public get id(): string {
+  public override get id(): string {
 
     return this.ufp.mac + ".PackageCamera";
   }
 
   // Make our RTSP stream findable.
-  public findRtsp(): Nullable<RtspEntry> {
+  public override selectChannel(): Nullable<ChannelProfile> {
 
-    const channel = this.ufp.channels.find(x => x.name === "Package Camera");
+    const channel = this.ufp.channels.find(isPackageChannel);
 
     if(!channel) {
 
       return null;
     }
 
-    // Return the information we need for package camera channel access.
-    return {
-
-      channel: channel,
-      lens: 2,
-      name: this.getResolution([ channel.width, channel.height, channel.fps ]) + " (" + channel.name + ")",
-      resolution: [ channel.width, channel.height, channel.fps ],
-      url:  "rtsps://" + this.nvr.config.address + ":" + this.nvr.ufp.ports.rtsps.toString() + "/" + channel.rtspAlias + "?enableSrtp"
-    };
+    // Return the information we need for package camera channel access. We pin lens 2 and resolve the URL host through the inherited rtspHost chain
+    // (overrideAddress ?? connectionHost ?? host) - the 3b-iii reconcile, so the package's RTSP URLs match the parent's instead of the former raw config.address.
+    return buildChannelProfile(channel, { lens: 2, rtspPort: this.nvr.ufp.ports.rtsps, urlHost: this.rtspHost });
   }
 
   // Return a recording RTSP configuration for HKSV.
-  public findRecordingRtsp(): Nullable<RtspEntry> {
+  public override selectRecordingChannel(): Nullable<ChannelProfile> {
 
-    return this.findRtsp();
+    return this.selectChannel();
   }
 }

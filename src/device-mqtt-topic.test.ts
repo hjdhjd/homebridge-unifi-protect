@@ -14,7 +14,7 @@
 import { ProtectBase, ProtectDevice } from "./devices/device.ts";
 import { describe, test } from "node:test";
 import type { Camera } from "unifi-protect";
-import type { PlatformAccessory } from "homebridge";
+import type { ProtectAccessory } from "./types.ts";
 import type { ProtectNvr } from "./nvr.ts";
 import assert from "node:assert/strict";
 import { makeTestAccessory } from "./testing.helpers.ts";
@@ -90,7 +90,7 @@ const makeDevice = (): { capture: MqttCapture; instance: TestProtectDevice } => 
     platform: { api: { hap: {} }, debug: sink, log: { debug: sink, error: sink, info: sink, warn: sink } },
     signal: new AbortController().signal
   };
-  const instance = new TestProtectDevice(nvr as unknown as ProtectNvr, makeTestAccessory() as unknown as PlatformAccessory, device as unknown as Camera);
+  const instance = new TestProtectDevice(nvr as unknown as ProtectNvr, makeTestAccessory() as unknown as ProtectAccessory, device as unknown as Camera);
 
   return { capture, instance };
 };

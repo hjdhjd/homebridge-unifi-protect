@@ -20,7 +20,7 @@
  */
 import type { Camera, PlaySpeakerOptions } from "unifi-protect";
 import { describe, test } from "node:test";
-import type { PlatformAccessory } from "homebridge";
+import type { ProtectAccessory } from "./types.ts";
 import { ProtectAuthorizationError } from "unifi-protect";
 import { ProtectDevice } from "./devices/device.ts";
 import type { ProtectNvr } from "./nvr.ts";
@@ -59,7 +59,7 @@ const makeHarness = (): CommandHarness => {
     platform: { api: { hap: {} }, debug: sink, log: { debug: sink, error: (message: string): void => { errors.push(message); }, info: sink, warn: sink } },
     signal: new AbortController().signal
   };
-  const instance = new TestProtectDevice(nvr as unknown as ProtectNvr, makeTestAccessory() as unknown as PlatformAccessory, device as unknown as Camera);
+  const instance = new TestProtectDevice(nvr as unknown as ProtectNvr, makeTestAccessory() as unknown as ProtectAccessory, device as unknown as Camera);
 
   return { errors, instance };
 };

@@ -185,7 +185,7 @@ export class ProtectSnapshot {
     // -i pipe:0                  Read input from standard input.
     const ffmpegOptions = [
 
-      "-r", this.protectCamera.stream.hksv?.rtspEntry?.channel.fps.toString() ?? "30",
+      "-r", this.protectCamera.stream.hksv?.channelProfile?.channel.fps.toString() ?? "30",
       "-probesize", buffer.length.toString(),
       "-f", "mp4",
       "-i", "pipe:0"
@@ -204,9 +204,9 @@ export class ProtectSnapshot {
     }
 
     // Grab the highest quality stream we have available.
-    const rtspEntry = this.protectCamera.findRtsp(3840, 2160, { biasHigher: true });
+    const channelProfile = this.protectCamera.selectChannel(3840, 2160, { biasHigher: true });
 
-    if(!rtspEntry) {
+    if(!channelProfile) {
 
       return null;
     }
@@ -217,14 +217,14 @@ export class ProtectSnapshot {
     // -r fps                     Set the input frame rate for the video stream.
     // -probesize number          How many bytes should be analyzed for stream information.
     // -rtsp_transport tcp        Tell the RTSP stream handler that we're looking for a TCP connection.
-    // -i rtspEntry.url           RTSPS URL to get our input stream from.
+    // -i channelProfile.url           RTSPS URL to get our input stream from.
     const ffmpegOptions = [
 
       "-avioflags", "direct",
-      "-r", rtspEntry.channel.fps.toString(),
+      "-r", channelProfile.channel.fps.toString(),
       "-probesize", this.protectCamera.stream.probesize.toString(),
       "-rtsp_transport", "tcp",
-      "-i", rtspEntry.url
+      "-i", channelProfile.url
     ];
 
     return this.snapFromFfmpeg(ffmpegOptions, signal, request);

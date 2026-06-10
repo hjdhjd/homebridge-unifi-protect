@@ -29,6 +29,7 @@ export default hbPluginUtils({
   extraConfigs: [
     { files: ["homebridge-ui/server.js"], languageOptions: { globals: { console: "readonly", fetch: "readonly" } } },
     {
+
       files: [ "**/*.test.ts", "**/*.fixtures.ts", "**/*.helpers.ts" ],
       rules: {
 

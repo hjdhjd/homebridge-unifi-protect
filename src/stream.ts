@@ -7,10 +7,11 @@
 import { AudioRecordingCodecType, AudioRecordingSamplerate, AudioStreamingCodecType, AudioStreamingSamplerate, BackpressureWriter, FfmpegOptions,
   FfmpegStreamingProcess, H264Level, H264Profile, HKSV_FRAGMENT_LENGTH, HOMEKIT_IDR_INTERVAL, HbpuAbortError, MediaContainerType, RtpDemuxer, SRTPCryptoSuites,
   StreamRequestTypes, VideoCodecType, formatBps, isHbpuAbortReason } from "homebridge-plugin-utils";
-import type { CameraController, CameraControllerOptions, CameraStreamingDelegate, HAP, PrepareStreamCallback, PrepareStreamRequest, PrepareStreamResponse, Service,
-  SnapshotRequest, SnapshotRequestCallback, StartStreamRequest, StreamRequestCallback, StreamingRequest } from "homebridge";
+import type { CameraController, CameraControllerOptions, CameraStreamingDelegate, HAP, PrepareStreamCallback, PrepareStreamRequest, PrepareStreamResponse, Resolution,
+  Service, SnapshotRequest, SnapshotRequestCallback, StartStreamRequest, StreamRequestCallback, StreamingRequest } from "homebridge";
 import type { HomebridgePluginLogging, IpFamily, Nullable, PortReservation } from "homebridge-plugin-utils";
 import { PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION, PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS, PROTECT_LIVESTREAM_API_IDR_INTERVAL } from "./settings.ts";
+import type { StreamingDelegate, StreamingDelegateFactory } from "./stream-delegate.ts";
 import type { LivestreamSubscription } from "./livestream.ts";
 import { ProtectAbortedError } from "unifi-protect";
 import type { ProtectCamera } from "./devices/index.ts";
@@ -136,7 +137,7 @@ class ProtectStreamingFfmpegProcess extends FfmpegStreamingProcess {
 }
 
 // Camera streaming delegate implementation for Protect.
-export class ProtectStreamingDelegate implements CameraStreamingDelegate {
+export class ProtectStreamingDelegate implements CameraStreamingDelegate, StreamingDelegate {
 
   public controller: CameraController;
   public readonly ffmpegOptions: FfmpegOptions;
@@ -617,17 +618,17 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     }
 
     // If we're using the livestream API and we're timeshifting, we override the stream quality we've determined in favor of our timeshift buffer.
-    let rtspEntry = useTsb ? this.hksv?.rtspEntry : null;
+    let channelProfile = useTsb ? this.hksv?.channelProfile : null;
 
     // Find the best RTSP stream based on what we're looking for.
     if(isTranscoding) {
 
       // If we have hardware transcoding enabled, we treat it uniquely and get the highest quality stream we can. Fixed-function hardware transcoders tend to perform
       // better with higher bitrate sources. We also want to generally bias ourselves toward higher quality streams where possible.
-      rtspEntry ??= this.protectCamera.findRtsp(
+      channelProfile ??= this.protectCamera.selectChannel(
         (this.protectCamera.hints.hardwareTranscoding) ? 3840 : request.video.width,
         (this.protectCamera.hints.hardwareTranscoding) ? 2160 : request.video.height,
-        { biasHigher: true, maxPixels: this.ffmpegOptions.hostSystemMaxPixels }
+        { biasHigher: true, maxPixels: this.ffmpegOptions.maxSourcePixels("stream") }
       );
 
       // If we have specified the bitrates we want to use when transcoding, let's honor those here.
@@ -640,16 +641,16 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       }
 
       // If we're targeting a bitrate that's beyond the capabilities of our input channel, match the bitrate of the input channel.
-      if(rtspEntry && (targetBitrate > (rtspEntry.channel.bitrate / 1000))) {
+      if(channelProfile && (targetBitrate > (channelProfile.channel.bitrate / 1000))) {
 
-        targetBitrate = rtspEntry.channel.bitrate / 1000;
+        targetBitrate = channelProfile.channel.bitrate / 1000;
       }
     } else {
 
-      rtspEntry ??= this.protectCamera.findRtsp(request.video.width, request.video.height);
+      channelProfile ??= this.protectCamera.selectChannel(request.video.width, request.video.height);
     }
 
-    if(!rtspEntry) {
+    if(!channelProfile) {
 
       const errorMessage = "Unable to start video stream: no valid RTSP stream profile was found.";
 
@@ -725,12 +726,12 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
 
       // -avioflags direct              Tell FFmpeg to minimize buffering to reduce latency for more realtime processing.
       // -rtsp_transport tcp            Tell the RTSP stream handler that we're looking for a TCP connection.
-      // -i rtspEntry.url               RTSPS URL to get our input stream from.
+      // -i channelProfile.url               RTSPS URL to get our input stream from.
       ffmpegArgs.push(
 
         "-avioflags", "direct",
         "-rtsp_transport", "tcp",
-        "-i", rtspEntry.url
+        "-i", channelProfile.url
       );
     }
 
@@ -761,8 +762,8 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     hinting.push(...(hinting.length ? [""] : []));
 
     this.log.info("%sStreaming request: %sx%s@%sfps, %s. Using %s [%s], %s [%s].", hinting.join(" "), request.video.width, request.video.height, request.video.fps,
-      formatBps(targetBitrate * 1000), rtspEntry.name, this.protectCamera.videoCodecName,
-      formatBps(rtspEntry.channel.bitrate), useTsb ? "TSB/" + (this.protectCamera.hasFeature("Debug.Video.HKSV.UseRtsp") ? "RTSP" : "API") : "RTSP");
+      formatBps(targetBitrate * 1000), channelProfile.name, this.protectCamera.videoCodecName,
+      formatBps(channelProfile.channel.bitrate), useTsb ? "TSB/" + (this.protectCamera.hasFeature("Debug.Video.HKSV.UseRtsp") ? "RTSP" : "API") : "RTSP");
 
     // When on high-performance hardware like Apple Silicon, using the TSB, and we don't have low-FPS cameras like the package camera, enable the use of the
     // CPU-intensive FFmpeg minterpolate filter to enable very smooth video, especially when there's motion involved. M3+ Apple Silicon environments are able to reliably
@@ -777,10 +778,10 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       ffmpegArgs.push(...this.ffmpegOptions.streamEncoder({
 
         bitrate: targetBitrate,
-        fps: useInterpolationFilter ? rtspEntry.channel.fps : request.video.fps,
+        fps: useInterpolationFilter ? channelProfile.channel.fps : request.video.fps,
         height: request.video.height,
         idrInterval: HOMEKIT_IDR_INTERVAL,
-        inputFps: rtspEntry.channel.fps,
+        inputFps: channelProfile.channel.fps,
         level: request.video.level,
         profile: request.video.profile,
         width: request.video.width
@@ -981,7 +982,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
       // subscribers share ONE pooled session only because BOTH go through this same seam with the same defaults - the live call OMITS segmentLength, so the seam
       // default (PROTECT_SEGMENT_RESOLUTION = 100) matches the timeshift's explicit 100. If either consumer's opts ever diverge, the session silently splits into two
       // sockets (double controller load, broken self-heal/discontinuity coupling).
-      subscription = this.protectCamera.livestream(rtspEntry, { signal: sessionInfo.abortController.signal, urgency: () => PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS });
+      subscription = this.protectCamera.livestream(channelProfile, { signal: sessionInfo.abortController.signal, urgency: () => PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS });
 
       // Drive the segment iterator in the background.
       void this.consumeStreamSegments(ffmpegStream, subscription, segmentWriter, tsBuffer);
@@ -1326,3 +1327,10 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate {
     return this.probesizeOverride || this.protectCamera.hints.probesize;
   }
 }
+
+// The production StreamingDelegateFactory: builds the concrete FFmpeg-backed delegate. The platform holds this typed as the abstraction; a test platform substitutes a
+// stub. The factory's create is exactly a constructor call, so wiring construction through it is behavior-neutral.
+export const streamingDelegateFactory: StreamingDelegateFactory = {
+
+  create: (camera: ProtectCamera, resolutions: Resolution[]): StreamingDelegate => new ProtectStreamingDelegate(camera, resolutions)
+};

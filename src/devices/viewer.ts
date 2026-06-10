@@ -2,10 +2,11 @@
  *
  * protect-viewer.ts: Viewer device class for UniFi Protect.
  */
-import type { CharacteristicValue, PlatformAccessory, Service } from "homebridge";
+import type { CharacteristicValue, Service } from "homebridge";
 import type { ProtectViewerConfig, Viewer } from "unifi-protect";
 import { selectLiveviews, selectViewer } from "unifi-protect";
 import type { Nullable } from "homebridge-plugin-utils";
+import type { ProtectAccessory } from "../types.ts";
 import { ProtectDevice } from "./device.ts";
 import type { ProtectNvr } from "../nvr.ts";
 
@@ -15,7 +16,7 @@ export class ProtectViewer extends ProtectDevice {
   declare protected readonly device: Viewer;
 
   // Create an instance.
-  constructor(nvr: ProtectNvr, accessory: PlatformAccessory, device: Viewer) {
+  constructor(nvr: ProtectNvr, accessory: ProtectAccessory, device: Viewer) {
 
     super(nvr, accessory, device);
 

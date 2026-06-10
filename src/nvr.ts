@@ -2,19 +2,20 @@
  *
  * protect-nvr.ts: NVR device class for UniFi Protect.
  */
-import type { API, HAP, PlatformAccessory } from "homebridge";
+import type { API, HAP } from "homebridge";
 import { APIEvent, MqttClient, formatSeconds, loopFaultReporter, retry, sanitizeName, superviseLoop } from "homebridge-plugin-utils";
 import type { HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
 import type { HttpRequestEndPayload, LivestreamRecoveryRecoveredPayload, LivestreamRecoveryStartedPayload, ProtectLogging, ProtectNvrConfig,
   ProtectState } from "unifi-protect";
 import type { NvrLifecyclePayload, ReachabilityFanoutPayload } from "./diagnostics.ts";
+import { PACKAGE_CHANNEL_NAME, ProtectCamera, ProtectChime, ProtectDoorbell, ProtectLight, ProtectLiveviews, ProtectNvrSystemInfo, ProtectSensor,
+  ProtectViewer } from "./devices/index.ts";
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_M3U_PLAYLIST_PORT, PROTECT_NVR_CONTROLLER_DISABLED_SETTLE_DELAY, PROTECT_NVR_REBOOT_CONFIRM_GRACE_MS,
   PROTECT_NVR_REBOOT_DEFERRAL_MAX, PROTECT_NVR_REBOOT_INTERVAL, PROTECT_NVR_REBOOT_MIN_INTERVAL, PROTECT_NVR_REMOVAL_STABILITY_WINDOW } from "./settings.ts";
-import { ProtectCamera, ProtectChime, ProtectDoorbell, ProtectLight, ProtectLiveviews, ProtectNvrSystemInfo, ProtectSensor, ProtectViewer } from "./devices/index.ts";
+import type { ProtectAccessory, ProtectAccessoryContext, ProtectDeviceConfigTypes, ProtectDeviceTypes, ProtectDevices } from "./types.ts";
 import { ProtectClient, channels as protectChannels, selectAdoptedCameraIds, selectAdoptedChimeIds, selectAdoptedLightIds, selectAdoptedSensorIds,
   selectAdoptedViewerIds } from "unifi-protect";
 import { ProtectDeviceCategories, exhaustiveGuard } from "./types.ts";
-import type { ProtectDeviceConfigTypes, ProtectDeviceTypes, ProtectDevices } from "./types.ts";
 import { computeStableSince, createConnectRetryPolicy, isStabilityWindowElapsed, isSuccessfulRequest, membershipDelta } from "./nvr-policy.ts";
 import { NvrHealth } from "./nvr-health.ts";
 import type { ProtectDevice } from "./devices/index.ts";
@@ -923,7 +924,7 @@ export class ProtectNvr {
         continue;
       }
 
-      const mac = accessory.context.mac as string | undefined;
+      const mac = accessory.context.mac;
 
       if(mac && !knownMacs.has(mac)) {
 
@@ -1034,7 +1035,7 @@ export class ProtectNvr {
   // grace disabled (interval 0) we remove immediately - the stability gate already provided the safety. The stillGone predicate is re-evaluated at fire against live
   // state (the caller supplies it: the category selector for a membership leave, the adopted-mac set for a cache orphan), and we re-confirm stability at fire, so a
   // device that returned during the grace is not removed. Keyed by accessory UUID - the one id shared by a membership leave (via the device) and an id-less orphan.
-  private scheduleDeviceRemoval(accessory: PlatformAccessory, stillGone: () => boolean): void {
+  private scheduleDeviceRemoval(accessory: ProtectAccessory, stillGone: () => boolean): void {
 
     if(this.deviceRemovalTimers.has(accessory.UUID)) {
 
@@ -1135,7 +1136,7 @@ export class ProtectNvr {
   }
 
   // Create instances of Protect device types in our plugin.
-  private addProtectDevice(accessory: PlatformAccessory, device: ProtectDeviceConfigTypes): Nullable<ProtectDevice> {
+  private addProtectDevice(accessory: ProtectAccessory, device: ProtectDeviceConfigTypes): Nullable<ProtectDevice> {
 
     const deviceName = device.name ?? device.marketName;
 
@@ -1286,7 +1287,7 @@ export class ProtectNvr {
     // We've got a new device, let's add it to HomeKit.
     if(!accessory) {
 
-      accessory = new this.api.platformAccessory(sanitizeName(device.name ?? device.marketName), uuid);
+      accessory = new this.api.platformAccessory<ProtectAccessoryContext>(sanitizeName(device.name ?? device.marketName), uuid);
 
       this.log.info("%s: Adding %s to HomeKit%s.", device.name ?? device.marketName, device.modelKey,
         this.hasFeature("Device.Standalone", device) ? " as a standalone device" : "");
@@ -1317,7 +1318,7 @@ export class ProtectNvr {
   // Remove an individual Protect accessory from HomeKit. The pure immediate remover: every guard and the package-camera cascade are preserved, but the DelayDeviceRemoval
   // grace lives one level up now (in scheduleDeviceRemoval), so by the time we are called the decision to remove was already made and graced. The disabled-controller
   // sweep, the self-reject in addHomeKitDevice, and a fired removal grace all call straight through here.
-  public removeHomeKitDevice(accessory: PlatformAccessory): void {
+  public removeHomeKitDevice(accessory: ProtectAccessory): void {
 
     // Ensure that this accessory hasn't already been removed.
     if(!this.platform.accessories.some(x => x.UUID === accessory.UUID)) {
@@ -1356,7 +1357,7 @@ export class ProtectNvr {
     const protectDevice = this.configuredDevices.get(accessory.UUID);
 
     // See if we can pull the device's configuration details from our Protect device instance or the live controller projection.
-    const device = protectDevice?.ufp ?? (accessory.context.mac ? this.deviceConfigByMac(accessory.context.mac as string) : null);
+    const device = protectDevice?.ufp ?? (accessory.context.mac ? this.deviceConfigByMac(accessory.context.mac) : null);
 
     this.log.info("%s: Removing %s from HomeKit.%s",
       device ? (device.name ?? device.marketName) : protectDevice?.accessoryName ?? accessory.displayName,
@@ -1456,7 +1457,7 @@ export class ProtectNvr {
         // Ensure we publish package cameras as well, when we have them.
         if(camera.featureFlags.hasPackageCamera) {
 
-          const packageChannel = camera.channels.find(x => x.isRtspEnabled && (x.name === "Package Camera"));
+          const packageChannel = camera.channels.find(x => x.isRtspEnabled && (x.name === PACKAGE_CHANNEL_NAME));
 
           if(!packageChannel) {
 

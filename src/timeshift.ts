@@ -2,16 +2,18 @@
  *
  * protect-timeshift.ts: UniFi Protect livestream timeshift buffer implementation to support HomeKit Secure Video.
  */
-import { type HomebridgePluginLogging, type Nullable, isKeyframe } from "homebridge-plugin-utils";
-import { type LivestreamSubscription, logLivestreamIterationError } from "./livestream.ts";
+import type { HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
 import { PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS, PROTECT_LIVESTREAM_API_IDR_INTERVAL, PROTECT_LIVESTREAM_IDLE_TOLERANCE_MS, PROTECT_SEGMENT_RESOLUTION }
   from "./settings.ts";
+import type { ChannelProfile } from "./devices/resolution.ts";
 import { EventEmitter } from "node:events";
 import { LIVE_SELF_HEAL_THRESHOLD } from "./livestream-recovery-policy.ts";
+import type { LivestreamSubscription } from "./livestream.ts";
 import type { ProtectCamera } from "./devices/index.ts";
 import { ProtectLivestreamUnavailableError } from "unifi-protect";
-import type { RtspEntry } from "./devices/camera.ts";
 import type { Segment } from "unifi-protect";
+import { isKeyframe } from "homebridge-plugin-utils";
+import { logLivestreamIterationError } from "./livestream.ts";
 
 // Typed event map for the timeshift buffer. Consumers (recording delegate) listen for these.
 //
@@ -77,7 +79,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
   }
 
   // Start the livestream and begin maintaining our timeshift buffer.
-  public async start(rtspEntry: RtspEntry): Promise<boolean> {
+  public async start(channelProfile: ChannelProfile): Promise<boolean> {
 
     // Stop the timeshift buffer if it's already running.
     if(this.isStarted) {
@@ -97,7 +99,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
     // prebuffer eases off a stressed-but-reachable controller). The closure moves only the recovery tolerance; v5's media-stall detection floors at max(urgency,
     // 2000ms) regardless, so the prebuffer stays watched at the 2-second parity window either way. A genuine reconnect surfaces inline as a discontinuity-marked
     // segment (handled in processSegment), so there is no separate disconnect handler to attach.
-    const subscription = this.protectCamera.livestream(rtspEntry, { segmentLength: this._segmentLength,
+    const subscription = this.protectCamera.livestream(channelProfile, { segmentLength: this._segmentLength,
       urgency: () => this._isTransmitting ? PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS : PROTECT_LIVESTREAM_IDLE_TOLERANCE_MS });
 
     // Drive the segment iterator in the background. The for-await loop runs until the subscription is disposed (graceful return), terminated with a typed error

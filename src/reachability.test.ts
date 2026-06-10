@@ -17,7 +17,7 @@
 import { Characteristic, Service, makeTestAccessory } from "./testing.helpers.ts";
 import { describe, test } from "node:test";
 import type { Camera } from "unifi-protect";
-import type { PlatformAccessory } from "homebridge";
+import type { ProtectAccessory } from "./types.ts";
 import { ProtectDevice } from "./devices/device.ts";
 import type { ProtectNvr } from "./nvr.ts";
 import type { TestAccessory } from "./testing.helpers.ts";
@@ -52,7 +52,7 @@ const makeReachableDevice = (accessory: TestAccessory): { connection: { isHealth
     platform: { api: { hap }, debug: sink, log: { debug: sink, error: sink, info: sink, warn: sink } },
     signal: new AbortController().signal
   };
-  const instance = new TestProtectDevice(nvr as unknown as ProtectNvr, accessory as unknown as PlatformAccessory, device as unknown as Camera);
+  const instance = new TestProtectDevice(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, device as unknown as Camera);
 
   return { connection, device, instance };
 };

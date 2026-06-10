@@ -6,12 +6,13 @@
  * for being sounding boards as I worked through several ideas and iterations of this work. Their camaraderie and support was
  * deeply appreciated.
  */
-import type { API, CameraRecordingConfiguration, CameraRecordingDelegate, HAP, PlatformAccessory, RecordingPacket } from "homebridge";
-import { BackpressureWriter, FfmpegRecordingProcess, HDSProtocolSpecificErrorReason, type HomebridgePluginLogging, type Nullable, formatBps }
-  from "homebridge-plugin-utils";
+import type { API, CameraRecordingConfiguration, CameraRecordingDelegate, HAP, RecordingPacket } from "homebridge";
+import { BackpressureWriter, FfmpegRecordingProcess, HDSProtocolSpecificErrorReason, formatBps } from "homebridge-plugin-utils";
+import type { ChannelProfile, ProtectCamera } from "./devices/index.ts";
+import type { HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
 import { PROTECT_HKSV_SHADOW_FLOOR_MS, PROTECT_HKSV_SHADOW_RECONNECT_MS, PROTECT_HKSV_SHADOW_SAFETY_MS, PROTECT_HKSV_TIMEOUT, PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION }
   from "./settings.ts";
-import type { ProtectCamera, RtspEntry } from "./devices/index.ts";
+import type { ProtectAccessory } from "./types.ts";
 import { ProtectTimeshiftBuffer } from "./timeshift.ts";
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -51,7 +52,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
   private _isRecording: boolean;
   private _isTransmitting: boolean;
   private abortController?: AbortController;
-  private readonly accessory: PlatformAccessory;
+  private readonly accessory: ProtectAccessory;
   private readonly api: API;
   private configurePromise?: Promise<boolean>;
   private configureRequested: boolean;
@@ -71,7 +72,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
   private reserveMax: number;
   private reserveMin: number;
   private reserveSum: number;
-  public rtspEntry: Nullable<RtspEntry>;
+  public channelProfile: Nullable<ChannelProfile>;
   private segmentWriter?: BackpressureWriter;
   public readonly timeshift: ProtectTimeshiftBuffer;
   private timeshiftedSegments: number;
@@ -101,7 +102,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     this.reserveMax = 0;
     this.reserveMin = 0;
     this.reserveSum = 0;
-    this.rtspEntry = null;
+    this.channelProfile = null;
     this.timeshift = new ProtectTimeshiftBuffer(protectCamera);
     this.timeshiftedSegments = 0;
     this.transmittedSegments = 0;
@@ -153,7 +154,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
 
     this.log.info("HKSV: %s%s [%s], %s.",
       (this.protectCamera.hints.hardwareTranscoding && (this.protectCamera.platform.codecSupport.hostSystem !== "raspbian")) ? HKSV_HARDWARE_TRANSCODE_MARKER : "",
-      this.rtspEntry?.name, this.protectCamera.videoCodecName, formatBps((this.recordingConfig?.videoCodec.parameters.bitRate ?? 0) * 1000));
+      this.channelProfile?.name, this.protectCamera.videoCodecName, formatBps((this.recordingConfig?.videoCodec.parameters.bitRate ?? 0) * 1000));
   }
 
   // Process updated recording configuration settings from HomeKit Secure Video.
@@ -413,7 +414,6 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
   //
   // A plain-Promise return is intentional here: it preserves the synchronous atomicity of the check-and-set on configurePromise below. An async wrapper would
   // introduce a microtask boundary that defeats that atomicity.
-  // eslint-disable-next-line @typescript-eslint/promise-function-async
   public configureTimeshifting(): Promise<boolean> {
 
     // Flag that a reconciliation was requested. An in-flight loop observes this flag after its current iteration completes and runs another pass against the
@@ -451,11 +451,11 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
 
   // The reconciliation body. Computes desired state from current inputs and brings the actual state into alignment.
   //
-  // `rtspEntry` is committed to instance state only after a successful start, so external readers (ProtectStreamingDelegate, ProtectSnapshot) always see an
-  // entry that actually backs a running timeshift. On stop, `rtspEntry` is cleared. The field stays coupled to `timeshift.isStarted` as a matched pair.
+  // `channelProfile` is committed to instance state only after a successful start, so external readers (ProtectStreamingDelegate, ProtectSnapshot) always see an
+  // entry that actually backs a running timeshift. On stop, `channelProfile` is cleared. The field stays coupled to `timeshift.isStarted` as a matched pair.
   private async runConfigureTimeshifting(): Promise<boolean> {
 
-    // Desired state is "running with the correct rtspEntry" iff we have a configuration, the camera is online, and HomeKit has asked us to record. The local
+    // Desired state is "running with the correct channelProfile" iff we have a configuration, the camera is online, and HomeKit has asked us to record. The local
     // binding of recordingConfig gives TypeScript a non-null reference to work with (instance field narrowing does not survive async boundaries).
     const recordingConfig = this.recordingConfig;
     const shouldRun = this._isRecording && (recordingConfig !== undefined) && this.protectCamera.isReachable;
@@ -474,21 +474,21 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
 
     if(!shouldRun) {
 
-      // Desired state is stopped. If the timeshift is running, stop it and clear the backing rtspEntry so external readers observe the matched
-      // (isStarted=false, rtspEntry=null) output state. Return value: true if "stopped" was the desired outcome (caller asked us to stop), false if the caller
+      // Desired state is stopped. If the timeshift is running, stop it and clear the backing channelProfile so external readers observe the matched
+      // (isStarted=false, channelProfile=null) output state. Return value: true if "stopped" was the desired outcome (caller asked us to stop), false if the caller
       // wanted us running but prerequisites were not met.
       if(this.timeshift.isStarted) {
 
         this.timeshift.stop();
-        this.rtspEntry = null;
+        this.channelProfile = null;
       }
 
       return !this._isRecording;
     }
 
     // Compute the desired RTSP entry for the HKSV-requested resolution. Held as a local until the start succeeds, at which point it is committed to
-    // this.rtspEntry. External readers must never see an entry whose start failed.
-    const desiredRtspEntry = this.protectCamera.findRecordingRtsp(recordingConfig.videoCodec.resolution[0], recordingConfig.videoCodec.resolution[1]);
+    // this.channelProfile. External readers must never see an entry whose start failed.
+    const desiredRtspEntry = this.protectCamera.selectRecordingChannel(recordingConfig.videoCodec.resolution[0], recordingConfig.videoCodec.resolution[1]);
 
     if(!desiredRtspEntry) {
 
@@ -497,10 +497,10 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
       return false;
     }
 
-    // If the timeshift is already running on the correct channel and lens, we are already in the desired state. this.rtspEntry holds the currently-backing
+    // If the timeshift is already running on the correct channel and lens, we are already in the desired state. this.channelProfile holds the currently-backing
     // entry, so comparing against it answers "is the running timeshift on the entry we want?".
-    if(this.timeshift.isStarted && (desiredRtspEntry.channel.id === this.rtspEntry?.channel.id) &&
-      ((desiredRtspEntry.lens === undefined) || (desiredRtspEntry.lens === this.rtspEntry.lens))) {
+    if(this.timeshift.isStarted && (desiredRtspEntry.channel.id === this.channelProfile?.channel.id) &&
+      ((desiredRtspEntry.lens === undefined) || (desiredRtspEntry.lens === this.channelProfile.lens))) {
 
       return true;
     }
@@ -512,7 +512,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     }
 
     // Commit the new backing entry now that the timeshift is actually running on it.
-    this.rtspEntry = desiredRtspEntry;
+    this.channelProfile = desiredRtspEntry;
 
     return true;
   }
@@ -545,7 +545,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
 
     // If we don't have a recording configuration from HomeKit, a valid RTSP profile, or not enough time in our timeshift buffer, we can't continue. On a discontinuity
     // restart, we skip the buffer duration check because the buffer was recently cleared and only contains fresh post-reconnection data.
-    if(!this.recordingConfig || !this.rtspEntry || this.timeshift.isRestarting ||
+    if(!this.recordingConfig || !this.channelProfile || this.timeshift.isRestarting ||
       (!isRestart && (this.timeshift.time < this.timeshift.configuredDuration))) {
 
       return false;
@@ -573,7 +573,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
         audioStream: 0,
         codec: this.protectCamera.ufp.videoCodec,
         enableAudio: this.isAudioActive,
-        fps: this.rtspEntry.channel.fps,
+        fps: this.channelProfile.channel.fps,
         timeshift: alignment?.seekOffsetMs ?? Math.max(this.timeshift.time - this.recordingConfig.prebufferLength, 0),
         transcodeAudio: false
       },
@@ -739,7 +739,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     this.transmittedSegments = Math.max(--this.transmittedSegments, 0);
 
     // Inform the user if we've recorded something.
-    if(!this.accessory.context.hksvRecordingDisabled && this.timeshiftedSegments && this.transmittedSegments && this.rtspEntry) {
+    if(!this.accessory.context.hksvRecordingDisabled && this.timeshiftedSegments && this.transmittedSegments && this.channelProfile) {
 
       // Calculate approximately how many seconds we've recorded. We have more accuracy in timeshifted segments, so we'll use the more accurate statistics when we can.
       const recordedSeconds = (this.timeshiftedSegments * this.timeshift.segmentLength) / 1000;

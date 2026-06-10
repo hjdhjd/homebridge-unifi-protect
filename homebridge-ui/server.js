@@ -7,9 +7,9 @@
  */
 "use strict";
 
-import { featureOptionCategories, featureOptions } from "../dist/protect-options.js";
+import { ProtectClient, isDeviceAdopted, noopLog } from "unifi-protect";
+import { featureOptionCategories, featureOptions } from "../dist/options.js";
 import { HomebridgePluginUiServer } from "@homebridge/plugin-ui-utils";
-import { ProtectApi } from "unifi-protect";
 import util from "node:util";
 
 class PluginUiServer extends HomebridgePluginUiServer {
@@ -41,69 +41,52 @@ class PluginUiServer extends HomebridgePluginUiServer {
     this.onRequest("/getErrorMessage", () => this.errorInfo);
   }
 
-  // Register the getDevices() webUI server API endpoint.
+  // Register getDevices() with the Homebridge server API.
   #registerGetDevices() {
 
-    let ufpApi;
-
-    // Return the list of Protect devices.
+    // Retrieve the list of devices from a Protect controller to populate the feature options device picker.
     this.onRequest("/getDevices", async (controller) => {
+
+      // Start each probe with a clean error slate so /getErrorMessage reflects only this attempt.
+      this.errorInfo = "";
+
+      // A quiet logging shim for the short-lived client: debug/info/warn stay silent (noopLog), while error captures the message so /getErrorMessage can surface the
+      // most recent failure reason to the user. The v5 ProtectLogging signature is (message, ...parameters), so we spread the rest parameters into util.format.
+      const log = { ...noopLog, error: (message, ...parameters) => {
+
+        this.errorInfo = util.format(message, ...parameters);
+
+        // eslint-disable-next-line no-console
+        console.error(this.errorInfo);
+      } };
 
       try {
 
-        const log = {
+        // Connect to the controller. v5's connect() performs login and the initial bootstrap atomically, throwing a typed error on failure; await using guarantees the
+        // client and its realtime connection are disposed on every exit path. We disable the periodic refresh failsafe since this is a one-shot discovery probe.
+        await using client = await ProtectClient.connect({ host: controller.address, log: log, password: controller.password, refreshIntervalMs: false,
+          username: controller.username });
 
-          debug: () => {},
-          error: (message, parameters = []) => {
+        // Sort adopted devices by display name, falling back to the market name when a device has no user-assigned name.
+        const byName = (a, b) => (a.name ?? a.marketName).localeCompare(b.name ?? b.marketName);
 
-            // Save the error to inform the user in the webUI.
-            this.errorInfo = util.format(message, ...(Array.isArray(parameters) ? parameters : [parameters]));
+        // Project each live device collection to its raw config record, keep only the devices adopted by this controller, and sort. We read the config records rather
+        // than the command-bearing projections because the webUI consumes plain controller fields and serializes them across the request boundary.
+        const adopted = (devices) => devices.map(device => device.config).filter(isDeviceAdopted).sort(byName);
 
-            // eslint-disable-next-line no-console
-            console.error(this.errorInfo);
-          },
-          info: () => {},
-          warn: () => {}
-        };
+        // Return the controller first, then the adopted devices by category. The controller is element 0 - the controller-as-device entry the feature options webUI
+        // selects on initial load.
+        return [ client.nvr.config, ...adopted(client.cameras), ...adopted(client.chimes), ...adopted(client.lights), ...adopted(client.sensors),
+          ...adopted(client.viewers) ];
+      } catch(error) {
 
-        // Connect to the Protect controller.
-        ufpApi = new ProtectApi(log);
-
-        if(!(await ufpApi.login(controller.address, controller.username, controller.password))) {
-
-          return [];
-        }
-
-        // Bootstrap the controller. It will emit a message once it's received the bootstrap JSON, or you can alternatively wait for the Promise to resolve.
-        if(!(await ufpApi.getBootstrap())) {
-
-          return [];
-        }
-
-        const bootstrap = ufpApi.bootstrap;
-
-        // Filter and sort each device category...we only want adopted devices, sorted by name.
-        const prepareDevices = (devices) => devices.filter(x => !x.isAdoptedByOther && x.isAdopted)
-          .sort((a, b) => (a.name ?? a.marketName).localeCompare(b.name ?? b.marketName));
-
-        bootstrap.cameras = prepareDevices(bootstrap.cameras);
-        bootstrap.chimes = prepareDevices(bootstrap.chimes);
-        bootstrap.lights = prepareDevices(bootstrap.lights);
-        bootstrap.sensors = prepareDevices(bootstrap.sensors);
-        bootstrap.viewers = prepareDevices(bootstrap.viewers);
-
-        return [ ufpApi.bootstrap.nvr, ...ufpApi.bootstrap.cameras, ...ufpApi.bootstrap.chimes, ...ufpApi.bootstrap.lights, ...ufpApi.bootstrap.sensors,
-          ...ufpApi.bootstrap.viewers ];
-      } catch(err) {
+        // The library reports failures through the log seam above; if it threw without logging, fall back to the thrown error's message so the user still sees a reason.
+        this.errorInfo ||= (error instanceof Error) ? error.message : String(error);
 
         // eslint-disable-next-line no-console
-        console.log(err);
+        console.error(error);
 
-        // Return nothing if we error out for some reason.
         return [];
-      } finally {
-
-        ufpApi?.logout();
       }
     });
   }

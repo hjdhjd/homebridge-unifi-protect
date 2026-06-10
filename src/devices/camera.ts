@@ -2,43 +2,26 @@
  *
  * protect-camera.ts: Camera device class for UniFi Protect.
  */
-import type { Camera, DeepPartial, LivestreamSource, ProtectCameraChannelConfig, ProtectCameraConfig, SnapshotOptions, TalkbackSession } from "unifi-protect";
-import type { CharacteristicValue, PlatformAccessory, Resolution, Service } from "homebridge";
-import { type Nullable, toStartCase } from "homebridge-plugin-utils";
+import type { Camera, DeepPartial, LivestreamSource, ProtectCameraConfig, SnapshotOptions, TalkbackSession } from "unifi-protect";
+import type { CharacteristicValue, Service } from "homebridge";
 import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_SEGMENT_RESOLUTION } from "../settings.ts";
 import { ProtectReservedNames, shouldReconfigureAsDoorbell } from "../types.ts";
+import { buildAdvertisedProfiles, buildChannelProfile, capByPixels, formatResolution, isPrimaryChannel, selectChannelProfile } from "./resolution.ts";
+import type { ChannelProfile } from "./resolution.ts";
 import type { LivestreamSubscription } from "../livestream.ts";
 import type { MessageSwitchInterface } from "./doorbell.ts";
+import type { Nullable } from "homebridge-plugin-utils";
+import type { ProtectAccessory } from "../types.ts";
 import type { ProtectCameraPackage } from "./camera-package.ts";
 import { ProtectDevice } from "./device.ts";
 import type { ProtectNvr } from "../nvr.ts";
-import { ProtectStreamingDelegate } from "../stream.ts";
 import { RtspLivestreamSubscription } from "../livestream.ts";
+import type { SelectRequest } from "./resolution.ts";
+import type { StreamingDelegate } from "../stream-delegate.ts";
 import { selectCamera } from "unifi-protect";
-
-export interface RtspEntry {
-
-  channel: ProtectCameraChannelConfig;
-  lens?: number;
-  name: string;
-  resolution: Resolution;
-  url: string;
-}
-
-// Options for tuning our RTSP lookups.
-type RtspOptions = Partial<{
-
-  biasHigher: boolean;
-  default: string;
-  maxPixels: number;
-  rtspEntries: RtspEntry[];
-}>;
+import { toStartCase } from "homebridge-plugin-utils";
 
 export class ProtectCamera extends ProtectDevice {
-
-  // HomeKit resolution tables for the two standard aspect ratios. These are the base resolutions we advertise...consumers apply their own FPS logic.
-  protected static readonly RESOLUTIONS_4X3 = [ [ 3840, 2880 ], [ 2560, 1920 ], [ 1920, 1440 ], [ 1280, 960 ], [ 1024, 768 ], [ 640, 480 ], [ 480, 360 ], [ 320, 240 ] ];
-  protected static readonly RESOLUTIONS_16X9 = [ [ 3840, 2160 ], [ 2560, 1440 ], [ 1920, 1080 ], [ 1280, 720 ], [ 640, 360 ], [ 480, 270 ], [ 320, 180 ] ];
 
   private ambientLight: number;
   private isDeleted: boolean;
@@ -49,13 +32,13 @@ export class ProtectCamera extends ProtectDevice {
   public detectLicensePlate: string[];
   public messageSwitches: Map<string, MessageSwitchInterface>;
   public packageCamera?: Nullable<ProtectCameraPackage>;
-  private rtspEntries: RtspEntry[];
-  public stream?: ProtectStreamingDelegate;
+  private channelProfiles: ChannelProfile[];
+  public stream?: StreamingDelegate;
   // Narrow the inherited projection handle to the camera projection so the read-through config getter and every this.ufp.<field> read resolve to ProtectCameraConfig.
   declare protected readonly device: Camera;
 
   // Create an instance.
-  constructor(nvr: ProtectNvr, accessory: PlatformAccessory, device: Camera) {
+  constructor(nvr: ProtectNvr, accessory: ProtectAccessory, device: Camera) {
 
     super(nvr, accessory, device);
 
@@ -65,7 +48,7 @@ export class ProtectCamera extends ProtectDevice {
     this.isTampered = false;
     this.detectLicensePlate = [];
     this.messageSwitches = new Map();
-    this.rtspEntries = [];
+    this.channelProfiles = [];
 
     this.configureHints();
     this.configureDevice();
@@ -78,15 +61,29 @@ export class ProtectCamera extends ProtectDevice {
     return this.device.config;
   }
 
+  // The host the camera's RTSP(S) URLs resolve against: the user's address override, else the camera's own controller-reported connection host, else the controller's
+  // host. Protected so the package camera subclass resolves its own RTSP URLs through the exact same chain (the 3b-iii URL-host reconcile, replacing the package's
+  // former raw config.address, which ignored both the override and the connection host).
+  protected get rtspHost(): string {
+
+    return this.nvr.config.overrideAddress ?? this.ufp.connectionHost ?? this.nvr.ufp.host;
+  }
+
   // Whether this accessory is running as a doorbell. The base camera is not; ProtectDoorbell overrides this to true. The reclassification observer reads it so a
   // device already running as a doorbell is never reconfigured again, and so the camera-only reclassification reaction is a no-op once promoted.
+  //
+  // isDoorbellAccessory is intentionally a getter, not a readonly field: it is read during base-class construction (the ProtectCamera constructor calls
+  // configureDevice(), ProtectDoorbell overrides it and calls super.configureDevice(), and the base configureDevice() reads this.isDoorbellAccessory) - BEFORE a
+  // ProtectDoorbell field initializer would run. A prototype getter dispatches to the most-derived value from the first access, so a doorbell correctly reads true
+  // during construction; a readonly field would read the base false and wrongly spawn the camera-to-doorbell reclassification reaction on an already-doorbell.
+  // eslint-disable-next-line @typescript-eslint/class-literal-property-style
   protected get isDoorbellAccessory(): boolean {
 
     return false;
   }
 
   // Configure device-specific settings for this device.
-  protected configureHints(): boolean {
+  protected override configureHints(): boolean {
 
     // Configure our parent's hints.
     super.configureHints();
@@ -133,18 +130,18 @@ export class ProtectCamera extends ProtectDevice {
 
     // Clean out the context object in case it's been polluted somehow.
     this.accessory.context = {};
-    this.accessory.context.detectMotion = savedContext.detectMotion as boolean | undefined ?? true;
+    this.accessory.context.detectMotion = savedContext.detectMotion ?? true;
     this.accessory.context.mac = this.ufp.mac;
     this.accessory.context.nvr = this.nvr.ufp.mac;
 
     if(this.hasFeature("Video.HKSV.Recording.Switch")) {
 
-      this.accessory.context.hksvRecordingDisabled = savedContext.hksvRecordingDisabled as boolean | undefined ?? false;
+      this.accessory.context.hksvRecordingDisabled = savedContext.hksvRecordingDisabled ?? false;
     }
 
     if(this.hasFeature("Doorbell.Mute")) {
 
-      this.accessory.context.doorbellMuted = savedContext.doorbellMuted as boolean | undefined ?? false;
+      this.accessory.context.doorbellMuted = savedContext.doorbellMuted ?? false;
     }
 
     // Inform the user that motion detection will suck.
@@ -219,7 +216,7 @@ export class ProtectCamera extends ProtectDevice {
   }
 
   // Cleanup after ourselves if we're being deleted.
-  public cleanup(): void {
+  public override cleanup(): void {
 
     // If we've got HomeKit Secure Video enabled and recording, disable it.
     if(this.stream?.hksv?.isRecording) {
@@ -400,13 +397,13 @@ export class ProtectCamera extends ProtectDevice {
     return this.device.snapshot(opts);
   }
 
-  // The narrow public seam onto the v5 camera projection's pooled livestream, mirroring snapshotFromController. We map our RtspEntry to the v5 `source` selector
+  // The narrow public seam onto the v5 camera projection's pooled livestream, mirroring snapshotFromController. We map our ChannelProfile to the v5 `source` selector
   // (the lens=>channel-0 coercion now lives in v5), default the segment length to our 100 ms resolution (matching the old subscribe default - the native pool
   // also floors at 100, but the RTSP adapter would otherwise default to 1000), declare HBUP's livestream defaults (a 16384-byte chunk for lower fragmentation and
   // per-segment timestamps - both enter the pool's sharing key, so they must be passed explicitly or two HBUP subscribers would silently fail to share a session),
   // preserve the friendly controller-side request label (the camera name + channel/lens, as the old manager sent), and pass the consumer's urgency closure straight
   // through to the pool's recovery/detection policy. The RTSP-debug variant is a pure-FFmpeg HBUP path that produces the same Segment stream behind the same interface.
-  public livestream(rtspEntry: RtspEntry, opts: { segmentLength?: number; signal?: AbortSignal; urgency?: () => number } = {}): LivestreamSubscription {
+  public livestream(channelProfile: ChannelProfile, opts: { segmentLength?: number; signal?: AbortSignal; urgency?: () => number } = {}): LivestreamSubscription {
 
     const segmentLength = opts.segmentLength ?? PROTECT_SEGMENT_RESOLUTION;
 
@@ -421,14 +418,15 @@ export class ProtectCamera extends ProtectDevice {
         recordingConfig: this.stream.hksv.recordingConfiguration,
         segmentLength: segmentLength,
         signal: opts.signal,
-        url: rtspEntry.url,
+        url: channelProfile.url,
         videoCodec: this.ufp.videoCodec
       });
     }
 
     // The native v5 pooled livestream. requestId preserves the old friendly label the controller logs (name + channel, or name + "0." + lens for a secondary lens).
-    const source: LivestreamSource = (rtspEntry.lens !== undefined) ? { lens: rtspEntry.lens, type: "lens" } : { channel: rtspEntry.channel.id, type: "channel" };
-    const requestId = this.name + ":" + ((rtspEntry.lens !== undefined) ? "0." + rtspEntry.lens.toString() : rtspEntry.channel.id.toString());
+    const source: LivestreamSource = (channelProfile.lens !== undefined) ? { lens: channelProfile.lens, type: "lens" } :
+      { channel: channelProfile.channel.id, type: "channel" };
+    const requestId = this.name + ":" + ((channelProfile.lens !== undefined) ? "0." + channelProfile.lens.toString() : channelProfile.channel.id.toString());
 
     return this.device.livestream({ chunkSize: 16384, requestId: requestId, segmentLength: segmentLength, signal: opts.signal, source: source, timestamps: true,
       urgency: opts.urgency });
@@ -678,7 +676,7 @@ export class ProtectCamera extends ProtectDevice {
     }
 
     // Configure the switch.
-    service.getCharacteristic(this.hap.Characteristic.On).onGet(() => this.accessory.context.doorbellMuted as boolean);
+    service.getCharacteristic(this.hap.Characteristic.On).onGet(() => this.accessory.context.doorbellMuted ?? false);
 
     service.getCharacteristic(this.hap.Characteristic.On).onSet((value: CharacteristicValue) => {
 
@@ -688,7 +686,7 @@ export class ProtectCamera extends ProtectDevice {
     });
 
     // Initialize the switch.
-    service.updateCharacteristic(this.hap.Characteristic.On, this.accessory.context.doorbellMuted as boolean);
+    service.updateCharacteristic(this.hap.Characteristic.On, this.accessory.context.doorbellMuted ?? false);
 
     this.log.info("Enabling doorbell mute switch.");
 
@@ -902,8 +900,6 @@ export class ProtectCamera extends ProtectDevice {
   // Configure a camera accessory for HomeKit.
   private async configureVideoStream(): Promise<boolean> {
 
-    const rtspEntries: RtspEntry[] = [];
-
     // No channels exist on this camera or we don't have access to the bootstrap configuration.
     if(!this.ufp.channels.length) {
 
@@ -923,10 +919,7 @@ export class ProtectCamera extends ProtectDevice {
     }
 
     // Figure out which camera channels are RTSP-enabled, and user-enabled. We also filter out any package camera entries. We deal with those independently elsewhere.
-    const cameraChannels = this.ufp.channels.filter(channel => channel.isRtspEnabled && (channel.name !== "Package Camera"));
-
-    // Set the camera and shapshot URLs.
-    const cameraUrl = "rtsps://" + (this.nvr.config.overrideAddress ?? this.ufp.connectionHost ?? this.nvr.ufp.host) + ":" + this.nvr.ufp.ports.rtsps.toString() + "/";
+    const cameraChannels = this.ufp.channels.filter(isPrimaryChannel);
 
     // No RTSP streams are available that meet our criteria - we're done.
     if(!cameraChannels.length) {
@@ -937,7 +930,10 @@ export class ProtectCamera extends ProtectDevice {
       return false;
     }
 
-    // Now that we have our RTSP streams, create a list of supported resolutions for HomeKit.
+    // Build the native RTSP entries from the user-enabled primary channels, skipping any channel Protect reports with nonsensical dimensions. The resolution module
+    // owns the entry construction (the friendly name, the native resolution tuple, and the SRTP URL composed against our host chain).
+    const nativeEntries: ChannelProfile[] = [];
+
     for(const channel of cameraChannels) {
 
       // Sanity check in case Protect reports nonsensical resolutions.
@@ -946,96 +942,21 @@ export class ProtectCamera extends ProtectDevice {
         continue;
       }
 
-      rtspEntries.push({
-
-        channel: channel,
-        name: this.getResolution([ channel.width, channel.height, channel.fps ]) + " (" + channel.name + ")",
-        resolution: [ channel.width, channel.height, channel.fps ],
-        url: cameraUrl + channel.rtspAlias + "?enableSrtp"
-      });
+      nativeEntries.push(buildChannelProfile(channel, { rtspPort: this.nvr.ufp.ports.rtsps, urlHost: this.rtspHost }));
     }
 
-    // Sort the list of resolutions, from high to low.
-    rtspEntries.sort(this.sortByResolutions.bind(this));
+    // Synthesize the full advertised resolution list HomeKit consumes from the native entries. The list build is preference-free: the streaming-quality preference is a
+    // request-time concern selectChannel applies, not a list-construction input (D1-heal, 3b-ii). The all-channels-fail-sanity empty result re-asserts HEAD's device
+    // short-circuit: an advertised list of zero entries must NOT construct a streaming delegate or call configureController - we return false before reaching either.
+    const advertised = buildAdvertisedProfiles(nativeEntries);
 
-    let validResolutions = [];
+    if(!advertised.length) {
 
-    // Next, ensure we have mandatory resolutions required by HomeKit, as well as special support for Apple TV and Apple Watch, while respecting aspect ratios.
-    // We use the frame rate of the first entry, which should be our highest resolution option that's native to the camera as the upper bound for frame rate.
-    //
-    // Our supported resolutions range from 4K through 320p.
-    if(this.is4x3AspectRatio(rtspEntries[0].resolution[0], rtspEntries[0].resolution[1])) {
-
-      validResolutions = [...ProtectCamera.RESOLUTIONS_4X3];
-    } else {
-
-      validResolutions = [...ProtectCamera.RESOLUTIONS_16X9];
-    }
-
-    // Generate a list of valid resolutions that support both 30 and 15fps.
-    validResolutions = validResolutions.flatMap(([ width, height ]) => [ 30, 15 ].map(fps => [ width, height, fps ]));
-
-    // Validate and add our entries to the list of what we make available to HomeKit. We map these resolutions to the channels we have available to us on the camera.
-    for(const entry of validResolutions) {
-
-      // This resolution is larger than the highest resolution on the camera, natively. We compare max dimensions so portrait-oriented cameras (where width < height) use
-      // their longer dimension as the threshold. We make an exception for 1080p and 720p resolutions since HomeKit explicitly requires them.
-      if((Math.max(entry[0], entry[1]) >= Math.max(rtspEntries[0].resolution[0], rtspEntries[0].resolution[1])) && ![ 1920, 1280 ].includes(entry[0])) {
-
-        continue;
-      }
-
-      // Find the closest RTSP match for this resolution.
-      const foundRtsp = this.findRtsp(entry[0], entry[1], { rtspEntries: rtspEntries });
-
-      if(!foundRtsp) {
-
-        continue;
-      }
-
-      // We already have this resolution in our list.
-      if(rtspEntries.some(x => (x.resolution[0] === entry[0]) && (x.resolution[1] === entry[1]) && (x.resolution[2] === foundRtsp.channel.fps))) {
-
-        continue;
-      }
-
-      // Add the resolution to the list of supported resolutions, but use the selected camera channel's native frame rate.
-      rtspEntries.push({ channel: foundRtsp.channel, name: foundRtsp.name, resolution: [ entry[0], entry[1], foundRtsp.channel.fps ], url: foundRtsp.url });
-
-      // Since we added resolutions to the list, resort resolutions, from high to low.
-      rtspEntries.sort(this.sortByResolutions.bind(this));
-    }
-
-    // Ensure we've got entries that can be used for HomeKit Secure Video. Some Protect cameras (e.g. G3 Flex) don't have a native frame rate that maps to HomeKit's
-    // specific requirements for event recording, so we normalize all non-conforming entries. This doesn't directly affect which stream is used to actually record
-    // something, but it does determine whether HomeKit even attempts to use the camera for HomeKit Secure Video.
-    if(![ 15, 24, 30 ].includes(rtspEntries[0].resolution[2])) {
-
-      // Iterate through the list of RTSP entries we're providing to HomeKit and ensure they all meet HomeKit's requirements for frame rate.
-      for(const entry of rtspEntries) {
-
-        // This entry already has a conforming frame rate.
-        if([ 15, 24, 30 ].includes(entry.resolution[2])) {
-
-          continue;
-        }
-
-        // Determine the best frame rate to use that's closest to what HomeKit wants to see.
-        if(entry.resolution[2] > 24) {
-
-          entry.resolution[2] = 30;
-        } else if(entry.resolution[2] > 15) {
-
-          entry.resolution[2] = 24;
-        } else {
-
-          entry.resolution[2] = 15;
-        }
-      }
+      return false;
     }
 
     // Publish our updated list of supported resolutions and their URLs.
-    this.rtspEntries = rtspEntries;
+    this.channelProfiles = advertised;
 
     // If we've already configured the HomeKit video streaming delegate, we're done here.
     if(this.stream) {
@@ -1046,9 +967,9 @@ export class ProtectCamera extends ProtectDevice {
     // Inform users about our RTSP entry mapping, if we're debugging.
     if(this.hasFeature("Debug.Video.Startup")) {
 
-      for(const entry of this.rtspEntries) {
+      for(const entry of this.channelProfiles) {
 
-        this.log.info("Mapping resolution: %s.", this.getResolution(entry.resolution) + " => " + entry.name + " [" + this.videoCodecName + "]");
+        this.log.info("Mapping resolution: %s.", formatResolution(entry.resolution) + " => " + entry.name + " [" + this.videoCodecName + "]");
       }
     }
 
@@ -1081,7 +1002,7 @@ export class ProtectCamera extends ProtectDevice {
     }
 
     // Configure the video stream with our resolutions.
-    this.stream = new ProtectStreamingDelegate(this, this.rtspEntries.map(x => x.resolution));
+    this.stream = this.platform.streamingDelegateFactory.create(this, this.channelProfiles.map(x => x.resolution));
 
     // If the user hasn't overriden our defaults, make sure we account for constrained hardware environments.
     if(!this.hints.recordingDefault) {
@@ -1090,9 +1011,10 @@ export class ProtectCamera extends ProtectDevice {
 
         case "raspbian":
 
-          // For constrained CPU environments like Raspberry Pi, we default to recording from the highest quality channel we can, that's at or below 1080p. That provides
-          // a reasonable default, while still allowing users who really want to, to be able to specify something else.
-          this.hints.recordingDefault = this.findRtsp(1920, 1080, { maxPixels: this.stream.ffmpegOptions.hostSystemMaxPixels })?.channel.name ?? "";
+          // On constrained hosts like a Raspberry Pi, we default to recording from the highest-quality channel at or below 1080p. The 1920x1080 target with the
+          // downward (bias-lower) nearest selection bounds the default to exactly that, so no extra pixel cap is needed. We select preference-free, not via
+          // selectChannel - because the recording default must not inherit the streaming-quality preference (D1-heal, 3b-ii); a user can still pin a specific channel.
+          this.hints.recordingDefault = selectChannelProfile(this.channelProfiles, { bias: "lower", height: 1080, mode: "nearest", width: 1920 })?.channel.name ?? "";
 
           break;
 
@@ -1173,7 +1095,7 @@ export class ProtectCamera extends ProtectDevice {
     });
 
     // Initialize the switch.
-    service.updateCharacteristic(this.hap.Characteristic.On, !(this.accessory.context.hksvRecordingDisabled as boolean));
+    service.updateCharacteristic(this.hap.Characteristic.On, !(this.accessory.context.hksvRecordingDisabled ?? false));
 
     this.log.info("Enabling HKSV recording switch.");
 
@@ -1541,124 +1463,30 @@ export class ProtectCamera extends ProtectDevice {
     }
   }
 
-  // Find an RTSP configuration for a given target resolution.
-  private findRtspEntry(width: number, height: number, options?: RtspOptions): Nullable<RtspEntry> {
+  // Find a streaming RTSP configuration for a given target resolution. This is the device wrapper over the pure selectChannelProfile: it injects our published entries
+  // and our this-state (the streaming default, which pins to a named channel, and the optional hardware pixel cap), then delegates the selection mathematics. The pixel
+  // cap is applied as a mode-agnostic pre-filter BEFORE selection - intentionally a pre-filter, not part of the request, so it filters the name branch too (matching
+  // HEAD, where a constrained request with an explicit profile preference still drops profiles above the cap); a future reader should not move it into the request.
+  public selectChannel(width: number, height: number, opts?: { biasHigher?: boolean; maxPixels?: number }): Nullable<ChannelProfile> {
 
-    const rtspEntries = options?.rtspEntries ?? this.rtspEntries;
+    const entries = capByPixels(this.channelProfiles, opts?.maxPixels);
+    const request: SelectRequest = this.hints.streamingDefault ? { mode: "name", name: this.hints.streamingDefault } :
+      { bias: opts?.biasHigher ? "higher" : "lower", height: height, mode: "nearest", width: width };
 
-    // No RTSP entries to choose from, we're done.
-    if(!rtspEntries.length) {
-
-      return null;
-    }
-
-    // Second, we check to see if we've set an explicit preference for stream quality.
-    if(options?.default) {
-
-      options.default = options.default.toUpperCase();
-
-      return rtspEntries.find(x => x.channel.name.toUpperCase() === options.default) ?? null;
-    }
-
-    // See if we have a match for our desired resolution on the camera. We ignore FPS - HomeKit clients seem to be able to handle it just fine.
-    const exactRtsp = rtspEntries.find(x => (x.channel.width === width) && (x.channel.height === height));
-
-    if(exactRtsp) {
-
-      return exactRtsp;
-    }
-
-    // If we haven't found an exact match, by default, we bias ourselves to the next lower resolution we find or the lowest resolution we have available as a backstop.
-    if(!options?.biasHigher) {
-
-      return rtspEntries.find(x => x.channel.width < width) ?? rtspEntries[rtspEntries.length - 1];
-    }
-
-    // If we're biasing ourselves toward higher resolutions (primarily used when transcoding so we start with a higher quality input), we look for the first entry that's
-    // larger than our requested width and if not found, we return the highest resolution we have available.
-    return rtspEntries.filter(x => x.channel.width > width).pop() ?? rtspEntries[0];
+    return selectChannelProfile(entries, request);
   }
 
-  // Find a streaming RTSP configuration for a given target resolution.
-  public findRtsp(width: number, height: number, options?: RtspOptions): Nullable<RtspEntry> {
+  // Find a recording RTSP configuration for a given target resolution. The recording wrapper biases higher (transcoding wants a higher-quality input), pins on the
+  // recording default rather than the streaming default, and applies the "record"-context hardware source ceiling from FfmpegOptions (D7 - single-sourced with the
+  // recording encoder choice). Inert today: maxSourcePixels("record") is Infinity on every host (HKSV software-encodes wherever a pixel cap would apply), so capByPixels
+  // passes everything through; it engages only when a future predicate change hardware-encodes recording on a pixel-limited host, flipping with the encoder.
+  public selectRecordingChannel(width: number, height: number): Nullable<ChannelProfile> {
 
-    // Create our options JSON if needed.
-    options ??= {};
+    const entries = capByPixels(this.channelProfiles, this.stream?.ffmpegOptions.maxSourcePixels("record"));
+    const request: SelectRequest = this.hints.recordingDefault ? { mode: "name", name: this.hints.recordingDefault } :
+      { bias: "higher", height: height, mode: "nearest", width: width };
 
-    // Set our default stream, if we've configured one.
-    options.default = this.hints.streamingDefault;
-
-    // See if we've been given RTSP entries or whether we should default to our own.
-    options.rtspEntries ??= this.rtspEntries;
-
-    // If we've imposed a constraint on the maximum dimensions of what we want due to a hardware limitation, filter out those entries.
-    if(options.maxPixels !== undefined) {
-
-      options.rtspEntries = options.rtspEntries.filter(x => (x.channel.width * x.channel.height) <= (options.maxPixels ?? Infinity));
-    }
-
-    return this.findRtspEntry(width, height, options);
-  }
-
-  // Find a recording RTSP configuration for a given target resolution.
-  public findRecordingRtsp(width: number, height: number): Nullable<RtspEntry> {
-
-    return this.findRtspEntry(width, height, { biasHigher: true, default: this.hints.recordingDefault });
-  }
-
-  // Determine whether a resolution belongs to the 4:3 aspect ratio family. HomeKit only recognizes 16:9 and 4:3 families...we normalize for portrait-oriented cameras
-  // (where width < height) so they map to the correct landscape resolution table.
-  protected is4x3AspectRatio(width: number, height: number): boolean {
-
-    const maxDim = Math.max(width, height);
-    const minDim = Math.min(width, height);
-
-    return (maxDim * 3) === (minDim * 4);
-  }
-
-  // Utility function for sorting by resolution.
-  private sortByResolutions(a: RtspEntry, b: RtspEntry): number {
-
-    // Check width.
-    if(a.resolution[0] < b.resolution[0]) {
-
-      return 1;
-    }
-
-    if(a.resolution[0] > b.resolution[0]) {
-
-      return -1;
-    }
-
-    // Check height.
-    if(a.resolution[1] < b.resolution[1]) {
-
-      return 1;
-    }
-
-    if(a.resolution[1] > b.resolution[1]) {
-
-      return -1;
-    }
-
-    // Check FPS.
-    if(a.resolution[2] < b.resolution[2]) {
-
-      return 1;
-    }
-
-    if(a.resolution[2] > b.resolution[2]) {
-
-      return -1;
-    }
-
-    return 0;
-  }
-
-  // Utility function to format resolution entries.
-  protected getResolution(resolution: Resolution): string {
-
-    return resolution[0].toString() + "x" + resolution[1].toString() + "@" + resolution[2].toString() + "fps";
+    return selectChannelProfile(entries, request);
   }
 
   // Utility property to return the camera's current video codec, formatted for display.

@@ -159,7 +159,7 @@ export const featureOptions: Record<string, ProtectFeatureOption[]> = {
   "Nvr": [
 
     { default: false, defaultValue: PROTECT_M3U_PLAYLIST_PORT, description: "Publish an M3U playlist of Protect cameras on the specified port of this Homebridge server that is suitable for use in apps (e.g. Channels DVR) that can make camera livestreams available through them.", modelKey: ["nvr"], name: "Service.Playlist" },
-    { default: true, defaultValue: PROTECT_DEVICE_REMOVAL_DELAY_INTERVAL, description: "Delay, in seconds, before removing devices that are no longer detected on the Protect controller. If disabled, devices are removed in realtime when the Protect controller does so.", modelKey: ["nvr"], name: "DelayDeviceRemoval" },
+    { default: true, defaultValue: PROTECT_DEVICE_REMOVAL_DELAY_INTERVAL, description: "Delay, in seconds, before removing devices that are no longer detected on the Protect controller. Removal is held off while the controller is unreachable or restarting, and resumes once it is healthy again: immediately, if the delay is disabled.", modelKey: ["nvr"], name: "DelayDeviceRemoval" },
     { default: false, description: "Publish all the realtime telemetry received from the Protect controller to MQTT.", modelKey: ["nvr"], name: "Publish.Telemetry" },
     { default: false, defaultValue: PROTECT_NVR_REBOOT_INTERVAL, description: "Proactively reboot the UniFi Protect controller on a scheduled interval, in hours. Active HomeKit Secure Video recording events will be allowed to complete before rebooting. Use with care.", modelKey: ["nvr"], name: "Reboot" },
     { default: false, description: "Add switch accessories to control the native recording capabilities of the UniFi Protect NVR.", modelKey: ["camera"], name: "Recording.Switch" },

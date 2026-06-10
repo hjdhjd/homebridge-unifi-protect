@@ -2,20 +2,22 @@
  *
  * protect-liveviews.ts: Liveviews class for UniFi Protect.
  */
-import type { CharacteristicValue, PlatformAccessory } from "homebridge";
-import { type Nullable, sanitizeName } from "homebridge-plugin-utils";
 import { PLATFORM_NAME, PLUGIN_NAME } from "../settings.ts";
+import type { ProtectAccessory, ProtectAccessoryContext } from "../types.ts";
+import type { CharacteristicValue } from "homebridge";
+import type { Nullable } from "homebridge-plugin-utils";
 import { ProtectBase } from "./device.ts";
 import type { ProtectNvr } from "../nvr.ts";
 import type { ProtectNvrLiveviewConfig } from "unifi-protect";
 import { ProtectSecuritySystem } from "./security-system.ts";
+import { sanitizeName } from "homebridge-plugin-utils";
 import { selectLiveviews } from "unifi-protect";
 
 export class ProtectLiveviews extends ProtectBase {
 
   private isConfigured: Set<string>;
   private isMqttConfigured: boolean;
-  private securityAccessory: Nullable<PlatformAccessory> | undefined;
+  private securityAccessory: Nullable<ProtectAccessory> | undefined;
   private securitySystem: Nullable<ProtectSecuritySystem>;
 
   // Configure our liveviews capability.
@@ -83,7 +85,7 @@ export class ProtectLiveviews extends ProtectBase {
       if((this.securityAccessory = this.platform.accessories.find(x => x.UUID === uuid)) === undefined) {
 
         // We will use the NVR MAC address + ".Security" to create our UUID. That should provide the guaranteed uniqueness we need.
-        this.securityAccessory = new this.api.platformAccessory(sanitizeName(this.nvr.ufp.name ?? this.nvr.ufp.marketName), uuid);
+        this.securityAccessory = new this.api.platformAccessory<ProtectAccessoryContext>(sanitizeName(this.nvr.ufp.name ?? this.nvr.ufp.marketName), uuid);
 
         // Register this accessory with homebridge and add it to the platform accessory array so we can track it.
         this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [this.securityAccessory]);
@@ -117,7 +119,7 @@ export class ProtectLiveviews extends ProtectBase {
       }
 
       // We found a switch matching this liveview. Move along...
-      if(this.liveviews.some(x => x.name.toUpperCase() === ("Protect-" + (accessory.context.liveview as string)).toUpperCase())) {
+      if(this.liveviews.some(x => x.name.toUpperCase() === ("Protect-" + (accessory.context.liveview ?? "")).toUpperCase())) {
 
         continue;
       }
@@ -126,7 +128,7 @@ export class ProtectLiveviews extends ProtectBase {
       this.log.info("Removing plugin-specific liveview switch: %s. The liveview has been either removed or renamed in UniFi Protect.", accessory.context.liveview);
 
       // Unregister the accessory and delete its remnants from HomeKit and the plugin.
-      this.isConfigured.delete((accessory.context.liveview as string).toUpperCase());
+      this.isConfigured.delete((accessory.context.liveview ?? "").toUpperCase());
       this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
       this.platform.accessories.splice(this.platform.accessories.indexOf(accessory), 1);
     }
@@ -149,6 +151,12 @@ export class ProtectLiveviews extends ProtectBase {
       // Grab the name of our new switch for reference.
       const viewName = viewMatch[1];
 
+      // The capture group is always present when the regex matched, but guard to keep viewName a string for the comparisons and UUID composition below.
+      if(!viewName) {
+
+        continue;
+      }
+
       // By design, we want to avoid configuring multiple liveview switches with the same name. Instead we combine all liveviews of the same name into a single switch.
       if(this.isConfigured.has(viewName.toUpperCase())) {
 
@@ -164,7 +172,7 @@ export class ProtectLiveviews extends ProtectBase {
 
       if((newAccessory = this.platform.accessories.find(x => x.UUID === uuid)) === undefined) {
 
-        newAccessory = new this.api.platformAccessory(sanitizeName((this.nvr.ufp.name ?? "") + " " + viewName), uuid);
+        newAccessory = new this.api.platformAccessory<ProtectAccessoryContext>(sanitizeName((this.nvr.ufp.name ?? "") + " " + viewName), uuid);
 
         // Register this accessory with homebridge and add it to the platform accessory array so we can track it.
         this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [newAccessory]);
@@ -174,7 +182,7 @@ export class ProtectLiveviews extends ProtectBase {
       // Configure our accessory.
       if("liveviewState" in newAccessory.context) {
 
-        liveviewState = newAccessory.context.liveviewState as boolean;
+        liveviewState = newAccessory.context.liveviewState ?? false;
       }
 
       newAccessory.context = {};
@@ -195,15 +203,15 @@ export class ProtectLiveviews extends ProtectBase {
 
       // Activate or deactivate motion detection.
       switchService.getCharacteristic(this.hap.Characteristic.On)
-        .onGet(this.getSwitchState.bind(this, newAccessory.context.liveview as string))
+        .onGet(this.getSwitchState.bind(this, newAccessory.context.liveview ?? ""))
         .onSet(this.setSwitchState.bind(this, newAccessory));
 
       // Initialize the switch. We keep a saved liveview switch state because we want to account for edge cases where liveviews can disappear and we end up in a
       // situation where motion detection is disabled without a way to enable it. By saving the switch state on the accessory, we can always initialize all
       // motion-related accessories at startup as having motion enabled, and explicitly disable them here at startup when we restore state.
-      switchService.updateCharacteristic(this.hap.Characteristic.On, newAccessory.context.liveviewState as boolean);
-      this.setSwitchState(newAccessory, newAccessory.context.liveviewState as boolean);
-      this.isConfigured.add((newAccessory.context.liveview as string).toUpperCase());
+      switchService.updateCharacteristic(this.hap.Characteristic.On, newAccessory.context.liveviewState);
+      this.setSwitchState(newAccessory, newAccessory.context.liveviewState);
+      this.isConfigured.add((newAccessory.context.liveview ?? "").toUpperCase());
 
       // Inform the user.
       this.log.info("Configuring plugin-specific liveview switch: %s.", viewName);
@@ -225,7 +233,7 @@ export class ProtectLiveviews extends ProtectBase {
 
       // Get the list of liveviews.
       const liveviews = this.platform.accessories.filter(x => "liveview" in x.context)
-        .map(x => ({ name: x.context.liveview as string, state: x.getService(this.hap.Service.Switch)?.getCharacteristic(this.hap.Characteristic.On).value }));
+        .map(x => ({ name: x.context.liveview ?? "", state: x.getService(this.hap.Service.Switch)?.getCharacteristic(this.hap.Characteristic.On).value }));
 
       return JSON.stringify(liveviews);
     });
@@ -245,7 +253,7 @@ export class ProtectLiveviews extends ProtectBase {
       try {
 
         incomingPayload = JSON.parse(rawValue) as mqttLiveviewJSON[];
-      } catch(error) {
+      } catch {
 
         this.log.error("Unable to process MQTT message: \"%s\". Invalid JSON.", rawValue);
 
@@ -265,7 +273,7 @@ export class ProtectLiveviews extends ProtectBase {
       for(const entry of incomingPayload) {
 
         // Lookup this liveview.
-        const accessory = this.platform.accessories.find(x => ("liveview" in x.context) && ((x.context.liveview as string).toUpperCase() === entry.name.toUpperCase()));
+        const accessory = this.platform.accessories.find(x => ("liveview" in x.context) && ((x.context.liveview ?? "").toUpperCase() === entry.name.toUpperCase()));
 
         // If we can't find it, move on.
         if(!accessory) {
@@ -281,17 +289,17 @@ export class ProtectLiveviews extends ProtectBase {
   }
 
   // Toggle the liveview switch state.
-  private setSwitchState(liveviewSwitch: PlatformAccessory, targetState: CharacteristicValue): void {
+  private setSwitchState(liveviewSwitch: ProtectAccessory, targetState: CharacteristicValue): void {
 
     // We don't have any liveviews or we're already at this state - we're done.
-    if(!this.liveviews.length || (this.getSwitchState(liveviewSwitch.context.liveview as string) === targetState)) {
+    if(!this.liveviews.length || (this.getSwitchState(liveviewSwitch.context.liveview ?? "") === targetState)) {
 
       return;
     }
 
     // Get the complete list of cameras in the liveview we're interested in. This cryptic line grabs the list of liveviews that have the name we're interested in (turns
     // out, you can define multiple liveviews in Protect with the same name...who knew!), and then create a single list containing all of the cameras found.
-    const targetCameraIds = this.getLiveviewCameras(liveviewSwitch.context.liveview as string);
+    const targetCameraIds = this.getLiveviewCameras(liveviewSwitch.context.liveview ?? "");
 
     // Nothing configured for this view. We're done.
     if(!targetCameraIds.length) {
@@ -315,25 +323,26 @@ export class ProtectLiveviews extends ProtectBase {
 
       // Set the motion detection state. We do this after setting any motion detection switch in order to ensure we fire events in the right order for the motion
       // detection switch.
-      protectDevice.accessory.context.detectMotion = targetState as boolean;
+      protectDevice.accessory.context.detectMotion = !!targetState;
 
       // Inform the user.
       this.log.info("%s -> %s: Motion detection %s.", liveviewSwitch.context.liveview, protectDevice.accessoryName,
-        (protectDevice.accessory.context.detectMotion === true) ? "enabled" : "disabled");
+        protectDevice.accessory.context.detectMotion ? "enabled" : "disabled");
     }
 
     // Save our new state.
-    liveviewSwitch.context.liveviewState = targetState;
+    liveviewSwitch.context.liveviewState = !!targetState;
 
     // Publish to MQTT, if configured.
-    this.publish("liveviews", JSON.stringify([{ name: liveviewSwitch.context.liveview as string, state: targetState }]));
+    this.publish("liveviews", JSON.stringify([{ name: liveviewSwitch.context.liveview ?? "", state: targetState }]));
   }
 
   // Get the current liveview switch state.
   private getSwitchState(liveviewName: string): boolean {
 
-    // Get the list of unique states that exist across all liveview-specified cameras.
-    const detectedStates = [...new Set(this.getLiveviewCameras(liveviewName).map(x => this.nvr.getDeviceById(x)?.accessory.context.detectMotion as boolean))];
+    // Get the list of unique motion-detection states across this liveview's cameras. A camera we cannot resolve to a managed accessory yields `undefined`, which we
+    // deliberately keep as a distinct state so the switch reads off - a signal that this user-grouped liveview references a camera that is missing or offline.
+    const detectedStates = [...new Set(this.getLiveviewCameras(liveviewName).map(x => this.nvr.getDeviceById(x)?.accessory.context.detectMotion))];
 
     // If we have more than one element in the array or an empty array (meaning we don't have a liveview we know about),
     // we don't have consistent states across all the devices, so we assume it's false.
@@ -342,8 +351,8 @@ export class ProtectLiveviews extends ProtectBase {
       return false;
     }
 
-    // Return the state we've detected.
-    return detectedStates[0];
+    // Return the state we've detected. An all-unresolvable liveview leaves the lone element undefined; we report off, consistent with the missing-camera signal above.
+    return detectedStates[0] ?? false;
   }
 
   // Get the devices associated with a particular liveview.

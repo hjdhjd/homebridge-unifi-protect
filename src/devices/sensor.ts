@@ -2,11 +2,12 @@
  *
  * protect-sensor.ts: Sensor device class for UniFi Protect.
  */
-import type { PlatformAccessory, Service } from "homebridge";
 import type { ProtectSensorConfig, Sensor } from "unifi-protect";
+import type { ProtectAccessory } from "../types.ts";
 import { ProtectDevice } from "./device.ts";
 import type { ProtectNvr } from "../nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
+import type { Service } from "homebridge";
 import { selectSensor } from "unifi-protect";
 
 /**
@@ -32,7 +33,7 @@ export class ProtectSensor extends ProtectDevice {
   declare protected readonly device: Sensor;
 
   // Create an instance.
-  constructor(nvr: ProtectNvr, accessory: PlatformAccessory, device: Sensor) {
+  constructor(nvr: ProtectNvr, accessory: ProtectAccessory, device: Sensor) {
 
     super(nvr, accessory, device);
 

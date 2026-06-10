@@ -2,16 +2,17 @@
  *
  * protect-nvr-systeminfo.ts: NVR System Information device class for UniFi Protect.
  */
-import { type Nullable, acquireService, sanitizeName, validService } from "homebridge-plugin-utils";
 import { PLATFORM_NAME, PLUGIN_NAME } from "../settings.ts";
-import type { PlatformAccessory } from "homebridge";
+import type { ProtectAccessory, ProtectAccessoryContext } from "../types.ts";
+import { acquireService, sanitizeName, validService } from "homebridge-plugin-utils";
+import type { Nullable } from "homebridge-plugin-utils";
 import { ProtectBase } from "./device.ts";
 import type { ProtectNvr } from "../nvr.ts";
 import { selectNvr } from "unifi-protect";
 
 export class ProtectNvrSystemInfo extends ProtectBase {
 
-  private accessory: Nullable<PlatformAccessory> | undefined;
+  private accessory: Nullable<ProtectAccessory> | undefined;
   private isConfigured: boolean;
 
   // Configure our NVR sensor capability.
@@ -48,7 +49,7 @@ export class ProtectNvrSystemInfo extends ProtectBase {
     // See if we already have this accessory defined.
     if(!this.accessory) {
 
-      if((this.accessory = this.platform.accessories.find((x: PlatformAccessory) => x.UUID === uuid)) === undefined) {
+      if((this.accessory = this.platform.accessories.find(x => x.UUID === uuid)) === undefined) {
 
         this.accessory = null;
       }
@@ -76,7 +77,7 @@ export class ProtectNvrSystemInfo extends ProtectBase {
     if(!this.accessory) {
 
       // We will use the NVR MAC address + ".NVRSystemInfo" to create our UUID. That should provide the guaranteed uniqueness we need.
-      this.accessory = new this.api.platformAccessory(sanitizeName(this.nvr.ufp.name ?? this.nvr.ufp.marketName), uuid);
+      this.accessory = new this.api.platformAccessory<ProtectAccessoryContext>(sanitizeName(this.nvr.ufp.name ?? this.nvr.ufp.marketName), uuid);
 
       // Register this accessory with homebridge and add it to the platform accessory array so we can track it.
       this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [this.accessory]);
