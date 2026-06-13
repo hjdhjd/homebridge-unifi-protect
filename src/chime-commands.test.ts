@@ -1,7 +1,7 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * chime-commands.test.ts: Unit tests for the Phase-2C chime/doorbell migrations - the chime's speaker/buzzer play dispatch (ProtectChime.playTone) and the doorbell's
- * chime-volume read math and cross-device write (ProtectDoorbell.chimeVolumeFor / setChimeVolume).
+ * chime-volume read math and cross-device write (DoorbellCapability.chimeVolumeFor / setChimeVolume).
  *
  * Two seams, two test strategies, by what the production code is:
  *
@@ -388,7 +388,7 @@ describe("ProtectChime.playTone dispatch (real runDeviceCommand seam)", () => {
   });
 });
 
-describe("ProtectDoorbell.setChimeVolume cross-device write (real runDeviceCommand seam)", () => {
+describe("DoorbellCapability.setChimeVolume cross-device write (real runDeviceCommand seam)", () => {
 
   // Build a chime target whose update captures its payload, for asserting the exact write-through PATCH shape.
   const makeChime = (cameraIds: string[], ringSettings: RingSetting[], captures: unknown[]): ChimeTarget => ({

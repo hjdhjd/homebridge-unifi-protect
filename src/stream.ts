@@ -14,7 +14,7 @@ import { PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION, PROTECT_LIVESTREAM_ACTIVE_TO
 import type { StreamingDelegate, StreamingDelegateFactory } from "./stream-delegate.ts";
 import type { LivestreamSubscription } from "./livestream.ts";
 import { ProtectAbortedError } from "unifi-protect";
-import type { ProtectCamera } from "./devices/index.ts";
+import type { ProtectCameraHost } from "./camera-host.ts";
 import type { ProtectNvr } from "./nvr.ts";
 import type { ProtectPlatform } from "./platform.ts";
 import { ProtectRecordingDelegate } from "./record.ts";
@@ -139,6 +139,9 @@ class ProtectStreamingFfmpegProcess extends FfmpegStreamingProcess {
 // Camera streaming delegate implementation for Protect.
 export class ProtectStreamingDelegate implements CameraStreamingDelegate, StreamingDelegate {
 
+  // The doorbell-ness the CameraController's frozen audio options were built for, captured at construction from the same isDoorbell read the recording audio options
+  // make below. The live-attach reads this off this.stream to detect a stale controller (a camera the controller late-flipped) and rebuild only when it diverges.
+  public readonly builtAsDoorbell: boolean;
   public controller: CameraController;
   public readonly ffmpegOptions: FfmpegOptions;
   private readonly hap: HAP;
@@ -148,7 +151,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
   private ongoingSessions: Map<string, OngoingSessionEntry>;
   private pendingSessions: Map<string, SessionInfo>;
   public readonly platform: ProtectPlatform;
-  public readonly protectCamera: ProtectCamera;
+  public readonly protectCamera: ProtectCameraHost;
   private probesizeOverride: number;
   private probesizeOverrideCount: number;
   private probesizeOverrideTimeout?: NodeJS.Timeout;
@@ -157,8 +160,9 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
   private abTest = false;
 
   // Create an instance of a HomeKit streaming delegate.
-  constructor(protectCamera: ProtectCamera, resolutions: [number, number, number][]) {
+  constructor(protectCamera: ProtectCameraHost, resolutions: [number, number, number][]) {
 
+    this.builtAsDoorbell = protectCamera.ufp.featureFlags.isDoorbell;
     this.hap = protectCamera.api.hap;
     this.hksv = null;
     this.log = protectCamera.log;
@@ -880,9 +884,10 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
       );
 
       // If we are audio filtering, address it here.
-      // Protect cameras deliver audio at 16000 Hz across both the livestream API (AAC) and RTSP (AAC + Opus) paths. This is the input sample rate that FFmpeg's
-      // audio filters operate on, independent of the output sample rate HomeKit requests.
-      const afOptions = this.protectCamera.getAudioFilters(16000);
+      // Protect doorbells deliver audio at 48000 Hz; every other Protect camera delivers it at 16000 Hz. This is the input sample rate FFmpeg's audio filters operate on,
+      // independent of the output rate HomeKit requests, and what getAudioFilters validates each filter's frequency against the Nyquist limit of. Feeding the doorbell's
+      // true 48000 Hz lifts the Nyquist ceiling to 24000 Hz, so a user's highpass/lowpass in the 8-24 kHz band is no longer silently dropped on a doorbell.
+      const afOptions = this.protectCamera.getAudioFilters(this.protectCamera.ufp.featureFlags.isDoorbell ? 48000 : 16000);
 
       if(afOptions.length) {
 
@@ -1332,5 +1337,5 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
 // stub. The factory's create is exactly a constructor call, so wiring construction through it is behavior-neutral.
 export const streamingDelegateFactory: StreamingDelegateFactory = {
 
-  create: (camera: ProtectCamera, resolutions: Resolution[]): StreamingDelegate => new ProtectStreamingDelegate(camera, resolutions)
+  create: (camera: ProtectCameraHost, resolutions: Resolution[]): StreamingDelegate => new ProtectStreamingDelegate(camera, resolutions)
 };

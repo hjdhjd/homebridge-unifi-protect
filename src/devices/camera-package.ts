@@ -2,65 +2,76 @@
  *
  * protect-camera-package.ts: Package camera device class for UniFi Protect.
  */
-import type { CharacteristicValue, Resolution } from "homebridge";
-import { PACKAGE_DEFAULT_RESOLUTION, buildAdvertisedResolutions, buildChannelProfile, formatResolution, isPackageChannel } from "./resolution.ts";
+import { PACKAGE_CAMERA_NAME_SUFFIX, ProtectReservedNames, packageCameraId } from "../types.ts";
+import { buildAdvertisedResolutions, buildChannelProfile, formatResolution, isPackageChannel } from "./resolution.ts";
 import type { ChannelProfile } from "./resolution.ts";
+import type { CharacteristicValue } from "homebridge";
 import type { Nullable } from "homebridge-plugin-utils";
 import { ProtectCamera } from "./camera.ts";
-import { ProtectReservedNames } from "../types.ts";
+import type { ProtectState } from "unifi-protect";
 import { retry } from "homebridge-plugin-utils";
+import { selectCamera } from "unifi-protect";
 
-// Package camera class. Extends ProtectCamera and represents the secondary camera channel on Protect doorbells that ship with one.
+// Package camera class. Extends ProtectCamera and represents the secondary camera channel on Protect doorbells that ship with one. The package camera is a HomeKit
+// sub-view of its parent doorbell's shared camera projection, not a Protect device of its own - it is self-observing over that shared projection, deriving its identity
+// and display name from the parent's, while its motion is delivered by the firehose router when the parent fires.
 export class ProtectCameraPackage extends ProtectCamera {
 
-  private flashlightState?: boolean;
+  // Whether the flashlight is currently lit. The literal initializer is safe under ES2024 field-define semantics precisely because it carries no constructor-chain-
+  // computed state: the field defines to false after the base constructor returns, and every reader of the field runs post-construction (the onGet and onSet handlers).
+  private flashlightState = false;
 
-  // The package camera is a HomeKit sub-view of its parent doorbell's shared camera projection, not a Protect device of its own: it has no independent state to observe,
-  // its availability, information, and name are fanned out by the parent doorbell, and its motion is delivered by the firehose router when the parent fires. So it spawns
-  // no observers - in particular it must not inherit the camera reactions (it would re-derive the parent's video stream and could trip the doorbell reclassification) nor
-  // the base name-sync observer, which would write the bare parent name; its own configureInfo override applies the suffixed name instead (see below).
-  protected override spawnObservers(): void {
+  // Spawn the package camera's bespoke observer set, deliberately REPLACING the camera set rather than extending it - no super call. The camera reactions must never
+  // spawn here: the reclassification observer would arm a flap-triggered doorbell-capability attach against the package accessory (an isDoorbell flap on the shared
+  // parent record would attach the doorbell capability onto the package - duplicate doorbell services and context corruption), and the channels/videoCodec observers
+  // would run the parent-flavored reconcileStreaming against the package accessory. The base pair (name sync and device information) still spawns through the family
+  // template, which is what lets the package track parent renames and firmware updates without any doorbell fan-out.
+  protected override spawnCameraObservers(): void {
 
-    return;
+    // Bind the by-id camera selector once, mirroring the parent's discipline - the package shares the parent's projection, so the parent's id is ours too.
+    const cam = selectCamera(this.ufp.id);
+
+    // The lifecycle state of the shared physical device drives the package accessory's availability, exactly as it drives the parent's - each side observes the same
+    // slice and pushes its own narrow projection.
+    this.observeState({ key: "camera.state", selector: state => cam(state)?.state, title: "availability" }, () => this.updateAvailability());
+
+    // The package channel can be provisioned after adoption (a doorbell that was not fully provisioned when first adopted). We reduce the channel to a computed
+    // primitive - its formatted dimension tuple, or undefined while absent - so the store's value dedup wakes this only when the package channel appears or genuinely
+    // changes shape, never on unrelated channel-list churn. The string serialization is a consumer-side stand-in for a store value-equality option. On a wake the
+    // handler re-attempts the idempotent stream configure: the arrival wake builds the stream from the real channel, and a post-build dimension change returns at the
+    // idempotency gate, leaving the advertised list frozen until a restart - exact parent parity.
+    const packageChannelShape = (state: ProtectState): string | undefined => {
+
+      const channel = cam(state)?.channels.find(isPackageChannel);
+
+      return channel ? formatResolution([ channel.width, channel.height, channel.fps ]) : undefined;
+    };
+
+    this.observeState({ key: "camera.packageChannel", selector: packageChannelShape, title: "video streaming" }, () => { this.configurePackageStream(); });
   }
 
-  // The package camera's display name is the parent's name plus a " Package Camera" suffix, single-sourced from the shared live parent projection. v4 synthesized a
-  // pre-suffixed ufp.name for the sub-view; the v5 shared-projection move reads the parent's bare name, so we re-add the suffix here when name-sync is on, restoring the
-  // v4 behavior the migration regressed (the base configureInfo would otherwise overwrite the suffix with the bare parent name). With name-sync off we leave the
-  // creation-time name, exactly as v4 did. The parent doorbell fans this out from its configureInfo (on a firmware change) and syncNameFromController (on a rename), so
-  // the sub-view's name and firmware track the parent live, without the package camera observing anything itself.
-  public override configureInfo(): boolean {
+  // The package camera's display name is the parent's synced name plus the display suffix, single-sourced from the shared live parent projection through the base
+  // syncedName seam. Every name-sync path (configureInfo at configure time, syncNameFromController on a controller-side rename) reads this derivation, so the suffix
+  // applies uniformly with name syncing on; with it off, the creation-time name persists untouched.
+  protected override get syncedName(): string {
 
-    if(this.hints.syncName) {
+    return super.syncedName + PACKAGE_CAMERA_NAME_SUFFIX;
+  }
 
-      this.accessoryName = (this.ufp.name ?? this.ufp.marketName) + " Package Camera";
-    }
+  // Push the package camera's availability projection: StatusActive on the motion sensor, nothing else - exactly the surface the parent doorbell used to fan out. The
+  // inherited camera projection would also write StatusTampered, sprouting an always-false tamper characteristic onto the package motion sensor through HAP's optional-
+  // characteristic auto-add, and a LightSensor line the package never carries; the narrow override is the guard against both.
+  protected override updateAvailability(): void {
 
-    return this.setInfo(this.accessory, this.ufp);
+    this.accessory.getService(this.hap.Service.MotionSensor)?.updateCharacteristic(this.hap.Characteristic.StatusActive, this.isReachable);
   }
 
   // Configure the package camera.
   protected override configureDevice(): boolean {
 
-    // Get our parent camera.
-    const parentCamera = this.nvr.getDeviceById(this.ufp.id);
-
-    this.flashlightState = false;
+    // The package camera inherits configureHints, which already computed every streaming hint in its own constructor pass from the shared parent MAC's feature-option
+    // scope, so the only hint set here is the package-specific probesize floor - package camera streams are sparse enough that FFmpeg needs a deeper probe to lock on.
     this.hints.probesize = 32768;
-
-    // Inherit settings from our parent.
-    if(parentCamera) {
-
-      this.hints.tsbStreaming = parentCamera.hints.tsbStreaming;
-      this.hints.hardwareDecoding = parentCamera.hints.hardwareDecoding;
-      this.hints.hardwareTranscoding = parentCamera.hints.hardwareTranscoding;
-      this.hints.highResSnapshots = parentCamera.hints.highResSnapshots;
-      this.hints.logHksv = parentCamera.hints.logHksv;
-      this.hints.transcode = parentCamera.hints.transcode;
-      this.hints.transcodeBitrate = parentCamera.hints.transcodeBitrate;
-      this.hints.transcodeHighLatency = parentCamera.hints.transcodeHighLatency;
-      this.hints.transcodeHighLatencyBitrate = parentCamera.hints.transcodeHighLatencyBitrate;
-    }
 
     // Save our context for reference before we recreate it.
     const savedContext = this.accessory.context;
@@ -89,19 +100,53 @@ export class ProtectCameraPackage extends ProtectCamera {
     // Configure the flashlight.
     this.configureFlashlight();
 
-    // The package camera's native resolution, the seed for the HomeKit resolution list. The annotation contextually types the fallback tuple - no cast.
-    const primaryResolution: Resolution = this.selectChannel()?.resolution ?? PACKAGE_DEFAULT_RESOLUTION;
+    // Configure the video stream when the controller has provisioned the package channel, deferring until then otherwise. configureDevice is the one caller that
+    // narrates the deferral to the user - the package-channel observer's later re-attempts stay silent until one succeeds.
+    if(!this.configurePackageStream()) {
+
+      this.log.info("The package camera accessory is ready, but its video stream will become available once the controller finishes provisioning the package " +
+        "camera channel.");
+    }
+
+    // We're done.
+    return true;
+  }
+
+  /* Configure the package camera's HomeKit video stream from the real package channel, deferring when the controller has not yet provisioned it. Idempotent through
+   * the this.stream gate, exactly the parent's create-once discipline (configureStreamingDelegate): the package-channel observer re-runs this on channel arrival, and a
+   * post-build dimension change wakes it too, where the gate returns and the advertised list stays frozen until a restart - the parent's identical staleness
+   * envelope. Deferral also means the accessory's HomeKit camera controller is registered only once the channel exists; if a session ends before it ever arrives,
+   * hap-nodejs marks the controller's persisted state purge-on-next-load, so the package's saved HKSV configuration can be purged across two such restarts - an
+   * accepted, narrow caveat of defer-create (the alternative, re-registering a controller mid-life, factory-resets HKSV unconditionally). Returns whether the
+   * stream is configured.
+   */
+  private configurePackageStream(): boolean {
+
+    // The stream is already configured - nothing to do.
+    if(this.stream) {
+
+      return true;
+    }
+
+    // The controller has not provisioned the package channel yet. The accessory itself (motion, flashlight) is fully functional in the meantime; it simply
+    // advertises no video stream until the channel arrives and the observer re-attempts.
+    const profile = this.selectChannel();
+
+    if(!profile) {
+
+      return false;
+    }
 
     // Synthesize the HomeKit resolution list from the package channel's fixed native top. The package camera is a single fixed channel - the resolution module seeds the
     // list with the native top itself and appends the aspect-appropriate mandated resolutions at the package frame rate, so we pass the seed once and do NOT prepend it.
-    const validResolutions = buildAdvertisedResolutions({ fpsSet: [15], nativeTop: primaryResolution });
+    const validResolutions = buildAdvertisedResolutions({ fpsSet: [15], nativeTop: profile.resolution });
 
     // Inform users about our RTSP entry mapping, if we're debugging.
     if(this.hasFeature("Debug.Video.Startup")) {
 
       for(const entry of validResolutions) {
 
-        this.log.info("Mapping resolution: %s.", formatResolution(entry) + " => " + formatResolution(primaryResolution));
+        this.log.info("Mapping resolution: %s.", formatResolution(entry) + " => " + formatResolution(profile.resolution));
       }
     }
 
@@ -112,7 +157,6 @@ export class ProtectCameraPackage extends ProtectCamera {
     // Fire up the controller and inform HomeKit about it.
     this.accessory.configureController(this.stream.controller);
 
-    // We're done.
     return true;
   }
 
@@ -137,7 +181,7 @@ export class ProtectCameraPackage extends ProtectCamera {
     }
 
     // Activate or deactivate the package camera flashlight.
-    service.getCharacteristic(this.hap.Characteristic.On).onGet(() => !!this.flashlightState);
+    service.getCharacteristic(this.hap.Characteristic.On).onGet(() => this.flashlightState);
 
     service.getCharacteristic(this.hap.Characteristic.On).onSet(async (value: CharacteristicValue) => {
 
@@ -199,16 +243,25 @@ export class ProtectCameraPackage extends ProtectCamera {
       this.registerInterval("flashlight", () => void activateFlashlight(), 20 * 1000);
     });
 
-    // Initialize the flashlight.
-    service.updateCharacteristic(this.hap.Characteristic.On, !!this.flashlightState);
+    // Initialize the flashlight to its resting off state. We write the literal rather than reading the field: this line runs inside the construction chain, before our
+    // subclass field initializer has defined flashlightState (ES2024 define semantics), and the momentary flashlight is always off at construction regardless.
+    service.updateCharacteristic(this.hap.Characteristic.On, false);
 
     return true;
+  }
+
+  // The package camera's public identity API: the unique device identifier derived from a parent doorbell's MAC address. The derivation itself lives in the shared types
+  // leaf (packageCameraId) so the doorbell capability - a pure consumer of the package's identity, never a co-author - can derive it without value-importing this sibling
+  // class. This static re-exposes that single derivation as the package class's own identity surface, consumed by the id getter and the accessory-UUID seed.
+  public static packageCameraId(mac: string): string {
+
+    return packageCameraId(mac);
   }
 
   // Return a unique identifier for package cameras based on the parent device's MAC address.
   public override get id(): string {
 
-    return this.ufp.mac + ".PackageCamera";
+    return ProtectCameraPackage.packageCameraId(this.ufp.mac);
   }
 
   // Make our RTSP stream findable.

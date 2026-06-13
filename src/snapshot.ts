@@ -5,7 +5,7 @@
 import { FfmpegExec, runWithAbort } from "homebridge-plugin-utils";
 import type { HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
 import { PROTECT_LIVESTREAM_API_IDR_INTERVAL, PROTECT_SNAPSHOT_CACHE_MAXAGE, PROTECT_SNAPSHOT_TIMEOUT } from "./settings.ts";
-import type { ProtectCamera } from "./devices/index.ts";
+import type { ProtectCameraHost } from "./camera-host.ts";
 import type { SnapshotOptions } from "unifi-protect";
 import type { SnapshotRequest } from "homebridge";
 
@@ -27,10 +27,10 @@ export class ProtectSnapshot {
   private _cachedSnapshot: Nullable<{ image: Buffer; time: number }>;
   private _snapshotInFlight: Nullable<Promise<Nullable<Buffer>>>;
   public readonly log: HomebridgePluginLogging;
-  public readonly protectCamera: ProtectCamera;
+  public readonly protectCamera: ProtectCameraHost;
 
   // Create an instance of a HomeKit streaming delegate.
-  constructor(protectCamera: ProtectCamera) {
+  constructor(protectCamera: ProtectCameraHost) {
 
     this.log = protectCamera.log;
     this.protectCamera = protectCamera;
@@ -230,7 +230,7 @@ export class ProtectSnapshot {
     return this.snapFromFfmpeg(ffmpegOptions, signal, request);
   }
 
-  // Snapshots using the Protect controller's snapshot command as the source. This is the v5 camera projection's snapshot, exposed through ProtectCamera's narrow public
+  // Snapshots using the Protect controller's snapshot command as the source. This is the v5 camera projection's snapshot, exposed through the camera's narrow public
   // seam. Unlike the FFmpeg-based sources, the controller command throws on failure rather than returning null - a non-2xx response, or a ProtectUnsupportedError when a
   // package snapshot is requested on a camera without a package sensor. We translate that throw into a null so the multi-source acquisition falls through to the next
   // source exactly as it always has, and so a snapshot failure never escapes acquireSnapshot.

@@ -283,8 +283,8 @@ describe("access unlock onSet (real runDeviceCommand)", () => {
 
 describe("RTSP enablement gate (real runDeviceCommand)", () => {
 
-  // The configureVideoStream enable-if-needed gate the camera ships: when any channel lacks RTSP, PATCH the full channel array with isRtspEnabled set through the shared
-  // helper and return early - the channels observer re-drives configuration once the controller's change reconciles - otherwise fall through to build the stream entries.
+  // The refreshChannelProfiles enable-if-needed gate the camera ships: when any channel lacks RTSP, PATCH the full channel array with isRtspEnabled set through the
+  // shared helper and return early - the channels observer re-drives configuration once the controller's change reconciles - otherwise fall through to build the entries.
   // We model the gate over an injected channels array and the harness's write-through update thunk, pinning which path runs and the exact PATCH payload.
   const enableRtspIfNeeded = (harness: CommandHarness, channels: { id: string; isRtspEnabled: boolean; name: string }[]) => async (): Promise<boolean> => {
 

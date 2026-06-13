@@ -293,8 +293,9 @@ export const CAMERA_FIXTURES: CameraFixture[] = [
   }
 ];
 
-// The package-camera golden-master fixtures. The G6 Pro Entry's real Package Camera channel (1600x1200 @ 3fps native) and the no-package fallback ([1600,1200,2]) both
-// seed a 4:3 list: the seed itself plus the under-top mandated 4:3 resolutions at 15fps. The seed retains its native fps; the appended rows are all 15fps.
+// The package-camera golden-master fixtures. Both seeds - the G6 Pro Entry's real Package Camera channel (1600x1200 @ 3fps native) and a low-fps 4:3 witness
+// ([1600,1200,2]) - expand to the same 4:3 list: the seed itself plus the under-top mandated 4:3 resolutions at 15fps. The seed retains its native fps; the appended
+// rows are all 15fps.
 export const PACKAGE_FIXTURES: PackageFixture[] = [
 
   {
@@ -309,7 +310,9 @@ export const PACKAGE_FIXTURES: PackageFixture[] = [
   },
   {
 
-    // The no-package-channel fallback: PACKAGE_DEFAULT_RESOLUTION ([1600,1200,2]) when no Package Camera channel is readable. Same 4:3 synthesis, seeded at 2fps.
+    // A low-fps 4:3 seed ([1600,1200,2]) - historically production's no-package-channel fallback (PACKAGE_DEFAULT_RESOLUTION, deleted by the 2b defer-create, which
+    // waits for the real channel instead of advertising an unstreamable list). Kept as a pure synthesis witness: the same 4:3 expansion, seeded at 2fps, pinning that
+    // the seed keeps its own frame rate.
     expected: [ [ 1600, 1200, 2 ], [ 1920, 1440, 15 ], [ 1280, 960, 15 ], [ 1024, 768, 15 ], [ 640, 480, 15 ], [ 480, 360, 15 ], [ 320, 240, 15 ] ],
     model: "Package fallback",
     nativeTop: [ 1600, 1200, 2 ]

@@ -4,12 +4,12 @@
  */
 import type { API, HAP } from "homebridge";
 import { APIEvent, MqttClient, formatSeconds, loopFaultReporter, retry, sanitizeName, superviseLoop } from "homebridge-plugin-utils";
-import type { HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
-import type { HttpRequestEndPayload, LivestreamRecoveryRecoveredPayload, LivestreamRecoveryStartedPayload, ProtectLogging, ProtectNvrConfig,
+import type { Camera, HttpRequestEndPayload, LivestreamRecoveryRecoveredPayload, LivestreamRecoveryStartedPayload, ProtectLogging, ProtectNvrConfig,
   ProtectState } from "unifi-protect";
+import { DoorbellCapability, ProtectCamera, ProtectCameraPackage, ProtectChime, ProtectLight, ProtectLiveviews, ProtectNvrSystemInfo, ProtectSensor,
+  ProtectViewer, isPackageChannel } from "./devices/index.ts";
+import type { HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
 import type { NvrLifecyclePayload, ReachabilityFanoutPayload } from "./diagnostics.ts";
-import { PACKAGE_CHANNEL_NAME, ProtectCamera, ProtectChime, ProtectDoorbell, ProtectLight, ProtectLiveviews, ProtectNvrSystemInfo, ProtectSensor,
-  ProtectViewer } from "./devices/index.ts";
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_M3U_PLAYLIST_PORT, PROTECT_NVR_CONTROLLER_DISABLED_SETTLE_DELAY, PROTECT_NVR_REBOOT_CONFIRM_GRACE_MS,
   PROTECT_NVR_REBOOT_DEFERRAL_MAX, PROTECT_NVR_REBOOT_INTERVAL, PROTECT_NVR_REBOOT_MIN_INTERVAL, PROTECT_NVR_REMOVAL_STABILITY_WINDOW } from "./settings.ts";
 import type { ProtectAccessory, ProtectAccessoryContext, ProtectDeviceConfigTypes, ProtectDeviceTypes, ProtectDevices } from "./types.ts";
@@ -518,11 +518,15 @@ export class ProtectNvr {
 
     // Every reboot re-adopts and restarts each camera's stream from scratch, so clear each camera's accumulated probesize self-tuning - a per-camera latch that at its
     // permanent ceiling arms no auto-reset and otherwise persists for the life of the delegate. We accept one baseline re-tune per reboot on a chronically-flaky camera
-    // rather than a forever-elevated probesize. Package cameras hang off the parent doorbell, not configuredDevices, so we reach them explicitly - mirroring disconnect.
-    for(const camera of this.devices("camera")) {
+    // rather than a forever-elevated probesize. The endpoints iterator walks package cameras alongside their parents, so the package's delegate resets here too.
+    for(const device of this.deviceEndpoints()) {
 
-      camera.stream?.resetProbesizeOverride();
-      camera.packageCamera?.stream?.resetProbesizeOverride();
+      if(!(device instanceof ProtectCamera)) {
+
+        continue;
+      }
+
+      device.stream?.resetProbesizeOverride();
     }
 
     this.resumeFromInducedReboot();
@@ -570,13 +574,16 @@ export class ProtectNvr {
     // Shutting them down proactively prevents error noise from livestream self-healing and FFmpeg processes communicating with a disconnected controller. Disposing
     // these consumers is what releases their underlying v5 livestream pool subscriptions: the camera no longer owns sessions, so there is no separate manager to
     // shut down. This is a HARD ORDERING INVARIANT - the connection-dependent consumers (and the pool subscriptions they hold) are torn down in this loop BEFORE
-    // the v5 client is disposed below, so no subscription outlives the client it draws from.
-    for(const protectCamera of this.devices("camera")) {
+    // the v5 client is disposed below, so no subscription outlives the client it draws from. The endpoints iterator walks package cameras alongside their parents.
+    for(const device of this.deviceEndpoints()) {
 
-      protectCamera.stream?.shutdown();
-      protectCamera.stream?.hksv?.timeshift.stop();
-      protectCamera.packageCamera?.stream?.shutdown();
-      protectCamera.packageCamera?.stream?.hksv?.timeshift.stop();
+      if(!(device instanceof ProtectCamera)) {
+
+        continue;
+      }
+
+      device.stream?.shutdown();
+      device.stream?.hksv?.timeshift.stop();
     }
 
     // Detach the connection-health subscriptions so they do not outlive the client whose connection monitor they observe.
@@ -895,7 +902,7 @@ export class ProtectNvr {
 
         if(device) {
 
-          this.scheduleDeviceRemoval(device.accessory, () => !this.adoptedIdSelectors[category](this.client.state.snapshot()).includes(id));
+          this.scheduleDeviceRemoval({ accessory: device.accessory, stillGone: () => !this.adoptedIdSelectors[category](this.client.state.snapshot()).includes(id) });
         }
       }
     }
@@ -928,7 +935,7 @@ export class ProtectNvr {
 
       if(mac && !knownMacs.has(mac)) {
 
-        this.scheduleDeviceRemoval(accessory, () => !this.currentAdoptedMacs().has(mac));
+        this.scheduleDeviceRemoval({ accessory: accessory, stillGone: () => !this.currentAdoptedMacs().has(mac) });
       }
     }
   }
@@ -1029,13 +1036,39 @@ export class ProtectNvr {
     }
 
     this.sweepOrphans();
+
+    // The package-camera pass: reconcile each doorbell's package camera against the live capability flag. This sweep is both the construction-time arm (it runs at
+    // the first post-startup stability, catching a capability withdrawn while HBUP was down - the across-restart ghost a cached BRIDGED package accessory would
+    // otherwise be forever, since the orphan sweep keys on a mac the package deliberately lacks) and the re-arm (a detach grace dropped by cancelAllDeviceRemovals,
+    // or a fire that failed its stability re-check, is re-scheduled when stability returns).
+    for(const device of this.devices("camera")) {
+
+      device.doorbell?.reconcilePackageCamera();
+    }
   }
 
-  // Mark an accessory for removal, honoring the DelayDeviceRemoval grace. Idempotent per accessory (a re-yield while it stays gone keeps the original deadline). With the
-  // grace disabled (interval 0) we remove immediately - the stability gate already provided the safety. The stillGone predicate is re-evaluated at fire against live
-  // state (the caller supplies it: the category selector for a membership leave, the adopted-mac set for a cache orphan), and we re-confirm stability at fire, so a
-  // device that returned during the grace is not removed. Keyed by accessory UUID - the one id shared by a membership leave (via the device) and an id-less orphan.
-  private scheduleDeviceRemoval(accessory: ProtectAccessory, stillGone: () => boolean): void {
+  /* Mark an accessory for removal, honoring the DelayDeviceRemoval grace. This is the single removal chokepoint every controller-state-driven removal routes
+   * through, and the stability policy lives here: nothing schedules unless the controller has been continuously good for the stability window. The membership and
+   * orphan callers pre-gate on removalStable before calling, so the in-chokepoint gate is deliberately redundant for them - it exists so the policy holds for every
+   * caller by construction rather than by caller discipline. Idempotent per accessory (a re-yield while it stays gone keeps the original deadline). With the grace
+   * disabled (interval 0) we remove immediately - the stability gate already provided the safety. The stillGone predicate is re-evaluated at fire against live state
+   * (the caller supplies it: the category selector for a membership leave, the adopted-mac set for a cache orphan, the capability flag for a package detach), and we
+   * re-confirm stability at fire, so a device that returned during the grace is not removed. Keyed by accessory UUID - the one id shared by a membership leave, an
+   * id-less orphan, and a package camera.
+   *
+   * @param options - accessory: the accessory to remove; reason: an optional user-facing sentence logged once at schedule time, on both the immediate and the
+   *                  deferred paths; remove: the removal action the decision runs, defaulting to removeHomeKitDevice; stillGone: the fire-time re-check against
+   *                  live controller state.
+   */
+  public scheduleDeviceRemoval(options: { accessory: ProtectAccessory; reason?: string; remove?: () => void; stillGone: () => boolean }): void {
+
+    const { accessory, reason, stillGone } = options;
+    const remove = options.remove ?? ((): void => this.removeHomeKitDevice(accessory));
+
+    if(!this.removalStable) {
+
+      return;
+    }
 
     if(this.deviceRemovalTimers.has(accessory.UUID)) {
 
@@ -1044,9 +1077,15 @@ export class ProtectNvr {
 
     const delayInterval = this.getFeatureNumber("Nvr.DelayDeviceRemoval") ?? 0;
 
+    // Narrate the removal decision once, at schedule time, when the caller supplied a reason - the one user-facing message for the whole removal flow.
+    if(reason) {
+
+      this.log.info(reason);
+    }
+
     if(delayInterval <= 0) {
 
-      this.removeHomeKitDevice(accessory);
+      remove();
 
       return;
     }
@@ -1059,13 +1098,14 @@ export class ProtectNvr {
 
       if(this.removalStable && stillGone()) {
 
-        this.removeHomeKitDevice(accessory);
+        remove();
       }
     }, delayInterval * 1000));
   }
 
-  // Cancel a single pending delayed removal by accessory UUID (a returning orphan, via addHomeKitDevice). Idempotent.
-  private cancelDeviceRemovalFor(uuid: string): void {
+  // Cancel a single pending delayed removal by accessory UUID (a returning orphan via addHomeKitDevice, or a package-capability return via the doorbell's
+  // reconcile). Idempotent.
+  public cancelDeviceRemovalFor(uuid: string): void {
 
     const timer = this.deviceRemovalTimers.get(uuid);
 
@@ -1090,7 +1130,8 @@ export class ProtectNvr {
   // Spawn the connection-health observe loop. Controller health is one fact with one reader: on each connection-state transition this loop walks the configured
   // accessories and pushes the recomputed reachability to each, rather than having N accessories each subscribe to the connection monitor (which would be 2N
   // iterators and N readers of a single fact). An accessory whose HomeKit-visible reachability actually flipped is published on the reachability-fanout diagnostics
-  // channel. Pull where the fact is per-device (the per-device leaf observers); push where the fact is controller-wide (here).
+  // channel. Pull where the fact is per-device (the per-device leaf observers); push where the fact is controller-wide (here). Package cameras ride the endpoints
+  // iterator, so their reachability is pushed - and published on the fanout channel - first-class rather than fanned out by the parent doorbell.
   private startConnectionObserver(): void {
 
     this.spawnLoop("the controller connection", async () => {
@@ -1103,7 +1144,7 @@ export class ProtectNvr {
         // (degraded / lost / reconnecting / healthy), so reading connection.isHealthy here is what closes the gate the moment a socket-dropping outage begins.
         this.refreshRemovalStability();
 
-        for(const device of this.configuredDevices.values()) {
+        for(const device of this.deviceEndpoints()) {
 
           const flip = device.refreshReachability();
 
@@ -1123,16 +1164,32 @@ export class ProtectNvr {
     void superviseLoop({ loop, onError: loopFaultReporter(this.log, title), signal: this.signal });
   }
 
-  // Reconfigure a camera as a doorbell. Cameras and doorbells share the same modelKey in Protect...the only differentiator is featureFlags.isDoorbell, which may not be
-  // populated when the device is first adopted. We tear down the ProtectCamera instance and replace it with a ProtectDoorbell against the same HomeKit accessory.
-  public reconfigureAsDoorbell(protectDevice: ProtectDevice): void {
+  /* Construct a doorbell capability for a camera that the controller reports as a doorbell. Constructing a device-family object is graph-assembly knowledge, which lives
+   * at the composition root - the camera keeps the entire lifecycle DECISION (it observes the flag and decides WHEN to attach), and only the new lands here. This method
+   * holds zero policy: one new, on request, by the decision-owner. Routing construction upward rides the codebase invariant that device-layer objects reach the NVR only
+   * through inherited fields, never value-imports - so the camera calling this DURING its own construction forms no module import edge, and the device layer is
+   * structurally cycle-proof. It is safe to call mid-construction because the method has no dependence on NVR state being mutated at that time.
+   */
+  public createDoorbellCapability(camera: ProtectCamera, device: Camera, signal: AbortSignal): DoorbellCapability {
 
-    // Tear down the existing device instance...listeners, timers, HKSV, and livestream resources.
-    protectDevice.cleanup();
+    return new DoorbellCapability(this, { camera: camera, device: device, signal: signal });
+  }
 
-    // Remove the old instance from our configured devices and recreate it with the correct class.
-    this.configuredDevices.delete(protectDevice.accessory.UUID);
-    this.addProtectDevice(protectDevice.accessory, protectDevice.ufp);
+  // Construct a package camera for a doorbell capability that has provisioned one. The same graph-assembly reasoning as createDoorbellCapability: the capability keeps
+  // the entire lazy decision (the package-flag observer, the stability sweep, the private parent projection), and only the new moves here. The capability passes the
+  // accessory it created or found plus its own parent projection; this method holds one new and no policy.
+  public createPackageCamera(accessory: ProtectAccessory, device: Camera): ProtectCameraPackage {
+
+    return new ProtectCameraPackage(this, accessory, device);
+  }
+
+  // Remove the doorbell-only services a demoted-while-down doorbell left on a now-plain camera accessory - the sweep-stale removal the camera's reconcile runs when the
+  // controller does not report a doorbell and no capability is attached. The removal logic is the DoorbellCapability's own SSOT (it owns the doorbell-only service set);
+  // this seam routes the camera's request through the composition root so the camera never value-imports the sibling capability class - the same removal-machinery-at-the
+  // -root rule the package sweep follows, keeping the device layer structurally cycle-proof (sibling device classes are type-only in the device leaves).
+  public removeStaleDoorbellServices(accessory: ProtectAccessory): void {
+
+    DoorbellCapability.removeServices(accessory, this.hap, this.log);
   }
 
   // Create instances of Protect device types in our plugin.
@@ -1154,8 +1211,9 @@ export class ProtectNvr {
           break;
         }
 
-        this.configuredDevices.set(accessory.UUID,
-          device.featureFlags.isDoorbell ? new ProtectDoorbell(this, accessory, camera) : new ProtectCamera(this, accessory, camera));
+        // Always a ProtectCamera. A device the controller reports as a doorbell attaches its DoorbellCapability through the camera's own construction-time reconcile,
+        // so there is one construction path for both arrival timings (doorbell-at-adoption and a late isDoorbell flip).
+        this.configuredDevices.set(accessory.UUID, new ProtectCamera(this, accessory, camera));
 
         break;
       }
@@ -1384,17 +1442,36 @@ export class ProtectNvr {
     // Finally, remove it from our list of configured devices and HomeKit.
     this.configuredDevices.delete(accessory.UUID);
 
-    // Update our internal list of all the accessories we know about.
+    // Remove each accessory through the shared tail. Cancelling any pending delayed removal per accessory first kills the cascade-then-stale-timer double fire: a
+    // cascade-removed package camera may hold its own pending detach grace, which must never fire against an accessory this removal already handled.
     for(const targetAccessory of deletingAccessories) {
 
-      // Unregister the accessory from HomeKit if we have a bridged accessory. Unbridged accessories are managed directly by users in the Home app.
-      if(targetAccessory._associatedHAPAccessory.bridged) {
-
-        this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [targetAccessory]);
-      }
-
-      this.platform.accessories.splice(this.platform.accessories.indexOf(targetAccessory), 1);
+      this.cancelDeviceRemovalFor(targetAccessory.UUID);
+      this.removeAccessoryFromHomeKit(targetAccessory);
     }
+  }
+
+  /* Remove an accessory from HomeKit and the platform's accessory list - the shared removal tail that removeHomeKitDevice and the package camera's graced detach
+   * both end in. Unregistration is gated on the accessory actually being bridged: hap-nodejs throws on unregistering a never-bridged (standalone) accessory, whose
+   * HomeKit-side removal is the user's in the Home app. The presence guard makes a stale double-fire a harmless no-op - an indexOf miss would otherwise splice(-1)
+   * and silently delete the LAST accessory in the platform array. Logs nothing: the caller owns the user-facing narration.
+   */
+  public removeAccessoryFromHomeKit(accessory: ProtectAccessory): void {
+
+    const index = this.platform.accessories.indexOf(accessory);
+
+    if(index === -1) {
+
+      return;
+    }
+
+    // Unregister the accessory from HomeKit if we have a bridged accessory. Unbridged accessories are managed directly by users in the Home app.
+    if(accessory._associatedHAPAccessory.bridged) {
+
+      this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
+    }
+
+    this.platform.accessories.splice(index, 1);
 
     // Tell Homebridge to save the updated list of accessories.
     this.api.updatePlatformAccessories(this.platform.accessories);
@@ -1457,7 +1534,7 @@ export class ProtectNvr {
         // Ensure we publish package cameras as well, when we have them.
         if(camera.featureFlags.hasPackageCamera) {
 
-          const packageChannel = camera.channels.find(x => x.isRtspEnabled && (x.name === PACKAGE_CHANNEL_NAME));
+          const packageChannel = camera.channels.find(x => x.isRtspEnabled && isPackageChannel(x));
 
           if(!packageChannel) {
 
@@ -1507,6 +1584,24 @@ export class ProtectNvr {
   private devices<T extends keyof ProtectDeviceTypes>(model?: T): ProtectDeviceTypes[T][] {
 
     return [...this.configuredDevices.values()].filter(device => device.ufp.modelKey === model) as ProtectDeviceTypes[T][];
+  }
+
+  // Iterate every HomeKit device endpoint this controller manages: each configured device and, immediately after a camera-family device that carries one, its package
+  // camera. Package cameras hang off the doorbell capability composed on their parent camera rather than configuredDevices, so any controller-wide push (the reachability
+  // fan-out, the probesize reset, the disconnect teardown) walks this iterator instead of hand-fanning the package at each site. Consumers that need camera-typed members
+  // narrow with instanceof ProtectCamera - sound and cast-free, since package cameras are ProtectCamera subclasses, and the parent's packageCamera getter delegates to
+  // the capability.
+  private *deviceEndpoints(): Generator<ProtectDevice> {
+
+    for(const device of this.configuredDevices.values()) {
+
+      yield device;
+
+      if((device instanceof ProtectCamera) && device.packageCamera) {
+
+        yield device.packageCamera;
+      }
+    }
   }
 
   // Return the Protect device object based on its unique device identifier, if it exists.

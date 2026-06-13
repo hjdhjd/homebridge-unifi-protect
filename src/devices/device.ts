@@ -73,6 +73,42 @@ interface ObservedSlice<T> {
   readonly title: string;
 }
 
+// The shared device-and-plugin-context surface the media delegates read off the camera they serve - the slice of ProtectDevice/ProtectBase that is genuinely
+// device-level, distinct from the camera-specific media members in ProtectCameraHost (which extends this). ProtectDevice implements it, so the contract is
+// guaranteed at the class; the media layer depends on it without naming the concrete device.
+export interface ProtectDeviceContext {
+
+  // The HAP platform accessory carrying this device's services and context.
+  readonly accessory: ProtectAccessory;
+
+  // The human-readable accessory name.
+  readonly accessoryName: string;
+
+  // The Homebridge API handle.
+  readonly api: API;
+
+  // Predicate for a resolved feature option.
+  hasFeature(option: string): boolean;
+
+  // The per-device resolved feature-hint bag.
+  readonly hints: ProtectHints;
+
+  // The composite reachability/online gate.
+  readonly isReachable: boolean;
+
+  // The per-device logger.
+  readonly log: HomebridgePluginLogging;
+
+  // The owning controller.
+  readonly nvr: ProtectNvr;
+
+  // The owning platform (codec support, config, verbose-FFmpeg flag).
+  readonly platform: ProtectPlatform;
+
+  // Toggles the recording-indicator status LED.
+  setStatusLed(value: boolean): Promise<boolean>;
+}
+
 export abstract class ProtectBase {
 
   public readonly api: API;
@@ -144,9 +180,10 @@ export abstract class ProtectBase {
     return this.nvr.client.controllerName ?? "";
   }
 
-  // The lifetime signal that scopes this owner's state observers. The base binds to the controller's terminal shutdown signal, which is the correct lifetime for the
-  // controller-scoped owners (system information, liveviews) whose existence spans the whole controller connection. ProtectDevice overrides this with its per-accessory
-  // composed signal, so a single accessory's teardown unwinds only its own observers. This is one of the two seams the shared observeState varies by leaf.
+  // The owner-lifetime signal that scopes this owner's state observers AND its MQTT subscriptions. The base binds to the controller's terminal shutdown signal, which
+  // is the correct lifetime for the controller-scoped owners (system information, liveviews) whose existence spans the whole controller connection. ProtectDevice
+  // overrides this with its per-accessory composed signal, so a single accessory's teardown unwinds only its own observers and releases exactly its own MQTT handlers.
+  // This is one of the two seams the shared observeState varies by leaf, and the signal the MQTT subscribe wrappers below thread to HBPU.
   protected get observeSignal(): AbortSignal {
 
     return this.nvr.signal;
@@ -209,16 +246,19 @@ export abstract class ProtectBase {
     void this.nvr.mqtt?.publish(mqttTopic(this.mqttId, topic), message);
   }
 
-  // Configure an MQTT get subscription under this owner's scope.
+  // Configure an MQTT get subscription under this owner's scope. The registration is bound to the owner-lifetime signal, so an owner's teardown (cleanup, removal,
+  // reclassification) releases exactly this owner's handler - load-bearing on shared topics, where the package camera and its parent doorbell each hold handlers on
+  // the same parent-MAC tuple and a tuple-wide unsubscribe would clobber the survivor's. The signal governs registration lifetime only; an in-flight handler runs to
+  // completion under HBPU's client-level signal, by design.
   protected subscribeGet(topic: string, type: string, getValue: () => string): void {
 
-    this.nvr.mqtt?.subscribeGet(mqttTopic(this.mqttId, topic), type, getValue);
+    this.nvr.mqtt?.subscribeGet(mqttTopic(this.mqttId, topic), type, getValue, { signal: this.observeSignal });
   }
 
-  // Configure an MQTT set subscription under this owner's scope.
+  // Configure an MQTT set subscription under this owner's scope, bound to the owner-lifetime signal exactly as subscribeGet is.
   protected subscribeSet(topic: string, type: string, setValue: (value: string, rawValue: string) => Promise<void> | void): void {
 
-    this.nvr.mqtt?.subscribeSet(mqttTopic(this.mqttId, topic), type, setValue);
+    this.nvr.mqtt?.subscribeSet(mqttTopic(this.mqttId, topic), type, setValue, { signal: this.observeSignal });
   }
 
   // Remove an MQTT subscription under this owner's scope. HBPU v2's unsubscribe takes the id and the topic tail as separate arguments (it reconstructs
@@ -227,14 +267,46 @@ export abstract class ProtectBase {
 
     this.nvr.mqtt?.unsubscribe(this.mqttId, topic);
   }
+
+  // Run a device command and report whether it succeeded. v5 device commands are write-through: they PATCH the controller and throw the classified FatalError on failure
+  // (rather than v4's null return), so this is the single place that converts a thrown command error into the boolean a HomeKit onSet handler branches on, and the single
+  // place a command failure is reported. The command is supplied as a thunk by the caller, where this.device is narrowed to the concrete projection, so the update
+  // typechecks against its own config; a helper that called this.device.update() itself would face the contravariance of the base's Camera | Light | Sensor | Chime |
+  // Viewer union. An authorization failure is the one actionable case for the user - the account lacks the Administrator role - so it earns specific guidance; any other
+  // failure is reported with its underlying cause. The action is a verb phrase ("turn the light on") interpolated into the message. This lives on ProtectBase, the lowest
+  // common ancestor of every command-issuer (every ProtectDevice subclass plus the DoorbellCapability), so the one copy serves them all; the three controller-scoped
+  // ProtectBase-only owners (the security system, the system-info owner, and liveviews) issue no Protect write commands and inherit it unused - a deliberate, accepted
+  // consequence of placing it at the common ancestor.
+  protected async runDeviceCommand(action: string, command: () => Promise<unknown>): Promise<boolean> {
+
+    try {
+
+      await command();
+
+      return true;
+    } catch(error) {
+
+      if(error instanceof ProtectAuthorizationError) {
+
+        this.log.error("Unable to %s. Please ensure this username has the Administrator role in UniFi Protect.", action);
+
+        return false;
+      }
+
+      // Report the failure with its underlying cause. The format string already supplies the terminal period, so we strip any trailing periods the error's own message
+      // carries (a v5 classified error is a full sentence ending in a period) so the line reads as one clean sentence rather than ending in a doubled period.
+      this.log.error("Unable to %s: %s.", action, ((error instanceof Error) ? error.message : String(error)).replace(/\.+$/, ""));
+
+      return false;
+    }
+  }
 }
 
-export abstract class ProtectDevice extends ProtectBase {
+export abstract class ProtectDevice extends ProtectBase implements ProtectDeviceContext {
 
   public accessory: ProtectAccessory;
-  // Per-accessory abort controller, composed against the NVR signal via composeSignals (the HBPU primitive). Aborting it (cleanup, device removal,
-  // reconfigureAsDoorbell teardown) tears down every observe loop this accessory spawned. Replaces the listeners Map plus nvr.events.off bookkeeping that the
-  // EventEmitter model required.
+  // Per-accessory abort controller, composed against the NVR signal via composeSignals (the HBPU primitive). Aborting it (cleanup, device removal) tears down every
+  // observe loop this accessory spawned. Replaces the listeners Map plus nvr.events.off bookkeeping that the EventEmitter model required.
   protected readonly controller: AbortController;
   // The live v5 projection for this device. Holds (client, id), reads through to the store on every config access. Set once at construction; never reassigned -
   // the accessory's identity is its MAC, stable across reboots, so the handle never goes stale. Injected by the NVR root when constructing the accessory, which
@@ -333,7 +405,7 @@ export abstract class ProtectDevice extends ProtectBase {
     // Sync the Protect name with HomeKit, if configured.
     if(this.hints.syncName) {
 
-      this.accessoryName = this.ufp.name ?? this.ufp.marketName;
+      this.accessoryName = this.syncedName;
     }
 
     return this.setInfo(this.accessory, this.ufp);
@@ -689,36 +761,6 @@ export abstract class ProtectDevice extends ProtectBase {
     return true;
   }
 
-  // Run a device command and report whether it succeeded. v5 device commands are write-through: they PATCH the controller and throw the classified FatalError on failure
-  // (rather than v4's null return), so this is the single place that converts a thrown command error into the boolean a HomeKit onSet handler branches on, and the single
-  // place a command failure is reported. The command is supplied as a thunk by the caller, where this.device is narrowed to the concrete projection, so the update
-  // typechecks against its own config; a helper that called this.device.update() itself would face the contravariance of the base's Camera | Light | Sensor | Chime |
-  // Viewer union. An authorization failure is the one actionable case for the user - the account lacks the Administrator role - so it earns specific guidance; any other
-  // failure is reported with its underlying cause. The action is a verb phrase ("turn the light on") interpolated into the message.
-  protected async runDeviceCommand(action: string, command: () => Promise<unknown>): Promise<boolean> {
-
-    try {
-
-      await command();
-
-      return true;
-    } catch(error) {
-
-      if(error instanceof ProtectAuthorizationError) {
-
-        this.log.error("Unable to %s. Please ensure this username has the Administrator role in UniFi Protect.", action);
-
-        return false;
-      }
-
-      // Report the failure with its underlying cause. The format string already supplies the terminal period, so we strip any trailing periods the error's own message
-      // carries (a v5 classified error is a full sentence ending in a period) so the line reads as one clean sentence rather than ending in a doubled period.
-      this.log.error("Unable to %s: %s.", action, ((error instanceof Error) ? error.message : String(error)).replace(/\.+$/, ""));
-
-      return false;
-    }
-  }
-
   // Set the status indicator light on a device. statusLedCommand resolves the device-appropriate write-through update (cameras and sensors use ledSettings; Protect
   // lights override it), and the shared command-error helper turns its throw-or-succeed contract into the boolean the status-indicator switch onSet and the camera
   // operating-mode indicator branch on.
@@ -804,8 +846,9 @@ export abstract class ProtectDevice extends ProtectBase {
       () => this.configureInfo());
   }
 
-  // Per-accessory lifetime: this accessory's composed signal scopes its observers, so cleanup / reconfigure / shutdown each unwind only this accessory's loops through
-  // the controller abort. Overrides the base default (the controller's terminal shutdown signal) that the controller-scoped owners use.
+  // Per-accessory lifetime: this accessory's composed signal scopes its observers and its MQTT subscriptions, so cleanup / reconfigure / shutdown each unwind only
+  // this accessory's loops - and release exactly this accessory's MQTT handlers - through the controller abort. Overrides the base default (the controller's terminal
+  // shutdown signal) that the controller-scoped owners use.
   protected override get observeSignal(): AbortSignal {
 
     return this.signal;
@@ -860,9 +903,17 @@ export abstract class ProtectDevice extends ProtectBase {
     }
   }
 
+  // The controller-side display name this device syncs into HomeKit: the user-assigned name, falling back to the model's market name. This is the single derivation the
+  // two name-sync consumers (configureInfo and syncNameFromController) read, and the one variation seam a leaf overrides to decorate its synced name - the package camera
+  // appends its display suffix here, so every sync path picks the decoration up without the parent fanning anything out.
+  protected get syncedName(): string {
+
+    return this.ufp.name ?? this.ufp.marketName;
+  }
+
   // Sync the controller's device name into HomeKit when the user enabled name syncing. Restores the v4 controller-side-rename propagation that the dissolved event
-  // pipeline used to perform: the cooked display name is name ?? marketName, and we only touch HomeKit (and log) when it actually differs from the current accessory
-  // name, so the idempotent re-read on an unrelated name-slice yield is silent.
+  // pipeline used to perform: the cooked display name is the syncedName derivation above, and we only touch HomeKit (and log) when it actually differs from the current
+  // accessory name, so the idempotent re-read on an unrelated name-slice yield is silent.
   protected syncNameFromController(): void {
 
     if(!this.hints.syncName) {
@@ -870,7 +921,7 @@ export abstract class ProtectDevice extends ProtectBase {
       return;
     }
 
-    const synced = this.ufp.name ?? this.ufp.marketName;
+    const synced = this.syncedName;
 
     if(this.accessoryName === synced) {
 

@@ -3,7 +3,7 @@
  * camera-construction.test.ts: The first real-ProtectCamera construction test - the proof of the platform-held streaming-delegate factory seam.
  *
  * This suite constructs a REAL minimal ProtectCamera end to end - the base constructors, configureHints, configureDevice, the floating configure IIFE
- * (configureVideoStream through the stub factory and accessory.configureController), and all eleven state-observe loops - against the reusable construction
+ * (reconcileStreaming through the stub factory and accessory.configureController), and all eleven state-observe loops - against the reusable construction
  * harness in testing.helpers.ts: the faithful v5 store double, the read-through Camera projection double, the typed NVR / platform doubles, and the stub
  * StreamingDelegateFactory the 2a-i dependency inversion exists to admit. It then drives a structural-sharing state push through a real observer reaction and
  * unwinds everything via cleanup(), asserting the wire-but-don't-fire observe contract at each phase through the observer-wake diagnostics channel.
@@ -163,7 +163,7 @@ describe("real ProtectCamera construction through the streaming-delegate factory
     assert.equal(wakes.length, 1, "exactly one observer woke for the single-slice push");
     assert.deepEqual(wakes[0], { accessoryId: accessory.UUID, key: "camera.channels" }, "the wake is the channels observer, attributed to this accessory");
 
-    // The reaction re-ran configureVideoStream, which republished the advertised profiles from the NEW channel set. Pick a discriminating row - one advertised for
+    // The reaction re-ran reconcileStreaming, which republished the advertised profiles from the NEW channel set. Pick a discriminating row - one advertised for
     // the G6 Pro Entry but absent from the G2 Pro list - and select it through the production selectChannel, proving the published profiles really moved.
     const discriminating: EntryProjection | undefined =
       g6Fixture.expected.find((entry) => !g2Fixture.expected.some((other) => isSameResolution(other.resolution, entry.resolution)));

@@ -258,6 +258,37 @@ export class ProtectEventDispatch {
     return { ...metadata, detectedThumbnails: metadata.detectedThumbnails.filter(({ type }) => type !== "motion") };
   }
 
+  /* Clear every event timer keyed to a device id, with exact-boundary semantics: a timer belongs to the device when its key IS the id or extends it as "id." -
+   * never a bare prefix match. HAZARD, documented for every future caller: the package camera's id is itself the PARENT's id plus a ".PackageCamera" segment, which
+   * matches the parent's own "id." subkey shape - so calling this with a PARENT id sweeps the package's timers too, and it must never be called with a parent id
+   * expecting package isolation. Returns whether an inflight bare-motion timer existed for the id exactly - the fact the package detach needs in order to decide
+   * whether the terminal MQTT motion reset must be published on the shared parent topic, since the cleared reset timer would otherwise have owned that publish.
+   */
+  public clearEventTimersForDevice(id: string): boolean {
+
+    const hadInflightMotion = this.eventTimers.has(id);
+
+    for(const [ key, timer ] of this.eventTimers) {
+
+      if((key === id) || key.startsWith(id + ".")) {
+
+        clearTimeout(timer);
+        this.eventTimers.delete(key);
+      }
+    }
+
+    return hadInflightMotion;
+  }
+
+  // Whether an inflight bare-motion timer exists for a device id exactly. The bare-motion timer is keyed by the id alone (subkeyed timers - smart detections,
+  // occupancy, rings - never match), so this is precisely "is this device's MotionDetected latched with a pending reset". The package detach reads the PARENT's
+  // state through this: when the parent holds its own inflight motion, the parent's reset timer will publish the shared topic's terminal "false" and the detach
+  // must not publish a premature one.
+  public hasInflightMotion(id: string): boolean {
+
+    return this.eventTimers.has(id);
+  }
+
   // Motion event processing from UniFi Protect.
   public motionEventHandler(protectDevice: ProtectDevice, detectedObjects: string[] = [], metadata?: ProtectEventMetadata): void {
 

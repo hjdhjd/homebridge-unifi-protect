@@ -9,7 +9,7 @@ import type { ChannelProfile } from "./devices/resolution.ts";
 import { EventEmitter } from "node:events";
 import { LIVE_SELF_HEAL_THRESHOLD } from "./livestream-recovery-policy.ts";
 import type { LivestreamSubscription } from "./livestream.ts";
-import type { ProtectCamera } from "./devices/index.ts";
+import type { ProtectCameraHost } from "./camera-host.ts";
 import { ProtectLivestreamUnavailableError } from "unifi-protect";
 import type { Segment } from "unifi-protect";
 import { isKeyframe } from "homebridge-plugin-utils";
@@ -58,13 +58,13 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
   // at a trivial CPU cost on modern systems.
   private readonly _segmentLength: number = PROTECT_SEGMENT_RESOLUTION;
   private readonly log: HomebridgePluginLogging;
-  private readonly protectCamera: ProtectCamera;
+  private readonly protectCamera: ProtectCameraHost;
   private segmentCount: number;
   // The active livestream subscription. Its presence is the single source of truth for whether the timeshift buffer is running; the public `isStarted` getter
   // derives from `subscription !== undefined`.
   private subscription?: LivestreamSubscription;
 
-  constructor(protectCamera: ProtectCamera) {
+  constructor(protectCamera: ProtectCameraHost) {
 
     // Initialize the event emitter.
     super();

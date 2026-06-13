@@ -40,10 +40,6 @@ export const RESOLUTIONS_4X3: readonly (readonly [number, number])[] =
 export const RESOLUTIONS_16X9: readonly (readonly [number, number])[] =
   [ [ 3840, 2160 ], [ 2560, 1440 ], [ 1920, 1080 ], [ 1280, 720 ], [ 640, 360 ], [ 480, 270 ], [ 320, 180 ] ];
 
-// The package camera's native-resolution fallback, used as the HomeKit list seed when no Package Camera channel is yet readable on the bootstrap. Documented as the
-// no-package-channel-access-yet fallback the package class falls back to.
-export const PACKAGE_DEFAULT_RESOLUTION: Resolution = [ 1600, 1200, 2 ];
-
 // The Protect channel name that designates a doorbell's secondary package-camera channel. Single-sources the literal across the camera class (which filters it out of
 // the primary list), the package class (which selects it), and the NVR RTSP playlist publisher.
 export const PACKAGE_CHANNEL_NAME = "Package Camera";
@@ -229,9 +225,10 @@ export function selectChannelProfile(entries: readonly ChannelProfile[], request
 }
 
 // Build the per-camera advertised resolution list HomeKit consumes, from the camera's native RTSP entries. This is the entangled crux of the resolution surface, lifted
-// verbatim from the device's configureVideoStream synthesis: sort high to low; capture the native top (the empty list returns []); pick the aspect-appropriate base
-// table; expand each row to 30 and 15 fps; then, for each candidate that belongs (under the drifting current top), find the closest RTSP match and append it with the
-// matched channel's native frame rate, re-sorting after each insert. Finally, normalize non-conforming frame rates to {15,24,30} so HomeKit will attempt the camera.
+// verbatim from the device's channel-profile derivation (refreshChannelProfiles): sort high to low; capture the native top (the empty list returns []); pick the
+// aspect-appropriate base table; expand each row to 30 and 15 fps; then, for each candidate that belongs (under the drifting current top), find the closest RTSP match
+// and append it with the matched channel's native frame rate, re-sorting after each insert. Finally, normalize non-conforming frame rates to {15,24,30} so HomeKit will
+// attempt the camera.
 //
 // The list build is preference-free: each candidate's closest-match uses the bias-lower nearest selection, mapping every HomeKit resolution to the highest channel at or
 // below it. The streaming-quality preference (Video.Stream.Only.X) is a request-time concern the selectChannel wrapper applies when a stream starts; it must not bias

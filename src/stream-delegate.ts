@@ -9,13 +9,17 @@
  */
 import type { CameraController, Resolution, SnapshotRequest, SnapshotRequestCallback } from "homebridge";
 import type { FfmpegOptions, Nullable } from "homebridge-plugin-utils";
-import type { ProtectCamera } from "./devices/camera.ts";
+import type { ProtectCameraHost } from "./camera-host.ts";
 import type { ProtectRecordingDelegate } from "./record.ts";
 
 // The surface consumers read off this.stream - the exact set grounded across camera, camera-package, record, nvr, snapshot, and event-dispatch (no more, no less). The
 // production implementation is ProtectStreamingDelegate; a test substitutes a stub. Properties are listed alphabetically.
 export interface StreamingDelegate {
 
+  // The doorbell-ness the controller's frozen audio options were built for. The CameraController's audio options, twoWayAudio/Speaker service, and supported-config TLVs
+  // are constructor-frozen, so a camera the controller late-flips to a doorbell carries a controller built for the wrong doorbell-ness; the live-attach reads this to
+  // detect that staleness and rebuild only when it genuinely diverges, performing zero controller churn when the delegate was already built with the correct value.
+  readonly builtAsDoorbell: boolean;
   controller: CameraController;
   readonly ffmpegOptions: FfmpegOptions;
   handleSnapshotRequest(request?: SnapshotRequest, callback?: SnapshotRequestCallback): Promise<void>;
@@ -29,5 +33,5 @@ export interface StreamingDelegate {
 // computed resolutions, so this is a factory rather than instance injection. The platform holds the production factory typed as this abstraction.
 export interface StreamingDelegateFactory {
 
-  create(camera: ProtectCamera, resolutions: Resolution[]): StreamingDelegate;
+  create(camera: ProtectCameraHost, resolutions: Resolution[]): StreamingDelegate;
 }

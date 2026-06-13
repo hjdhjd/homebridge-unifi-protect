@@ -5,7 +5,8 @@
  * The HAP test-double is itself code, and a bug in the double would silently corrupt every consumer test that depends on it...particularly the StatusActive
  * write path the reachability rewire relies on. The double earns the same coverage rigor as production code: every accessor, every fan-out branch, every handler binding.
  */
-import { Characteristic, Service, TestAccessory, TestStateStore, makeCameraConfig, makeProtectState, makeTestAccessory, settle } from "./testing.helpers.ts";
+import { Characteristic, Service, TestAccessory, TestStateStore, makeCameraConfig, makeChimeConfig, makeProtectState, makeTestAccessory, makeTestAccessoryFamily,
+  makeTestNvr, settle } from "./testing.helpers.ts";
 import { describe, test } from "node:test";
 import type { ProtectCameraConfig } from "unifi-protect";
 import assert from "node:assert/strict";
@@ -58,6 +59,27 @@ describe("HAP test-double", () => {
       // The reachability fan-out walks accessory.services directly, so the array must be public and complete. AccessoryInformation is preloaded, so we expect three.
       assert.equal(accessory.services.length, 3, "AccessoryInformation plus the two added sensors are all visible on the public services array");
       assert.ok(accessory.services.some((service) => service.type === Service.OccupancySensor), "the occupancy sensor kind is present on the double");
+    });
+
+    // removeService is the removal path homebridge-plugin-utils' validService takes when an existing service fails validation, the camera's smart-detect pruning calls
+    // directly, and the sweep-stale arm's DoorbellCapability.removeServices drives - so the capability-detach-adjacent assertions lean on it. It must drop exactly the
+    // named instance, leave every other service (including a same-type, different-subtype sibling) in place, and tolerate a service that is not present without throwing.
+    test("removeService drops exactly the named service, leaves same-type siblings, and is a no-op on an absent service", () => {
+
+      const accessory = makeTestAccessory();
+      const baseSwitch = accessory.addService(Service.Switch, "Base Switch");
+      const taggedSwitch = accessory.addService(Service.Switch, "Tagged Switch", "tagged");
+
+      accessory.removeService(taggedSwitch);
+
+      assert.equal(accessory.getServiceById(Service.Switch, "tagged"), undefined, "the removed tagged Switch is gone");
+      assert.equal(accessory.getService(Service.Switch), baseSwitch, "the same-type, different-subtype sibling survives the removal");
+
+      // A second removal of the already-removed instance must not corrupt the array (no negative-index splice) and must leave the survivors untouched.
+      accessory.removeService(taggedSwitch);
+
+      assert.equal(accessory.getService(Service.Switch), baseSwitch, "the base Switch still resolves after a redundant remove of an absent service");
+      assert.ok(accessory.services.includes(baseSwitch), "the base Switch remains on the public services array after the no-op removal");
     });
   });
 
@@ -266,5 +288,247 @@ describe("v5 state-store double (TestStateStore)", () => {
     // The loop exited via break rather than abort, so the signal stayed live throughout - which is the point: break alone must deregister. Abort the controller
     // anyway so nothing lingers.
     controller.abort();
+  });
+});
+
+describe("2b harness growth: service identity, controller log, and event notifications", () => {
+
+  test("every namespace service marker carries a distinct, non-empty static UUID, mirrored onto instances from both construction paths", () => {
+
+    const uuids = Object.values(Service).map((marker) => marker.UUID);
+
+    // The amended identity contract: real, distinct, never-empty identities (an empty UUID would false-positive HBPU's degenerate name-set predicates).
+    assert.ok(uuids.every((uuid) => (typeof uuid === "string") && (uuid.length > 0)), "every marker carries a non-empty static UUID");
+    assert.equal(new Set(uuids).size, uuids.length, "every marker UUID is distinct");
+
+    // The marker-construction path (what acquireService's create branch invokes) and the legacy type-form path both mirror the static through this.type.
+    const viaMarker = new Service.MotionSensor("Motion");
+
+    assert.equal(viaMarker.UUID, Service.MotionSensor.UUID, "a marker-constructed service mirrors its class static");
+
+    const accessory = makeTestAccessory();
+    const viaLegacy = accessory.addService(Service.Switch, "Switch");
+
+    assert.equal(viaLegacy.UUID, Service.Switch.UUID, "a legacy type-form service mirrors the namespace entry's static through this.type");
+    assert.notEqual(viaLegacy.UUID, "", "no construction path ever yields an empty UUID");
+  });
+
+  test("setPrimaryService records the primary designation", () => {
+
+    const accessory = makeTestAccessory();
+    const service = accessory.addService(Service.Doorbell, "Doorbell");
+
+    assert.equal(service.isPrimary, false, "a fresh service is not primary");
+
+    service.setPrimaryService(true);
+
+    assert.equal(service.isPrimary, true, "setPrimaryService(true) records the designation");
+
+    service.setPrimaryService(false);
+
+    assert.equal(service.isPrimary, false, "setPrimaryService(false) clears it");
+  });
+
+  test("the controller-event log records configure and remove in order, the derived views filter it, and a double configure throws", () => {
+
+    const accessory = makeTestAccessory();
+    const first = { sentinel: "first" };
+    const second = { sentinel: "second" };
+
+    accessory.configureController(first);
+
+    // HAP throws on a second controller registration while one is configured - the double enforces the same invariant.
+    assert.throws(() => accessory.configureController(second), /already added/, "a double configure throws, mirroring HAP");
+
+    accessory.removeController(first);
+
+    // After removal the chokepoint clears, so a re-configure succeeds, exactly as it would live.
+    accessory.configureController(second);
+
+    assert.deepEqual(accessory.controllerEvents.map((event) => event.kind), [ "configure", "remove", "configure" ], "the unified log preserves event order");
+    assert.deepEqual(accessory.controllerEvents.map((event) => event.seq), [ 0, 1, 2 ], "sequence numbers are monotonic");
+    assert.deepEqual(accessory.configureControllerCalls, [ first, second ], "the configure view derives from the log");
+    assert.deepEqual(accessory.removeControllerCalls, [first], "the remove view derives from the log");
+    assert.equal(accessory.configuredController, second, "the chokepoint tracks the currently configured controller");
+  });
+
+  test("sendEventNotification records events in order without disturbing the cached value", () => {
+
+    const doorbell = new Service.Doorbell("Doorbell");
+    const characteristic = doorbell.getCharacteristic(Characteristic.ProgrammableSwitchEvent);
+
+    characteristic.updateValue("resting");
+    characteristic.sendEventNotification(Characteristic.ProgrammableSwitchEvent.SINGLE_PRESS);
+    characteristic.sendEventNotification(Characteristic.ProgrammableSwitchEvent.SINGLE_PRESS);
+
+    assert.deepEqual(characteristic.events, [ 0, 0 ], "both press events are recorded in order");
+    assert.equal(characteristic.value, "resting", "an event notification never changes the cached value");
+  });
+});
+
+describe("2b harness growth: chime state and record removal", () => {
+
+  test("makeChimeConfig populates the chime-volume read set and pushChimePatch wakes only chime-derived selectors that changed", async () => {
+
+    const chime = makeChimeConfig({ cameraIds: ["camera-1"], ringSettings: [{ cameraId: "camera-1", volume: 50 }] });
+    const store = new TestStateStore(makeProtectState({ chimes: [chime] }));
+    const controller = new AbortController();
+    const iterator = store.observe((state) => state.chimes.get(chime.id)?.ringSettings.find((ring) => ring.cameraId === "camera-1")?.volume,
+      { signal: controller.signal });
+    const first = iterator.next();
+
+    await settle();
+
+    // An unrelated chime patch leaves the derived volume unchanged, so the observer must stay parked; the volume change is the only wake.
+    store.pushChimePatch(chime.id, { name: "Renamed Chime" });
+    store.pushChimePatch(chime.id, { ringSettings: [{ cameraId: "camera-1", repeatTimes: 1, ringtoneId: "default", volume: 80 }] });
+
+    assert.equal((await first).value, 80, "the volume change is the first and only yield");
+
+    controller.abort();
+
+    assert.equal((await iterator.next()).done, true, "abort completes the iterator");
+  });
+
+  test("removeCameraRecord deletes the record so reads see absence and selectors yield undefined", async () => {
+
+    const camera = makeCameraConfig({ channels: [] });
+    const store = new TestStateStore(makeProtectState({ cameras: [camera] }));
+    const controller = new AbortController();
+    const iterator = store.observe((state) => state.cameras.get(camera.id)?.name, { signal: controller.signal });
+    const first = iterator.next();
+
+    await settle();
+
+    store.removeCameraRecord(camera.id);
+
+    assert.equal((await first).value, undefined, "the removal yields the undefined slice");
+    assert.equal(store.snapshot().cameras.has(camera.id), false, "the record is gone from the snapshot");
+
+    controller.abort();
+  });
+});
+
+describe("2b harness growth: NVR removal machinery", () => {
+
+  test("scheduleDeviceRemoval honors the registered DelayDeviceRemoval default and the fire body re-checks stability and stillGone", () => {
+
+    const store = new TestStateStore(makeProtectState());
+    const { nvr } = makeTestNvr({ store });
+    const accessory = makeTestAccessory("Victim", "uuid:victim");
+
+    nvr.platform.accessories.push(accessory);
+    nvr.scheduleDeviceRemoval({ accessory, stillGone: () => true });
+
+    // The registered default is 60 seconds, so the schedule defers rather than removing immediately.
+    assert.equal(nvr.scheduledRemovals.length, 1, "the schedule decision is recorded");
+    assert.equal(nvr.scheduledRemovals[0]?.interval, 60, "the interval resolves to the registered DelayDeviceRemoval default");
+    assert.ok(nvr.removalTimers.has(accessory.UUID), "a manually-fireable timer entry is recorded");
+    assert.ok(nvr.platform.accessories.includes(accessory), "the accessory survives until the grace fires");
+
+    // A second schedule while one is pending is idempotent, mirroring production.
+    nvr.scheduleDeviceRemoval({ accessory, stillGone: () => true });
+
+    assert.equal(nvr.scheduledRemovals.length, 1, "a pending removal dedups a re-schedule");
+
+    nvr.removalTimers.get(accessory.UUID)?.fire();
+
+    assert.equal(nvr.platform.accessories.includes(accessory), false, "the fired grace removes the accessory through the tail");
+    assert.equal(nvr.removalTimers.size, 0, "the fired timer entry is deleted");
+  });
+
+  test("the stability gate suppresses scheduling and a stale fire after cancellation is a no-op", () => {
+
+    const store = new TestStateStore(makeProtectState());
+    const { nvr } = makeTestNvr({ store });
+    const accessory = makeTestAccessory("Victim", "uuid:victim");
+
+    nvr.platform.accessories.push(accessory);
+    nvr.removalStable = false;
+    nvr.scheduleDeviceRemoval({ accessory, stillGone: () => true });
+
+    assert.equal(nvr.scheduledRemovals.length, 0, "an unstable controller schedules nothing");
+
+    nvr.removalStable = true;
+    nvr.scheduleDeviceRemoval({ accessory, stillGone: () => true });
+
+    const entry = nvr.removalTimers.get(accessory.UUID);
+
+    nvr.cancelDeviceRemovalFor(accessory.UUID);
+
+    assert.deepEqual(nvr.cancelledRemovals, [accessory.UUID], "the cancellation is recorded");
+
+    // A captured stale fire after cancellation still runs its body, but the production-mirroring re-checks make it harmless when stillGone holds; here we prove the
+    // presence guard half by firing after the accessory was already removed another way.
+    nvr.removeAccessoryFromHomeKit(accessory);
+    entry?.fire();
+
+    assert.equal(nvr.platform.accessories.length, 0, "the stale fire is a no-op against the already-removed accessory");
+  });
+
+  test("user-disabling DelayDeviceRemoval makes removal immediate and the tail is presence-guarded and bridged-gated", () => {
+
+    const store = new TestStateStore(makeProtectState());
+    const { apiCalls, nvr } = makeTestNvr({ store, userOptions: ["Disable.Nvr.DelayDeviceRemoval"] });
+    const bystander = makeTestAccessory("Bystander", "uuid:bystander");
+    const victim = makeTestAccessory("Victim", "uuid:victim");
+
+    nvr.platform.accessories.push(victim, bystander);
+    nvr.scheduleDeviceRemoval({ accessory: victim, stillGone: () => true });
+
+    assert.equal(nvr.scheduledRemovals[0]?.interval, 0, "the disabled option resolves to the immediate path");
+    assert.equal(nvr.removalTimers.size, 0, "no timer is recorded on the immediate path");
+    assert.deepEqual(nvr.platform.accessories, [bystander], "the accessory is removed synchronously");
+    assert.equal(apiCalls.filter((call) => call.kind === "unregister").length, 1, "a bridged accessory records exactly one unregister");
+
+    // The presence guard: a double-removal must be a no-op, never a splice of an unrelated accessory.
+    nvr.removeAccessoryFromHomeKit(victim);
+
+    assert.deepEqual(nvr.platform.accessories, [bystander], "a stale double-removal leaves the platform array intact");
+
+    // The bridged gate: an unbridged accessory is spliced but never unregistered.
+    bystander._associatedHAPAccessory.bridged = false;
+    nvr.removeAccessoryFromHomeKit(bystander);
+
+    assert.equal(nvr.platform.accessories.length, 0, "the unbridged accessory is spliced");
+    assert.equal(apiCalls.filter((call) => call.kind === "unregister").length, 1, "no unregister is recorded for an unbridged accessory");
+  });
+});
+
+describe("2b harness growth: MQTT recording double and the family builder", () => {
+
+  test("the MQTT double is opt-in and records publishes and subscription registrations with their init options", async () => {
+
+    const store = new TestStateStore(makeProtectState());
+    const withoutMqtt = makeTestNvr({ store });
+
+    assert.equal(withoutMqtt.mqtt, null, "the default NVR double carries no MQTT client, matching an unconfigured broker");
+
+    const { mqtt } = makeTestNvr({ mqtt: true, store });
+
+    assert.ok(mqtt, "opting in installs the recording double");
+
+    const signal = new AbortController().signal;
+
+    await mqtt.publish("74ACB9000001/motion", "true");
+    mqtt.subscribeGet("74ACB9000001/motion", "motion", () => "false", { signal });
+
+    assert.deepEqual(mqtt.published, [{ message: "true", topic: "74ACB9000001/motion" }], "publishes are recorded");
+    assert.equal(mqtt.subscriptions.length, 1, "subscription registrations are recorded");
+    assert.equal(mqtt.subscriptions[0]?.init?.signal, signal, "the per-subscription init options - including the lifetime signal - are recorded");
+  });
+
+  test("the family builder produces a restart-shaped bridged pair with exact production context keys", () => {
+
+    const store = new TestStateStore(makeProtectState());
+    const { nvr } = makeTestNvr({ store });
+    const { packageAccessory, parentAccessory } = makeTestAccessoryFamily({ nvr });
+
+    assert.deepEqual(nvr.platform.accessories, [ parentAccessory, packageAccessory ], "both cached accessories land in the platform array");
+    assert.deepEqual(parentAccessory.context, { mac: "74ACB9000001", nvr: nvr.ufp.mac }, "the parent context carries the production mac and nvr keys");
+    assert.deepEqual(packageAccessory.context, { nvr: nvr.ufp.mac, packageCamera: "74ACB9000001" }, "the package context carries nvr and packageCamera, never mac");
+    assert.equal(packageAccessory.UUID, "uuid:74ACB9000001.PackageCamera", "the package UUID pins the persistence-critical identity-suffix fixture");
+    assert.ok(parentAccessory._associatedHAPAccessory.bridged && packageAccessory._associatedHAPAccessory.bridged,
+      "a restart restore only ever contains bridged accessories");
   });
 });

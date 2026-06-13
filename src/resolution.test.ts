@@ -46,7 +46,7 @@ function outcome(entry: Nullable<ChannelProfile>): SelectOutcome | null {
   return entry ? { id: entry.channel.id, resolution: entry.resolution } : null;
 }
 
-// Build the native RTSP entries the parent build consumes from a channel set, mirroring camera.ts configureVideoStream: filter to RTSP-enabled primary channels, skip
+// Build the native RTSP entries the parent build consumes from a channel set, mirroring camera.ts refreshChannelProfiles: filter to RTSP-enabled primary channels, skip
 // the sanity-fail channels, and construct an entry per channel against the fixture host.
 function nativeEntries(channels: ProtectCameraChannelConfig[]): ChannelProfile[] {
 
@@ -120,7 +120,7 @@ describe("resolution: the RTSP-enabled / sanity-fail channel filtering", () => {
 
   // The all-sanity-fail case (a 0-width channel and an empty-name channel): the native list is empty, so buildAdvertisedProfiles returns [] without throwing. This is the
   // blessed hardening - HEAD's :979 device guard and the new return [] replace the pre-v5 crash on an empty list (the deleted oracle dereferenced rtspEntries[0] here,
-  // which is exactly why this case is asserted directly rather than against an oracle). The device level re-asserts this: camera.ts configureVideoStream guards
+  // which is exactly why this case is asserted directly rather than against an oracle). The device level re-asserts this: camera.ts refreshChannelProfiles guards
   // `if(!advertised.length) { return false; }` BEFORE constructing the streaming delegate or calling configureController, so an all-fail camera builds no controller.
   test("buildAdvertisedProfiles([]) returns [] (no throw) - the device short-circuit signal", () => {
 

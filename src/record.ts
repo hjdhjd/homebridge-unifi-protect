@@ -8,11 +8,12 @@
  */
 import type { API, CameraRecordingConfiguration, CameraRecordingDelegate, HAP, RecordingPacket } from "homebridge";
 import { BackpressureWriter, FfmpegRecordingProcess, HDSProtocolSpecificErrorReason, formatBps } from "homebridge-plugin-utils";
-import type { ChannelProfile, ProtectCamera } from "./devices/index.ts";
 import type { HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
 import { PROTECT_HKSV_SHADOW_FLOOR_MS, PROTECT_HKSV_SHADOW_RECONNECT_MS, PROTECT_HKSV_SHADOW_SAFETY_MS, PROTECT_HKSV_TIMEOUT, PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION }
   from "./settings.ts";
+import type { ChannelProfile } from "./devices/resolution.ts";
 import type { ProtectAccessory } from "./types.ts";
+import type { ProtectCameraHost } from "./camera-host.ts";
 import { ProtectTimeshiftBuffer } from "./timeshift.ts";
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -46,6 +47,37 @@ async function *initThenMedia(proc: FfmpegRecordingProcess, signal: AbortSignal)
   yield* proc.segments({ signal });
 }
 
+/* The per-event state of a single HomeKit Secure Video recording event: its monotonic identity, the moment HomeKit's timeout clock began, the decline flag, and the
+ * pacing / reserve telemetry accumulators surfaced in the teardown log. The lifetime of one of these IS the lifetime of one HKSV event - the recording delegate holds
+ * the current event's session and reassigns a fresh one at the top of every request. Constructing it is the per-event reset: it collapses what were three scattered seed
+ * sites (the delegate constructor, the request-entry block, and a mid-request block) into one establishment point, and a new event cannot inherit a prior event's
+ * residual by construction. reserveMin seeds at positive infinity so the first reserve sample wins its Math.min comparison; the teardown reads it only when reserveCount
+ * is non-zero, so the sentinel never reaches the log.
+ *
+ * It is a pure data value object with no methods: the reserve-telemetry fragment is composed on the delegate (it reaches for logging and module-level settings concerns
+ * that do not belong on a per-event record), reading these accumulators as plain data. id and pacingStartTime are write-once; the accumulators mutate across the event.
+ */
+class RecordingSession {
+
+  public lastPacingDelay = 0;
+  public maxPacingDelay = 0;
+  public recordingDeclined = false;
+  public reserveCount = 0;
+  public reserveMax = 0;
+  public reserveMin = Number.POSITIVE_INFINITY;
+  public reserveSum = 0;
+  public timeshiftedSegments = 0;
+  public transmittedSegments = 0;
+  public readonly id: number;
+  public readonly pacingStartTime: number;
+
+  constructor(options: { id: number; pacingStartTime: number }) {
+
+    this.id = options.id;
+    this.pacingStartTime = options.pacingStartTime;
+  }
+}
+
 // Camera recording delegate implementation for Protect.
 export class ProtectRecordingDelegate implements CameraRecordingDelegate {
 
@@ -56,56 +88,44 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
   private readonly api: API;
   private configurePromise?: Promise<boolean>;
   private configureRequested: boolean;
-  private eventId: number;
   private ffmpegStream?: FfmpegRecordingProcess;
   private readonly hap: HAP;
   private hasLoggedConfig: boolean;
-  private lastPacingDelay: number;
   private lastStreamId: number;
   private readonly log: HomebridgePluginLogging;
-  private maxPacingDelay: number;
-  private pacingStartTime: number;
-  private readonly protectCamera: ProtectCamera;
+  // The monotonic recording-event counter. Each request mints the next event identity by pre-increment into a fresh RecordingSession, so the first event is 1.
+  private nextEventId: number;
+  private readonly protectCamera: ProtectCameraHost;
   private recordingConfig?: CameraRecordingConfiguration;
-  private recordingDeclined: boolean;
-  private reserveCount: number;
-  private reserveMax: number;
-  private reserveMin: number;
-  private reserveSum: number;
-  public channelProfile: Nullable<ChannelProfile>;
   private segmentWriter?: BackpressureWriter;
+  // The current (or most-recent) HKSV event's per-event state. Constructor-initialized so it is never undefined, then reassigned at the top of every request. The
+  // HAP-facing close path (acknowledgeStream / closeRecordingStream) reads it after the request generator has returned, observing the most-recent event's accumulated
+  // state exactly as the former delegate-held fields did; the pre-first-event window is gated out by stopTransmitting's !_isTransmitting guard.
+  private session: RecordingSession;
+  public channelProfile: Nullable<ChannelProfile>;
   public readonly timeshift: ProtectTimeshiftBuffer;
-  private timeshiftedSegments: number;
   private transmitListener?: ((segment: Buffer) => void);
-  private transmittedSegments: number;
   private wasDeferredOffline: boolean;
 
   // Create an instance of the HKSV recording delegate.
-  constructor(protectCamera: ProtectCamera) {
+  constructor(protectCamera: ProtectCameraHost) {
 
     this._isRecording = false;
     this._isTransmitting = false;
     this.accessory = protectCamera.accessory;
     this.api = protectCamera.api;
     this.configureRequested = false;
-    this.eventId = 0;
     this.hap = protectCamera.api.hap;
     this.hasLoggedConfig = false;
-    this.lastPacingDelay = 0;
     this.lastStreamId = -1;
     this.log = protectCamera.log;
-    this.maxPacingDelay = 0;
-    this.pacingStartTime = 0;
+    this.nextEventId = 0;
     this.protectCamera = protectCamera;
-    this.recordingDeclined = false;
-    this.reserveCount = 0;
-    this.reserveMax = 0;
-    this.reserveMin = 0;
-    this.reserveSum = 0;
+    // Seed an inert session so the field is never undefined before the first event. Its values are never observed: the HAP-facing close path that reads a session is
+    // gated out by stopTransmitting's !_isTransmitting guard until an event actually transmits.
+    this.session = new RecordingSession({ id: 0, pacingStartTime: 0 });
     this.channelProfile = null;
     this.timeshift = new ProtectTimeshiftBuffer(protectCamera);
-    this.timeshiftedSegments = 0;
-    this.transmittedSegments = 0;
     this.wasDeferredOffline = false;
   }
 
@@ -180,16 +200,13 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
   // operations (like pacing delays) immediately rather than waiting for closeRecordingStream to propagate through our code.
   public async *handleRecordingStreamRequest(_streamId: number, signal: AbortSignal): AsyncGenerator<RecordingPacket> {
 
-    // Track when the recording request arrived from HomeKit's perspective. HomeKit's timeout clock starts when it sends the request, so we initialize lastYieldTime here
-    // to represent the moment HomeKit's timer began...the first segment will be due pacingInterval after this point.
-    this.eventId++;
-    this.pacingStartTime = Date.now();
+    // Open a fresh per-event session. Constructing it mints the next monotonic event id and stamps pacingStartTime to now, and it establishes every per-event accumulator
+    // at its clean seed (the decline flag false, the segment counters and pacing/reserve telemetry zeroed, reserveMin at positive infinity) in one place - so a new event
+    // cannot inherit a prior event's residual. We track pacingStartTime as the moment HomeKit's timeout clock began, since HomeKit's timer starts when it sends the
+    // request...the first segment will be due pacingInterval after this point.
+    this.session = new RecordingSession({ id: ++this.nextEventId, pacingStartTime: Date.now() });
 
-    let lastYieldTime = this.pacingStartTime;
-
-    // The first transmitted segment in an fMP4 stream is always the initialization segment and contains no video, so we don't count it.
-    this.recordingDeclined = false;
-    this.transmittedSegments = this.timeshiftedSegments = 0;
+    let lastYieldTime = this.session.pacingStartTime;
 
     // If we are recording HKSV events but the timeshift buffer is not currently running, reconcile now. This covers cases where an earlier configureTimeshifting
     // attempt failed (offline camera, establishment timeout) and no subsequent lifecycle event re-triggered the reconciler.
@@ -211,7 +228,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
       }
 
       // Mark that we intentionally chose not to respond to this recording event so stopTransmitting doesn't log it as an error.
-      this.recordingDeclined = true;
+      this.session.recordingDeclined = true;
 
       // Send a single byte packet and mark it as our last.
       yield { data: HKSV_END_OF_STREAM_MARKER, isLast: true };
@@ -224,20 +241,6 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     // yielding pre-produced segments, absorbing stalls that would otherwise cause recording timeouts. While we wait between yields, the initThenMedia generator is
     // paused and FFmpeg's output accumulates in the assembler's internal segment reserve.
     const pacingInterval = PROTECT_HKSV_TIMEOUT - 500;
-
-    // Reset per-event pacing telemetry. lastPacingDelay and maxPacingDelay accumulate across the life of a single recording event and are surfaced in the
-    // HKSV.Telemetry teardown log, so they need a clean slate here rather than carrying residual values from the previous event.
-    this.lastPacingDelay = 0;
-    this.maxPacingDelay = 0;
-
-    // Reset per-event reserve-depth telemetry. We sample the FFmpeg-produced-but-unpulled segment reserve once per pace iteration (see paceSegmentDelivery) and
-    // accumulate its min, max, and a running sum-and-count for the mean, all surfaced in the HKSV.Telemetry teardown log. reserveMin starts at positive infinity so the
-    // first sample wins the Math.min comparison; the teardown reads it only when reserveCount is non-zero, so the sentinel never reaches the log. These mirror the
-    // pacing accumulators above and likewise need a clean slate per event rather than carrying residual values from the previous event.
-    this.reserveCount = 0;
-    this.reserveMax = 0;
-    this.reserveMin = Number.POSITIVE_INFINITY;
-    this.reserveSum = 0;
 
     // Create an AbortController for interrupting pacing delays. HAP's signal handles stream closure, but we also need to abort when a livestream discontinuity is
     // detected so we can restart FFmpeg without waiting for the current pacing delay to expire.
@@ -261,7 +264,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
 
       if(this.protectCamera.hasFeature("Debug.Video.HKSV.Telemetry")) {
 
-        this.log.warn("Livestream discontinuity detected during recording event %s. Restarting FFmpeg with clean data.", this.eventId.toString());
+        this.log.warn("Livestream discontinuity detected during recording event %s. Restarting FFmpeg with clean data.", this.session.id.toString());
       }
 
       isDiscontinuity = true;
@@ -275,7 +278,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
       // plugin is intentionally tearing down, not because something went wrong - the operator already saw the NVR-level message that explains it.
       if((this.protectCamera.nvr.phase === "running") && this.protectCamera.hasFeature("Debug.Video.HKSV.Telemetry")) {
 
-        this.log.warn("Timeshift subscription terminated during recording event %s. Ending HKSV recording.", this.eventId.toString());
+        this.log.warn("Timeshift subscription terminated during recording event %s. Ending HKSV recording.", this.session.id.toString());
       }
 
       isTerminated = true;
@@ -308,7 +311,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
 
             if(this.protectCamera.hasFeature("Debug.Video.HKSV.Telemetry")) {
 
-              this.log.warn("Discontinuity recovery failed for recording event %s. Unable to restart FFmpeg.", this.eventId.toString());
+              this.log.warn("Discontinuity recovery failed for recording event %s. Unable to restart FFmpeg.", this.session.id.toString());
             }
 
             // Recovery failed. Route through the terminated exit path so HAP gets a clean isLast=true marker rather than a silent generator return...the
@@ -321,7 +324,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
 
           if(this.protectCamera.hasFeature("Debug.Video.HKSV.Telemetry")) {
 
-            this.log.warn("Discontinuity recovery succeeded for recording event %s. Resuming HKSV recording.", this.eventId.toString());
+            this.log.warn("Discontinuity recovery succeeded for recording event %s. Resuming HKSV recording.", this.session.id.toString());
           }
         }
 
@@ -338,7 +341,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
           }
 
           // Keep track of how many segments we're sending to HKSV.
-          this.transmittedSegments++;
+          this.session.transmittedSegments++;
 
           // Pace segment delivery to HomeKit relative to the last yield, then yield the segment.
           await this.paceSegmentDelivery(lastYieldTime, pacingInterval, combinedSignal);
@@ -568,8 +571,10 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
 
       recording: {
 
-        // The Protect livestream API delivers audio at 16000 Hz (16-bit mono AAC). This is the input sample rate that FFmpeg's audio filters operate on.
-        audioFilters: this.protectCamera.getAudioFilters(16000),
+        // The Protect livestream API delivers doorbell audio at 48000 Hz and every other camera's at 16000 Hz (16-bit mono AAC). This is the input sample rate FFmpeg's
+        // audio filters operate on, and what getAudioFilters validates each filter's frequency against the Nyquist limit of - so a doorbell's true 48000 Hz keeps a
+        // user's 8-24 kHz highpass/lowpass from being silently dropped.
+        audioFilters: this.protectCamera.getAudioFilters(this.protectCamera.ufp.featureFlags.isDoorbell ? 48000 : 16000),
         audioStream: 0,
         codec: this.protectCamera.ufp.videoCodec,
         enableAudio: this.isAudioActive,
@@ -592,7 +597,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     // fired solely after a successful write - and quietly absorb a benign teardown rejection so there is no floating rejection.
     this.timeshift.on("segment", this.transmitListener = (segment: Buffer): void => {
 
-      this.segmentWriter?.write(segment).then(() => this.timeshiftedSegments++, (error: unknown) => this.log.debug("Backpressure write dropped.", { error }));
+      this.segmentWriter?.write(segment).then(() => this.session.timeshiftedSegments++, (error: unknown) => this.log.debug("Backpressure write dropped.", { error }));
     });
 
     // Check to make sure something didn't go wrong when we start transmitting the stream. If there is, we're resetting our connectivity to the Protect controller.
@@ -631,8 +636,8 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
   // closure or a livestream discontinuity can interrupt it immediately. Pacing delay metrics are tracked for telemetry.
   private async paceSegmentDelivery(lastYieldTime: number, pacingInterval: number, signal: AbortSignal): Promise<void> {
 
-    this.lastPacingDelay = (lastYieldTime + pacingInterval) - Date.now();
-    this.maxPacingDelay = Math.max(this.maxPacingDelay, this.lastPacingDelay);
+    this.session.lastPacingDelay = (lastYieldTime + pacingInterval) - Date.now();
+    this.session.maxPacingDelay = Math.max(this.session.maxPacingDelay, this.session.lastPacingDelay);
 
     // Sample the reserve depth - the count of FFmpeg-produced-but-unpulled fMP4 segments queued in the assembler. This is the natural off-the-hot-path sampling site:
     // the pacing loop calls us exactly once per yield (at roughly the pacing cadence of a few seconds, not per FFmpeg segment), so a single read here gives us one
@@ -642,15 +647,15 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
 
       const reserve = this.ffmpegStream?.bufferedSegments ?? 0;
 
-      this.reserveCount++;
-      this.reserveMax = Math.max(this.reserveMax, reserve);
-      this.reserveMin = Math.min(this.reserveMin, reserve);
-      this.reserveSum += reserve;
+      this.session.reserveCount++;
+      this.session.reserveMax = Math.max(this.session.reserveMax, reserve);
+      this.session.reserveMin = Math.min(this.session.reserveMin, reserve);
+      this.session.reserveSum += reserve;
     }
 
-    if(this.lastPacingDelay > 0) {
+    if(this.session.lastPacingDelay > 0) {
 
-      await delay(this.lastPacingDelay, undefined, { signal }).catch((): void => { /* Expected on stream close or discontinuity. */ });
+      await delay(this.session.lastPacingDelay, undefined, { signal }).catch((): void => { /* Expected on stream close or discontinuity. */ });
     }
   }
 
@@ -664,21 +669,21 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
   // reserve sample was taken (a very short event that never paced), we report nothing rather than divide by zero.
   private reserveTelemetry(): string {
 
-    if(this.reserveCount === 0) {
+    if(this.session.reserveCount === 0) {
 
       return "";
     }
 
     const segmentLength = this.timeshift.segmentLength;
-    const meanReserve = this.reserveSum / this.reserveCount;
+    const meanReserve = this.session.reserveSum / this.session.reserveCount;
     const reserveMs = meanReserve * segmentLength;
 
     // The shadow adaptive-urgency-B value, clamped into [FLOOR, reserveMs] so it never goes negative and never exceeds the reserve it was derived from.
     const shadowUrgencyB = Math.min(Math.max(reserveMs - PROTECT_HKSV_SHADOW_RECONNECT_MS - PROTECT_HKSV_SHADOW_SAFETY_MS, PROTECT_HKSV_SHADOW_FLOOR_MS), reserveMs);
 
-    return ", reserve: " + this.reserveMin.toString() + "/" + meanReserve.toFixed(1) + "/" + this.reserveMax.toString() + " segments (" +
-      Math.round(this.reserveMin * segmentLength).toString() + "/" + Math.round(reserveMs).toString() + "/" + Math.round(this.reserveMax * segmentLength).toString() +
-      "ms min/mean/max), shadow urgency B: " + Math.round(shadowUrgencyB).toString() + "ms";
+    return ", reserve: " + this.session.reserveMin.toString() + "/" + meanReserve.toFixed(1) + "/" + this.session.reserveMax.toString() + " segments (" +
+      Math.round(this.session.reserveMin * segmentLength).toString() + "/" + Math.round(reserveMs).toString() + "/" +
+      Math.round(this.session.reserveMax * segmentLength).toString() + "ms min/mean/max), shadow urgency B: " + Math.round(shadowUrgencyB).toString() + "ms";
   }
 
   // Stop transmitting the HomeKit hub our timeshifted fMP4 stream.
@@ -728,21 +733,21 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     }
 
     // If we have intentionally declined to respond to a recording event, we're done.
-    if(!this.protectCamera.stream || this.recordingDeclined) {
+    if(!this.protectCamera.stream || this.session.recordingDeclined) {
 
       return;
     }
 
     // We actually have one less segment than we think we do since we counted the fMP4 stream header as well, which shouldn't count toward our total of transmitted video
     // segments.
-    this.timeshiftedSegments = Math.max(--this.timeshiftedSegments, 0);
-    this.transmittedSegments = Math.max(--this.transmittedSegments, 0);
+    this.session.timeshiftedSegments = Math.max(--this.session.timeshiftedSegments, 0);
+    this.session.transmittedSegments = Math.max(--this.session.transmittedSegments, 0);
 
     // Inform the user if we've recorded something.
-    if(!this.accessory.context.hksvRecordingDisabled && this.timeshiftedSegments && this.transmittedSegments && this.channelProfile) {
+    if(!this.accessory.context.hksvRecordingDisabled && this.session.timeshiftedSegments && this.session.transmittedSegments && this.channelProfile) {
 
       // Calculate approximately how many seconds we've recorded. We have more accuracy in timeshifted segments, so we'll use the more accurate statistics when we can.
-      const recordedSeconds = (this.timeshiftedSegments * this.timeshift.segmentLength) / 1000;
+      const recordedSeconds = (this.session.timeshiftedSegments * this.timeshift.segmentLength) / 1000;
 
       let recordedTime;
       let timeUnit;
@@ -811,19 +816,19 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     // Inform the user when things stopped unexpectedly, accounting for known factors like the camera being online, the timeshift buffer restarting, or the NVR
     // being in an induced-disruption phase (rebooting, shutting down). We suppress errors for sub-100ms durations...these are HomeKit protocol-level events
     // where the recording stream is opened and immediately closed before we can respond, and are not actionable.
-    const recordingDuration = Date.now() - this.pacingStartTime;
+    const recordingDuration = Date.now() - this.session.pacingStartTime;
 
     if((reason !== undefined) && (reason !== HDSProtocolSpecificErrorReason.NORMAL) && (recordingDuration >= 100) &&
       !this.timeshift.isRestarting && this.protectCamera.isReachable && (this.protectCamera.nvr.phase === "running") &&
       (this.timeshift.time >= (this.recordingConfig?.prebufferLength ?? 0))) {
 
       const telemetry = this.protectCamera.hasFeature("Debug.Video.HKSV.Telemetry") ?
-        " (event: " + this.eventId.toString() + ", stream: " + this.lastStreamId.toString() +
+        " (event: " + this.session.id.toString() + ", stream: " + this.lastStreamId.toString() +
         ", duration: " + (recordingDuration / 1000).toFixed(3) +
-        "s, segments yielded: " + this.transmittedSegments.toString() + ", segments to FFmpeg: " + this.timeshiftedSegments.toString() +
+        "s, segments yielded: " + this.session.transmittedSegments.toString() + ", segments to FFmpeg: " + this.session.timeshiftedSegments.toString() +
         ", FFmpeg ended: " + ffmpegEnded.toString() + ", FFmpeg timeout: " + ffmpegTimedOut.toString() +
-        ", pacing delay: " + Math.round(this.lastPacingDelay).toString() +
-        "/" + Math.round(this.maxPacingDelay).toString() + "ms last/peak" + this.reserveTelemetry() + ")" : "";
+        ", pacing delay: " + Math.round(this.session.lastPacingDelay).toString() +
+        "/" + Math.round(this.session.maxPacingDelay).toString() + "ms last/peak" + this.reserveTelemetry() + ")" : "";
 
       this.log.error("HKSV recording event ended early: %s%s", reasonDescription, telemetry);
 

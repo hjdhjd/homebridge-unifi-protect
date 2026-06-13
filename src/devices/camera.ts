@@ -5,13 +5,14 @@
 import type { Camera, DeepPartial, LivestreamSource, ProtectCameraConfig, SnapshotOptions, TalkbackSession } from "unifi-protect";
 import type { CharacteristicValue, Service } from "homebridge";
 import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_SEGMENT_RESOLUTION } from "../settings.ts";
-import { ProtectReservedNames, shouldReconfigureAsDoorbell } from "../types.ts";
+import { ProtectReservedNames, doorbellReconcileAction } from "../types.ts";
 import { buildAdvertisedProfiles, buildChannelProfile, capByPixels, formatResolution, isPrimaryChannel, selectChannelProfile } from "./resolution.ts";
 import type { ChannelProfile } from "./resolution.ts";
+import type { DoorbellCapability } from "./doorbell.ts";
 import type { LivestreamSubscription } from "../livestream.ts";
-import type { MessageSwitchInterface } from "./doorbell.ts";
 import type { Nullable } from "homebridge-plugin-utils";
 import type { ProtectAccessory } from "../types.ts";
+import type { ProtectCameraHost } from "../camera-host.ts";
 import type { ProtectCameraPackage } from "./camera-package.ts";
 import { ProtectDevice } from "./device.ts";
 import type { ProtectNvr } from "../nvr.ts";
@@ -21,7 +22,7 @@ import type { StreamingDelegate } from "../stream-delegate.ts";
 import { selectCamera } from "unifi-protect";
 import { toStartCase } from "homebridge-plugin-utils";
 
-export class ProtectCamera extends ProtectDevice {
+export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
 
   private ambientLight: number;
   private isDeleted: boolean;
@@ -30,9 +31,14 @@ export class ProtectCamera extends ProtectDevice {
   // tamper-detection onGet and the availability projection. Public because its single writer is the NVR-level event dispatch, not this class.
   public isTampered: boolean;
   public detectLicensePlate: string[];
-  public messageSwitches: Map<string, MessageSwitchInterface>;
-  public packageCamera?: Nullable<ProtectCameraPackage>;
+  // The composed doorbell capability, attached when (and only when) the controller reports this camera as a doorbell. Initialized to null so the field-init runs BEFORE
+  // the ctor-body configureDevice that attaches it - declared and set by ProtectCamera itself, so the subclass field-wipe class does not apply.
+  public doorbell: Nullable<DoorbellCapability> = null;
   private channelProfiles: ChannelProfile[];
+  // Whether the doorbell ring-trigger MQTT subscription has been registered, so the one registration site (configureMqtt at construction) and the late-promotion attach
+  // arm never double-register (HBPU subscribe is not idempotent). Initialized to false through a field initializer, set by ProtectCamera's own configureDoorbellRingMqtt
+  // after the gate passes - never inside a super constructor - so it carries no ctor-chain-computed state and the subclass field-wipe class does not apply.
+  #ringMqttRegistered = false;
   public stream?: StreamingDelegate;
   // Narrow the inherited projection handle to the camera projection so the read-through config getter and every this.ufp.<field> read resolve to ProtectCameraConfig.
   declare protected readonly device: Camera;
@@ -47,7 +53,6 @@ export class ProtectCamera extends ProtectDevice {
     this.isRinging = false;
     this.isTampered = false;
     this.detectLicensePlate = [];
-    this.messageSwitches = new Map();
     this.channelProfiles = [];
 
     this.configureHints();
@@ -61,25 +66,20 @@ export class ProtectCamera extends ProtectDevice {
     return this.device.config;
   }
 
+  // The package camera, delegated to the doorbell capability that owns its lifecycle. Null when no doorbell capability is attached, or when an attached doorbell has no
+  // package camera. This is the single seam the two external readers (event-dispatch's package-motion branch and the NVR's deviceEndpoints iterator) consume, so the
+  // package's ownership can live entirely on the capability without touching either caller.
+  public get packageCamera(): Nullable<ProtectCameraPackage> {
+
+    return this.doorbell?.packageCamera ?? null;
+  }
+
   // The host the camera's RTSP(S) URLs resolve against: the user's address override, else the camera's own controller-reported connection host, else the controller's
   // host. Protected so the package camera subclass resolves its own RTSP URLs through the exact same chain (the 3b-iii URL-host reconcile, replacing the package's
   // former raw config.address, which ignored both the override and the connection host).
   protected get rtspHost(): string {
 
     return this.nvr.config.overrideAddress ?? this.ufp.connectionHost ?? this.nvr.ufp.host;
-  }
-
-  // Whether this accessory is running as a doorbell. The base camera is not; ProtectDoorbell overrides this to true. The reclassification observer reads it so a
-  // device already running as a doorbell is never reconfigured again, and so the camera-only reclassification reaction is a no-op once promoted.
-  //
-  // isDoorbellAccessory is intentionally a getter, not a readonly field: it is read during base-class construction (the ProtectCamera constructor calls
-  // configureDevice(), ProtectDoorbell overrides it and calls super.configureDevice(), and the base configureDevice() reads this.isDoorbellAccessory) - BEFORE a
-  // ProtectDoorbell field initializer would run. A prototype getter dispatches to the most-derived value from the first access, so a doorbell correctly reads true
-  // during construction; a readonly field would read the base false and wrongly spawn the camera-to-doorbell reclassification reaction on an already-doorbell.
-  // eslint-disable-next-line @typescript-eslint/class-literal-property-style
-  protected get isDoorbellAccessory(): boolean {
-
-    return false;
   }
 
   // Configure device-specific settings for this device.
@@ -191,7 +191,7 @@ export class ProtectCamera extends ProtectDevice {
     (async (): Promise<void> => {
 
       // Configure the ambient light sensor and video stream in parallel since they are independent operations.
-      await Promise.all([ this.configureAmbientLightSensor(), this.configureVideoStream() ]);
+      await Promise.all([ this.configureAmbientLightSensor(), this.reconcileStreaming() ]);
 
       // Configure our camera details.
       this.configureCameraDetails();
@@ -212,49 +212,154 @@ export class ProtectCamera extends ProtectDevice {
       this.configureDoorbellTrigger();
     })();
 
+    // Attach the doorbell capability when the controller already reports this camera as a doorbell. This runs at the END of configureDevice's synchronous body, after
+    // the IIFE statement: the IIFE's synchronous prefix has already kicked off reconcileStreaming, while its tail (the mute switch and trigger) runs on later
+    // microtasks. The capability's configure synchronously stands up the Doorbell service (through configureDoorbellService), so the service exists before that
+    // microtask tail reaches the mute-switch gate - exactly the ordering the pre-collapse doorbell subclass guaranteed by standing up the Doorbell service synchronously
+    // ahead of the IIFE. A camera the controller does not report as a doorbell attaches nothing here.
+    this.reconcileDoorbellCapability("construct");
+
     return true;
+  }
+
+  /* Reconcile this camera's doorbell capability against the controller's live state - the single chokepoint the construction-time arm and the always-armed isDoorbell
+   * observer both route through, driven by the pure doorbellReconcileAction over (hasCapability, isDoorbell). The live-attach replaces the former teardown+recreate: a
+   * promotion composes the capability onto the running instance in place, rebuilding only the one HAP object that cannot change in place (the CameraController) and only
+   * when it was genuinely built for the wrong doorbell-ness. The source discriminant separates the two attach contexts: at construction the normal flow (the pending
+   * IIFE building the stream with the now-true flag, the IIFE tail running mute/trigger, configureMqtt registering ring) covers the camera-side wiring, so the construct
+   * arm does only the capability compose; a live promotion ("observe") must additionally re-run that camera-side wiring because the construction flow already ran with
+   * the flag false.
+   */
+  private reconcileDoorbellCapability(source: "construct" | "observe"): void {
+
+    switch(doorbellReconcileAction({ hasCapability: this.doorbell !== null, isDoorbell: this.ufp.featureFlags.isDoorbell })) {
+
+      case "attach":
+
+        this.attachDoorbellCapability(source);
+
+        break;
+
+      case "report-withdrawn":
+
+        // Promotion-only by HJD ruling: the controller no longer reports this camera as a doorbell, but its doorbell accessories remain until HBUP restarts. We narrate
+        // the withdrawal once (a settled demotion; a within-drain flap self-collapses because the reconcile re-reads live state) and remove nothing.
+        this.log.warn("The controller no longer reports this camera as a doorbell; its doorbell accessories remain until UniFi Protect for HomeKit restarts.");
+
+        break;
+
+      case "sweep-stale":
+
+        // A demoted-while-down doorbell reconstructs as a plain camera with no capability: remove the doorbell-only services it left behind (idempotent - a no-op on a
+        // steady plain camera). The removal routes through the NVR composition root so the camera never value-imports the sibling capability class (the device-layer
+        // structural-cycle-proof invariant); the Doorbell service itself is left to configureDoorbellTrigger's existing removal arm.
+        this.nvr.removeStaleDoorbellServices(this.accessory);
+
+        break;
+
+      case "none":
+
+        // Steady state - a doorbell with its capability, or a plain camera with none.
+        break;
+    }
+  }
+
+  /* Compose the doorbell capability onto this live camera and, for a genuine live promotion, re-run the camera-side doorbell wiring the construction flow would have run
+   * had the flag been true at adoption. The construct arm does only the capability compose: the normal construction flow covers everything else. The observe arm, a
+   * promotion of a running plain camera, additionally: recomputes the two hasSpeaker-derived hints the controller rebuild reads (NOT full configureHints, which re-emits
+   * startup INFO); rebuilds the streaming delegate when - and only when - the existing controller was built for the wrong doorbell-ness (so a stream built before the
+   * flag flipped is refreshed, while a construction-attach with a correctly-built stream performs zero controller churn); re-runs the mute switch and trigger (the
+   * construction IIFE tail already ran them while the flag was false, and the Doorbell service now exists); registers the ring-trigger MQTT (a late promotion the
+   * construction configureMqtt could not have registered); and narrates the promotion once.
+   */
+  private attachDoorbellCapability(source: "construct" | "observe"): void {
+
+    // Construction is graph-assembly, so the camera does not new the capability itself - it asks the NVR composition root to build one (which holds zero policy, just the
+    // one new) and keeps the lifecycle decision here. The camera reaches the NVR through an inherited field, never a value-import, so this call forms no module import
+    // edge and the device layer stays structurally cycle-proof. The capability's configure stands up the Doorbell service through configureDoorbellService.
+    this.doorbell = this.nvr.createDoorbellCapability(this, this.device, this.signal);
+    this.doorbell.configure();
+
+    // At construction the normal flow handles the camera-side wiring; only a live promotion runs the rest.
+    if(source === "construct") {
+
+      return;
+    }
+
+    // Recompute exactly the two hasSpeaker-derived hints the controller rebuild reads. We do NOT re-run full configureHints, which would re-emit the startup INFO lines.
+    this.hints.twoWayAudio = this.ufp.featureFlags.hasSpeaker && this.hasFeature("Audio") && this.hasFeature("Audio.TwoWay");
+    this.hints.twoWayAudioDirect = this.ufp.featureFlags.hasSpeaker && this.hasFeature("Audio") && this.hasFeature("Audio.TwoWay.Direct");
+
+    // Rebuild the CameraController only when the existing stream was built for the wrong doorbell-ness - a genuine late flip. A construction-attach whose stream was
+    // built with the flag already true leaves builtAsDoorbell matching, so this is a no-op and there is zero controller churn.
+    if(this.stream && (this.stream.builtAsDoorbell !== this.ufp.featureFlags.isDoorbell)) {
+
+      this.rebuildStreamingDelegate();
+    }
+
+    // Re-run the camera's doorbell-adjacent configures now that the Doorbell service exists (the construction IIFE tail ran them while the flag was false).
+    // acquireService is idempotent, so a re-run that finds the service in place is harmless.
+    this.configureDoorbellMuteSwitch();
+    this.configureDoorbellTrigger();
+
+    // Register the ring-trigger MQTT subscription, which the construction configureMqtt could not have registered while the flag was false (the once-guard makes a
+    // later duplicate registration a no-op).
+    this.configureDoorbellRingMqtt();
+
+    // Narrate the promotion once - today's reclassification is completely silent.
+    this.log.info("The controller now reports this camera as a doorbell; its doorbell features are now available in HomeKit.");
+  }
+
+  // Publish the per-accessory observer-wake milestone for a slice the attached doorbell capability watches. The capability has no accessory identity of its own (it
+  // extends ProtectBase, not ProtectDevice), so it delegates its wake attribution here. This is a thin public seam onto the inherited ProtectDevice.onObserverWake,
+  // which is the single publisher - the hasSubscribers-guarded publish keyed on this camera's accessory UUID - so the capability's wakes and the camera's own wakes
+  // share one publication idiom, single-sourced. Zero-cost when no diagnostics subscriber is attached.
+  public publishObserverWake(key: string): void {
+
+    this.onObserverWake(key);
   }
 
   // Cleanup after ourselves if we're being deleted.
   public override cleanup(): void {
 
-    // If we've got HomeKit Secure Video enabled and recording, disable it.
-    if(this.stream?.hksv?.isRecording) {
+    // Tear down the doorbell capability first when one is attached - releasing its package camera, its observers, and exactly its MQTT handlers - then null the handle,
+    // mirroring today's doorbell.cleanup ordering (package first).
+    this.doorbell?.cleanup();
+    this.doorbell = null;
 
-      void this.stream.hksv.updateRecordingActive(false);
-    }
-
-    // Tear down this camera's livestream consumers so their v5 pool subscriptions are released on deletion. The camera no longer owns livestream sessions - the
-    // stream (live) and timeshift (HKSV) consumers own the subscriptions, and disposing them decrements the pool refcount to zero. Mirrors nvr.disconnect()'s
-    // per-camera teardown; replaces the old LivestreamManager.shutdown().
-    this.stream?.shutdown();
-    this.stream?.hksv?.timeshift.stop();
-
-    // Unregister our controller.
-    if(this.stream) {
-
-      this.accessory.removeController(this.stream.controller);
-    }
+    // Tear down the streaming delegate and unregister its controller through the shared extraction.
+    this.teardownStreamingDelegate();
 
     super.cleanup();
 
     this.isDeleted = true;
   }
 
-  // Spawn the camera's narrow-selector state observers (Fork B). Each loop fires only when its watched slice changes by reference - the store's Object.is dedup is the
-  // trigger, so there is no hand-diff and no held snapshot. super spawns the universal name-sync observer. Activity (motion, ring, smart detection, tamper) is delivered
-  // by the NVR firehose router and is deliberately never re-synthesized here from device-state.
+  /* The camera family's observer template, effectively final: super spawns the universal base observers (name sync and device information), then spawnCameraObservers
+   * spawns the family-specific set. Camera-family leaves extend spawnCameraObservers, never this template - a deliberate asymmetry with the other device families, which
+   * extend spawnObservers directly. Only the camera family has a leaf-of-a-leaf (the package camera under the doorbell) that must suppress part of its parent's observer
+   * set, and the seam is what lets it replace exactly the camera reactions while still inheriting the base pair. The package replaces spawnCameraObservers without a
+   * super call (its own bespoke set); the doorbell's own reactions are no longer a camera subclass - they spawn through the composed DoorbellCapability's own configure,
+   * keyed on the capability's signal - so the camera's set is the plain-camera set and the per-class observer count pins in the construction tests are the enforcement.
+   */
   protected override spawnObservers(): void {
 
     super.spawnObservers();
+    this.spawnCameraObservers();
+  }
+
+  // Spawn the camera's narrow-selector state observers (Fork B). Each loop fires only when its watched slice changes by reference - the store's Object.is dedup is the
+  // trigger, so there is no hand-diff and no held snapshot. Activity (motion, ring, smart detection, tamper) is delivered by the NVR firehose router and is deliberately
+  // never re-synthesized here from device-state.
+  protected spawnCameraObservers(): void {
 
     // Bind the by-id camera selector once and read fields off it, so each per-dispatch selector evaluation reuses the same closure rather than re-deriving it.
     const cam = selectCamera(this.ufp.id);
 
     // The RTSP channel set and the negotiated video codec both shape the HomeKit streaming surface, so a change to either re-derives it. Two observers, not one tuple: a
     // fresh tuple would never dedup on Object.is, whereas each field dedups natively as its own slice.
-    this.observeState({ key: "camera.channels", selector: state => cam(state)?.channels, title: "video streaming" }, () => void this.configureVideoStream());
-    this.observeState({ key: "camera.videoCodec", selector: state => cam(state)?.videoCodec, title: "video streaming" }, () => void this.configureVideoStream());
+    this.observeState({ key: "camera.channels", selector: state => cam(state)?.channels, title: "video streaming" }, () => void this.reconcileStreaming());
+    this.observeState({ key: "camera.videoCodec", selector: state => cam(state)?.videoCodec, title: "video streaming" }, () => void this.reconcileStreaming());
 
     // The lifecycle state enum drives two independent reactions, so each gets its own observer on the same slice. We watch state because isOnline - and therefore the
     // device-online half of isReachable - derives from it; the controller-health half is pushed by the NVR connection loop, not observed here.
@@ -279,18 +384,13 @@ export class ProtectCamera extends ProtectDevice {
     this.observeState({ key: "camera.recordingSettings", selector: state => cam(state)?.recordingSettings, title: "recording" },
       () => this.updateRecordingSwitches());
 
-    // A camera can become a doorbell after adoption (the controller provisions featureFlags.isDoorbell late); when it flips, tear down and recreate this accessory as a
-    // doorbell. A device already running as a doorbell never spawns this observer, so the reaction is camera-only.
-    if(!this.isDoorbellAccessory) {
-
-      this.observeState({ key: "camera.isDoorbell", selector: state => cam(state)?.featureFlags.isDoorbell, title: "doorbell status" }, () => {
-
-        if(shouldReconfigureAsDoorbell({ isDoorbell: this.ufp.featureFlags.isDoorbell, isDoorbellAccessory: this.isDoorbellAccessory })) {
-
-          this.nvr.reconfigureAsDoorbell(this);
-        }
-      });
-    }
+    // A camera's doorbell-ness is temporally dynamic: the controller can provision featureFlags.isDoorbell late (a promotion) or withdraw it (a demotion). The observer
+    // is always armed - it routes every flag change through the live-attach reconcile chokepoint, which composes the capability onto the running instance on a promotion
+    // and narrates a settled demotion - so a construction-time doorbell and a late flip share ONE code path. The reconcile re-reads live state on each wake, so a
+    // within-drain flap (true->false->true delivered in one notify) self-collapses to the final value with no churn. The package camera stays un-armed by its no-super
+    // spawnCameraObservers, never spawning this observer against the shared parent record.
+    this.observeState({ key: "camera.isDoorbell", selector: state => cam(state)?.featureFlags.isDoorbell, title: "doorbell status" },
+      () => this.reconcileDoorbellCapability("observe"));
   }
 
   // Configure the ambient light sensor for HomeKit.
@@ -715,7 +815,7 @@ export class ProtectCamera extends ProtectDevice {
     if(!doorbellService) {
 
       // Configure the doorbell service.
-      if(!this.configureVideoDoorbell()) {
+      if(!this.configureDoorbellService()) {
 
         return false;
       }
@@ -769,8 +869,10 @@ export class ProtectCamera extends ProtectDevice {
     return true;
   }
 
-  // Configure the doorbell service for HomeKit.
-  protected configureVideoDoorbell(): boolean {
+  // The camera's "ensure my Doorbell service exists and is primary" seam, public so both the trigger path (configureDoorbellTrigger, when a plain camera enables the
+  // automation trigger) and - from the attached capability - the doorbell attach sequence consume the one definition. HomeKit requires the Doorbell service to be the
+  // primary service on the accessory.
+  public configureDoorbellService(): boolean {
 
     // Acquire the service.
     const service = this.acquireService(this.hap.Service.Doorbell);
@@ -897,8 +999,23 @@ export class ProtectCamera extends ProtectDevice {
     return true;
   }
 
-  // Configure a camera accessory for HomeKit.
-  private async configureVideoStream(): Promise<boolean> {
+  // Reconcile the camera's HomeKit streaming surface: compose the always-run channel-profile derivation with the create-once delegate build. This is the single entry
+  // point the channels / videoCodec observers and the construction IIFE call, so a channel or codec change re-derives the advertised list and, the first time the list
+  // is non-empty, stands up the streaming delegate. A false from refreshChannelProfiles (no channels, an RTSP-enable write-through that must reconcile first, no valid
+  // entries) short-circuits before any delegate build; otherwise we hand off to the synchronous create-once half.
+  protected async reconcileStreaming(): Promise<boolean> {
+
+    if(!(await this.refreshChannelProfiles())) {
+
+      return false;
+    }
+
+    return this.configureStreamingDelegate();
+  }
+
+  // The derivation half: compute and publish the advertised channel-profile list HomeKit consumes. Always run (every channel / codec change re-derives), returns true
+  // only after a non-empty list is published, false on every early-out exactly as the pre-decomposition flow did.
+  private async refreshChannelProfiles(): Promise<boolean> {
 
     // No channels exist on this camera or we don't have access to the bootstrap configuration.
     if(!this.ufp.channels.length) {
@@ -907,9 +1024,9 @@ export class ProtectCamera extends ProtectDevice {
     }
 
     // Ensure RTSP is enabled on every channel. This is a write-through config change with no read-after-write: if any channel still needs RTSP, enable them all and
-    // return, then let the channels observer (wired in spawnObservers) re-run this method once the change reconciles, at which point every channel reads back enabled
-    // and we build the stream entries below. When RTSP is already on - the common case for any existing camera and every restart - we skip the PATCH and fall through
-    // synchronously, exactly as before. The reducer dedups a no-op patch, so a redundant enable could never loop the observer regardless.
+    // return, then let the channels observer (wired in spawnCameraObservers) re-run this method once the change reconciles, at which point every channel reads back
+    // enabled and we build the stream entries below. When RTSP is already on - the common case for any existing camera and every restart - we skip the PATCH and fall
+    // through synchronously, exactly as before. The reducer dedups a no-op patch, so a redundant enable could never loop the observer regardless.
     if(this.ufp.channels.some(channel => !channel.isRtspEnabled)) {
 
       await this.runDeviceCommand("enable RTSP on the camera's channels",
@@ -958,10 +1075,26 @@ export class ProtectCamera extends ProtectDevice {
     // Publish our updated list of supported resolutions and their URLs.
     this.channelProfiles = advertised;
 
+    return true;
+  }
+
+  // The create-once half: stand up the HomeKit streaming delegate and register its CameraController, exactly once per instance. This half is SYNCHRONOUS by design -
+  // there is no await between the this.stream gate and configureController, so two concurrent callers can never both pass the gate while this.stream is undefined
+  // (nothing yields between the gate and the assignment). That race-freedom invariant is load-bearing for the channels / videoCodec observers, which can both fire in
+  // one drain. The isDeleted guard covers the rebuild path (step 10), which can fire reconcileStreaming on an accessory mid-removal: a being-removed camera must not
+  // re-register a controller.
+  private configureStreamingDelegate(): boolean {
+
     // If we've already configured the HomeKit video streaming delegate, we're done here.
     if(this.stream) {
 
       return true;
+    }
+
+    // The accessory is being removed - do not stand up a controller on it.
+    if(this.isDeleted) {
+
+      return false;
     }
 
     // Inform users about our RTSP entry mapping, if we're debugging.
@@ -1035,6 +1168,44 @@ export class ProtectCamera extends ProtectDevice {
     this.accessory.configureController(this.stream.controller);
 
     return true;
+  }
+
+  // Tear down this camera's streaming delegate and unregister its CameraController. Extracted verbatim from cleanup's teardown block so both cleanup (on deletion) and
+  // the live-attach rebuild (step 10) tear the delegate down through one path: HKSV recording off, the live and timeshift consumers shut down (releasing their v5 pool
+  // subscriptions), and the controller removed from HomeKit.
+  private teardownStreamingDelegate(): void {
+
+    // If we've got HomeKit Secure Video enabled and recording, disable it.
+    if(this.stream?.hksv?.isRecording) {
+
+      void this.stream.hksv.updateRecordingActive(false);
+    }
+
+    // Tear down this camera's livestream consumers so their v5 pool subscriptions are released. The camera no longer owns livestream sessions - the stream (live) and
+    // timeshift (HKSV) consumers own the subscriptions, and disposing them decrements the pool refcount to zero. Mirrors nvr.disconnect()'s per-camera teardown.
+    this.stream?.shutdown();
+    this.stream?.hksv?.timeshift.stop();
+
+    // Unregister our controller.
+    if(this.stream) {
+
+      this.accessory.removeController(this.stream.controller);
+    }
+  }
+
+  /* Rebuild the streaming delegate and its CameraController in place - the one HAP object the live-attach cannot mutate (its audio options, the twoWayAudio/Speaker
+   * service, and the supported-configuration TLVs are constructor-frozen). The teardown's removeController runs synchronously; clearing this.stream re-opens the
+   * create-once gate; reconcileStreaming's create-half (configureStreamingDelegate) lands on the next microtask after refreshChannelProfiles resolves, so the
+   * remove-before-configure ordering holds, and exactly one removeController plus one configureController fire at this event. This is today's shipped reclassification
+   * semantics - the HKSV factory reset (removeController) and the supported-config hash change - preserved at exactly this transition, no longer carried by a
+   * teardown+recreate of the whole instance. The create-half's isDeleted guard prevents a re-register if the accessory is removed in the window. (It inherits today's
+   * benign fire-and-forget updateRecordingActive(false) teardown race - parity, not introduced here.)
+   */
+  private rebuildStreamingDelegate(): void {
+
+    this.teardownStreamingDelegate();
+    this.stream = undefined;
+    void this.reconcileStreaming();
   }
 
   // Configure HomeKit Secure Video support.
@@ -1367,23 +1538,41 @@ export class ProtectCamera extends ProtectDevice {
       void this.stream?.handleSnapshotRequest();
     });
 
-    // Enable doorbell-specific MQTT capabilities only when we have a Protect doorbell or a doorbell trigger enabled.
-    if(this.ufp.featureFlags.isDoorbell || this.hasFeature("Doorbell.Trigger")) {
-
-      // Trigger doorbell when requested.
-      this.subscribeSet("doorbell", "doorbell ring trigger", (value: string) => {
-
-        // When we get the right message, we trigger the doorbell request.
-        if(value !== "true") {
-
-          return;
-        }
-
-        this.nvr.events.doorbellEventHandler(this, Date.now());
-      });
-    }
+    // Register the doorbell ring-trigger subscription, gated and once-guarded so a late promotion can register it without the construction call double-subscribing.
+    this.configureDoorbellRingMqtt();
 
     return true;
+  }
+
+  // Register the doorbell ring-trigger MQTT subscription, exactly once, when the camera is a Protect doorbell or the user enabled the doorbell trigger. HBPU subscribe is
+  // not idempotent, so the registered-once guard prevents a double-subscription across the two call sites (configureMqtt at construction, and the attach arm for a late
+  // promotion). The guard is set ONLY after the gate passes and the registration happens, so a no-op construction call on a plain camera (gate false) does not latch it -
+  // the later attach-time registration must not be suppressed.
+  private configureDoorbellRingMqtt(): void {
+
+    if(this.#ringMqttRegistered) {
+
+      return;
+    }
+
+    if(!(this.ufp.featureFlags.isDoorbell || this.hasFeature("Doorbell.Trigger"))) {
+
+      return;
+    }
+
+    // Trigger doorbell when requested.
+    this.subscribeSet("doorbell", "doorbell ring trigger", (value: string) => {
+
+      // When we get the right message, we trigger the doorbell request.
+      if(value !== "true") {
+
+        return;
+      }
+
+      this.nvr.events.doorbellEventHandler(this, Date.now());
+    });
+
+    this.#ringMqttRegistered = true;
   }
 
   // Refresh camera-specific characteristics. Composes the per-concern updaters below; retained as the public entry point for external callers (the recording-switch and
@@ -1395,6 +1584,9 @@ export class ProtectCamera extends ProtectDevice {
     this.updateNightVision();
     this.updateStatusIndicator();
     this.updateRecordingSwitches();
+
+    // Compose the attached doorbell capability's refresh (the physical-chime push) when one is present.
+    this.doorbell?.updateDevice();
 
     return true;
   }
