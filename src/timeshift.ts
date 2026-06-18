@@ -2,7 +2,7 @@
  *
  * protect-timeshift.ts: UniFi Protect livestream timeshift buffer implementation to support HomeKit Secure Video.
  */
-import type { HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
+import type { Clock, HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
 import { PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS, PROTECT_LIVESTREAM_API_IDR_INTERVAL, PROTECT_LIVESTREAM_IDLE_TOLERANCE_MS, PROTECT_SEGMENT_RESOLUTION }
   from "./settings.ts";
 import type { ChannelProfile } from "./devices/resolution.ts";
@@ -57,6 +57,10 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
   // Segment resolution for the timeshift buffer. Fixed at PROTECT_SEGMENT_RESOLUTION (100ms) because a small value gives HKSV a better event recording experience
   // at a trivial CPU cost on modern systems.
   private readonly _segmentLength: number = PROTECT_SEGMENT_RESOLUTION;
+  // The injected wall-clock seam (production systemClock, a controllable TestClock under test). The timeshift reads it for keyframe-staleness timing - the
+  // _lastKeyframeTime write on each keyframe and the now-versus-then staleness compare in getLastKeyframe - so that path is test-deterministic without a real-time
+  // wait. This mirrors the recording delegate's clock field-copy exactly (record.ts), reaching the clock through the platform handle the camera already carries.
+  private readonly clock: Clock;
   private readonly log: HomebridgePluginLogging;
   private readonly protectCamera: ProtectCameraHost;
   private segmentCount: number;
@@ -73,6 +77,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
     this._lastKeyframeTime = 0;
     this._pendingDiscontinuity = false;
     this._segments = [];
+    this.clock = protectCamera.platform.clock;
     this.log = protectCamera.log;
     this.protectCamera = protectCamera;
     this.segmentCount = 1;
@@ -256,7 +261,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
     // Track when we last saw a keyframe for staleness detection in snapshot extraction.
     if(isKeyframeSegment) {
 
-      this._lastKeyframeTime = Date.now();
+      this._lastKeyframeTime = this.clock.now();
 
       // If we were waiting for a keyframe after a discontinuity, the buffer now has a clean starting point. Signal the recording delegate to restart FFmpeg.
       if(this._pendingDiscontinuity) {
@@ -373,7 +378,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
     }
 
     // If the last keyframe is older than 2x the IDR interval, the livestream is likely stalled and we should let the caller fall through to other snapshot sources.
-    if((Date.now() - this._lastKeyframeTime) > (PROTECT_LIVESTREAM_API_IDR_INTERVAL * 2 * 1000)) {
+    if((this.clock.now() - this._lastKeyframeTime) > (PROTECT_LIVESTREAM_API_IDR_INTERVAL * 2 * 1000)) {
 
       return null;
     }

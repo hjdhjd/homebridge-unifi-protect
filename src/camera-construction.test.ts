@@ -21,7 +21,7 @@ import type { Camera, ProtectCameraConfig } from "unifi-protect";
 import type { CameraFixture, EntryProjection } from "./resolution.fixtures.ts";
 import { Characteristic, Service, TestCameraProjection, TestStateStore, makeCameraConfig, makeProtectState, makeTestAccessory, makeTestNvr, settle }
   from "./testing.helpers.ts";
-import type { TestAccessory, TestProtectNvr, TestStreamingDelegateFactory } from "./testing.helpers.ts";
+import type { TestAccessory, TestProtectNvr, TestStreamingDelegate, TestStreamingDelegateFactory } from "./testing.helpers.ts";
 import { after, before, describe, test } from "node:test";
 import type { ObserverWakePayload } from "./diagnostics.ts";
 import type { ProtectAccessory } from "./types.ts";
@@ -207,5 +207,63 @@ describe("real ProtectCamera construction through the streaming-delegate factory
     await settle();
 
     assert.equal(wakeLog.length, teardownBaseline, "a push after cleanup wakes nothing");
+  });
+});
+
+describe("camera HKSV self-heal observer", () => {
+
+  // The one harness AbortController this suite builds; aborted in teardown so its observe loops never outlive the suite.
+  let healController: AbortController | undefined;
+
+  after(() => {
+
+    healController?.abort();
+  });
+
+  // Behavior-first coverage of the self-heal observer (src/devices/camera.ts:367-375): a camera that comes back online with HKSV recording still enabled but the
+  // timeshift buffer not started re-arms recording, retrying the buffer init the initial (offline) configure could not complete. We build our OWN camera here rather
+  // than reuse the suite-scoped one (that suite uses before(), not beforeEach(), so its camera must not be mutated), set the factory-returned delegate's hksv to a
+  // recording double the observer reads, then drive a genuine offline->online state edge. The DISCONNECTED push must come first: makeCameraConfig seeds state
+  // "CONNECTED", so pushing CONNECTED straight onto an already-CONNECTED record dedups to a no-op and the observer never fires.
+  test("re-arms recording on the online transition when HKSV is armed but the buffer has not started", async () => {
+
+    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS });
+    const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
+    const { controller, factory, nvr } = makeTestNvr({ store });
+
+    healController = controller;
+
+    const projection = new TestCameraProjection(cameraConfig.id, store);
+    const accessory = makeTestAccessory("Self-Heal Camera", "22222222-3333-4444-5555-666666666666");
+    const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Camera);
+
+    await settle();
+
+    // The observer reads stream.hksv.isRecording, stream.hksv.timeshift.isStarted, and calls stream.hksv.updateRecordingActive(true). We capture each re-arm call's
+    // argument so the assertion observes the behavior (a single true re-arm) rather than a private field. The confined cast bridges the recording double to the
+    // StreamingDelegate["hksv"] type the field is declared as.
+    const reArmCalls: boolean[] = [];
+    const delegate = factory.createCalls[0]?.delegate;
+
+    assert.ok(delegate, "the factory recorded its create call so the camera holds a stub delegate");
+
+    delegate.hksv = { isRecording: true, timeshift: { isStarted: false, stop: (): void => { /* No-op: the double owns no buffer to release on teardown. */ } },
+      updateRecordingActive: (active: boolean): void => { reArmCalls.push(active); } } as unknown as TestStreamingDelegate["hksv"];
+
+    // The offline edge: the observer reaction no-ops because isReachable is false (device.isOnline derives false from the DISCONNECTED state).
+    store.pushCameraPatch(cameraConfig.id, { state: "DISCONNECTED" });
+
+    await settle();
+
+    // The online edge: isReachable is now true (controller health true, device online), HKSV is armed, and the buffer is not started - so the observer re-arms once.
+    store.pushCameraPatch(cameraConfig.id, { state: "CONNECTED" });
+
+    await settle();
+
+    assert.deepEqual(reArmCalls, [true], "the online transition re-armed recording exactly once; the offline push's reaction no-oped on !isReachable");
+
+    camera.cleanup();
+
+    await settle();
   });
 });

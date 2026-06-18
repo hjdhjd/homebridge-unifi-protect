@@ -13,9 +13,9 @@
  * decline path those fields are never read, so the suite would pass whether or not they were reset. The RecordingSession extraction's behavior-neutrality therefore rests
  * on a field-by-field source trace, not on this net; this net's value is the real-but-narrow one of pinning the observable decline contract green before and after.
  *
- * The segment-producing recording path (which would exercise the pacing/reserve telemetry) is infeasible against the current stub: the transmit gate declines whenever
- * timeshift.time is below the configured duration, and the stub's livestream yields no segments, so time stays zero; reaching the transmit path also spawns a real FFmpeg
- * process, breaching the suite's no-FFmpeg boundary. Building that harness is a separate, larger Phase-4 investment, deliberately out of scope here.
+ * The segment-producing recording path (which exercises the pacing/reserve telemetry) now lives in recording-transmit.test.ts: it fills the timeshift buffer with the
+ * harness's segment-yielding livestream double and constructs the FFmpeg process through the platform's recording-process factory seam, so it drives the transmit path
+ * FFmpeg-free with deterministic injected-clock pacing.
  */
 import { Characteristic, Service, makeTestCameraHost } from "./testing.helpers.ts";
 import { PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION, PROTECT_SEGMENT_RESOLUTION } from "./settings.ts";

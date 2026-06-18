@@ -7,15 +7,14 @@
  * deeply appreciated.
  */
 import type { API, CameraRecordingConfiguration, CameraRecordingDelegate, HAP, RecordingPacket } from "homebridge";
-import { BackpressureWriter, FfmpegRecordingProcess, HDSProtocolSpecificErrorReason, formatBps } from "homebridge-plugin-utils";
-import type { HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
+import { BackpressureWriter, HDSProtocolSpecificErrorReason, formatBps } from "homebridge-plugin-utils";
+import type { Clock, HomebridgePluginLogging, Nullable, RecordingProcess } from "homebridge-plugin-utils";
 import { PROTECT_HKSV_SHADOW_FLOOR_MS, PROTECT_HKSV_SHADOW_RECONNECT_MS, PROTECT_HKSV_SHADOW_SAFETY_MS, PROTECT_HKSV_TIMEOUT, PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION }
   from "./settings.ts";
 import type { ChannelProfile } from "./devices/resolution.ts";
 import type { ProtectAccessory } from "./types.ts";
 import type { ProtectCameraHost } from "./camera-host.ts";
 import { ProtectTimeshiftBuffer } from "./timeshift.ts";
-import { setTimeout as delay } from "node:timers/promises";
 
 // HKSV end-of-stream marker. A single zero byte yielded with `isLast=true` signals the end of a recording stream to HomeKit. Module-scoped so we allocate once
 // per process rather than per yield.
@@ -31,7 +30,7 @@ const HKSV_HARDWARE_TRANSCODE_MARKER = "\u26A1\uFE0F ";
 // when the stream aborted before the init arrived (it never threw out of the HAP generator), but v2's getInitSegment() rejects with signal.reason on a pre-init abort.
 // We catch that rejection and return, ending the for-await cleanly so the post-loop teardown yields its end-of-stream marker exactly as v1 did on a HAP-close or a thin
 // discontinuity restart. Re-created per do-while pass, so a discontinuity restart re-yields the fresh process's new init as the loop's first counted item.
-async function *initThenMedia(proc: FfmpegRecordingProcess, signal: AbortSignal): AsyncGenerator<Buffer> {
+async function *initThenMedia(proc: RecordingProcess, signal: AbortSignal): AsyncGenerator<Buffer> {
 
   let init: Buffer;
 
@@ -86,9 +85,12 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
   private abortController?: AbortController;
   private readonly accessory: ProtectAccessory;
   private readonly api: API;
+  // The injected wall-clock seam (production systemClock, a controllable TestClock under test). The delegate reads it for every time primitive - the per-event
+  // pacingStartTime, the per-yield delivery anchor, the pacing-delay computation and await, and the early-end duration - so the whole pacing path is test-deterministic.
+  private readonly clock: Clock;
   private configurePromise?: Promise<boolean>;
   private configureRequested: boolean;
-  private ffmpegStream?: FfmpegRecordingProcess;
+  private ffmpegStream?: RecordingProcess;
   private readonly hap: HAP;
   private hasLoggedConfig: boolean;
   private lastStreamId: number;
@@ -114,6 +116,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     this._isTransmitting = false;
     this.accessory = protectCamera.accessory;
     this.api = protectCamera.api;
+    this.clock = protectCamera.platform.clock;
     this.configureRequested = false;
     this.hap = protectCamera.api.hap;
     this.hasLoggedConfig = false;
@@ -204,7 +207,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     // at its clean seed (the decline flag false, the segment counters and pacing/reserve telemetry zeroed, reserveMin at positive infinity) in one place - so a new event
     // cannot inherit a prior event's residual. We track pacingStartTime as the moment HomeKit's timeout clock began, since HomeKit's timer starts when it sends the
     // request...the first segment will be due pacingInterval after this point.
-    this.session = new RecordingSession({ id: ++this.nextEventId, pacingStartTime: Date.now() });
+    this.session = new RecordingSession({ id: ++this.nextEventId, pacingStartTime: this.clock.now() });
 
     let lastYieldTime = this.session.pacingStartTime;
 
@@ -359,7 +362,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
           // Send HKSV the fMP4 segment. The delivery time anchors the next pacing delay.
           yield { data: segment, isLast: false };
 
-          lastYieldTime = Date.now();
+          lastYieldTime = this.clock.now();
         }
 
       // isDiscontinuity and isTerminated are mutated asynchronously by the event listeners above.
@@ -564,10 +567,12 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     // having to recover from mid-GOP data. The seek offset tells FFmpeg's -ss exactly how far to advance from the keyframe to the prebuffer start point.
     const alignment = this.timeshift.getKeyframeAlignedStart(this.recordingConfig.prebufferLength);
 
-    // Start a new FFmpeg instance to transcode using HomeKit's requirements. The HBPU-v2 process spawns the child synchronously on construction, so there is no separate
-    // start() step...by the time the constructor returns the FFmpeg child is already running. The recording options move into init.recording, the HomeKit recording
-    // configuration into init.recordingConfig, and the debug flag into init.verbose.
-    this.ffmpegStream = new FfmpegRecordingProcess(this.protectCamera.stream.ffmpegOptions, {
+    // Start a new FFmpeg instance to transcode using HomeKit's requirements. Construction routes through the platform's recording-process factory, mirroring the
+    // streaming-delegate factory seam: the production factory's create is exactly the FfmpegRecordingProcess constructor call (so this is behavior-neutral), while a test
+    // substitutes an FFmpeg-free double. The HBPU-v2 process spawns the child synchronously on construction, so there is no separate start() step...by the time create
+    // returns the FFmpeg child is already running. The recording options move into init.recording, the HomeKit recording configuration into init.recordingConfig, and the
+    // debug flag into init.verbose.
+    this.ffmpegStream = this.protectCamera.platform.recordingProcessFactory.create(this.protectCamera.stream.ffmpegOptions, {
 
       recording: {
 
@@ -636,7 +641,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
   // closure or a livestream discontinuity can interrupt it immediately. Pacing delay metrics are tracked for telemetry.
   private async paceSegmentDelivery(lastYieldTime: number, pacingInterval: number, signal: AbortSignal): Promise<void> {
 
-    this.session.lastPacingDelay = (lastYieldTime + pacingInterval) - Date.now();
+    this.session.lastPacingDelay = (lastYieldTime + pacingInterval) - this.clock.now();
     this.session.maxPacingDelay = Math.max(this.session.maxPacingDelay, this.session.lastPacingDelay);
 
     // Sample the reserve depth - the count of FFmpeg-produced-but-unpulled fMP4 segments queued in the assembler. This is the natural off-the-hot-path sampling site:
@@ -655,7 +660,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
 
     if(this.session.lastPacingDelay > 0) {
 
-      await delay(this.session.lastPacingDelay, undefined, { signal }).catch((): void => { /* Expected on stream close or discontinuity. */ });
+      await this.clock.delay(this.session.lastPacingDelay, { signal }).catch((): void => { /* Expected on stream close or discontinuity. */ });
     }
   }
 
@@ -816,7 +821,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     // Inform the user when things stopped unexpectedly, accounting for known factors like the camera being online, the timeshift buffer restarting, or the NVR
     // being in an induced-disruption phase (rebooting, shutting down). We suppress errors for sub-100ms durations...these are HomeKit protocol-level events
     // where the recording stream is opened and immediately closed before we can respond, and are not actionable.
-    const recordingDuration = Date.now() - this.session.pacingStartTime;
+    const recordingDuration = this.clock.now() - this.session.pacingStartTime;
 
     if((reason !== undefined) && (reason !== HDSProtocolSpecificErrorReason.NORMAL) && (recordingDuration >= 100) &&
       !this.timeshift.isRestarting && this.protectCamera.isReachable && (this.protectCamera.nvr.phase === "running") &&

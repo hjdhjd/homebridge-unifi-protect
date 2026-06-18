@@ -3,7 +3,7 @@
  * protect-doorbell.ts: Doorbell capability for UniFi Protect.
  */
 import type { AcquireServiceTarget, HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
-import type { Camera, DeepPartial, ProtectCameraConfig, ProtectCameraLcdMessageConfig, ProtectChimeConfig } from "unifi-protect";
+import type { Camera, DeepPartial, ProtectCameraConfig, ProtectCameraLcdMessageConfig } from "unifi-protect";
 import type { CharacteristicValue, HAP, Service, WithUUID } from "homebridge";
 import { PACKAGE_CAMERA_NAME_SUFFIX, ProtectReservedNames, packageCameraId } from "../types.ts";
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_DOORBELL_CHIME_DURATION_DIGITAL } from "../settings.ts";
@@ -14,6 +14,7 @@ import { ProtectBase } from "./device.ts";
 import type { ProtectCamera } from "./camera.ts";
 import type { ProtectCameraPackage } from "./camera-package.ts";
 import type { ProtectNvr } from "../nvr.ts";
+import { chimeVolumeFor } from "./chime-volume.ts";
 import { mqttTopic } from "../mqtt.ts";
 
 // A doorbell message entry.
@@ -41,29 +42,6 @@ const DOORBELL_RESERVED_SUBTYPES: readonly string[] = [ ProtectReservedNames.CON
 // The reserved-name lookup the message-switch sweep consults, so a non-reserved Switch subtype on a camera-family accessory (the only such subtype is a message switch,
 // shaped "type.text") is the removal target while every reserved subtype is left to its own owner.
 const RESERVED_NAMES = new Set(Object.values(ProtectReservedNames).map(x => x.toUpperCase()));
-
-// Compute a doorbell's effective chime volume: the mean of the per-doorbell ring volume across every chime assigned to it (a chime can serve multiple doorbells), or 0
-// when none is assigned. Pure over config records so the read-through getter and the volume observer share one definition of "this doorbell's volume".
-const chimeVolumeFor = (chimes: readonly ProtectChimeConfig[], cameraId: string): number => {
-
-  let total = 0;
-  let count = 0;
-
-  for(const chime of chimes) {
-
-    const ring = chime.cameraIds.includes(cameraId) ? chime.ringSettings.find(setting => setting.cameraId === cameraId) : undefined;
-
-    if(!ring) {
-
-      continue;
-    }
-
-    total += ring.volume;
-    count++;
-  }
-
-  return count ? (total / count) : 0;
-};
 
 /* The doorbell capability composed onto a ProtectCamera. It extends ProtectBase - the shared observe / MQTT / command spine - rather than ProtectCamera, because
  * doorbell-ness is temporally dynamic capability state, not a static identity: the camera the controller late-flips to a doorbell stays the same instance, and this

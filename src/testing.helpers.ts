@@ -26,25 +26,28 @@
  * published package is a publish-hygiene decision deliberately left out of scope here.
  */
 import type { API, CameraController, HAP, Resolution } from "homebridge";
-import type { Camera, ProtectCameraChannelConfig, ProtectCameraConfig, ProtectChimeConfig, ProtectNvrConfig, ProtectState, Segment, SnapshotOptions,
-  TalkbackSession } from "unifi-protect";
+import { BOX_HEADER_SIZE, FeatureOptions, SAMPLE_FLAG_NON_SYNC, TRUN_FLAG_DATA_OFFSET, TRUN_FLAG_FIRST_SAMPLE_FLAGS, TestClock, TestRecordingProcessFactory }
+  from "homebridge-plugin-utils";
+import type { Camera, Chime, LivestreamSubscriptionState, PlaySpeakerOptions, ProtectCameraChannelConfig, ProtectCameraConfig, ProtectChimeConfig, ProtectEventMetadata,
+  ProtectLightConfig, ProtectNvrConfig, ProtectNvrLiveviewConfig, ProtectRingtoneConfig, ProtectSensorConfig, ProtectState, ProtectViewerConfig, Segment, Sensor,
+  SnapshotOptions, TalkbackSession } from "unifi-protect";
+import type { Clock, HomebridgePluginLogging, Nullable, RecordingProcessFactory } from "homebridge-plugin-utils";
 import { FIXTURE_HOST, FIXTURE_RTSPS_PORT, G2_PRO_CHANNELS } from "./resolution.fixtures.ts";
-import type { HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
+import type { NvrPhase, ProtectNvr } from "./nvr.ts";
 import { PLATFORM_NAME, PLUGIN_NAME } from "./settings.ts";
+import type { ProtectAccessory, ProtectDevices } from "./types.ts";
 import type { ProtectNvrOptions, ProtectOptions } from "./options.ts";
 import type { StreamingDelegate, StreamingDelegateFactory } from "./stream-delegate.ts";
 import { featureOptionCategories, featureOptions } from "./options.ts";
 import type { ChannelProfile } from "./devices/resolution.ts";
 import { DoorbellCapability } from "./devices/doorbell.ts";
-import { FeatureOptions } from "homebridge-plugin-utils";
 import type { LivestreamSubscription } from "./livestream.ts";
-import type { ProtectAccessory } from "./types.ts";
 import type { ProtectCamera } from "./devices/camera.ts";
 import type { ProtectCameraHost } from "./camera-host.ts";
 import { ProtectCameraPackage } from "./devices/camera-package.ts";
+import { ProtectDevice } from "./devices/device.ts";
 import { ProtectEventDispatch } from "./event-dispatch.ts";
 import type { ProtectHints } from "./devices/device.ts";
-import type { ProtectNvr } from "./nvr.ts";
 import type { ProtectPlatform } from "./platform.ts";
 
 // Identity class for a HAP Characteristic kind. Each characteristic kind is its own marker class; production code passes the class as a key to
@@ -58,6 +61,14 @@ class OnCharacteristicType {
 class StatusActiveCharacteristicType {
 
   public readonly hapKind = "StatusActive" as const;
+}
+
+// The low-battery characteristic. The sensor's updateBatteryStatus writes StatusLowBattery onto the Battery service from batteryStatus.isLow; it is resolved on-demand
+// from the namespace (not a service seed), so the kind must exist as a first-class key for that write to land on a distinct entry rather than collide on an undefined
+// key.
+class StatusLowBatteryCharacteristicType {
+
+  public readonly hapKind = "StatusLowBattery" as const;
 }
 
 // The tamper-status characteristic. Added for the firehose tamper delivery and the sensor tamper push: the camera's tamperEventHandler and the sensor's tamper observer
@@ -93,12 +104,48 @@ class LockTargetStateCharacteristicType {
   public readonly hapKind = "LockTargetState" as const;
 }
 
+/* The security-system state characteristics. The security-system owner reads the named arm states off these two characteristics on every state transition: the current
+ * state carries five distinct values (the currentSecuritySystemState string map is keyed by them) and the target state carries four (the setProps validValues array
+ * carries them, and the onSet maps a target to a current), so the double mirrors HAP's exact constants as statics on each marker. Distinct values are load-bearing -
+ * a collision would collapse the Record<number, string> map and silently mis-key the MQTT state string. SecuritySystemCurrentState is also the seed characteristic the
+ * SecuritySystem service marker constructs with (acquireService recovers the Characteristic constructor from the new service's first characteristic). The static members
+ * are alphabetical per the house style; note the Current marker uses DISARMED=3 while the Target marker uses DISARM=3 - the same integer under two HAP-distinct names,
+ * both of which the production code reaches by name.
+ */
+class SecuritySystemCurrentStateCharacteristicType {
+
+  public static readonly ALARM_TRIGGERED = 4;
+  public static readonly AWAY_ARM = 1;
+  public static readonly DISARMED = 3;
+  public static readonly NIGHT_ARM = 2;
+  public static readonly STAY_ARM = 0;
+  public readonly hapKind = "SecuritySystemCurrentState" as const;
+}
+
+class SecuritySystemTargetStateCharacteristicType {
+
+  public static readonly AWAY_ARM = 1;
+  public static readonly DISARM = 3;
+  public static readonly NIGHT_ARM = 2;
+  public static readonly STAY_ARM = 0;
+  public readonly hapKind = "SecuritySystemTargetState" as const;
+}
+
 // The AccessoryInformation characteristics. Added for the camera-construction harness: ProtectBase.setInfo writes Manufacturer / Model / SerialNumber /
 // FirmwareRevision onto the AccessoryInformation service at configure time, and the accessoryName getter reads the Name characteristic, so distinct kinds are
 // required for each so the writes never collide on an undefined key.
 class FirmwareRevisionCharacteristicType {
 
   public readonly hapKind = "FirmwareRevision" as const;
+}
+
+// The hardware-revision characteristic. The security-system owner's bespoke configureInfo writes HardwareRevision onto the AccessoryInformation service unconditionally
+// (it bases it off nvr.ufp.hardwareRevision with no length guard), so the kind must be a distinct key for that write to land rather than collide on an undefined key.
+// (ProtectBase.setInfo also writes it, but length-guarded behind a populated hardwareRevision the device-info concern net deliberately omits; the controller-owner net is
+// the first to reach it.)
+class HardwareRevisionCharacteristicType {
+
+  public readonly hapKind = "HardwareRevision" as const;
 }
 
 class ManufacturerCharacteristicType {
@@ -121,11 +168,55 @@ class SerialNumberCharacteristicType {
   public readonly hapKind = "SerialNumber" as const;
 }
 
+// The battery-level characteristic. The sensor's updateBatteryStatus writes BatteryLevel onto the Battery service from batteryStatus.percentage, and it is the seed
+// characteristic the Battery service marker constructs with, so the kind must exist as a first-class key for the sensor family's real construction to reach it.
+class BatteryLevelCharacteristicType {
+
+  public readonly hapKind = "BatteryLevel" as const;
+}
+
+// The ambient-light characteristic. The sensor's ambient-light service binds onGet and pushes the current light level on CurrentAmbientLightLevel (with the 0.0001
+// HomeKit floor), and it is the seed characteristic the LightSensor service marker constructs with, so the kind must be a distinct key for that path to read faithfully.
+class CurrentAmbientLightLevelCharacteristicType {
+
+  public readonly hapKind = "CurrentAmbientLightLevel" as const;
+}
+
+// The relative-humidity characteristic. The sensor's humidity service binds onGet and pushes the current humidity on CurrentRelativeHumidity (with the <0 floor), and it
+// is the seed characteristic the HumiditySensor service marker constructs with, so the kind must be a distinct key for that path to read faithfully.
+class CurrentRelativeHumidityCharacteristicType {
+
+  public readonly hapKind = "CurrentRelativeHumidity" as const;
+}
+
+// The temperature characteristic. The sensor's temperature service binds onGet and pushes the current temperature on CurrentTemperature, and it is the seed
+// characteristic the TemperatureSensor service marker constructs with, so the kind must be a distinct key for that path to read faithfully.
+class CurrentTemperatureCharacteristicType {
+
+  public readonly hapKind = "CurrentTemperature" as const;
+}
+
+// The leak-detected characteristic. The sensor's leak service binds onGet and pushes the leak state on LeakDetected, and it is the seed characteristic the LeakSensor
+// service marker constructs with, so the kind must be a distinct key for that path to read faithfully.
+class LeakDetectedCharacteristicType {
+
+  public readonly hapKind = "LeakDetected" as const;
+}
+
 // The motion-detected characteristic. The camera's configureMotionSensor initializes MotionDetected to false on the motion service it acquires, and the motion
 // delivery flips it, so the construction harness needs the kind as a first-class key (it is also the seed characteristic the MotionSensor marker constructs with).
 class MotionDetectedCharacteristicType {
 
   public readonly hapKind = "MotionDetected" as const;
+}
+
+// The occupancy-detected characteristic. configureOccupancySensor initializes OccupancyDetected to false on the occupancy service it acquires (device.ts:684) and the
+// occupancy MQTT getter reads it, so the kind must exist as a first-class key. device-motion is the first concern test to construct an occupancy sensor, so this is added
+// here per the "expand as production reaches a new kind" pattern that grows MotionDetected and the rest above; before it the OccupancySensor service seeded the generic
+// Name stand-in because OccupancyDetected was verified unreached.
+class OccupancyDetectedCharacteristicType {
+
+  public readonly hapKind = "OccupancyDetected" as const;
 }
 
 // The brightness characteristic. The doorbell's chime-volume Lightbulb and the camera's night-vision dimmer both bind onGet/onSet handlers and push updates on
@@ -159,13 +250,23 @@ class ProgrammableSwitchEventCharacteristicType {
 // class, so the reachability tests pivot on this characteristic. On covers the toggle pair used by switches in the double's self-test. LockCurrentState /
 // LockTargetState back the access-unlock delivery tests. The AccessoryInformation kinds (Manufacturer / Model / SerialNumber / FirmwareRevision / Name) and
 // MotionDetected back the real-construction harness; Brightness, NightVision, CameraOperatingModeIndicator, and ProgrammableSwitchEvent back the doorbell-family
-// construction harness. Expand as the production code reaches for new kinds.
+// construction harness; OccupancyDetected backs the device-motion base-capability net, where configureOccupancySensor first reaches it. BatteryLevel / StatusLowBattery
+// (the battery service updater) and CurrentAmbientLightLevel / CurrentRelativeHumidity / CurrentTemperature / LeakDetected (the sensor's per-mode services) back the
+// sensor-family real-construction net, where ProtectSensor first reaches them. SecuritySystemCurrentState / SecuritySystemTargetState (the security-system state machine,
+// the Current marker also the SecuritySystem service's seed) and HardwareRevision (the security-system's bespoke configureInfo) back the controller-owner net, where
+// ProtectSecuritySystem first reaches them. Expand as the production code reaches for new kinds.
 export const Characteristic = {
 
+  BatteryLevel: BatteryLevelCharacteristicType,
   Brightness: BrightnessCharacteristicType,
   CameraOperatingModeIndicator: CameraOperatingModeIndicatorCharacteristicType,
   ContactSensorState: ContactSensorStateCharacteristicType,
+  CurrentAmbientLightLevel: CurrentAmbientLightLevelCharacteristicType,
+  CurrentRelativeHumidity: CurrentRelativeHumidityCharacteristicType,
+  CurrentTemperature: CurrentTemperatureCharacteristicType,
   FirmwareRevision: FirmwareRevisionCharacteristicType,
+  HardwareRevision: HardwareRevisionCharacteristicType,
+  LeakDetected: LeakDetectedCharacteristicType,
   LockCurrentState: LockCurrentStateCharacteristicType,
   LockTargetState: LockTargetStateCharacteristicType,
   Manufacturer: ManufacturerCharacteristicType,
@@ -173,10 +274,14 @@ export const Characteristic = {
   MotionDetected: MotionDetectedCharacteristicType,
   Name: NameCharacteristicType,
   NightVision: NightVisionCharacteristicType,
+  OccupancyDetected: OccupancyDetectedCharacteristicType,
   On: OnCharacteristicType,
   ProgrammableSwitchEvent: ProgrammableSwitchEventCharacteristicType,
+  SecuritySystemCurrentState: SecuritySystemCurrentStateCharacteristicType,
+  SecuritySystemTargetState: SecuritySystemTargetStateCharacteristicType,
   SerialNumber: SerialNumberCharacteristicType,
   StatusActive: StatusActiveCharacteristicType,
+  StatusLowBattery: StatusLowBatteryCharacteristicType,
   StatusTampered: StatusTamperedCharacteristicType
 } as const;
 
@@ -186,6 +291,15 @@ export const Characteristic = {
 export type ServiceType = abstract new (...args: never[]) => object;
 export type CharacteristicType = abstract new (...args: never[]) => object;
 
+// The props object production passes to Characteristic.setProps - the security-system owner narrows SecuritySystemTargetState's validValues this way. validValues is the
+// only field the plugin sets and the only one a test asserts; the open index signature mirrors HAP's far wider PartialAllowingNull<CharacteristicProps> surface so any
+// other prop production might set still type-checks at the call site. A named interface (not an inline intersection) keeps the field and the setProps parameter one
+// source and reads cleanly under the house no-property-access-from-index-signature rule, where the explicitly-declared validValues stays dot-accessible.
+export interface TestCharacteristicProps extends Record<string, unknown> {
+
+  validValues?: number[];
+}
+
 // One characteristic backing instance, owned by a TestService. Holds the last value written, plus the optional onGet / onSet handlers production code installs.
 // triggerGet / triggerSet are the test-side knobs that exercise the bound handlers without going through a real HAP request path.
 export class TestCharacteristic {
@@ -194,6 +308,9 @@ export class TestCharacteristic {
   // The event-notification log, mirroring HAP's sendEventNotification semantics: an event is a transient occurrence pushed to subscribers (the doorbell ring's
   // SINGLE_PRESS), recorded in order here, and it deliberately never changes the characteristic's cached value.
   public readonly events: unknown[] = [];
+  // The last props object production set via setProps, captured so a test can assert the security-system owner's updateDevice narrowed the target state's validValues.
+  // Undefined until production calls setProps; a silent no-op double would make the arm-states reconcile net vacuous.
+  public props: TestCharacteristicProps | undefined = undefined;
   private currentValue: unknown = null;
   private getHandler: (() => unknown) | undefined = undefined;
   private setHandler: ((value: unknown) => void | Promise<void>) | undefined = undefined;
@@ -213,6 +330,16 @@ export class TestCharacteristic {
   public updateValue(value: unknown): this {
 
     this.currentValue = value;
+
+    return this;
+  }
+
+  // Record the props production set on this characteristic, mirroring HAP's Characteristic.setProps, which returns the characteristic so production chains it off
+  // getCharacteristic (the security-system owner's updateDevice narrows SecuritySystemTargetState's validValues this way). The double captures the last props object so
+  // a test can assert the exact validValues array landed; the recordable-double discipline (capture-then-return-this) mirrors onSet / updateValue.
+  public setProps(props: TestCharacteristicProps): this {
+
+    this.props = props;
 
     return this;
   }
@@ -343,6 +470,29 @@ export class TestService {
     return this;
   }
 
+  // Mirror HAP's Service.setCharacteristic(type, value), which routes to Characteristic.setValue and therefore FIRES the bound onSet handler - the path the
+  // production MQTT subscribeSet handlers use to drive a device command through HomeKit's own set machinery. This is deliberately distinct from
+  // updateCharacteristic above, which is a status push (updateValue) that does NOT run the handler. The handler is fired and not awaited, mirroring HAP's
+  // synchronous, fire-and-forget setCharacteristic; a rejection is swallowed because HAP does not surface the set-handler's failure to the setCharacteristic caller
+  // (the device handlers route through runDeviceCommand and resolve rather than throw, so this catch is the faithful-and-robust belt, not a masked error). A test
+  // settles past one tick to let the handler run, then asserts the effect; triggerSet caches the value after the handler resolves, so the read cache stays correct.
+  public setCharacteristic(charType: CharacteristicType, value: unknown): this {
+
+    void this.getCharacteristic(charType).triggerSet(value).catch((): void => { /* HAP does not surface the set-handler's rejection to the caller. */ });
+
+    return this;
+  }
+
+  // Declare an optional characteristic on this service, mirroring HAP's Service.addOptionalCharacteristic. The camera's configureAmbientLightSensor acquire initializer
+  // takes this path directly (it permits StatusActive on the LightSensor before binding its onGet), a seam no other construction path reaches - the real acquireService's
+  // own addOptionalCharacteristic calls for ConfiguredName / Name stay gated off the markers by the degenerate name-set predicates (see the class doc). HAP lazily
+  // materializes a permitted characteristic on first access, so the double materializes it now through getCharacteristic, keeping the later getCharacteristic / onGet
+  // bind against the SAME instance and never throwing on the direct call.
+  public addOptionalCharacteristic(charType: CharacteristicType): void {
+
+    this.getCharacteristic(charType);
+  }
+
   // Report whether the characteristic of the given kind has already been created on this service. Mirrors HAP's Service.testCharacteristic, which the production
   // reachability fan-out (ProtectDevice.refreshReachability) calls to decide whether a service carries StatusActive before writing it. Unlike getCharacteristic, this
   // never lazily creates the characteristic - it is a pure predicate over what has already been added.
@@ -385,6 +535,21 @@ class AccessoryInformationServiceType extends TestService {
     super(AccessoryInformationServiceType, displayName, subtype);
 
     this.getCharacteristic(NameCharacteristicType);
+  }
+}
+
+// The battery kind. Added for the sensor-family real-construction net: ProtectSensor.configureBatteryService unconditionally acquires a Battery service and
+// updateBatteryStatus writes its BatteryLevel / StatusLowBattery, so the kind must exist as a distinct key. Seeds its primary BatteryLevel characteristic.
+class BatteryServiceType extends TestService {
+
+  public static readonly UUID = "Battery";
+  public readonly hapKind = "Battery" as const;
+
+  public constructor(displayName = "", subtype?: string) {
+
+    super(BatteryServiceType, displayName, subtype);
+
+    this.getCharacteristic(BatteryLevelCharacteristicType);
   }
 }
 
@@ -434,6 +599,51 @@ class DoorbellServiceType extends TestService {
   }
 }
 
+// The humidity-sensor kind. Added for the sensor-family real-construction net: ProtectSensor.configureHumiditySensor acquires a HumiditySensor service when humidity is
+// enabled, binds onGet, and pushes CurrentRelativeHumidity, so the kind must exist as a distinct key. Seeds its primary CurrentRelativeHumidity characteristic.
+class HumiditySensorServiceType extends TestService {
+
+  public static readonly UUID = "HumiditySensor";
+  public readonly hapKind = "HumiditySensor" as const;
+
+  public constructor(displayName = "", subtype?: string) {
+
+    super(HumiditySensorServiceType, displayName, subtype);
+
+    this.getCharacteristic(CurrentRelativeHumidityCharacteristicType);
+  }
+}
+
+// The leak-sensor kind. Added for the sensor-family real-construction net: ProtectSensor.configureLeakSensor acquires LeakSensor services (internal / external subtypes)
+// in the default leak mode, binds onGet, and pushes LeakDetected, so the kind must exist as a distinct key. Seeds its primary LeakDetected characteristic.
+class LeakSensorServiceType extends TestService {
+
+  public static readonly UUID = "LeakSensor";
+  public readonly hapKind = "LeakSensor" as const;
+
+  public constructor(displayName = "", subtype?: string) {
+
+    super(LeakSensorServiceType, displayName, subtype);
+
+    this.getCharacteristic(LeakDetectedCharacteristicType);
+  }
+}
+
+// The light-sensor kind. Added for the sensor-family real-construction net: ProtectSensor.configureAmbientLightSensor acquires a LightSensor service when ambient light
+// is enabled, binds onGet, and pushes CurrentAmbientLightLevel, so the kind must exist as a distinct key. Seeds its primary CurrentAmbientLightLevel characteristic.
+class LightSensorServiceType extends TestService {
+
+  public static readonly UUID = "LightSensor";
+  public readonly hapKind = "LightSensor" as const;
+
+  public constructor(displayName = "", subtype?: string) {
+
+    super(LightSensorServiceType, displayName, subtype);
+
+    this.getCharacteristic(CurrentAmbientLightLevelCharacteristicType);
+  }
+}
+
 // The lightbulb kind. Added for the camera-construction harness: configureNightVisionDimmer validates a Lightbulb service by key (a no-op at defaults), so the
 // kind must exist as a distinct key.
 class LightbulbServiceType extends TestService {
@@ -477,9 +687,10 @@ class MotionSensorServiceType extends TestService {
   }
 }
 
-// The occupancy sensor kind. Added for the reachability fan-out tests: an accessory carrying both a MotionSensor and an OccupancySensor exercises refreshReachability
-// writing StatusActive across every service that declares it. Its HAP-required OccupancyDetected characteristic is verified unreached by the construction harness,
-// so it seeds the generic Name stand-in rather than growing the Characteristic namespace speculatively.
+// The occupancy sensor kind. Originally added for the reachability fan-out tests (an accessory carrying both a MotionSensor and an OccupancySensor exercises
+// refreshReachability writing StatusActive across every service that declares it), where its HAP-required OccupancyDetected characteristic was verified unreached, so it
+// seeded the generic Name stand-in. device-motion's base-capability net is the first to construct an occupancy sensor through configureOccupancySensor (which initializes
+// OccupancyDetected to false), so the seed now upgrades to its kind-true OccupancyDetected characteristic, exactly as the marker doc comment describes.
 class OccupancySensorServiceType extends TestService {
 
   public static readonly UUID = "OccupancySensor";
@@ -489,7 +700,24 @@ class OccupancySensorServiceType extends TestService {
 
     super(OccupancySensorServiceType, displayName, subtype);
 
-    this.getCharacteristic(NameCharacteristicType);
+    this.getCharacteristic(OccupancyDetectedCharacteristicType);
+  }
+}
+
+// The security-system kind. Added for the controller-owner net: ProtectSecuritySystem.configureSecuritySystem acquires a SecuritySystem service (else construction
+// throws at acquireService), reads/writes its SecuritySystemCurrentState / SecuritySystemTargetState, and updateDevice sets the target's validValues, so the kind must
+// exist as a distinct key. Seeds its primary SecuritySystemCurrentState characteristic so the real acquireService recovers the Characteristic constructor from the new
+// service's first characteristic, the Battery / sensor precedent.
+class SecuritySystemServiceType extends TestService {
+
+  public static readonly UUID = "SecuritySystem";
+  public readonly hapKind = "SecuritySystem" as const;
+
+  public constructor(displayName = "", subtype?: string) {
+
+    super(SecuritySystemServiceType, displayName, subtype);
+
+    this.getCharacteristic(SecuritySystemCurrentStateCharacteristicType);
   }
 }
 
@@ -506,19 +734,40 @@ class SwitchServiceType extends TestService {
   }
 }
 
+// The temperature-sensor kind. Added for the sensor-family real-construction net: ProtectSensor.configureTemperatureSensor acquires a TemperatureSensor service when
+// temperature is enabled, binds onGet, and pushes CurrentTemperature, so the kind must exist as a distinct key. Seeds its primary CurrentTemperature characteristic.
+class TemperatureSensorServiceType extends TestService {
+
+  public static readonly UUID = "TemperatureSensor";
+  public readonly hapKind = "TemperatureSensor" as const;
+
+  public constructor(displayName = "", subtype?: string) {
+
+    super(TemperatureSensorServiceType, displayName, subtype);
+
+    this.getCharacteristic(CurrentTemperatureCharacteristicType);
+  }
+}
+
 // The HAP Service namespace as the test-double exposes it. Add new kinds here when a test reaches for one the production code touches. Alphabetical, per the
 // house style for object property order.
 export const Service = {
 
   AccessoryInformation: AccessoryInformationServiceType,
+  Battery: BatteryServiceType,
   CameraOperatingMode: CameraOperatingModeServiceType,
   ContactSensor: ContactSensorServiceType,
   Doorbell: DoorbellServiceType,
+  HumiditySensor: HumiditySensorServiceType,
+  LeakSensor: LeakSensorServiceType,
+  LightSensor: LightSensorServiceType,
   Lightbulb: LightbulbServiceType,
   LockMechanism: LockMechanismServiceType,
   MotionSensor: MotionSensorServiceType,
   OccupancySensor: OccupancySensorServiceType,
-  Switch: SwitchServiceType
+  SecuritySystem: SecuritySystemServiceType,
+  Switch: SwitchServiceType,
+  TemperatureSensor: TemperatureSensorServiceType
 } as const;
 
 /* One accessory. Carries an AccessoryInformation service from construction (every HomeKit accessory has one); subsequent addService calls append additional
@@ -822,6 +1071,61 @@ export class TestStateStore {
     this.pushCameraPatch(id, { featureFlags: { ...record.featureFlags, ...flags } });
   }
 
+  // The light-slice mirror of pushCameraPatch: replace only the targeted light record, spread-sharing its untouched fields, while every other slice of the state keeps
+  // its reference - so exactly the observers watching light-derived selectors (the light's four narrow reactions) wake. The plain per-slice form, because Step 0's
+  // lesson is that a key-generic push cannot correlate a slice's record type cast-free against the ReadonlyMap slices, so each slice carries its own typed helper.
+  public pushLightPatch(id: string, patch: Partial<ProtectLightConfig>): void {
+
+    const previous = this.state;
+    const record = previous.lights.get(id);
+
+    if(!record) {
+
+      throw new Error("The light record to patch is not present in the store double: " + id + ".");
+    }
+
+    const lights = new Map(previous.lights);
+
+    lights.set(id, { ...record, ...patch });
+    this.push({ ...previous, lights });
+  }
+
+  // Push a partial lightDeviceSettings patch, composing it over the targeted light record's LIVE lightDeviceSettings so nothing else on the nested object moves. The
+  // light's ledLevel and isIndicatorEnabled selectors both read into lightDeviceSettings, so pushLightPatch's shallow merge would otherwise REPLACE the whole nested
+  // object and spuriously wake the sibling selector (or corrupt its state); composing here lets a test move exactly one nested field, mirroring pushCameraFeatureFlags.
+  public pushLightDeviceSettings(id: string, settings: Partial<ProtectLightConfig["lightDeviceSettings"]>): void {
+
+    const record = this.state.lights.get(id);
+
+    if(!record) {
+
+      throw new Error("The light record to patch is not present in the store double: " + id + ".");
+    }
+
+    this.pushLightPatch(id, { lightDeviceSettings: { ...record.lightDeviceSettings, ...settings } });
+  }
+
+  // The sensor-slice mirror of pushCameraPatch: replace only the targeted sensor record, spread-sharing its untouched fields, while every other slice keeps its
+  // reference - so exactly the observers watching sensor-derived selectors wake. Lands here as the device-info concern net's first consumer (the base device.name /
+  // device.firmwareVersion observers read the sensor record through selectSensor, so a name push wakes the name observer and a firmware push wakes the firmware observer)
+  // and is reused by the later sensor family. The plain per-slice form, because Step 0's lesson is that a key-generic push cannot correlate a slice's record type
+  // cast-free against the ReadonlyMap slices, so each slice carries its own typed helper.
+  public pushSensorPatch(id: string, patch: Partial<ProtectSensorConfig>): void {
+
+    const previous = this.state;
+    const record = previous.sensors.get(id);
+
+    if(!record) {
+
+      throw new Error("The sensor record to patch is not present in the store double: " + id + ".");
+    }
+
+    const sensors = new Map(previous.sensors);
+
+    sensors.set(id, { ...record, ...patch });
+    this.push({ ...previous, sensors });
+  }
+
   // The chime-slice mirror of pushCameraPatch: replace only the targeted chime record, spread-sharing its untouched fields, while every other slice keeps its
   // reference - so exactly the observers watching chime-derived selectors (the doorbell's chime-volume reduction) wake.
   public pushChimePatch(id: string, patch: Partial<ProtectChimeConfig>): void {
@@ -838,6 +1142,62 @@ export class TestStateStore {
 
     chimes.set(id, { ...record, ...patch });
     this.push({ ...previous, chimes });
+  }
+
+  // The viewer-slice mirror of pushChimePatch: replace only the targeted viewer record, spread-sharing its untouched fields, while every other slice keeps its
+  // reference - so exactly the observers watching viewer-derived selectors (the viewer's active-liveview reflection) wake. This is how the suite drives the
+  // observer-driven active-liveview reflection, since the projection double's update records rather than folding.
+  public pushViewerPatch(id: string, patch: Partial<ProtectViewerConfig>): void {
+
+    const previous = this.state;
+    const record = previous.viewers.get(id);
+
+    if(!record) {
+
+      throw new Error("The viewer record to patch is not present in the store double: " + id + ".");
+    }
+
+    const viewers = new Map(previous.viewers);
+
+    viewers.set(id, { ...record, ...patch });
+    this.push({ ...previous, viewers });
+  }
+
+  // The nvr-slice mirror of the per-slice push helpers, adapted for the one slice that is a SINGLE nullable record rather than a Map: replace the nvr record with the
+  // patch spread over its untouched fields, while every other slice keeps its reference - so exactly the observers watching nvr-derived selectors (the nvr-systeminfo
+  // owner's narrow nvr.systemInfo reaction) wake. When a test moves systemInfo it passes a FRESH systemInfo object, so selectNvr(state)?.systemInfo changes by reference
+  // AND - because client.nvr.config reads through this same slice - nvr.ufp.systemInfo becomes that same new object, so the observer wakes and its re-read returns the
+  // new value. The plain per-slice form, not a key-generic, for the same reason the Map push helpers are (the Step 0 lesson). Guards the slice non-null because the
+  // patch composes over the live record.
+  public pushNvrPatch(patch: Partial<ProtectNvrConfig>): void {
+
+    const previous = this.state;
+
+    if(!previous.nvr) {
+
+      throw new Error("The nvr record to patch is not present in the store double.");
+    }
+
+    this.push({ ...previous, nvr: { ...previous.nvr, ...patch } });
+  }
+
+  // The controller-wide ringtone-collection push: rebuild only the ringtones slice from the supplied array, sharing every other slice's reference - so exactly the
+  // nvr.ringtones collection observer (the chime's ringtone-switch reconcile) wakes. A plain per-slice function, not a key-generic, because a key-generic cannot
+  // correlate a slice's record type cast-free against the ReadonlyMap slices (the Step 0 lesson).
+  public pushRingtones(ringtones: ProtectRingtoneConfig[]): void {
+
+    const next = new Map(ringtones.map((ringtone): [string, ProtectRingtoneConfig] => [ ringtone.id, ringtone ]));
+
+    this.push({ ...this.state, ringtones: next });
+  }
+
+  // The controller-wide liveview-collection push: rebuild only the liveviews slice from the supplied array, sharing every other slice's reference - so exactly the
+  // nvr.liveviews collection observer (the viewer's switch-set reconcile) wakes. A plain per-slice function, for the same reason pushRingtones is.
+  public pushLiveviews(liveviews: ProtectNvrLiveviewConfig[]): void {
+
+    const next = new Map(liveviews.map((liveview): [string, ProtectNvrLiveviewConfig] => [ liveview.id, liveview ]));
+
+    this.push({ ...this.state, liveviews: next });
   }
 
   // Remove a camera record outright, mirroring the reducer's device-removed reduction: the cameras map is rebuilt without the record while every other slice keeps
@@ -883,14 +1243,20 @@ export class TestStateStore {
 }
 
 /**
- * Build a complete ProtectState for the store double, populated with the supplied camera and chime records and empty collections everywhere else. Mirrors the real
- * reduced state's shape (unifi-protect's reducer), so the real memoized selectors read it natively.
+ * Build a complete ProtectState for the store double, populated with whichever device-slice records the caller supplies and empty collections everywhere else.
+ * Mirrors the real reduced state's shape (unifi-protect's reducer), so the real memoized selectors read it natively. Every slice keys its records by their own id,
+ * exactly as the reducer does; the lone nvr slice is a single nullable record rather than a map. Omitting any option yields the empty starting value for that slice
+ * (an empty Map, or null for nvr), so a bare makeProtectState() is the empty-everywhere baseline the observe and selector tests seed.
  *
- * @param options - cameras: the camera config records to key into the cameras map, each keyed by its own id; chimes: the chime config records, likewise.
+ * @param options - cameras / chimes / lights / liveviews / ringtones / sensors / viewers: the config records to key into the matching map slice, each keyed by its
+ *                  own id; nvr: the single controller config record set on the nvr slice (defaults to null). The users slice is intentionally not exposed: no test
+ *                  seeds it, so it stays the empty Map the reducer starts from.
  *
  * @returns a full ProtectState ready to seed a TestStateStore.
  */
-export function makeProtectState(options: { cameras?: ProtectCameraConfig[]; chimes?: ProtectChimeConfig[] } = {}): ProtectState {
+export function makeProtectState(options: { cameras?: ProtectCameraConfig[]; chimes?: ProtectChimeConfig[]; lights?: ProtectLightConfig[];
+  liveviews?: ProtectNvrLiveviewConfig[]; nvr?: Nullable<ProtectNvrConfig>; ringtones?: ProtectRingtoneConfig[]; sensors?: ProtectSensorConfig[];
+  viewers?: ProtectViewerConfig[]; } = {}): ProtectState {
 
   return {
 
@@ -898,13 +1264,13 @@ export function makeProtectState(options: { cameras?: ProtectCameraConfig[]; chi
     bootstrapId: 1,
     cameras: new Map((options.cameras ?? []).map((camera): [string, ProtectCameraConfig] => [ camera.id, camera ])),
     chimes: new Map((options.chimes ?? []).map((chime): [string, ProtectChimeConfig] => [ chime.id, chime ])),
-    lights: new Map(),
-    liveviews: new Map(),
-    nvr: null,
-    ringtones: new Map(),
-    sensors: new Map(),
+    lights: new Map((options.lights ?? []).map((light): [string, ProtectLightConfig] => [ light.id, light ])),
+    liveviews: new Map((options.liveviews ?? []).map((liveview): [string, ProtectNvrLiveviewConfig] => [ liveview.id, liveview ])),
+    nvr: options.nvr ?? null,
+    ringtones: new Map((options.ringtones ?? []).map((ringtone): [string, ProtectRingtoneConfig] => [ ringtone.id, ringtone ])),
+    sensors: new Map((options.sensors ?? []).map((sensor): [string, ProtectSensorConfig] => [ sensor.id, sensor ])),
     users: new Map(),
-    viewers: new Map()
+    viewers: new Map((options.viewers ?? []).map((viewer): [string, ProtectViewerConfig] => [ viewer.id, viewer ]))
   };
 }
 
@@ -996,23 +1362,32 @@ export function makeCameraConfig(options: { channels: ProtectCameraChannelConfig
 
 /**
  * Build a minimal-but-real chime config record, mirroring makeCameraConfig's discipline: the fields the doorbell's chime-volume derivation reads (cameraIds and the
- * per-doorbell ringSettings entries) are populated for real, the rest of the wire type sits behind the single documented cast.
+ * per-doorbell ringSettings entries) are populated for real, plus the construction read-set the real ProtectChime now needs - displayName / firmwareVersion / marketName
+ * are what setInfo reads (the model derivation prefers marketName, the firmware-revision write guards on firmwareVersion's presence), so they join the record now that
+ * the chime is constructed for real rather than only modeled. type / hardwareRevision are omitted exactly as makeLightConfig omits them: marketName wins the model-name
+ * derivation and the hardwareRevision guard short-circuits on absence, so the construction path stays type-honest without them. The rest of the wire type sits behind the
+ * single documented cast.
  *
  * @param options - cameraIds: the doorbells this chime serves; id / mac / name: optional identity overrides; ringSettings: the per-doorbell ring entries (volume is
- *                  the field the derivation reads).
+ *                  the field the derivation reads, repeatTimes / ringtoneId the play join reads).
  *
- * @returns a chime config record the chime-volume paths read as real.
+ * @returns a chime config record the chime-volume and construction paths read as real.
  */
 export function makeChimeConfig(options: { cameraIds?: string[]; id?: string; mac?: string; name?: string;
   ringSettings?: { cameraId: string; repeatTimes?: number; ringtoneId?: string; volume: number }[]; } = {}): ProtectChimeConfig {
 
+  const name = options.name ?? "Test Chime";
+
   const populated = {
 
     cameraIds: options.cameraIds ?? [],
+    displayName: name,
+    firmwareVersion: "5.0.0",
     id: options.id ?? "test-chime-1",
     mac: options.mac ?? "74ACB9000101",
+    marketName: "Test Chime Model",
     modelKey: "chime",
-    name: options.name ?? "Test Chime",
+    name: name,
     ringSettings: (options.ringSettings ?? []).map((ring) => ({
 
       cameraId: ring.cameraId,
@@ -1027,17 +1402,259 @@ export function makeChimeConfig(options: { cameraIds?: string[]; id?: string; ma
   return populated as unknown as ProtectChimeConfig;
 }
 
+/**
+ * Build a minimal-but-real light config record, mirroring makeCameraConfig's single-confined-cast discipline: every field the ProtectLight construction and observe
+ * paths actually read is populated for real (the power state, the nested lightDeviceSettings the brightness and status-indicator selectors read, the motion timestamp,
+ * and the identity / connection fields), and the record is cast once to the full wire type. The ProtectLightConfig wire type carries many fields the light's paths
+ * never touch, so we populate the verified read set and confine the lone cast here. type / hardwareRevision are omitted exactly as makeCameraConfig omits them: the
+ * marketName wins the model-name derivation and the hardwareRevision guard short-circuits on absence, so the construction path stays type-honest without them.
+ *
+ * @param options - id: optional identity override (defaults to "test-light-1"); isIndicatorEnabled: the nested status-indicator setting the isIndicatorEnabled selector
+ *                  reads (defaults to false); isLightOn: the power state the Lightbulb On characteristic mirrors (defaults to false); lastMotion: the motion timestamp
+ *                  the lastMotion observer gates on (defaults to null); ledLevel: the nested Protect 1-6 LED level the Brightness selector reads (defaults to 1, which
+ *                  maps to 0%); mac: optional MAC override (defaults to a light-distinct value); name: optional display name (defaults to "Test Light").
+ *
+ * @returns a light config record the construction and observe paths read as real.
+ */
+export function makeLightConfig(options: { id?: string; isIndicatorEnabled?: boolean; isLightOn?: boolean; lastMotion?: Nullable<number>; ledLevel?: number;
+  mac?: string; name?: string; } = {}): ProtectLightConfig {
+
+  const name = options.name ?? "Test Light";
+
+  const populated = {
+
+    displayName: name,
+    firmwareVersion: "5.0.0",
+    id: options.id ?? "test-light-1",
+    isLightOn: options.isLightOn ?? false,
+    lastMotion: options.lastMotion ?? null,
+    lightDeviceSettings: { isIndicatorEnabled: options.isIndicatorEnabled ?? false, ledLevel: options.ledLevel ?? 1 },
+    mac: options.mac ?? "74ACB9000201",
+    marketName: "Test Light Model",
+    modelKey: "light",
+    name: name,
+    state: "CONNECTED"
+  };
+
+  return populated as unknown as ProtectLightConfig;
+}
+
+/**
+ * Build a minimal-but-real viewer config record, mirroring makeLightConfig's single-confined-cast discipline: every field the ProtectViewer construction and observe
+ * paths read is populated for real (the active liveview the switch state mirrors, plus the identity / connection / info fields setInfo reads), and the record is cast
+ * once to the full wire type. The ProtectViewerConfig wire type carries many fields the viewer's paths never touch (the feature-flag bag, the connection-state objects),
+ * so we populate the verified read set and confine the lone cast here. type / hardwareRevision are omitted exactly as makeLightConfig omits them.
+ *
+ * @param options - id: optional identity override (defaults to "test-viewer-1"); liveview: the active liveview id the switch-on reflection reads (defaults to null, no
+ *                  active liveview); mac: optional MAC override (defaults to a viewer-distinct value); name: optional display name (defaults to "Test Viewer").
+ *
+ * @returns a viewer config record the construction and observe paths read as real.
+ */
+export function makeViewerConfig(options: { id?: string; liveview?: Nullable<string>; mac?: string; name?: string } = {}): ProtectViewerConfig {
+
+  const name = options.name ?? "Test Viewer";
+
+  const populated = {
+
+    displayName: name,
+    firmwareVersion: "5.0.0",
+    id: options.id ?? "test-viewer-1",
+    liveview: options.liveview ?? null,
+    mac: options.mac ?? "74ACB9000301",
+    marketName: "Test Viewer Model",
+    modelKey: "viewer",
+    name: name,
+    state: "CONNECTED"
+  };
+
+  return populated as unknown as ProtectViewerConfig;
+}
+
+/**
+ * Build a minimal-but-real sensor config record, mirroring makeCameraConfig's wide-read-set discipline: every field the ProtectSensor construction, the base
+ * device-capability paths (motion / occupancy / status-LED), and the later sensor-family configure paths actually read is populated for real, and the record is cast
+ * once to the full wire type. A bare makeSensorConfig() is an all-quiet sensor - every *Settings.isEnabled is false, the LED indicator is off, the mount type is "none",
+ * a battery is present and healthy, no air-quality stats are present - and isMotionDetected defaults to TRUE so the Motion.* feature options satisfy their hasProperty
+ * applicability gate (which makes the option visible to FeatureOptions; it is NOT the runtime service gate - that is the Enable.Motion.* userOptions string, since all
+ * three Motion options default to false). This is the ONE carrier the base-capability concern tests ride on AND the sensor-family fixture, so it is the single source for
+ * the sensor shape - there is no second "base config" builder. type is omitted exactly as makeLightConfig omits it: marketName wins the model-name derivation, so the
+ * construction path stays type-honest without it. hardwareRevision is OPT-IN with no default (stays absent), mirroring makeNvrConfig: a bare call omits the key so
+ * ProtectBase.setInfo's HardwareRevision length-guard short-circuits, while passing a value lands it so the device-info HardwareRevision write nets non-vacuously. The
+ * air-quality stats sub-objects are ProtectAirQualityMetricInterface ({ status, value }) shapes built only for the metrics a test supplies; the lone confined cast to
+ * ProtectSensorConfig carries the whole record's type honesty (the ProtectThresholdSettings and ProtectAirQualityMetricInterface shapes are populated faithfully behind
+ * it rather than imported separately).
+ *
+ * @param options - alarmEnabled: the alarm settings toggle (defaults false); alarmTriggeredAt: the alarm-trip timestamp (defaults null); ambientLight: the ambient
+ *                  light reading folded into stats.light.value (omitted, no light stat); batteryLow / batteryPercentage: the battery status (default false / 100);
+ *                  externalLeakDetectedAt: the external-leak timestamp the leak path index-reads (defaults null); hardwareRevision: the hardware revision the device-info
+ *                  HardwareRevision write reads (OPT-IN, omitted by default so setInfo's length-guard short-circuits); humidity: the humidity reading folded into
+ *                  stats.humidity.value (omitted, no humidity stat); humidityEnabled: the humidity settings toggle (defaults false); id: identity override (defaults
+ *                  "test-sensor-1"); isConnected: the connection flag (defaults true); isMotionDetected: the Motion.* applicability property (defaults true); isOpened:
+ *                  the contact state (defaults null); leakDetectedAt: the internal-leak timestamp (defaults null); leakExternalEnabled / leakInternalEnabled: the leak
+ *                  settings toggles (default false); ledEnabled: the status-indicator LED toggle (defaults false); lightEnabled: the light settings toggle (defaults
+ *                  false); mac: identity override (defaults a sensor-distinct value); motionDetectedAt: the motion timestamp the sensor motion observer gates on
+ *                  (defaults 0); motionEnabled: the motion settings toggle (defaults false); mountType: the sensor mount type (defaults "none"); name: display name
+ *                  (defaults "Test Sensor"); tamperingDetectedAt: the tamper timestamp (defaults null); temperature: the temperature reading folded into
+ *                  stats.temperature.value (omitted, no temperature stat); temperatureEnabled: the temperature settings toggle (defaults false).
+ *
+ * @returns a sensor config record the construction, base-capability, and sensor-family paths read as real.
+ */
+export function makeSensorConfig(options: { alarmEnabled?: boolean; alarmTriggeredAt?: Nullable<number>; ambientLight?: number; batteryLow?: boolean;
+  batteryPercentage?: Nullable<number>; externalLeakDetectedAt?: Nullable<number>; hardwareRevision?: string; humidity?: number; humidityEnabled?: boolean; id?: string;
+  isConnected?: boolean; isMotionDetected?: boolean; isOpened?: Nullable<boolean>; leakDetectedAt?: Nullable<number>; leakExternalEnabled?: boolean;
+  leakInternalEnabled?: boolean; ledEnabled?: boolean; lightEnabled?: boolean; mac?: string; motionDetectedAt?: number; motionEnabled?: boolean; mountType?: string;
+  name?: string; tamperingDetectedAt?: Nullable<number>; temperature?: number; temperatureEnabled?: boolean; } = {}): ProtectSensorConfig {
+
+  const name = options.name ?? "Test Sensor";
+
+  // A ProtectThresholdSettings shape ({ highThreshold, isEnabled, lowThreshold, margin }) keyed only by the isEnabled toggle a test cares about; the threshold numbers
+  // are quiet, valid defaults the construction path never inspects.
+  const thresholdSettings = (isEnabled: boolean): { highThreshold: number; isEnabled: boolean; lowThreshold: number; margin: number } => ({ highThreshold: 0, isEnabled,
+    lowThreshold: 0, margin: 0 });
+
+  // Build the air-quality stats record only with the metrics a test supplies; each present metric is a ProtectAirQualityMetricInterface ({ status, value }) shape, so the
+  // status string is carried alongside the value rather than overloading a bare { value }. An all-quiet sensor supplies no metrics, so stats is absent entirely.
+  const stats: { humidity?: { status: string; value: number }; light?: { status: string; value: number }; temperature?: { status: string; value: number } } = {};
+
+  if(options.humidity !== undefined) {
+
+    stats.humidity = { status: "", value: options.humidity };
+  }
+
+  if(options.ambientLight !== undefined) {
+
+    stats.light = { status: "", value: options.ambientLight };
+  }
+
+  if(options.temperature !== undefined) {
+
+    stats.temperature = { status: "", value: options.temperature };
+  }
+
+  const populated = {
+
+    alarmSettings: { isEnabled: options.alarmEnabled ?? false },
+    alarmTriggeredAt: options.alarmTriggeredAt ?? null,
+    batteryStatus: { isLow: options.batteryLow ?? false, percentage: options.batteryPercentage ?? 100 },
+    displayName: name,
+    externalLeakDetectedAt: options.externalLeakDetectedAt ?? null,
+    firmwareVersion: "5.0.0",
+    humiditySettings: thresholdSettings(options.humidityEnabled ?? false),
+    id: options.id ?? "test-sensor-1",
+    isConnected: options.isConnected ?? true,
+    isMotionDetected: options.isMotionDetected ?? true,
+    isOpened: options.isOpened ?? null,
+    leakDetectedAt: options.leakDetectedAt ?? null,
+    leakSettings: { isExternalEnabled: options.leakExternalEnabled ?? false, isInternalEnabled: options.leakInternalEnabled ?? false },
+    ledSettings: { isEnabled: options.ledEnabled ?? false },
+    lightSettings: thresholdSettings(options.lightEnabled ?? false),
+    mac: options.mac ?? "74ACB9000401",
+    marketName: "Test Sensor Model",
+    modelKey: "sensor",
+    motionDetectedAt: options.motionDetectedAt ?? 0,
+    motionSettings: { isEnabled: options.motionEnabled ?? false, sensitivity: 0 },
+    mountType: options.mountType ?? "none",
+    name: name,
+    state: "CONNECTED",
+    tamperingDetectedAt: options.tamperingDetectedAt ?? null,
+    temperatureSettings: thresholdSettings(options.temperatureEnabled ?? false),
+    ...(Object.keys(stats).length ? { stats } : {}),
+
+    // OPT-IN only, mirroring makeNvrConfig's hardwareRevision exactly: when the caller passes a value the device-info HardwareRevision write nets it on the record;
+    // otherwise the field stays absent so ProtectBase.setInfo's length-guard short-circuits, exactly as the all-quiet carrier did before this option existed. The
+    // conditional spread keeps the key absent rather than present-as-undefined, so an `in` check sees the pre-marker shape.
+    ...(options.hardwareRevision !== undefined ? { hardwareRevision: options.hardwareRevision } : {})
+  };
+
+  return populated as unknown as ProtectSensorConfig;
+}
+
+/**
+ * Build a minimal-but-real ringtone config record. The chime scopes its speaker switches to the ringtones whose nvrMac matches this controller's MAC, so nvrMac
+ * defaults to the makeNvrConfig MAC ("74ACB9FFFFFF"): any other default would fail the chime's tone.nvrMac === nvr.ufp.mac filter and create zero speaker switches,
+ * silently emptying the chime suite. The rest of the wire type sits behind the single documented cast.
+ *
+ * @param options - id: optional identity override (defaults to "test-ringtone-1"); name: optional display name (defaults to "Test Ringtone"); nvrMac: the controller
+ *                  MAC the chime filters on (defaults to the makeNvrConfig MAC so seeded ringtones survive the filter).
+ *
+ * @returns a ringtone config record the chime's ringtone-switch reconcile reads as real.
+ */
+export function makeRingtoneConfig(options: { id?: string; name?: string; nvrMac?: string } = {}): ProtectRingtoneConfig {
+
+  const populated = {
+
+    id: options.id ?? "test-ringtone-1",
+    isDefault: false,
+    modelKey: "ringtone",
+    name: options.name ?? "Test Ringtone",
+    nvrMac: options.nvrMac ?? "74ACB9FFFFFF",
+    size: 0
+  };
+
+  return populated as unknown as ProtectRingtoneConfig;
+}
+
+/**
+ * Build a minimal-but-real liveview config record. The viewer reads a liveview's id (to reconcile its switch set) and name (the switch display name, the MQTT label),
+ * so those are populated for real; the rest of the wire type (layout, ownership flags) sits behind the single documented cast. slots defaults to empty (the viewer never
+ * reads it), but the controller-owner net's motion fanouts flatten slots[].cameras (the security-system's setSecurityState and the liveviews' getLiveviewCameras), so a
+ * cameras option populates a single slot with those member ids - a no-cameras call preserves the empty-slots default. DISTINCT-ID DISCIPLINE: makeProtectState keys the
+ * liveviews map by id and the id default is the constant "test-liveview-1", so any test seeding MULTIPLE liveviews must pass a distinct id per record or they collapse to
+ * one map entry, silently vacating the multi-state setProps reconcile and the per-name fanout lookups (the viewer.test.ts precedent passes distinct ids).
+ *
+ * @param options - cameras: optional member-camera ids populated into a single slot (defaults to no slot, preserving slots: []); id: optional identity override (defaults
+ *                  to "test-liveview-1"); name: optional display name (defaults to "Test Liveview").
+ *
+ * @returns a liveview config record the viewer's switch reconcile and the controller-owner fanouts read as real.
+ */
+export function makeLiveviewConfig(options: { cameras?: string[]; id?: string; name?: string } = {}): ProtectNvrLiveviewConfig {
+
+  const populated = {
+
+    id: options.id ?? "test-liveview-1",
+    isDefault: false,
+    isGlobal: false,
+    layout: 0,
+    modelKey: "liveview",
+    name: options.name ?? "Test Liveview",
+    owner: "test-owner",
+    slots: options.cameras ? [{ cameras: options.cameras, cycleInterval: 0, cycleMode: "motion" }] : []
+  };
+
+  return populated as unknown as ProtectNvrLiveviewConfig;
+}
+
 /* The Camera projection double, mirroring unifi-protect's DeviceProjection contract for the members the construction path reads: a stable id, the "camera"
  * modelKey discriminant, a READ-THROUGH config getter into the store double's CURRENT state (never a held snapshot - a push must change what this.ufp returns, or
  * an end-to-end push test proves nothing), and the derived name / isOnline getters using the projection's own definitions (name ?? displayName, and
- * state === "CONNECTED" per the library's isDeviceOnline). The projection METHODS (update, lux, livestream, talkback, snapshot, reboot) sit behind gates the
- * minimal construction scenario never opens and are deliberately omitted - a test that reaches one fails loudly on the missing member instead of silently
- * succeeding against a stub.
+ * state === "CONNECTED" per the library's isDeviceOnline). It now exposes the write-through update the camera's bound onSets dispatch (the night-vision dimmer's
+ * ispSettings write, the recording switch's recordingSettings write, the camera-routed status-LED's ledSettings write), RECORDING the payload and resolving by
+ * default with a settable updateRejection so a test drives the real runDeviceCommand failure path. It also exposes the two best-effort, runDeviceCommand-bypassing
+ * commands the camera issues on a cadence - the ambient-light lux query (a reading the configure path reads at construction and on a 60-second poll) and the
+ * package-camera flashlight pulse (the dark-guarded retry-and-heartbeat) - each RECORDING its calls and resolving by default with a settable rejection so a test
+ * drives the real sentinel-swallowing failure paths. The remaining METHODS (livestream, talkback, snapshot, reboot) sit behind gates the minimal construction
+ * scenario never opens and are deliberately omitted - a test that reaches one fails loudly on the missing member instead of silently succeeding against a stub.
  */
 export class TestCameraProjection {
 
   public readonly id: string;
   public readonly modelKey = "camera" as const;
+  // The recorded update payloads the camera's real onSet write-through commands dispatch, so a test asserts the exact payload (the ispSettings / recordingSettings /
+  // ledSettings the four bound handlers issue). The shape stays general because the camera issues three distinct payload shapes through this one member.
+  public readonly updateCalls: { payload: unknown }[] = [];
+  // The settable rejection: when set, the next update rejects with it, so a test drives the real runDeviceCommand failure branch (a plain Error or a
+  // ProtectAuthorizationError).
+  public updateRejection: Nullable<Error> = null;
+  // The ambient-light reading lux() resolves with - a benign positive default, only reached when featureFlags.hasLuxCheck opens configureAmbientLightSensor. A test sets
+  // it (zero for the floor sentinel, a positive value for the passthrough) before construction or before a poll. luxRejection drives the throw -> -1 sentinel, and
+  // luxCalls is the proof the unreachable arm never issues the doomed query (the configure path short-circuits to -1 without calling lux at all when offline).
+  public luxReading = 100;
+  public luxRejection: Nullable<Error> = null;
+  public readonly luxCalls: { opts?: { signal?: AbortSignal } }[] = [];
+  // The recorded flashlight pulses turnOnFlashlight() resolves into, so a test asserts the retry budget by count (one on a success or a heartbeat re-pulse, three on the
+  // exhausted failure). flashlightRejection drives the retry-exhaustion failure path, where the catch swallows the pulse to a reflected-off switch.
+  public flashlightRejection: Nullable<Error> = null;
+  public readonly flashlightCalls: { opts?: { signal?: AbortSignal } }[] = [];
   private readonly store: TestStateStore;
 
   public constructor(id: string, store: TestStateStore) {
@@ -1069,6 +1686,403 @@ export class TestCameraProjection {
   public get name(): string {
 
     return this.config.name ?? this.config.displayName;
+  }
+
+  // Record an update payload and resolve with this projection, or reject with the settable rejection so a test drives the failure path. It RECORDS ONLY - it does NOT
+  // fold the payload into the store, so every reflection stays inline-local (the dimmer Brightness snaps its own local level, the recording switch flips its siblings
+  // inline) or observer-driven (a test pushes the reflection through pushCameraPatch), keeping the command and the reflection independently asserted.
+  public async update(payload: unknown): Promise<this> {
+
+    this.updateCalls.push({ payload });
+
+    if(this.updateRejection) {
+
+      throw this.updateRejection;
+    }
+
+    return this;
+  }
+
+  // Record a lux query and resolve with the settable reading, or reject with the settable rejection so a test drives the catch -> -1 throw sentinel. It RECORDS the call
+  // (luxCalls) so a test proves the unreachable arm never queries, and returns the raw reading - the camera's getLux closure owns the 0 -> 0.0001 floor and the -1
+  // sentinel mapping, so this double stays a faithful library projection and does no sentinel logic of its own.
+  public async lux(opts?: { signal?: AbortSignal }): Promise<number> {
+
+    this.luxCalls.push({ opts });
+
+    if(this.luxRejection) {
+
+      throw this.luxRejection;
+    }
+
+    return this.luxReading;
+  }
+
+  // Record a flashlight pulse and resolve, or reject with the settable rejection so a test drives the retry-exhaustion failure path (the package camera's
+  // activateFlashlight retries three times, then swallows a persistent rejection to a reflected-off switch). RECORDS the call so a test asserts the retry budget.
+  public async turnOnFlashlight(opts?: { signal?: AbortSignal }): Promise<void> {
+
+    this.flashlightCalls.push({ opts });
+
+    if(this.flashlightRejection) {
+
+      throw this.flashlightRejection;
+    }
+  }
+}
+
+/* The Light projection double, the exact analog of TestCameraProjection for the light family: a stable id, the "light" modelKey discriminant, a READ-THROUGH config
+ * getter into the store double's CURRENT state (never a held snapshot - a push must change what this.ufp returns, or an end-to-end observe test proves nothing), and
+ * the derived name / isOnline getters using the projection's own definitions (name ?? displayName, and state === "CONNECTED" per the library's isDeviceOnline). It now
+ * exposes the write-through update the light's bound onSets dispatch (the lightOnSettings.isLedForceOn power write the On onSet issues, and the lightDeviceSettings
+ * .ledLevel brightness write the Brightness onSet issues), RECORDING the payload and resolving by default with a settable updateRejection so a test drives the real
+ * runDeviceCommand failure path. It mirrors TestCameraProjection: the read-through config getter PLUS the recording update member, the resolve-by-default idiom.
+ */
+export class TestLightProjection {
+
+  public readonly id: string;
+  public readonly modelKey = "light" as const;
+  // The recorded update payloads the light's real onSet write-through commands dispatch (the lightOnSettings.isLedForceOn power write and the lightDeviceSettings
+  // .ledLevel brightness write), so a test asserts the exact payload. The shape stays general because the light issues two distinct payload shapes through this member.
+  public readonly updateCalls: { payload: unknown }[] = [];
+  // The settable rejection: when set, the next update rejects with it, so a test drives the real runDeviceCommand failure branch (a plain Error or a
+  // ProtectAuthorizationError).
+  public updateRejection: Nullable<Error> = null;
+  private readonly store: TestStateStore;
+
+  public constructor(id: string, store: TestStateStore) {
+
+    this.id = id;
+    this.store = store;
+  }
+
+  // Read-through config into the store double's current state, mirroring the real projection's absent-record guard.
+  public get config(): Readonly<ProtectLightConfig> {
+
+    const config = this.store.snapshot().lights.get(this.id);
+
+    if(!config) {
+
+      throw new ReferenceError("The light record is not present in the store double: " + this.id + ".");
+    }
+
+    return config;
+  }
+
+  // Whether the device is currently connected, per the library's isDeviceOnline definition.
+  public get isOnline(): boolean {
+
+    return this.config.state === "CONNECTED";
+  }
+
+  // The device's display name - its user-assigned name when set, otherwise the controller's displayName, per the DeviceProjection convention.
+  public get name(): string {
+
+    return this.config.name ?? this.config.displayName;
+  }
+
+  // Record an update payload and resolve with this projection, or reject with the settable rejection so a test drives the failure path. It RECORDS ONLY - it does NOT
+  // fold the payload into the store, so the command (the captured updateCalls payload) and any reflection (the 50ms Brightness re-reflect, the publish) stay
+  // independently asserted, exactly as TestCameraProjection.update does.
+  public async update(payload: unknown): Promise<this> {
+
+    this.updateCalls.push({ payload });
+
+    if(this.updateRejection) {
+
+      throw this.updateRejection;
+    }
+
+    return this;
+  }
+}
+
+/* The Chime projection double, the chime-family analog of TestLightProjection: a stable id, the "chime" modelKey discriminant, a READ-THROUGH config getter into the
+ * store double's CURRENT state (never a held snapshot - a push must change what this.ufp returns, or an end-to-end observe test proves nothing), and the derived name /
+ * isOnline getters using the projection's own definitions. Unlike the read-only Light / Camera projections, the chime exposes a COMMAND surface: the real ProtectChime's
+ * playTone dispatches to playBuzzer / playSpeaker, so this double records every play call and resolves by default, with a settable playRejection so a test can drive the
+ * real runDeviceCommand failure (and, for a ProtectAuthorizationError, the admin-guidance) path. It also exposes the write-through update the doorbell's cross-device
+ * setChimeVolume drives through client.chimes (the per-doorbell ring-volume PATCH), RECORDING the payload and resolving by default with a settable updateRejection - kept
+ * DISTINCT from playRejection so the volume-write failure drive and the play failure drive are two independent levers - so a test drives the real runDeviceCommand
+ * failure path on the volume write.
+ */
+export class TestChimeProjection {
+
+  public readonly id: string;
+  public readonly modelKey = "chime" as const;
+  // The recorded play commands the real playTone dispatches into, so a test asserts the exact dispatch (buzzer vs speaker) and, for the speaker, the joined payload.
+  public readonly playBuzzerCalls: { opts?: { signal?: AbortSignal } }[] = [];
+  public readonly playSpeakerCalls: { opts: PlaySpeakerOptions }[] = [];
+  // The settable rejection: when set, the next play command rejects with it, so a test drives the real runDeviceCommand failure (a plain Error) or the admin-guidance
+  // (a ProtectAuthorizationError) branch.
+  public playRejection: Nullable<Error> = null;
+  // The recorded update payloads the doorbell's cross-device setChimeVolume dispatches into (the single-entry ringSettings PATCH for this doorbell's ring), so a test
+  // asserts the exact write payload. The shape stays general because the write carries the per-doorbell ring PATCH.
+  public readonly updateCalls: { payload: unknown }[] = [];
+  // The settable rejection for the volume write, kept DISTINCT from playRejection (two independent levers, never overloaded): when set, the next update rejects with it,
+  // so a test drives the real runDeviceCommand failure branch (a plain Error or a ProtectAuthorizationError) on the chime-volume write specifically.
+  public updateRejection: Nullable<Error> = null;
+  private readonly store: TestStateStore;
+
+  public constructor(id: string, store: TestStateStore) {
+
+    this.id = id;
+    this.store = store;
+  }
+
+  // Read-through config into the store double's current state, mirroring the real projection's absent-record guard.
+  public get config(): Readonly<ProtectChimeConfig> {
+
+    const config = this.store.snapshot().chimes.get(this.id);
+
+    if(!config) {
+
+      throw new ReferenceError("The chime record is not present in the store double: " + this.id + ".");
+    }
+
+    return config;
+  }
+
+  // Whether the device is currently connected, per the library's isDeviceOnline definition.
+  public get isOnline(): boolean {
+
+    return this.config.state === "CONNECTED";
+  }
+
+  // The device's display name - its user-assigned name when set, otherwise the controller's displayName, per the DeviceProjection convention.
+  public get name(): string {
+
+    return this.config.name ?? this.config.displayName;
+  }
+
+  // Record a buzzer play and resolve, or reject with the settable rejection so a test drives the failure path.
+  public async playBuzzer(opts?: { signal?: AbortSignal }): Promise<void> {
+
+    this.playBuzzerCalls.push({ opts });
+
+    if(this.playRejection) {
+
+      throw this.playRejection;
+    }
+  }
+
+  // Record a speaker play with its joined payload and resolve, or reject with the settable rejection so a test drives the failure path.
+  public async playSpeaker(opts: PlaySpeakerOptions = {}): Promise<void> {
+
+    this.playSpeakerCalls.push({ opts });
+
+    if(this.playRejection) {
+
+      throw this.playRejection;
+    }
+  }
+
+  // Record a volume-write update payload and resolve with this projection, or reject with the settable updateRejection so a test drives the real runDeviceCommand failure
+  // path on the doorbell's cross-device chime-volume write. It RECORDS ONLY - it does NOT fold the payload into the store, so the volume reflection stays observer-driven
+  // and the command and the reflection are independently asserted.
+  public async update(payload: unknown): Promise<this> {
+
+    this.updateCalls.push({ payload });
+
+    if(this.updateRejection) {
+
+      throw this.updateRejection;
+    }
+
+    return this;
+  }
+}
+
+/* The Viewer projection double, the viewer-family analog of TestLightProjection: a stable id, the "viewer" modelKey discriminant, a READ-THROUGH config getter into the
+ * store double's CURRENT state (never a held snapshot - a push must change what this.ufp returns, or an end-to-end observe test proves nothing), and the derived name /
+ * isOnline getters. Unlike the read-only Light / Camera projections, the viewer drives its controller through the write-through update command, so this double exposes an
+ * update that RECORDS its payload and resolves by default, with a settable updateRejection so a test can drive the real runDeviceCommand failure path. It records only -
+ * it deliberately does NOT fold the payload back into the store, because the viewer's active-liveview reflection is observer-driven (setViewer does not update the local
+ * config); a test drives that reflection through pushViewerPatch, keeping the command and the reflection independently asserted.
+ */
+export class TestViewerProjection {
+
+  public readonly id: string;
+  public readonly modelKey = "viewer" as const;
+  // The recorded update payloads the real setViewer dispatches, so a test asserts the exact write-through liveview payload.
+  public readonly updateCalls: { liveview: Nullable<string> }[] = [];
+  // The settable rejection: when set, the next update rejects with it, so a test drives the real runDeviceCommand failure branch.
+  public updateRejection: Nullable<Error> = null;
+  private readonly store: TestStateStore;
+
+  public constructor(id: string, store: TestStateStore) {
+
+    this.id = id;
+    this.store = store;
+  }
+
+  // Read-through config into the store double's current state, mirroring the real projection's absent-record guard.
+  public get config(): Readonly<ProtectViewerConfig> {
+
+    const config = this.store.snapshot().viewers.get(this.id);
+
+    if(!config) {
+
+      throw new ReferenceError("The viewer record is not present in the store double: " + this.id + ".");
+    }
+
+    return config;
+  }
+
+  // Whether the device is currently connected, per the library's isDeviceOnline definition.
+  public get isOnline(): boolean {
+
+    return this.config.state === "CONNECTED";
+  }
+
+  // The device's display name - its user-assigned name when set, otherwise the controller's displayName, per the DeviceProjection convention.
+  public get name(): string {
+
+    return this.config.name ?? this.config.displayName;
+  }
+
+  // Record an update payload and resolve with this projection, or reject with the settable rejection so a test drives the failure path. The payload is recorded only;
+  // it is NOT folded into the store, so the active-liveview reflection stays observer-driven (a test pushes the reflection through pushViewerPatch).
+  public async update(payload: { liveview: Nullable<string> }): Promise<this> {
+
+    this.updateCalls.push({ liveview: payload.liveview });
+
+    if(this.updateRejection) {
+
+      throw this.updateRejection;
+    }
+
+    return this;
+  }
+}
+
+/* The Sensor projection double, the sensor-family analog of TestViewerProjection: a stable id, the "sensor" modelKey discriminant, a READ-THROUGH config getter into the
+ * store double's CURRENT state (never a held snapshot - a push must change what this.ufp returns, or an end-to-end observe test proves nothing), and the derived name /
+ * isOnline getters using the projection's own definitions. Like the viewer it exposes a write-through update that RECORDS its payload and resolves by default, with a
+ * settable updateRejection so a test drives the real runDeviceCommand failure path (the sensor's status-LED command writes ledSettings through it). It RECORDS only - it
+ * deliberately does NOT fold the payload back into the store, mirroring the viewer: the device-statusled concern test and the sensor family exercise that recorder later,
+ * while the device-motion base-capability net rides on it purely as the read-through carrier. The payload is recorded as the raw value so the recorder is general across
+ * every command shape a later commit drives through it.
+ */
+export class TestSensorProjection {
+
+  public readonly id: string;
+  public readonly modelKey = "sensor" as const;
+  // The recorded update payloads the real write-through commands dispatch, so a test asserts the exact payload (the status-LED ledSettings write, for example).
+  public readonly updateCalls: { payload: unknown }[] = [];
+  // The settable rejection: when set, the next update rejects with it, so a test drives the real runDeviceCommand failure branch.
+  public updateRejection: Nullable<Error> = null;
+  private readonly store: TestStateStore;
+
+  public constructor(id: string, store: TestStateStore) {
+
+    this.id = id;
+    this.store = store;
+  }
+
+  // Read-through config into the store double's current state, mirroring the real projection's absent-record guard.
+  public get config(): Readonly<ProtectSensorConfig> {
+
+    const config = this.store.snapshot().sensors.get(this.id);
+
+    if(!config) {
+
+      throw new ReferenceError("The sensor record is not present in the store double: " + this.id + ".");
+    }
+
+    return config;
+  }
+
+  // Whether the device is currently connected, per the library's isDeviceOnline definition.
+  public get isOnline(): boolean {
+
+    return this.config.state === "CONNECTED";
+  }
+
+  // The device's display name - its user-assigned name when set, otherwise the controller's displayName, per the DeviceProjection convention.
+  public get name(): string {
+
+    return this.config.name ?? this.config.displayName;
+  }
+
+  // Record an update payload and resolve with this projection, or reject with the settable rejection so a test drives the failure path. The payload is recorded only; it
+  // is NOT folded into the store, mirroring the viewer projection - a reactive reflection a later commit asserts stays observer-driven through a push helper.
+  public async update(payload: unknown): Promise<this> {
+
+    this.updateCalls.push({ payload });
+
+    if(this.updateRejection) {
+
+      throw this.updateRejection;
+    }
+
+    return this;
+  }
+}
+
+/* The shared minimal base-capability vehicle: a concrete ProtectDevice leaf whose constructor ONLY super()s, so it stands up the real base with no family configureDevice
+ * confound, and which exposes the protected base capability methods as public test windows. It generalizes the command-error suite's TestProtectDevice (which exposes
+ * runDeviceCommand as runCommand) into the ONE vehicle every device-<capability> concern test reuses: each concern test drives the one base capability it owns against
+ * this leaf, so the cross-cutting base behaviors (the motion switch / trigger, the occupancy sensor, and - in later commits - the status-LED switch, device info, hints,
+ * and the observer spawn) are netted family-agnostically rather than inside any family suite.
+ *
+ * The windows grow additively, each added and exercised by the commit that nets its capability, so the vehicle never ships an exposed method no test drives: the motion
+ * and hints windows landed first (configureHintsFor, which a concern test populates this.hints through before the motion configurators read it; configureMotionSensorFor;
+ * configureOccupancySensorFor), the status-indicator window (configureStatusLedSwitchFor) joined them netted by device-statusled.test.ts, and the device-information and
+ * observer-spawn windows (configureInfoFor; spawnObserversFor) joined netted by device-info.test.ts. Later commits add any remaining windows the same way.
+ *
+ * The device handle is narrowed to a Sensor projection (the all-quiet makeSensorConfig carrier rides on TestSensorProjection), and ufp is overridden to read through it,
+ * mirroring how each family leaf narrows its own projection at construction.
+ */
+export class TestBaseDevice extends ProtectDevice {
+
+  declare protected readonly device: Sensor;
+
+  // Read-through to the sensor projection, narrowing the base's union getter to the concrete Sensor config the carrier supplies.
+  public override get ufp(): Readonly<ProtectSensorConfig> {
+
+    return this.device.config;
+  }
+
+  // Public window onto the base configureHints, so a concern test populates this.hints (the motion configurators read this.hints) before driving a capability.
+  public configureHintsFor(): boolean {
+
+    return this.configureHints();
+  }
+
+  // Public window onto the base configureMotionSensor (the motion sensor service plus the motion switch / trigger and the motion get/set MQTT seam).
+  public configureMotionSensorFor(isEnabled = true, isInitialized = false): boolean {
+
+    return this.configureMotionSensor(isEnabled, isInitialized);
+  }
+
+  // Public window onto the base configureOccupancySensor (the occupancy service plus its StatusActive / OccupancyDetected characteristics and the occupancy MQTT get).
+  public configureOccupancySensorFor(isEnabled = true, isInitialized = false): boolean {
+
+    return this.configureOccupancySensor(isEnabled, isInitialized);
+  }
+
+  // Public window onto the base configureStatusLedSwitch (the Device.StatusLed.Switch accessory: its On onGet/onSet reading and writing the status indicator light
+  // through setStatusLed -> statusLedCommand -> device.update({ ledSettings })). This joins the motion / hints windows above as the additive growth the foundation brief
+  // foresaw, each capability window added and tested by its own commit; the deep status-LED nets live in device-statusled.test.ts.
+  public configureStatusLedSwitchFor(isEnabled = true): boolean {
+
+    return this.configureStatusLedSwitch(isEnabled);
+  }
+
+  // Public window onto the base configureInfo (the AccessoryInformation Manufacturer / Model / SerialNumber / FirmwareRevision writes via setInfo, plus the
+  // syncName-gated accessoryName sync). This joins the motion / hints / status-LED windows above as the additive growth the foundation brief foresaw, each capability
+  // window added and tested by its own commit; the deep device-info nets live in device-info.test.ts.
+  public configureInfoFor(): boolean {
+
+    return this.configureInfo();
+  }
+
+  // Public window onto the base spawnObservers (the two universal device observers: device.name -> syncNameFromController and device.firmwareVersion -> configureInfo).
+  // A concern test calls this after configureHintsFor / configureInfoFor to register the observers, then settles the lazy registration before asserting the reactions.
+  public spawnObserversFor(): void {
+
+    this.spawnObservers();
   }
 }
 
@@ -1218,10 +2232,23 @@ export class TestCameraHost implements ProtectCameraHost {
 
   // Recordable call logs: each behavior-bearing seam pushes its arguments here so a later test can assert the seam was invoked exactly as expected.
   public readonly livestreamCalls: { channelProfile: ChannelProfile; opts?: { segmentLength?: number; signal?: AbortSignal; urgency?: () => number } }[] = [];
+
+  // The segment-count knob the transmit test sets to fill the timeshift buffer: the number of keyframe-bearing media segments livestream() yields. Defaults 0, which
+  // returns the inert (segment-less) livestream double so the A1 construction suites stay on their unchanged path.
+  public livestreamMediaSegments = 0;
+
+  // The queue of test-provided subscriptions livestream() hands out in order: each call shifts the head, so a single start consumes one, and a start-twice or
+  // id-identity test supplies two DISTINCT-id controllable doubles. When the queue is empty, livestream() falls back to the livestreamMediaSegments-selected parking /
+  // inert double - the unchanged path the A1 and recording-transmit suites stay on (they never set this queue).
+  public livestreamSubscriptions: LivestreamSubscription[] = [];
   public log: HomebridgePluginLogging;
   public nvr: ProtectNvr;
   public platform: ProtectPlatform;
   public readonly rebootCalls: number[] = [];
+
+  // The error reboot() rejects with when set (default undefined = reboot resolves). A self-heal test sets this to drive the reboot-failure branch, where the timeshift
+  // logs that the camera could not be rebooted; the call is still recorded in rebootCalls before the rejection, matching production's invoke-then-fail ordering.
+  public rebootError?: Error;
 
   // The settable channel selectors; default null (no profile resolved), so the snapshot RTSP source - which would call selectChannel - never proceeds past its own
   // !stream guard anyway, keeping the two-sided test on the controller path.
@@ -1266,19 +2293,29 @@ export class TestCameraHost implements ProtectCameraHost {
     return [];
   }
 
-  // The recordable livestream seam. NOT exercised by A1 - it records its arguments and hands back a type-complete LivestreamSubscription double whose iterator
-  // yields nothing and whose dispose is a no-op, so the surface compiles against the production interface without standing up a real pooled session.
+  // The recordable livestream seam. It records its arguments and hands back a LivestreamSubscription double whose profile is selected by this host's
+  // livestreamMediaSegments knob: the default 0 yields the inert double (empty iterator, no-op dispose, "closed" state) the A1 construction suites stay on, while a
+  // positive count yields the established segment-yielding double (one init then that many keyframe-bearing media segments, then a parked iterator) the transmit net
+  // fills its timeshift buffer from.
   public livestream(channelProfile: ChannelProfile, opts?: { segmentLength?: number; signal?: AbortSignal; urgency?: () => number }): LivestreamSubscription {
 
     this.livestreamCalls.push({ channelProfile, opts });
 
-    return makeLivestreamSubscriptionDouble();
+    // Hand out the next test-provided subscription from the queue, if any; otherwise fall back to the livestreamMediaSegments-selected parking / inert double. The queue
+    // path is how a standalone timeshift test drives the SUT with a controllable double (and supplies two distinct doubles for the restart / id-identity targets); the
+    // fallback preserves the unchanged behavior the A1 and recording-transmit suites depend on (they never set the queue).
+    return this.livestreamSubscriptions.shift() ?? makeLivestreamSubscriptionDouble({ mediaSegments: this.livestreamMediaSegments });
   }
 
-  // The recordable reboot seam; records the call count and resolves.
+  // The recordable reboot seam; records the call, then rejects with rebootError when one is set (the self-heal reboot-failure path) or resolves otherwise.
   public async reboot(): Promise<void> {
 
     this.rebootCalls.push(this.rebootCalls.length + 1);
+
+    if(this.rebootError !== undefined) {
+
+      throw this.rebootError;
+    }
   }
 
   // The recordable status-LED seam; records every requested value and resolves true.
@@ -1309,20 +2346,297 @@ export class TestCameraHost implements ProtectCameraHost {
   }
 }
 
-// Build a type-complete LivestreamSubscription double for the camera-host stub's livestream seam. It satisfies the full interface (the five named members plus the
-// two symbol-keyed methods AsyncIterable<Segment> and AsyncDisposable require) with inert behavior: the iterator yields nothing, dispose is a no-op, and the state
-// reports "closed". A1 never exercises it - the double exists only so the host's livestream return type-checks against the production interface.
-function makeLivestreamSubscriptionDouble(): LivestreamSubscription {
+// Write a single ISO BMFF box: a BOX_HEADER_SIZE-byte header (a 4-byte big-endian size covering the whole box, then the 4-byte ASCII type) followed by the body. We
+// import BOX_HEADER_SIZE from HBPU rather than hardcoding 8 so the offset is single-sourced with the very constant the real isKeyframe parse uses to walk these boxes.
+function makeBox(type: string, body: Buffer): Buffer {
+
+  const header = Buffer.alloc(BOX_HEADER_SIZE);
+
+  header.writeUInt32BE(BOX_HEADER_SIZE + body.length, 0);
+  header.write(type, 4, "ascii");
+
+  return Buffer.concat([ header, body ]);
+}
+
+// Synthesize a genuine fMP4 media fragment so the production isKeyframe TRUN-flag parse runs against REAL bytes on the REAL path - no isKeyframe injection seam, so the
+// test exercises the actual fMP4 keyframe coupling rather than a test-only divergence. The fragment is moof>traf>trun with a 16-byte trun body: the fullbox version/flags
+// word sets TRUN_FLAG_DATA_OFFSET and TRUN_FLAG_FIRST_SAMPLE_FLAGS so the parse reads a first_sample_flags field, sample_count is 1, and data_offset is 0. The ONLY
+// difference between a keyframe and a non-keyframe fragment is that first_sample_flags word (offset 12): 0 leaves the SAMPLE_FLAG_NON_SYNC bit clear, marking a sync
+// sample (a keyframe), while SAMPLE_FLAG_NON_SYNC sets it, marking a non-sync sample (a non-keyframe) the production parse rejects. The mdat carries an empty body - the
+// timeshift never decodes the payload, it only parses the moof for keyframe-ness and concatenates the bytes. The returned data buffer is the moof+mdat pair a media
+// Segment delivers. This is the single source of truth for both fragment kinds; makeKeyframeFragment and makeNonKeyframeFragment are the two thin selectors over it.
+function makeMediaFragment(options: { keyframe?: boolean } = {}): { data: Buffer; mdat: Buffer; moof: Buffer } {
+
+  const keyframe = options.keyframe ?? true;
+  const trunBody = Buffer.alloc(16);
+
+  trunBody.writeUInt32BE(TRUN_FLAG_DATA_OFFSET | TRUN_FLAG_FIRST_SAMPLE_FLAGS, 0);
+  trunBody.writeUInt32BE(1, 4);
+  trunBody.writeUInt32BE(0, 8);
+  trunBody.writeUInt32BE(keyframe ? 0 : SAMPLE_FLAG_NON_SYNC, 12);
+
+  const moof = makeBox("moof", makeBox("traf", makeBox("trun", trunBody)));
+  const mdat = makeBox("mdat", Buffer.alloc(0));
+
+  return { data: Buffer.concat([ moof, mdat ]), mdat, moof };
+}
+
+// The keyframe-bearing fragment: makeMediaFragment with its default keyframe-true selection, so the production isKeyframe parse returns true. This is a thin wrapper
+// that preserves the pre-refactor makeKeyframeFragment output byte-for-byte (the default keyframe path writes first_sample_flags 0 exactly as before), so the
+// KEYFRAME_FRAGMENT const, the segment-yielding parking double, and the keyframe self-test all read the identical bytes.
+export function makeKeyframeFragment(): { data: Buffer; mdat: Buffer; moof: Buffer } {
+
+  return makeMediaFragment();
+}
+
+// The non-keyframe-bearing fragment: makeMediaFragment with keyframe false, so the trun first_sample_flags carries SAMPLE_FLAG_NON_SYNC and the production isKeyframe
+// parse returns false on the REAL path. The timeshift suite pushes this through the controllable double to exercise the discontinuity keyframe-gate (a
+// discontinuity-marked non-keyframe must defer the discontinuity emit until a clean keyframe arrives) and to drive any non-keyframe classification. Built at the use
+// site rather than cached in a module const so there is no unused-when-the-suite-changes SSOT cruft to drift.
+export function makeNonKeyframeFragment(): { data: Buffer; mdat: Buffer; moof: Buffer } {
+
+  return makeMediaFragment({ keyframe: false });
+}
+
+// The one keyframe fragment and init buffer the segment-yielding double reuses across every yield. The timeshift never mutates segment bytes (it parses and concatenates
+// them), so sharing one instance is safe and avoids re-synthesizing the boxes per call.
+const KEYFRAME_FRAGMENT = makeKeyframeFragment();
+const INIT_SEGMENT_DATA = Buffer.from("test-init-segment");
+
+/* Build a LivestreamSubscription double for the camera-host stub's livestream seam, in one of two profiles selected by the requested media-segment count:
+ *
+ *   - mediaSegments === 0 (the default): the byte-identical INERT profile the A1 construction tests rely on - initSegment null, state "closed", whenEstablished resolves
+ *     false, an empty iterator, no-op reassess/dispose. A1 never exercises it; it exists only so the host's livestream return type-checks against the production type.
+ *   - mediaSegments > 0: the ESTABLISHED segment-yielding profile - initSegment populated, state "live", whenEstablished resolves true, and an iterator yielding one init
+ *     segment then mediaSegments keyframe-bearing media segments so the timeshift fills its buffer with real fMP4 the production isKeyframe parse accepts.
+ *
+ * LOAD-BEARING: after yielding its media segments the established iterator MUST PARK, never completing. A finite generator returns done, which ends the timeshift's
+ * consumeSegments for-await, runs its finally -> finalizeSubscription -> clearBuffer, and wipes the just-filled buffer (the this.subscription?.id === subscription.id
+ * guard is true by then, because start() commits this.subscription mid-drain) - so timeshift.time falls back to zero and the transmit gate would always decline. We park
+ * by owning an internal AbortController: [Symbol.asyncDispose] aborts it, and the generator, after its media loop, awaits a promise that resolves on that abort (resolves
+ * immediately if already aborted, else via a one-shot "abort" listener). The for-await therefore never completes while filling, the buffer survives, and a real
+ * timeshift.stop()/dispose still releases it cleanly. whenEstablished resolves true immediately while the consumer fills its buffer by draining the parking iterator to
+ * its park point; a single settle() in the test drains all the microtask-resolved yields before the park, because the generator crosses no macrotask/timer boundary (were
+ * one ever added, a single settle() would silently under-drain).
+ */
+export function makeLivestreamSubscriptionDouble(options: { mediaSegments?: number } = {}): LivestreamSubscription {
+
+  const mediaSegments = options.mediaSegments ?? 0;
+
+  // The inert profile: preserved byte-for-byte so the A1 construction suites stay green.
+  if(mediaSegments === 0) {
+
+    return {
+
+      id: "test-livestream-subscription",
+      initSegment: null,
+      reassess: (): void => { /* No-op: the double has no recovery loop to re-decide. */ },
+      state: "closed",
+      whenEstablished: async (): Promise<boolean> => false,
+      [Symbol.asyncIterator]: async function *(): AsyncGenerator<Segment> { /* The double delivers no segments. */ },
+      [Symbol.asyncDispose]: async (): Promise<void> => { /* No-op: the double owns no resources to release. */ }
+    };
+  }
+
+  // The established profile owns a dispose-abort controller so its iterator can park after the media loop. Disposing aborts it, releasing the park.
+  const disposed = new AbortController();
 
   return {
 
     id: "test-livestream-subscription",
-    initSegment: null,
+    initSegment: { codec: "h264", data: INIT_SEGMENT_DATA },
     reassess: (): void => { /* No-op: the double has no recovery loop to re-decide. */ },
-    state: "closed",
-    whenEstablished: async (): Promise<boolean> => false,
-    [Symbol.asyncIterator]: async function *(): AsyncGenerator<Segment> { /* The double delivers no segments. */ },
-    [Symbol.asyncDispose]: async (): Promise<void> => { /* No-op: the double owns no resources to release. */ }
+    state: "live",
+    whenEstablished: async (): Promise<boolean> => true,
+    [Symbol.asyncIterator]: async function *(): AsyncGenerator<Segment> {
+
+      yield { codec: "h264", data: INIT_SEGMENT_DATA, type: "init" };
+
+      for(let i = 0; i < mediaSegments; i++) {
+
+        yield { data: KEYFRAME_FRAGMENT.data, mdat: KEYFRAME_FRAGMENT.mdat, moof: KEYFRAME_FRAGMENT.moof, type: "media" };
+      }
+
+      // Park: await the dispose-abort so the consumer's for-await never completes and the filled buffer survives. Resolve immediately if already disposed, else on the
+      // one-shot abort.
+      await new Promise<void>((resolve) => {
+
+        if(disposed.signal.aborted) {
+
+          resolve();
+
+          return;
+        }
+
+        disposed.signal.addEventListener("abort", () => resolve(), { once: true });
+      });
+    },
+    [Symbol.asyncDispose]: async (): Promise<void> => { disposed.abort(); }
+  };
+}
+
+// A process-local monotonic counter minting a distinct default id per controllable double. Distinct ids are LOAD-BEARING: the timeshift's consumeSegments finally guards
+// teardown on this.subscription?.id === subscription.id, so a restart test (start A, then start B) and the id-identity guard test need two doubles whose ids genuinely
+// differ - or the guard cannot discriminate and the test is vacuous.
+let controllableLivestreamCounter = 0;
+
+/**
+ * The controllable livestream-subscription double: a queue-driven LivestreamSubscription a test feeds segments into one at a time and can end or throw-into, plus a
+ * recording surface for behavior-first assertions. It generalizes makeLivestreamSubscriptionDouble's drain-loop/park iterator so a standalone ProtectTimeshiftBuffer test
+ * can drive the SUT's full emission/lifecycle surface (an init segment, keyframe and non-keyframe media, a discontinuity-marked segment, a graceful end, and an iterator
+ * error) without a recording delegate in the loop.
+ *
+ * @property disposed       - True once the double's asyncDispose ran; a test asserts a start-validation failure or a stop disposed the subscription.
+ * @property end            - Enqueue a graceful end. Processed AFTER any already-queued segments (drain-then-close), so queued media is never dropped, then the iterator
+ *                            returns and the timeshift's consumeSegments finally runs.
+ * @property push           - Enqueue one media (or init) segment and wake the iterator. One push plus one settle() processes exactly that one segment; MULTIPLE pushes
+ *                            plus one settle() drain all of them in a single macrotask, so an intermediate-state test must settle() after EACH push.
+ * @property reassessCalls  - The number of times the timeshift called reassess() (its transmit-start recovery escalation).
+ * @property throwError     - Enqueue an iterator error. Processed after queued segments, then thrown into the for-await so the timeshift classifies it (and self-heals).
+ */
+export interface ControllableLivestreamDouble extends LivestreamSubscription {
+
+  readonly disposed: boolean;
+  end(): void;
+  push(segment: Segment): void;
+  readonly reassessCalls: number;
+  throwError(error: unknown): void;
+}
+
+/* Build a controllable LivestreamSubscription double for a standalone timeshift behavior test.
+ *
+ * The iterator is the lost-wakeup-safe drain-loop the parking double established, generalized to a runtime-fed queue: it holds a queue of items
+ * ({ kind: "segment" } | { kind: "end" } | { kind: "error" }), and on each turn it DRAINS THE WHOLE QUEUE - shifting and acting on every queued item (yield a segment,
+ * return on end, throw on error) - and ONLY parks on a fresh one-shot resolver when the queue is empty and the double is not yet terminated; on wake it RE-CHECKS the
+ * queue and continues the drain. Draining the whole queue per wake is load-bearing: a naive park/yield-one/re-park strands a second segment pushed under one wake
+ * (empirically reproduced), so a two-push-then-drain self-test would observe only the first.
+ *
+ * The park keeps isStarted true: while the queue is open and the double is not ended/disposed the generator NEVER completes (it parks), so the timeshift's
+ * consumeSegments for-await stays open, its finally does not run, the subscription stays committed, and timeshift.isStarted reports true. end()/throwError()/dispose are
+ * the iterator-termination drivers that feed that finally: each enqueues its terminal item AFTER any queued segments (drain-then-close, so queued media is not
+ * dropped) and wakes the iterator. whenEstablished resolves immediately (default true) so start() commits the subscription before the test pushes media.
+ *
+ * The terminal transition is one-shot and idempotent: once the generator has returned (end/dispose) or thrown (error), the double is terminated and push/end/throwError
+ * and a second dispose are NO-OPS, and the parking resolver is resolved at most once (guarded so no double-resolve). asyncDispose records disposed = true and signals a
+ * graceful end if the double is not already terminated.
+ */
+export function makeControllableLivestreamDouble(options: { id?: string; initSegment?: { codec: string; data: Buffer } | null; state?: LivestreamSubscriptionState;
+  whenEstablished?: boolean; } = {}): ControllableLivestreamDouble {
+
+  // The runtime-fed item queue and the lifecycle flags. terminated latches once the generator returns or throws, after which every control method no-ops.
+  const queue: ({ kind: "segment"; segment: Segment } | { kind: "end" } | { kind: "error"; error: unknown })[] = [];
+  let terminated = false;
+  let disposed = false;
+  let reassessCalls = 0;
+
+  // Resolve the init segment, distinguishing "option omitted" (default to a populated init so start() commits) from "option explicitly null" (the start-validation arm
+  // the timeshift declines on). A plain ?? cannot make that distinction - it treats an explicit null as nullish and would override it with the default - so we branch on
+  // strict undefined.
+  const initSegment = (options.initSegment === undefined) ? { codec: "h264", data: INIT_SEGMENT_DATA } : options.initSegment;
+
+  // The one-shot park resolver: the generator stores its resolver here before awaiting, and wake() resolves and clears it. Holding at most one resolver and clearing it
+  // on resolve guarantees no double-resolve and no stale wake.
+  let wakeResolver: (() => void) | null = null;
+
+  // Wake a parked generator, if one is parked. Resolving and clearing in one step keeps the resolver one-shot.
+  const wake = (): void => {
+
+    const resolve = wakeResolver;
+
+    wakeResolver = null;
+    resolve?.();
+  };
+
+  // Enqueue an item and wake the iterator, unless the double has already terminated (in which case every control method is a no-op).
+  const enqueue = (item: { kind: "segment"; segment: Segment } | { kind: "end" } | { kind: "error"; error: unknown }): void => {
+
+    if(terminated) {
+
+      return;
+    }
+
+    queue.push(item);
+    wake();
+  };
+
+  return {
+
+    get disposed(): boolean {
+
+      return disposed;
+    },
+    end: (): void => enqueue({ kind: "end" }),
+    id: options.id ?? ("controllable-livestream-" + (++controllableLivestreamCounter).toString()),
+    initSegment,
+    push: (segment: Segment): void => enqueue({ kind: "segment", segment }),
+    reassess: (): void => { reassessCalls++; },
+    get reassessCalls(): number {
+
+      return reassessCalls;
+    },
+    state: options.state ?? "live",
+    throwError: (error: unknown): void => enqueue({ error, kind: "error" }),
+    whenEstablished: async (): Promise<boolean> => options.whenEstablished ?? true,
+    [Symbol.asyncIterator]: async function *(): AsyncGenerator<Segment> {
+
+      // The drain-loop: process the whole queue, then park only when it is empty and we have not yet terminated. On wake, the outer while re-checks the queue.
+      while(!terminated) {
+
+        // Drain every queued item before considering a park, so no item pushed under a single wake is stranded.
+        while(queue.length > 0) {
+
+          const item = queue.shift();
+
+          if(!item) {
+
+            break;
+          }
+
+          switch(item.kind) {
+
+            case "end": {
+
+              terminated = true;
+
+              return;
+            }
+
+            case "error": {
+
+              terminated = true;
+
+              throw item.error;
+            }
+
+            case "segment": {
+
+              yield item.segment;
+
+              break;
+            }
+
+            default: {
+
+              throw new Error("The controllable livestream double received an unknown queue item kind.");
+            }
+          }
+        }
+
+        // The queue is empty and we have not terminated: park on a fresh one-shot resolver until a control method wakes us, then re-check the queue.
+        if(!terminated) {
+
+          // eslint-disable-next-line no-await-in-loop -- The park is intentionally serial: the generator suspends here until a push/end/throwError/dispose wakes it.
+          await new Promise<void>((resolve) => { wakeResolver = resolve; });
+        }
+      }
+    },
+    [Symbol.asyncDispose]: async (): Promise<void> => {
+
+      // Record the dispose and, if the double has not already terminated, signal a graceful end so the parked iterator completes its finally. Idempotent: a second
+      // dispose after termination no-ops via the enqueue terminated-guard.
+      disposed = true;
+      enqueue({ kind: "end" });
+    }
   };
 }
 
@@ -1332,21 +2646,28 @@ function makeLivestreamSubscriptionDouble(): LivestreamSubscription {
  * against, so a delegate is unit-constructed with no real camera. The single seam casts live inside TestCameraHost's constructor (the doubles are not the
  * production handle types); the host returned here is the production-interface-typed double.
  *
- * @param options - userOptions: feature-option config strings forwarded to the makeTestNvr context's REAL FeatureOptions engine (for a later behavior test that
- *                  steers a feature-gated delegate path); the default empty context is the quiet-default host.
+ * @param options - clock: an optional controllable TestClock forwarded into the makeTestNvr platform double's clock seam and re-returned, so a transmit test holds the
+ *                  exact instance the recording delegate reads via platform.clock and advances it to release pacing (omitted, a fresh default TestClock is created);
+ *                  recordingProcessFactory: the test recording-process factory injected into the makeTestNvr platform double's recordingProcessFactory seam, so a
+ *                  transmit test's delegate constructs its FFmpeg process through the test double (omitted, makeTestNvr installs a fresh default factory); userOptions:
+ *                  feature-option config strings forwarded to the makeTestNvr context's REAL FeatureOptions engine (for a later behavior test that steers a feature-gated
+ *                  delegate path); the default empty context is the quiet-default host.
  *
- * @returns accessory: the TestAccessory backing the host; controller: the AbortController behind the context's signal (abort it in suite teardown); host: the
- *          TestCameraHost double under test; nvr: the NVR double backing the context.
+ * @returns accessory: the TestAccessory backing the host; clock: the controllable TestClock installed on the platform double (the same instance the recording delegate
+ *          reads, so a transmit test advances it to release pacing); controller: the AbortController behind the context's signal (abort it in suite teardown); host: the
+ *          TestCameraHost double under test; logEntries: every line the construction and transmit paths logged (so a transmit test can assert on captured telemetry);
+ *          nvr: the NVR double backing the context.
  */
-export function makeTestCameraHost(options: { userOptions?: string[] } = {}):
-{ accessory: TestAccessory; controller: AbortController; host: TestCameraHost; nvr: TestProtectNvr } {
+export function makeTestCameraHost(options: { clock?: TestClock; recordingProcessFactory?: RecordingProcessFactory; userOptions?: string[] } = {}):
+{ accessory: TestAccessory; clock: TestClock; controller: AbortController; host: TestCameraHost; logEntries: TestLogEntry[]; nvr: TestProtectNvr } {
 
   const store = new TestStateStore(makeProtectState());
-  const { controller, nvr } = makeTestNvr({ store, userOptions: options.userOptions });
+  const { clock, controller, logEntries, nvr } = makeTestNvr({ clock: options.clock, recordingProcessFactory: options.recordingProcessFactory, store,
+    userOptions: options.userOptions });
   const accessory = makeTestAccessory();
   const host = new TestCameraHost({ accessory, nvr });
 
-  return { accessory, controller, host, nvr };
+  return { accessory, clock, controller, host, logEntries, nvr };
 }
 
 // One captured log line from the harness's recording sinks: the level it was emitted at and the raw parameters, so a test can assert on (or ignore) whatever the
@@ -1357,20 +2678,27 @@ export interface TestLogEntry {
   parameters: unknown[];
 }
 
-// One recorded MQTT subscription registration: the composed topic tail, the human-readable type label, the registration kind, and the per-subscription init options
-// production passed - the lifetime signal lives there, so a test can assert which signal scoped each registration and observe it abort with its owner.
+// One recorded MQTT subscription registration: the composed topic tail, the human-readable type label, the registration kind, the per-subscription init options
+// production passed (the lifetime signal lives there, so a test can assert which signal scoped each registration and observe it abort with its owner), and the captured
+// handler closure. getValue is present on a "get" registration, setValue on a "set" registration; both are captured so a test can FIND a subscription by topic / kind
+// and INVOKE its handler directly - the path the production MQTT subscribeGet / subscribeSet handlers take that the HomeKit onSet machinery does not exercise (the
+// chime's switch(value) tone dispatch and empty-payload default, the viewer's liveview name lookup and unknown-name error).
 export interface TestMqttSubscription {
 
+  getValue?: () => string;
   init?: { signal?: AbortSignal };
   kind: "get" | "set";
+  setValue?: (value: string, rawValue: string) => Promise<void> | void;
   topic: string;
   type: string;
 }
 
 /* A minimal recording double of the HBPU MqttClient surface ProtectBase's wrappers and the event dispatcher reach: publish, subscribeGet, subscribeSet, and
- * unsubscribe. Registration-recording only - handlers are recorded but never invoked, because delivering a message to a registered handler (and releasing it when
- * its signal aborts) is HBPU's contract, pinned by HBPU's own tests. What THIS double proves is HBUP's side of the seam: which subscriptions a device registered,
- * on which topics, carrying which lifetime signal, and what was published.
+ * unsubscribe. Registration-recording, plus handler CAPTURE - delivering a message to a registered handler (and releasing it when its signal aborts) is HBPU's
+ * contract, pinned by HBPU's own tests, so the double does not stand up a broker; it captures each handler closure onto the recorded subscription so a test can find
+ * it by topic / kind and invoke it directly. That lets a test exercise HBUP's own MQTT-specific dispatch (the chime's switch(value) tone dispatch and empty-payload
+ * default, the viewer's liveview name lookup and unknown-name error) - the handler bodies that the HomeKit onSet machinery never reaches. What THIS double proves is
+ * HBUP's side of the seam: which subscriptions a device registered, on which topics, carrying which lifetime signal, what each handler does, and what was published.
  */
 export class TestMqttClient {
 
@@ -1383,14 +2711,14 @@ export class TestMqttClient {
     this.published.push({ message, topic });
   }
 
-  public subscribeGet(topic: string, type: string, _getValue: () => string, init?: { signal?: AbortSignal }): void {
+  public subscribeGet(topic: string, type: string, getValue: () => string, init?: { signal?: AbortSignal }): void {
 
-    this.subscriptions.push({ init, kind: "get", topic, type });
+    this.subscriptions.push({ getValue, init, kind: "get", topic, type });
   }
 
-  public subscribeSet(topic: string, type: string, _setValue: (value: string, rawValue: string) => Promise<void> | void, init?: { signal?: AbortSignal }): void {
+  public subscribeSet(topic: string, type: string, setValue: (value: string, rawValue: string) => Promise<void> | void, init?: { signal?: AbortSignal }): void {
 
-    this.subscriptions.push({ init, kind: "set", topic, type });
+    this.subscriptions.push({ init, kind: "set", setValue, topic, type });
   }
 
   public unsubscribe(id: string, topic: string): void {
@@ -1408,10 +2736,11 @@ export interface TestApiCall {
 }
 
 // The platform double's honest structural type. The members mirror what ProtectBase and the camera-family construction paths read off nvr.platform: the HAP
-// namespaces plus the deterministic uuid generator, the platform-accessory class and the four registration recorders (the doorbell's configurePackageCamera and the
-// NVR removal tail drive them), the platform's mutable accessories array, a concrete codecSupport (the real platform getter throws before the FFmpeg probe - a
-// concrete object with a non-raspbian hostSystem keeps the recording-default switch on its default branch), the ProtectOptions-shaped config, the REAL
-// FeatureOptions engine, the log sinks, and the streaming-delegate factory seam.
+// namespaces plus the deterministic uuid generator, the injected wall-clock seam (the recording delegate reads platform.clock for its pacing-time primitives), the
+// platform-accessory class and the four registration recorders (the doorbell's configurePackageCamera and the NVR removal tail drive them), the platform's mutable
+// accessories array, a concrete codecSupport (the real platform getter throws before the FFmpeg probe - a concrete object with a non-raspbian hostSystem keeps the
+// recording-default switch on its default branch), the ProtectOptions-shaped config, the REAL FeatureOptions engine, the log sinks, the recording-process factory seam
+// (the recording delegate constructs its FFmpeg process through it), and the streaming-delegate factory seam.
 export interface TestProtectPlatform {
 
   readonly accessories: TestAccessory[];
@@ -1424,6 +2753,7 @@ export interface TestProtectPlatform {
     unregisterPlatformAccessories: (pluginName: string, platformName: string, accessories: TestAccessory[]) => void;
     updatePlatformAccessories: (accessories: TestAccessory[]) => void;
   };
+  readonly clock: Clock;
   readonly codecSupport: { hostSystem: string };
   readonly config: ProtectOptions;
   readonly debug: (...parameters: unknown[]) => void;
@@ -1435,6 +2765,7 @@ export interface TestProtectPlatform {
     info: (...parameters: unknown[]) => void;
     warn: (...parameters: unknown[]) => void;
   };
+  readonly recordingProcessFactory: RecordingProcessFactory;
   readonly streamingDelegateFactory: TestStreamingDelegateFactory;
 }
 
@@ -1445,6 +2776,25 @@ export interface TestScheduleDeviceRemovalOptions {
   reason?: string;
   remove?: () => void;
   stillGone: () => boolean;
+}
+
+/* The shared recording event-dispatch double: a REAL ProtectEventDispatch whose motion delivery is overridden to record into an array rather than touch HomeKit or arm a
+ * reset timer. The override's arity and parameter types mirror production's motionEventHandler (event-dispatch.ts) exactly, so it type-checks as a true override; the two
+ * parameters the recording path deliberately does not read carry the underscore prefix the house no-unused-vars rule reserves for intentionally-unused arguments, and
+ * their types still anchor the override against production. Recording arms NO reset timer, so a motion test leaks no handle.
+ *
+ * This serves every family and base-capability path whose motion routes through the firehose - the light family's lastMotion observer and the base motion trigger / the
+ * base motion-set MQTT seam alike - injected through makeTestNvr's dispatch seam and read back off nvr.events. It is the SSOT for that recording shape: it was promoted
+ * here out of light.test.ts so the light suite and the device-motion concern net share one definition rather than each carrying its own near-identical subclass.
+ */
+export class TestRecordingDispatch extends ProtectEventDispatch {
+
+  public readonly calls: { id: string; kind: string }[] = [];
+
+  public override motionEventHandler(protectDevice: ProtectDevice, _detectedObjects: string[] = [], _metadata?: ProtectEventMetadata): void {
+
+    this.calls.push({ id: protectDevice.ufp.id, kind: "motion" });
+  }
 }
 
 /* The NVR double, mirroring each member the camera-family construction and lifecycle paths read. The construction surface is the 2a-ii set: the v5 client shape
@@ -1464,9 +2814,12 @@ export class TestProtectNvr {
 
   public readonly client: {
 
+    readonly chimes: readonly Chime[];
     connection: { isHealthy: boolean };
     controllerName: string | null;
+    readonly liveviews: readonly ProtectNvrLiveviewConfig[];
     nvr: { config: ProtectNvrConfig };
+    readonly ringtones: readonly ProtectRingtoneConfig[];
     state: TestStateStore;
   };
 
@@ -1481,9 +2834,20 @@ export class TestProtectNvr {
   };
 
   public readonly mqtt: Nullable<TestMqttClient>;
+
+  // The NVR lifecycle phase, settable and defaulting to the organic "running" state. The recording delegate reads nvr.phase to suppress its induced-disruption (reboot /
+  // shutdown) error logs, so a transmit test that asserts the early-end telemetry log fires needs this to be "running".
+  public phase: NvrPhase = "running";
   public readonly platform: TestProtectPlatform;
   public removalStable = true;
   public readonly signal: AbortSignal;
+
+  // The managed-device registry, mirroring ProtectNvr.configuredDevices: a Map keyed by accessory UUID whose values are the constructed device objects. The
+  // controller-owner motion fanouts resolve a member camera through it - the security-system fanout reads configuredDevices.get(accessory.UUID)?.ufp.id, the liveviews
+  // fanout reaches it through getDeviceById. A test seeds a minimal member double through the ProtectDevices cast at the construction seam, exactly as the device-class
+  // doubles are cast elsewhere. Both fanouts read only a narrow slice of the device (ufp.id for the security path, accessory / accessoryName for the liveviews path), so
+  // the seeded double carries just that slice.
+  public readonly configuredDevices = new Map<string, ProtectDevices>();
 
   // The recorded machinery: every cancelled removal UUID, the pending manually-fireable removal timers keyed by accessory UUID, and every schedule decision with its
   // resolved interval.
@@ -1494,8 +2858,8 @@ export class TestProtectNvr {
   // The once-per-option feature log gate, mirroring ProtectNvr.logFeature's featureLog record.
   readonly #featureLog: Record<string, boolean> = {};
 
-  public constructor(init: { client: TestProtectNvr["client"]; config: ProtectNvrOptions; log: TestProtectNvr["log"]; mqtt: Nullable<TestMqttClient>;
-    platform: TestProtectPlatform; signal: AbortSignal; }) {
+  public constructor(init: { client: TestProtectNvr["client"]; config: ProtectNvrOptions; dispatch?: (nvr: ProtectNvr) => ProtectEventDispatch;
+    log: TestProtectNvr["log"]; mqtt: Nullable<TestMqttClient>; platform: TestProtectPlatform; signal: AbortSignal; }) {
 
     this.client = init.client;
     this.config = init.config;
@@ -1504,8 +2868,12 @@ export class TestProtectNvr {
     this.platform = init.platform;
     this.signal = init.signal;
 
-    // The real event dispatcher, wired against this double - its constructor reads only the platform's HAP namespace, the log, and the NVR handle itself.
-    this.events = new ProtectEventDispatch(this as unknown as ProtectNvr);
+    // The real event dispatcher, wired against this double - its constructor reads only the platform's HAP namespace, the log, and the NVR handle itself. The optional
+    // dispatch factory is the reusable injection seam: when omitted, the default factory is byte-identical to today's new ProtectEventDispatch(this), so every existing
+    // consumer is unchanged; a test injects a recording subclass (overriding motionEventHandler to record without arming the real reset timer) to assert the device
+    // observers' firehose routing without leaking a dangling timer handle. The factory runs at exactly the point this.events was assigned before, the last write in
+    // the constructor, so nothing reads events before this line either way.
+    this.events = (init.dispatch ?? ((nvr: ProtectNvr): ProtectEventDispatch => new ProtectEventDispatch(nvr)))(this as unknown as ProtectNvr);
   }
 
   // Read-through to the controller record, mirroring the production getter.
@@ -1532,6 +2900,13 @@ export class TestProtectNvr {
   public getFeatureNumber(option: string): Nullable<number | undefined> {
 
     return this.platform.featureOptions.getInteger(option, this.ufp.mac);
+  }
+
+  // Return the managed Protect device whose ufp.id matches, or null - the production getDeviceById one-liner (nvr.ts), mirrored so the liveviews motion fanout resolves a
+  // member camera against the seeded configuredDevices registry exactly as production does.
+  public getDeviceById(deviceId: string): Nullable<ProtectDevices> {
+
+    return [...this.configuredDevices.values()].find((device) => device.ufp.id === deviceId) ?? null;
   }
 
   // The production controller-scoped feature test, mirrored for any double-side caller that consults controller scope.
@@ -1640,12 +3015,37 @@ export class TestProtectNvr {
   }
 }
 
-// Build the minimal NVR config record the construction path reads through nvr.ufp: the host (the last fallback in the camera's RTSP host chain), the controller
-// MAC (the feature-option controller scope key), and the RTSP(S) ports - the RTSPS port pinned to the fixture value so channel profile URLs match the
-// golden-master corpus. The single confined cast seam for the controller record, mirroring makeCameraConfig's discipline.
-function makeNvrConfig(): ProtectNvrConfig {
+// Build the NVR config record the construction path reads through nvr.ufp: the host (the last fallback in the camera's RTSP host chain), the controller MAC (the
+// feature-option controller scope key, and the chime / ringtone nvrMac filter key), the RTSP(S) ports (the RTSPS port pinned to the fixture value so channel profile
+// URLs match the golden-master corpus), plus the controller-owner read set: a marketName / name / type for setInfo's Model and the system-info accessory's display name,
+// and a populated systemInfo so the nvr-systeminfo owner's initial pass (which dereferences systemInfo.cpu.temperature with no optional chaining) and its MQTT
+// JSON.stringify read meaningfully. The optional temperature override moves systemInfo.cpu.temperature so the observer's reactive refresh can be asserted on a known
+// value. hardwareRevision is OPT-IN with no default (stays undefined): the security-system owner writes nvr.ufp.hardwareRevision onto HardwareRevision unconditionally,
+// so buildSecuritySystem opts a value in to net that write non-vacuously, while the DEFAULT still omits the field - which keeps ProtectBase.setInfo's HardwareRevision
+// length-guard short-circuited for the device-info concern net, exactly as before (commit 2 added the marker but left the default omission intact). The single confined
+// cast seam for the controller record, mirroring makeCameraConfig's discipline.
+export function makeNvrConfig(options: { hardwareRevision?: string; marketName?: string; name?: string; temperature?: number; type?: string } = {}): ProtectNvrConfig {
 
-  const populated = { host: "nvr.test", mac: "74ACB9FFFFFF", ports: { rtsp: 7447, rtsps: FIXTURE_RTSPS_PORT } };
+  const populated = {
+
+    host: "nvr.test",
+    mac: "74ACB9FFFFFF",
+    marketName: options.marketName ?? "UniFi Dream Machine SE",
+    name: options.name ?? "Test Controller",
+    ports: { rtsp: 7447, rtsps: FIXTURE_RTSPS_PORT },
+    systemInfo: {
+
+      cpu: { averageLoad: 12.5, temperature: options.temperature ?? 40 },
+      memory: { available: 2048, free: 1024, total: 4096 },
+      storage: { available: 500, devices: [], isRecycling: false, size: 1000, type: "hdd", used: 500 }
+    },
+    type: options.type ?? "UDMPRO",
+
+    // OPT-IN only: when the caller passes a value (the security-system owner does), it lands on the record; otherwise the field stays absent so setInfo's length-guard
+    // remains short-circuited and the committed device-info default-omission assertion stays accurate. The conditional spread keeps the key absent rather than
+    // present-as-undefined, so an `in` check or a length read sees the same shape it saw before this option existed.
+    ...(options.hardwareRevision !== undefined ? { hardwareRevision: options.hardwareRevision } : {})
+  };
 
   return populated as unknown as ProtectNvrConfig;
 }
@@ -1655,32 +3055,79 @@ function makeNvrConfig(): ProtectNvrConfig {
  * TestProtectNvr; the single cast to ProtectNvr is confined to the construction seam in the test itself, mirroring the reachability suite's discipline - the
  * casts live at the seam, and the instance under test is the production class.
  *
- * @param options - controllerName: the v5 controller label (defaults to "Test Controller"); mqtt: pass true to install the recording MQTT double (the default null
- *                  makes every MQTT wrapper a no-op, matching an unconfigured broker); overrideAddress: the controller-level address override for rtspHost-chain
- *                  tests; store: the state-store double backing client.state; userOptions: feature-option config strings (the production options array shape, e.g.
- *                  "Enable.Device.SyncName" or "Disable.Nvr.DelayDeviceRemoval") applied to the REAL FeatureOptions engine.
+ * @param options - chimes: the HELD chime projection doubles client.chimes exposes (omitted, the empty default), kept as the same instances across every access so the
+ *                  doorbell's cross-device setChimeVolume write hits, and a test's updateRejection lever is set on, ONE projection - a per-access rebuild would silently
+ *                  break the rejection drive; clock: an optional controllable TestClock installed on the platform double's clock seam and returned so a transmit test can
+ *                  advance virtual time to drive the recording delegate's pacing (omitted, a fresh default TestClock seeded at 0 is created); controllerName: the v5
+ *                  controller label (defaults
+ *                  to "Test Controller"); dispatch: an optional event-dispatch factory threaded into the NVR double's events seam (omitted, the default builds the real
+ *                  ProtectEventDispatch unchanged; a test injects a recording subclass to assert the device observers' firehose routing without arming the real reset
+ *                  timer); mqtt: pass true to install the recording MQTT double (the default null makes every MQTT wrapper a no-op, matching an unconfigured broker);
+ *                  overrideAddress: the controller-level address override for rtspHost-chain tests; recordingProcessFactory: an optional test recording-process factory
+ *                  installed on the platform double's recordingProcessFactory seam (omitted, a fresh default factory is created so the recording delegate constructs its
+ *                  FFmpeg process through the test double); store: the state-store double backing client.state; userOptions: feature-option config strings (the
+ *                  production options array shape, e.g. "Enable.Device.SyncName" or "Disable.Nvr.DelayDeviceRemoval") applied to the REAL FeatureOptions engine.
  *
- * @returns apiCalls: every homebridge accessory-registration call the platform double recorded; controller: the AbortController behind nvr.signal (abort it in
- *          suite teardown); factory: the stub streaming-delegate factory; logEntries: every line the construction path logged; mqtt: the recording MQTT double when
- *          requested, else null; nvr: the NVR double.
+ * @returns apiCalls: every homebridge accessory-registration call the platform double recorded; clock: the controllable TestClock installed on the platform double (the
+ *          same instance the recording delegate reads via platform.clock, so a transmit test advances it to release pacing); controller: the AbortController behind
+ *          nvr.signal (abort it in suite teardown); factory: the stub streaming-delegate factory; logEntries: every line the construction path logged; mqtt: the
+ *          recording MQTT double when requested, else null; nvr: the NVR double.
  */
-export function makeTestNvr(options: { controllerName?: string; mqtt?: boolean; overrideAddress?: string; store: TestStateStore; userOptions?: string[] }):
-{ apiCalls: TestApiCall[]; controller: AbortController; factory: TestStreamingDelegateFactory; logEntries: TestLogEntry[]; mqtt: Nullable<TestMqttClient>;
-  nvr: TestProtectNvr; } {
+export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: TestClock; controllerName?: string; dispatch?: (nvr: ProtectNvr) => ProtectEventDispatch;
+  mqtt?: boolean; overrideAddress?: string; recordingProcessFactory?: RecordingProcessFactory; store: TestStateStore; userOptions?: string[]; }):
+{ apiCalls: TestApiCall[]; clock: TestClock; controller: AbortController; factory: TestStreamingDelegateFactory; logEntries: TestLogEntry[];
+  mqtt: Nullable<TestMqttClient>; nvr: TestProtectNvr; } {
 
   const accessories: TestAccessory[] = [];
   const apiCalls: TestApiCall[] = [];
+
+  // The HELD chime projection doubles client.chimes returns: the SAME instances captured once here, never a per-access rebuild. The doorbell's setChimeVolume filters
+  // client.chimes and calls update() on the matching projection, and a test asserts that projection's updateCalls / sets its updateRejection lever, so they must be
+  // one instance. A rebuild getter would hand the write a fresh projection each pass and a test's rejection would go unseen, so the failure drive would pass vacuously.
+  const chimes = options.chimes ?? [];
+  const clock = options.clock ?? new TestClock();
   const controller = new AbortController();
+
+  // The stable fallback the client.nvr.config getter returns when the store carries no nvr slice, built once so every fallback read is the SAME reference (the existing
+  // camera consumers - which never seed the nvr slice - keep reading a fixed record, exactly as the held record they read before this getter).
+  const defaultNvrConfig = makeNvrConfig();
   const factory = new TestStreamingDelegateFactory();
   const logEntries: TestLogEntry[] = [];
+  const recordingProcessFactory = options.recordingProcessFactory ?? new TestRecordingProcessFactory();
   const mqtt = options.mqtt ? new TestMqttClient() : null;
   const sink = (level: TestLogEntry["level"]): ((...parameters: unknown[]) => void) => (...parameters: unknown[]): void => { logEntries.push({ level, parameters }); };
   const log = { debug: sink("debug"), error: sink("error"), info: sink("info"), warn: sink("warn") };
   const client = {
 
+    // The HELD chime projections, exposed as the production client.chimes array the doorbell's setChimeVolume filters by cameraIds and writes through. A plain held
+    // property (not a store-rebuild getter like liveviews / ringtones below): the volume write and the test's assertion / rejection lever must see the SAME instance, so
+    // the projections are captured once above. Projected to the library's Chime shape through the confined seam cast, exactly as the other client members project.
+    chimes: chimes as unknown as Chime[],
     connection: { isHealthy: true },
     controllerName: options.controllerName ?? "Test Controller",
-    nvr: { config: makeNvrConfig() },
+
+    // The controller-wide liveview collection, read through the store double's CURRENT state, mirroring the production client.liveviews array the viewer reconciles its
+    // switches against. A getter (not a held array) closing over options.store so a pushLiveviews changes what the viewer reads, exactly as the live projection does.
+    get liveviews(): readonly ProtectNvrLiveviewConfig[] {
+
+      return [...options.store.snapshot().liveviews.values()];
+    },
+
+    // The controller record, read THROUGH the store double's CURRENT nvr slice rather than a held value, so nvr.ufp (the production getter reads client.nvr.config) and
+    // selectNvr(state) are ONE source: a pushNvrPatch that moves systemInfo by reference changes both at once, which is what lets the nvr-systeminfo owner's observer
+    // reaction be asserted non-vacuously. Falls back to the stable default when the store carries no nvr slice, preserving every non-seeding consumer (the sole prior
+    // reader, the camera family, never seeds it). Mirrors the liveviews / ringtones store-backed getters above.
+    nvr: { get config(): ProtectNvrConfig {
+
+      return options.store.snapshot().nvr ?? defaultNvrConfig;
+    } },
+
+    // The controller-wide ringtone collection, read through the store double's CURRENT state, mirroring the production client.ringtones array the chime filters its
+    // speaker switches against. A getter closing over options.store so a pushRingtones changes what the chime reads, exactly as the live projection does.
+    get ringtones(): readonly ProtectRingtoneConfig[] {
+
+      return [...options.store.snapshot().ringtones.values()];
+    },
     state: options.store
   };
 
@@ -1724,23 +3171,26 @@ export function makeTestNvr(options: { controllerName?: string; mqtt?: boolean; 
     client: client,
     config: { address: "nvr.test", mqttTopic: "test/protect", password: "test-password", username: "test-user",
       ...(options.overrideAddress !== undefined ? { overrideAddress: options.overrideAddress } : {}) },
+    dispatch: options.dispatch,
     log: log,
     mqtt: mqtt,
     platform: {
 
       accessories: accessories,
       api: api,
+      clock: clock,
       codecSupport: { hostSystem: "macOS" },
       config: { controllers: [], debugAll: false, options: [], ringDelay: 0, verboseFfmpeg: false, videoProcessor: "ffmpeg" },
       debug: sink("debug"),
       featureOptions: new FeatureOptions(featureOptionCategories, featureOptions, options.userOptions ?? []),
       log: log,
+      recordingProcessFactory: recordingProcessFactory,
       streamingDelegateFactory: factory
     },
     signal: controller.signal
   });
 
-  return { apiCalls, controller, factory, logEntries, mqtt, nvr };
+  return { apiCalls, clock, controller, factory, logEntries, mqtt, nvr };
 }
 
 /**

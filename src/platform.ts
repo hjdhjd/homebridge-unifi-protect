@@ -3,10 +3,10 @@
  * protect-platform.ts: homebridge-unifi-protect platform class.
  */
 import type { API, DynamicPlatformPlugin, Logging } from "homebridge";
-import { APIEvent, FeatureOptions, FfmpegCodecs, RtpPortAllocator } from "homebridge-plugin-utils";
+import { APIEvent, FeatureOptions, FfmpegCodecs, RtpPortAllocator, recordingProcessFactory, systemClock } from "homebridge-plugin-utils";
+import type { Clock, Nullable, RecordingProcessFactory } from "homebridge-plugin-utils";
 import type { ProtectAccessory, ProtectPlatformConfig } from "./types.ts";
 import { featureOptionCategories, featureOptions } from "./options.ts";
-import type { Nullable } from "homebridge-plugin-utils";
 import { PROTECT_MQTT_TOPIC } from "./settings.ts";
 import { ProtectNvr } from "./nvr.ts";
 import type { ProtectOptions } from "./options.ts";
@@ -19,11 +19,13 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
 
   public accessories: ProtectAccessory[];
   public readonly api: API;
+  public readonly clock: Clock;
   private _codecSupport: Nullable<FfmpegCodecs> = null;
   public readonly config: ProtectOptions;
   private readonly controllers: ProtectNvr[];
   public readonly featureOptions: FeatureOptions;
   public readonly log: Logging;
+  public readonly recordingProcessFactory: RecordingProcessFactory;
   public readonly rtpPorts: RtpPortAllocator;
   public readonly streamingDelegateFactory: StreamingDelegateFactory;
   public verboseFfmpeg: boolean;
@@ -32,9 +34,11 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
 
     this.accessories = [];
     this.api = api;
+    this.clock = systemClock;
     this.controllers = [];
     this.featureOptions = new FeatureOptions(featureOptionCategories, featureOptions, config?.options ?? []);
     this.log = log;
+    this.recordingProcessFactory = recordingProcessFactory;
     this.rtpPorts = new RtpPortAllocator();
     this.streamingDelegateFactory = streamingDelegateFactory;
     this.verboseFfmpeg = false;
