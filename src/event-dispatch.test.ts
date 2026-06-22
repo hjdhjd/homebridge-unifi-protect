@@ -2,25 +2,26 @@
  *
  * event-dispatch.test.ts: Unit tests for the typed event-firehose router and the controller telemetry publisher.
  *
- * Two layers are pinned here. The bare-motion de-duplication policy is a pure function (shouldDeliverBareMotion), so its truth table is exercised directly with no
- * mocks. The router and telemetry loops are exercised against the real production ProtectEventDispatch, constructed with the minimal mocks its constructor and the loops
+ * The router and telemetry loops are exercised against the real production ProtectEventDispatch, constructed with the minimal mocks its constructor and the loops
  * actually read - a controlled client.events() / client.rawPackets() async stream, a getDeviceById over a fixed device map, an mqtt publish spy, and the feature-option
  * gate. The delivery methods are the dispatch decision's observable effect, so a thin recording subclass overrides them to capture exactly what the router routed; the
- * real run() applies the de-dup and the smart-detect gate before invoking them, so routing and policy are verified together. The casts are confined to the mock seam,
- * matching the posture the reachability and nvr suites already established; the instance under test is the production class.
+ * real run() applies the smart-detect gate before invoking them, so routing is verified against the production class. Bare camera motion is no longer a firehose arm -
+ * the controller signals it as a lastMotion device-state advance, which the camera leaf observes directly, so its delivery policy (shouldDeliverBareMotion) and its
+ * observe-driven routing live with the camera leaf and its tests, not here. The casts are confined to the mock seam, matching the posture the reachability and nvr suites
+ * already established; the instance under test is the production class.
  */
-import { ACCESS_UNLOCK_DURATION, ProtectEventDispatch, shouldDeliverBareMotion } from "./event-dispatch.ts";
+import { ACCESS_UNLOCK_DURATION, ProtectEventDispatch } from "./event-dispatch.ts";
 import type { AuthMethod, ProtectEventMetadata, TypedEvent } from "unifi-protect";
 import { Characteristic, Service, makeTestAccessory } from "./testing.helpers.ts";
 import type { ProtectCamera, ProtectDevice } from "./devices/index.ts";
 import { describe, mock, test } from "node:test";
-import type { Nullable } from "homebridge-plugin-utils";
 import { PROTECT_DOORBELL_AUTHSENSOR_DURATION } from "./settings.ts";
 import type { ProtectNvr } from "./nvr.ts";
 import { ProtectReservedNames } from "./types.ts";
 import type { TestAccessory } from "./testing.helpers.ts";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
+import { format } from "node:util";
 
 // A finite async stream over a fixed item list. The router and telemetry loops consume client.events() / client.rawPackets() with `for await`, so a terminating
 // generator lets each loop complete on its own without the test needing to drive the abort signal.
@@ -32,22 +33,21 @@ async function *streamOf<T>(items: readonly T[]): AsyncGenerator<T> {
   }
 }
 
-// One captured delivery invocation. The router's observable effect is which delivery method it called, on which device, with which arguments; this is the shape the
-// recording subclass records so the assertions can pin routing, de-duplication, and argument threading in one place.
+// One captured delivery invocation. The router's observable effect is which delivery method it called, on which device, and with which arguments (the motion objects and
+// metadata, the access action, the auth method); this is the shape the recording subclass records so the assertions can pin routing and argument threading in one place.
 interface DeliveryCall {
 
   action?: string;
   id: string;
   kind: "access" | "auth" | "doorbell" | "motion" | "tamper";
-  lastRing?: Nullable<number>;
   metadata?: unknown;
   method?: AuthMethod;
   objects?: string[];
 }
 
-// A real ProtectEventDispatch whose delivery methods are overridden to record rather than touch HomeKit. run() still resolves the target device, applies the bare-motion
-// de-duplication policy, and gates smart detections exactly as in production - only the terminal delivery is captured - so these tests pin the routing and policy, not
-// the HAP-real characteristic writes (those stay live-validated).
+// A real ProtectEventDispatch whose delivery methods are overridden to record rather than touch HomeKit. run() still resolves the target device and gates smart
+// detections exactly as in production - only the terminal delivery is captured - so these tests pin the routing, not the HAP-real characteristic writes (those stay
+// live-validated).
 class RecordingDispatch extends ProtectEventDispatch {
 
   public readonly calls: DeliveryCall[] = [];
@@ -57,9 +57,9 @@ class RecordingDispatch extends ProtectEventDispatch {
     this.calls.push({ id: protectDevice.ufp.id, kind: "motion", metadata, objects: detectedObjects });
   }
 
-  public override doorbellEventHandler(protectDevice: ProtectCamera, lastRing: Nullable<number>): void {
+  public override doorbellEventHandler(protectDevice: ProtectCamera): void {
 
-    this.calls.push({ id: protectDevice.ufp.id, kind: "doorbell", lastRing });
+    this.calls.push({ id: protectDevice.ufp.id, kind: "doorbell" });
   }
 
   public override accessEventHandler(protectDevice: ProtectCamera, action: string, metadata?: Record<string, unknown>): void {
@@ -134,35 +134,9 @@ const makeDispatch = (options: DispatchOptions = {}): { dispatch: RecordingDispa
 // A never-aborting signal: the firehose / telemetry streams in these tests are finite, so the loops end on their own and the signal only needs to be a valid argument.
 const liveSignal = (): AbortSignal => new AbortController().signal;
 
-describe("bare-motion de-duplication policy (shouldDeliverBareMotion)", () => {
-
-  test("fires bare motion in every case except a capable, smart-enabled camera that is not recording", () => {
-
-    // The policy: fire = HKSV recording OR no smart capability OR smart detection disabled. The lone suppression is the case where smart detection is the source of
-    // truth - the camera can smart-detect, the user enabled it, and HKSV is not separately demanding the motion - so the matching smartDetect event will fire instead.
-    const cases: { expected: boolean; hksvRecording: boolean; smartCapable: boolean; smartDetectEnabled: boolean }[] = [
-
-      { expected: true, hksvRecording: false, smartCapable: false, smartDetectEnabled: false },
-      { expected: true, hksvRecording: false, smartCapable: false, smartDetectEnabled: true },
-      { expected: true, hksvRecording: false, smartCapable: true, smartDetectEnabled: false },
-      { expected: false, hksvRecording: false, smartCapable: true, smartDetectEnabled: true },
-      { expected: true, hksvRecording: true, smartCapable: false, smartDetectEnabled: false },
-      { expected: true, hksvRecording: true, smartCapable: false, smartDetectEnabled: true },
-      { expected: true, hksvRecording: true, smartCapable: true, smartDetectEnabled: false },
-      { expected: true, hksvRecording: true, smartCapable: true, smartDetectEnabled: true }
-    ];
-
-    for(const { expected, hksvRecording, smartCapable, smartDetectEnabled } of cases) {
-
-      assert.equal(shouldDeliverBareMotion({ hksvRecording, smartCapable, smartDetectEnabled }), expected,
-        "hksvRecording=" + String(hksvRecording) + " smartCapable=" + String(smartCapable) + " smartDetectEnabled=" + String(smartDetectEnabled));
-    }
-  });
-});
-
 describe("firehose router dispatch (real ProtectEventDispatch.run)", () => {
 
-  test("routes a doorbell ring to the doorbell delivery on the addressed camera, threading the timestamp", async () => {
+  test("routes a doorbell ring to the doorbell delivery on the addressed camera", async () => {
 
     const devices = new Map<string, unknown>([[ "cam1", makeCamera("cam1") ]]);
     const events: TypedEvent[] = [{ at: 1234, cameraId: "cam1", eventId: "e1", kind: "doorbellRing" }];
@@ -170,7 +144,7 @@ describe("firehose router dispatch (real ProtectEventDispatch.run)", () => {
 
     await dispatch.run(liveSignal());
 
-    assert.deepEqual(dispatch.calls, [{ id: "cam1", kind: "doorbell", lastRing: 1234 }]);
+    assert.deepEqual(dispatch.calls, [{ id: "cam1", kind: "doorbell" }]);
   });
 
   test("routes a smart detection to the motion delivery, threading the object types and metadata", async () => {
@@ -245,27 +219,6 @@ describe("firehose router dispatch (real ProtectEventDispatch.run)", () => {
     assert.deepEqual(dispatch.calls, [], "a smart detection is dropped when the user has smart detection turned off");
   });
 
-  test("delivers bare motion only when the de-duplication policy says smart detection is not the source of truth", async () => {
-
-    // cam1 has no smart capability -> bare motion must fire. cam2 is capable and smart-enabled and not recording -> bare motion must be suppressed (smartDetect owns it).
-    const devices = new Map<string, unknown>([
-
-      [ "cam1", makeCamera("cam1", { hksvRecording: false, smartCapable: false, smartDetectEnabled: false }) ],
-      [ "cam2", makeCamera("cam2", { hksvRecording: false, smartCapable: true, smartDetectEnabled: true }) ]
-    ]);
-    const events: TypedEvent[] = [
-
-      { at: 1, cameraId: "cam1", eventId: "e1", kind: "motionDetected" },
-      { at: 2, cameraId: "cam2", eventId: "e2", kind: "motionDetected" }
-    ];
-    const { dispatch } = makeDispatch({ devices, events });
-
-    await dispatch.run(liveSignal());
-
-    assert.deepEqual(dispatch.calls, [{ id: "cam1", kind: "motion", metadata: undefined, objects: [] }],
-      "bare motion fires for the non-smart camera and is suppressed for the smart-capable, smart-enabled one");
-  });
-
   test("routes a successful access door-open to the access delivery, threading the action and metadata", async () => {
 
     const devices = new Map<string, unknown>([[ "cam1", makeCamera("cam1") ]]);
@@ -307,12 +260,11 @@ describe("firehose router dispatch (real ProtectEventDispatch.run)", () => {
     // Every activity kind resolves its target through getDeviceById; an unconfigured id routes nowhere whatever the kind.
     const events: TypedEvent[] = [
 
-      { at: 1, cameraId: "missing", eventId: "e1", kind: "motionDetected" },
-      { at: 2, cameraId: "missing", eventId: "e2", kind: "smartDetect", objectTypes: ["person"] },
-      { at: 3, cameraId: "missing", eventId: "e3", kind: "tamperDetected" },
-      { at: 4, cameraId: "missing", eventId: "e4", kind: "authDetected", metadata: { nfc: { nfcId: "card-9", ulpId: "ulp-1" } }, method: "nfc" },
-      { at: 5, cameraId: "missing", eventId: "e5", kind: "doorbellRing" },
-      { action: "open_door", at: 6, deviceId: "missing", eventId: "e6", kind: "accessEvent", metadata: { openSuccess: true } }
+      { at: 1, cameraId: "missing", eventId: "e1", kind: "smartDetect", objectTypes: ["person"] },
+      { at: 2, cameraId: "missing", eventId: "e2", kind: "tamperDetected" },
+      { at: 3, cameraId: "missing", eventId: "e3", kind: "authDetected", metadata: { nfc: { nfcId: "card-9", ulpId: "ulp-1" } }, method: "nfc" },
+      { at: 4, cameraId: "missing", eventId: "e4", kind: "doorbellRing" },
+      { action: "open_door", at: 5, deviceId: "missing", eventId: "e5", kind: "accessEvent", metadata: { openSuccess: true } }
     ];
     const { dispatch } = makeDispatch({ devices: new Map<string, unknown>(), events });
 
@@ -327,12 +279,11 @@ describe("firehose router dispatch (real ProtectEventDispatch.run)", () => {
     const devices = new Map<string, unknown>([[ "sensor1", { ufp: { id: "sensor1", modelKey: "sensor" } } ]]);
     const events: TypedEvent[] = [
 
-      { at: 1, cameraId: "sensor1", eventId: "e1", kind: "motionDetected" },
-      { at: 2, cameraId: "sensor1", eventId: "e2", kind: "smartDetect", objectTypes: ["person"] },
-      { at: 3, cameraId: "sensor1", eventId: "e3", kind: "tamperDetected" },
-      { at: 4, cameraId: "sensor1", eventId: "e4", kind: "authDetected", metadata: { nfc: { nfcId: "card-9", ulpId: "ulp-1" } }, method: "nfc" },
-      { at: 5, cameraId: "sensor1", eventId: "e5", kind: "doorbellRing" },
-      { action: "open_door", at: 6, deviceId: "sensor1", eventId: "e6", kind: "accessEvent", metadata: { openSuccess: true } }
+      { at: 1, cameraId: "sensor1", eventId: "e1", kind: "smartDetect", objectTypes: ["person"] },
+      { at: 2, cameraId: "sensor1", eventId: "e2", kind: "tamperDetected" },
+      { at: 3, cameraId: "sensor1", eventId: "e3", kind: "authDetected", metadata: { nfc: { nfcId: "card-9", ulpId: "ulp-1" } }, method: "nfc" },
+      { at: 4, cameraId: "sensor1", eventId: "e4", kind: "doorbellRing" },
+      { action: "open_door", at: 5, deviceId: "sensor1", eventId: "e5", kind: "accessEvent", metadata: { openSuccess: true } }
     ];
     const { dispatch } = makeDispatch({ devices, events });
 
@@ -390,30 +341,6 @@ describe("firehose dispatch diagnostics (hbup:firehose:dispatch)", () => {
         { cameraId: "cam1", kind: "authDetected" },
         { cameraId: "cam1", kind: "accessEvent" }
       ], "each delivered event publishes one milestone carrying its kind and the addressed camera id");
-    } finally {
-
-      diagnosticsChannel.unsubscribe("hbup:firehose:dispatch", onDispatch);
-    }
-  });
-
-  test("publishes no dispatch milestone for an event the router suppresses", async () => {
-
-    const received: unknown[] = [];
-    const onDispatch = (message: unknown): void => { received.push(message); };
-
-    diagnosticsChannel.subscribe("hbup:firehose:dispatch", onDispatch);
-
-    try {
-
-      // A bare motion on a smart-capable, smart-enabled, not-recording camera is suppressed by the de-dup policy. The milestone is published only when an event actually
-      // reaches a delivery method, so the suppressed event produces nothing.
-      const devices = new Map<string, unknown>([[ "cam1", makeCamera("cam1", { hksvRecording: false, smartCapable: true, smartDetectEnabled: true }) ]]);
-      const events: TypedEvent[] = [{ at: 1, cameraId: "cam1", eventId: "e1", kind: "motionDetected" }];
-      const { dispatch } = makeDispatch({ devices, events });
-
-      await dispatch.run(liveSignal());
-
-      assert.deepEqual(received, [], "a suppressed event never publishes a dispatch milestone");
     } finally {
 
       diagnosticsChannel.unsubscribe("hbup:firehose:dispatch", onDispatch);
@@ -753,4 +680,269 @@ describe("doorbell auth delivery (real ProtectEventDispatch.authEventHandler)", 
       mock.timers.reset();
     }
   });
+});
+
+// Build a real ProtectEventDispatch wired to the HAP doubles motionEventDelivery touches, plus a camera stand-in carrying the supplied TestAccessory and the motion
+// hints the delivery reads. The info log is captured (formatted through util.format, as the real Homebridge logger renders its printf-style calls) so the assertions
+// can pin the coalescing of simultaneous types and the strictly-grows enrichment dedup; mqtt.publish calls land in `published`. Smart detection and motion logging are
+// enabled by default so a test names only the axis it varies. Every delivery arms a motionDuration reset timer, so the suite runs under mock timers.
+const makeMotionDispatch = (accessory: TestAccessory, hints: Record<string, unknown> = {}): { camera: ProtectCamera; dispatch: ProtectEventDispatch;
+  logged: string[]; published: unknown[][]; } => {
+
+  const logged: string[] = [];
+  const published: unknown[][] = [];
+  const noop = (): void => { /* swallow non-info log output in tests */ };
+  const log = { debug: noop, error: noop, info: (message: string, ...parameters: unknown[]): void => { logged.push(format(message, ...parameters)); }, warn: noop };
+  const hap = {
+
+    Characteristic: { ContactSensorState: Characteristic.ContactSensorState, MotionDetected: Characteristic.MotionDetected,
+      OccupancyDetected: Characteristic.OccupancyDetected, On: Characteristic.On },
+    Service: { ContactSensor: Service.ContactSensor, MotionSensor: Service.MotionSensor, OccupancySensor: Service.OccupancySensor, Switch: Service.Switch }
+  };
+  const publish = (...args: unknown[]): void => { published.push(args); };
+  const nvr = { log, mqtt: { publish }, platform: { api: { hap }, config: {} } };
+  const dispatch = new ProtectEventDispatch(nvr as unknown as ProtectNvr);
+  const camera = {
+
+    accessory,
+    hints: { logMotion: true, motionDuration: 10, occupancyDuration: 10, smartDetect: true, smartOccupancy: [], ...hints },
+    id: "cam-motion",
+    log,
+    ufp: { mac: "AA:BB:CC:DD:EE:FF" }
+  };
+
+  return { camera: camera as unknown as ProtectCamera, dispatch, logged, published };
+};
+
+// Run a test body under mock setTimeout so each delivery's motionDuration reset timer is controllable and never lingers on the real loop after the test.
+const withMockTimers = (body: () => void): void => {
+
+  mock.timers.enable({ apis: ["setTimeout"] });
+
+  try {
+
+    body();
+  } finally {
+
+    mock.timers.reset();
+  }
+};
+
+describe("smart-detection delivery (real ProtectEventDispatch.motionEventHandler)", () => {
+
+  test("coalesces simultaneous plain object types onto a single log line", () => withMockTimers(() => {
+
+    const accessory = makeTestAccessory();
+
+    accessory.addService(Service.MotionSensor, "Motion");
+
+    const { camera, dispatch, logged } = makeMotionDispatch(accessory);
+
+    dispatch.motionEventHandler(camera, [ "animal", "face", "person" ]);
+
+    assert.deepEqual(logged, [ "Motion detected.", "Smart motion detected: animal, face, person." ],
+      "the three simultaneous detections coalesce onto one line rather than three");
+  }));
+
+  test("logs a vehicle bare first, then re-logs it once as its metadata fills in", () => withMockTimers(() => {
+
+    const accessory = makeTestAccessory();
+
+    accessory.addService(Service.MotionSensor, "Motion");
+
+    const { camera, dispatch, logged } = makeMotionDispatch(accessory);
+
+    // First delivery: the controller has only identified a vehicle, no plate/color/type yet, so it logs as a bare detection.
+    dispatch.motionEventHandler(camera, ["vehicle"]);
+
+    // Second delivery within the window: color and body type have arrived, so the detection re-logs once with the enriched attributes.
+    dispatch.motionEventHandler(camera, [], { detectedThumbnails: [{ attributes: { color: { confidence: 68, val: "black" },
+      vehicleType: { confidence: 96, val: "suv" } }, type: "vehicle" }] });
+
+    assert.deepEqual(logged, [
+
+      "Motion detected.",
+      "Smart motion detected: vehicle.",
+      "Smart motion detected: vehicle (color: black [68% confidence], vehicleType: suv [96% confidence])."
+    ], "the bare vehicle line is followed by exactly one enriched line");
+  }));
+
+  test("does not re-log a vehicle whose metadata has not grown", () => withMockTimers(() => {
+
+    const accessory = makeTestAccessory();
+
+    accessory.addService(Service.MotionSensor, "Motion");
+
+    const { camera, dispatch, logged } = makeMotionDispatch(accessory);
+    const thumbnail = { detectedThumbnails: [{ attributes: { color: { confidence: 68, val: "black" } }, type: "vehicle" }] };
+
+    dispatch.motionEventHandler(camera, [], thumbnail);
+    dispatch.motionEventHandler(camera, [], thumbnail);
+    dispatch.motionEventHandler(camera, [], thumbnail);
+
+    assert.deepEqual(logged.filter(line => line.startsWith("Smart motion detected")), ["Smart motion detected: vehicle (color: black [68% confidence])."],
+      "the identical retriggers re-arm the timer but do not re-log the enriched line");
+  }));
+
+  test("does not re-log a plain detection that retriggers within the motion window", () => withMockTimers(() => {
+
+    const accessory = makeTestAccessory();
+
+    accessory.addService(Service.MotionSensor, "Motion");
+
+    const { camera, dispatch, logged } = makeMotionDispatch(accessory);
+
+    dispatch.motionEventHandler(camera, ["person"]);
+    dispatch.motionEventHandler(camera, ["person"]);
+
+    assert.deepEqual(logged.filter(line => line.startsWith("Smart motion detected")), ["Smart motion detected: person."],
+      "the second person detection within the window re-arms the timer but does not re-log");
+  }));
+
+  test("trips the configured license-plate contact sensor and renders the plate into the log line", () => withMockTimers(() => {
+
+    const accessory = makeTestAccessory();
+
+    accessory.addService(Service.MotionSensor, "Motion");
+
+    const plateSensor = accessory.addService(Service.ContactSensor, "Plate ABC123", ProtectReservedNames.CONTACT_MOTION_SMARTDETECT_LICENSE + ".ABC123");
+    const { camera, dispatch, logged } = makeMotionDispatch(accessory);
+
+    dispatch.motionEventHandler(camera, [], { detectedThumbnails: [{ confidence: 98, name: "ABC123", type: "vehicle" }] });
+
+    assert.equal(plateSensor.getCharacteristic(Characteristic.ContactSensorState).value, Characteristic.ContactSensorState.CONTACT_NOT_DETECTED,
+      "the matching plate contact sensor trips on the detection");
+    assert.deepEqual(logged.filter(line => line.startsWith("Smart motion detected")),
+      ["Smart motion detected: vehicle (license plate: ABC123 [98% confidence])."], "the plate is rendered into the enriched log line");
+  }));
+
+  test("suppresses all smart-detection logging when motion logging is disabled, but still trips the motion sensor", () => withMockTimers(() => {
+
+    const accessory = makeTestAccessory();
+    const motion = accessory.addService(Service.MotionSensor, "Motion");
+    const { camera, dispatch, logged } = makeMotionDispatch(accessory, { logMotion: false });
+
+    dispatch.motionEventHandler(camera, [ "animal", "face", "person" ]);
+
+    assert.deepEqual(logged, [], "no lines are logged when motion logging is disabled");
+    assert.equal(motion.getCharacteristic(Characteristic.MotionDetected).value, true, "the motion sensor still trips regardless of the logging hint");
+  }));
+
+  test("re-logs the enriched line in a fresh motion window after the reset timer fires", () => withMockTimers(() => {
+
+    const accessory = makeTestAccessory();
+
+    accessory.addService(Service.MotionSensor, "Motion");
+
+    const { camera, dispatch, logged } = makeMotionDispatch(accessory, { motionDuration: 10 });
+    const thumbnail = { detectedThumbnails: [{ attributes: { color: { confidence: 68, val: "black" } }, type: "vehicle" }] };
+
+    dispatch.motionEventHandler(camera, [], thumbnail);
+
+    // Advance past the motion window so the reset timer clears the per-type tracker, then deliver the same detection again - which must log afresh.
+    mock.timers.tick(10 * 1000);
+    dispatch.motionEventHandler(camera, [], thumbnail);
+
+    assert.deepEqual(logged.filter(line => line.startsWith("Smart motion detected")),
+      [ "Smart motion detected: vehicle (color: black [68% confidence]).", "Smart motion detected: vehicle (color: black [68% confidence])." ],
+      "the detection re-logs once per motion window");
+  }));
+
+  test("logs a vehicle once when it arrives bare and enriched in the same delivery", () => withMockTimers(() => {
+
+    const accessory = makeTestAccessory();
+
+    accessory.addService(Service.MotionSensor, "Motion");
+
+    const { camera, dispatch, logged } = makeMotionDispatch(accessory);
+
+    // The v5 smartDetect firehose event carries the object type in objectTypes AND its enriched detail in detectedThumbnails within one payload, so the same type is
+    // processed both bare and enriched in a single delivery; it must produce exactly one (enriched) line, never an additional bare coalesced line.
+    dispatch.motionEventHandler(camera, ["vehicle"], { detectedThumbnails: [{ attributes: { color: { confidence: 68, val: "black" },
+      vehicleType: { confidence: 96, val: "suv" } }, type: "vehicle" }] });
+
+    assert.deepEqual(logged.filter(line => line.startsWith("Smart motion detected")),
+      ["Smart motion detected: vehicle (color: black [68% confidence], vehicleType: suv [96% confidence])."],
+      "the vehicle logs once enriched, never also as a bare coalesced line");
+  }));
+
+  test("in one delivery coalesces plain types and logs a rich type on its own enriched line", () => withMockTimers(() => {
+
+    const accessory = makeTestAccessory();
+
+    accessory.addService(Service.MotionSensor, "Motion");
+
+    const { camera, dispatch, logged } = makeMotionDispatch(accessory);
+
+    dispatch.motionEventHandler(camera, [ "person", "vehicle" ], { detectedThumbnails: [{ attributes: { color: { confidence: 68, val: "black" },
+      vehicleType: { confidence: 96, val: "suv" } }, type: "vehicle" }] });
+
+    assert.deepEqual(logged.filter(line => line.startsWith("Smart motion detected")), [
+
+      "Smart motion detected: vehicle (color: black [68% confidence], vehicleType: suv [96% confidence]).",
+      "Smart motion detected: person."
+    ], "the plain person coalesces on its own line and the enriched vehicle is not also listed there");
+  }));
+
+  test("publishes the per-type MQTT state once and the metadata topic only as it grows", () => withMockTimers(() => {
+
+    const accessory = makeTestAccessory();
+
+    accessory.addService(Service.MotionSensor, "Motion");
+
+    const { camera, dispatch, published } = makeMotionDispatch(accessory);
+    const thumbnail = { detectedThumbnails: [{ attributes: { color: { confidence: 68, val: "black" } }, type: "vehicle" }] };
+
+    dispatch.motionEventHandler(camera, [], thumbnail);
+    dispatch.motionEventHandler(camera, [], thumbnail);
+
+    const topics = published.map(entry => String(entry[0]));
+
+    assert.equal(topics.filter(topic => topic.endsWith("/motion/smart/vehicle")).length, 1, "the per-type state publishes once on first detection");
+
+    const metadata = published.filter(entry => String(entry[0]).endsWith("/motion/smart/vehicle/metadata"));
+
+    assert.equal(metadata.length, 1, "the metadata publishes once and not again on an identical retrigger");
+    assert.deepEqual(JSON.parse(String(metadata[0]?.[1])), { color: { confidence: 68, val: "black" }, type: "vehicle" },
+      "the metadata payload matches the enricher output");
+  }));
+
+  test("with motion logging off, publishes MQTT state and metadata but logs nothing", () => withMockTimers(() => {
+
+    const accessory = makeTestAccessory();
+
+    accessory.addService(Service.MotionSensor, "Motion");
+
+    const { camera, dispatch, logged, published } = makeMotionDispatch(accessory, { logMotion: false });
+
+    dispatch.motionEventHandler(camera, [], { detectedThumbnails: [{ attributes: { color: { confidence: 68, val: "black" } }, type: "vehicle" }] });
+
+    const topics = published.map(entry => String(entry[0]));
+
+    // MQTT is gated only on MQTT being configured: both the per-type state and the rich metadata publish regardless of the console-logging hint (deduped, not
+    // suppressed).
+    assert.ok(topics.some(topic => topic.endsWith("/motion/smart/vehicle")), "the per-type state publishes on MQTT regardless of the logging hint");
+    assert.ok(topics.some(topic => topic.endsWith("/motion/smart/vehicle/metadata")), "the metadata publishes on MQTT regardless of the logging hint");
+    assert.deepEqual(logged, [], "but nothing is logged when motion logging is disabled");
+  }));
+
+  test("clearing a device's timers also clears its smart-detect log high-water marks", () => withMockTimers(() => {
+
+    const accessory = makeTestAccessory();
+
+    accessory.addService(Service.MotionSensor, "Motion");
+
+    const { camera, dispatch, logged } = makeMotionDispatch(accessory);
+    const thumbnail = { detectedThumbnails: [{ attributes: { color: { confidence: 68, val: "black" } }, type: "vehicle" }] };
+
+    dispatch.motionEventHandler(camera, [], thumbnail);
+
+    // clearEventTimersForDevice clears the reset timers WITHOUT firing them, so the high-water marks must be swept explicitly or the next detection would be suppressed.
+    dispatch.clearEventTimersForDevice("cam-motion");
+    dispatch.motionEventHandler(camera, [], thumbnail);
+
+    assert.deepEqual(logged.filter(line => line.startsWith("Smart motion detected")),
+      [ "Smart motion detected: vehicle (color: black [68% confidence]).", "Smart motion detected: vehicle (color: black [68% confidence])." ],
+      "after the device's timers are cleared, the next detection logs afresh rather than being suppressed by a stale high-water mark");
+  }));
 });

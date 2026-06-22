@@ -169,7 +169,7 @@ export class ProtectLight extends ProtectDevice {
 
     const light = selectLight(this.ufp.id);
 
-    // Light motion, like sensor motion, is a device-state field (lastMotion) rather than a firehose occurrence - v5's motionDetected is camera-only - so observing the
+    // Light motion, like sensor and camera motion, is a device-state field (lastMotion) the controller advances rather than a firehose occurrence, so observing the
     // timestamp is the single source for this device, firing only on a real (truthy) detection rather than re-synthesizing it from a held prior value.
     this.observeState({ key: "light.lastMotion", selector: state => light(state)?.lastMotion, title: "motion detection" }, lastMotion => {
 

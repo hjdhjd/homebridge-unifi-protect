@@ -5,7 +5,7 @@
  * doorbell-ness.
  *
  * Suite C (live-attach) drives a real ProtectCamera constructed as a plain camera (isDoorbell false, a real stub-factory stream built with builtAsDoorbell false) and
- * pushes isDoorbell true through the always-armed observer: the capability attaches, the Doorbell service appears and is primary, the census grows to fifteen, the
+ * pushes isDoorbell true through the always-armed observer: the capability attaches, the Doorbell service appears and is primary, the census grows to sixteen, the
  * accessory's ordered controller-event log shows EXACTLY one removeController then one configureController (the in-place rebuild), the stream's builtAsDoorbell is now
  * true, the ring MQTT is registered exactly once, and one promotion INFO is logged. It then pins the no-churn cases: a construction-attach (a flag-true construction)
  * yields the same service set with ZERO removeController (the stub stream is built with builtAsDoorbell true, so the rebuild gate is a no-op), an idempotent re-push does
@@ -68,15 +68,15 @@ describe("live-attach reclassification (suite C)", () => {
 
     await settle();
 
-    // The capability composed onto the running instance, the Doorbell service is present and primary, and the census grew to fifteen (the always-armed observer plus the
-    // capability four onto the plain-camera-plus-base eleven).
+    // The capability composed onto the running instance, the Doorbell service is present and primary, and the census grew to sixteen (the capability four onto the
+    // plain-camera-plus-base twelve, which already carries the always-armed isDoorbell observer and the bare-motion lastMotion observer).
     assert.ok(camera.doorbell, "the doorbell capability attached onto the live camera");
 
     const doorbellService = accessory.getService(Service.Doorbell);
 
     assert.ok(doorbellService, "the Doorbell service now exists");
     assert.equal(doorbellService.isPrimary, true, "the Doorbell service is primary");
-    assert.equal(store.observerCount, 15, "the promoted camera carries the fifteen-observer doorbell census");
+    assert.equal(store.observerCount, 16, "the promoted camera carries the sixteen-observer doorbell census");
 
     // The in-place controller rebuild: exactly one removeController then one configureController, in that order, fired at this event (today's shipped reclassification
     // semantics - the HKSV factory reset and supported-config hash change - now carried by a rebuild of only the controller, not a teardown+recreate of the instance).

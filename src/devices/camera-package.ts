@@ -14,7 +14,8 @@ import { selectCamera } from "unifi-protect";
 
 // Package camera class. Extends ProtectCamera and represents the secondary camera channel on Protect doorbells that ship with one. The package camera is a HomeKit
 // sub-view of its parent doorbell's shared camera projection, not a Protect device of its own - it is self-observing over that shared projection, deriving its identity
-// and display name from the parent's, while its motion is delivered by the firehose router when the parent fires.
+// and display name from the parent's, while its motion is driven by the parent camera's lastMotion leaf observer (the package has no motion sensor of its own, so the
+// parent's bare-motion observe forwards a recording package camera's motion for it).
 export class ProtectCameraPackage extends ProtectCamera {
 
   // Whether the flashlight is currently lit. The literal initializer is safe under ES2024 field-define semantics precisely because it carries no constructor-chain-

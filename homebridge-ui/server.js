@@ -80,11 +80,17 @@ class PluginUiServer extends HomebridgePluginUiServer {
           ...adopted(client.viewers) ];
       } catch(error) {
 
-        // The library reports failures through the log seam above; if it threw without logging, fall back to the thrown error's message so the user still sees a reason.
-        this.errorInfo ||= (error instanceof Error) ? error.message : String(error);
+        // The library reports failures through the log shim above, which captured a friendly message into errorInfo and already logged it. The typed transport errors,
+        // however, propagate WITHOUT logging - so when errorInfo is still empty we capture the thrown error's friendly .message and log that single clean sentence here.
+        // We never log the raw error object, which would dump its stack and chained cause into the log; and the empty-errorInfo guard avoids logging the same failure
+        // twice when the shim already reported it.
+        if(!this.errorInfo) {
 
-        // eslint-disable-next-line no-console
-        console.error(error);
+          this.errorInfo = (error instanceof Error) ? error.message : String(error);
+
+          // eslint-disable-next-line no-console
+          console.error(this.errorInfo);
+        }
 
         return [];
       }

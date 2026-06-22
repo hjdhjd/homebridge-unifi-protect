@@ -3,7 +3,7 @@
  * protect-nvr.ts: NVR device class for UniFi Protect.
  */
 import type { API, HAP } from "homebridge";
-import { APIEvent, MqttClient, formatSeconds, loopFaultReporter, retry, sanitizeName, superviseLoop } from "homebridge-plugin-utils";
+import { APIEvent, MqttClient, formatErrorMessage, formatSeconds, loopFaultReporter, retry, sanitizeName, superviseLoop } from "homebridge-plugin-utils";
 import type { Camera, HttpRequestEndPayload, LivestreamRecoveryRecoveredPayload, LivestreamRecoveryStartedPayload, ProtectLogging, ProtectNvrConfig,
   ProtectState } from "unifi-protect";
 import { DoorbellCapability, ProtectCamera, ProtectCameraPackage, ProtectChime, ProtectLight, ProtectLiveviews, ProtectNvrSystemInfo, ProtectSensor,
@@ -23,6 +23,7 @@ import { ProtectEventDispatch } from "./event-dispatch.ts";
 import type { ProtectNvrOptions } from "./options.ts";
 import type { ProtectPlatform } from "./platform.ts";
 import { channels } from "./diagnostics.ts";
+import { describeDevice } from "./devices/device-descriptor.ts";
 import http from "node:http";
 import { livestreamRecoveryDecision } from "./livestream-recovery-policy.ts";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -452,7 +453,7 @@ export class ProtectNvr {
         return false;
       }
 
-      this.log.error("Unable to connect to the Protect controller: %s.", (error instanceof Error) ? error.message : String(error));
+      this.log.error("Unable to connect to the Protect controller: %s.", formatErrorMessage(error));
 
       return false;
     }
@@ -468,8 +469,10 @@ export class ProtectNvr {
       return false;
     }
 
-    // Assign our name if the user hasn't explicitly specified a preference.
-    this.name = this.config.name ?? this.client.controllerName ?? this.config.address;
+    // Assign our log-prefix name, decorated with the controller model - "Name [Model]" via describeDevice - so every controller-scoped line shows the hardware,
+    // matching the pre-v5 prefix. The name resolution is unchanged (a user preference wins, then the controller's reported name, then its address); describeDevice only
+    // appends the bracketed model, and is reached here post-bootstrap where this.ufp is populated. Early, pre-bootstrap logs keep the bare name set in the constructor.
+    this.name = describeDevice(this.ufp, { name: this.config.name ?? this.client.controllerName ?? this.config.address });
 
     // Wire the per-client connection-health inputs (throttle rails, controller-lost/recovered lifecycle) against the freshly-established client.
     this.wireConnectionHealth();
@@ -667,7 +670,7 @@ export class ProtectNvr {
     }
 
     // Inform the user about the devices we see, reading the live v5 projections.
-    this.log.info("Discovered controller: %s.", this.client.controllerName ?? this.ufp.marketName);
+    this.log.info("Discovered controller: %s.", describeDevice(this.ufp, { includeNetwork: true, name: this.client.controllerName }));
 
     for(const config of this.deviceConfigs) {
 
@@ -677,7 +680,7 @@ export class ProtectNvr {
         continue;
       }
 
-      this.log.info("Discovered %s: %s.", config.modelKey, config.name ?? config.marketName);
+      this.log.info("Discovered %s: %s.", config.modelKey, describeDevice(config, { includeNetwork: true }));
     }
 
     // Perform the initial device population and spawn the observe loops that keep us in sync. The bootstrap-refresh timer and the synthetic re-emit the v4 model used are
@@ -790,7 +793,7 @@ export class ProtectNvr {
       // reschedule at the deferral cadence - a failure is just another reason to try again the next time we check. Propagate the cycle start so the ceiling keeps
       // counting cumulative time across deferrals and retries.
       this.transition("running");
-      this.log.error("Unable to reboot the Protect controller: %s.", (error instanceof Error) ? error.message : String(error));
+      this.log.error("Unable to reboot the Protect controller: %s.", formatErrorMessage(error));
 
       this.nvrRebootTimer = setTimeout(() => void this.executeScheduledReboot(intervalHours, nextCycleStart), 60 * 1000);
 
@@ -1313,7 +1316,7 @@ export class ProtectNvr {
       // Notify the user we see this device, but we aren't adding it to HomeKit.
       this.unsupportedDevices[device.mac] = true;
 
-      this.log.info("UniFi Protect device type %s is not currently supported, ignoring: %s.", device.modelKey, device.name ?? device.marketName);
+      this.log.info("UniFi Protect device type %s is not currently supported, ignoring: %s.", device.modelKey, describeDevice(device));
 
       return false;
     }
@@ -1347,7 +1350,7 @@ export class ProtectNvr {
 
       accessory = new this.api.platformAccessory<ProtectAccessoryContext>(sanitizeName(device.name ?? device.marketName), uuid);
 
-      this.log.info("%s: Adding %s to HomeKit%s.", device.name ?? device.marketName, device.modelKey,
+      this.log.info("%s: Adding %s to HomeKit%s.", describeDevice(device), device.modelKey,
         this.hasFeature("Device.Standalone", device) ? " as a standalone device" : "");
 
       // Register this accessory with homebridge and add it to the accessory array so we can track it.
@@ -1418,7 +1421,7 @@ export class ProtectNvr {
     const device = protectDevice?.ufp ?? (accessory.context.mac ? this.deviceConfigByMac(accessory.context.mac) : null);
 
     this.log.info("%s: Removing %s from HomeKit.%s",
-      device ? (device.name ?? device.marketName) : protectDevice?.accessoryName ?? accessory.displayName,
+      device ? describeDevice(device) : protectDevice?.accessoryName ?? accessory.displayName,
       device?.modelKey ?? "device",
       accessory._associatedHAPAccessory.bridged ? "" : " You will need to manually delete the device in the Home app to complete the removal.");
 
@@ -1566,7 +1569,7 @@ export class ProtectNvr {
         return;
       }
 
-      this.log.error("M3U playlist publisher error: %s", error);
+      this.log.error("The M3U playlist publisher encountered an error and has stopped: %s.", formatErrorMessage(error));
       server.close();
     });
 

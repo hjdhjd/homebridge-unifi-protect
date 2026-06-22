@@ -4,34 +4,28 @@
  */
 "use strict";
 
+import { controllers, hasValidCredentials, primaryController, withPrimaryCredentials } from "./protect-config.mjs";
 import { webUi } from "homebridge-plugin-utils/webUi.mjs";
 
-// Execute our first run screen if we don't have valid Protect login credentials and a controller.
-const firstRunIsRequired = () => {
+// Execute our first run screen if we don't have valid Protect login credentials and a controller. The framework injects our primary platform-config entry, so this is
+// a pure predicate over the persisted config rather than a reach into the feature-options page's state.
+const firstRunIsRequired = ({ config }) => !hasValidCredentials(config);
 
-  if(ui.featureOptions.currentConfig.length && ui.featureOptions.currentConfig[0].controllers?.length &&
-    ui.featureOptions.currentConfig[0].controllers[0]?.address?.length && ui.featureOptions.currentConfig[0].controllers[0]?.username?.length &&
-    ui.featureOptions.currentConfig[0].controllers[0]?.password?.length) {
+// Initialize our first run screen with any information from our existing configuration. The injected config is the primary platform entry; we pre-populate the form
+// from its primary controller, if one is already configured.
+const firstRunOnStart = ({ config }) => {
 
-    return false;
-  }
+  const controller = primaryController(config);
 
-  return true;
-};
-
-// Initialize our first run screen with any information from our existing configuration.
-const firstRunOnStart = () => {
-
-  // Pre-populate with anything we might already have in our configuration.
-  document.getElementById("address").value = ui.featureOptions.currentConfig[0].controllers?.[0]?.address ?? "";
-  document.getElementById("username").value = ui.featureOptions.currentConfig[0].controllers?.[0]?.username ?? "";
-  document.getElementById("password").value = ui.featureOptions.currentConfig[0].controllers?.[0]?.password ?? "";
+  document.getElementById("address").value = controller?.address ?? "";
+  document.getElementById("username").value = controller?.username ?? "";
+  document.getElementById("password").value = controller?.password ?? "";
 
   return true;
 };
 
 // Validate our Protect credentials.
-const firstRunOnSubmit = async () => {
+const firstRunOnSubmit = async ({ commit, config }) => {
 
   const address = document.getElementById("address").value;
   const username = document.getElementById("username").value;
@@ -70,17 +64,9 @@ const firstRunOnSubmit = async () => {
     return false;
   }
 
-  // Snapshot the live configuration once - currentConfig rebuilds a fresh copy on every read, so we capture a single reference to mutate and persist rather than
-  // re-reading it per line (re-reading mutates throwaway copies and loses the write). We shallow-copy the controllers array so we preserve any additional controllers,
-  // and merge onto the existing primary entry rather than discarding its other fields. On a true first run controllers[0] is undefined; object spread of undefined is
-  // a safe no-op (it yields just the three credential fields), so no separate initialization is needed.
-  const pluginConfig = ui.featureOptions.currentConfig;
-  const controllers = [...(pluginConfig[0].controllers ?? [])];
-
-  controllers[0] = { ...controllers[0], address, password, username };
-  pluginConfig[0].controllers = controllers;
-
-  await homebridge.updatePluginConfig(pluginConfig);
+  // Persist the validated credentials through the framework's single write seam. We own the shape of the write - credentials live under the primary controller, which
+  // withPrimaryCredentials encodes while preserving any additional controllers - and the session owns persistence and the preservation of sibling platform entries.
+  await commit(withPrimaryCredentials(config, { address, password, username }));
 
   return true;
 };
@@ -88,22 +74,13 @@ const firstRunOnSubmit = async () => {
 // Return whether a given device is a controller.
 const isController = (device) => device.modelKey === "nvr";
 
-// Return the list of controllers from our plugin configuration.
-const getControllers = () => {
+// Return the list of controllers from our plugin configuration. The framework injects our primary platform-config entry; we map each configured controller to the
+// sidebar shape, deliberately carrying no credentials into the rendered list.
+const getControllers = ({ config }) => controllers(config).map((controller) => ({ name: controller.address, serialNumber: controller.address }));
 
-  const controllers = [];
-
-  // Grab the controllers from our configuration.
-  for(const controller of ui.featureOptions.currentConfig[0].controllers ?? []) {
-
-    controllers.push({ name: controller.address, serialNumber: controller.address });
-  }
-
-  return controllers;
-};
-
-// Return the list of devices associated with a given Protect controller.
-const getDevices = async (selectedController) => {
+// Return the list of devices associated with a given Protect controller. The framework injects the live platform config alongside the selected controller, so we can
+// recover the selected controller's credentials (which the sidebar entries deliberately omit) without reaching for the config ourselves.
+const getDevices = async (selectedController, { config }) => {
 
   // If we're in the global context, we have no devices.
   if(!selectedController) {
@@ -112,7 +89,7 @@ const getDevices = async (selectedController) => {
   }
 
   // Find the entry in our plugin configuration.
-  const controller = (ui.featureOptions.currentConfig[0].controllers ?? []).find(c => c.address === selectedController.serialNumber);
+  const controller = controllers(config).find((c) => c.address === selectedController.serialNumber);
 
   if(!controller) {
 

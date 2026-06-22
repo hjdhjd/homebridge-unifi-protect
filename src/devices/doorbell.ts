@@ -725,7 +725,7 @@ export class DoorbellCapability extends ProtectBase {
       // At a minimum, make sure a message was specified. If we have a duration, make sure it's a valid number.
       if(!("message" in inboundPayload) || (("duration" in inboundPayload) && Number.isNaN(inboundPayload.duration))) {
 
-        this.log.error("Unable to process MQTT message: \"%s\".", inboundPayload);
+        this.log.error("Unable to process MQTT message: \"%s\". The message must include a \"message\" field and any duration must be numeric.", rawValue);
 
         return;
       }

@@ -1013,7 +1013,7 @@ export class TestStateStore {
     this.state = initialState;
   }
 
-  // The number of currently registered observers, derived from the registration set. Eleven after a minimal camera construction settles; zero after cleanup.
+  // The number of currently registered observers, derived from the registration set. Twelve after a minimal camera construction settles; zero after cleanup.
   public get observerCount(): number {
 
     return this.observers.size;
@@ -1490,8 +1490,10 @@ export function makeViewerConfig(options: { id?: string; liveview?: Nullable<str
  *                  HardwareRevision write reads (OPT-IN, omitted by default so setInfo's length-guard short-circuits); humidity: the humidity reading folded into
  *                  stats.humidity.value (omitted, no humidity stat); humidityEnabled: the humidity settings toggle (defaults false); id: identity override (defaults
  *                  "test-sensor-1"); isConnected: the connection flag (defaults true); isMotionDetected: the Motion.* applicability property (defaults true); isOpened:
- *                  the contact state (defaults null); leakDetectedAt: the internal-leak timestamp (defaults null); leakExternalEnabled / leakInternalEnabled: the leak
- *                  settings toggles (default false); ledEnabled: the status-indicator LED toggle (defaults false); lightEnabled: the light settings toggle (defaults
+ *                  the contact state (defaults null); leakChannelNames: the water-leak channels the controller advertises in featureFlags.waterLeak.channelNames - the
+ *                  leak-policy leaf's capability discriminator (defaults [], no leak capability); leakDetectedAt: the internal-leak timestamp (defaults null);
+ *                  leakExternalEnabled / leakInternalEnabled: the leak settings toggles (default false); ledEnabled: the status-indicator LED toggle (defaults false);
+ *                  lightEnabled: the light settings toggle (defaults
  *                  false); mac: identity override (defaults a sensor-distinct value); motionDetectedAt: the motion timestamp the sensor motion observer gates on
  *                  (defaults 0); motionEnabled: the motion settings toggle (defaults false); mountType: the sensor mount type (defaults "none"); name: display name
  *                  (defaults "Test Sensor"); tamperingDetectedAt: the tamper timestamp (defaults null); temperature: the temperature reading folded into
@@ -1501,8 +1503,9 @@ export function makeViewerConfig(options: { id?: string; liveview?: Nullable<str
  */
 export function makeSensorConfig(options: { alarmEnabled?: boolean; alarmTriggeredAt?: Nullable<number>; ambientLight?: number; batteryLow?: boolean;
   batteryPercentage?: Nullable<number>; externalLeakDetectedAt?: Nullable<number>; hardwareRevision?: string; humidity?: number; humidityEnabled?: boolean; id?: string;
-  isConnected?: boolean; isMotionDetected?: boolean; isOpened?: Nullable<boolean>; leakDetectedAt?: Nullable<number>; leakExternalEnabled?: boolean;
-  leakInternalEnabled?: boolean; ledEnabled?: boolean; lightEnabled?: boolean; mac?: string; motionDetectedAt?: number; motionEnabled?: boolean; mountType?: string;
+  isConnected?: boolean; isMotionDetected?: boolean; isOpened?: Nullable<boolean>; leakChannelNames?: string[]; leakDetectedAt?: Nullable<number>;
+  leakExternalEnabled?: boolean; leakInternalEnabled?: boolean; ledEnabled?: boolean; lightEnabled?: boolean; mac?: string; motionDetectedAt?: number;
+  motionEnabled?: boolean; mountType?: string;
   name?: string; tamperingDetectedAt?: Nullable<number>; temperature?: number; temperatureEnabled?: boolean; } = {}): ProtectSensorConfig {
 
   const name = options.name ?? "Test Sensor";
@@ -1538,6 +1541,10 @@ export function makeSensorConfig(options: { alarmEnabled?: boolean; alarmTrigger
     batteryStatus: { isLow: options.batteryLow ?? false, percentage: options.batteryPercentage ?? 100 },
     displayName: name,
     externalLeakDetectedAt: options.externalLeakDetectedAt ?? null,
+
+    // The minimal sensor featureFlags the leak-policy leaf reads: the water-leak capability the controller advertises, keyed by channelNames. Defaults to [] (no leak
+    // capability), so the all-quiet carrier exposes no leak service and registers no leak MQTT get, matching a no-leak device (USL-Entry) with zero per-test edits.
+    featureFlags: { waterLeak: { channelCount: (options.leakChannelNames ?? []).length, channelNames: options.leakChannelNames ?? [] } },
     firmwareVersion: "5.0.0",
     humiditySettings: thresholdSettings(options.humidityEnabled ?? false),
     id: options.id ?? "test-sensor-1",

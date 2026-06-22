@@ -264,7 +264,7 @@ export class ProtectLiveviews extends ProtectBase {
       // Sanity check.
       if(!incomingPayload.length) {
 
-        this.log.error("Unable to process MQTT message: \"%s\".", incomingPayload);
+        this.log.error("Unable to process MQTT message: \"%s\". The payload contained no liveviews.", rawValue);
 
         return;
       }

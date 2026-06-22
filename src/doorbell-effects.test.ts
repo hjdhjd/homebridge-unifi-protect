@@ -9,11 +9,11 @@
  * which getMessages leaves empty unless nvr.ufp.doorbellSettings is seeded - a harness add this Tier does not make), so it is owned by Tier 2; the hasPackageCamera
  * reflection is a lifecycle reconcile already netted by the family construction suite.
  *
- * The doorbell-trigger ring onSet is also netted here: triggering the switch with a truthy value fires nvr.events.doorbellEventHandler(this, Date.now()) - it writes no
+ * The doorbell-trigger ring onSet is also netted here: triggering the switch with a truthy value fires nvr.events.doorbellEventHandler(this) - it writes no
  * accessory.context and never touches the controller. The ring is captured through a TEST-LOCAL ProtectEventDispatch subclass that overrides doorbellEventHandler into a
- * recording array (the pattern event-dispatch.test.ts:51-63 established), injected through makeTestNvr's dispatch seam and read back off nvr.events - NOT the shared
- * TestRecordingDispatch, which overrides only motionEventHandler. The override captures the routing (which device, which lastRing); it deliberately does not re-test the
- * handler's HomeKit effects, which are event-dispatch.ts's own concern.
+ * recording array (the pattern event-dispatch.test.ts established), injected through makeTestNvr's dispatch seam and read back off nvr.events - NOT the shared
+ * TestRecordingDispatch, which overrides only motionEventHandler. The override captures the routing (which device the ring fired for); it deliberately does not
+ * re-test the handler's HomeKit effects, which are event-dispatch.ts's own concern.
  *
  * The vacuity gate is two-part (carried from the device-* law): every gated reflection HARD-asserts its gated service or switch EXISTS as the FIRST discriminator (a
  * non-optional assert.ok, so an absent service throws here rather than passing vacuously) and pairs with a without-gate test that proves the same push produces nothing
@@ -37,24 +37,23 @@ import type { ProtectNvr } from "./nvr.ts";
 import { ProtectReservedNames } from "./types.ts";
 import assert from "node:assert/strict";
 
-// One captured doorbell-ring routing. The onSet's observable effect is which device it routed to and the lastRing it threaded, so this is the shape the recording
-// subclass captures - the same posture event-dispatch.test.ts uses for its own routing assertions.
+// One captured doorbell-ring routing. The onSet's observable effect is which device it routed to, so this is the shape the recording subclass captures - the same posture
+// event-dispatch.test.ts uses for its own routing assertions.
 interface RingCall {
 
   id: string;
-  lastRing: Nullable<number>;
 }
 
 // A REAL ProtectEventDispatch whose doorbell delivery is overridden to record rather than touch HomeKit or arm a ring timer. The override's arity and parameter types
-// mirror production's doorbellEventHandler (event-dispatch.ts:551) exactly, so it type-checks as a true override; the camera's doorbell-trigger onSet calls
-// this.nvr.events.doorbellEventHandler(this, Date.now()), so this captures exactly that routing without firing the real ring's HomeKit effects.
+// mirror production's doorbellEventHandler (event-dispatch.ts:523) exactly, so it type-checks as a true override; the camera's doorbell-trigger onSet calls
+// this.nvr.events.doorbellEventHandler(this), so this captures exactly that routing without firing the real ring's HomeKit effects.
 class RecordingRingDispatch extends ProtectEventDispatch {
 
   public readonly rings: RingCall[] = [];
 
-  public override doorbellEventHandler(protectDevice: ProtectCamera, lastRing: Nullable<number>): void {
+  public override doorbellEventHandler(protectDevice: ProtectCamera): void {
 
-    this.rings.push({ id: protectDevice.ufp.id, lastRing });
+    this.rings.push({ id: protectDevice.ufp.id });
   }
 }
 
@@ -138,9 +137,9 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
       built = await buildDoorbell({ featureFlags: { hasChime: true }, userOptions: ["Enable.Doorbell.PhysicalChime"] });
 
-      // The doorbell census: the camera's plain set (nine, including the always-armed isDoorbell observer) plus the base pair plus the capability's four = fifteen. A
-      // drift here means an extra or missing observer slipped in.
-      assert.equal(built.nvr.client.state.observerCount, 15, "the doorbell wires exactly fifteen observers (the camera nine, the base pair, and the capability four)");
+      // The doorbell census: the camera's plain set (ten, including the always-armed isDoorbell observer and the bare-motion lastMotion observer) plus the base pair plus
+      // the capability's four = sixteen. A drift here means an extra or missing observer slipped in.
+      assert.equal(built.nvr.client.state.observerCount, 16, "the doorbell wires exactly sixteen observers (the camera ten, the base pair, and the capability four)");
 
       // HARD-assert all three physical-chime switches exist FIRST: the gate is hasChime && hasFeature("Doorbell.PhysicalChime") (doorbell.ts:526). An absent service
       // would let the value assertions pass vacuously.
@@ -408,7 +407,7 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
   describe("the doorbell-trigger ring onSet (fires doorbellEventHandler, no controller write)", () => {
 
-    test("triggering the switch on routes a ring to doorbellEventHandler with this doorbell and a numeric lastRing", async () => {
+    test("triggering the switch on routes a ring to doorbellEventHandler with this doorbell", async () => {
 
       // Inject the recording dispatch so nvr.events.doorbellEventHandler is the captured override; the trigger switch needs Enable.Doorbell.Trigger to materialize.
       const dispatch = (nvr: ProtectNvr): ProtectEventDispatch => new RecordingRingDispatch(nvr);
@@ -424,13 +423,12 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
       assert.equal(ring.rings.length, 0, "no ring has fired before the trigger");
 
-      // onSet true: the handler fires this.nvr.events.doorbellEventHandler(this, Date.now()) - no accessory.context write, no controller write. The recording override
-      // captures the routing.
+      // onSet true: the handler fires this.nvr.events.doorbellEventHandler(this) - no accessory.context write, no controller write. The recording override captures the
+      // routing.
       await triggerSwitch.getCharacteristic(Characteristic.On).triggerSet(true);
 
       assert.equal(ring.rings.length, 1, "the truthy trigger fired exactly one ring through doorbellEventHandler");
       assert.equal(ring.rings[0]?.id, built.cameraConfig.id, "the ring routed to this doorbell (the protectDevice argument is the doorbell itself)");
-      assert.equal(typeof ring.rings[0]?.lastRing, "number", "the ring threaded a numeric lastRing (Date.now())");
     });
 
     test("triggering the switch off fires no ring", async () => {

@@ -14,8 +14,8 @@
  * vacuously. The ring's feature-gated registration is paired with a without-gate test that proves no /doorbell subscription is registered on a plain camera.
  *
  * The ring is captured through a TEST-LOCAL ProtectEventDispatch subclass that overrides doorbellEventHandler into a recording array (the pattern
- * doorbell-effects.test.ts:51-59 established), injected through makeTestNvr's dispatch seam and read back off nvr.events - NOT the shared TestRecordingDispatch, which
- * overrides only motionEventHandler. The override captures the routing (which device, which lastRing); it deliberately does not re-test the handler's HomeKit effects,
+ * doorbell-effects.test.ts established), injected through makeTestNvr's dispatch seam and read back off nvr.events - NOT the shared TestRecordingDispatch, which
+ * overrides only motionEventHandler. The override captures the routing (which device the ring fired for); it deliberately does not re-test the handler's HomeKit effects,
  * which are event-dispatch.ts's own concern, and it arms no reset timer, so cleanup leaks no handle.
  *
  * Every constructed camera is unwound through cleanup() plus the harness abort in an afterEach, so no observe loop outlives the test.
@@ -25,31 +25,29 @@ import { G2_PRO_CHANNELS, MIXED_RTSP_DISABLED_CHANNELS } from "./resolution.fixt
 import type { TestAccessory, TestLogEntry, TestMqttClient, TestProtectNvr } from "./testing.helpers.ts";
 import { TestCameraProjection, TestStateStore, makeCameraConfig, makeProtectState, makeTestAccessory, makeTestNvr, settle } from "./testing.helpers.ts";
 import { afterEach, describe, mock, test } from "node:test";
-import type { Nullable } from "homebridge-plugin-utils";
 import type { ProtectAccessory } from "./types.ts";
 import { ProtectCamera } from "./devices/camera.ts";
 import { ProtectEventDispatch } from "./event-dispatch.ts";
 import type { ProtectNvr } from "./nvr.ts";
 import assert from "node:assert/strict";
 
-// One captured doorbell-ring routing. The /doorbell SET body's observable effect is which device it routed to and the lastRing it threaded, so this is the shape the
-// recording subclass captures - the same posture doorbell-effects.test.ts uses for its own routing assertions.
+// One captured doorbell-ring routing. The /doorbell SET body's observable effect is which device it routed to, so this is the shape the recording subclass captures - the
+// same posture doorbell-effects.test.ts uses for its own routing assertions.
 interface RingCall {
 
   id: string;
-  lastRing: Nullable<number>;
 }
 
 // A REAL ProtectEventDispatch whose doorbell delivery is overridden to record rather than touch HomeKit or arm a ring timer. The override's arity and parameter types
 // mirror production's doorbellEventHandler (event-dispatch.ts) exactly, so it type-checks as a true override; the camera's /doorbell SET body calls
-// this.nvr.events.doorbellEventHandler(this, Date.now()), so this captures exactly that routing without firing the real ring's HomeKit effects or arming its reset timer.
+// this.nvr.events.doorbellEventHandler(this), so this captures exactly that routing without firing the real ring's HomeKit effects or arming its reset timer.
 class RecordingRingDispatch extends ProtectEventDispatch {
 
   public readonly rings: RingCall[] = [];
 
-  public override doorbellEventHandler(protectDevice: ProtectCamera, lastRing: Nullable<number>): void {
+  public override doorbellEventHandler(protectDevice: ProtectCamera): void {
 
-    this.rings.push({ id: protectDevice.ufp.id, lastRing });
+    this.rings.push({ id: protectDevice.ufp.id });
   }
 }
 
@@ -193,7 +191,7 @@ describe("camera-leaf MQTT handler bodies (camera-mqtt concern net)", () => {
 
   describe("the /doorbell ring SET (the value gate routing to doorbellEventHandler)", () => {
 
-    test("with Enable.Doorbell.Trigger, a \"true\" value routes one ring to doorbellEventHandler with this camera and a numeric lastRing", async () => {
+    test("with Enable.Doorbell.Trigger, a \"true\" value routes one ring to doorbellEventHandler with this camera", async () => {
 
       // Inject the recording dispatch so nvr.events.doorbellEventHandler is the captured override; the /doorbell subscription registers when isDoorbell ||
       // hasFeature("Doorbell.Trigger"), so a plain camera with Enable.Doorbell.Trigger registers it without a doorbell capability.
@@ -211,14 +209,13 @@ describe("camera-leaf MQTT handler bodies (camera-mqtt concern net)", () => {
 
       assert.equal(ring.rings.length, 0, "no ring has fired before the SET");
 
-      // The "true" value passes the value !== "true" gate and fires this.nvr.events.doorbellEventHandler(this, Date.now()) - no accessory.context write, no controller
-      // write. The recording override captures the routing. The body is synchronous, but we settle anyway as a harmless belt.
+      // The "true" value passes the value !== "true" gate and fires this.nvr.events.doorbellEventHandler(this) - no accessory.context write, no controller write. The
+      // recording override captures the routing. The body is synchronous, but we settle anyway as a harmless belt.
       await doorbell.setValue("true", "true");
       await settle();
 
       assert.equal(ring.rings.length, 1, "the \"true\" value fired exactly one ring through doorbellEventHandler");
       assert.equal(ring.rings[0]?.id, cameraConfig.id, "the ring routed to this camera (the protectDevice argument is the camera itself)");
-      assert.equal(typeof ring.rings[0]?.lastRing, "number", "the ring threaded a numeric lastRing (Date.now())");
     });
 
     test("a non-\"true\" value fires no ring", async () => {

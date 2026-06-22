@@ -20,6 +20,7 @@ import { RtspLivestreamSubscription } from "../livestream.ts";
 import type { SelectRequest } from "./resolution.ts";
 import type { StreamingDelegate } from "../stream-delegate.ts";
 import { selectCamera } from "unifi-protect";
+import { shouldDeliverBareMotion } from "./motion-policy.ts";
 import { toStartCase } from "homebridge-plugin-utils";
 
 export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
@@ -391,6 +392,39 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
     // spawnCameraObservers, never spawning this observer against the shared parent record.
     this.observeState({ key: "camera.isDoorbell", selector: state => cam(state)?.featureFlags.isDoorbell, title: "doorbell status" },
       () => this.reconcileDoorbellCapability("observe"));
+
+    // Bare motion is a device-state field, not a firehose occurrence: the controller signals a raw motion start by advancing the camera record's lastMotion timestamp, so
+    // the camera observes it here exactly like the sensor and light families observe their own motion state. The store seeds this observer's baseline at subscribe and
+    // yields only on a subsequent advance, so a bootstrap-hydrated value or a reconnect-unchanged value never fires - the truthy guard only screens the 0/never-detected
+    // case. Whether the advance actually trips the parent's MotionSensor is the bare-motion policy's decision: we fire only when smart detection is not the source of
+    // truth for this camera (see shouldDeliverBareMotion). The package forward is INDEPENDENT of the parent's bare-motion de-dup above - a recording package camera has
+    // no motion sensor of its own, so the parent's raw motion always trips it whenever the package is recording for HKSV, regardless of whether the parent itself fired.
+    this.observeState({ key: "camera.lastMotion", selector: state => cam(state)?.lastMotion, title: "motion detection" }, lastMotion => {
+
+      if(!lastMotion) {
+
+        return;
+      }
+
+      const featureFlags = this.ufp.featureFlags;
+
+      const fire = shouldDeliverBareMotion({
+
+        hksvRecording: this.stream?.hksv?.isRecording ?? false,
+        smartCapable: (featureFlags.smartDetectAudioTypes.length > 0) || (featureFlags.smartDetectTypes.length > 0),
+        smartDetectEnabled: this.hints.smartDetect
+      });
+
+      if(fire) {
+
+        this.nvr.events.motionEventHandler(this);
+      }
+
+      if(this.packageCamera?.stream?.hksv?.isRecording) {
+
+        this.nvr.events.motionEventHandler(this.packageCamera);
+      }
+    });
   }
 
   // Configure the ambient light sensor for HomeKit.
@@ -848,7 +882,7 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
       if(value) {
 
         // Trigger the ring event.
-        this.nvr.events.doorbellEventHandler(this, Date.now());
+        this.nvr.events.doorbellEventHandler(this);
         this.log.info("Doorbell ring event triggered.");
 
       } else {
@@ -1569,7 +1603,7 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
         return;
       }
 
-      this.nvr.events.doorbellEventHandler(this, Date.now());
+      this.nvr.events.doorbellEventHandler(this);
     });
 
     this.#ringMqttRegistered = true;

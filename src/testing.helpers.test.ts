@@ -1417,6 +1417,25 @@ describe("A2 base-capability foundation: the shared dispatch, the sensor carrier
     assert.equal(opted.hardwareRevision, "REV-A1", "an opted-in hardwareRevision lands on the record for the device-info HardwareRevision write to net");
   });
 
+  test("makeSensorConfig defaults the water-leak capability to no channels and lands an opted-in channelNames the leak-policy leaf reads", () => {
+
+    // The leak-policy leaf reads featureFlags.waterLeak.channelNames as the capability discriminator. The default is [] (no leak capability), so the all-quiet carrier
+    // exposes no leak service; an opted-in channelNames lands on the record so the single-channel / multi-channel leak paths can be exercised.
+    const defaults = makeSensorConfig();
+
+    assert.deepEqual(defaults.featureFlags.waterLeak?.channelNames, [], "the default makeSensorConfig advertises no water-leak channels");
+    assert.equal(defaults.featureFlags.waterLeak?.channelCount, 0, "the default channelCount mirrors the empty channelNames length");
+
+    const single = makeSensorConfig({ leakChannelNames: ["internal"] });
+
+    assert.deepEqual(single.featureFlags.waterLeak?.channelNames, ["internal"], "an opted-in single channel lands on featureFlags.waterLeak.channelNames");
+    assert.equal(single.featureFlags.waterLeak?.channelCount, 1, "the channelCount mirrors the single-channel length");
+
+    const dual = makeSensorConfig({ leakChannelNames: [ "internal", "external" ] });
+
+    assert.deepEqual(dual.featureFlags.waterLeak?.channelNames, [ "internal", "external" ], "an opted-in two-channel set lands on featureFlags.waterLeak.channelNames");
+  });
+
   test("TestSensorProjection reads through to the store, guards an absent record, derives isOnline / name, and records update payloads without folding", async () => {
 
     const sensor = makeSensorConfig({ id: "sensor-d" });

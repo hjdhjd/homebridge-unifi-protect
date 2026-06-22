@@ -1,14 +1,16 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * camera-reactions.test.ts: The camera-leaf observe-and-fire net - the five uncovered device-state reactions and the bound read / pure-context handlers, against the
+ * camera-reactions.test.ts: The camera-leaf observe-and-fire net - the uncovered device-state reactions and the bound read / pure-context handlers, against the
  * REAL constructed ProtectCamera.
  *
- * The camera leaf registers nine state observers (camera.ts:354-393). Three are already netted by camera-construction.test.ts (camera.channels -> reconcileStreaming,
- * camera.state -> updateAvailability, and the camera.state.hksv self-heal). This suite nets the remaining five device-state reactions behavior-FIRST - each is a
- * structural-sharing store push (pushCameraPatch / pushCameraFeatureFlags) followed by a settle and an assertion on the characteristic the reaction WROTE, never on the
- * private updater that wrote it - plus the bound GET read-throughs and the two pure-context onSets (HKSV recording, doorbell mute) whose handlers write only
- * accessory.context and never touch the controller. Each reaction is constructed against a plain ProtectCamera through the same camera-construction harness seam (the
- * stub streaming-delegate factory), so the instance under test is the production class and the casts are confined to the construction call.
+ * The camera leaf registers ten state observers (camera.ts:355-428). Three are already netted by camera-construction.test.ts (camera.channels -> reconcileStreaming,
+ * camera.state -> updateAvailability, and the camera.state.hksv self-heal). This suite nets the device-state reactions behavior-FIRST - each is a
+ * structural-sharing store push (pushCameraPatch / pushCameraFeatureFlags) followed by a settle and an assertion on the effect the reaction produced (the characteristic
+ * it WROTE, or the recording dispatch it routed to), never on the private updater that wrote it - plus the bound GET read-throughs and the two pure-context onSets (HKSV
+ * recording, doorbell mute) whose handlers write only accessory.context and never touch the controller. The camera.lastMotion bare-motion observer is netted here through
+ * the injected recording-dispatch seam, exactly as the sensor / light suites net their own lastMotion observe. Each reaction is constructed against a plain ProtectCamera
+ * through the same camera-construction harness seam (the stub streaming-delegate factory), so the instance under test is the production class and the casts are confined
+ * to the construction call.
  *
  * The vacuity gate is two-part, carried from the device-* law: a gated reaction needs both its HARDWARE precondition (a makeCameraConfig featureFlags flag) and, where a
  * sub-option defaults FALSE, the exact Enable.* userOption string. Every with-feature reaction HARD-asserts the gated service or characteristic EXISTS as its FIRST
@@ -27,14 +29,15 @@
  * cleanup() in an afterEach so its per-accessory abort never outlives the test.
  */
 import type { Camera, ProtectCameraConfig } from "unifi-protect";
-import { Characteristic, Service, TestCameraProjection, TestStateStore, makeCameraConfig, makeProtectState, makeTestAccessory, makeTestNvr, settle }
-  from "./testing.helpers.ts";
+import { Characteristic, Service, TestCameraProjection, TestRecordingDispatch, TestStateStore, makeCameraConfig, makeProtectState, makeTestAccessory, makeTestNvr,
+  settle } from "./testing.helpers.ts";
 import type { TestAccessory, TestProtectNvr, TestStreamingDelegateFactory } from "./testing.helpers.ts";
 import { afterEach, describe, test } from "node:test";
 import { G2_PRO_CHANNELS } from "./resolution.fixtures.ts";
 import type { ObserverWakePayload } from "./diagnostics.ts";
 import type { ProtectAccessory } from "./types.ts";
 import { ProtectCamera } from "./devices/camera.ts";
+import type { ProtectEventDispatch } from "./event-dispatch.ts";
 import type { ProtectNvr } from "./nvr.ts";
 import { ProtectReservedNames } from "./types.ts";
 import assert from "node:assert/strict";
@@ -56,17 +59,34 @@ interface BuiltCamera {
   controller: AbortController;
   factory: TestStreamingDelegateFactory;
   nvr: TestProtectNvr;
+  recording: TestRecordingDispatch;
 }
 
 // Build a REAL plain ProtectCamera against the harness doubles, exactly as camera-construction.test.ts:71-91 assembles it: a camera config (optionally carrying feature
 // flags), the v5 store double over it, the typed NVR / platform doubles with the test's userOptions threaded into the REAL FeatureOptions engine, the read-through camera
 // projection, and a fresh accessory. The casts are confined to this seam - the instance is the production ProtectCamera and everything it runs is the production path.
-// The returned controller is the harness AbortController the afterEach aborts to unwind the observe loops.
-async function buildCamera(options: { featureFlags?: Partial<ProtectCameraConfig["featureFlags"]>; userOptions?: string[] } = {}): Promise<BuiltCamera> {
+// The returned controller is the harness AbortController the afterEach aborts to unwind the observe loops. seedLastMotion, when supplied, is committed to the store
+// record BEFORE the camera is constructed, so the lastMotion observer seeds its baseline against an already-present value - the bootstrap-hydration case where a value
+// present at subscribe must never fire.
+async function buildCamera(options: { featureFlags?: Partial<ProtectCameraConfig["featureFlags"]>; seedLastMotion?: number; userOptions?: string[] } = {}):
+Promise<BuiltCamera> {
 
   const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, ...(options.featureFlags ? { featureFlags: options.featureFlags } : {}) });
   const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-  const { controller, factory, nvr } = makeTestNvr({ store, userOptions: options.userOptions });
+
+  // Seed a hydrated lastMotion onto the store record before any observer exists, so the observer's baseline at subscribe carries it. No observer is registered yet, so
+  // this push only commits the state - it wakes nothing.
+  if(options.seedLastMotion !== undefined) {
+
+    store.pushCameraPatch(cameraConfig.id, { lastMotion: options.seedLastMotion });
+  }
+
+  // Inject the recording dispatch through the NVR double's dispatch seam so the lastMotion observer's firehose routing is asserted against the REAL ProtectEventDispatch
+  // contract (the recording subclass captures the delivery without arming the real reset timer or touching HAP), exactly as the sensor / light suites do. The recording
+  // double is read back off nvr.events rather than captured from the factory closure - the same posture sensor.test.ts uses to avoid the assignment-expression smell.
+  const { controller, factory, nvr } = makeTestNvr({ dispatch: (innerNvr: ProtectNvr): ProtectEventDispatch => new TestRecordingDispatch(innerNvr), store,
+    userOptions: options.userOptions });
+  const recording = nvr.events as TestRecordingDispatch;
   const accessory = makeTestAccessory("Test Camera", "uuid:74ACB9000001");
   const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, new TestCameraProjection(cameraConfig.id, store) as unknown as
     Camera);
@@ -74,7 +94,7 @@ async function buildCamera(options: { featureFlags?: Partial<ProtectCameraConfig
   // Settle the floating configure IIFE and the observe loops' lazy registration before any push so the camera is fully wired when the reaction is driven.
   await settle();
 
-  return { accessory, camera, cameraConfig, controller, factory, nvr };
+  return { accessory, camera, cameraConfig, controller, factory, nvr, recording };
 }
 
 describe("camera-family observer reactions and bound read handlers (camera-reactions concern net)", () => {
@@ -95,10 +115,10 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
       built = await buildCamera();
 
-      // The plain-camera census: the base pair (name, firmware) plus the camera's nine narrow observers. A drift here means an extra or missing observer slipped in.
+      // The plain-camera census: the base pair (name, firmware) plus the camera's ten narrow observers. A drift here means an extra or missing observer slipped in.
       const store = built.nvr.client.state;
 
-      assert.equal(store.observerCount, 11, "the plain camera wires exactly eleven observers (the base pair plus the camera's nine)");
+      assert.equal(store.observerCount, 12, "the plain camera wires exactly twelve observers (the base pair plus the camera's ten)");
 
       // The videoCodec reaction is identical to the (already-netted) channels reaction: both call reconcileStreaming. Its only observable output is the WAKE KEY plus a
       // re-derive side effect (the factory is not invoked again), so a one-shot wake subscription windows the single push and the create-call count proves the re-run
@@ -128,6 +148,70 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
         diagnosticsChannel.unsubscribe("hbup:observer:wake", onWake);
       }
+    });
+  });
+
+  describe("the lastMotion -> bare-motion reaction (observe-and-fire through the gated policy)", () => {
+
+    test("a truthy lastMotion advance fires motionEventHandler when the policy says bare motion is the source of truth", async () => {
+
+      // The plain camera carries no smart-detection capability (smartDetectTypes empty) and is not recording, so shouldDeliverBareMotion returns true: bare motion is the
+      // source of truth and the advance must trip the parent's MotionSensor.
+      built = await buildCamera();
+
+      // makeCameraConfig seeds no lastMotion, so the observer's baseline is undefined; this first truthy advance is a genuine change that wakes it.
+      built.nvr.client.state.pushCameraPatch(built.cameraConfig.id, { lastMotion: 1700000000000 });
+
+      await settle();
+
+      assert.deepEqual(built.recording.calls, [{ id: built.cameraConfig.id, kind: "motion" }],
+        "the truthy lastMotion advance routed to motionEventHandler exactly once for the non-smart camera");
+    });
+
+    test("a truthy lastMotion advance does NOT fire when smart detection owns motion (smart-capable, smart-enabled, not recording)", async () => {
+
+      // A smart-capable camera with smart detection enabled and HKSV not recording is the lone suppression case: the matching smartDetect firehose event owns motion, so
+      // the bare-motion advance must not also fire. The smartDetect hint is hasSmartDetect AND the Motion.SmartDetect option (which defaults OFF), so both halves of the
+      // gate must be present; smartDetectTypes makes the camera capable.
+      built = await buildCamera({ featureFlags: { hasSmartDetect: true, smartDetectTypes: ["person"] }, userOptions: ["Enable.Motion.SmartDetect"] });
+
+      built.nvr.client.state.pushCameraPatch(built.cameraConfig.id, { lastMotion: 1700000000000 });
+
+      await settle();
+
+      assert.deepEqual(built.recording.calls, [],
+        "a smart-capable, smart-enabled, not-recording camera suppresses bare motion - the smartDetect event is the source of truth");
+    });
+
+    test("a falsy lastMotion value does NOT fire even though it changed", async () => {
+
+      // Two-step, mirroring the sensor suite's falsy case: the baseline is undefined, so a bare 0 push is a genuine undefined->0 change that wakes the observer; the
+      // production if(!lastMotion) guard, not a dead observer, is what suppresses the delivery for the falsy value.
+      built = await buildCamera();
+
+      built.nvr.client.state.pushCameraPatch(built.cameraConfig.id, { lastMotion: 1700000000000 });
+
+      await settle();
+
+      const recordingBaseline = built.recording.calls.length;
+
+      assert.equal(recordingBaseline, 1, "the truthy advance fired once, so the falsy step measures a real change off a fired baseline");
+
+      built.nvr.client.state.pushCameraPatch(built.cameraConfig.id, { lastMotion: 0 });
+
+      await settle();
+
+      assert.equal(built.recording.calls.length, recordingBaseline, "the truthy->0 change woke the observer but the if(!lastMotion) guard suppressed the delivery");
+    });
+
+    test("a lastMotion already present at subscribe (bootstrap hydration) never fires", async () => {
+
+      // The structural hydration safety: the store seeds the observer's baseline at subscribe, so a value already present when the observer arms is the baseline and
+      // yields nothing on its own. seedLastMotion commits a truthy lastMotion to the store record BEFORE the camera is constructed, so the observer baselines against it.
+      built = await buildCamera({ seedLastMotion: 1700000000000 });
+
+      assert.deepEqual(built.recording.calls, [],
+        "a hydrated lastMotion present at subscribe is the baseline and never fires - the hydration safety is structural, not a guard");
     });
   });
 

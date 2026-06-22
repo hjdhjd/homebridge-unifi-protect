@@ -6,7 +6,7 @@
  */
 import { AudioRecordingCodecType, AudioRecordingSamplerate, AudioStreamingCodecType, AudioStreamingSamplerate, BackpressureWriter, FfmpegOptions,
   FfmpegStreamingProcess, H264Level, H264Profile, HKSV_FRAGMENT_LENGTH, HOMEKIT_IDR_INTERVAL, HbpuAbortError, MediaContainerType, RtpDemuxer, SRTPCryptoSuites,
-  StreamRequestTypes, VideoCodecType, formatBps, isHbpuAbortReason } from "homebridge-plugin-utils";
+  StreamRequestTypes, VideoCodecType, formatBps, formatErrorMessage, isHbpuAbortReason } from "homebridge-plugin-utils";
 import type { CameraController, CameraControllerOptions, CameraStreamingDelegate, HAP, PrepareStreamCallback, PrepareStreamRequest, PrepareStreamResponse, Resolution,
   Service, SnapshotRequest, SnapshotRequestCallback, StartStreamRequest, StreamRequestCallback, StreamingRequest } from "homebridge";
 import type { HomebridgePluginLogging, IpFamily, Nullable, PortReservation } from "homebridge-plugin-utils";
@@ -1161,13 +1161,13 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
             return;
           }
 
-          this.log.error("The return audio channel encountered an error: %s", error);
+          this.log.error("The return audio channel encountered an error: %s.", formatErrorMessage(error));
         }).finally(() => void tb[Symbol.asyncDispose]());
       } catch(error) {
 
         // camera.talkback() threw (ProtectUnsupportedError for no speaker, or a negotiation/open failure). v5's TalkbackSession owns the socket-level
         // expected-disconnect filtering, so the surface consolidates to this open-failure message plus the F13 mid-stream fault message; we continue without talkback.
-        this.log.error("Unable to connect to the return audio channel: %s", error);
+        this.log.error("Unable to connect to the return audio channel: %s.", formatErrorMessage(error));
       }
     }
   }
@@ -1259,7 +1259,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
       this.ongoingSessions.delete(sessionId);
     } catch(error) {
 
-      this.log.error("Error occurred while ending the FFmpeg video processes: %s.", error);
+      this.log.error("Unable to cleanly end the FFmpeg video processes: %s.", formatErrorMessage(error));
     }
   }
 

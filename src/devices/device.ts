@@ -15,6 +15,7 @@ import type { ProtectDeviceConfigTypes } from "../types.ts";
 import type { ProtectNvr } from "../nvr.ts";
 import type { ProtectPlatform } from "../platform.ts";
 import { channels } from "../diagnostics.ts";
+import { describeDevice } from "./device-descriptor.ts";
 import { mqttTopic } from "../mqtt.ts";
 import util from "node:util";
 
@@ -125,12 +126,15 @@ export abstract class ProtectBase {
     this.nvr = nvr;
     this.platform = nvr.platform;
 
+    // Every log line is prefixed with this.logName: the plain name on the base, overridden by ProtectDevice to the full "Name [Model]" descriptor so device lines show
+    // which hardware they belong to (matching the pre-v5 prefix). logName is deliberately separate from the bare `name` getter, which is the stable functional identity
+    // (it keys the livestream request id and the HomeKit accessory) and must not carry the bracketed model.
     this.log = {
 
-      debug: (message: string, ...parameters: unknown[]): void => { nvr.platform.debug(util.format(this.name + ": " + message, ...parameters)); },
-      error: (message: string, ...parameters: unknown[]): void => { nvr.platform.log.error(util.format(this.name + ": " + message, ...parameters)); },
-      info: (message: string, ...parameters: unknown[]): void => { nvr.platform.log.info(util.format(this.name + ": " + message, ...parameters)); },
-      warn: (message: string, ...parameters: unknown[]): void => { nvr.platform.log.warn(util.format(this.name + ": " + message, ...parameters)); }
+      debug: (message: string, ...parameters: unknown[]): void => { nvr.platform.debug(util.format(this.logName + ": " + message, ...parameters)); },
+      error: (message: string, ...parameters: unknown[]): void => { nvr.platform.log.error(util.format(this.logName + ": " + message, ...parameters)); },
+      info: (message: string, ...parameters: unknown[]): void => { nvr.platform.log.info(util.format(this.logName + ": " + message, ...parameters)); },
+      warn: (message: string, ...parameters: unknown[]): void => { nvr.platform.log.warn(util.format(this.logName + ": " + message, ...parameters)); }
     };
   }
 
@@ -178,6 +182,14 @@ export abstract class ProtectBase {
   public get name(): string {
 
     return this.nvr.client.controllerName ?? "";
+  }
+
+  // The log-line prefix for this owner. The base returns the bare name because a controller-scoped owner (system information, liveviews) has no hardware model to
+  // surface. ProtectDevice overrides this to append "[Model]", restoring the pre-v5 per-line prefix. It is deliberately a separate accessor from `name`: as the
+  // constructor's log seam notes, `name` is the stable functional identity (livestream request id, HomeKit accessory) and must never carry the bracketed model.
+  protected get logName(): string {
+
+    return this.name;
   }
 
   // The owner-lifetime signal that scopes this owner's state observers AND its MQTT subscriptions. The base binds to the controller's terminal shutdown signal, which
@@ -985,6 +997,14 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
   public override get name(): string {
 
     return this.device.name;
+  }
+
+  // The log-line prefix for a device, decorated with the model - "Name [Model]" - so every device-scoped line shows which hardware produced it, restoring the pre-v5
+  // format. The format is single-sourced through describeDevice (plain mode) reading the live v5 projection via this.ufp, so a device rename reflects immediately; the
+  // functional `name` above is left bare and untouched.
+  protected override get logName(): string {
+
+    return describeDevice(this.ufp);
   }
 
   // Utility function to return the current accessory name of this device.

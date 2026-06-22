@@ -13,7 +13,8 @@
  * ambient 0.0001 and humidity <0 HomeKit floors, the StatusActive / StatusTampered state characteristics each carries, and the per-mode MQTT publishes; the leak (default
  * LeakSensor, internal / external subtypes) plus the moisture variant (Sensor.MoistureSensor swaps to a subtyped ContactSensor, and the mode-flip cleanup removes the
  * opposite-type service); the three sensor observers (the motionDetectedAt firehose routed through the injected TestRecordingDispatch exactly like the light's
- * lastMotion; the tamperingDetectedAt fan-out across every state-bearing service; the whole-record sensor.config reconcile); and the seven GET MQTT subscriptions.
+ * lastMotion; the tamperingDetectedAt fan-out across every state-bearing service; the whole-record sensor.config reconcile); the five always-on GET MQTT subscriptions
+ * plus the model-aware leak GETs (registered per-channel, present-iff-enabled, once-guarded, and unsubscribed when a channel is toggled off).
  *
  * The LOAD-BEARING multi-wake: the third observer (sensor.config) selects the WHOLE sensor record (selectSensor(id)), and pushSensorPatch replaces that record on every
  * patch, so sensor.config wakes on EVERY push - in ADDITION to any narrow observer (sensor.motionDetectedAt / sensor.tamperingDetectedAt) whose field changed. So a
@@ -272,6 +273,39 @@ describe("real ProtectSensor construction and family behavior", () => {
     none.sensor.cleanup();
   });
 
+  test("a single-channel UP-Sense exposes the internal LeakSensor iff its mount role is leak, ignoring the stuck leakSettings flag", () => {
+
+    // The single-channel UP-Sense (featureFlags.waterLeak.channelNames ["internal"]) drives leak via the physical mount role: mountType "leak" exposes the internal
+    // LeakSensor. Its leakSettings.isInternalEnabled is a stuck capability echo, so the leak-policy leaf deliberately ignores it on a single-channel device.
+    const enabled = buildSensor({ leakChannelNames: ["internal"], mountType: "leak" });
+
+    assert.ok(enabled.accessory.getServiceById(Service.LeakSensor, ProtectReservedNames.LEAKSENSOR_INTERNAL),
+      "a single-channel sensor with mountType leak materializes the internal LeakSensor");
+
+    enabled.sensor.cleanup();
+
+    // The REGRESSION case: the stuck internal flag is true but the mount role is off. The old gate keyed on the flag and wrongly exposed the LeakSensor; the leaf reads
+    // mountType on a single-channel device, so no leak service materializes.
+    const stuckFlag = buildSensor({ leakChannelNames: ["internal"], leakInternalEnabled: true, mountType: "none" });
+
+    assert.equal(stuckFlag.accessory.getServiceById(Service.LeakSensor, ProtectReservedNames.LEAKSENSOR_INTERNAL), undefined,
+      "a single-channel sensor with mountType none exposes NO internal LeakSensor even though the stuck leakSettings flag is true");
+
+    stuckFlag.sensor.cleanup();
+  });
+
+  test("a single-channel UP-Sense never exposes the external LeakSensor regardless of the leak flags or mount role", () => {
+
+    // The single-channel device advertises only "internal", so the external channel is never a service - the capability gate in the leak-policy leaf short-circuits it
+    // before any flag or mount role is consulted.
+    const built = buildSensor({ leakChannelNames: ["internal"], leakExternalEnabled: true, leakInternalEnabled: true, mountType: "leak" });
+
+    assert.equal(built.accessory.getServiceById(Service.LeakSensor, ProtectReservedNames.LEAKSENSOR_EXTERNAL), undefined,
+      "a single-channel sensor advertises no external channel, so the external LeakSensor never materializes");
+
+    built.sensor.cleanup();
+  });
+
   test("the humidity sensor reads through CurrentRelativeHumidity and floors a negative reading to zero", async () => {
 
     // No humidity option, so stats.humidity is absent and the getter returns -1, floored to 0.
@@ -326,9 +360,11 @@ describe("real ProtectSensor construction and family behavior", () => {
     built.sensor.cleanup();
   });
 
-  test("the default leak mode materializes internal and external LeakSensor services with read-through and the isConnected-gated publishes", async () => {
+  test("a multi-channel sensor materializes internal and external LeakSensor services with read-through and the isConnected-gated publishes", async () => {
 
-    const built = buildSensor({ leakDetectedAt: 1700000000000, leakExternalEnabled: true, leakInternalEnabled: true });
+    // A multi-channel USL-Environmental (channelNames ["internal","external"]) drives each leak channel via its live leakSettings flag, so both flags enabled exposes
+    // both LeakSensor services - the path the leak-policy leaf preserves byte-for-byte from the pre-fix behavior.
+    const built = buildSensor({ leakChannelNames: [ "internal", "external" ], leakDetectedAt: 1700000000000, leakExternalEnabled: true, leakInternalEnabled: true });
 
     const internal = built.accessory.getServiceById(Service.LeakSensor, ProtectReservedNames.LEAKSENSOR_INTERNAL);
     const external = built.accessory.getServiceById(Service.LeakSensor, ProtectReservedNames.LEAKSENSOR_EXTERNAL);
@@ -348,7 +384,7 @@ describe("real ProtectSensor construction and family behavior", () => {
 
   test("a disconnected sensor suppresses the leak MQTT publishes but still materializes the services", () => {
 
-    const built = buildSensor({ isConnected: false, leakInternalEnabled: true });
+    const built = buildSensor({ isConnected: false, leakChannelNames: [ "internal", "external" ], leakInternalEnabled: true });
 
     assert.ok(built.accessory.getServiceById(Service.LeakSensor, ProtectReservedNames.LEAKSENSOR_INTERNAL),
       "the internal LeakSensor still materializes when disconnected");
@@ -358,7 +394,7 @@ describe("real ProtectSensor construction and family behavior", () => {
     built.sensor.cleanup();
   });
 
-  test("the moisture variant swaps to a subtyped ContactSensor and the mode-flip removes a pre-seeded LeakSensor", () => {
+  test("the moisture variant swaps to a subtyped ContactSensor and the mode-flip removes a pre-seeded LeakSensor on a single-channel mount-role sensor", () => {
 
     // Pre-seed a LeakSensor at the internal subtype BEFORE constructing the moisture-mode sensor so the mode-flip cleanup (which removes the opposite-type service) is
     // exercised genuinely rather than vacuously - a fresh accessory carries no LeakSensor, so without the pre-seed the removal would be a no-op.
@@ -368,7 +404,9 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     assert.ok(seeded.getServiceById(Service.LeakSensor, ProtectReservedNames.LEAKSENSOR_INTERNAL), "the legacy LeakSensor was seeded before construction");
 
-    const built = buildSensor({ leakInternalEnabled: true }, { accessory: seeded, userOptions: ["Enable.Sensor.MoistureSensor"] });
+    // The realistic moisture scenario is a single-channel UP-Sense at the mount-role path: channelNames ["internal"] with mountType "leak", so the leak-policy leaf
+    // returns true for internal via the mount role and the moisture swap materializes the subtyped ContactSensor with the opposite-type cleanup firing.
+    const built = buildSensor({ leakChannelNames: ["internal"], mountType: "leak" }, { accessory: seeded, userOptions: ["Enable.Sensor.MoistureSensor"] });
 
     assert.equal(seeded.getServiceById(Service.LeakSensor, ProtectReservedNames.LEAKSENSOR_INTERNAL), undefined,
       "the mode-flip removed the opposite-type LeakSensor when switching to moisture mode");
@@ -463,15 +501,101 @@ describe("real ProtectSensor construction and family behavior", () => {
     assert.ok(accessory.getService(Service.TemperatureSensor), "the sensor.config reconcile materialized the newly-enabled temperature service");
   });
 
-  test("the seven GET MQTT subscriptions compose the device-MAC-scoped topic tails", () => {
+  test("the five always-on GET MQTT subscriptions compose the device-MAC-scoped topic tails, and the default no-leak sensor registers NEITHER leak GET", () => {
 
+    // The default carrier advertises no water-leak channels (channelNames []), so the leak-policy leaf gates both leak channels off and the per-channel MQTT fold-in
+    // registers NEITHER leak GET. The other five sensor GETs are always-on and registered unconditionally in configureMqtt.
     const tails = mqtt.subscriptions.filter((subscription) => subscription.kind === "get").map((subscription) => subscription.topic);
     const mac = projection.config.mac;
 
-    for(const tail of [ "alarm", "ambientlight", "contact", "humidity", "leak", "leak-external", "temperature" ]) {
+    for(const tail of [ "alarm", "ambientlight", "contact", "humidity", "temperature" ]) {
 
       assert.ok(tails.includes(mac + "/" + tail), "the " + tail + " GET subscription composed the device-scoped tail");
     }
+
+    assert.equal(tails.includes(mac + "/leak"), false, "the no-leak default registers no internal leak GET");
+    assert.equal(tails.includes(mac + "/leak-external"), false, "the no-leak default registers no external leak GET");
+  });
+
+  test("the leak GET subscriptions register present-iff-enabled, mirroring the leak-policy leaf", () => {
+
+    // Single-channel mount-role enabled: the internal leak GET registers, the external never (the channel is not advertised).
+    const single = buildSensor({ leakChannelNames: ["internal"], mountType: "leak" });
+    const singleTails = single.mqtt.subscriptions.filter((subscription) => subscription.kind === "get").map((subscription) => subscription.topic);
+    const singleMac = single.projection.config.mac;
+
+    assert.ok(singleTails.includes(singleMac + "/leak"), "a single-channel mount-role sensor registers the internal leak GET");
+    assert.equal(singleTails.includes(singleMac + "/leak-external"), false, "a single-channel sensor never registers the external leak GET (channel not advertised)");
+
+    single.sensor.cleanup();
+
+    // Single-channel mount role OFF (the stuck-flag bug case): neither leak GET registers even though the stuck internal flag is true.
+    const disabled = buildSensor({ leakChannelNames: ["internal"], leakInternalEnabled: true, mountType: "none" });
+    const disabledTails = disabled.mqtt.subscriptions.filter((subscription) => subscription.kind === "get").map((subscription) => subscription.topic);
+    const disabledMac = disabled.projection.config.mac;
+
+    assert.equal(disabledTails.includes(disabledMac + "/leak"), false,
+      "a single-channel sensor with mountType none registers no internal leak GET despite the stuck flag");
+
+    disabled.sensor.cleanup();
+
+    // Multi-channel with the external flag on: the external leak GET registers.
+    const multi = buildSensor({ leakChannelNames: [ "internal", "external" ], leakExternalEnabled: true, leakInternalEnabled: true });
+    const multiTails = multi.mqtt.subscriptions.filter((subscription) => subscription.kind === "get").map((subscription) => subscription.topic);
+    const multiMac = multi.projection.config.mac;
+
+    assert.ok(multiTails.includes(multiMac + "/leak"), "a multi-channel sensor with the internal flag on registers the internal leak GET");
+    assert.ok(multiTails.includes(multiMac + "/leak-external"), "a multi-channel sensor with the external flag on registers the external leak GET");
+
+    multi.sensor.cleanup();
+  });
+
+  test("re-running the reconcile does not register a second leak GET handler (the once-guard holds across config churn)", async () => {
+
+    // subscribeGet is NOT idempotent (HBPU accumulates a handler per call), so the leak GET registration is once-guarded behind isInitialized. A re-run of updateDevice -
+    // driven here by a non-leak config push that wakes the whole-record sensor.config observer - must NOT register a second leak GET. The TestMqttClient records every
+    // subscribeGet, so a duplicate is directly countable.
+    const built = buildSensor({ leakChannelNames: ["internal"], mountType: "leak" });
+    const mac = built.projection.config.mac;
+    const leakGetCount = (): number => built.mqtt.subscriptions.filter((subscription) => (subscription.kind === "get") && (subscription.topic === mac + "/leak")).length;
+
+    await settle();
+
+    assert.equal(leakGetCount(), 1, "the internal leak GET registered exactly once at construction");
+
+    // A settings-only push wakes the whole-record sensor.config observer, which re-runs updateDevice() (isInitialized defaults true). The once-guard must suppress a
+    // second registration.
+    built.store.pushSensorPatch("test-sensor-1", { temperatureSettings: { highThreshold: 0, isEnabled: true, lowThreshold: 0, margin: 0 } });
+
+    await settle();
+
+    assert.equal(leakGetCount(), 1, "the re-run did NOT register a second internal leak GET - the isInitialized once-guard holds");
+
+    built.sensor.cleanup();
+  });
+
+  test("a channel toggled off unsubscribes its leak GET before the validService removal, mirroring the occupancy / motion ordering", async () => {
+
+    // A multi-channel sensor with the external flag on registers the external leak GET at construction. Pushing the external flag off wakes the sensor.config reconcile,
+    // which runs the leak-policy leaf for the now-disabled channel and unsubscribes its GET BEFORE the validService continue removes the service.
+    const built = buildSensor({ leakChannelNames: [ "internal", "external" ], leakExternalEnabled: true, leakInternalEnabled: true });
+
+    await settle();
+
+    assert.ok(built.accessory.getServiceById(Service.LeakSensor, ProtectReservedNames.LEAKSENSOR_EXTERNAL), "the external LeakSensor exists before the toggle-off");
+
+    const unsubBaseline = built.mqtt.unsubscribes.filter((entry) => entry.topic === "leak-external/get").length;
+
+    built.store.pushSensorPatch("test-sensor-1", { leakSettings: { isExternalEnabled: false, isInternalEnabled: true } });
+
+    await settle();
+
+    assert.equal(built.accessory.getServiceById(Service.LeakSensor, ProtectReservedNames.LEAKSENSOR_EXTERNAL), undefined,
+      "toggling the external flag off removed the external LeakSensor");
+    assert.ok(built.mqtt.unsubscribes.filter((entry) => entry.topic === "leak-external/get").length > unsubBaseline,
+      "the disabled external channel unsubscribed its leak GET on the topic tail");
+
+    built.sensor.cleanup();
   });
 
   test("a captured GET handler reads through the live config value", () => {

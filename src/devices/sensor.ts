@@ -3,11 +3,13 @@
  * protect-sensor.ts: Sensor device class for UniFi Protect.
  */
 import type { ProtectSensorConfig, Sensor } from "unifi-protect";
+import type { LeakChannelContext } from "./leak-policy.ts";
 import type { ProtectAccessory } from "../types.ts";
 import { ProtectDevice } from "./device.ts";
 import type { ProtectNvr } from "../nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
 import type { Service } from "homebridge";
+import { leakChannelEnabled } from "./leak-policy.ts";
 import { selectSensor } from "unifi-protect";
 
 /**
@@ -130,16 +132,19 @@ export class ProtectSensor extends ProtectDevice {
     }
 
     // Configure the leak sensor.
-    if(this.configureLeakSensor()) {
+    if(this.configureLeakSensor(isInitialized)) {
 
       const sensorType = this.hasFeature("Sensor.MoistureSensor") ? "moisture" : "leak";
 
-      if(this.ufp.leakSettings.isInternalEnabled) {
+      // The enabled-sensors log reads the same leak-policy leaf as the service gate, so the log can never disagree with the services actually created.
+      const context = this.leakContext;
+
+      if(leakChannelEnabled(context, "internal")) {
 
         currentEnabledSensors.push(sensorType);
       }
 
-      if(this.ufp.leakSettings.isExternalEnabled) {
+      if(leakChannelEnabled(context, "external")) {
 
         currentEnabledSensors.push(sensorType + " (external)");
       }
@@ -336,8 +341,15 @@ export class ProtectSensor extends ProtectDevice {
     return true;
   }
 
+  // The sensor facts the leak policy reads, extracted off the projection as primitives. channelNames is the controller's own water-leak capability statement (the
+  // discriminator between the single-channel mount-role model and the multi-channel live-settings model); leakSettings and mountType carry the two enable signals.
+  private get leakContext(): LeakChannelContext {
+
+    return { channelNames: this.ufp.featureFlags.waterLeak?.channelNames ?? [], leakSettings: this.ufp.leakSettings, mountType: this.ufp.mountType };
+  }
+
   // Configure the leak sensor for HomeKit.
-  private configureLeakSensor(): boolean {
+  private configureLeakSensor(isInitialized = true): boolean {
 
     // Determine which service and characteristic types to use based on whether we are configured as a moisture sensor.
     const isMoistureSensor = this.hasFeature("Sensor.MoistureSensor");
@@ -346,14 +358,21 @@ export class ProtectSensor extends ProtectDevice {
     const sensorType = isMoistureSensor ? "contact sensor" : "leak sensor";
     const serviceType = isMoistureSensor ? this.hap.Service.ContactSensor : this.hap.Service.LeakSensor;
 
+    // The single source of truth for which channels are enabled, read once per reconcile so the gate, the publish, and the MQTT registration all agree.
+    const context = this.leakContext;
+
     let count = 0;
 
     for(const sensor of [
 
-      { isDetected: "externalLeakDetectedAt", isEnabled: "isExternalEnabled" as const, mqtt: "leak-external",
+      { channel: "external" as const, isDetected: "externalLeakDetectedAt", mqtt: "leak-external",
         name: " External " + (isMoistureSensor ? "Moisture" : "Leak") + " Sensor", subtype: ProtectReservedNames.LEAKSENSOR_EXTERNAL },
-      { isDetected: "leakDetectedAt", isEnabled: "isInternalEnabled" as const, mqtt: "leak", subtype: ProtectReservedNames.LEAKSENSOR_INTERNAL }
+      { channel: "internal" as const, isDetected: "leakDetectedAt", mqtt: "leak", subtype: ProtectReservedNames.LEAKSENSOR_INTERNAL }
     ]) {
+
+      // The model-aware enablement decision, routed through the pure leak-policy leaf: the device must advertise the channel AND the model-correct enable signal must be
+      // set (mountType "leak" for single-channel mount-role devices, the live leakSettings flag for multi-channel devices).
+      const enabled = leakChannelEnabled(context, sensor.channel);
 
       // Remove the opposite sensor type if it exists since we are switching between sensor configurations.
       const oldService = this.accessory.getServiceById(removeServiceType, sensor.subtype);
@@ -363,8 +382,14 @@ export class ProtectSensor extends ProtectDevice {
         this.accessory.removeService(oldService);
       }
 
+      // A channel toggled off releases its MQTT get handler BEFORE the validService continue skips the rest of the loop body, mirroring the occupancy / motion ordering.
+      if(!enabled) {
+
+        this.unsubscribe(sensor.mqtt + "/get");
+      }
+
       // Validate whether we should have this service enabled.
-      if(!this.validService(serviceType, this.ufp.leakSettings[sensor.isEnabled], sensor.subtype)) {
+      if(!this.validService(serviceType, enabled, sensor.subtype)) {
 
         continue;
       }
@@ -393,6 +418,14 @@ export class ProtectSensor extends ProtectDevice {
       if(this.ufp.isConnected) {
 
         this.publish(sensor.mqtt, this.leakDetected(sensor.isDetected).toString());
+      }
+
+      // Register the MQTT get handler exactly once per channel: subscribeGet is NOT idempotent (it accumulates handlers per call), so we guard it behind the
+      // first-run flag exactly as the occupancy / motion sensors do. ONLY leak is folded onto this per-channel leaf gate, because only leak has the model-aware
+      // per-channel enable signal; the other five sensor GETs remain unconditional in configureMqtt - a pre-existing, accepted inconsistency that is out of scope here.
+      if(!isInitialized) {
+
+        this.subscribeGet(sensor.mqtt, "leak detected", () => this.leakDetected(sensor.isDetected).toString());
       }
 
       count++;
@@ -533,15 +566,15 @@ export class ProtectSensor extends ProtectDevice {
     return this.ufp.stats?.temperature?.value ?? -1;
   }
 
-  // Configure MQTT capabilities for sensors.
+  // Configure MQTT capabilities for sensors. The leak get handlers are NOT registered here: leak is the one sensor mode whose per-channel enablement is model-aware, so
+  // its get registration is folded into configureLeakSensor's per-channel loop (once-guarded, and released by the channel's own unsubscribe when it is disabled). The
+  // remaining five GETs are always-on and registered unconditionally here.
   private configureMqtt(): void {
 
     this.subscribeGet("alarm", "alarm detected", () => this.alarmDetected.toString());
     this.subscribeGet("ambientlight", "ambient light", () => this.ambientLight.toString());
     this.subscribeGet("contact", "contact sensor", () => this.contact.toString());
     this.subscribeGet("humidity", "humidity", () => this.humidity.toString());
-    this.subscribeGet("leak", "leak detected", () => this.leakDetected().toString());
-    this.subscribeGet("leak-external", "leak detected", () => this.leakDetected("externalLeakDetectedAt").toString());
     this.subscribeGet("temperature", "temperature", () => this.temperature.toString());
   }
 
@@ -554,9 +587,9 @@ export class ProtectSensor extends ProtectDevice {
     const sensor = selectSensor(this.ufp.id);
 
     // Sensor motion is a device-state field, not a firehose occurrence: the controller surfaces a UP Sense motion as a fresh motionDetectedAt timestamp on the sensor
-    // record, with no `event`-channel counterpart (v5's firehose motionDetected is camera-only). So the single source for "did this sensor see motion?" is the timestamp
-    // itself, and observing it is the honest single-source reaction - the selector's dedup is the diff, with no held #prev snapshot and nothing re-synthesized. We
-    // deliver only on a truthy timestamp (a real detection), never on a clear back to null.
+    // record, with no `event`-channel counterpart. So the single source for "did this sensor see motion?" is the timestamp itself, and observing it is the honest
+    // single-source reaction - the selector's dedup is the diff, with no held #prev snapshot and nothing re-synthesized. We deliver only on a truthy timestamp (a real
+    // detection), never on a clear back to null. The camera and light families observe their own lastMotion the same way.
     this.observeState({ key: "sensor.motionDetectedAt", selector: state => sensor(state)?.motionDetectedAt, title: "motion detection" }, motionDetectedAt => {
 
       if(motionDetectedAt) {

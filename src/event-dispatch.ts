@@ -10,6 +10,8 @@ import type { ProtectCamera, ProtectDevice } from "./devices/index.ts";
 import type { FirehoseDispatchPayload } from "./diagnostics.ts";
 import type { ProtectNvr } from "./nvr.ts";
 import { ProtectReservedNames } from "./types.ts";
+import { SMART_DETECT_ENRICHERS } from "./devices/smart-detect-metadata.ts";
+import type { SmartDetectEventItem } from "./devices/smart-detect-metadata.ts";
 import { channels } from "./diagnostics.ts";
 import { mqttTopic } from "./mqtt.ts";
 
@@ -19,32 +21,14 @@ import { mqttTopic } from "./mqtt.ts";
 export const ACCESS_UNLOCK_DURATION = 2000;
 
 /**
- * The v4 bare-motion de-duplication policy, lifted to a pure predicate so the router's decision is exhaustively testable without standing up a camera accessory.
- *
- * Under v5 the controller classifies a raw motion start (`motionDetected`) and a smart-object detection (`smartDetect`) into two distinct firehose events, so HBUP no
- * longer hand-diffs `lastMotion` against the smart payload to avoid a double-fire. The *policy*, however, survives verbatim: we trip the HomeKit MotionSensor from a
- * bare `motionDetected` only when smart detection cannot be the authoritative source of motion - the camera is actively recording for HKSV (where every motion start
- * must drive the recording), the camera has no smart-detection capability at all, or the user has turned smart detection off. In every other case the matching
- * `smartDetect` event is the source of truth and firing here as well would double-report the same motion.
- *
- * @param inputs - The three camera facts the policy reads, named so the truth table is legible: whether HKSV is recording, whether the camera can smart-detect, and
- *                 whether the user enabled smart detection.
- *
- * @returns `true` when a bare `motionDetected` should trip the HomeKit MotionSensor, `false` when the `smartDetect` event owns motion for this camera.
- */
-export function shouldDeliverBareMotion(inputs: { hksvRecording: boolean; smartCapable: boolean; smartDetectEnabled: boolean }): boolean {
-
-  return inputs.hksvRecording || !inputs.smartCapable || !inputs.smartDetectEnabled;
-}
-
-/**
  * The controller's typed event surface, projected onto HomeKit. This is the surviving half of the v4 `ProtectEvents` class: the state-merge, packet re-emit, and
  * per-id EventEmitter fan-out all dissolved into v5's reducer and observe loops, and what remains is a thin router over the classified firehose plus the HomeKit
  * delivery methods that router drives.
  *
  *   - `run()` is one controller-level consumer of `client.events()` - the typed, classified firehose. It switches on the discriminated `kind` and dispatches each
- *     activity occurrence (motion, smart detection, doorbell ring, access unlock) to the addressed accessory's delivery method. State transitions
- *     (deviceAdded/devicePatched/...) are the NVR observe loops' concern and are ignored here.
+ *     activity occurrence (smart detection, doorbell ring, tamper, access unlock, doorbell auth) to the addressed accessory's delivery method. State transitions
+ *     (deviceAdded/devicePatched/...) are the NVR observe loops' concern and are ignored here. Bare camera motion is NOT routed here: the controller signals it only as a
+ *     `lastMotion` device-state advance with no occurrence packet, so the camera leaf observes that field directly, exactly as the sensor and light families do.
  *   - `publishTelemetry()` is the controller telemetry republisher: every raw frame off `client.rawPackets()` is mirrored to MQTT when the user opts in.
  *   - the delivery methods (`motionEventHandler`, `doorbellEventHandler`, `accessEventHandler`) own the HomeKit-facing behavior - the characteristic writes, the reset
  *     timers, and the MQTT side-channels. They are unchanged from v4; only their *trigger* moved from a hand-diffed device-state payload to the typed firehose.
@@ -59,6 +43,7 @@ export class ProtectEventDispatch {
   private log: HomebridgePluginLogging;
   private nvr: ProtectNvr;
   private readonly eventTimers: Map<string, NodeJS.Timeout>;
+  private readonly smartDetectLoggedAttributes: Map<string, number>;
 
   // Initialize an instance of our Protect event dispatcher.
   constructor(nvr: ProtectNvr) {
@@ -72,6 +57,7 @@ export class ProtectEventDispatch {
     this.hap = nvr.platform.api.hap;
     this.log = nvr.log;
     this.nvr = nvr;
+    this.smartDetectLoggedAttributes = new Map();
   }
 
   // The typed-firehose router. One controller-level consumer of the classified event stream: each event arrives already modeled (v5 owns the decode and classification),
@@ -82,45 +68,6 @@ export class ProtectEventDispatch {
     for await (const event of this.nvr.client.events({ signal })) {
 
       switch(event.kind) {
-
-        case "motionDetected": {
-
-          // A raw motion start. We resolve the addressed camera, then apply the bare-motion de-duplication policy: trip the HomeKit MotionSensor only when smart
-          // detection is not the source of truth for this camera (see shouldDeliverBareMotion). When it owns motion, the matching smartDetect event fires instead.
-          const camera = this.cameraFor(event.cameraId);
-
-          if(!camera) {
-
-            break;
-          }
-
-          // One read-through of the live camera config for the duration of this synchronous decision. The capability arrays are stable across the dedup read, so a
-          // scope-local hoist keeps the bare-motion policy off the projection getter chain without ever caching state across an await.
-          const featureFlags = camera.ufp.featureFlags;
-
-          const fire = shouldDeliverBareMotion({
-
-            hksvRecording: camera.stream?.hksv?.isRecording ?? false,
-            smartCapable: (featureFlags.smartDetectAudioTypes.length > 0) || (featureFlags.smartDetectTypes.length > 0),
-            smartDetectEnabled: camera.hints.smartDetect
-          });
-
-          if(fire) {
-
-            this.publishDispatch(event.kind, event.cameraId);
-            this.motionEventHandler(camera);
-          }
-
-          // A package camera is a secondary lens on this same physical device with no motion sensor of its own, so HKSV needs the parent's raw motion to trip the
-          // package accessory's motion sensor for it to record. This is independent of the parent's bare-motion de-dup above (which governs only the parent's own
-          // MotionSensor): when the package camera is recording, the parent's raw motion always drives it. Relocated from the doorbell leaf's now-deleted event handler.
-          if(camera.packageCamera?.stream?.hksv?.isRecording) {
-
-            this.motionEventHandler(camera.packageCamera);
-          }
-
-          break;
-        }
 
         case "smartDetect": {
 
@@ -178,7 +125,7 @@ export class ProtectEventDispatch {
           }
 
           this.publishDispatch(event.kind, event.cameraId);
-          this.doorbellEventHandler(camera, event.at);
+          this.doorbellEventHandler(camera);
 
           break;
         }
@@ -218,7 +165,9 @@ export class ProtectEventDispatch {
 
         default: {
 
-          // State transitions (deviceAdded / devicePatched / deviceRemoved / bootstrapLoaded) are the NVR observe loops' concern; the router ignores them.
+          // State transitions (deviceAdded / devicePatched / deviceRemoved / bootstrapLoaded) are the NVR observe loops' concern; the router ignores them. A firehose
+          // motionDetected also lands here: bare camera motion is now observed off the camera record's lastMotion device-state field, so the only motionDetected the
+          // controller emits is the non-realtime event/type:motion thumbnail path v4 already filtered, and ignoring it here preserves that v4 parity.
           break;
         }
       }
@@ -263,6 +212,9 @@ export class ProtectEventDispatch {
    * matches the parent's own "id." subkey shape - so calling this with a PARENT id sweeps the package's timers too, and it must never be called with a parent id
    * expecting package isolation. Returns whether an inflight bare-motion timer existed for the id exactly - the fact the package detach needs in order to decide
    * whether the terminal MQTT motion reset must be published on the shared parent topic, since the cleared reset timer would otherwise have owned that publish.
+   *
+   * We sweep the smart-detection logged-attribute high-water marks under the same exact-boundary rule, so they share the timers' lifetime and never orphan across a
+   * device detach and re-add - a stale high-water would otherwise suppress the first enriched log of the re-added device's next motion window.
    */
   public clearEventTimersForDevice(id: string): boolean {
 
@@ -274,6 +226,14 @@ export class ProtectEventDispatch {
 
         clearTimeout(timer);
         this.eventTimers.delete(key);
+      }
+    }
+
+    for(const key of this.smartDetectLoggedAttributes.keys()) {
+
+      if((key === id) || key.startsWith(id + ".")) {
+
+        this.smartDetectLoggedAttributes.delete(key);
       }
     }
 
@@ -352,15 +312,7 @@ export class ProtectEventDispatch {
     }, protectDevice.hints.motionDuration * 1000));
 
     // We build a unified list of the object events we're interested in: legacy smart detections first, followed by thumbnail-based detections.
-    interface EventItem {
-
-      type: string;
-      name?: string;
-      confidence?: number;
-      payload?: ProtectEventMetadataDetectedThumbnail;
-    }
-
-    const smartEvents: EventItem[] = [];
+    const smartEvents: SmartDetectEventItem[] = [];
 
     // Only look for smart detections if we're configured to do so.
     if(protectDevice.hints.smartDetect) {
@@ -381,13 +333,24 @@ export class ProtectEventDispatch {
       }
     }
 
+    // Plain object types (no per-type enricher, or none with attributes yet) newly detected this delivery. We coalesce these onto one log line after the loop, so a
+    // simultaneous animal/face/person detection reads as a single entry rather than three lines. Types that carry rich metadata log on their own enriched line instead,
+    // so the coalesced line stays a clean list of bare object types - and we track which types produced an enriched line so the same type, when it arrives both bare (via
+    // objectTypes) and enriched (via detectedThumbnails) in one firehose payload, is not also listed on the coalesced line.
+    const coalescedTypes: string[] = [];
+    const enrichedTypes = new Set<string>();
+
     // Iterate over the smart events that Protect has detected.
     for(const event of smartEvents) {
 
       const key = protectDevice.id + ".Motion.SmartDetect.ObjectSensors." + event.type;
 
+      // A retrigger within the motion window must re-arm the reset timer below but never re-trip the sensor or re-announce on MQTT, so the once-per-window side
+      // effects are gated on this being a newly-seen detection.
+      const isNewDetection = !this.eventTimers.has(key);
+
       // We have a new event, let's make sure we trigger our sensors only once.
-      if(!this.eventTimers.has(key)) {
+      if(isNewDetection) {
 
         // These sensors only get triggered if they actually exist on the accessory.
         protectDevice.accessory.getServiceById(this.hap.Service.ContactSensor, ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + "." + event.type)?.
@@ -395,12 +358,6 @@ export class ProtectEventDispatch {
 
         // Publish the smart detection event to MQTT, if the user has configured it.
         void this.nvr.mqtt?.publish(mqttTopic(protectDevice.ufp.mac, "motion/smart/" + event.type), "true");
-
-        // Inform the user. We handle logging for vehicle-related events below.
-        if(protectDevice.hints.logMotion && (event.type !== "vehicle")) {
-
-          protectDevice.log.info("Smart motion detected: %s.", event.type);
-        }
       } else {
 
         // Clear out the inflight motion event timer.
@@ -418,79 +375,94 @@ export class ProtectEventDispatch {
         void this.nvr.mqtt?.publish(mqttTopic(protectDevice.ufp.mac, "motion/smart/" + event.type), "false");
         protectDevice.log.debug("Resetting smart object motion event.");
 
-        // Delete the timer from our motion event tracker.
+        // Delete the timer and the logged-attribute high-water mark so the next motion window for this type starts fresh.
         this.eventTimers.delete(key);
+        this.smartDetectLoggedAttributes.delete(key);
       }, protectDevice.hints.motionDuration * 1000));
 
-      // Vehicles have additional attributes that can be associated with their smart detections. We process those here.
-      if(event.type === "vehicle") {
+      // Vehicles can carry a license plate. If the user has configured a contact sensor for a specific plate, trip the matching one. This per-plate contact-sensor
+      // feature (the SmartDetect.ObjectSensors.LicensePlate option) is independent of the log and MQTT metadata rendering below, which the per-type enricher owns.
+      if((event.type === "vehicle") && event.name) {
 
-        // We have a license plate. Let's see if we have a match with what the user has configured.
-        if(event.name) {
+        const plate = event.name.toUpperCase();
+        const plateKey = key + "." + plate;
 
-          const plate = event.name.toUpperCase();
-          const plateKey = key + "." + plate;
+        // We have a new plate detection.
+        if(!this.eventTimers.has(plateKey)) {
 
-          // We have a new plate detection.
-          if(!this.eventTimers.has(plateKey)) {
+          protectDevice.accessory.getServiceById(this.hap.Service.ContactSensor,
+            ProtectReservedNames.CONTACT_MOTION_SMARTDETECT_LICENSE + "." + plate)?.
+            updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.hap.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED);
+        } else {
 
-            protectDevice.accessory.getServiceById(this.hap.Service.ContactSensor,
-              ProtectReservedNames.CONTACT_MOTION_SMARTDETECT_LICENSE + "." + plate)?.
-              updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.hap.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED);
-          } else {
-
-            clearTimeout(this.eventTimers.get(plateKey));
-          }
-
-          // Reset our license plate smart detection contact sensor after motionDuration.
-          this.eventTimers.set(plateKey, setTimeout(() => {
-
-            protectDevice.accessory.getServiceById(this.hap.Service.ContactSensor,
-              ProtectReservedNames.CONTACT_MOTION_SMARTDETECT_LICENSE + "." + plate)?.
-              updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.hap.Characteristic.ContactSensorState.CONTACT_DETECTED);
-
-            // Delete the timer from our motion event tracker.
-            this.eventTimers.delete(plateKey);
-          }, protectDevice.hints.motionDuration * 1000));
+          clearTimeout(this.eventTimers.get(plateKey));
         }
 
-        // Publish event metadata when we see it. Currently, Protect publishes additional telemetry for vehicle types.
-        if(protectDevice.hints.logMotion) {
+        // Reset our license plate smart detection contact sensor after motionDuration.
+        this.eventTimers.set(plateKey, setTimeout(() => {
 
-          const attributes: string[] = [];
+          protectDevice.accessory.getServiceById(this.hap.Service.ContactSensor,
+            ProtectReservedNames.CONTACT_MOTION_SMARTDETECT_LICENSE + "." + plate)?.
+            updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.hap.Characteristic.ContactSensorState.CONTACT_DETECTED);
 
-          // We have a license plate.
-          if(event.name) {
-
-            attributes.push("license plate: " + event.name + " [" + String(event.confidence ?? 0) + "% confidence]");
-          }
-
-          // Look at the color and vehicle type.
-          for(const attribute of [ "color", "vehicleType" ] as const) {
-
-            if(event.payload?.attributes?.[attribute]) {
-
-              attributes.push(attribute + ": " + (event.payload.attributes[attribute].val ?? "") + " [" + String(event.payload.attributes[attribute].confidence ?? 0) +
-                "% confidence]");
-            }
-          }
-
-          // Inform the user.
-          if(attributes.length) {
-
-            void this.nvr.mqtt?.publish(mqttTopic(protectDevice.ufp.mac, "motion/smart/" + event.type + "/metadata"), JSON.stringify({
-
-              ...(Number.isFinite(event.confidence) && { confidence: event.confidence }),
-              ...(event.name?.length && { name: event.name }),
-              type: event.type,
-              ...(event.payload?.attributes?.color && { color: event.payload.attributes.color }),
-              ...(event.payload?.attributes?.vehicleType && { vehicleType: event.payload.attributes.vehicleType })
-            }));
-          }
-
-          protectDevice.log.info("Smart motion detected: %s%s.", event.type, attributes.length ? (" (" + attributes.join(", ") + ")") : "");
-        }
+          // Delete the timer from our motion event tracker.
+          this.eventTimers.delete(plateKey);
+        }, protectDevice.hints.motionDuration * 1000));
       }
+
+      // Render this detection's rich metadata through its per-type enricher, if one exists. A type with no enricher - or an enricher that has produced nothing yet - is a
+      // plain detection: we coalesce its bare type name onto the shared line below, once per window, recording a zero high-water mark so an enrichment-capable type that
+      // starts bare can still grow past it and log its attributes when they arrive.
+      const enricher = SMART_DETECT_ENRICHERS.get(event.type);
+      const attributes = enricher?.attributes(event) ?? [];
+
+      if(!attributes.length) {
+
+        if(isNewDetection) {
+
+          this.smartDetectLoggedAttributes.set(key, 0);
+          coalescedTypes.push(event.type);
+        }
+
+        continue;
+      }
+
+      // We have rich metadata. To suppress the in-window noise while still surfacing the fullest telemetry, we act only when the attribute set strictly grows beyond what
+      // we last rendered for this detection (the first detection included, since the high-water mark is absent until then). The controller commonly reads a vehicle's
+      // plate, color, and type a beat after the initial detection, so this logs the enriched line as it fills in rather than on every update.
+      if(attributes.length <= (this.smartDetectLoggedAttributes.get(key) ?? 0)) {
+
+        continue;
+      }
+
+      this.smartDetectLoggedAttributes.set(key, attributes.length);
+
+      // This type now owns an enriched line for the delivery, so it must be excluded from the coalesced bare line below even if it was also seen bare via objectTypes.
+      enrichedTypes.add(event.type);
+
+      // Publish the structured metadata to MQTT on the same footing as the other motion/smart MQTT topics: gated on MQTT being configured, NOT on the console-logging
+      // hint. The strictly-grows dedup above is what keeps the channel quiet; logMotion governs only the human-facing log line below.
+      const mqttPayload = enricher?.mqtt(event);
+
+      if(mqttPayload) {
+
+        void this.nvr.mqtt?.publish(mqttTopic(protectDevice.ufp.mac, "motion/smart/" + event.type + "/metadata"), JSON.stringify(mqttPayload));
+      }
+
+      // Log the enriched line, if the user has opted into motion logging.
+      if(protectDevice.hints.logMotion) {
+
+        protectDevice.log.info("Smart motion detected: %s (%s).", event.type, attributes.join(", "));
+      }
+    }
+
+    // Emit the coalesced line once for everything newly detected this delivery that carries no rich metadata, excluding any type that already logged its own enriched
+    // line.
+    const coalescedLine = coalescedTypes.filter(type => !enrichedTypes.has(type));
+
+    if(coalescedLine.length && protectDevice.hints.logMotion) {
+
+      protectDevice.log.info("Smart motion detected: %s.", coalescedLine.join(", "));
     }
 
     // If we don't have smart detection enabled, or if we do have it enabled and we have a smart detection event that's detected something of interest, let's process
@@ -548,12 +520,7 @@ export class ProtectEventDispatch {
   }
 
   // Doorbell event processing from UniFi Protect and delivered to HomeKit.
-  public doorbellEventHandler(protectDevice: ProtectCamera, lastRing: Nullable<number>): void {
-
-    if(!lastRing) {
-
-      return;
-    }
+  public doorbellEventHandler(protectDevice: ProtectCamera): void {
 
     // If we have an inflight ring event, and we're enforcing a ring duration, we're done.
     if(this.eventTimers.has(protectDevice.id + ".Doorbell.Ring")) {
