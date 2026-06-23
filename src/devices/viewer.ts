@@ -8,7 +8,7 @@ import { selectLiveviews, selectViewer } from "unifi-protect";
 import type { Nullable } from "homebridge-plugin-utils";
 import type { ProtectAccessory } from "../types.ts";
 import { ProtectDevice } from "./device.ts";
-import type { ProtectNvr } from "../nvr.ts";
+import type { ProtectNvr } from "../nvr/nvr.ts";
 
 export class ProtectViewer extends ProtectDevice {
 

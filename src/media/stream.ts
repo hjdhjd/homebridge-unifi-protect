@@ -1,0 +1,1281 @@
+/* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
+ *
+ * stream.ts: Homebridge camera streaming delegate implementation for Protect.
+ *
+ * This module is heavily inspired by the homebridge and homebridge-camera-ffmpeg source code. Thank you for your contributions to the HomeKit world.
+ */
+import { AudioRecordingCodecType, AudioRecordingSamplerate, AudioStreamingCodecType, AudioStreamingSamplerate, BackpressureWriter, FfmpegOptions,
+  FfmpegStreamingProcess, H264Level, H264Profile, HKSV_FRAGMENT_LENGTH, HOMEKIT_IDR_INTERVAL, HbpuAbortError, MediaContainerType, RtpDemuxer, SRTPCryptoSuites,
+  StreamRequestTypes, VideoCodecType, formatBps, formatErrorMessage, isHbpuAbortReason } from "homebridge-plugin-utils";
+import type { CameraController, CameraControllerOptions, CameraStreamingDelegate, HAP, PrepareStreamCallback, PrepareStreamRequest, PrepareStreamResponse, Resolution,
+  Service, SnapshotRequest, SnapshotRequestCallback, StartStreamRequest, StreamRequestCallback, StreamingRequest } from "homebridge";
+import type { HomebridgePluginLogging, IpFamily, Nullable, PortReservation } from "homebridge-plugin-utils";
+import { PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION, PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS, PROTECT_LIVESTREAM_API_IDR_INTERVAL } from "../settings.ts";
+import type { StreamingDelegate, StreamingDelegateFactory } from "./stream-delegate.ts";
+import type { LivestreamSubscription } from "./livestream.ts";
+import { ProtectAbortedError } from "unifi-protect";
+import type { ProtectCameraHost } from "./camera-host.ts";
+import type { ProtectNvr } from "../nvr/nvr.ts";
+import type { ProtectPlatform } from "../platform.ts";
+import { ProtectRecordingDelegate } from "./record.ts";
+import { ProtectReservedNames } from "../types.ts";
+import { ProtectSnapshot } from "./snapshot.ts";
+import { ProtectStreamingFfmpegProcess } from "./stream-ffmpeg-process.ts";
+import type { TalkbackSession } from "unifi-protect";
+import { logLivestreamIterationError } from "./livestream.ts";
+import { mqttTopic } from "../mqtt.ts";
+
+interface OngoingSessionEntry {
+
+  // The per-session AbortController. Aborting it is the single teardown convergence point: it fans out to the demuxer, every FFmpeg, the backpressure writer, the
+  // talkback session, and (via its signal) the livestream subscription.
+  abortController: AbortController;
+  ffmpeg: FfmpegStreamingProcess[];
+  rtpDemuxer: Nullable<RtpDemuxer>;
+  rtpPortReservations: PortReservation[];
+  talkback?: TalkbackSession;
+  toggleLight?: Service;
+}
+
+interface SessionInfo {
+
+  // The per-session AbortController, created in prepareStream so it spans prepare -> start -> stop and covers the demuxer born in prepareStream.
+  abortController: AbortController;
+
+  // Address of the HomeKit client.
+  address: string;
+  addressVersion: IpFamily;
+
+  audioCryptoSuite: SRTPCryptoSuites;
+  audioIncomingRtcpPort: number;
+
+  // Port to receive audio from the HomeKit microphone.
+  audioIncomingRtpPort: number;
+  audioPort: number;
+  audioSRTP: Buffer;
+  audioSSRC: number;
+
+  // Does the user have a version of FFmpeg that supports AAC-ELD?
+  hasAudioSupport: boolean;
+
+  // RTP demuxer needed for two-way audio.
+  rtpDemuxer: Nullable<RtpDemuxer>;
+
+  // RTP port reservations.
+  rtpPortReservations: PortReservation[];
+
+  // This should be saved if multiple suites are supported.
+  videoCryptoSuite: SRTPCryptoSuites;
+  videoPort: number;
+  videoReturnPort: number;
+
+  // Key and salt concatenated.
+  videoSRTP: Buffer;
+
+  // RTP synchronization source.
+  videoSSRC: number;
+}
+
+// Camera streaming delegate implementation for Protect.
+export class ProtectStreamingDelegate implements CameraStreamingDelegate, StreamingDelegate {
+
+  // The doorbell-ness the CameraController's frozen audio options were built for, captured at construction from the same isDoorbell read the recording audio options
+  // make below. The live-attach reads this off this.stream to detect a stale controller (a camera the controller late-flipped) and rebuild only when it diverges.
+  public readonly builtAsDoorbell: boolean;
+  public controller: CameraController;
+  public readonly ffmpegOptions: FfmpegOptions;
+  private readonly hap: HAP;
+  public hksv: Nullable<ProtectRecordingDelegate>;
+  public readonly log: HomebridgePluginLogging;
+  private readonly nvr: ProtectNvr;
+  private ongoingSessions: Map<string, OngoingSessionEntry>;
+  private pendingSessions: Map<string, SessionInfo>;
+  public readonly platform: ProtectPlatform;
+  public readonly protectCamera: ProtectCameraHost;
+  private probesizeOverride: number;
+  private probesizeOverrideCount: number;
+  private probesizeOverrideTimeout?: NodeJS.Timeout;
+  private snapshot: ProtectSnapshot;
+  public verboseFfmpeg: boolean;
+  private abTest = false;
+
+  // Create an instance of a HomeKit streaming delegate.
+  constructor(protectCamera: ProtectCameraHost, resolutions: [number, number, number][]) {
+
+    this.builtAsDoorbell = protectCamera.ufp.featureFlags.isDoorbell;
+    this.hap = protectCamera.api.hap;
+    this.hksv = null;
+    this.log = protectCamera.log;
+    this.nvr = protectCamera.nvr;
+    this.ongoingSessions = new Map();
+    this.protectCamera = protectCamera;
+    this.pendingSessions = new Map();
+    this.platform = protectCamera.platform;
+    this.probesizeOverride = 0;
+    this.probesizeOverrideCount = 0;
+    this.verboseFfmpeg = false;
+
+    // Configure our hardware acceleration support.
+    this.ffmpegOptions = new FfmpegOptions({
+
+      codecSupport: this.platform.codecSupport,
+      crop: this.protectCamera.hints.cropOptions,
+      debug: this.platform.config.debugAll,
+      hardwareDecoding: this.protectCamera.hints.hardwareDecoding,
+      hardwareTranscoding: this.protectCamera.hints.hardwareTranscoding,
+      log: this.log,
+      name: (): string => this.protectCamera.accessoryName
+    });
+
+    // Encourage users to enable hardware-accelerated transcoding on macOS.
+    if(!this.protectCamera.hints.hardwareTranscoding && !this.protectCamera.accessory.context.packageCamera &&
+      this.platform.codecSupport.hostSystem.startsWith("macOS.")) {
+
+      this.log.warn("macOS detected: consider enabling hardware acceleration (located under the video feature options section in the HBUP webUI) for even better " +
+        "performance and an improved user experience.");
+    }
+
+    // Setup for HKSV, if enabled.
+    if(this.protectCamera.isHksvCapable) {
+
+      this.hksv = new ProtectRecordingDelegate(protectCamera);
+    }
+
+    // Configure our snapshot handler.
+    this.snapshot = new ProtectSnapshot(protectCamera);
+
+    // Setup for our camera controller.
+    const options: CameraControllerOptions = {
+
+      // HomeKit requires at least 2 streams, and HomeKit Secure Video requires 1.
+      cameraStreamCount: 10,
+
+      // Our streaming delegate - aka us.
+      delegate: this,
+
+      // Our recording capabilities for HomeKit Secure Video.
+      recording: !this.protectCamera.isHksvCapable || !this.hksv ? undefined : {
+
+        delegate: this.hksv,
+
+        options: {
+
+          audio: {
+
+            codecs: [
+              {
+
+                // When using the livestream API, Protect cameras sample audio at 16 kHz, except for doorbells, which sample audio at 48 kHz.
+                samplerate: this.protectCamera.ufp.featureFlags.isDoorbell ? AudioRecordingSamplerate.KHZ_48 : AudioRecordingSamplerate.KHZ_16,
+                type: AudioRecordingCodecType.AAC_LC
+              }
+            ]
+          },
+
+          mediaContainerConfiguration: [
+            {
+
+              // The default HKSV segment length is 4000ms. It turns out that any setting less than that will disable HomeKit Secure Video.
+              fragmentLength: HKSV_FRAGMENT_LENGTH,
+              type: MediaContainerType.FRAGMENTED_MP4
+            }
+          ],
+
+          // Maximum prebuffer length supported. In Protect, this is effectively unlimited, but HomeKit only seems to request a maximum of a 4000ms prebuffer.
+          prebufferLength: PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION,
+
+          video: {
+
+            parameters: {
+
+              // Through admittedly anecdotal testing on various G3 and G4 models, UniFi Protect seems to support only the H.264 Main profile, though it does support
+              // various H.264 levels, ranging from Level 3 through Level 5.1 (G4 Pro at maximum resolution). However, HomeKit only supports Level 3.1, 3.2, and 4.0
+              // currently.
+              levels: [ H264Level.LEVEL3_1, H264Level.LEVEL3_2, H264Level.LEVEL4_0 ],
+              profiles: [H264Profile.MAIN]
+            },
+
+            resolutions: resolutions,
+
+            type: VideoCodecType.H264
+          }
+        }
+      },
+
+      // Our motion sensor.
+      sensors: !this.protectCamera.isHksvCapable ? undefined : {
+
+        motion: this.protectCamera.accessory.getService(this.hap.Service.MotionSensor)
+      },
+
+      streamingOptions: {
+
+        audio: {
+
+          codecs: [
+
+            {
+
+              audioChannels: 1,
+              bitrate: 0,
+
+              // Protect doorbells and the Opus audio track over RTSP both use a 48 kHz audio sampling rate, which HomeKit doesn't support. Since both 16 and 24 will
+              // divide cleanly into 48, we allow HomeKit to choose its preference. Otherwise, the livestream API uses a 16 kHz sampling rate.
+              samplerate: (this.protectCamera.ufp.featureFlags.isDoorbell || !this.protectCamera.hints.tsbStreaming) ?
+                [ AudioStreamingSamplerate.KHZ_16, AudioStreamingSamplerate.KHZ_24 ] : AudioStreamingSamplerate.KHZ_16,
+              type: AudioStreamingCodecType.AAC_ELD
+            }
+          ],
+
+          twoWayAudio: this.protectCamera.hints.twoWayAudio
+        },
+
+        supportedCryptoSuites: [SRTPCryptoSuites.AES_CM_128_HMAC_SHA1_80],
+
+        video: {
+
+          codec: {
+
+            // Through admittedly anecdotal testing on various G3 and G4 models, UniFi Protect seems to support only the H.264 Main profile, though it does support
+            // various H.264 levels, ranging from Level 3 through Level 5.1 (G4 Pro at maximum resolution). However, HomeKit only supports Level 3.1, 3.2, and 4.0
+            // currently.
+            levels: [ H264Level.LEVEL3_1, H264Level.LEVEL3_2, H264Level.LEVEL4_0 ],
+            profiles: [H264Profile.MAIN]
+          },
+
+          // Retrieve the list of supported resolutions from the camera and apply our best guesses for how to map specific resolutions to the available RTSP streams on a
+          // camera. Unfortunately, this creates challenges in doing on-the-fly RTSP changes in UniFi Protect. Once the list of supported resolutions is set here, there's
+          // no going back unless a user restarts HBUP. Homebridge doesn't have a way to dynamically adjust the list of supported resolutions at this time.
+          resolutions: resolutions
+        }
+      }
+    };
+
+    this.controller = new this.hap.CameraController(options);
+  }
+
+  // HomeKit image snapshot request handler.
+  // eslint-disable-next-line @typescript-eslint/no-misused-promises -- Async implementation of a void-returning Homebridge interface method.
+  public async handleSnapshotRequest(request?: SnapshotRequest, callback?: SnapshotRequestCallback): Promise<void> {
+
+    const snapshot = await this.snapshot.getSnapshot(request);
+
+    // No snapshot was returned - we're done here.
+    if(!snapshot) {
+
+      if(callback) {
+
+        callback(new Error(this.protectCamera.accessoryName + ": Unable to retrieve a snapshot"));
+      }
+
+      return;
+    }
+
+    // Return the image to HomeKit.
+    if(callback) {
+
+      callback(undefined, snapshot);
+    }
+
+    // Publish the snapshot as a data URL to MQTT, if configured.
+    void this.nvr.mqtt?.publish(mqttTopic(this.protectCamera.ufp.mac, "snapshot"), "data:image/jpeg;base64," + snapshot.toString("base64"));
+  }
+
+  // Prepare to launch the video stream.
+  // eslint-disable-next-line @typescript-eslint/no-misused-promises -- Async implementation of a void-returning Homebridge interface method.
+  public async prepareStream(request: PrepareStreamRequest, callback: PrepareStreamCallback): Promise<void> {
+
+    // The per-session AbortController. We create it here so it spans prepare -> start -> stop and covers the demuxer born below; it is the single teardown
+    // convergence point that stopStream aborts.
+    const abortController = new AbortController();
+    const rtpPortReservations: PortReservation[] = [];
+
+    // Reserve one or two consecutive UDP ports through the HBPU-v2 allocator. The allocator throws on failure (no -1 sentinel), so the caller wraps the whole
+    // reservation sequence in a try/catch. We push the returned reservation handle into rtpPortReservations and return it so the call site can read its port; a
+    // count: 2 handle owns port and port + 1 atomically, so there is no separate +1 push.
+    const reservePort = async (ipFamily: IpFamily = "ipv4", count: (1 | 2) = 1): Promise<PortReservation> => {
+
+      const reservation = await this.platform.rtpPorts.reserve({ count, ipFamily, signal: abortController.signal });
+
+      rtpPortReservations.push(reservation);
+
+      return reservation;
+    };
+
+    // Check if the camera has a microphone and if we have audio support is enabled in the plugin.
+    const isAudioEnabled = this.protectCamera.ufp.featureFlags.hasMic && this.protectCamera.hasFeature("Audio");
+
+    // We need to check for AAC support because it's going to determine whether we support audio.
+    const hasAudioSupport = isAudioEnabled && (this.ffmpegOptions.audioEncoder().length > 0);
+
+    const audioSSRC = this.hap.CameraController.generateSynchronisationSource();
+
+    if(!hasAudioSupport) {
+
+      this.log.info("Audio support disabled.%s", isAudioEnabled ? " A version of FFmpeg that is compiled with fdk_aac support is required to support audio." : "");
+    }
+
+    let rtpDemuxer: Nullable<RtpDemuxer> = null;
+    let audioIncomingPort = -1;
+    let audioIncomingRtcpPort: number;
+    let audioIncomingRtpPort = -1;
+    let videoReturnPort: number;
+
+    try {
+
+      // Setup our audio plumbing. The two-way-audio ports (audioIncomingPort, audioIncomingRtpPort) are only reserved when two-way audio is active.
+      audioIncomingRtcpPort = (await reservePort(request.addressVersion)).port;
+
+      if(hasAudioSupport && this.protectCamera.hints.twoWayAudio) {
+
+        audioIncomingPort = (await reservePort(request.addressVersion)).port;
+
+        // The audioIncomingRtpPort reservation owns port and port + 1 (FFmpeg's "RTP port N implies RTCP port N+1" convention), so we only read its first port.
+        audioIncomingRtpPort = (await reservePort(request.addressVersion, 2)).port;
+
+        // Setup the RTP demuxer for two-way audio scenarios. The talkback URL is no longer fetched here - camera.talkback() negotiates it in startStream.
+        rtpDemuxer = new RtpDemuxer({ inputPort: audioIncomingPort, ipFamily: request.addressVersion, log: this.log, rtcpPort: audioIncomingRtcpPort,
+          rtpPort: audioIncomingRtpPort, signal: abortController.signal });
+      }
+
+      // Setup our video plumbing.
+      videoReturnPort = (await reservePort(request.addressVersion)).port;
+    } catch {
+
+      // The allocator could not satisfy a reservation (or the caller aborted mid-reservation). Inform the user, tear down anything already built, release the
+      // already-acquired handles, and fail the prepare. This routes to callback(error) rather than v1's log-then-callback-with-bogus-ports path.
+      this.log.error("Unable to reserve the UDP ports needed to begin streaming.");
+
+      abortController.abort();
+
+      for(const reservation of rtpPortReservations) {
+
+        void reservation[Symbol.asyncDispose]();
+      }
+
+      callback(new Error(this.protectCamera.accessoryName + ": Unable to reserve the UDP ports needed to begin streaming."));
+
+      return;
+    }
+
+    const videoSSRC = this.hap.CameraController.generateSynchronisationSource();
+
+    const sessionInfo: SessionInfo = {
+
+      abortController: abortController,
+      address: request.targetAddress,
+      addressVersion: request.addressVersion,
+
+      audioCryptoSuite: request.audio.srtpCryptoSuite,
+      audioIncomingRtcpPort: audioIncomingRtcpPort,
+      audioIncomingRtpPort: audioIncomingRtpPort,
+      audioPort: request.audio.port,
+      audioSRTP: Buffer.concat([ request.audio.srtp_key, request.audio.srtp_salt ]),
+      audioSSRC: audioSSRC,
+
+      hasAudioSupport: hasAudioSupport,
+      rtpDemuxer: rtpDemuxer,
+      rtpPortReservations: rtpPortReservations,
+
+      videoCryptoSuite: request.video.srtpCryptoSuite,
+      videoPort: request.video.port,
+      videoReturnPort: videoReturnPort,
+      videoSRTP: Buffer.concat([ request.video.srtp_key, request.video.srtp_salt ]),
+      videoSSRC: videoSSRC
+    };
+
+    // Prepare the response stream. Here's where we figure out if we're doing two-way audio or not. For two-way audio, we need to use a demuxer to separate RTP and RTCP
+    // packets. For traditional video/audio streaming, we want to keep it simple and don't use a demuxer.
+    const response: PrepareStreamResponse = {
+
+      audio: {
+
+        port: (hasAudioSupport && this.protectCamera.hints.twoWayAudio) ? audioIncomingPort : audioIncomingRtcpPort,
+        // eslint-disable-next-line camelcase
+        srtp_key: request.audio.srtp_key,
+        // eslint-disable-next-line camelcase
+        srtp_salt: request.audio.srtp_salt,
+        ssrc: audioSSRC
+      },
+
+      video: {
+
+        port: videoReturnPort,
+        // eslint-disable-next-line camelcase
+        srtp_key: request.video.srtp_key,
+        // eslint-disable-next-line camelcase
+        srtp_salt: request.video.srtp_salt,
+        ssrc: videoSSRC
+      }
+    };
+
+    // Add it to the pending session queue so we're ready to start when we're called upon.
+    this.pendingSessions.set(request.sessionID, sessionInfo);
+    callback(undefined, response);
+  }
+
+  // Consume Segments from a livestream subscription and write them through to FFmpeg via the supplied BackpressureWriter. FFmpeg needs a valid fMP4 header before any
+  // MOOF/MDAT data, so we prepend the header exactly once on the first media: either the pre-existing timeshift buffer slice (which already contains the init segment
+  // followed by recent frames) or the subscription's cached init segment data on its own. The v5 pool yields the init as its own Segment, so we SKIP the init-typed
+  // segment here (writing both the prepended init data and the init segment would double-write the fMP4 header and corrupt FFmpeg's -f mp4 input) and consume the
+  // cached initSegment.data instead. Error classification is centralised in logLivestreamIterationError so every livestream consumer uses identical phrasing.
+  private async consumeStreamSegments(ffmpegStream: ProtectStreamingFfmpegProcess, subscription: LivestreamSubscription, segmentWriter: BackpressureWriter,
+    tsBuffer: Nullable<Buffer>): Promise<void> {
+
+    let headerWritten = false;
+
+    try {
+
+      for await (const segment of subscription) {
+
+        // The init segment is consumed through the cached subscription.initSegment getter and prepended once below as the header, not written here. Skip it.
+        if(segment.type === "init") {
+
+          continue;
+        }
+
+        // The first media segment after a genuine reconnect carries discontinuity:true: its tfdt baseMediaDecodeTime has been rebased near zero (a backward timeline
+        // jump). Our live -f mp4 input carries +discardcorrupt / ignore_err but NOT +genpts, so feeding the rebased fragment would corrupt FFmpeg's demux. We end
+        // FFmpeg's stdin instead - the .exited force-stop bridge then re-establishes the HomeKit session cleanly, reproducing pre-v5's onDisconnect -> stdin.end on
+        // every visible disconnect (the marker now sources that decision inline, replacing the deleted onDisconnect callback). The v5-source timeline-continuity
+        // alternative (stitching the timeline across reconnects rather than ending) is backlogged. This check is BEFORE the write so the rebased fragment is never
+        // forwarded; it mirrors timeshift.ts's check-before-forward ordering.
+        if(segment.discontinuity) {
+
+          ffmpegStream.stdin.end();
+
+          return;
+        }
+
+        // Prepend the fMP4 header once, on the first media segment. The whenEstablished contract guarantees subscription.initSegment is non-null by the time media
+        // flows...the unifi-protect library delivers the init segment before the first media segment. If the library ever violates this and we see a null header
+        // here, fail the stream cleanly rather than feeding FFmpeg MOOF/MDAT chunks without a header (which would silently corrupt the output).
+        if(!headerWritten) {
+
+          headerWritten = true;
+
+          const header = tsBuffer ?? subscription.initSegment?.data;
+
+          if(!header) {
+
+            this.log.error("Live streaming aborted: the livestream API delivered its first segment before the initialization segment.");
+            ffmpegStream.stdin.end();
+
+            return;
+          }
+
+          void segmentWriter.write(header).catch((error: unknown) => this.log.debug("Live stream backpressure write dropped.", { error }));
+        }
+
+        // Write the media fragment. The v2 write() returns a typed-rejecting Promise; the .catch (debug) swallows BackpressureClosedStreamError / signal.reason on
+        // teardown (the common case when FFmpeg exits mid-write). No highWaterMark (unbounded) and no segment-count accounting, unlike HKSV.
+        void segmentWriter.write(segment.data).catch((error: unknown) => this.log.debug("Live stream backpressure write dropped.", { error }));
+      }
+    } catch(error) {
+
+      logLivestreamIterationError({ consumer: "Live streaming", error, log: this.log });
+
+      // The iterator terminated out-of-band (the subscription is disposed, no more segments will arrive). Ending FFmpeg's stdin lets the process wrap up cleanly
+      // on its own schedule rather than waiting for its internal stall timeout to fire. There is no consumer-side reboot here - the live and HKSV-timeshift
+      // consumers share one pooled session and the timeshift owns the single reboot anchor; logLivestreamIterationError already warns on the recovery give-up.
+      ffmpegStream.stdin.end();
+    }
+  }
+
+  // Launch the Protect video (and audio) stream.
+  private async startStream(request: StartStreamRequest, callback: StreamRequestCallback): Promise<void> {
+
+    const sessionInfo = this.pendingSessions.get(request.sessionID);
+
+    if(!sessionInfo) {
+
+      callback(new Error("Unable to find the pending session."));
+
+      return;
+    }
+
+    const sdpIpVersion = sessionInfo.addressVersion === "ipv6" ? "IP6" : "IP4";
+
+    // If we aren't connected, we're done.
+    if(!this.protectCamera.isReachable) {
+
+      const errorMessage = "Unable to start video stream: the camera is offline or unavailable.";
+
+      this.log.error(errorMessage);
+      callback(new Error(this.protectCamera.accessoryName + ": " + errorMessage));
+
+      return;
+    }
+
+    // We transcode based in the following circumstances:
+    //
+    //   1. The user has explicitly configured transcoding.
+    //   2. The user has configured cropping for the video stream.
+    //   3. We are on a high latency streaming session (e.g. cellular). If we're high latency, we'll transcode by default unless the user has asked us not to. Why? It
+    //      generally results in a speedier experience, at the expense of some stream quality (HomeKit tends to request far lower bitrates than Protect is capable of
+    //      producing).
+    //   4. The codec in use on the Protect camera isn't H.264.
+    //
+    // How do we determine if we're a high latency connection? We look at the RTP packet time of the audio packet time for a hint. HomeKit uses values of 20, 30, 40,
+    // and 60ms. We make an assumption, validated by lots of real-world testing, that when we see 60ms used by HomeKit, it's a high latency connection and act
+    // accordingly.
+    const isHighLatency = request.audio.packet_time >= 60;
+    const isTranscoding = this.protectCamera.hints.transcode || this.protectCamera.hints.crop || (isHighLatency && this.protectCamera.hints.transcodeHighLatency) ||
+      (this.protectCamera.ufp.videoCodec !== "h264");
+
+    // Set the initial bitrate we should use for this request based on what HomeKit is requesting.
+    let targetBitrate = request.video.max_bit_rate;
+
+    // Only use API livestreaming if we have an active timeshift buffer. Otherwise, we'll fallback to RTSP streaming. We coerce to a strict boolean (the && may yield
+    // undefined when hksv is absent) because useTsb is captured as the streaming subclass's per-session suppressLivestreamApiErrors flag, which is a boolean.
+    let useTsb = (this.protectCamera.hints.tsbStreaming && this.hksv?.isRecording) ?? false;
+
+    // If we're A/B testing, switch our streaming types. This is intended for internal development purposes only.
+    if(this.abTest && this.protectCamera.hasFeature("Debug.Video.Stream.ABTest")) {
+
+      useTsb = !useTsb;
+    }
+
+    this.abTest = !this.abTest;
+
+    // FFmpeg doesn't support AV1 over RTSP yet.
+    if((this.protectCamera.ufp.videoCodec === "av1") && !useTsb) {
+
+      if(!this.hksv?.isRecording) {
+
+        const errorMessage = "Unable to start video stream: FFmpeg does not currently support AV1-encoded RTSP streams. " +
+          "Enable HKSV in the Home app and ensure API-based livestreaming is enabled in HBUP (enabled by default).";
+
+        this.log.error(errorMessage);
+        callback(new Error(this.protectCamera.accessoryName + ": " + errorMessage));
+
+        return;
+      }
+
+      useTsb = true;
+    }
+
+    // Always try to use API livestreaming if we are looking at the package camera.
+    if(("packageCamera" in this.protectCamera.accessory.context) && !useTsb && this.hksv?.isRecording) {
+
+      useTsb = true;
+    }
+
+    // If we're using the livestream API and we're timeshifting, we override the stream quality we've determined in favor of our timeshift buffer.
+    let channelProfile = useTsb ? this.hksv?.channelProfile : null;
+
+    // Find the best RTSP stream based on what we're looking for.
+    if(isTranscoding) {
+
+      // If we have hardware transcoding enabled, we treat it uniquely and get the highest quality stream we can. Fixed-function hardware transcoders tend to perform
+      // better with higher bitrate sources. We also want to generally bias ourselves toward higher quality streams where possible.
+      channelProfile ??= this.protectCamera.selectChannel(
+        (this.protectCamera.hints.hardwareTranscoding) ? 3840 : request.video.width,
+        (this.protectCamera.hints.hardwareTranscoding) ? 2160 : request.video.height,
+        { biasHigher: true, maxPixels: this.ffmpegOptions.maxSourcePixels("stream") }
+      );
+
+      // If we have specified the bitrates we want to use when transcoding, let's honor those here.
+      if(isHighLatency && (this.protectCamera.hints.transcodeHighLatencyBitrate > 0)) {
+
+        targetBitrate = this.protectCamera.hints.transcodeHighLatencyBitrate;
+      } else if(!isHighLatency && (this.protectCamera.hints.transcodeBitrate > 0)) {
+
+        targetBitrate = this.protectCamera.hints.transcodeBitrate;
+      }
+
+      // If we're targeting a bitrate that's beyond the capabilities of our input channel, match the bitrate of the input channel.
+      if(channelProfile && (targetBitrate > (channelProfile.channel.bitrate / 1000))) {
+
+        targetBitrate = channelProfile.channel.bitrate / 1000;
+      }
+    } else {
+
+      channelProfile ??= this.protectCamera.selectChannel(request.video.width, request.video.height);
+    }
+
+    if(!channelProfile) {
+
+      const errorMessage = "Unable to start video stream: no valid RTSP stream profile was found.";
+
+      this.log.error("%s %sx%s, %s fps, %s kbps.", errorMessage,
+        request.video.width, request.video.height, request.video.fps, request.video.max_bit_rate.toLocaleString("en-US"));
+
+      callback(new Error(this.protectCamera.accessoryName + ": " + errorMessage));
+
+      return;
+    }
+
+    let flashlightService;
+
+    // If we are streaming the package camera, and it's dark outside, activate the flashlight on the camera.
+    if("packageCamera" in this.protectCamera.accessory.context) {
+
+      flashlightService = this.protectCamera.accessory.getServiceById(this.hap.Service.Lightbulb, ProtectReservedNames.LIGHTBULB_PACKAGE_FLASHLIGHT);
+
+      // If we're already on, we assume the user's activated it and we'll leave it untouched. Otherwise, we'll toggle it on and off when we begin and end streaming.
+      if(this.protectCamera.ufp.isDark && flashlightService && !flashlightService.getCharacteristic(this.hap.Characteristic.On).value) {
+
+        // We explicitly want to call the set handler for the flashlight.
+        flashlightService.setCharacteristic(this.hap.Characteristic.On, true);
+      } else {
+
+        flashlightService = undefined;
+      }
+    }
+
+    // If we have the timeshift buffer enabled, and we've selected the same quality for the livestream as our timeshift buffer, we use the timeshift buffer to
+    // significantly accelerate our livestream startup. Using the timeshift buffer provides advantages:
+    //
+    // - Since we typically have several seconds of video already queued up in the timeshift buffer, FFmpeg will get a significant speed up in startup performance.
+    //   FFmpeg takes time at the beginning of each session to analyze the input before allowing you to perform any action. By using the timeshift buffer, we're able to
+    //   give FFmpeg all that data right at the beginning, effectively reducing that startup time to the point of being imperceptible.
+    //
+    // - Since we are using an already existing connection to the Protect controller, we don't need to create another connection which incurs an additional delay, as well
+    //   as a resource hit on the Protect controller.
+    const tsBuffer: Nullable<Buffer> = useTsb ? (this.hksv?.timeshift.getLast(PROTECT_LIVESTREAM_API_IDR_INTERVAL * 1000) ?? null) : null;
+
+    // -hide_banner                     Suppress printing the startup banner in FFmpeg.
+    // -nostats                         Suppress printing progress reports while encoding in FFmpeg.
+    // -fflags flags                    Set the format flags to discard any corrupt packets rather than exit, generate a presentation timestamp if it's missing, ignore
+    //                                  the decoding timestamp, and minimize buffering as well as latency. Adjusting timestamps is a necessity if we want to ensure we
+    //                                  keep audio and video in sync, especially when using hardware acceleration.
+    // -err_detect ignore_err           Ignore decoding errors and continue rather than exit.
+    // -max_delay 500000                Set an upper limit on how much time FFmpeg can take in demuxing packets, in microseconds.
+    // -flags low_delay                 Tell FFmpeg to optimize for low delay / realtime decoding.
+    // -r fps                           Specify the input frame rate for the video stream.
+    // -probesize number                How many bytes should be analyzed for stream information.
+    const ffmpegArgs = [
+
+      "-hide_banner",
+      "-nostats",
+      "-fflags", "+discardcorrupt",
+      "-err_detect", "ignore_err",
+      ...this.ffmpegOptions.videoDecoder(this.protectCamera.ufp.videoCodec),
+      "-max_delay", "500000",
+      "-flags", "low_delay",
+      "-probesize", this.probesize.toString()
+    ];
+
+    if(useTsb) {
+
+      // -f mp4                         Tell ffmpeg that it should expect an MP4-encoded input stream.
+      // -i pipe:0                      Use standard input to get video data.
+      ffmpegArgs.push(
+
+        "-f", "mp4",
+        "-i", "pipe:0"
+      );
+    } else {
+
+      // -avioflags direct              Tell FFmpeg to minimize buffering to reduce latency for more realtime processing.
+      // -rtsp_transport tcp            Tell the RTSP stream handler that we're looking for a TCP connection.
+      // -i channelProfile.url               RTSPS URL to get our input stream from.
+      ffmpegArgs.push(
+
+        "-avioflags", "direct",
+        "-rtsp_transport", "tcp",
+        "-i", channelProfile.url
+      );
+    }
+
+    // -map 0:v:0                       Selects the first available video track from the stream. Protect actually maps audio
+    //                                  and video tracks in opposite locations from where FFmpeg typically expects them. This
+    //                                  setting is a more general solution than naming the track locations directly in case
+    //                                  Protect changes this in the future.
+    ffmpegArgs.push(
+
+      "-map", "0:v:0"
+    );
+
+    // Inform the user.
+    const hinting = [];
+
+    // Lightning bolt, using the default emoji presentation. We use this to indicate hardware acceleration.
+    hinting.push(...(isTranscoding && this.protectCamera.hints.hardwareTranscoding ? ["\u{26A1}\u{FE0F}"] : []));
+
+    // Gear, using the text presentation modifier. We use this to indicate that we're transcoding.
+    hinting.push(...(isTranscoding ? ["\u{26ED}\u{FE0E}"] : []));
+
+    // Hourglass, using the text presentation modifier. We use this to indicate high latency connections.
+    hinting.push(...((request.audio.packet_time === 60) ? ["\u{29D6}\u{FE0E}"] : []));
+
+    // Speaker, using the text presentation modifier. We use this to indicate that we're applying audio filters for noise reduction.
+    hinting.push(...(sessionInfo.hasAudioSupport && (this.protectCamera.hasFeature("Audio.Filter.Noise")) ? ["\u{1F50A}\u{FE0E}"] : []));
+
+    hinting.push(...(hinting.length ? [""] : []));
+
+    this.log.info("%sStreaming request: %sx%s@%sfps, %s. Using %s [%s], %s [%s].", hinting.join(" "), request.video.width, request.video.height, request.video.fps,
+      formatBps(targetBitrate * 1000), channelProfile.name, this.protectCamera.videoCodecName,
+      formatBps(channelProfile.channel.bitrate), useTsb ? "TSB/" + (this.protectCamera.hasFeature("Debug.Video.HKSV.UseRtsp") ? "RTSP" : "API") : "RTSP");
+
+    // When on high-performance hardware like Apple Silicon, using the TSB, and we don't have low-FPS cameras like the package camera, enable the use of the
+    // CPU-intensive FFmpeg minterpolate filter to enable very smooth video, especially when there's motion involved. M3+ Apple Silicon environments are able to reliably
+    // use this filter in realtime and with great results. I'm hoping to be able to enable this in the future for other platforms.
+    const useInterpolationFilter = useTsb && !("packageCamera" in this.protectCamera.accessory.context) &&
+      ((this.platform.codecSupport.hostSystem === "macOS.Apple") && (this.platform.codecSupport.cpuGeneration >= 3));
+
+    // Check to see if we're transcoding. If we are, set the right FFmpeg encoder options. If not, copy the video stream.
+    if(isTranscoding) {
+
+      // Configure our video parameters for transcoding.
+      ffmpegArgs.push(...this.ffmpegOptions.streamEncoder({
+
+        bitrate: targetBitrate,
+        fps: useInterpolationFilter ? channelProfile.channel.fps : request.video.fps,
+        height: request.video.height,
+        idrInterval: HOMEKIT_IDR_INTERVAL,
+        inputFps: channelProfile.channel.fps,
+        level: request.video.level,
+        profile: request.video.profile,
+        width: request.video.width
+      }));
+
+      if(useInterpolationFilter) {
+
+        // Adjust our presentation timestamps for a smoother streaming experience.
+        const minterpolate =
+
+          ((this.protectCamera.hints.hardwareTranscoding && this.platform.codecSupport.ffmpegVersion.startsWith("8.")) ? "hwdownload, format=nv12, " : "") +
+          "fps=" + request.video.fps.toString() +
+          ", minterpolate=fps=" + request.video.fps.toString() + ":mi_mode=mci:mc_mode=aobmc:me=fss:me_mode=bidir:vsbmc=1:scd=none";
+
+        const vf = ffmpegArgs.indexOf("-filter:v");
+
+        if(vf >= 0) {
+
+          ffmpegArgs[vf + 1] = (ffmpegArgs[vf + 1] ?? "") + ", " + minterpolate;
+        } else {
+
+          ffmpegArgs.push("-filter:v", minterpolate);
+        }
+      }
+    } else {
+
+      // Configure our video parameters for just copying the input stream from Protect - it tends to be quite solid in most cases:
+      //
+      // -codec:v copy                  Copy the stream without reencoding it.
+      ffmpegArgs.push(
+
+        "-codec:v", "copy"
+      );
+
+      // The livestream API needs to be transmuxed before we use it directly.
+      if(useTsb) {
+
+        // -bsf:v h264_mp4toannexb    Convert the livestream container format from MP4 to MPEG-TS.
+        ffmpegArgs.push("-bsf:v", "h264_mp4toannexb");
+      }
+    }
+
+    // -metadata                        Set the metadata to the name of the camera to distinguish between FFmpeg sessions.
+    ffmpegArgs.push(
+
+      "-metadata", "comment=" + this.protectCamera.accessoryName + " Livestream"
+    );
+
+    // Configure our video parameters for SRTP streaming:
+    //
+    // -payload_type num                Payload type for the RTP stream. This is negotiated by HomeKit and is usually 99 for H.264 video.
+    // -ssrc                            Synchronization source stream identifier. Random number negotiated by HomeKit to identify this stream.
+    // -f rtp                           Specify that we're using the RTP protocol.
+    // -flush_packets 1                 Ensure we flush our write buffer after each muxed packet.
+    // -packetsize 1200                 Use a packetsize of 1200 for compatibility across network environments. This should be no more than HomeKit livestreaming MTU
+    //                                  (1378 for IPv4 and 1228 for IPv6).
+    // -srtp_out_suite enc              Specify the output encryption encoding suites.
+    // -srtp_out_params params          Specify the output encoding parameters. This is negotiated by HomeKit.
+    ffmpegArgs.push(
+
+      "-payload_type", request.video.pt.toString(),
+      "-ssrc", sessionInfo.videoSSRC.toString(),
+      "-f", "rtp",
+      "-flush_packets", "1",
+      "-packetsize", "1200",
+      "-srtp_out_suite", "AES_CM_128_HMAC_SHA1_80",
+      "-srtp_out_params", sessionInfo.videoSRTP.toString("base64"),
+      "srtp://" + sessionInfo.address + ":" + sessionInfo.videoPort.toString() + "?rtcpport=" + sessionInfo.videoPort.toString()
+    );
+
+    // Configure the audio portion of the command line, if we have a version of FFmpeg that supports the audio codecs we need. Options we use are:
+    //
+    // -map 0:a:0?                      Selects the first available audio track from the stream, if it exists. Protect actually maps audio
+    //                                  and video tracks in opposite locations from where FFmpeg typically expects them. This
+    //                                  setting is a more general solution than naming the track locations directly in case
+    //                                  Protect changes this in the future.
+    // -codec:a                         Encode using the codecs available to us on given platforms.
+    // -profile:a 38                    Specify enhanced, low-delay AAC for HomeKit.
+    // -flags +global_header            Sets the global header in the bitstream. Needed for FDK-AAC to correctly initialize. For encoders like aac_at it becomes a no-op.
+    // -ar samplerate                   Sample rate to use for this audio. This is specified by HomeKit.
+    // -b:a bitrate                     Bitrate to use for this audio stream. This is specified by HomeKit.
+    // -ac number                       Set the number of audio channels.
+    if(sessionInfo.hasAudioSupport) {
+
+      // Configure our audio parameters.
+      ffmpegArgs.push(
+
+        // Take advantage of the higher fidelity potentially available to us from the Opus track in the RTSP stream. The livestream API only provides an AAC track.
+        "-map", useTsb ? "0:a:0?" : "0:a:1?",
+        ...this.ffmpegOptions.audioEncoder(),
+        "-flags", "+global_header",
+        "-profile:a", "38",
+        "-ar", request.audio.sample_rate.toString() + "k",
+        "-b:a", request.audio.max_bit_rate.toString() + "k",
+        "-ac", request.audio.channel.toString()
+      );
+
+      // If we are audio filtering, address it here.
+      // Protect doorbells deliver audio at 48000 Hz; every other Protect camera delivers it at 16000 Hz. This is the input sample rate FFmpeg's audio filters operate on,
+      // independent of the output rate HomeKit requests, and what getAudioFilters validates each filter's frequency against the Nyquist limit of. Feeding the doorbell's
+      // true 48000 Hz lifts the Nyquist ceiling to 24000 Hz, so a user's highpass/lowpass in the 8-24 kHz band is no longer silently dropped on a doorbell.
+      const afOptions = this.protectCamera.getAudioFilters(this.protectCamera.ufp.featureFlags.isDoorbell ? 48000 : 16000);
+
+      if(afOptions.length) {
+
+        ffmpegArgs.push("-filter:a", afOptions.join(", "));
+      }
+
+      // Add the required RTP settings and encryption for the stream:
+      //
+      // -payload_type num                Payload type for the RTP stream. This is negotiated by HomeKit and is usually 110 for AAC-ELD audio.
+      // -ssrc                            Synchronization source stream identifier. Random number negotiated by HomeKit to identify this stream.
+      // -f rtp                           Specify that we're using the RTP protocol.
+      // -flush_packets 1                 Ensure we flush our write buffer after each muxed packet.
+      // -packetsize 384                  Use a packetsize as a multiple of the sample rate. HomeKit livestreaming wants a block size of 480 samples when using AAC-ELD.
+      //                                  We loosely interpret that to mean less than 480 bytes per packet and use 384 since it's divisible by 16 kHz and 24 kHz.
+      // -srtp_out_suite enc              Specify the output encryption encoding suites.
+      // -srtp_out_params params          Specify the output encoding parameters. This is negotiated by HomeKit.
+      ffmpegArgs.push(
+
+        "-payload_type", request.audio.pt.toString(),
+        "-ssrc", sessionInfo.audioSSRC.toString(),
+        "-f", "rtp",
+        "-flush_packets", "1",
+        "-packetsize", "384",
+        "-srtp_out_suite", "AES_CM_128_HMAC_SHA1_80",
+        "-srtp_out_params", sessionInfo.audioSRTP.toString("base64"),
+        "srtp://" + sessionInfo.address + ":" + sessionInfo.audioPort.toString() + "?rtcpport=" + sessionInfo.audioPort.toString()
+      );
+    }
+
+    // Additional logging, but only if we're debugging.
+    if(this.platform.verboseFfmpeg || this.verboseFfmpeg || this.protectCamera.hasFeature("Debug.Video.FFmpeg")) {
+
+      ffmpegArgs.push("-loglevel", "level+verbose");
+    }
+
+    if(this.platform.config.debugAll) {
+
+      ffmpegArgs.push("-loglevel", "level+debug");
+    }
+
+    // Combine everything and start an instance of FFmpeg. The video health watchdog (returnPort) is supplied ONLY for non-two-way-audio sessions, exactly as v1: a
+    // two-way-audio session demuxes its packet flow externally, so arming the internal 5-second inbound-silence watchdog there would risk a false force-stop on every
+    // two-way live view. The HBPU-v2 process spawns the child synchronously on construction. The subclass reproduces v1's failed-teardown logging (benign-API
+    // suppression gated on useTsb, plus probesize self-tuning) through the logFailedTeardown hook.
+    const ffmpegStream = new ProtectStreamingFfmpegProcess(this.ffmpegOptions, {
+
+      args: ffmpegArgs,
+      onProbesizeError: (): void => this.adjustProbeSize(),
+      returnPort: (sessionInfo.hasAudioSupport && this.protectCamera.hints.twoWayAudio) ? undefined :
+        { ipFamily: sessionInfo.addressVersion, port: sessionInfo.videoReturnPort },
+      signal: sessionInfo.abortController.signal,
+      suppressLivestreamApiErrors: useTsb
+    });
+
+    // Bridge FFmpeg's ready signal to HomeKit's StreamRequestCallback, exactly once, for all input sources. v1 fired callback() on FFmpeg's first stderr byte
+    // regardless of source; ready resolves on that same first byte and rejects on a spawn failure (-> callback(error)). We prefer the underlying cause on the reject
+    // path so an ENOENT surfaces usefully rather than the bare abort-reason name. ready settles once, so this calls back exactly once; the whenEstablished await below
+    // gates only whether to keep or bail the session, never the callback.
+    void ffmpegStream.ready.then(() => callback(undefined), (reason: unknown) => callback(new Error(this.protectCamera.accessoryName + ": " +
+      (((reason instanceof HbpuAbortError) && (reason.cause instanceof Error)) ? reason.cause.message : String(reason)))));
+
+    let segmentWriter: Nullable<BackpressureWriter> = null;
+    let subscription: Nullable<LivestreamSubscription> = null;
+
+    // Force-stop bridge: when FFmpeg exits, reclaim the subscription and writer, and (when the session is still live and the exit was organic, not a self-initiated
+    // shutdown) force HomeKit to reclaim the streaming slot. We observe BOTH settlements of exited - it rejects on the never-spawned/ENOENT path, and a never-spawned
+    // FFmpeg still needs its subscription/writer reclaimed - so the same cleanup runs on either branch. The organic discriminator reads signal.reason: stopStream
+    // aborts with an explicit HbpuAbortError("shutdown"), so isHbpuAbortReason(reason, "shutdown") suppresses the self-stop double-fire; the entry-existence guard is
+    // defense-in-depth. This reproduces v1's started-then-died force-stop, and the returnPort watchdog timeout flows through the same path.
+    const bridge = (): void => {
+
+      void subscription?.[Symbol.asyncDispose]();
+      segmentWriter?.abort();
+
+      if(this.ongoingSessions.has(request.sessionID) && !isHbpuAbortReason(ffmpegStream.signal.reason, "shutdown")) {
+
+        this.controller.forceStopStreamingSession(request.sessionID);
+        this.stopStream(request.sessionID);
+      }
+    };
+
+    void ffmpegStream.exited.then(() => bridge(), () => bridge());
+
+    if(useTsb) {
+
+      // Feed segments to FFmpeg with backpressure handling...if FFmpeg can't keep up, segments are queued and written when it's ready.
+      segmentWriter = new BackpressureWriter(() => ffmpegStream.stdin, { signal: sessionInfo.abortController.signal });
+
+      // Subscribe to the pooled livestream via the camera seam. This call is synchronous and returns the subscription handle immediately; the underlying connection
+      // begins establishing in the background. We start consuming segments below within the same synchronous frame, before any asynchronous segment can be delivered.
+      //
+      // A live view is always active (no idle phase, unlike the timeshift's transmit toggle), so the recovery urgency closure is the constant active tolerance: the
+      // pool reconnects immediately on a stall because a HomeKit live view is latency-sensitive. This replaces v1's elevateCriticality. The value only matters when
+      // the controller is unhealthy.
+      //
+      // POOL-SHARING INVARIANT: v5's pool sharing key now includes segmentLength/chunkSize/timestamps (pre-v5 was channel + lens only). The live and HKSV-timeshift
+      // subscribers share ONE pooled session only because BOTH go through this same seam with the same defaults - the live call OMITS segmentLength, so the seam
+      // default (PROTECT_SEGMENT_RESOLUTION = 100) matches the timeshift's explicit 100. If either consumer's opts ever diverge, the session silently splits into two
+      // sockets (double controller load, broken self-heal/discontinuity coupling).
+      subscription = this.protectCamera.livestream(channelProfile, { signal: sessionInfo.abortController.signal, urgency: () => PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS });
+
+      // Drive the segment iterator in the background.
+      void this.consumeStreamSegments(ffmpegStream, subscription, segmentWriter, tsBuffer);
+
+      // Wait for the session to establish. If it fails (provisioning deadline expired), tear down the spawned FFmpeg, the writer, and the subscription, then bail.
+      // The FFmpeg was spawned above before this await, so we must abort it here too rather than leaving it to sit until its returnPort watchdog fires.
+      if(!(await subscription.whenEstablished())) {
+
+        ffmpegStream.abort();
+        segmentWriter.abort();
+        void subscription[Symbol.asyncDispose]();
+
+        return;
+      }
+    }
+
+    // Some housekeeping for our FFmpeg and demuxer sessions.
+    this.ongoingSessions.set(request.sessionID, {
+
+      abortController: sessionInfo.abortController,
+      ffmpeg: [ffmpegStream],
+      rtpDemuxer: sessionInfo.rtpDemuxer,
+      rtpPortReservations: sessionInfo.rtpPortReservations,
+      toggleLight: flashlightService
+    });
+
+    this.pendingSessions.delete(request.sessionID);
+
+    // If we aren't doing two-way audio, we're done here. For two-way audio...we have some more plumbing to do.
+    if(!sessionInfo.hasAudioSupport || !this.protectCamera.hints.twoWayAudio) {
+
+      return;
+    }
+
+    // Session description protocol message that FFmpeg will share with HomeKit.
+    // SDP messages tell the other side of the connection what we're expecting to receive.
+    //
+    // Parameters are:
+    //
+    // v             Protocol version - always 0.
+    // o             Originator and session identifier.
+    // s             Session description.
+    // c             Connection information.
+    // t             Timestamps for the start and end of the session.
+    // m             Media type - audio, adhering to RTP/AVP, payload type 110.
+    // b             Bandwidth information - application specific, 16k or 24k.
+    // a=rtpmap      Payload type 110 corresponds to an MP4 stream. Format is MPEG4-GENERIC/<audio clock rate>/<audio channels>
+    // a=fmtp        For payload type 110, use these format parameters.
+    // a=crypto      Crypto suite to use for this session.
+    const sdpReturnAudio = [
+
+      "v=0",
+      "o=- 0 0 IN " + sdpIpVersion + " 127.0.0.1",
+      "s=" + this.protectCamera.accessoryName + " Audio Talkback",
+      "c=IN " + sdpIpVersion + " " + sessionInfo.address,
+      "t=0 0",
+      "m=audio " + sessionInfo.audioIncomingRtpPort.toString() + " RTP/AVP " + request.audio.pt.toString(),
+      "b=AS:24",
+      "a=rtpmap:110 MPEG4-GENERIC/" + ((request.audio.sample_rate === AudioStreamingSamplerate.KHZ_16) ? "16000" : "24000") + "/" + request.audio.channel.toString(),
+      "a=fmtp:110 profile-level-id=1;mode=AAC-hbr;sizelength=13;indexlength=3;indexdeltalength=3; config=" +
+        ((request.audio.sample_rate === AudioStreamingSamplerate.KHZ_16) ? "F8F0212C00BC00" : "F8EC212C00BC00"),
+      "a=crypto:1 AES_CM_128_HMAC_SHA1_80 inline:" + sessionInfo.audioSRTP.toString("base64")
+    ].join("\n");
+
+    // Configure the audio portion of the command line, if we have a version of FFmpeg that supports the audio codecs we need. Options we use are:
+    //
+    // -hide_banner           Suppress printing the startup banner in FFmpeg.
+    // -nostats               Suppress printing progress reports while encoding in FFmpeg.
+    // -protocol_whitelist    Set the list of allowed protocols for this FFmpeg session.
+    // -f sdp                 Specify that our input will be an SDP file.
+    // -codec:a               Decode AAC input using the specified decoder.
+    // -i pipe:0              Read input from standard input.
+    // -codec:a               Encode to AAC. This format is set by Protect.
+    // -flags +global_header  Sets the global header in the bitstream.
+    // -ar                    Sets the audio rate to what Protect is expecting.
+    // -b:a                   Bitrate to use for this audio stream based on what HomeKit is providing us.
+    // -ac                    Sets the channel layout of the audio stream based on what Protect is expecting.
+    // -f adts                Transmit an ADTS stream.
+    // pipe:1                 Output the ADTS stream to standard output.
+    const ffmpegReturnAudioCmd = [
+
+      "-hide_banner",
+      "-nostats",
+      "-protocol_whitelist", "crypto,file,pipe,rtp,udp",
+      "-f", "sdp",
+      "-codec:a", this.ffmpegOptions.audioDecoder,
+      "-i", "pipe:0",
+      "-map", "0:a:0",
+      ...this.ffmpegOptions.audioEncoder(),
+      "-flags", "+global_header",
+      "-ar", this.protectCamera.ufp.talkbackSettings.samplingRate.toString(),
+      "-b:a", request.audio.max_bit_rate.toString() + "k",
+      "-ac", this.protectCamera.ufp.talkbackSettings.channels.toString(),
+      "-f", "adts"
+    ];
+
+    if(this.protectCamera.hints.twoWayAudioDirect) {
+
+      ffmpegReturnAudioCmd.push("udp://" + this.protectCamera.ufp.host + ":" + this.protectCamera.ufp.talkbackSettings.bindPort.toString());
+    } else {
+
+      ffmpegReturnAudioCmd.push("pipe:1");
+    }
+
+    // Additional logging, but only if we're debugging.
+    if(this.platform.verboseFfmpeg || this.verboseFfmpeg) {
+
+      ffmpegReturnAudioCmd.push("-loglevel", "level+verbose");
+    }
+
+    if(this.platform.config.debugAll) {
+
+      ffmpegReturnAudioCmd.push("-loglevel", "level+debug");
+    }
+
+    // Wait for the first RTP packet to be forwarded before launching the return-audio FFmpeg. mediaReady resolves on the first forwarded RTP and rejects with the
+    // signal's reason if the demuxer aborts before any RTP arrives (it folds v1's isRunning discriminator into the reject path, so a STOP during the handshake bails
+    // cleanly). The null-narrow mirrors prepareStream: rtpDemuxer is non-null whenever two-way audio is active, which is the only path that reaches here.
+    if(sessionInfo.rtpDemuxer) {
+
+      try {
+
+        await sessionInfo.rtpDemuxer.mediaReady;
+      } catch {
+
+        return;
+      }
+    }
+
+    // Fire up the return-audio FFmpeg and start processing the incoming audio. This is constructed UNCONDITIONALLY: the twoWayAudioDirect path needs it to push
+    // udp://camera, and the controller-relayed path drains its ADTS stdout into the talkback session. It uses the plain FfmpegStreamingProcess (no returnPort
+    // watchdog because it is outbound, and no subclass suppression/probesize because that is a livestream-API concern). The v2 process spawns on construction, so
+    // stdin is available immediately for the SDP.
+    const ffmpegReturnAudio = new FfmpegStreamingProcess(this.ffmpegOptions, { args: ffmpegReturnAudioCmd, signal: sessionInfo.abortController.signal });
+
+    // Setup housekeeping for the twoway FFmpeg session.
+    this.ongoingSessions.get(request.sessionID)?.ffmpeg.push(ffmpegReturnAudio);
+
+    // Feed the SDP session description to FFmpeg on stdin.
+    ffmpegReturnAudio.stdin.end(sdpReturnAudio + "\n");
+
+    // Send the audio through the Protect controller's talkback channel, unless we are talking directly to the camera over UDP (twoWayAudioDirect), in which case
+    // FFmpeg already pushes udp://camera from the command above and there is no talkback session to open.
+    if(!this.protectCamera.hints.twoWayAudioDirect) {
+
+      try {
+
+        // Open the talkback channel. camera.talkback() negotiates the WebSocket and connects atomically (returns a live session or throws); it throws
+        // ProtectUnsupportedError for a camera with no speaker. It must be open before tb.send (send throws unless the session is live). We store the session on the
+        // ongoing entry as a stopStream backstop immediately after opening.
+        const tb = await this.protectCamera.talkback({ signal: sessionInfo.abortController.signal });
+        const entry = this.ongoingSessions.get(request.sessionID);
+
+        if(entry) {
+
+          entry.talkback = tb;
+        }
+
+        // Drain the return-audio FFmpeg's ADTS stdout into the talkback session. send() resolves only when stdout is exhausted (the return-audio lifetime), so it is
+        // detached, not awaited. A Node Readable is an AsyncIterable<Buffer>, so stdout feeds in with no adapter. We dispose the session when send settles (the
+        // return-audio FFmpeg ended or faulted), reproducing pre-v5's proactive close-on-return-audio-exit; it is idempotent with the stopStream abort backstop.
+        void tb.send(ffmpegReturnAudio.stdout, { signal: sessionInfo.abortController.signal }).catch((error: unknown) => {
+
+          // On a clean STOP the in-flight send rejects with ProtectNetworkError (the session closes via the shared signal, so its constructor-registered abort
+          // listener rejects send's fault race before send's own onAbort runs), NOT ProtectAbortedError - so the load-bearing arm is signal.aborted, not the error
+          // type. A type-only check would log a spurious error on every clean two-way-audio STOP. A genuine mid-stream fault still surfaces as an error.
+          if(sessionInfo.abortController.signal.aborted || (error instanceof ProtectAbortedError)) {
+
+            this.log.debug("Return audio channel closed.", { error });
+
+            return;
+          }
+
+          this.log.error("The return audio channel encountered an error: %s.", formatErrorMessage(error));
+        }).finally(() => void tb[Symbol.asyncDispose]());
+      } catch(error) {
+
+        // camera.talkback() threw (ProtectUnsupportedError for no speaker, or a negotiation/open failure). v5's TalkbackSession owns the socket-level
+        // expected-disconnect filtering, so the surface consolidates to this open-failure message plus the F13 mid-stream fault message; we continue without talkback.
+        this.log.error("Unable to connect to the return audio channel: %s.", formatErrorMessage(error));
+      }
+    }
+  }
+
+  // Process incoming stream requests.
+  // eslint-disable-next-line @typescript-eslint/no-misused-promises -- Async implementation of a void-returning Homebridge interface method.
+  public async handleStreamRequest(request: StreamingRequest, callback: StreamRequestCallback): Promise<void> {
+
+    switch(request.type) {
+
+      case StreamRequestTypes.START:
+
+        await this.startStream(request, callback);
+
+        break;
+
+      case StreamRequestTypes.RECONFIGURE:
+
+        // Once FFmpeg is updated to support this, we'll enable this one.
+        this.log.debug("Streaming parameters adjustment requested by HomeKit: %sx%s, %s fps, %s.",
+          request.video.width, request.video.height, request.video.fps, formatBps(request.video.max_bit_rate));
+
+        callback();
+
+        break;
+
+      case StreamRequestTypes.STOP:
+      default:
+
+        this.stopStream(request.sessionID);
+        callback();
+
+        break;
+    }
+  }
+
+  // Close a video stream.
+  public stopStream(sessionId: string): void {
+
+    try {
+
+      // Stop any FFmpeg instances we have running.
+      const ongoingSession = this.ongoingSessions.get(sessionId);
+
+      if(ongoingSession) {
+
+        // Single-abort teardown. The per-session AbortController is the SOLE teardown trigger: it fans out (via its signal) to the demuxer, every FFmpeg, the
+        // backpressure writer, the talkback session, and the livestream subscription. The explicit HbpuAbortError("shutdown") reason is load-bearing - the .exited
+        // force-stop bridge reads isHbpuAbortReason(reason, "shutdown") to suppress the self-stop double-fire; a bare abort() would set the reason to a DOMException
+        // the discriminator never matches. This subsumes the old per-process stop() loop and the demuxer close().
+        ongoingSession.abortController.abort(new HbpuAbortError("shutdown"));
+
+        // Dispose the talkback session as a backstop. The abort above already closed it through the shared signal, so this is an idempotent no-op (no double error).
+        void ongoingSession.talkback?.[Symbol.asyncDispose]();
+
+        // Turn off the flashlight on package cameras, if enabled. This HomeKit-state side effect cannot fold into the abort, so it stays explicit. We explicitly want
+        // to call the set handler for the flashlight.
+        ongoingSession.toggleLight?.setCharacteristic(this.hap.Characteristic.On, false);
+
+        // Inform the user.
+        this.log.info("Stopped video streaming session.");
+
+        // Release our port reservations. Disposal is a pure in-memory release that resolves on the same microtask (no I/O), so the fire-and-forget keeps stopStream
+        // synchronous.
+        for(const reservation of ongoingSession.rtpPortReservations) {
+
+          void reservation[Symbol.asyncDispose]();
+        }
+      }
+
+      // On the off chance we were signaled to prepare to start streaming, but never actually started streaming, cleanup after ourselves.
+      const pendingSession = this.pendingSessions.get(sessionId);
+
+      if(pendingSession) {
+
+        // Abort the pending session's controller. This tears down the RtpDemuxer that prepareStream bound (a leak v1 never closed - it only released the pending
+        // session's ports) and releases the pending reservations through the shared signal.
+        pendingSession.abortController.abort(new HbpuAbortError("shutdown"));
+
+        // Release our port reservations.
+        for(const reservation of pendingSession.rtpPortReservations) {
+
+          void reservation[Symbol.asyncDispose]();
+        }
+      }
+
+      // Delete the entries.
+      this.pendingSessions.delete(sessionId);
+      this.ongoingSessions.delete(sessionId);
+    } catch(error) {
+
+      this.log.error("Unable to cleanly end the FFmpeg video processes: %s.", formatErrorMessage(error));
+    }
+  }
+
+  // Shutdown all our video streams.
+  public shutdown(): void {
+
+    for(const session of this.ongoingSessions.keys()) {
+
+      this.stopStream(session);
+    }
+  }
+
+  // Adjust our probe hints.
+  public adjustProbeSize(): void {
+
+    if(this.probesizeOverrideTimeout) {
+
+      clearTimeout(this.probesizeOverrideTimeout);
+      this.probesizeOverrideTimeout = undefined;
+    }
+
+    // Maintain statistics on how often we need to adjust our probesize. If this happens too frequently, we will default to a working value.
+    this.probesizeOverrideCount++;
+
+    // Increase the probesize by a factor of two each time we need to do something about it. The idea is to balance the latency implications
+    // for the user, but also ensuring we have a functional streaming experience.
+    this.probesizeOverride = this.probesize * 2;
+
+    // Safety check to make sure this never gets too crazy.
+    if(this.probesizeOverride > 5000000) {
+
+      this.probesizeOverride = 5000000;
+    }
+
+    this.log.error("The FFmpeg process ended unexpectedly due to issues with the media stream provided by the UniFi Protect livestream API. " +
+    "Adjusting the settings we use for FFmpeg %s to use safer values at the expense of some additional streaming startup latency.",
+    this.probesizeOverrideCount < 10 ? "temporarily" : "permanently");
+
+    // If this happens often enough, keep the override in place permanently.
+    if(this.probesizeOverrideCount < 10) {
+
+      this.probesizeOverrideTimeout = setTimeout(() => {
+
+        this.probesizeOverride = 0;
+        this.probesizeOverrideTimeout = undefined;
+      }, 1000 * 60 * 10);
+    }
+  }
+
+  // Reset the probesize self-tuning back to this camera's baseline. The override and its retry count accumulate as FFmpeg repeatedly fails to estimate the stream rate,
+  // and at the permanent ceiling (count >= 10) no auto-reset timer is armed, so the elevated probesize - and the startup latency it costs - otherwise persists for the
+  // whole life of the delegate. A controller reboot restarts this camera's stream from scratch, the natural boundary to clear the latch and let it re-tune from its
+  // baseline; the NVR calls this on the reboot edge. The trade-off is one possibly-wasted baseline spawn on a chronically-flaky camera, in exchange for not penalizing
+  // every camera forever - probesize is read only at FFmpeg spawn (stream.ts:712), so this never disturbs an in-flight process, and a fresh failure cheaply re-arms it.
+  public resetProbesizeOverride(): void {
+
+    if(this.probesizeOverrideTimeout) {
+
+      clearTimeout(this.probesizeOverrideTimeout);
+      this.probesizeOverrideTimeout = undefined;
+    }
+
+    this.probesizeOverride = 0;
+    this.probesizeOverrideCount = 0;
+  }
+
+  // Utility to return the currently set probesize for a camera.
+  public get probesize(): number {
+
+    return this.probesizeOverride || this.protectCamera.hints.probesize;
+  }
+}
+
+// The production StreamingDelegateFactory: builds the concrete FFmpeg-backed delegate. The platform holds this typed as the abstraction; a test platform substitutes a
+// stub. The factory's create is exactly a constructor call, so wiring construction through it is behavior-neutral.
+export const streamingDelegateFactory: StreamingDelegateFactory = {
+
+  create: (camera: ProtectCameraHost, resolutions: Resolution[]): StreamingDelegate => new ProtectStreamingDelegate(camera, resolutions)
+};

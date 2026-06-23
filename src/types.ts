@@ -4,9 +4,13 @@
  */
 
 import type { CharacteristicValue, PlatformAccessory, PlatformConfig } from "homebridge";
-import type { ProtectCamera, ProtectChime, ProtectLight, ProtectSensor, ProtectViewer } from "./devices/index.ts";
 import type { ProtectCameraConfig, ProtectChimeConfig, ProtectLightConfig, ProtectSensorConfig, ProtectViewerConfig } from "unifi-protect";
+import type { ProtectCamera } from "./devices/cameras/camera.ts";
+import type { ProtectChime } from "./devices/chime.ts";
+import type { ProtectLight } from "./devices/light.ts";
 import type { ProtectNvrOptions } from "./options.ts";
+import type { ProtectSensor } from "./devices/sensor.ts";
+import type { ProtectViewer } from "./devices/viewer.ts";
 
 // Compile-time exhaustiveness check for discriminated unions. When all cases of a union are handled in a switch statement, TypeScript narrows the remaining type to
 // `never`. Passing it to this function ensures the compiler will flag an error if a new variant is added to the union without a corresponding case. At runtime this is a
@@ -84,36 +88,6 @@ export interface ProtectPlatformConfig extends PlatformConfig {
   ringDelay?: number;
   verboseFfmpeg?: boolean;
   videoProcessor?: string;
-}
-
-/**
- * Resolve what a camera should do to reconcile its doorbell capability against the controller's live state. Cameras and doorbells share Protect's "camera" modelKey - the
- * sole differentiator is featureFlags.isDoorbell, which can arrive (or be withdrawn) after a camera is first adopted (the controller provisions the doorbell capability
- * late). The per-camera reclassification observer watches that flag and routes its change through one reconcile chokepoint driven by this exhaustive 2x2 over
- * (hasCapability, isDoorbell) - a pure device-classification decision, kept here beside the device-category constants and testable without standing up an accessory (the
- * camera leaf is not directly importable in a unit test due to its transitive streaming-stack dependencies).
- *
- * The four actions, by HJD ruling (the live-attach replaces the former teardown+recreate; demotion is observability-only):
- *
- * - "attach": the controller now reports a doorbell and no capability is attached yet - compose the capability onto the live camera in place (no teardown).
- * - "report-withdrawn": the controller no longer reports a doorbell but a capability is attached - log a warning only; the capability and its accessories remain (a full
- *   detach is a one-arm addition later if field observation shows demotion happens in the wild).
- * - "sweep-stale": the controller does not report a doorbell and no capability is attached - remove any doorbell-only services a demoted-while-down doorbell left behind
- *   (idempotent; a no-op on a steady plain camera).
- * - "none": steady state - a doorbell with its capability, or a plain camera with none.
- *
- * @param inputs - hasCapability is whether this camera already has a doorbell capability attached; isDoorbell is the camera's current featureFlags.isDoorbell.
- *
- * @returns the reconcile action the camera's chokepoint should run.
- */
-export function doorbellReconcileAction(inputs: { hasCapability: boolean; isDoorbell: boolean }): "attach" | "none" | "report-withdrawn" | "sweep-stale" {
-
-  if(inputs.isDoorbell) {
-
-    return inputs.hasCapability ? "none" : "attach";
-  }
-
-  return inputs.hasCapability ? "report-withdrawn" : "sweep-stale";
 }
 
 // A frozen lookup of the reserved subtype identifiers HBUP assigns to the HomeKit services it synthesizes. Modeled as an "as const" object rather than a TypeScript

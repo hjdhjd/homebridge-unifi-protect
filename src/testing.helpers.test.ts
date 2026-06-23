@@ -14,8 +14,8 @@ import type { ProtectAccessory, ProtectDevices } from "./types.ts";
 import type { ProtectCameraConfig, ProtectLightConfig, ProtectNvrConfig, ProtectNvrLiveviewConfig, ProtectRingtoneConfig, ProtectSensorConfig, ProtectViewerConfig,
   Segment, Sensor } from "unifi-protect";
 import { describe, test } from "node:test";
-import { ProtectEventDispatch } from "./event-dispatch.ts";
-import type { ProtectNvr } from "./nvr.ts";
+import { ProtectEventDispatch } from "./nvr/event-dispatch.ts";
+import type { ProtectNvr } from "./nvr/nvr.ts";
 import assert from "node:assert/strict";
 import { isKeyframe } from "homebridge-plugin-utils";
 

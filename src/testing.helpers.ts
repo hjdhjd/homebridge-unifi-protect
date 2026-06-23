@@ -32,21 +32,21 @@ import type { Camera, Chime, LivestreamSubscriptionState, PlaySpeakerOptions, Pr
   ProtectLightConfig, ProtectNvrConfig, ProtectNvrLiveviewConfig, ProtectRingtoneConfig, ProtectSensorConfig, ProtectState, ProtectViewerConfig, Segment, Sensor,
   SnapshotOptions, TalkbackSession } from "unifi-protect";
 import type { Clock, HomebridgePluginLogging, Nullable, RecordingProcessFactory } from "homebridge-plugin-utils";
-import { FIXTURE_HOST, FIXTURE_RTSPS_PORT, G2_PRO_CHANNELS } from "./resolution.fixtures.ts";
-import type { NvrPhase, ProtectNvr } from "./nvr.ts";
+import { FIXTURE_HOST, FIXTURE_RTSPS_PORT, G2_PRO_CHANNELS } from "./camera.fixtures.ts";
+import type { NvrPhase, ProtectNvr } from "./nvr/nvr.ts";
 import { PLATFORM_NAME, PLUGIN_NAME } from "./settings.ts";
 import type { ProtectAccessory, ProtectDevices } from "./types.ts";
 import type { ProtectNvrOptions, ProtectOptions } from "./options.ts";
-import type { StreamingDelegate, StreamingDelegateFactory } from "./stream-delegate.ts";
+import type { StreamingDelegate, StreamingDelegateFactory } from "./media/stream-delegate.ts";
 import { featureOptionCategories, featureOptions } from "./options.ts";
-import type { ChannelProfile } from "./devices/resolution.ts";
-import { DoorbellCapability } from "./devices/doorbell.ts";
-import type { LivestreamSubscription } from "./livestream.ts";
-import type { ProtectCamera } from "./devices/camera.ts";
-import type { ProtectCameraHost } from "./camera-host.ts";
-import { ProtectCameraPackage } from "./devices/camera-package.ts";
+import type { ChannelProfile } from "./media/resolution.ts";
+import { DoorbellCapability } from "./devices/cameras/doorbell.ts";
+import type { LivestreamSubscription } from "./media/livestream.ts";
+import type { ProtectCamera } from "./devices/cameras/camera.ts";
+import type { ProtectCameraHost } from "./media/camera-host.ts";
+import { ProtectCameraPackage } from "./devices/cameras/camera-package.ts";
 import { ProtectDevice } from "./devices/device.ts";
-import { ProtectEventDispatch } from "./event-dispatch.ts";
+import { ProtectEventDispatch } from "./nvr/event-dispatch.ts";
 import type { ProtectHints } from "./devices/device.ts";
 import type { ProtectPlatform } from "./platform.ts";
 
@@ -1299,18 +1299,19 @@ export interface TestCameraFeatureFlags {
  * quiet-default shape (every feature flag false, recording mode "always", a CONNECTED state, and the fixture host so channel URLs match the golden-master
  * corpus), and the record is then cast once to the full wire type. This is the ONE confined cast seam for the camera record: the ProtectCameraConfig wire type
  * carries many fields the construction path never touches, so we populate the verified read set and document the cast here rather than scattering casts through
- * tests - the same spirit as resolution.fixtures.ts' makeChannel, carried as far as is practical for a much wider record. Every override merges BEFORE the single
+ * tests - the same spirit as camera.fixtures.ts' makeChannel, carried as far as is practical for a much wider record. Every override merges BEFORE the single
  * cast, so an overridden record is exactly as type-honest as the default one.
  *
- * @param options - channels: the typed channel array (reuse the resolution.fixtures.ts corpus); featureFlags: per-flag overrides merged over the all-false
+ * @param options - channels: the typed channel array (reuse the camera.fixtures.ts corpus); featureFlags: per-flag overrides merged over the all-false
  *                  defaults (a doorbell test sets isDoorbell, a package test adds hasPackageCamera); chimeDuration / enableNfc / isDark / lcdMessage: the
- *                  doorbell-adjacent fields its configure paths read; id / mac / name: optional identity overrides.
+ *                  doorbell-adjacent fields its configure paths read; id / mac / name: optional identity overrides; videoCodec: the codec string (default "h264"),
+ *                  overridable to "av1" so the playlist filter's codec exclusion can be exercised.
  *
  * @returns a camera config record the construction path reads as real.
  */
 export function makeCameraConfig(options: { channels: ProtectCameraChannelConfig[]; chimeDuration?: number; enableNfc?: boolean;
   featureFlags?: Partial<TestCameraFeatureFlags>; id?: string; isDark?: boolean; lcdMessage?: { duration?: number; resetAt?: Nullable<number>; text?: string;
-    type?: string; }; mac?: string; name?: string; }): ProtectCameraConfig {
+    type?: string; }; mac?: string; name?: string; videoCodec?: string; }): ProtectCameraConfig {
 
   const name = options.name ?? "Test Camera";
 
@@ -1353,7 +1354,7 @@ export function makeCameraConfig(options: { channels: ProtectCameraChannelConfig
     recordingSettings: { mode: "always" },
     smartDetectSettings: { enableTamperDetection: false },
     state: "CONNECTED",
-    videoCodec: "h264",
+    videoCodec: options.videoCodec ?? "h264",
     ...(options.lcdMessage !== undefined ? { lcdMessage: options.lcdMessage } : {})
   };
 

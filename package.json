@@ -69,14 +69,15 @@
   ],
   "scripts": {
     "prebuild": "npm run clean && npm run build-ui",
-    "build": "tsc",
+    "build": "tsc -p tsconfig.build.json",
     "build-ui": "homebridge-plugin-utils prepare-ui homebridge-ui/public/lib",
-    "clean": "shx rm -rf dist homebridge-ui/public/lib",
+    "clean": "node -e \"for(const p of ['dist','homebridge-ui/public/lib'])require('node:fs').rmSync(p,{force:true,recursive:true})\"",
     "prelint": "npm run build-ui",
     "lint": "eslint --max-warnings=${ESLINT_MAX_WARNINGS:-\"-1\"} eslint.config.mjs src homebridge-ui/*.js homebridge-ui/public/**.mjs",
     "postpublish": "npm run clean",
-    "prepublishOnly": "npm run lint && npm run build",
+    "prepublishOnly": "npm run lint && npm run typecheck && npm run build",
     "test": "node --strip-types --test --experimental-test-coverage --test-timeout=15000 \"src/**/*.test.ts\"",
+    "typecheck": "tsc --noEmit",
     "test:watch": "node --strip-types --test --watch \"src/**/*.test.ts\""
   },
   "main": "dist/index.js",
@@ -84,16 +85,15 @@
     "@homebridge/plugin-ui-utils": "2.2.4",
     "ffmpeg-for-homebridge": "2.2.2",
     "homebridge-plugin-utils": "file:../homebridge-plugin-utils",
-    "undici": "8.4.1",
+    "undici": "8.5.0",
     "unifi-protect": "file:../unifi-protect"
   },
   "devDependencies": {
     "@stylistic/eslint-plugin": "5.10.0",
-    "@types/node": "25.9.3",
+    "@types/node": "26.0.0",
     "eslint": "9.39.2",
     "homebridge": "2.1.0",
-    "shx": "0.4.0",
     "typescript": "5.9.3",
-    "typescript-eslint": "8.61.0"
+    "typescript-eslint": "8.61.1"
   }
 }

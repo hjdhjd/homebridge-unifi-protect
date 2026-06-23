@@ -6,7 +6,7 @@ import type { Light, ProtectLightConfig } from "unifi-protect";
 import type { CharacteristicValue } from "homebridge";
 import type { ProtectAccessory } from "../types.ts";
 import { ProtectDevice } from "./device.ts";
-import type { ProtectNvr } from "../nvr.ts";
+import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
 import { selectLight } from "unifi-protect";
 

@@ -7,7 +7,7 @@ import type { CharacteristicValue } from "homebridge";
 import { PROTECT_DOORBELL_CHIME_SPEAKER_DURATION } from "../settings.ts";
 import type { ProtectAccessory } from "../types.ts";
 import { ProtectDevice } from "./device.ts";
-import type { ProtectNvr } from "../nvr.ts";
+import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
 import { selectRingtones } from "unifi-protect";
 import { toStartCase } from "homebridge-plugin-utils";

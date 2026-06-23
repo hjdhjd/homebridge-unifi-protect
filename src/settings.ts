@@ -96,13 +96,6 @@ export const PROTECT_OCCUPANCY_DURATION = 300;
 // Minimum required GPU memory on a Raspberry Pi for hardware acceleration.
 export const PROTECT_RPI_GPU_MINIMUM = 128;
 
-// Maximum age of a snapshot in seconds.
-export const PROTECT_SNAPSHOT_CACHE_MAXAGE = 90;
-
-// Timeout for snapshot acquisition, in milliseconds. HomeKit enforces a 5000ms hard limit on snapshot requests. We budget 10ms of overhead for the response to
-// reach HomeKit after our code produces the snapshot.
-export const PROTECT_SNAPSHOT_TIMEOUT = 4990;
-
 // Bitrate, in kilobits per second, to use when transcoding to local clients.
 export const PROTECT_TRANSCODE_BITRATE = 2000;
 

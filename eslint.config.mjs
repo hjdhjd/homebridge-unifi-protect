@@ -2,7 +2,7 @@
  *
  * eslint.config.mjs: Linting defaults for Homebridge plugins.
  */
-import hbPluginUtils from "homebridge-plugin-utils/build/eslint-plugin/index.mjs";
+import hbPluginUtils from "homebridge-plugin-utils/eslint";
 
 export default hbPluginUtils({
 
@@ -41,6 +41,6 @@ export default hbPluginUtils({
     }
   ],
   js: [ "homebridge-ui/public/**/*.@(js|mjs)", "homebridge-ui/server.js", "eslint.config.mjs" ],
-  ts: [ "src/**.ts", "src/devices/**.ts" ],
+  ts: ["src/**/*.ts"],
   ui: [ "homebridge-ui/public/lib/webUi.mjs", "homebridge-ui/public/lib/webUi-featureoptions.mjs", "homebridge-ui/public/ui.mjs" ]
 });

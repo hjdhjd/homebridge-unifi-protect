@@ -8,11 +8,11 @@ import type { Clock, Nullable, RecordingProcessFactory } from "homebridge-plugin
 import type { ProtectAccessory, ProtectPlatformConfig } from "./types.ts";
 import { featureOptionCategories, featureOptions } from "./options.ts";
 import { PROTECT_MQTT_TOPIC } from "./settings.ts";
-import { ProtectNvr } from "./nvr.ts";
+import { ProtectNvr } from "./nvr/nvr.ts";
 import type { ProtectOptions } from "./options.ts";
-import type { StreamingDelegateFactory } from "./stream-delegate.ts";
+import type { StreamingDelegateFactory } from "./media/stream-delegate.ts";
 import ffmpegPath from "ffmpeg-for-homebridge";
-import { streamingDelegateFactory } from "./stream.ts";
+import { streamingDelegateFactory } from "./media/stream.ts";
 import util from "node:util";
 
 export class ProtectPlatform implements DynamicPlatformPlugin {

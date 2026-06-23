@@ -6,7 +6,7 @@ import type { ProtectSensorConfig, Sensor } from "unifi-protect";
 import type { LeakChannelContext } from "./leak-policy.ts";
 import type { ProtectAccessory } from "../types.ts";
 import { ProtectDevice } from "./device.ts";
-import type { ProtectNvr } from "../nvr.ts";
+import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
 import type { Service } from "homebridge";
 import { leakChannelEnabled } from "./leak-policy.ts";
