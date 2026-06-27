@@ -3,8 +3,8 @@
  * camera-reactions.test.ts: The camera-leaf observe-and-fire net - the uncovered device-state reactions and the bound read / pure-context handlers, against the
  * REAL constructed ProtectCamera.
  *
- * The camera leaf registers ten state observers (camera.ts:355-428). Three are already netted by camera-construction.test.ts (camera.channels -> reconcileStreaming,
- * camera.state -> updateAvailability, and the camera.state.hksv self-heal). This suite nets the device-state reactions behavior-FIRST - each is a
+ * The camera leaf registers ten state observers (camera.ts). Three are already netted by camera-construction.test.ts (camera.channels -> reconcileStreaming,
+ * camera.state -> updateAvailability, and the camera.state.hksv both-edge timeshift reconcile). This suite nets the device-state reactions behavior-FIRST - each is a
  * structural-sharing store push (pushCameraPatch / pushCameraFeatureFlags) followed by a settle and an assertion on the effect the reaction produced (the characteristic
  * it WROTE, or the recording dispatch it routed to), never on the private updater that wrote it - plus the bound GET read-throughs and the two pure-context onSets (HKSV
  * recording, doorbell mute) whose handlers write only accessory.context and never touch the controller. The camera.lastMotion bare-motion observer is netted here through
@@ -17,8 +17,8 @@
  * discriminator (a non-optional assert.ok, so an absent service throws here rather than letting a later optional-chained assertion pass vacuously) and pairs with a
  * without-gate test that proves the same push produces nothing when the precondition is omitted.
  *
- * Two writes are honestly out of this suite's reach and left uncovered, NOT asserted: the night-vision operating-mode write (camera.ts:1607-1610, gated on
- * this.hints.nightVision through the CameraOperatingMode service) and the status-indicator operating-mode write (camera.ts:1626-1629, the CameraOperatingModeIndicator on
+ * Two writes are honestly out of this suite's reach and left uncovered, NOT asserted: the night-vision operating-mode write (camera.ts, gated on
+ * this.hints.nightVision through the CameraOperatingMode service) and the status-indicator operating-mode write (camera.ts, the CameraOperatingModeIndicator on
  * the same service). CameraOperatingMode is never created in this harness: the plugin never acquireService's it - it only ever getService-reads it - and the HAP
  * CameraController that does create it, as a side effect of configureController, is replaced by the stub streaming-delegate factory, so those writes target an absent
  * service and cannot be made non-vacuous here. The night-vision-dimmer onSet, the status-LED-switch onSet, and the
@@ -50,7 +50,7 @@ function cameraPatch(patch: Record<string, unknown>): Partial<ProtectCameraConfi
   return patch as Partial<ProtectCameraConfig>;
 }
 
-// The construction handles a test holds, so the afterEach can unwind the per-accessory abort regardless of which build helper produced them.
+// The construction handles a test holds onto, so the afterEach can unwind the per-accessory abort regardless of which build helper produced them.
 interface BuiltCamera {
 
   accessory: TestAccessory;
@@ -62,8 +62,8 @@ interface BuiltCamera {
   recording: TestRecordingDispatch;
 }
 
-// Build a REAL plain ProtectCamera against the harness doubles, exactly as camera-construction.test.ts:71-91 assembles it: a camera config (optionally carrying feature
-// flags), the v5 store double over it, the typed NVR / platform doubles with the test's userOptions threaded into the REAL FeatureOptions engine, the read-through camera
+// Build a REAL plain ProtectCamera against the harness doubles, exactly as camera-construction.test.ts assembles it: a camera config (optionally carrying feature
+// flags), the store double over it, the typed NVR / platform doubles with the test's userOptions threaded into the REAL FeatureOptions engine, the read-through camera
 // projection, and a fresh accessory. The casts are confined to this seam - the instance is the production ProtectCamera and everything it runs is the production path.
 // The returned controller is the harness AbortController the afterEach aborts to unwind the observe loops. seedLastMotion, when supplied, is committed to the store
 // record BEFORE the camera is constructed, so the lastMotion observer seeds its baseline against an already-present value - the bootstrap-hydration case where a value
@@ -257,7 +257,7 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
       assert.ok(motionService, "the camera carries its motion sensor");
 
-      // The hardware precondition is the other half of the gate (camera.ts:737 ANDs hasTamperDetection with the setting): without it, the push wakes the observer but the
+      // The hardware precondition is the other half of the gate (camera.ts ANDs hasTamperDetection with the setting): without it, the push wakes the observer but the
       // configure path takes its removal branch and StatusTampered never appears.
       built.nvr.client.state.pushCameraPatch(built.cameraConfig.id, cameraPatch({ smartDetectSettings: { enableTamperDetection: true } }));
 
@@ -274,7 +274,7 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
       built = await buildCamera({ featureFlags: { hasIcrSensitivity: true, hasInfrared: true }, userOptions: ["Enable.Device.NightVision.Dimmer"] });
 
-      // HARD-assert the dimmer exists FIRST: the gate is hasInfrared && hasIcrSensitivity && hasFeature("Device.NightVision.Dimmer") (camera.ts:1280-1281), so an absent
+      // HARD-assert the dimmer exists FIRST: the gate is hasInfrared && hasIcrSensitivity && hasFeature("Device.NightVision.Dimmer") (camera.ts), so an absent
       // service would let the value assertions pass vacuously.
       const dimmer = built.accessory.getServiceById(Service.Lightbulb, ProtectReservedNames.LIGHTBULB_NIGHTVISION);
 
@@ -325,8 +325,8 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
       built = await buildCamera({ userOptions: ["Enable.Device.StatusLed.Switch"] });
 
-      // HARD-assert the switch exists FIRST: the materialization gate is hasFeature("Device.StatusLed.Switch") alone (device.ts:725 - isEnabled defaults true at the
-      // unconditional camera.ts:203 call site, with NO hasLedStatus and NO ledSettings precondition), so the userOption alone materializes it. An absent service would
+      // HARD-assert the switch exists FIRST: the materialization gate is hasFeature("Device.StatusLed.Switch") alone (device.ts - isEnabled defaults true at the
+      // unconditional camera.ts call site, with NO hasLedStatus and NO ledSettings precondition), so the userOption alone materializes it. An absent service would
       // let the value assertion pass vacuously.
       const statusLedSwitch = built.accessory.getServiceById(Service.Switch, ProtectReservedNames.SWITCH_STATUS_LED);
 
@@ -443,7 +443,7 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
     test("the doorbell-mute switch onSet toggles accessory.context.doorbellMuted both ways and the onGet reflects it", async () => {
 
-      // The doorbell-mute switch also requires a Doorbell service (camera.ts:760), so the camera must be doorbell hardware; the Doorbell.Mute option gates the switch.
+      // The doorbell-mute switch also requires a Doorbell service (camera.ts), so the camera must be doorbell hardware; the Doorbell.Mute option gates the switch.
       built = await buildCamera({ featureFlags: { isDoorbell: true }, userOptions: ["Enable.Doorbell.Mute"] });
 
       // HARD-assert the switch exists FIRST.

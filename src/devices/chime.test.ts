@@ -7,7 +7,7 @@
  * (the three observers, the buzzer / ringtone speaker switches, the legacy-service removal, the play dispatch, and the MQTT tone handler). Every assertion drives the
  * REAL production class through its real configureDevice / spawnObservers paths and its real playTone over the real runDeviceCommand seam - never a modeled stand-in.
  *
- * This suite subsumes the modeled playTone coverage the former chime-commands.test.ts hand-copied into a local closure (a SSOT/drift risk): the chime's speaker join,
+ * This suite covers the chime's complete playTone behavior through the real production class: the chime's speaker join,
  * the missing-ring fallback, the empty-ringSettings no-op, the buzzer no-join, the no-tone-selected empty payload, the rejection and the authorization paths are all
  * netted here END-TO-END through the real switch onSet AND the real MQTT subscribeSet("tone") handler. The empty-payload (no-tone-selected) case is reachable ONLY via
  * the MQTT "chime" path - the switch onSet always carries a tone subtype on a speaker switch - so it is asserted through the captured MQTT handler.

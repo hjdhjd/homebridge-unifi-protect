@@ -5,7 +5,7 @@
  * The router and telemetry loops are exercised against the real production ProtectEventDispatch, constructed with the minimal mocks its constructor and the loops
  * actually read - a controlled client.events() / client.rawPackets() async stream, a getDeviceById over a fixed device map, an mqtt publish spy, and the feature-option
  * gate. The delivery methods are the dispatch decision's observable effect, so a thin recording subclass overrides them to capture exactly what the router routed; the
- * real run() applies the smart-detect gate before invoking them, so routing is verified against the production class. Bare camera motion is no longer a firehose arm -
+ * real run() applies the smart-detect gate before invoking them, so routing is verified against the production class. Bare camera motion is not a firehose arm -
  * the controller signals it as a lastMotion device-state advance, which the camera leaf observes directly, so its delivery policy (shouldDeliverBareMotion) and its
  * observe-driven routing live with the camera leaf and its tests, not here. The casts are confined to the mock seam, matching the posture the reachability and nvr suites
  * already established; the instance under test is the production class.
@@ -104,8 +104,8 @@ const makeCamera = (id: string, options: { hksvRecording?: boolean; smartCapable
 };
 
 // Build a real ProtectEventDispatch (via the recording subclass) over a mock NVR exposing only what the constructor and the loops read. The published array captures
-// every mqtt.publish call so the telemetry assertions can read the tuples back; under the v2 signature each tuple is [composed {id}/{topic} tail, payload]. The
-// streams are finite, so run() / publishTelemetry() complete on their own without needing the signal to abort.
+// every mqtt.publish call so the telemetry assertions can read the tuples back; under the homebridge-plugin-utils signature each tuple is [composed {id}/{topic} tail,
+// payload]. The streams are finite, so run() / publishTelemetry() complete on their own without needing the signal to abort.
 const makeDispatch = (options: DispatchOptions = {}): { dispatch: RecordingDispatch; published: unknown[][] } => {
 
   const { devices = new Map<string, unknown>(), events = [], rawPackets = [], telemetryEnabled = false } = options;
@@ -164,8 +164,8 @@ describe("firehose router dispatch (real ProtectEventDispatch.run)", () => {
   test("filters \"motion\"-tagged thumbnails out of the delivered smart-detection metadata without mutating the source", async () => {
 
     // With "Create motion events" enabled, Protect tags some detections as plain "motion" inside a smart event's thumbnails; those are not true smart detections, so the
-    // router strips them before delivery (preserving the v4 leaf's filter). The genuine "person" thumbnail survives and reaches the delivery; the source object is left
-    // untouched, since the firehose event is read-only consumer data v5 owns.
+    // router strips them before delivery. The genuine "person" thumbnail survives and reaches the delivery; the source object is left untouched, since the firehose
+    // event is read-only consumer data the unifi-protect library owns.
     const devices = new Map<string, unknown>([[ "cam1", makeCamera("cam1", { smartDetectEnabled: true }) ]]);
     const metadata = { detectedThumbnails: [ { type: "person" }, { type: "motion" } ] };
     const events: TypedEvent[] = [{ at: 1, cameraId: "cam1", eventId: "e1", kind: "smartDetect", metadata, objectTypes: ["person"] }];
@@ -182,7 +182,7 @@ describe("firehose router dispatch (real ProtectEventDispatch.run)", () => {
   test("suppresses a smart detection that carries only \"motion\" thumbnails and no object types", async () => {
 
     // An event whose thumbnails are all "motion" and which carries no smart object types collapses to nothing after the filter, so it must not reach the delivery - the
-    // exact v4 suppression that keeps "Create motion events" from spuriously tripping the smart-detection sensors. Filtering happens before the has-anything gate, so the
+    // exact suppression that keeps "Create motion events" from spuriously tripping the smart-detection sensors. Filtering happens before the has-anything gate, so the
     // emptied thumbnail list fails the gate.
     const devices = new Map<string, unknown>([[ "cam1", makeCamera("cam1", { smartDetectEnabled: true }) ]]);
     const metadata = { detectedThumbnails: [ { type: "motion" }, { type: "motion" } ] };
@@ -375,9 +375,8 @@ describe("controller telemetry publisher (real ProtectEventDispatch.publishTelem
 });
 
 // Build a real ProtectEventDispatch (not the recording subclass) wired to a populated HAP double, plus a camera stand-in whose accessory is the supplied TestAccessory.
-// The access-unlock delivery is the one step-4 handler that is genuinely restructured (the others moved verbatim from v4), so these tests drive the real method against
-// real HAP-double services rather than recording the routing. Only the surface accessEventHandler touches is mocked: the lock service / characteristic identities on hap,
-// and the camera's id, log, and accessory.
+// The access-unlock delivery carries genuine logic - the timed re-secure - so these tests drive the real method against real HAP-double services rather than recording
+// the routing. Only the surface accessEventHandler touches is mocked: the lock service / characteristic identities on hap, and the camera's id, log, and accessory.
 const makeAccessDispatch = (accessory: TestAccessory): { camera: ProtectCamera; dispatch: ProtectEventDispatch } => {
 
   const noop = (): void => { /* swallow log output in tests */ };
@@ -489,9 +488,8 @@ describe("access unlock delivery (real ProtectEventDispatch.accessEventHandler)"
 });
 
 // Build a real ProtectEventDispatch wired to the StatusTampered HAP double, plus a camera stand-in carrying the supplied TestAccessory and a mutable isTampered flag. The
-// tamper delivery is the step-5 relocation of the v4 leaf's tamper latch, so these drive the real method against real HAP-double services rather than recording the
-// routing. Only the surface tamperEventHandler touches is mocked: the MotionSensor / StatusTampered identities on hap, and the camera's id, isTampered, log, and
-// accessory.
+// tamper delivery latches the camera tampered, so these drive the real method against real HAP-double services rather than recording the routing. Only the surface
+// tamperEventHandler touches is mocked: the MotionSensor / StatusTampered identities on hap, and the camera's id, isTampered, log, and accessory.
 const makeTamperDispatch = (accessory: TestAccessory): { camera: ProtectCamera; dispatch: ProtectEventDispatch } => {
 
   const noop = (): void => { /* swallow log output in tests */ };
@@ -549,7 +547,7 @@ describe("camera tamper delivery (real ProtectEventDispatch.tamperEventHandler)"
 });
 
 // Build a real ProtectEventDispatch wired to the ContactSensor / ContactSensorState HAP double and an mqtt publish spy, plus a camera stand-in carrying the supplied
-// TestAccessory. The auth delivery is the step-5 relocation of the v4 doorbell auth handler, so these drive the real method against real HAP-double services rather than
+// TestAccessory. The auth delivery trips the doorbell's authentication contact sensor, so these drive the real method against real HAP-double services rather than
 // recording the routing. Only the surface authEventHandler touches is mocked: the ContactSensor / ContactSensorState identities on hap, the camera's accessory / id / log
 // / ufp.mac, and an mqtt.publish spy whose calls land in `published`.
 const makeAuthDispatch = (accessory: TestAccessory): { camera: ProtectCamera; dispatch: ProtectEventDispatch; published: unknown[][] } => {
@@ -636,10 +634,10 @@ describe("doorbell auth delivery (real ProtectEventDispatch.authEventHandler)", 
     assert.deepEqual(published, [], "an unrecognized scan is an attempt, not an authentication, so it publishes nothing");
   });
 
-  test("publishes the auth MQTT even when the contact sensor is not configured (v4 parity)", () => {
+  test("publishes the auth MQTT even when the contact sensor is not configured", () => {
 
-    // The AuthSensor contact service is off by default; the v4 handler published the authenticate event regardless, gating only the characteristic writes. A recognized
-    // scan on an accessory with no ContactSensor must still publish - and must not throw - or the default configuration silently loses its auth MQTT.
+    // The AuthSensor contact service is off by default; the auth delivery publishes the authenticate event regardless, gating only the characteristic writes. A
+    // recognized scan on an accessory with no ContactSensor must still publish - and must not throw - or the default configuration silently loses its auth MQTT.
     const accessory = makeTestAccessory();
     const { camera, dispatch, published } = makeAuthDispatch(accessory);
 
@@ -857,7 +855,7 @@ describe("smart-detection delivery (real ProtectEventDispatch.motionEventHandler
 
     const { camera, dispatch, logged } = makeMotionDispatch(accessory);
 
-    // The v5 smartDetect firehose event carries the object type in objectTypes AND its enriched detail in detectedThumbnails within one payload, so the same type is
+    // The smartDetect firehose event carries the object type in objectTypes AND its enriched detail in detectedThumbnails within one payload, so the same type is
     // processed both bare and enriched in a single delivery; it must produce exactly one (enriched) line, never an additional bare coalesced line.
     dispatch.motionEventHandler(camera, ["vehicle"], { detectedThumbnails: [{ attributes: { color: { confidence: 68, val: "black" },
       vehicleType: { confidence: 96, val: "suv" } }, type: "vehicle" }] });

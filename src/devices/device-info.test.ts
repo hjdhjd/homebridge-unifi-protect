@@ -2,7 +2,7 @@
  *
  * device-info.test.ts: The base-capability concern net for the shared ProtectDevice device-information surface, netted once family-agnostically.
  *
- * setInfo (device.ts:138), configureInfo (device.ts:403), and the two universal observers spawnObservers (device.ts:835) registers are BASE ProtectDevice behaviors
+ * setInfo (device-base.ts), configureInfo (device.ts), and the two universal observers spawnObservers (device.ts) registers are BASE ProtectDevice behaviors
  * shared by every device family: setInfo writes the unconditional Manufacturer and the length-guarded Model / SerialNumber / HardwareRevision / FirmwareRevision;
  * configureInfo, syncName-gated, syncs the accessory name and then writes that info; and the two base observers react to controller-side changes - the device.name
  * observer propagates a controller-side rename into HomeKit (gated by Device.SyncName) through syncNameFromController, and the device.firmwareVersion observer refreshes

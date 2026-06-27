@@ -28,14 +28,14 @@ export interface SmartDetectEventItem {
  */
 export interface SmartDetectEnricher {
 
-  /* The human-readable attribute fragments for this detection, e.g. `[ "color: black [68% confidence]", "vehicleType: suv [96% confidence]" ]`. Returns an empty array
+  /** The human-readable attribute fragments for this detection, e.g. `[ "color: black [68% confidence]", "vehicleType: suv [96% confidence]" ]`. Returns an empty array
    * when the controller has not yet attached any rich metadata, which the router treats as a plain detection and coalesces onto the shared log line. The router re-logs a
    * detection only when this list grows IN LENGTH, so progressively-enriched telemetry is captured at its fullest without re-logging the in-window noise; a later
    * same-length re-read that only changes existing values does not re-log. An enricher should therefore surface each new piece of telemetry as an additional fragment.
    */
   readonly attributes: (item: SmartDetectEventItem) => string[];
 
-  /* The structured payload mirrored to the type's `motion/smart/<type>/metadata` MQTT topic, or `null` when there is no metadata to publish. */
+  /** The structured payload mirrored to the type's `motion/smart/<type>/metadata` MQTT topic, or `null` when there is no metadata to publish. */
   readonly mqtt: (item: SmartDetectEventItem) => Nullable<Record<string, unknown>>;
 }
 

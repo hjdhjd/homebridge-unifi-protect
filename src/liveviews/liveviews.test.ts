@@ -21,7 +21,7 @@
  * The motion fanout is netted NON-VACUOUSLY: a member camera is seeded into configuredDevices whose ufp.id matches a Protect-Scene liveview's slots[].cameras, its
  * accessory carrying a PLAIN Service.Switch (liveviews reads the plain Switch here, not the SWITCH_MOTION_SENSOR-subtyped one the security fanout reads). The member's
  * detectMotion starts FALSY and the scene switch is pre-seeded liveviewState false so the construction-time setSwitchState early-returns (getSwitchState === target),
- * making the later toggle a genuine false->true change - liveviews continue()s a member already at the target (liveviews.ts:316), so a member at the target would no-op.
+ * making the later toggle a genuine false->true change - setSwitchState in liveviews.ts continue()s a member already at its target, so it would no-op.
  */
 import { Characteristic, Service, TestStateStore, makeLiveviewConfig, makeNvrConfig, makeProtectState, makeTestAccessory, makeTestNvr, settle }
   from "../testing.helpers.ts";

@@ -16,15 +16,15 @@ import type { SmartDetectEventItem } from "./smart-detect-metadata.ts";
 import { channels } from "../diagnostics.ts";
 import { mqttTopic } from "../mqtt.ts";
 
-// How long the HomeKit Access lock shows unlocked before we re-secure it, mirroring the v4 momentary-unlock behavior. UniFi Access emits no "relocked" occurrence,
+// How long the HomeKit Access lock shows unlocked before we re-secure it, presenting the unlock as momentary. UniFi Access emits no "relocked" occurrence,
 // so this is a display-side timer that returns the lock to its resting state, not a reflection of the physical lock. Exported so the unlock delivery's timer window is
 // referenced by name in tests rather than as a magic number.
 export const ACCESS_UNLOCK_DURATION = 2000;
 
 /**
- * The controller's typed event surface, projected onto HomeKit. This is the surviving half of the v4 `ProtectEvents` class: the state-merge, packet re-emit, and
- * per-id EventEmitter fan-out all dissolved into v5's reducer and observe loops, and what remains is a thin router over the classified firehose plus the HomeKit
- * delivery methods that router drives.
+ * The controller's typed event surface, projected onto HomeKit. A thin router over the classified event firehose, plus the HomeKit delivery methods that router
+ * drives. Controller-state merge, packet re-emit, and per-id fan-out belong to the unifi-protect library's reducer and observe loops; what lives here is purely the
+ * routing and delivery.
  *
  *   - `run()` is one controller-level consumer of `client.events()` - the typed, classified firehose. It switches on the discriminated `kind` and dispatches each
  *     activity occurrence (smart detection, doorbell ring, tamper, access unlock, doorbell auth) to the addressed accessory's delivery method. State transitions
@@ -32,11 +32,11 @@ export const ACCESS_UNLOCK_DURATION = 2000;
  *     `lastMotion` device-state advance with no occurrence packet, so the camera leaf observes that field directly, exactly as the sensor and light families do.
  *   - `publishTelemetry()` is the controller telemetry republisher: every raw frame off `client.rawPackets()` is mirrored to MQTT when the user opts in.
  *   - the delivery methods (`motionEventHandler`, `doorbellEventHandler`, `accessEventHandler`) own the HomeKit-facing behavior - the characteristic writes, the reset
- *     timers, and the MQTT side-channels. They are unchanged from v4; only their *trigger* moved from a hand-diffed device-state payload to the typed firehose.
+ *     timers, and the MQTT side-channels. Their *trigger* is the typed firehose: each delivery fires on a discriminated event kind.
  *
- * A plain class, not an EventEmitter: nothing here emits, and the last `.on`/`.off` subscriber - ProtectNvrSystemInfo's `updateEvent.<nvrId>` listener, whose fan-out
- * source had already dissolved into v5's reducer - migrated to a narrow `client.state.observe` loop over the controller's systemInfo slice. No event bus
- * survives: the accessory leaves call the delivery methods directly through `nvr.events`, and the router and telemetry publisher are spawned as NVR observe loops.
+ * A plain class, not an EventEmitter: nothing here emits. The accessory leaves call the delivery methods directly through `nvr.events`, and the router and telemetry
+ * publisher are spawned as NVR observe loops, so no event bus survives. The controller's systemInfo is consumed the same way, through a narrow `client.state.observe`
+ * loop over that slice rather than through an event subscriber.
  */
 export class ProtectEventDispatch {
 
@@ -49,11 +49,11 @@ export class ProtectEventDispatch {
   // Initialize an instance of our Protect event dispatcher.
   constructor(nvr: ProtectNvr) {
 
-    // Structural wiring only. The controller-state-dependent setup the v4 constructor did here - reading the telemetry feature option (which resolves against the
-    // controller mac, unknown before connect()) and binding the realtime packet listener on the legacy controller API - is gone: this constructor runs inside
-    // ProtectNvr's constructor, before connect(), where neither the controller mac nor a live client exists yet. The realtime consumers it used to wire are now the
-    // NVR's loops - the typed firehose router (run) and the telemetry publisher (publishTelemetry) below, both spawned post-connect and bound to the shutdown signal -
-    // so this stays a plain field-initializer and the controller-scoped work happens when those loops start.
+    // Structural wiring only. This constructor runs inside ProtectNvr's constructor, before connect(), where neither the controller mac nor a live client exists yet,
+    // so controller-state-dependent setup cannot happen here - reading the telemetry feature option (which resolves against the controller mac) and binding the realtime
+    // packet consumers both need a connected controller. That work lives in the NVR's loops - the typed firehose router (run) and the telemetry publisher
+    // (publishTelemetry) below, both spawned post-connect and bound to the shutdown signal - so this stays a plain field-initializer and the controller-scoped work
+    // happens when those loops start.
     this.eventTimers = new Map();
     this.hap = nvr.platform.api.hap;
     this.log = nvr.log;
@@ -61,9 +61,10 @@ export class ProtectEventDispatch {
     this.smartDetectLoggedAttributes = new Map();
   }
 
-  // The typed-firehose router. One controller-level consumer of the classified event stream: each event arrives already modeled (v5 owns the decode and classification),
-  // so we switch on the discriminated kind and route each activity occurrence to the addressed accessory's HomeKit delivery method. The caller binds this to the NVR's
-  // terminal shutdown signal; the loop ends quietly when that signal aborts (the library smooths the caller's own abort into a clean return).
+  // The typed-firehose router. One controller-level consumer of the classified event stream: each event arrives already modeled (the unifi-protect library owns the
+  // decode and classification), so we switch on the discriminated kind and route each activity occurrence to the addressed accessory's HomeKit delivery method. The
+  // caller binds this to the NVR's terminal shutdown signal; the loop ends quietly when that signal aborts (the library smooths the caller's own abort into a clean
+  // return).
   public async run(signal: AbortSignal): Promise<void> {
 
     for await (const event of this.nvr.client.events({ signal })) {
@@ -81,10 +82,10 @@ export class ProtectEventDispatch {
             break;
           }
 
-          // Preserve the v4 thumbnail filter: with "Create motion events" enabled on the camera, Protect tags some detections as plain "motion" inside a smart event's
-          // thumbnails; those are not true smart detections, so we drop them - building a filtered copy rather than mutating the classifier's metadata - before both the
-          // has-anything gate and the delivery, matching the v4 leaf exactly. The firehose metadata structurally satisfies HBUP's richer ProtectEventMetadata shape (the
-          // one home that knows the delivery reads detectedThumbnails off it), so it flows in without a cast.
+          // The thumbnail filter: with "Create motion events" enabled on the camera, Protect tags some detections as plain "motion" inside a smart event's thumbnails;
+          // those are not true smart detections, so we drop them - building a filtered copy rather than mutating the classifier's metadata - before both the has-anything
+          // gate and the delivery. The firehose metadata structurally satisfies the plugin's richer ProtectEventMetadata shape (the one home that knows the delivery
+          // reads detectedThumbnails off it), so it flows in without a cast.
           const metadata = this.withoutMotionThumbnails(event.metadata);
 
           if(!event.objectTypes.length && !metadata?.detectedThumbnails?.length) {
@@ -150,7 +151,8 @@ export class ProtectEventDispatch {
         case "authDetected": {
 
           // A doorbell fingerprint match or NFC card tap. We route it to the auth delivery, which trips the doorbell's authentication contact sensor on a recognized
-          // identity. Classification is v5's; this is delivery only - the kind already tells us it is an auth scan, and the matched identity is a metadata read below.
+          // identity. The unifi-protect library owns classification; this is delivery only - the kind already tells us it is an auth scan, and the matched identity is a
+          // metadata read below.
           const camera = this.cameraFor(event.cameraId);
 
           if(!camera) {
@@ -167,8 +169,8 @@ export class ProtectEventDispatch {
         default: {
 
           // State transitions (deviceAdded / devicePatched / deviceRemoved / bootstrapLoaded) are the NVR observe loops' concern; the router ignores them. A firehose
-          // motionDetected also lands here: bare camera motion is now observed off the camera record's lastMotion device-state field, so the only motionDetected the
-          // controller emits is the non-realtime event/type:motion thumbnail path v4 already filtered, and ignoring it here preserves that v4 parity.
+          // motionDetected also lands here: bare camera motion is observed off the camera record's lastMotion device-state field, so the only motionDetected the
+          // controller emits is the non-realtime event/type:motion thumbnail path, which carries no genuine smart detection and is correctly ignored here.
           break;
         }
       }
@@ -196,8 +198,8 @@ export class ProtectEventDispatch {
   }
 
   // Drop "motion"-tagged thumbnails from smart-detection metadata, returning a filtered copy and never mutating the classifier's object. When a camera has Protect's
-  // "Create motion events" setting on, Protect emits motion-typed thumbnails alongside genuine smart detections; those are plain motion, not smart objects, so the v4
-  // leaf stripped them before delivery and this preserves that exactly. Metadata without thumbnails (or absent entirely) passes through untouched.
+  // "Create motion events" setting on, Protect emits motion-typed thumbnails alongside genuine smart detections; those are plain motion, not smart objects, so we strip
+  // them before delivery. Metadata without thumbnails (or absent entirely) passes through untouched.
   private withoutMotionThumbnails(metadata?: ProtectEventMetadata): ProtectEventMetadata | undefined {
 
     if(!metadata?.detectedThumbnails) {
@@ -613,9 +615,9 @@ export class ProtectEventDispatch {
     }, this.nvr.platform.config.ringDelay * 1000));
   }
 
-  // Access unlock delivery, relocated from the camera leaf's add-event handler (since removed). A UniFi Access door-open occurrence that succeeded drops the
-  // camera's Access lock to unlocked, then re-secures it after a brief window so HomeKit reflects the momentary unlock - UniFi Access has no relock occurrence to drive
-  // the return. Other access actions (NFC, fingerprint, keypad reads) are not yet modeled and are deliberately ignored here; they arrive with the Access unlock work.
+  // Access unlock delivery. A UniFi Access door-open occurrence that succeeded drops the camera's Access lock to unlocked, then re-secures it after a brief window so
+  // HomeKit reflects the momentary unlock - UniFi Access has no relock occurrence to drive the return. Other access actions (NFC, fingerprint, keypad reads) are not yet
+  // modeled and are deliberately ignored here; they arrive with the Access unlock work.
   public accessEventHandler(protectDevice: ProtectCamera, action: string, metadata?: Record<string, unknown>): void {
 
     // We only act on a successful door-open occurrence; everything else is a no-op until the broader Access unlock plumbing lands.
@@ -654,16 +656,15 @@ export class ProtectEventDispatch {
     }, ACCESS_UNLOCK_DURATION));
   }
 
-  // Doorbell authentication delivery, relocated from the doorbell leaf's now-deleted add-event handler. A fingerprint match or NFC card tap trips the doorbell's
-  // authentication contact sensor when the scan resolved a known identity, then resets it to its detected (resting) state after a brief window. The classification -
-  // which method this scan used - is v5's: we consume event.method rather than re-derive it, the single source for fingerprint-vs-NFC (this restores v4 parity exactly,
-  // where the leaf keyed the method off the wire type). The delivery policy stays ours: whether the scan resolved an identity is a metadata read here, and the
-  // "authenticate" MQTT publish fires regardless of whether the contact service is configured - the service is off by default, but the side-channel is not gated on it,
-  // so only the characteristic writes are service-gated.
+  // Doorbell authentication delivery. A fingerprint match or NFC card tap trips the doorbell's authentication contact sensor when the scan resolved a known identity,
+  // then resets it to its detected (resting) state after a brief window. The unifi-protect library owns the classification - which method this scan used - so we consume
+  // event.method rather than re-derive it, the single source for fingerprint-vs-NFC. The delivery policy stays ours: whether the scan resolved an identity is a
+  // metadata read here, and the "authenticate" MQTT publish fires regardless of whether the contact service is configured - the service is off by default, but the
+  // side-channel is not gated on it, so only the characteristic writes are service-gated.
   public authEventHandler(protectDevice: ProtectCamera, method: AuthMethod, metadata?: ProtectEventMetadata): void {
 
     // Resolve the authentication contact sensor, if the user configured it. The optional-chained characteristic writes below make a disabled sensor a clean no-op while
-    // the MQTT publish still fires - the v4 parity this delivery must preserve.
+    // the MQTT publish still fires.
     const authService = protectDevice.accessory.getServiceById(this.hap.Service.ContactSensor, ProtectReservedNames.CONTACT_AUTHSENSOR);
 
     // A new scan supersedes any pending reset, so we clear the inflight timer before acting - the same debounce the access delivery uses.
@@ -687,8 +688,8 @@ export class ProtectEventDispatch {
     // A recognized identity: trip the sensor to its not-detected (authenticated) state.
     authService?.updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.hap.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED);
 
-    // Publish the credential to MQTT regardless of the sensor's presence (v4 parity). The method is the classifier's; a card tap additionally carries its card id, read
-    // from the metadata here at delivery.
+    // Publish the credential to MQTT regardless of the sensor's presence. The method is the classifier's; a card tap additionally carries its card id, read from the
+    // metadata here at delivery.
     const authInfo = (method === "nfc") ? { id: metadata.nfc?.nfcId ?? "", type: "nfc" } : { type: "fingerprint" };
 
     void this.nvr.mqtt?.publish(mqttTopic(protectDevice.ufp.mac, "authenticate"), JSON.stringify(authInfo));
@@ -701,14 +702,13 @@ export class ProtectEventDispatch {
     }, PROTECT_DOORBELL_AUTHSENSOR_DURATION));
   }
 
-  // Camera tamper delivery, relocated from the camera leaf's now-deleted add-event handler. A tamper occurrence latches the camera tampered and trips StatusTampered on
-  // its motion sensor. The latch is one-way - UniFi Protect emits no paired "tamper cleared" occurrence and the camera config carries no tamper-state field, so the
-  // occurrence is its only source - and it clears only when the user toggles tamper detection in Protect (which resets isTampered through configureTamperDetection) or
-  // restarts HBUP. We set a public flag on the camera, mirroring how the doorbell-ring delivery sets isRinging, so the camera's own tamper-detection onGet and
-  // availability projection read back a single source of truth.
+  // Camera tamper delivery. A tamper occurrence latches the camera tampered and trips StatusTampered on its motion sensor. The latch is one-way - UniFi Protect emits no
+  // paired "tamper cleared" occurrence and the camera config carries no tamper-state field, so the occurrence is its only source - and it clears only when the user
+  // toggles tamper detection in Protect (which resets isTampered through configureTamperDetection) or restarts the plugin. We set a public flag on the camera, mirroring
+  // how the doorbell-ring delivery sets isRinging, so the camera's own tamper-detection onGet and availability projection read back a single source of truth.
   public tamperEventHandler(protectDevice: ProtectCamera): void {
 
-    // Idempotent: once latched, a repeat tamper occurrence is a no-op until the state is cleared, matching the v4 leaf's "only act on the false-to-true edge".
+    // Idempotent: once latched, a repeat tamper occurrence is a no-op until the state is cleared - we act only on the false-to-true edge.
     if(protectDevice.isTampered) {
 
       return;
@@ -719,11 +719,11 @@ export class ProtectEventDispatch {
     protectDevice.log.info("Tamper event detected. To clear the indicator, toggle tamper detection in the Protect web UI or restart HBUP.");
   }
 
-  // Controller telemetry republisher. Mirrors v4's telemetry publish: every frame the controller emits is republished verbatim to the controller's "telemetry" MQTT
-  // topic when the user has opted in. We consume client.rawPackets() - the raw realtime firehose - rather than the classified client.events() stream deliberately:
-  // rawPackets carries the valid-but-unmodeled frames the classifier drops, so this preserves v4 parity where the typed stream would silently narrow telemetry. Self-
-  // gated on the controller-scoped feature option, resolved post-connect (reading it pre-connect, against an unknown controller mac, was the v4 crash): a disabled
-  // controller returns immediately and never opens the raw iterator. The caller binds this to the NVR's terminal shutdown signal; the loop ends quietly on abort.
+  // Controller telemetry republisher. Every frame the controller emits is republished verbatim to the controller's "telemetry" MQTT topic when the user has opted in. We
+  // consume client.rawPackets() - the raw realtime firehose - rather than the classified client.events() stream deliberately: rawPackets carries the valid-but-unmodeled
+  // frames the classifier drops, so the typed stream would silently narrow telemetry. Self-gated on the controller-scoped feature option, resolved post-connect (the
+  // controller mac it resolves against is unknown before connect): a disabled controller returns immediately and never opens the raw iterator. The caller binds this to
+  // the NVR's terminal shutdown signal; the loop ends quietly on abort.
   public async publishTelemetry(signal: AbortSignal): Promise<void> {
 
     if(!this.nvr.hasFeature("Nvr.Publish.Telemetry")) {

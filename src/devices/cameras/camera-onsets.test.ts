@@ -11,7 +11,7 @@
  * captured updateCalls payload) and the reflection (an inline-local characteristic write, or an observer-driven push) are asserted INDEPENDENTLY - folding would make a
  * broken observer pass vacuously.
  *
- * runDeviceCommand (device.ts:280-302) is the chokepoint: await command() -> true on success; any throw -> false, logging one of two branches - a
+ * runDeviceCommand (device-base.ts) is the chokepoint: await command() -> true on success; any throw -> false, logging one of two branches - a
  * ProtectAuthorizationError earns the admin-role guidance, anything else earns the trailing-period-stripped "Unable to %s: %s." line. It does NOT revert; the CALLER
  * reverts gated on the boolean. So updateRejection null drives the success path, a plain Error the plain-error branch, and a ProtectAuthorizationError the admin-guidance
  * branch.
@@ -59,8 +59,8 @@ interface BuiltCamera {
   projection: TestCameraProjection;
 }
 
-// Build a REAL plain ProtectCamera against the harness doubles, exactly as camera-reactions.test.ts:65-78 assembles it: a camera config (optionally carrying feature
-// flags), the v5 store double over it, the typed NVR / platform doubles with the test's userOptions threaded into the REAL FeatureOptions engine, the read-through camera
+// Build a REAL plain ProtectCamera against the doubles, exactly as camera-reactions.test.ts's buildCamera assembles it: a camera config (optionally carrying feature
+// flags), the store double over it, the typed NVR / platform doubles with the test's userOptions threaded into the REAL FeatureOptions engine, the read-through camera
 // projection (held so a test sets updateRejection and reads updateCalls on the SAME instance the onSet wrote into), and a fresh accessory. The casts are confined to this
 // seam - the instance is the production ProtectCamera and everything it runs is the production path. The returned controller is the harness AbortController the
 // afterEach aborts to unwind the observe loops.
@@ -98,13 +98,13 @@ describe("camera-family device.update-backed onSet handlers (camera-onsets conce
     built = undefined;
   });
 
-  describe("the night-vision dimmer On onSet (camera.ts:1300-1338)", () => {
+  describe("the night-vision dimmer On onSet (camera.ts)", () => {
 
     test("a successful On set issues the ispSettings irLedMode write picked from the dimmer Brightness and schedules no revert", async () => {
 
       built = await buildCamera({ featureFlags: { hasIcrSensitivity: true, hasInfrared: true }, userOptions: ["Enable.Device.NightVision.Dimmer"] });
 
-      // HARD-assert the dimmer exists FIRST: the gate is hasInfrared && hasIcrSensitivity && hasFeature("Device.NightVision.Dimmer") (camera.ts:1280-1281), so an absent
+      // HARD-assert the dimmer exists FIRST: the gate is hasInfrared && hasIcrSensitivity && hasFeature("Device.NightVision.Dimmer") (camera.ts), so an absent
       // service would let the payload assertion pass vacuously.
       const dimmer = built.accessory.getServiceById(Service.Lightbulb, ProtectReservedNames.LIGHTBULB_NIGHTVISION);
 
@@ -218,7 +218,7 @@ describe("camera-family device.update-backed onSet handlers (camera-onsets conce
     });
   });
 
-  describe("the night-vision dimmer Brightness onSet (camera.ts:1343-1423)", () => {
+  describe("the night-vision dimmer Brightness onSet (camera.ts)", () => {
 
     test("a successful Brightness set snaps to the custom range, issues icrCustomValue, and reflects the snapped local level after the 50ms window", async () => {
 
@@ -302,7 +302,7 @@ describe("camera-family device.update-backed onSet handlers (camera-onsets conce
     });
   });
 
-  describe("the UFP-recording switch onSet (camera.ts:1440-1507)", () => {
+  describe("the UFP-recording switch onSet (camera.ts)", () => {
 
     test("activating ALWAYS spreads the read-through recordingSettings with the new mode, fans the siblings Off, and logs the mode", async () => {
 
@@ -392,7 +392,7 @@ describe("camera-family device.update-backed onSet handlers (camera-onsets conce
     });
   });
 
-  describe("the status-LED switch onSet WIRING (device.ts:744-754 -> setStatusLed -> statusLedCommand)", () => {
+  describe("the status-LED switch onSet WIRING (configureStatusLedSwitch in device.ts -> setStatusLed -> statusLedCommand)", () => {
 
     test("a camera status-LED On set routes through statusLedCommand to the ledSettings isEnabled write", async () => {
 
@@ -404,7 +404,7 @@ describe("camera-family device.update-backed onSet handlers (camera-onsets conce
 
       assert.ok(statusLedSwitch, "Enable.Device.StatusLed.Switch materializes the SWITCH_STATUS_LED switch");
 
-      // WIRING only: the camera modelKey routes statusLedCommand to device.update({ ledSettings: { isEnabled } }) (device.ts:1020-1022); we assert the camera issued the
+      // WIRING only: the camera modelKey routes statusLedCommand to device.update({ ledSettings: { isEnabled } }) (device.ts); we assert the camera issued the
       // ledSettings write, NOT the statusLedCommand internals (device-statusled.test.ts owns those, the two-layer architecture).
       await statusLedSwitch.getCharacteristic(Characteristic.On).triggerSet(true);
 

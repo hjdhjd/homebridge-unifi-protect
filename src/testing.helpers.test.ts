@@ -255,7 +255,7 @@ describe("HAP test-double", () => {
   });
 });
 
-describe("v5 state-store double (TestStateStore)", () => {
+describe("the state-store double (TestStateStore)", () => {
 
   // Build a one-camera store and return both halves. The contract tests observe the camera's name slice: a string, so the store's Object.is reference dedup
   // degenerates to value identity, which keeps the ping-pong expectations easy to read while exercising the exact dedup gate the real store applies.
@@ -421,13 +421,14 @@ describe("makeProtectState device-slice widening", () => {
   });
 });
 
-describe("2b harness growth: service identity, controller log, and event notifications", () => {
+describe("harness growth: service identity, controller log, and event notifications", () => {
 
   test("every namespace service marker carries a distinct, non-empty static UUID, mirrored onto instances from both construction paths", () => {
 
     const uuids = Object.values(Service).map((marker) => marker.UUID);
 
-    // The amended identity contract: real, distinct, never-empty identities (an empty UUID would false-positive HBPU's degenerate name-set predicates).
+    // The amended identity contract: real, distinct, never-empty identities (an empty UUID would false-positive homebridge-plugin-utils' degenerate
+    // name-set predicates).
     assert.ok(uuids.every((uuid) => (typeof uuid === "string") && (uuid.length > 0)), "every marker carries a non-empty static UUID");
     assert.equal(new Set(uuids).size, uuids.length, "every marker UUID is distinct");
 
@@ -537,7 +538,7 @@ describe("2b harness growth: service identity, controller log, and event notific
   });
 });
 
-describe("2b harness growth: chime state and record removal", () => {
+describe("harness growth: chime state and record removal", () => {
 
   test("makeChimeConfig populates the chime-volume read set and pushChimePatch wakes only chime-derived selectors that changed", async () => {
 
@@ -580,7 +581,7 @@ describe("2b harness growth: chime state and record removal", () => {
   });
 });
 
-describe("2b harness growth: NVR removal machinery", () => {
+describe("harness growth: NVR removal machinery", () => {
 
   test("scheduleDeviceRemoval honors the registered DelayDeviceRemoval default and the fire body re-checks stability and stillGone", () => {
 
@@ -666,7 +667,7 @@ describe("2b harness growth: NVR removal machinery", () => {
   });
 });
 
-describe("2b harness growth: MQTT recording double and the family builder", () => {
+describe("harness growth: MQTT recording double and the family builder", () => {
 
   test("the MQTT double is opt-in and records publishes and subscription registrations with their init options", async () => {
 
@@ -883,7 +884,7 @@ describe("A2 light family: config builder, push helpers, and projection double",
   });
 });
 
-describe("2b harness growth: the recording transmit doubles", () => {
+describe("harness growth: the recording transmit doubles", () => {
 
   // The keyframe-fragment box builder must synthesize a genuine fMP4 fragment the PRODUCTION isKeyframe parse accepts - there is no isKeyframe injection seam, so the
   // transmit test exercises the real fMP4 keyframe coupling. If the builder ever drifts (a wrong box nesting, a flipped TRUN flag, the NON_SYNC bit set), production
@@ -951,7 +952,7 @@ describe("2b harness growth: the recording transmit doubles", () => {
   });
 });
 
-describe("2c harness growth: the timeshift behavior doubles", () => {
+describe("harness growth: the timeshift behavior doubles", () => {
 
   // The non-keyframe builder is the negative counterpart to the held keyframe self-test: it must synthesize a fragment the PRODUCTION isKeyframe parse REJECTS, so the
   // timeshift suite's discontinuity keyframe-gate (a discontinuity-marked non-keyframe must defer until a clean keyframe) is genuinely exercised. There is no isKeyframe
@@ -961,8 +962,9 @@ describe("2c harness growth: the timeshift behavior doubles", () => {
     assert.equal(isKeyframe(makeNonKeyframeFragment().data), false, "the synthesized non-sync fragment reads as a non-keyframe");
   });
 
-  // The SSOT refactor (makeMediaFragment) must keep the keyframe fragment byte-identical to its pre-refactor self: the KEYFRAME_FRAGMENT const, the segment-yielding
-  // parking double, and the recording-transmit path all read these bytes, so a drift would silently churn that net. The keyframe still reads as a sync sample.
+  // Because makeKeyframeFragment is a thin selector over the shared makeMediaFragment, its bytes must stay stable: the KEYFRAME_FRAGMENT const, the
+  // segment-yielding parking double, and the recording-transmit path all read these bytes, so a drift would silently churn that net. The keyframe still reads
+  // as a sync sample.
   test("makeKeyframeFragment still synthesizes a fragment the production isKeyframe parse accepts after the SSOT refactor", () => {
 
     assert.equal(isKeyframe(makeKeyframeFragment().data), true, "the keyframe fragment still reads as a sync sample after the refactor");

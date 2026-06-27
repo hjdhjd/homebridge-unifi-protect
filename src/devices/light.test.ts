@@ -239,7 +239,7 @@ describe("real ProtectLight construction and observer behavior", () => {
 
     // The topic composition above is netted; these tests find each captured subscription by its MAC-scoped tail and INVOKE its getValue / setValue closure - the handler
     // body the HomeKit onSet machinery never reaches. The beforeEach builds { isLightOn: true, ledLevel: 4 } -> On true, Brightness ledLevelToBrightness(4) = 60. The SET
-    // bodies drive the Lightbulb On / Brightness onSet, which write through this.device.update on the named lightProjection (the harness add this step unlocked).
+    // bodies drive the Lightbulb On / Brightness onSet, which write through this.device.update on the named lightProjection (the harness addition this step unlocked).
 
     test("the /light GET reads the live power state as a string", () => {
 

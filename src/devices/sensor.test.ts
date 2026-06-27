@@ -148,7 +148,7 @@ describe("real ProtectSensor construction and family behavior", () => {
     assert.equal(accessory.getServiceById(Service.LeakSensor, ProtectReservedNames.LEAKSENSOR_INTERNAL), undefined, "no internal LeakSensor at all-quiet");
     assert.equal(accessory.getServiceById(Service.LeakSensor, ProtectReservedNames.LEAKSENSOR_EXTERNAL), undefined, "no external LeakSensor at all-quiet");
 
-    // The enabled-sensors log is DIFF-GATED (sensor.ts:176): it fires only when the new enabled set differs from the held enabledSensors. The constructor seeds
+    // The enabled-sensors log is DIFF-GATED (sensor's updateDevice): it fires only when the new enabled set differs from the held enabledSensors. The constructor seeds
     // enabledSensors to [] and an all-quiet construction derives [], so there is no diff and NEITHER the "Enabled sensor%s" nor the "No sensors enabled." line fires at
     // construction. This is correct production behavior - the "No sensors enabled." line is the transition-to-empty message, exercised non-vacuously in the next test.
     assert.equal(loggedAt(logEntries, "info", "No sensors enabled."), false,
@@ -552,9 +552,9 @@ describe("real ProtectSensor construction and family behavior", () => {
 
   test("re-running the reconcile does not register a second leak GET handler (the once-guard holds across config churn)", async () => {
 
-    // subscribeGet is NOT idempotent (HBPU accumulates a handler per call), so the leak GET registration is once-guarded behind isInitialized. A re-run of updateDevice -
-    // driven here by a non-leak config push that wakes the whole-record sensor.config observer - must NOT register a second leak GET. The TestMqttClient records every
-    // subscribeGet, so a duplicate is directly countable.
+    // subscribeGet is NOT idempotent (homebridge-plugin-utils accumulates a handler per call), so the leak GET registration is once-guarded behind isInitialized. A
+    // re-run of updateDevice - driven here by a non-leak config push that wakes the whole-record sensor.config observer - must NOT register a second leak GET. The
+    // TestMqttClient records every subscribeGet, so a duplicate is directly countable.
     const built = buildSensor({ leakChannelNames: ["internal"], mountType: "leak" });
     const mac = built.projection.config.mac;
     const leakGetCount = (): number => built.mqtt.subscriptions.filter((subscription) => (subscription.kind === "get") && (subscription.topic === mac + "/leak")).length;

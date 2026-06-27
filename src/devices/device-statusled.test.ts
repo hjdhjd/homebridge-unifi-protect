@@ -2,8 +2,8 @@
  *
  * device-statusled.test.ts: The base-capability concern net for the shared ProtectDevice status-indicator switch, netted once family-agnostically.
  *
- * The status-indicator switch (Device.StatusLed.Switch) is a BASE ProtectDevice behavior: configureStatusLedSwitch (device.ts:722) acquires the switch, setStatusLed
- * (device.ts:767) routes the onSet through the shared command-error helper, and statusLedCommand (device.ts:1014) resolves the device-appropriate write-through update.
+ * The status-indicator switch (Device.StatusLed.Switch) is a BASE ProtectDevice behavior: configureStatusLedSwitch (device.ts) acquires the switch, setStatusLed
+ * (device.ts) routes the onSet through the shared command-error helper, and statusLedCommand (device.ts) resolves the device-appropriate write-through update.
  * Cameras and sensors share the ledSettings.isEnabled routing the base serves directly (it narrows this.device through its modelKey discriminant), so this net rides the
  * all-quiet makeSensorConfig carrier - which always carries ledSettings - as the shared vehicle. Per the two-layer test architecture the base camera/sensor routing is
  * netted ONCE here against the shared minimal TestBaseDevice vehicle rather than re-asserted inside each family suite. The light's statusLedCommand override (its

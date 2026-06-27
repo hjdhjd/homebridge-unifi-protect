@@ -1,19 +1,19 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * protect-nvr-health.ts: Cohesive observability for the NVR's current operating condition.
+ * nvr-health.ts: Cohesive observability for the NVR's current operating condition.
  *
  * This module models the *health* of a UniFi Protect NVR as a first-class, NVR-scoped concept that the rest of the plugin can read instead of having to stitch
  * the picture together from per-component counters and per-camera errors. The design follows three principles:
  *
  *   1. Health is *derived*, not *set*. Inputs are typed symptoms (`HealthSymptom`) flowing in from the components that observe them - the unifi-protect API
- *      layer for request results and throttle transitions, the livestream manager for stall events. The state is computed by a pure reducer over a sliding
+ *      layer for request results and throttle transitions, the livestream subscription seam for stall events. The state is computed by a pure reducer over a sliding
  *      window of those symptoms with hysteresis. There is no `setState` method. Callers can only `observe` symptoms.
  *
  *   2. Single source of truth, single home. There is exactly one NvrHealth per ProtectNvr. Every subsystem that wants to know "is the NVR OK?" reads
  *      `nvr.health.state`. Every subsystem that observes a symptom calls `nvr.health.observe(...)`. No parallel "is X stressed" flags scattered across classes.
  *
  *   3. Mechanism vs policy separation. This module owns the *mechanism*: the symptom buffer, the eviction window, the threshold transitions. The recovery
- *      policy that consumes the resulting state lives elsewhere (e.g., in protect-livestream.ts). State here is a value other code can map to actions; this
+ *      policy that consumes the resulting state lives elsewhere (e.g., in livestream-recovery-policy.ts). State here is a value other code can map to actions; this
  *      module does not decide what to do.
  *
  * The reducer is a pure function `(state, symptom, now) => state'`, exported and independently testable. The class is a thin event-sink wrapper that drives
@@ -46,7 +46,7 @@ const STRESSED_RELEASE = 8;
  *   - `healthy`: nominal. The controller is responsive; no recent symptom rate concerns.
  *   - `degraded`: elevated symptom rate. Reconnect-aggressive behavior should soften (e.g., defer non-urgent reconnects); critical paths still proceed.
  *   - `stressed`: sustained or library-acknowledged stress. Non-critical work should back off; only urgent paths (in-flight HKSV recordings, active live streams)
- *      should drive new requests at controller.
+ *      should drive new requests at the controller.
  */
 export type NvrHealthState = "degraded" | "healthy" | "stressed";
 
@@ -143,8 +143,9 @@ export function reduceHealth(prev: HealthState, symptom: HealthSymptom, now: num
     nextState = "stressed";
   } else {
 
-    // Weight stress evidence against recovery evidence. apiSuccess and livestreamRecovery reduce the apparent symptom load; everything else adds to it. The
-    // released-throttle event is informational (it adjusts the latched flag above) and does not add weight here.
+    // Weight stress evidence against recovery evidence. apiError and livestreamStall add stress weight; apiSuccess and livestreamRecovery reduce it. The
+    // library-throttle events are informational here and add no weight: the entered case has already forced stressed via the latched flag above, and the
+    // released event only adjusts that flag.
     let stressWeight = 0;
 
     for(const s of recentSymptoms) {

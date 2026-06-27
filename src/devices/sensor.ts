@@ -1,6 +1,6 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * protect-sensor.ts: Sensor device class for UniFi Protect.
+ * sensor.ts: Sensor device class for UniFi Protect.
  */
 import type { ProtectSensorConfig, Sensor } from "unifi-protect";
 import type { LeakChannelContext } from "./leak-policy.ts";
@@ -79,7 +79,7 @@ export class ProtectSensor extends ProtectDevice {
     return true;
   }
 
-  // Update battery status information for HomeKit.
+  // Configure the battery service for HomeKit.
   private configureBatteryService(): boolean {
 
     // Acquire the service.
@@ -153,7 +153,7 @@ export class ProtectSensor extends ProtectDevice {
     // Configure the motion sensor.
     if(this.configureMotionSensor(this.ufp.motionSettings.isEnabled, isInitialized)) {
 
-      // Sensor accessories also support battery, connection, and tamper status...we need to handle those ourselves.
+      // Apply the connection and tamper status characteristics to the motion service ourselves; battery status is handled separately by configureBatteryService.
       const motionService = this.accessory.getService(this.hap.Service.MotionSensor);
 
       if(motionService) {
@@ -182,7 +182,7 @@ export class ProtectSensor extends ProtectDevice {
 
       this.enabledSensors = currentEnabledSensors;
 
-      // Inform the user what we're enabling on startup.
+      // Inform the user when the enabled-sensor set changes.
       if(this.enabledSensors.length) {
 
         this.log.info("Enabled sensor%s: %s.", this.enabledSensors.length > 1 ? "s" : "", this.enabledSensors.join(", "));
@@ -506,7 +506,7 @@ export class ProtectSensor extends ProtectDevice {
     // Return true if we are not null, meaning the alarm has sounded.
     const value = this.ufp.alarmTriggeredAt !== null;
 
-    // Save the state change and publish to MQTT.
+    // Save the state change and inform the user.
     if(value !== this.lastAlarm) {
 
       this.lastAlarm = value;
@@ -549,7 +549,7 @@ export class ProtectSensor extends ProtectDevice {
       return value;
     }
 
-    // Save the state change and publish to MQTT.
+    // Save the state change and inform the user.
     if(value !== this.lastLeak[type]) {
 
       this.lastLeak[type] = value;
@@ -578,8 +578,8 @@ export class ProtectSensor extends ProtectDevice {
     this.subscribeGet("temperature", "temperature", () => this.temperature.toString());
   }
 
-  // Spawn the sensor's narrow-selector observers (Fork B). super spawns the universal name-sync observer; the sensor adds three reactions, each waking only on its own
-  // slice through the store's reference dedup.
+  // Spawn the sensor's narrow-selector observers. super spawns the two universal observers (name sync and firmware/device-info refresh); the sensor adds three
+  // reactions, each waking only on its own slice through the store's reference dedup.
   protected override spawnObservers(): void {
 
     super.spawnObservers();
@@ -604,7 +604,7 @@ export class ProtectSensor extends ProtectDevice {
       () => this.updateTamperState());
 
     // The remaining sensor reactions are a full service reconciliation (battery, the per-mode sensor services, the status indicator, StatusActive). They key off many
-    // settings sub-objects and live stat values, so we observe the whole sensor record and re-derive - matching v4's refresh-on-any-change, but now structurally silent
+    // settings sub-objects and live stat values, so we observe the whole sensor record and re-derive - reproducing a refresh-on-any-change, but now structurally silent
     // when nothing changed (the store's reference dedup). Decomposing this into per-service observers, which would also retire the idempotent StatusTampered re-apply the
     // dedicated tamper observer above already owns, is a tracked follow-up.
     this.observeState({ key: "sensor.config", selector: sensor, title: "sensor settings" }, () => this.updateDevice());

@@ -217,8 +217,8 @@ describe("base ProtectDevice motion capability (device-motion concern net)", () 
       assert.ok(trigger, "the trigger materialized");
       assert.ok(motionService, "the motion sensor materialized");
 
-      // Drive the off-revert (device.ts:642): the trigger's onSet, on isOn false, re-arms the trigger to true via a bare setTimeout(-> true, 50) IFF the motion sensor
-      // still reports motion. Set MotionDetected true to model live motion, then turn the trigger off.
+      // Drive the off-revert in configureMotionTrigger's onSet (device.ts): on isOn false it re-arms the trigger to true via a bare setTimeout(-> true, 50) IFF the
+      // motion sensor still reports motion. Set MotionDetected true to model live motion, then turn the trigger off.
       motionService.updateCharacteristic(Characteristic.MotionDetected, true);
 
       const triggerOn = trigger.getCharacteristic(Characteristic.On);

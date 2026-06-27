@@ -1,6 +1,6 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * protect-securitysystem.ts: Security system accessory for UniFi Protect.
+ * security-system.ts: Security system accessory for UniFi Protect.
  */
 import { acquireService, validService } from "homebridge-plugin-utils";
 import type { CharacteristicValue } from "homebridge";
@@ -160,7 +160,7 @@ export class ProtectSecuritySystem extends ProtectBase {
   // Configure the security system for HomeKit.
   private configureSecuritySystem(): boolean {
 
-    // Find any existing security system service.
+    // Acquire (find or create) the security system service.
     const service = acquireService(this.accessory, this.hap.Service.SecuritySystem, this.accessory.displayName);
 
     if(!service) {

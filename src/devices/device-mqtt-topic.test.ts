@@ -2,14 +2,14 @@
  *
  * device-mqtt-topic.test.ts: Unit tests for the ProtectBase MQTT wrappers and the mqttId seam that single-source the device- and controller-scoped topic conventions.
  *
- * Every MQTT publish / subscribe routes through ProtectBase.publish, subscribeGet, and subscribeSet. Those wrappers are the one place HBUP composes an owner's mqttId
- * into the topic tail that HBPU's MqttClient then prefixes with the configured topic, so the wire topic is {topicPrefix}/{mqttId}/{subtopic} (subscribeGet / subscribeSet
- * additionally append the internal /get and /set suffixes). mqttId is the single seam the wrappers vary by: ProtectDevice overrides it to the device MAC (device scope),
- * while the controller-scoped owners (system information, liveviews, the security system) inherit the base default of the controller MAC (controller scope). These tests
- * pin both compositions against the real production wrappers, capturing the topic each forwards to a mock nvr.mqtt. The MQTT topic structure is a user-facing contract
- * (automations subscribe to it), so a changed composition is a regression these tests guard against. ProtectDevice and a bare ProtectBase leaf are the smallest real
- * surfaces that carry the wrappers: the abstract base declares no abstract members, so a near-empty concrete leaf is a faithful instance whose publish, subscribeGet, and
- * subscribeSet are all the base's own - the same admission command-error.test.ts and reachability.test.ts rely on.
+ * Every MQTT publish / subscribe routes through ProtectBase.publish, subscribeGet, and subscribeSet. Those wrappers are the one place the plugin composes an owner's
+ * mqttId into the topic tail that homebridge-plugin-utils' MqttClient then prefixes with the configured topic, so the wire topic is {topicPrefix}/{mqttId}/{subtopic}
+ * (subscribeGet / subscribeSet additionally append the internal /get and /set suffixes). mqttId is the single seam the wrappers vary by: ProtectDevice overrides it to
+ * the device MAC (device scope), while the controller-scoped owners (system information, liveviews, the security system) inherit the base default of the controller MAC
+ * (controller scope). These tests pin both compositions against the real production wrappers, capturing the topic each forwards to a mock nvr.mqtt. The MQTT topic
+ * structure is a user-facing contract (automations subscribe to it), so a changed composition is a regression these tests guard against. ProtectDevice and a bare
+ * ProtectBase leaf are the smallest real surfaces that carry the wrappers: the abstract base declares no abstract members, so a near-empty concrete leaf is a faithful
+ * instance whose publish, subscribeGet, and subscribeSet are all the base's own - the same admission command-error.test.ts and reachability.test.ts rely on.
  */
 import { describe, test } from "node:test";
 import type { Camera } from "unifi-protect";

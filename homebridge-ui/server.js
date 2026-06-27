@@ -2,7 +2,7 @@
  *
  * server.js: homebridge-unifi-protect webUI server API.
  *
- * This module is heavily inspired by the homebridge-config-ui-x source code and borrows from both.
+ * This module is heavily inspired by, and borrows from, the homebridge-config-ui-x source code.
  * Thank you oznu for your contributions to the HomeKit world.
  */
 "use strict";
@@ -50,8 +50,9 @@ class PluginUiServer extends HomebridgePluginUiServer {
       // Start each probe with a clean error slate so /getErrorMessage reflects only this attempt.
       this.errorInfo = "";
 
-      // A quiet logging shim for the short-lived client: debug/info/warn stay silent (noopLog), while error captures the message so /getErrorMessage can surface the
-      // most recent failure reason to the user. The v5 ProtectLogging signature is (message, ...parameters), so we spread the rest parameters into util.format.
+      // A quiet logging shim for the short-lived client: debug/info/warn stay silent (noopLog), while error captures the message so /getErrorMessage can
+      // surface the most recent failure reason to the user. The unifi-protect ProtectLogging signature is (message, ...parameters), so we spread the rest
+      // parameters into util.format.
       const log = { ...noopLog, error: (message, ...parameters) => {
 
         this.errorInfo = util.format(message, ...parameters);
@@ -62,8 +63,9 @@ class PluginUiServer extends HomebridgePluginUiServer {
 
       try {
 
-        // Connect to the controller. v5's connect() performs login and the initial bootstrap atomically, throwing a typed error on failure; await using guarantees the
-        // client and its realtime connection are disposed on every exit path. We disable the periodic refresh failsafe since this is a one-shot discovery probe.
+        // Connect to the controller. unifi-protect's connect() performs login and the initial bootstrap atomically, throwing a typed error on failure; await
+        // using guarantees the client and its realtime connection are disposed on every exit path. We disable the periodic refresh failsafe since this is a
+        // one-shot discovery probe.
         await using client = await ProtectClient.connect({ host: controller.address, log: log, password: controller.password, refreshIntervalMs: false,
           username: controller.username });
 
@@ -100,7 +102,7 @@ class PluginUiServer extends HomebridgePluginUiServer {
   // Register the getOptions() webUI server API endpoint.
   #registerGetOptions() {
 
-    // Return the list of options configured for a given Protect device.
+    // Return the full feature-option category and option catalog the webUI renders; per-device filtering happens client-side.
     this.onRequest("/getOptions", () => ({ categories: featureOptionCategories, options: featureOptions }));
   }
 }

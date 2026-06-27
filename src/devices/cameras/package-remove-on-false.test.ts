@@ -1,6 +1,6 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * package-remove-on-false.test.ts: The package camera's remove-on-false lifecycle (BC2) - the stability-gated, graced reconcile and detach.
+ * package-remove-on-false.test.ts: The package camera's remove-on-false lifecycle - the stability-gated, graced reconcile and detach.
  *
  * This suite drives the doorbell capability's reconcilePackageCamera - the single lifecycle chokepoint for both directions of the controller's hasPackageCamera
  * capability flag - against the harness NVR double's recorded removal machinery, which mirrors the production chokepoint (the stability gate, the per-UUID
@@ -301,7 +301,7 @@ describe("package camera remove-on-false (BC2)", () => {
 
     // Unwind the doorbell's observers before removing the record - hygiene that isolates the captured stillGone closure from any live observer reaction. The captured
     // closure is exactly what the production fire would run, and it must hold its absence tolerance independently of any live instance. (Every doorbell selector now
-    // hoists its plain id at spawn, including the chime-volume selector that 2c-0 fixed, so the live instance no longer throws against a removed record either.)
+    // hoists its plain id at spawn, including the chime-volume selector, so the live instance no longer throws against a removed record either.)
     harness.doorbell.cleanup();
 
     await settle();

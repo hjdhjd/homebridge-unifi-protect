@@ -187,7 +187,7 @@ describe("reachability (real ProtectDevice)", () => {
     assert.equal(occupancy.getCharacteristic(Characteristic.StatusActive).value, true, "the occupancy sensor's StatusActive reflects the reachable state");
     assert.equal(toggle.testCharacteristic(Characteristic.StatusActive), false, "the switch never gained a StatusActive characteristic - the fan-out left it untouched");
 
-    // Unreachable (a controller outage): every StatusActive-bearing service goes inactive, the real improvement over the v4 stale-active behavior.
+    // Unreachable (a controller outage): every StatusActive-bearing service goes inactive, the real improvement over leaving them stale-active.
     connection.isHealthy = false;
     instance.refreshReachability();
 

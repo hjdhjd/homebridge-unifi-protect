@@ -99,10 +99,10 @@ export interface ProtectDeviceContext {
 export abstract class ProtectDevice extends ProtectBase implements ProtectDeviceContext {
 
   public accessory: ProtectAccessory;
-  // Per-accessory abort controller, composed against the NVR signal via composeSignals (the HBPU primitive). Aborting it (cleanup, device removal) tears down every
-  // observe loop this accessory spawned. Replaces the listeners Map plus nvr.events.off bookkeeping that the EventEmitter model required.
+  // Per-accessory abort controller, composed against the NVR signal via composeSignals (the homebridge-plugin-utils primitive). Aborting it (cleanup, device removal)
+  // tears down every observe loop this accessory spawned.
   protected readonly controller: AbortController;
-  // The live v5 projection for this device. Holds (client, id), reads through to the store on every config access. Set once at construction; never reassigned -
+  // The live projection for this device. Holds (client, id), reads through to the store on every config access. Set once at construction; never reassigned -
   // the accessory's identity is its MAC, stable across reboots, so the handle never goes stale. Injected by the NVR root when constructing the accessory, which
   // knows the concrete projection type at the point of adoption (Camera | Light | Sensor | Chime | Viewer); subclasses narrow at their own constructor.
   protected readonly device: Camera | Light | Sensor | Chime | Viewer;
@@ -112,10 +112,10 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
   protected readonly signal: AbortSignal;
   protected timers: Map<string, NodeJS.Timeout>;
 
-  // The constructor initializes key variables and calls configureDevice().
+  // The constructor captures the accessory and live projection handle, wires the per-accessory abort controller and its composed signal, and seeds the hints and timers
+  // state; device configuration is wired separately by the NVR root after construction.
   constructor(nvr: ProtectNvr, accessory: ProtectAccessory, device: Camera | Light | Sensor | Chime | Viewer) {
 
-    // Call the constructor of our base class.
     super(nvr);
 
     this.accessory = accessory;
@@ -126,10 +126,10 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
     this.timers = new Map();
   }
 
-  // Read-through config. The live v5 projection delivers the current config on every access - no held snapshot, no merge, no reassignment. Subclasses reading
+  // Read-through config. The live projection delivers the current config on every access - no held snapshot, no merge, no reassignment. Subclasses reading
   // this.ufp.<field> at HomeKit-callback rates pay one getter chain in nanoseconds; if profiling later names a hot read site, scope-local-hoist the read-through
   // once into a local at the top of the scope and read fields off the local for the duration. Never cache as an accessory field - that re-introduces the held-state
-  // model this migration removes, which would violate the single source of truth.
+  // model we deliberately do not keep, which would violate the single source of truth.
   public get ufp(): Readonly<ProtectDeviceConfigTypes> {
 
     return this.device.config;
@@ -416,6 +416,7 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
         // Check to see if motion events are disabled.
         if(switchService && !switchService.getCharacteristic(this.hap.Characteristic.On).value) {
 
+          // Motion is disabled, so snap the trigger back off. The ~50ms cosmetic bounce is deliberately left out of this.timers; it need not survive cleanup().
           setTimeout(() => triggerService.updateCharacteristic(this.hap.Characteristic.On, false), 50);
 
         } else {
@@ -433,6 +434,7 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
       // If the motion sensor is still on, we should be as well.
       if(motionService?.getCharacteristic(this.hap.Characteristic.MotionDetected).value) {
 
+        // Re-arm the trigger to track the still-active motion sensor. Same ~50ms cosmetic bounce, deliberately left out of this.timers; it need not survive cleanup().
         setTimeout(() => triggerService.updateCharacteristic(this.hap.Characteristic.On, true), 50);
       }
     });
@@ -612,17 +614,17 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
     return name ? RESERVED_NAMES.has(name.toUpperCase()) : false;
   }
 
-  // Two-scope reachability: controller health gates every device at once (a controller outage freezes device.isOnline at a stale value, so it cannot be trusted
-  // alone), device.isOnline gates each device. This is the single HBUP availability helper - there is no parallel mechanism. StatusActive characteristics across the
+  // Two-scope reachability: controller health gates every device at once (a controller outage freezes device.isOnline at a stale value, so it cannot be trusted alone),
+  // device.isOnline gates each device. This is the plugin's single availability helper - there is no parallel mechanism. StatusActive characteristics across the
   // accessory read this; operation-initiation gates read this; HKSV composes its readiness gate (buffer >= 10s) at its call site, never inside here. The library
-  // deliberately does NOT ship this composition (a v5 design decision: isOnline is last-known device state) - HBUP is the consumer that composes per-operation
-  // reachability.
+  // deliberately does NOT ship this composition (a deliberate design decision: isOnline is last-known device state) - the plugin is the consumer that composes
+  // per-operation reachability.
   public get isReachable(): boolean {
 
     return this.nvr.client.connection.isHealthy && this.device.isOnline;
   }
 
-  // Spawn this accessory's narrow-selector state observers (Fork B): one for-await loop per reaction, each yielding only when its watched slice changes by reference, so
+  // Spawn this accessory's narrow-selector state observers: one for-await loop per reaction, each yielding only when its watched slice changes by reference, so
   // idle wake-ups are structurally zero (the store's Object.is dedup is upstream of the yield). Leaves override and call super to add their device-specific reactions;
   // the base owns the one reaction every device class shares - syncing the controller's name into HomeKit - so a rename propagates whatever the device kind. Each loop
   // binds to this.signal, so cleanup()/reconfigure/shutdown tear them all down through the per-accessory controller abort.
@@ -635,7 +637,7 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
 
     // Device information (model, serial, firmware) is set once at configure; the firmware revision is the only field that changes at runtime, on a Protect firmware
     // update. A narrow observe on that slice refreshes the AccessoryInformation service when (and only when) firmware changes - restoring the per-refresh
-    // configureInfo the v4 syncDevices loop ran.
+    // configureInfo the syncDevices loop ran.
     this.observeState({ key: "device.firmwareVersion", selector: state => this.deviceConfigSelector()(state)?.firmwareVersion, title: "device information" },
       () => this.configureInfo());
   }
@@ -705,7 +707,7 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
     return this.ufp.name ?? this.ufp.marketName;
   }
 
-  // Sync the controller's device name into HomeKit when the user enabled name syncing. Restores the v4 controller-side-rename propagation that the dissolved event
+  // Sync the controller's device name into HomeKit when the user enabled name syncing. Restores the controller-side-rename propagation that the dissolved event
   // pipeline used to perform: the cooked display name is the syncedName derivation above, and we only touch HomeKit (and log) when it actually differs from the current
   // accessory name, so the idempotent re-read on an unrelated name-slice yield is silent.
   protected syncNameFromController(): void {
@@ -774,16 +776,16 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
     return this.ufp.mac;
   }
 
-  // Utility function to return the fully enumerated name of this device. The v5 projection's name getter resolves config.name ?? config.displayName per the
-  // DeviceProjection convention. This is one read path, single-sourced with v5.
+  // Utility function to return the fully enumerated name of this device. The projection's name getter resolves config.name ?? config.displayName per the
+  // DeviceProjection convention. This is one read path, single-sourced through the projection.
   public override get name(): string {
 
     return this.device.name;
   }
 
-  // The log-line prefix for a device, decorated with the model - "Name [Model]" - so every device-scoped line shows which hardware produced it, restoring the pre-v5
-  // format. The format is single-sourced through describeDevice (plain mode) reading the live v5 projection via this.ufp, so a device rename reflects immediately; the
-  // functional `name` above is left bare and untouched.
+  // The log-line prefix for a device, decorated with the model - "Name [Model]" - so every device-scoped line shows which hardware produced it. The format is
+  // single-sourced through describeDevice (plain mode) reading the live projection via this.ufp, so a device rename reflects immediately; the functional `name` above
+  // is left bare and untouched.
   protected override get logName(): string {
 
     return describeDevice(this.ufp);

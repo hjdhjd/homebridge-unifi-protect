@@ -11,4 +11,3 @@
 
 # Exclude these.
 dist/**/*.d.ts.map
-dist/protect-gendocs.*

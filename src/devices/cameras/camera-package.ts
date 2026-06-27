@@ -1,6 +1,6 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * protect-camera-package.ts: Package camera device class for UniFi Protect.
+ * camera-package.ts: Package camera device class for UniFi Protect.
  */
 import { PACKAGE_CAMERA_NAME_SUFFIX, ProtectReservedNames, packageCameraId } from "../../types.ts";
 import { buildAdvertisedResolutions, buildChannelProfile, formatResolution, isPackageChannel } from "../../media/resolution.ts";
@@ -9,6 +9,7 @@ import type { CharacteristicValue } from "homebridge";
 import type { Nullable } from "homebridge-plugin-utils";
 import { ProtectCamera } from "./camera.ts";
 import type { ProtectState } from "unifi-protect";
+import { describeDevice } from "../device-descriptor.ts";
 import { retry } from "homebridge-plugin-utils";
 import { selectCamera } from "unifi-protect";
 
@@ -57,6 +58,13 @@ export class ProtectCameraPackage extends ProtectCamera {
   protected override get syncedName(): string {
 
     return super.syncedName + PACKAGE_CAMERA_NAME_SUFFIX;
+  }
+
+  // The package camera's log prefix mirrors the syncedName seam: the parent's "Name [Model]" descriptor with the Package Camera suffix on the name, so the package's log
+  // lines are attributable instead of colliding with the parent doorbell's (they share the same projection, so the base logName would render identically).
+  protected override get logName(): string {
+
+    return describeDevice(this.ufp, { name: this.syncedName });
   }
 
   // Push the package camera's availability projection: StatusActive on the motion sensor, nothing else - exactly the surface the parent doorbell used to fan out. The
@@ -229,7 +237,7 @@ export class ProtectCameraPackage extends ProtectCamera {
       // Clear out any interval we have.
       this.clearTimer("flashlight");
 
-      // If it's dark, we're done.
+      // If it's not dark, the flashlight will not engage - reset the switch to off and we're done.
       if(!this.ufp.isDark) {
 
         setTimeout(() => service.updateCharacteristic(this.hap.Characteristic.On, false), 50);
@@ -276,7 +284,7 @@ export class ProtectCameraPackage extends ProtectCamera {
     }
 
     // Return the information we need for package camera channel access. We pin lens 2 and resolve the URL host through the inherited rtspHost chain
-    // (overrideAddress ?? connectionHost ?? host) - the 3b-iii reconcile, so the package's RTSP URLs match the parent's instead of the former raw config.address.
+    // (overrideAddress ?? connectionHost ?? host), so the package's RTSP URLs match the parent's instead of the former raw config.address.
     return buildChannelProfile(channel, { lens: 2, rtspPort: this.nvr.ufp.ports.rtsps, urlHost: this.rtspHost });
   }
 

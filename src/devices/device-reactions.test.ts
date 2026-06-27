@@ -1,6 +1,6 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * device-reactions.test.ts: Unit tests for the pure decision functions the per-device state observers (Fork B) rest on.
+ * device-reactions.test.ts: Unit tests for the pure decision functions the per-device state observers rest on.
  *
  * The device leaves themselves are not directly importable in a unit test - the camera leaf transitively drags the streaming stack, and the others stand up a HAP
  * accessory at construction - so the reaction decisions that warrant pinning are extracted as pure functions and exercised here in isolation. The camera-to-doorbell
@@ -18,9 +18,9 @@ describe("doorbell reconcile decision (doorbellReconcileAction)", () => {
   test("the exhaustive 2x2 over (hasCapability, isDoorbell) maps to the four live-attach actions", () => {
 
     // The full truth table over the two inputs: whether this camera already has a doorbell capability attached, and the camera's current featureFlags.isDoorbell. The
-    // live-attach replaces the former teardown+recreate, so the four actions are: a late-arriving doorbell flag on a plain camera attaches the capability; a withdrawn
-    // flag on a camera that still has one is reported (observability-only, nothing removed); a plain camera with no capability sweeps any stale doorbell-only services;
-    // and a steady doorbell (with its capability) or a steady plain camera (with none) is a no-op.
+    // live-attach model attaches the capability in place rather than tearing down and recreating, so the four actions are: a late-arriving doorbell flag on a plain
+    // camera attaches the capability; a withdrawn flag on a camera that still has one is reported (observability-only, nothing removed); a plain camera with no
+    // capability sweeps any stale doorbell-only services; and a steady doorbell (with its capability) or a steady plain camera (with none) is a no-op.
     const cases: { expected: ReturnType<typeof doorbellReconcileAction>; hasCapability: boolean; isDoorbell: boolean }[] = [
 
       { expected: "attach", hasCapability: false, isDoorbell: true },

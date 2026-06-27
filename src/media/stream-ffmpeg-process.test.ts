@@ -12,7 +12,8 @@
  * Honest scope note: this covers the DECISION, where all the policy risk lives, and the compile-time exhaustiveGuard in the dispatcher closes the "an unhandled verdict
  * slips through" risk (a future fourth verdict is a tsc error, not a silent canonical dump). The one residual we cannot reach is a mis-wired EFFECT inside one of the
  * three handled case bodies, because reaching the dispatcher requires constructing the class, which spawns an FFmpeg child and needs a real FfmpegOptions this suite does
- * not build. That dispatch is three lines of trivial glue verified by inspection, and HBPU's own process tests cover the base super.logFailedTeardown dump.
+ * not build. That dispatch is three lines of trivial glue verified by inspection, and homebridge-plugin-utils' own process tests cover the base super.logFailedTeardown
+ * dump.
  */
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";

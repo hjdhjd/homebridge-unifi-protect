@@ -6,27 +6,27 @@ import type { TypedEvent } from "unifi-protect";
 import diagnosticsChannel from "node:diagnostics_channel";
 
 /**
- * HBUP's forward-only observability surface, expressed as `node:diagnostics_channel` publishers - the very primitive the unifi-protect library uses for its own
+ * The plugin's forward-only observability surface, expressed as `node:diagnostics_channel` publishers - the very primitive the unifi-protect library uses for its own
  * channels, so there is one observability idiom across the plugin and the library it consumes. A subscriber attaches to a channel to watch an internal lifecycle
  * event without the plugin having to grow bespoke logging hooks or per-event callback parameters; every publisher gates on `hasSubscribers` before building a
  * payload, so there is exactly zero cost when nobody is listening.
  *
  * Channel names follow a stable `hbup:<subsystem>:<event>` taxonomy and are declared exactly once here; call sites import the publisher they need rather than
  * re-deriving the channel-name string, so a rename is a single edit and a typo is impossible at the call site. This is the mirror of the library's diagnostics
- * module, kept deliberately small: the wider perf observers (the per-accessory observer-wake and the firehose-dispatch channels) arrive with the build steps that
- * introduce the loops they instrument.
+ * module, kept deliberately small: the four channels declared here - firehose dispatch, controller lifecycle, the per-accessory observer-wake, and the
+ * reachability fan-out - cover the plugin's internal lifecycle and per-device reaction points.
  */
 export const channels = {
 
   // The typed-firehose router dispatched an activity event (motion, smart detection, doorbell ring, access) to a HomeKit delivery method. Fires once per routed event
-  // that reaches a delivery method, carrying the discriminated kind and the addressed camera id.
+  // that reaches a delivery method, carrying the discriminated kind and, when a target accessory was resolved, the addressed camera id.
   firehoseDispatch: diagnosticsChannel.channel("hbup:firehose:dispatch"),
 
   // An NVR-level lifecycle transition: the terminal shutdown abort, the controller-state milestones observed from the connection monitor, and the post-connect
-  // "connected" announcement. The single forward-only window onto the controller's lifecycle from HBUP's side.
+  // "connected" announcement. The single forward-only window onto the controller's lifecycle from the plugin's side.
   nvrLifecycle: diagnosticsChannel.channel("hbup:nvr:lifecycle"),
 
-  // A per-accessory narrow-selector observer (Fork B) yielded - its watched slice changed and its reaction is about to run. The single forward-only window onto the
+  // A per-accessory narrow-selector observer yielded - its watched slice changed and its reaction is about to run. The single forward-only window onto the
   // per-device reaction model, naming which accessory woke and which slice triggered it, so a debug subscriber can confirm an observer wakes only on its own field
   // rather than on routine config churn.
   observerWake: diagnosticsChannel.channel("hbup:observer:wake"),
@@ -48,7 +48,7 @@ export interface FirehoseDispatchPayload {
 
 /**
  * Payload published on {@link channels.nvrLifecycle}. `event` names the lifecycle milestone: `connected` after a successful connect, `shuttingDown` at the terminal
- * abort chokepoint, and `controllerLost` / `controllerRebooted` / `controllerRecovered` as forwarded from the connection monitor's blessed events.
+ * abort chokepoint, and `controllerLost` / `controllerRebooted` / `controllerRecovered` as forwarded from the connection monitor's events.
  */
 export interface NvrLifecyclePayload {
 

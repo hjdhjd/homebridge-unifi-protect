@@ -27,6 +27,7 @@ export default hbPluginUtils({
   // We turn off only those four rules for test infrastructure so the rest of the strict preset still applies. Mirrors the same admission v5 (unifi-protect) uses
   // so a single test idiom carries across both repos.
   extraConfigs: [
+    // server.js runs in Node, so it needs console and fetch declared as readonly globals - the js preset applied to that file pattern does not supply them on its own.
     { files: ["homebridge-ui/server.js"], languageOptions: { globals: { console: "readonly", fetch: "readonly" } } },
     {
 

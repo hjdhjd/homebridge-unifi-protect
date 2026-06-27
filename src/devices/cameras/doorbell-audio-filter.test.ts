@@ -1,6 +1,6 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * doorbell-audio-filter.test.ts: The 2c-iii doorbell audio-filter Nyquist fix - getAudioFilters validates each user-configured highpass/lowpass against the Nyquist limit
+ * doorbell-audio-filter.test.ts: The doorbell audio-filter Nyquist fix - getAudioFilters validates each user-configured highpass/lowpass against the Nyquist limit
  * (half the input sample rate), so the rate the call sites feed it determines whether a filter in the 8-24 kHz band survives. Doorbells deliver audio at 48 kHz (Nyquist
  * 24 kHz) while every other camera delivers at 16 kHz (Nyquist 8 kHz); the former hard-coded 16000 at both call sites silently dropped a doorbell user's 8-24 kHz
  * filters. This suite pins the corrected behavior at the getAudioFilters boundary: fed the doorbell's true 48 kHz, a 9 kHz lowpass survives; fed 16 kHz, it is dropped.
@@ -14,7 +14,7 @@ import { ProtectCamera } from "./camera.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
 import assert from "node:assert/strict";
 
-describe("doorbell audio-filter Nyquist validation (2c-iii)", () => {
+describe("doorbell audio-filter Nyquist validation", () => {
 
   test("an 8-24 kHz filter is validated against the source rate: kept at the doorbell's 48 kHz, dropped at a non-doorbell's 16 kHz", async () => {
 

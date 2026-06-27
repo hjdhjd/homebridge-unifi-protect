@@ -196,7 +196,7 @@ export function selectChannelProfile(entries: readonly ChannelProfile[], request
 
       // An exact channel-dimension match wins outright (we ignore FPS - HomeKit clients handle it just fine). Among the entries sharing that channel, prefer the one
       // whose advertised resolution ALSO equals the native dimensions over a higher-sorted synthetic that overstates them, so the returned entry's .resolution honestly
-      // describes the chosen source (D8 - the channel was always correct; this corrects the label). The fully-exact find falls back to the first channel match, which is
+      // describes the chosen source (the channel was always correct; this corrects the label). The fully-exact find falls back to the first channel match, which is
       // defined within this guard.
       const exact = entries.find((e) => (e.channel.width === request.width) && (e.channel.height === request.height));
 
@@ -233,7 +233,7 @@ export function selectChannelProfile(entries: readonly ChannelProfile[], request
 //
 // The list build is preference-free: each candidate's closest-match uses the bias-lower nearest selection, mapping every HomeKit resolution to the highest channel at or
 // below it. The streaming-quality preference (Video.Stream.Only.X) is a request-time concern the selectChannel wrapper applies when a stream starts; it must not bias
-// which resolutions we advertise (D1-heal, 3b-ii - the leak that, before this, also pinned the HKSV recording default to the streaming channel on constrained hosts).
+// which resolutions we advertise (the leak that, before this, also pinned the HKSV recording default to the streaming channel on constrained hosts).
 export function buildAdvertisedProfiles(nativeEntries: readonly ChannelProfile[]): ChannelProfile[] {
 
   // Copy the native entries into a mutable working list and sort it high to low. We never mutate the caller's array.
@@ -274,7 +274,7 @@ export function buildAdvertisedProfiles(nativeEntries: readonly ChannelProfile[]
     }
 
     // Find the closest RTSP match for this resolution: the bias-lower nearest selection over the pre-sorted entries, with no pixel cap and no streaming preference (the
-    // list is preference-free - D1-heal). This maps the candidate to the highest channel at or below it.
+    // list is preference-free). This maps the candidate to the highest channel at or below it.
     const foundRtsp = selectChannelProfile(entries, { bias: "lower", height: candidate[1], mode: "nearest", width: candidate[0] });
 
     if(!foundRtsp) {

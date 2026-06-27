@@ -60,7 +60,7 @@ function makeChannelProfile(host: TestCameraHost): ChannelProfile {
 }
 
 // Build one media Segment around a fragment's bytes. processSegment reads only type, discontinuity, and data; moof/mdat are type-required, so we supply the fragment's
-// own. The optional discontinuity flag marks the first media after a reconnect (the v5 discontinuity:true), which the timeshift's discontinuity gate keys on.
+// own. The optional discontinuity flag marks the first media after a reconnect (the unifi-protect discontinuity:true), which the timeshift's discontinuity gate keys on.
 function makeMediaSegment(fragment: { data: Buffer; mdat: Buffer; moof: Buffer }, options: { discontinuity?: boolean } = {}): Segment {
 
   if(options.discontinuity) {

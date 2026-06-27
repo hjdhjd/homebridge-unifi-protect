@@ -9,12 +9,13 @@ import type { Camera, HttpRequestEndPayload, LivestreamRecoveryRecoveredPayload,
 import type { HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
 import type { NvrLifecyclePayload, ReachabilityFanoutPayload } from "../diagnostics.ts";
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_NVR_CONTROLLER_DISABLED_SETTLE_DELAY, PROTECT_NVR_REBOOT_CONFIRM_GRACE_MS, PROTECT_NVR_REBOOT_DEFERRAL_MAX,
-  PROTECT_NVR_REBOOT_INTERVAL, PROTECT_NVR_REBOOT_MIN_INTERVAL, PROTECT_NVR_REMOVAL_STABILITY_WINDOW } from "../settings.ts";
+  PROTECT_NVR_REBOOT_INTERVAL, PROTECT_NVR_REBOOT_MIN_INTERVAL, PROTECT_NVR_REBOOT_RECENCY_MS, PROTECT_NVR_REMOVAL_STABILITY_WINDOW } from "../settings.ts";
 import type { ProtectAccessory, ProtectAccessoryContext, ProtectDeviceConfigTypes, ProtectDeviceTypes, ProtectDevices } from "../types.ts";
 import { ProtectClient, channels as protectChannels, selectAdoptedCameraIds, selectAdoptedChimeIds, selectAdoptedLightIds, selectAdoptedSensorIds,
   selectAdoptedViewerIds } from "unifi-protect";
 import { ProtectDeviceCategories, exhaustiveGuard } from "../types.ts";
-import { computeStableSince, createConnectRetryPolicy, isStabilityWindowElapsed, isSuccessfulRequest, membershipDelta } from "./nvr-policy.ts";
+import { computeStableSince, createConnectRetryPolicy, createLivestreamEpisodeLatch, isInducedDisruption, isStabilityWindowElapsed, isSuccessfulRequest,
+  isWithinRebootRecency, membershipDelta, shouldResumeFromInducedReboot } from "./nvr-policy.ts";
 import { DoorbellCapability } from "../devices/cameras/doorbell.ts";
 import { NvrHealth } from "./nvr-health.ts";
 import { ProtectCamera } from "../devices/cameras/camera.ts";
@@ -56,7 +57,7 @@ export type NvrPhase = "connecting" | "rebooting" | "running" | "shuttingDown";
 export class ProtectNvr {
 
   private api: API;
-  // The v5 client - the single owner of protocol truth (reduced state, realtime decode, refresh failsafe, connection health). Established by connect() via
+  // The unifi-protect client - the single owner of protocol truth (reduced state, realtime decode, refresh failsafe, connection health). Established by connect() via
   // ProtectClient.connect() and torn down through its Symbol.asyncDispose. Definite-assignment typed for the connected lifetime; it is genuinely undefined only in the
   // narrow window before the first connect() (guarded where that window is reachable, e.g. disconnect()).
   public client!: ProtectClient;
@@ -77,6 +78,15 @@ export class ProtectNvr {
   // True once the controller has reached good-state at least once. Distinguishes the initial startup entry (uptime-backdated) from a later recovery (counted from now).
   private hasStabilizedOnce: boolean;
   public readonly health: NvrHealth;
+  // The plugin's own-clock timestamp (Date.now()) of the last controller reboot we observed via the library's jitter-thresholded `controllerRebooted` event, or null
+  // until one is seen this process. The per-camera livestream-disruption logs read this to recognize a blip that is the tail of a recent reboot - which fires after the
+  // plugin has left the induced phase - and quiet it, distinct from a genuine single-camera drop. Not a controller clock: it is when WE observed the reboot, on our own
+  // wall clock.
+  private lastRebootObservedAt: Nullable<number>;
+  // Per-episode quiet-classification latch for the per-camera livestream-disruption logs. The interruption edge records whether the episode should be logged quietly
+  // (the tail of an induced disruption or a recently-observed reboot); the recovery edge - which can no longer read the phase reliably - consumes that classification.
+  // Reclaimed on the camera's removal.
+  private readonly livestreamEpisodes = createLivestreamEpisodeLatch();
   private liveviews: Nullable<ProtectLiveviews>;
   public readonly log: HomebridgePluginLogging;
   public mqtt: Nullable<MqttClient>;
@@ -95,11 +105,11 @@ export class ProtectNvr {
   private stabilityReachedTimer: Nullable<NodeJS.Timeout>;
   public systemInfo: Nullable<ProtectNvrSystemInfo>;
   private unsupportedDevices: Record<string, boolean>;
-  // The v5 client logger. Shares the controller-log destination but gates error output through `logApiErrors` so induced-disruption noise is suppressed, exactly as the
-  // v4 ProtectApi logger did. Typed as v5's own ProtectLogging seam so it is single-sourced with the contract ProtectClient.connect() expects.
+  // The unifi-protect client logger. Shares the controller-log destination but gates error output through `logApiErrors` so induced-disruption noise is suppressed. Typed
+  // as the unifi-protect library's own ProtectLogging seam so it is single-sourced with the contract ProtectClient.connect() expects.
   private readonly clientLog: ProtectLogging;
   // The device-category -> adopted-id-selector SSOT. The membership observe loops, the stability sweep, and the per-fire stillGone re-check all read the live adopted
-  // set through this one map, so the five content-memoized v5 selectors are wired in exactly one place rather than re-listed at each reader.
+  // set through this one map, so the five content-memoized selectors are wired in exactly one place rather than re-listed at each reader.
   private readonly adoptedIdSelectors: Record<keyof ProtectDeviceTypes, (state: ProtectState) => readonly string[]> = {
 
     camera: selectAdoptedCameraIds,
@@ -120,6 +130,7 @@ export class ProtectNvr {
     this.featureLog = {};
     this.hap = this.api.hap;
     this.hasStabilizedOnce = false;
+    this.lastRebootObservedAt = null;
     this.liveviews = null;
     this.mqtt = null;
     this.name = nvrOptions.name ?? nvrOptions.address;
@@ -132,7 +143,7 @@ export class ProtectNvr {
     this.systemInfo = null;
     this.unsupportedDevices = {};
 
-    // Configure the v5 client logging. Error output is gated by `logApiErrors` so induced disruptions stay quiet.
+    // Configure the unifi-protect client logging. Error output is gated by `logApiErrors` so induced disruptions stay quiet.
     this.clientLog = {
 
       debug: (message: string, ...parameters: unknown[]): void => { this.platform.debug(util.format(message, ...parameters)); },
@@ -158,8 +169,8 @@ export class ProtectNvr {
 
     // Initialize the NVR-health observer. This is the single source of truth across the plugin for the NVR's current operating condition. Every subsystem that
     // wants to make a stress-aware decision reads `this.health.state`; every subsystem that observes a symptom calls `this.health.observe(...)`. Its connection
-    // inputs are wired below (request outcomes) and in connect() (throttle rails), so they flow from the v5 client's observability surface without each call site
-    // needing its own hook.
+    // inputs are wired below (request outcomes) and in connect() (throttle rails), so they flow from the unifi-protect client's observability surface without each
+    // call site needing its own hook.
     this.health = new NvrHealth();
 
     // Apply initial-phase side effects. Phase is `connecting` until the first successful connect(); during connecting, health observation is suspended (we have
@@ -225,10 +236,10 @@ export class ProtectNvr {
       return;
     }
 
-    // Wire the NVR-health request-outcome inputs from v5's process-global HTTP diagnostics channel. The channel carries every request from every client in the
-    // process, so we filter by this controller's host to keep each NVR's health scoped to its own controller. A 2xx is recovery evidence; everything else (an error,
-    // or a non-2xx status) is a stress symptom. Wired here - past the address guard, so a misconfigured controller never subscribes - and detached on the terminal
-    // shutdown signal (which the SHUTDOWN handler below guarantees fires). Observation is gated by the health observer's own suspend/resume, so symptoms during
+    // Wire the NVR-health request-outcome inputs from the unifi-protect library's process-global HTTP diagnostics channel. The channel carries every request from every
+    // client in the process, so we filter by this controller's host to keep each NVR's health scoped to its own controller. A 2xx is recovery evidence; everything else
+    // (an error, or a non-2xx status) is a stress symptom. Wired here - past the address guard, so a misconfigured controller never subscribes - and detached on the
+    // terminal shutdown signal (which the SHUTDOWN handler below guarantees fires). Observation is gated by the health observer's own suspend/resume, so symptoms during
     // connecting or induced disruptions are dropped.
     const onRequestEnd = (message: unknown): void => {
 
@@ -246,7 +257,8 @@ export class ProtectNvr {
     this.signal.addEventListener("abort", () => protectChannels.httpRequestEnd.unsubscribe(onRequestEnd), { once: true });
 
     // Wire the livestream stall/recovery health and log feeds. Same once-per-NVR setup site as the API-health feed above: past the address guard and detached on the
-    // terminal shutdown signal. v5's livestream-recovery channels are process-global, so this subscribes exactly once and never re-wires per reconnect.
+    // terminal shutdown signal. The unifi-protect library's livestream-recovery channels are process-global, so this subscribes exactly once and never re-wires per
+    // reconnect.
     this.wireLivestreamHealth();
 
     // Cleanly shut down on Homebridge exit.
@@ -282,18 +294,18 @@ export class ProtectNvr {
       // disruptions; without this transition the disconnect below would fan out as if cameras were failing unexpectedly.
       this.transition("shuttingDown");
 
-      // Disconnect from the controller. This tears down active HomeKit streams, HKSV timeshift buffers, and the v5 client connection.
+      // Disconnect from the controller. This tears down active HomeKit streams, HKSV timeshift buffers, and the unifi-protect client connection.
       void this.disconnect();
     });
   }
 
   /**
-   * Wire the NVR-health and user-facing log feeds for livestream disruptions, sourced from v5's process-global livestream-recovery diagnostics channels. v5 owns the
-   * recovery protocol and publishes each episode's lifecycle on these channels; HBUP translates them into its own health model and its own per-camera logs, scoped to
-   * this controller's cameras.
+   * Wire the NVR-health and user-facing log feeds for livestream disruptions, sourced from the unifi-protect library's process-global livestream-recovery diagnostics
+   * channels. The library owns the recovery protocol and publishes each episode's lifecycle on these channels; the plugin translates them into its own health model and
+   * its own per-camera logs, scoped to this controller's cameras.
    *
    * We subscribe the two episode-boundary channels - `recovery:started` (a stream was disrupted; the episode begins) and `recovery:recovered` (it resumed). These are
-   * the faithful re-home of the pre-v5 stall/recovery health feed: one stress symptom per disruption episode, one recovery symptom per recovery, so a recovered episode
+   * the stall/recovery health feed: one stress symptom per disruption episode, one recovery symptom per recovery, so a recovered episode
    * nets zero and a failed one (started, never recovered) stays +1 - correct stress accounting with no double count. The other livestream channels are deliberately not
    * consumed here: `stall:detected` is a subset of `recovery:started` (every detected stall begins an episode) and consuming both would double-count;
    * `recovery:exhausted` is the consumer-side self-heal's concern; `session:closed`/`codec:changed` are neither health nor log signals.
@@ -305,7 +317,7 @@ export class ProtectNvr {
   private wireLivestreamHealth(): void {
 
     // A livestream was disrupted and an episode begins. Feed the +1 stress symptom (keyed on the episode start, so it also catches socket-close disruptions the narrow
-    // stall channel misses) and warn the user immediately so a stream in trouble is visible while it is happening.
+    // stall channel misses) and surface it to the user at the level the classification below decides, so a stream in genuine trouble is visible while it is happening.
     const onRecoveryStarted = (message: unknown): void => {
 
       const payload = message as LivestreamRecoveryStartedPayload;
@@ -316,8 +328,27 @@ export class ProtectNvr {
         return;
       }
 
+      // Classify whether to log this episode quietly, and record that so the recovery edge - which cannot read the phase reliably, the controller having returned by then
+      // - consults the same classification. Quiet is the SUPERSET of two cases the phase alone cannot cover: an interruption observed while still rebooting/shutting down
+      // (induced), AND the post-return re-establishment blip of a controller reboot, whose recovery:started fires at episode entry seconds after the controller returned,
+      // by which point the plugin has already concluded the reboot and resumed running - so isInducedDisruption(this.phase) reads false here and the recency half
+      // catches it. This sits AFTER the ownership guard above: the unifi-protect library's recovery channels are process-global, so recording before the guard would
+      // latch every OTHER controller's cameras too, and our own forgetCamera (scoped to our removals) could never reclaim a foreign started-never-recovered entry.
+      const quiet = isInducedDisruption(this.phase) ||
+        isWithinRebootRecency({ lastRebootMs: this.lastRebootObservedAt, nowMs: Date.now(), windowMs: PROTECT_NVR_REBOOT_RECENCY_MS });
+
+      this.livestreamEpisodes.record(payload.key, payload.cameraId, quiet);
       this.health.observe({ at: Date.now(), cameraId: payload.cameraId, kind: "livestreamStall" });
-      camera.log.warn("The livestream was interrupted and is recovering.");
+
+      // A reboot blips every camera and is already narrated once at the controller level, so the per-camera flurry drops to debug whether the reboot was induced or
+      // organic; a genuine single-camera drop on a controller that has not recently rebooted stays at warn - that one is in trouble and the noise is the signal.
+      if(quiet) {
+
+        camera.log.debug("The livestream was interrupted and is recovering.");
+      } else {
+
+        camera.log.warn("The livestream was interrupted and is recovering.");
+      }
     };
 
     // The disrupted livestream recovered. Feed the -1 recovery symptom and report the resolution and how long media was absent. `Math.max(1, ...)` avoids a nonsensical
@@ -332,15 +363,29 @@ export class ProtectNvr {
         return;
       }
 
+      // The current phase is not a reliable classification proxy here (the controller has returned), so the quiet/loud value latched at the interruption edge - not
+      // this.phase - decides the level. Consume drains the entry; a never-recovered episode is reclaimed by forgetCamera on the camera's removal.
+      const quiet = this.livestreamEpisodes.consume(payload.key);
+      const recoveredAfter = formatSeconds(Math.max(1, Math.round(payload.downtimeMs / 1000)));
+
       this.health.observe({ at: Date.now(), cameraId: payload.cameraId, kind: "livestreamRecovery" });
-      camera.log.warn("The livestream has recovered after %s.", formatSeconds(Math.max(1, Math.round(payload.downtimeMs / 1000))));
+
+      // Mirror the interruption edge: the per-camera recovery of a reboot's tail (induced or recently observed) is debug, since the library narrates the controller-level
+      // recovery; a genuine single-camera drop stays warn.
+      if(quiet) {
+
+        camera.log.debug("The livestream has recovered after %s.", recoveredAfter);
+      } else {
+
+        camera.log.warn("The livestream has recovered after %s.", recoveredAfter);
+      }
     };
 
     protectChannels.livestreamRecoveryStarted.subscribe(onRecoveryStarted);
     protectChannels.livestreamRecoveryRecovered.subscribe(onRecoveryRecovered);
 
-    // Detach both on the terminal shutdown signal, mirroring the API-health feed. The v5 channels are global and outlive any single client, so an explicit unsubscribe
-    // on shutdown is what keeps these subscriptions leak-free.
+    // Detach both on the terminal shutdown signal, mirroring the API-health feed. The unifi-protect library's channels are global and outlive any single client, so an
+    // explicit unsubscribe on shutdown is what keeps these subscriptions leak-free.
     this.signal.addEventListener("abort", () => {
 
       protectChannels.livestreamRecoveryStarted.unsubscribe(onRecoveryStarted);
@@ -368,12 +413,12 @@ export class ProtectNvr {
   }
 
   /**
-   * Read-through NVR configuration. Replaces the held bootstrap snapshot with the live v5 projection, so every `nvr.ufp.<field>` read across the plugin reflects the
-   * current reduced state with no merge and no reassignment. A read before the first successful connect() throws (the getter dereferences `this.client`, which is unset
-   * until connect() assigns it) - this is deliberate: a too-early read should fail loudly, not silently return a stale snapshot, which is the held-state footgun this
-   * migration removes. No code path reaches that throw: the constructor and the only other pre-connect path (`login()`'s global enable gate) both avoid `ufp` - the
-   * gate consults feature options by global scope, not the controller mac, and `ProtectEventDispatch` construction is now structural-only (it no longer reads
-   * `hasFeature`/`ufp`).
+   * Read-through NVR configuration. Replaces the held bootstrap snapshot with the live unifi-protect projection, so every `nvr.ufp.<field>` read across the plugin
+   * reflects the current reduced state with no merge and no reassignment. A read before the first successful connect() throws (the getter dereferences
+   * `this.client`, which is unset until connect() assigns it) - this is deliberate: a too-early read should fail loudly, not silently return a stale snapshot, which
+   * is the held-state footgun this read-through design avoids. No code path reaches that throw: the constructor and the only other pre-connect path (`login()`'s
+   * global enable gate) both avoid `ufp` - the gate consults feature options by global scope, not the controller mac, and `ProtectEventDispatch` construction is now
+   * structural-only (it no longer reads `hasFeature`/`ufp`).
    */
   public get ufp(): Readonly<ProtectNvrConfig> {
 
@@ -383,7 +428,7 @@ export class ProtectNvr {
   /**
    * Whether API error logging is currently surfaced to the user. Derived from phase: errors are visible during `connecting` (so credential or address problems
    * reach the user) and `running` (organic errors are real signal), but suppressed during `rebooting` and `shuttingDown` where the errors are induced by our own
-   * teardown. Read by the v5 client logger callback in this NVR's constructor.
+   * teardown. Read by the unifi-protect client logger callback in this NVR's constructor.
    */
   public get logApiErrors(): boolean {
 
@@ -437,11 +482,11 @@ export class ProtectNvr {
     }
   }
 
-  // Establish a connection to the Protect controller. v5's ProtectClient.connect() is atomic - it logs in, fetches the initial bootstrap, seeds the reducer, and
-  // brings up the realtime events channel as one ready-or-throws operation, owning retry/backoff and the periodic refresh failsafe internally. We wrap it in a
-  // startup-resilient retry: authentication faults get a small consecutive budget so a controller still sorting out its own auth recovers, but genuinely-wrong
-  // credentials fail fast rather than looping forever (the v4 defect); any non-auth fault resets the budget and retries unbounded until the controller appears or
-  // the shutdown signal aborts. Safe to call multiple times - each call establishes a fresh client.
+  // Establish a connection to the Protect controller. The unifi-protect library's ProtectClient.connect() is atomic - it logs in, fetches the initial bootstrap, seeds
+  // the reducer, and brings up the realtime events channel as one ready-or-throws operation, owning retry/backoff and the periodic refresh failsafe internally. We wrap
+  // it in a startup-resilient retry: authentication faults get a small consecutive budget so a controller still sorting out its own auth recovers, but genuinely-wrong
+  // credentials fail fast rather than looping forever; any non-auth fault resets the budget and retries unbounded until the controller appears or the shutdown signal
+  // aborts. Safe to call multiple times - each call establishes a fresh client.
   private async connect(): Promise<boolean> {
 
     const { shouldRetry } = createConnectRetryPolicy();
@@ -450,7 +495,8 @@ export class ProtectNvr {
 
       this.client = await retry((signal) => ProtectClient.connect({ host: this.config.address, log: this.clientLog, password: this.config.password,
         recoveryPolicy: (context) => livestreamRecoveryDecision(context,
-          { healthState: this.health.state, isHealthy: this.client.connection.isHealthy, isThrottled: this.client.connection.isThrottled, phase: this.phase }), signal,
+          { healthState: this.health.state, isHealthy: this.client.connection.isHealthy, isThrottled: this.client.connection.isThrottled, phase: this.phase },
+          this.episodeCameraReachable(context.cameraId)), signal,
         username: this.config.username }), { attempts: Infinity, shouldRetry, signal: this.signal });
     } catch(error) {
 
@@ -467,7 +513,7 @@ export class ProtectNvr {
 
     const version = this.client.nvr.config.version;
 
-    // If we are running an unsupported version of UniFi Protect, we're done. The version gate stays HBUP-side, reading the live projection post-connect.
+    // If we are running an unsupported version of UniFi Protect, we're done. The version gate stays plugin-side, reading the live projection post-connect.
     if(![ "6.", "7." ].some(v => version.startsWith(v))) {
 
       this.log.error("This version of HBUP requires running UniFi Protect v6.0 or above using the official Protect release channel only.");
@@ -476,9 +522,10 @@ export class ProtectNvr {
       return false;
     }
 
-    // Assign our log-prefix name, decorated with the controller model - "Name [Model]" via describeDevice - so every controller-scoped line shows the hardware,
-    // matching the pre-v5 prefix. The name resolution is unchanged (a user preference wins, then the controller's reported name, then its address); describeDevice only
-    // appends the bracketed model, and is reached here post-bootstrap where this.ufp is populated. Early, pre-bootstrap logs keep the bare name set in the constructor.
+    // Assign our log-prefix name, decorated with the controller model - "Name [Model]" via describeDevice - so every controller-scoped line shows the hardware
+    // in its prefix. The name resolution follows the established precedence (a user preference wins, then the controller's reported name, then its address);
+    // describeDevice only appends the bracketed model, and is reached here post-bootstrap where this.ufp is populated. Early, pre-bootstrap logs keep the bare name set
+    // in the constructor.
     this.name = describeDevice(this.ufp, { name: this.config.name ?? this.client.controllerName ?? this.config.address });
 
     // Wire the per-client connection-health inputs (throttle rails, controller-lost/recovered lifecycle) against the freshly-established client.
@@ -520,9 +567,16 @@ export class ProtectNvr {
     ];
   }
 
-  // React to a controller reboot, whether we induced it or it happened organically. We publish the lifecycle milestone (the v5 library already logs the detection at
-  // warn, so we do not duplicate it) and, if WE induced the reboot, resume normal operation. C1b adds the per-camera probesize reset here.
+  // React to a controller reboot detection, whether we induced it or it happened organically. We record when we observed it (our own-clock recency anchor), publish the
+  // lifecycle milestone (the unifi-protect library already logs the detection at warn, so we do not duplicate it), and reset each camera's probesize self-tuning. We
+  // no longer conclude an induced reboot here: the resume now rides the connection's recovery edge in startConnectionObserver, so it is driven by the connection's own
+  // health journey rather than this detection event.
   private onControllerRebooted(): void {
+
+    // Record our own-clock observation of this reboot. This is the SSOT moment the plugin learns a reboot happened (induced or organic), so it anchors the recency window
+    // the per-camera livestream-disruption logs consult to quiet a re-establishment blip that lands after the plugin has already concluded the reboot and
+    // resumed running.
+    this.lastRebootObservedAt = Date.now();
 
     this.publishLifecycle("controllerRebooted");
 
@@ -538,26 +592,25 @@ export class ProtectNvr {
 
       device.stream?.resetProbesizeOverride();
     }
-
-    this.resumeFromInducedReboot();
   }
 
-  // The connection returned to healthy after a loss. Publish the milestone, then resume normal operation if WE induced the disruption (a reboot). A recovery while we
-  // are `running` - an organic blip the connection monitor healed on its own - is a deliberate no-op: health should keep observing it as the genuine disruption it was.
+  // The connection returned to healthy after a loss. Publish the milestone; the induced-reboot resume is no longer driven here but by the connection's recovery edge in
+  // startConnectionObserver (the same non-healthy -> healthy edge this recovery represents), so this handler's sole remaining duty is the lifecycle publish.
   private onControllerRecovered(): void {
 
     this.publishLifecycle("controllerRecovered");
-    this.resumeFromInducedReboot();
   }
 
-  // Return from our own induced reboot to steady-state operation. The recovery edge (a reboot detection or a connection recovery) drives the rebooting -> running
-  // transition, but ONLY when we induced it (`_phase === "rebooting"`); an organic edge while `running` is a no-op. The un-strand contract rests on controllerRebooted,
-  // which v5 fires on any boot-time jump and is guaranteed because `upSince` is a required, always-advancing field - a future v5 change making it optional would
-  // silently reintroduce a strand, so this contract is load-bearing. We clear the no-op confirmation timer (a real recovery edge proves the reboot took effect) and
-  // reset the pre-reboot health history: the controller is freshly booted, so any stress or library-throttle state latched before the reboot is no longer relevant.
-  // The suspend held across the whole rebooting phase kept induced symptoms out of the buffer, but the latched state enum and the throttle flag clear only on a reset
-  // or a fresh clearing observation, so we reset explicitly here - restoring the clean baseline the legacy connect()-driven reset gave us. (The no-op path deliberately
-  // does NOT reset: a controller that never actually rebooted keeps its still-relevant health history.)
+  // Return from our own induced reboot to steady-state operation, called by startConnectionObserver on the connection's recovery edge (a non-healthy -> healthy
+  // transition while rebooting). The `_phase === "rebooting"` guard is a defensive method-boundary precondition: the recovery-edge predicate is the SSOT decision and
+  // this guard asserts the contract, so an organic recovery while `running` is a no-op here. The un-strand property is inherent to the recovery edge - a real reboot
+  // always drops then recovers the connection, so the edge always fires, depending on nothing but the connection's own health journey and no separate detection event.
+  // We clear the no-op confirmation timer (a real recovery edge proves the reboot took effect) and reset the pre-reboot health history: the controller is freshly
+  // booted, so any stress or library-throttle state latched before the reboot is no longer relevant. The suspend held across the whole rebooting phase kept induced
+  // symptoms out of the buffer, but the latched state enum and the throttle flag clear only on a reset or a fresh clearing observation, so we reset explicitly here -
+  // restoring the clean baseline the connect()-driven reset gives us. The library narrates the recovery itself, so we no longer log a redundant "back online"
+  // line. (The no-op path produces no recovery edge and resumes via the rebootConfirmTimer instead, which deliberately does NOT reset: a controller that never actually
+  // rebooted keeps its still-relevant health history.)
   private resumeFromInducedReboot(): void {
 
     if(this._phase !== "rebooting") {
@@ -572,19 +625,18 @@ export class ProtectNvr {
     }
 
     this.health.reset();
-    this.log.info("The controller has finished rebooting and is back online.");
     this.transition("running");
   }
 
   // Cleanly disconnect from the Protect controller. This tears down all connection-dependent resources (active HomeKit streams, HKSV timeshift buffers, the
-  // connection-health subscriptions, and the v5 client itself) while preserving one-time infrastructure (playlist servers, MQTT, event listeners).
+  // connection-health subscriptions, and the unifi-protect client itself) while preserving one-time infrastructure (playlist servers, MQTT, event listeners).
   private async disconnect(): Promise<void> {
 
     // Tear down all connection-dependent camera resources. Active HomeKit streaming sessions and HKSV timeshift buffers both depend on the controller connection.
-    // Shutting them down proactively prevents error noise from livestream self-healing and FFmpeg processes communicating with a disconnected controller. Disposing
-    // these consumers is what releases their underlying v5 livestream pool subscriptions: the camera no longer owns sessions, so there is no separate manager to
-    // shut down. This is a HARD ORDERING INVARIANT - the connection-dependent consumers (and the pool subscriptions they hold) are torn down in this loop BEFORE
-    // the v5 client is disposed below, so no subscription outlives the client it draws from. The endpoints iterator walks package cameras alongside their parents.
+    // Shutting them down proactively prevents error noise from livestream self-healing and FFmpeg processes communicating with a disconnected controller. Disposing these
+    // consumers is what releases their underlying unifi-protect livestream pool subscriptions: the camera no longer owns sessions, so there is no separate manager
+    // to shut down. This is a HARD ORDERING INVARIANT - the connection-dependent consumers (and the pool subscriptions they hold) are torn down in this loop BEFORE the
+    // unifi-protect client is disposed below, so no subscription outlives the client it draws from. The endpoints iterator walks package cameras alongside their parents.
     for(const device of this.deviceEndpoints()) {
 
       if(!(device instanceof ProtectCamera)) {
@@ -604,7 +656,7 @@ export class ProtectNvr {
 
     this.connectionSubscriptions = [];
 
-    // Dispose the v5 client - tearing down the connection monitor, livestream pool, state store, session, and transport pool, in that order. The client is
+    // Dispose the unifi-protect client - tearing down the connection monitor, livestream pool, state store, session, and transport pool, in that order. The client is
     // definite-assignment typed for the connected lifetime, but a shutdown during the initial connect can reach here before connect() assigned it; the cast guards
     // that window without widening the field's type for every connected-path read.
     const client = this.client as ProtectClient | undefined;
@@ -676,7 +728,7 @@ export class ProtectNvr {
       servePlaylist(this);
     }
 
-    // Inform the user about the devices we see, reading the live v5 projections.
+    // Inform the user about the devices we see, reading the live unifi-protect projections.
     this.log.info("Discovered controller: %s.", describeDevice(this.ufp, { includeNetwork: true, name: this.client.controllerName }));
 
     for(const config of this.deviceConfigs) {
@@ -690,11 +742,11 @@ export class ProtectNvr {
       this.log.info("Discovered %s: %s.", config.modelKey, describeDevice(config, { includeNetwork: true }));
     }
 
-    // Perform the initial device population and spawn the observe loops that keep us in sync. The bootstrap-refresh timer and the synthetic re-emit the v4 model used are
-    // gone: membership is now an observe over the content-memoized adopted-id selectors, controller health an observe over the connection monitor, and the controller-
-    // scoped accessories (system information, liveviews) each observe their own slice of the v5 projection from their own constructors - the subject owns its reactivity,
-    // the same model the per-device leaves use. Orphan cleanup no longer runs here: the stability sweep owns it now, so a cached accessory is removed only once the
-    // controller has been good for the stability window (immediately at startup for a controller already up past it, via the uptime backdate).
+    // Perform the initial device population and spawn the observe loops that keep us in sync. Membership is an observe over the content-memoized adopted-id selectors,
+    // controller health an observe over the connection monitor, and the controller-scoped accessories (system information, liveviews) each observe their own slice of the
+    // unifi-protect projection from their own constructors - the subject owns its reactivity, the same model the per-device leaves use. Orphan cleanup does not run
+    // here: the stability sweep owns it, so a cached accessory is removed only once the controller has been good for the stability window (immediately at startup for a
+    // controller already up past it, via the uptime backdate).
     this.startDeviceObservers();
 
     // Seed the initial liveview population now that the device accessories exist. A liveview switch restores its saved motion-detection state onto its member cameras, so
@@ -735,8 +787,8 @@ export class ProtectNvr {
     const intervalHours = Math.max(rebootInterval ?? PROTECT_NVR_REBOOT_INTERVAL, PROTECT_NVR_REBOOT_MIN_INTERVAL);
     const intervalMs = intervalHours * 60 * 60 * 1000;
 
-    // Anchor the schedule to the controller's actual uptime so HBUP restarts don't reset the reboot cadence. If the controller has been up longer than the interval,
-    // we schedule a reboot shortly after startup to let everything settle first.
+    // Anchor the schedule to the controller's actual uptime so plugin restarts don't reset the reboot cadence. If the controller has been up longer than the
+    // interval, we schedule a reboot shortly after startup to let everything settle first.
     const uptimeMs = this.ufp.upSince ? (Date.now() - this.ufp.upSince) : 0;
     const delayMs = Math.max(intervalMs - uptimeMs, 60 * 1000);
 
@@ -750,9 +802,9 @@ export class ProtectNvr {
   // the first reschedule (deferral or post-failure retry) on every subsequent call. This makes the deferral ceiling a pure function of the call chain rather
   // than separate mutable state on the NVR, and it lets failure-retry naturally accumulate cycle time the same way deferrals do.
   //
-  // The reboot now rides v5's `client.reboot()` and its surviving connection layer: we POST the reboot and let the connection monitor, store, and livestream pool ride
-  // the outage and auto-recover without recreating the client, rather than the legacy manual disconnect / sleep / reconnect window. The rebooting -> running transition
-  // is driven by the recovery edge (controllerRebooted / controllerRecovered wired in wireConnectionHealth), with the no-op confirmation timer as the only other exit.
+  // The reboot rides the unifi-protect client's `reboot()` and its surviving connection layer: we POST the reboot and let the connection monitor, store, and livestream
+  // pool ride the outage and auto-recover without recreating the client. The rebooting -> running transition is driven by the connection's recovery edge (a
+  // non-healthy -> healthy transition observed in startConnectionObserver), with the no-op confirmation timer the only other exit.
   private async executeScheduledReboot(intervalHours: number, cycleStart?: number): Promise<void> {
 
     // Check if any cameras are actively recording HKSV events. We defer if so, but only up to PROTECT_NVR_REBOOT_DEFERRAL_MAX cumulatively...past that ceiling we
@@ -790,9 +842,10 @@ export class ProtectNvr {
 
     try {
 
-      // Reboot the controller through v5's client. POSTs the UniFi-OS reboot and throws a classified error on a non-2xx response; the surviving connection monitor
-      // and store ride the outage and auto-recover without recreating the client, so we do NOT tear anything down here. The rebooting -> running transition is driven
-      // by the recovery edge (controllerRebooted / controllerRecovered) wired in wireConnectionHealth, with the no-op confirmation below as the only other exit.
+      // Reboot the controller through the unifi-protect client. POSTs the UniFi-OS reboot and throws a classified error on a non-2xx response; the surviving connection
+      // monitor and store ride the outage and auto-recover without recreating the client, so we do NOT tear anything down here. The rebooting -> running transition is
+      // driven by the connection's recovery edge (a non-healthy -> healthy transition observed in startConnectionObserver), with the no-op confirmation below as the only
+      // other exit.
       await this.client.reboot();
     } catch(error) {
 
@@ -810,12 +863,12 @@ export class ProtectNvr {
     this.log.info("Rebooting the Protect controller; connectivity will resume automatically once it returns.");
 
     // Confirm the reboot actually took effect. A genuine reboot drops the controller's realtime connection within seconds - it arrives as an unsolicited socket close
-    // that v5 routes straight onto its recovery rail, so connection.isHealthy goes false promptly and stays false for the minutes the controller takes to return. If,
-    // after the grace window, we are still `rebooting` AND the connection never went unhealthy, the controller never actually restarted (a silent no-op accept) and we
-    // must not stay suppressed on a perfectly healthy controller, so we resume normal monitoring. For a genuine reboot this check is inert - the connection is unhealthy
-    // well within the grace, and the recovery edge drives the return instead. The grace is generous headroom over the seconds-scale real drop (a pathologically slow-to-
-    // drop controller is the one case this could misread, and it self-heals: the late drop is then handled as an organic disruption). Cleared on the recovery edge and
-    // on shutdown.
+    // that the unifi-protect library routes straight onto its recovery rail, so connection.isHealthy goes false promptly and stays false for the minutes the controller
+    // takes to return. If, after the grace window, we are still `rebooting` AND the connection never went unhealthy, the controller never actually restarted (a silent
+    // no-op accept) and we must not stay suppressed on a perfectly healthy controller, so we resume normal monitoring. For a genuine reboot this check is inert - the
+    // connection is unhealthy well within the grace, and the recovery edge drives the return instead. The grace is generous headroom over the seconds-scale real drop (a
+    // pathologically slow-to-drop controller is the one case this could misread, and it self-heals: the late drop is then handled as an organic disruption). Cleared on
+    // the recovery edge and on shutdown.
     this.rebootConfirmTimer = setTimeout(() => {
 
       this.rebootConfirmTimer = null;
@@ -831,16 +884,16 @@ export class ProtectNvr {
     this.nvrRebootTimer = setTimeout(() => void this.executeScheduledReboot(intervalHours), intervalHours * 60 * 60 * 1000);
   }
 
-  // The live v5 device config records across every category, flattened. The single read path for the discovery dump, the by-mac lookup, and the orphan sweep, so
-  // those three readers never re-derive the controller's device inventory from a held snapshot - each is a thin map off the client's live projection collections.
+  // The live unifi-protect device config records across every category, flattened. The single read path for the discovery dump, the by-mac lookup, and the orphan sweep,
+  // so those three readers never re-derive the controller's device inventory from a held snapshot - each is a thin map off the client's live projection collections.
   private get deviceConfigs(): ProtectDeviceConfigTypes[] {
 
     return [ ...this.client.cameras.map(c => c.config), ...this.client.chimes.map(c => c.config), ...this.client.lights.map(c => c.config),
       ...this.client.sensors.map(c => c.config), ...this.client.viewers.map(c => c.config) ];
   }
 
-  // Resolve the live config record for a device id within a category, from the v5 projection. The single read path the membership reconcile uses to turn a freshly-
-  // adopted id into the record it feeds to addHomeKitDevice.
+  // Resolve the live config record for a device id within a category, from the unifi-protect projection. The single read path the membership reconcile uses to turn a
+  // freshly-adopted id into the record it feeds to addHomeKitDevice.
   private deviceConfig(category: keyof ProtectDeviceTypes, id: string): Nullable<ProtectDeviceConfigTypes> {
 
     switch(category) {
@@ -873,15 +926,14 @@ export class ProtectNvr {
     }
   }
 
-  // Resolve a device's config record by MAC from the live projections. Used by the removal log to name a device the controller still reports, replacing the v4
-  // bootstrap scan.
+  // Resolve a device's config record by MAC from the live projections. Used by the removal log to name a device the controller still reports.
   private deviceConfigByMac(mac: string): Nullable<ProtectDeviceConfigTypes> {
 
     return this.deviceConfigs.find(config => config.mac === mac) ?? null;
   }
 
-  // Reconcile one device category's HomeKit membership against the controller's current adopted-id set. This subsumes the v4 poll-driven syncDevices and the
-  // event-driven adopt/unadopt handling into one engine: an adopted id we have not configured is added; a configured device whose id has left the adopted set is
+  // Reconcile one device category's HomeKit membership against the controller's current adopted-id set. One engine handles both membership and adoption changes: an
+  // adopted id we have not configured is added; a configured device whose id has left the adopted set is
   // removed. The content-memoized adopted-id selectors wake the observe loop only on a genuine membership change (add, removal, or adoption flip), never on the
   // continuous lastSeen/stats churn, so the reconcile cost scales with real membership deltas rather than with refresh frequency. Called once at login with the
   // current snapshot (initial population) and on each subsequent observe yield (ongoing deltas) - one function, both roles.
@@ -901,7 +953,7 @@ export class ProtectNvr {
     }
 
     // Mark for removal any configured device that has left the adopted set - but ONLY when the controller is stable (good for >= the window). During or right after a
-    // disruption we mark nothing; the controller may merely be re-adopting, and the stability sweep re-evaluates once it settles. The v5 content-memoized adopted-id
+    // disruption we mark nothing; the controller may merely be re-adopting, and the stability sweep re-evaluates once it settles. The content-memoized adopted-id
     // selector already ignores transient disconnect churn (a disconnected-but-adopted device stays in the set), so a toRemove id is a genuine unadopt; the stability gate
     // adds the destructive-action safety on top. Marking honors the user's DelayDeviceRemoval grace before the actual removal.
     if(this.removalStable) {
@@ -918,18 +970,18 @@ export class ProtectNvr {
     }
   }
 
-  // The set of MACs the controller currently reports as adopted by us (not adopted-by-other), from the live v5 projection. The SSOT for "is this device still ours?",
-  // read by the orphan sweep's known-set and re-read by each orphan-removal grace predicate so the fire-time check sees the live adopted set, not a stale snapshot.
+  // The set of MACs the controller currently reports as adopted by us (not adopted-by-other), from the live unifi-protect projection. The SSOT for "is this device still
+  // ours?", read by the orphan sweep's known-set and re-read by each orphan-removal grace predicate so the fire-time check sees the live adopted set, not a stale
+  // snapshot.
   private currentAdoptedMacs(): Set<string> {
 
     return new Set(this.deviceConfigs.filter(config => config.isAdopted && !config.isAdoptedByOther).map(config => config.mac));
   }
 
   // Sweep cached accessories that are no longer present on the controller. Homebridge restores previously-registered accessories at startup; any belonging to this
-  // controller whose device the controller no longer reports as adopted is an orphan we remove. This replaces the v4 cleanupDevices orphan pass, reading the live
-  // projection inventory rather than a held bootstrap. Liveview, security-system, and system-information accessories are managed elsewhere and skipped. Removal now runs
-  // through the same DelayDeviceRemoval grace as a membership leave, with a fire-time predicate that re-reads the live adopted-mac set so an orphan re-adopted during the
-  // grace is not removed.
+  // controller whose device the controller no longer reports as adopted is an orphan we remove. It reads the live adopted-mac projection rather than a held bootstrap.
+  // Liveview, security-system, and system-information accessories are managed elsewhere and skipped. Removal runs through the same DelayDeviceRemoval grace as a
+  // membership leave, with a fire-time predicate that re-reads the live adopted-mac set so an orphan re-adopted during the grace is not removed.
   private sweepOrphans(): void {
 
     const knownMacs = this.currentAdoptedMacs();
@@ -950,10 +1002,11 @@ export class ProtectNvr {
     }
   }
 
-  // Spawn the per-category device-membership observe loops, seeding each with an initial population pass. v5's observe() yields on change, not the current value, so
-  // each loop reconciles once against the current snapshot before awaiting deltas. The loops are bound to the terminal shutdown signal and assume a stable client for
-  // the plugin's connected lifetime - the v5 invariant, since the ConnectionMonitor recovers an outage without recreating the client. (The Phase-4 scheduled-reboot
-  // loop, which does recreate the client, is the one exception, and is itself superseded by that auto-recovery; it is out of this phase's cut line.)
+  // Spawn the per-category device-membership observe loops, seeding each with an initial population pass. The unifi-protect client's observe() yields on change, not the
+  // current value, so each loop reconciles once against the current snapshot before awaiting deltas. The loops are bound to the terminal shutdown signal and assume a
+  // stable client for the plugin's connected lifetime - a unifi-protect library invariant, since the ConnectionMonitor recovers an outage without recreating the client.
+  // The scheduled reboot rides that same surviving client (it POSTs client.reboot() and lets the connection monitor auto-recover, recreating nothing), so the
+  // stable-client assumption holds across a reboot too and the loops never need re-spawning.
   private startDeviceObservers(): void {
 
     for(const key of Object.keys(this.adoptedIdSelectors) as (keyof ProtectDeviceTypes)[]) {
@@ -974,15 +1027,15 @@ export class ProtectNvr {
   }
 
   // Recompute the controller's good-state and drive the removal stability clock. Good means running AND reachable AND healthy: phase===running excludes induced
-  // disruptions, connection.isHealthy is v5's authoritative reachability fact (it closes the gate promptly on a socket-dropping outage - reboot, network loss, TCP RST -
-  // and the symptom-rate health model alone drifts back to healthy during a quiet outage, so we must read the connection fact directly), and health.state===healthy
-  // excludes a reachable-but-stressed controller. The fourth conjunct, hasFeature("Device"), means a feature-disabled controller never reaches good-state, so the
-  // stability sweep never arms during the disabled-controller startup path (login's sleep window). The conjunct ordering is LOAD-BEARING: this._phase==="running"
-  // short-circuits BEFORE this.client.connection.isHealthy, guarding the pre-connect window where this.client is unset (do not reorder). A library throttle makes
-  // connection.isHealthy false (it derives the throttled state), so a throttle conservatively resets the clock - matching pre-v5's isThrottled queue-clear. On entering
-  // good-state we stamp controllerStableSince (uptime-backdated only on the first entry) and arm the one-shot stability sweep; on leaving it we clear the clock, the
-  // sweep timer, and EVERY pending removal - the "all bets are off, no destructive action" rule. Idempotent: re-entrant and same-state calls are no-ops. Called from
-  // transition() (phase), the health stateChange handler (health), and the connection observe loop (reachability) - the three facts good depends on.
+  // disruptions, connection.isHealthy is the unifi-protect library's authoritative reachability fact (it closes the gate promptly on a socket-dropping outage - reboot,
+  // network loss, TCP RST - and the symptom-rate health model alone drifts back to healthy during a quiet outage, so we must read the connection fact directly), and
+  // health.state===healthy excludes a reachable-but-stressed controller. The fourth conjunct, hasFeature("Device"), means a feature-disabled controller never reaches
+  // good-state, so the stability sweep never arms during the disabled-controller startup path (login's sleep window). The conjunct ordering is LOAD-BEARING:
+  // this._phase==="running" short-circuits BEFORE this.client.connection.isHealthy, guarding the pre-connect window where this.client is unset (do not reorder).
+  // A library throttle makes connection.isHealthy false (it derives the throttled state), so a throttle conservatively resets the clock. On entering good-state we stamp
+  // controllerStableSince (uptime-backdated only on the first entry) and arm the one-shot stability sweep; on leaving it we clear the clock, the sweep timer, and EVERY
+  // pending removal - the "all bets are off, no destructive action" rule. Idempotent: re-entrant and same-state calls are no-ops. Called from transition() (phase), the
+  // health stateChange handler (health), and the connection observe loop (reachability) - the three facts good depends on.
   private refreshRemovalStability(): void {
 
     const good = (this._phase === "running") && this.client.connection.isHealthy && (this.health.state === "healthy") && this.hasFeature("Device");
@@ -1031,8 +1084,8 @@ export class ProtectNvr {
   }
 
   // Re-assess the full device inventory now that the controller is stable, marking for (graced) removal anything genuinely gone. The one-time sweep on reaching
-  // stability: immediate at startup for a controller already up past the window (the uptime backdate), the window after any recovery otherwise. Subsumes the old
-  // unconditional startup orphan sweep, so cache cleanup is likewise stability-gated.
+  // stability: immediate at startup for a controller already up past the window (the uptime backdate), the window after any recovery otherwise. Cache cleanup is
+  // stability-gated along with membership removal, so a cached orphan is removed only once the controller has held good for the window.
   private sweepRemovableDevices(): void {
 
     if(!this.removalStable) {
@@ -1048,7 +1101,7 @@ export class ProtectNvr {
     this.sweepOrphans();
 
     // The package-camera pass: reconcile each doorbell's package camera against the live capability flag. This sweep is both the construction-time arm (it runs at
-    // the first post-startup stability, catching a capability withdrawn while HBUP was down - the across-restart ghost a cached BRIDGED package accessory would
+    // the first post-startup stability, catching a capability withdrawn while the plugin was down - the across-restart ghost a cached BRIDGED package accessory would
     // otherwise be forever, since the orphan sweep keys on a mac the package deliberately lacks) and the re-arm (a detach grace dropped by cancelAllDeviceRemovals,
     // or a fire that failed its stability re-check, is re-scheduled when stability returns).
     for(const device of this.devices("camera")) {
@@ -1137,16 +1190,26 @@ export class ProtectNvr {
     this.deviceRemovalTimers.clear();
   }
 
-  // Spawn the connection-health observe loop. Controller health is one fact with one reader: on each connection-state transition this loop walks the configured
-  // accessories and pushes the recomputed reachability to each, rather than having N accessories each subscribe to the connection monitor (which would be 2N
-  // iterators and N readers of a single fact). An accessory whose HomeKit-visible reachability actually flipped is published on the reachability-fanout diagnostics
-  // channel. Pull where the fact is per-device (the per-device leaf observers); push where the fact is controller-wide (here). Package cameras ride the endpoints
-  // iterator, so their reachability is pushed - and published on the fanout channel - first-class rather than fanned out by the parent doorbell.
+  // Spawn the connection-state observe loop - the single consumer of connection.observe(), carrying two controller-wide duties on each transition. First it concludes an
+  // induced reboot on the connection's recovery edge (so the resume rides this existing iterator rather than a second subscription); then it pushes recomputed
+  // reachability to every accessory. Controller health is one fact with one reader: rather than N accessories each subscribing to the connection monitor (which would be
+  // 2N iterators and N readers of a single fact), this loop walks the configured accessories and pushes each its recomputed reachability. An accessory whose
+  // HomeKit-visible reachability actually flipped is published on the reachability-fanout diagnostics channel. Pull where the fact is per-device (the per-device leaf
+  // observers); push where the fact is controller-wide (here). Package cameras ride the endpoints iterator, so their reachability is pushed - and published on the
+  // fanout channel - first-class rather than fanned out by the parent doorbell.
   private startConnectionObserver(): void {
 
     this.spawnLoop("the controller connection", async () => {
 
-      for await (const _transition of this.client.connection.observe({ signal: this.signal })) {
+      for await (const transition of this.client.connection.observe({ signal: this.signal })) {
+
+        // Conclude an induced reboot the moment the connection recovers - a non-healthy -> healthy edge while rebooting. The decision is the pure
+        // shouldResumeFromInducedReboot; this is the single existing consumer of the connection-state stream, so the check rides here rather than a second subscription.
+        // We do it before the stability re-evaluation below so a resume's transition("running") + health.reset() land first, and that step sees the running phase.
+        if(shouldResumeFromInducedReboot({ from: transition.from, phase: this._phase, to: transition.to })) {
+
+          this.resumeFromInducedReboot();
+        }
 
         // Re-evaluate the removal stability clock - reachability is the third fact `good` depends on, and this is the load-bearing driver. An organic outage publishes
         // only a lifecycle event (controllerLost emits no phase or health change) and the symptom-rate health model drifts back to healthy during a quiet outage, so
@@ -1211,9 +1274,9 @@ export class ProtectNvr {
 
       case "camera": {
 
-        // We have a UniFi Protect camera or doorbell. We resolve the live v5 projection for this id and inject it into the accessory; the projection-acquisition
-        // policy lives here at the composition root, which knows the concrete type at the point of adoption. The handle is null only when the record has not yet
-        // reduced, in which case there is nothing to adopt.
+        // We have a UniFi Protect camera or doorbell. We resolve the live unifi-protect projection for this id and inject it into the accessory;
+        // the projection-acquisition policy lives here at the composition root, which knows the concrete type at the point of adoption. The handle is null only when the
+        // record has not yet reduced, in which case there is nothing to adopt.
         const camera = this.client.camera(device.id);
 
         if(!camera) {
@@ -1305,7 +1368,7 @@ export class ProtectNvr {
   // Add a newly detected Protect device to HomeKit.
   public addHomeKitDevice(device: ProtectDeviceConfigTypes): boolean {
 
-    // If we have no MAC address, name, or this camera isn't being managed by this Protect controller, we're done.
+    // If we have no controller MAC, no device MAC, or this device isn't adopted by this controller, we're done.
     if(!this.ufp.mac || !device.mac || device.isAdoptedByOther || !device.isAdopted) {
 
       return false;
@@ -1373,7 +1436,7 @@ export class ProtectNvr {
       this.api.updatePlatformAccessories(this.platform.accessories);
     }
 
-    // Setup the accessory as a new Protect device in HBUP if we haven't configured it yet. A device we already track needs no action here: its state now arrives
+    // Setup the accessory as a new Protect device in the plugin if we haven't configured it yet. A device we already track needs no action here: its state now arrives
     // through the per-device observe loops, not a synthetic refresh re-emit, so there is nothing to re-merge.
     if(!this.configuredDevices.has(accessory.UUID)) {
 
@@ -1423,6 +1486,13 @@ export class ProtectNvr {
 
     // Grab our instance of the Protect device, if it exists.
     const protectDevice = this.configuredDevices.get(accessory.UUID);
+
+    // Reclaim any livestream-episode latch entries for the camera being removed (a started-but-never-recovered episode would otherwise never drain). Keyed off the
+    // device's id, which is the cameraId the latch entries carry; a non-camera device's id matches nothing, so this is a no-op scan of a small map for them.
+    if(protectDevice?.ufp.id) {
+
+      this.livestreamEpisodes.forgetCamera(protectDevice.ufp.id);
+    }
 
     // See if we can pull the device's configuration details from our Protect device instance or the live controller projection.
     const device = protectDevice?.ufp ?? (accessory.context.mac ? this.deviceConfigByMac(accessory.context.mac) : null);
@@ -1508,6 +1578,23 @@ export class ProtectNvr {
 
         yield device.packageCamera;
       }
+    }
+  }
+
+  // Resolve the reachability of the camera whose livestream recovery is being decided, for the recovery policy's offline-defer gate. getDeviceById can still return a
+  // camera whose unifi-protect store record has been removed (deleted at the controller, not yet reconciled out of our configuredDevices), and ProtectDevice.isReachable
+  // throws a ReferenceError in that window (its @throws documents it - isOnline reads the projection's config, which throws on an absent record). A throwing recovery
+  // policy would break the pool's recovery loop, so we convert a vanished record into "reachable" - the same disposition as an unresolvable id - and let the pending
+  // subscription disposal, not the policy, clean up the removed camera. A package-camera substream carries its PARENT camera's id, so this resolves the parent and reads
+  // the parent's reachability, which is correct since there is no separate package device.
+  private episodeCameraReachable(cameraId: string): boolean {
+
+    try {
+
+      return this.getDeviceById(cameraId)?.isReachable ?? true;
+    } catch {
+
+      return true;
     }
   }
 

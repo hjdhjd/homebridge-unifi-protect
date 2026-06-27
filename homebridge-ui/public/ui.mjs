@@ -106,7 +106,7 @@ const getDevices = async (selectedController, { config }) => {
     device.serialNumber = device.mac;
     device.sidebarGroup = device.modelKey + "s";
 
-    // We update the name of the controller that we show users once we've connected with the controller and have it's name.
+    // We update the name of the controller that we show users once we've connected with the controller and have its name.
     if(isController(device)) {
 
       const activeController = [...document.querySelectorAll("[data-navigation='controller']")].find(c => c.getAttribute("data-device-serial") === controller.address);
@@ -125,17 +125,19 @@ const getDevices = async (selectedController, { config }) => {
 const validOption = (device, option) => {
 
   if(device && (device.modelKey !== "nvr") && (
-    (option.hasAccessFeature && (!device.accessDeviceMetadata?.featureFlags || !option.hasAccessFeature.some(x => device.accessDeviceMetadata.featureFlags[x]))) ||
-    (option.hasFeature && (!device.featureFlags || !option.hasFeature.some(x => device.featureFlags[x]))) ||
-    (option.hasProperty && !option.hasProperty.some(x => x in device)) ||
-    (option.modelKey && (option.modelKey !== "all") && !option.modelKey.includes(device.modelKey)) ||
-    (option.hasSmartObjectType && device.featureFlags?.smartDetectTypes && !option.hasSmartObjectType.some(x => device.featureFlags.smartDetectTypes.includes(x))))) {
+    (option.meta?.hasAccessFeature && (!device.accessDeviceMetadata?.featureFlags ||
+      !option.meta?.hasAccessFeature.some(x => device.accessDeviceMetadata.featureFlags[x]))) ||
+    (option.meta?.hasFeature && (!device.featureFlags || !option.meta?.hasFeature.some(x => device.featureFlags[x]))) ||
+    (option.meta?.hasProperty && !option.meta?.hasProperty.some(x => x in device)) ||
+    (option.meta?.modelKey && (option.meta?.modelKey !== "all") && !option.meta?.modelKey.includes(device.modelKey)) ||
+    (option.meta?.hasSmartObjectType && device.featureFlags?.smartDetectTypes &&
+      !option.meta?.hasSmartObjectType.some(x => device.featureFlags.smartDetectTypes.includes(x))))) {
 
     return false;
   }
 
   // Test for the explicit exclusion of a property if it's true.
-  if(device && option.isNotProperty?.some(x => device[x] === true)) {
+  if(device && option.meta?.isNotProperty?.some(x => device[x] === true)) {
 
     return false;
   }
@@ -145,7 +147,7 @@ const validOption = (device, option) => {
 
     case "camera":
 
-      if(option.hasCameraFeature && !option.hasCameraFeature.some(x => device.featureFlags[x])) {
+      if(option.meta?.hasCameraFeature && !option.meta?.hasCameraFeature.some(x => device.featureFlags[x])) {
 
         return false;
       }
@@ -154,7 +156,7 @@ const validOption = (device, option) => {
 
     case "light":
 
-      if(option.hasLightProperty && !option.hasLightProperty.some(x => x in device)) {
+      if(option.meta?.hasLightProperty && !option.meta?.hasLightProperty.some(x => x in device)) {
 
         return false;
       }
@@ -163,7 +165,7 @@ const validOption = (device, option) => {
 
     case "sensor":
 
-      if(option.hasSensorProperty && !option.hasSensorProperty.some(x => x in device)) {
+      if(option.meta?.hasSensorProperty && !option.meta?.hasSensorProperty.some(x => x in device)) {
 
         return false;
       }
@@ -188,19 +190,19 @@ const validOptionCategory = (device, category) => {
   }
 
   // Only show device categories we're explicitly interested in.
-  if(!category.modelKey?.some(model => [ "all", device.modelKey ].includes(model))) {
+  if(!category.meta?.modelKey?.some(model => [ "all", device.modelKey ].includes(model))) {
 
     return false;
   }
 
   // Test for the explicit exclusion of a property if it's true.
-  if(category.isNotProperty?.some(x => device[x] === true)) {
+  if(category.meta?.isNotProperty?.some(x => device[x] === true)) {
 
     return false;
   }
 
   // Test for the feature availability on a specific device type.
-  if(category["has" + device.modelKey.charAt(0).toUpperCase() + device.modelKey.slice(1) + "Feature"]?.some(x => !device.featureFlags?.[x])) {
+  if(category.meta?.featureByModel?.[device.modelKey]?.some(x => !device.featureFlags?.[x])) {
 
     return false;
   }

@@ -71,6 +71,7 @@
     "prebuild": "npm run clean && npm run build-ui",
     "build": "tsc -p tsconfig.build.json",
     "build-ui": "homebridge-plugin-utils prepare-ui homebridge-ui/public/lib",
+    "build-docs": "npm run build && homebridge-plugin-utils prepare-docs dist/options.js",
     "clean": "node -e \"for(const p of ['dist','homebridge-ui/public/lib'])require('node:fs').rmSync(p,{force:true,recursive:true})\"",
     "prelint": "npm run build-ui",
     "lint": "eslint --max-warnings=${ESLINT_MAX_WARNINGS:-\"-1\"} eslint.config.mjs src homebridge-ui/*.js homebridge-ui/public/**.mjs",
@@ -90,10 +91,10 @@
   },
   "devDependencies": {
     "@stylistic/eslint-plugin": "5.10.0",
-    "@types/node": "26.0.0",
+    "@types/node": "26.0.1",
     "eslint": "9.39.2",
     "homebridge": "2.1.0",
     "typescript": "5.9.3",
-    "typescript-eslint": "8.61.1"
+    "typescript-eslint": "8.62.0"
   }
 }

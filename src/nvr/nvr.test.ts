@@ -1,7 +1,8 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * nvr.test.ts: Unit tests for the pure decision logic the v5 controller-root inversion introduces - the startup-resilient connect retry policy, the HomeKit-membership
- * set diff, and the request-outcome classifier - plus the NvrHealth connection-input mapping those drive.
+ * nvr.test.ts: Unit tests for the controller root's pure decision logic - the startup-resilient connect retry policy, the HomeKit-membership set diff, the
+ * request-outcome classifier, the removal-stability arithmetic, the livestream-disruption gating (induced/recency/episode-latch), and the induced-reboot resume
+ * decision - plus the NvrHealth connection-input mapping those drive.
  *
  * ProtectNvr itself is a composition root: its constructor stands up the event handler and the controller logging, and it transitively imports the entire device and
  * media graph, so it is neither unit-constructable nor cheaply loadable. The response is to keep the *decisions* it makes in a pure leaf module (nvr-policy.ts) and pin
@@ -9,7 +10,8 @@
  * The connection-input mapping is verified against the real NvrHealth with an injected clock, so the test proves both the new mapping and that the reducer/window
  * behavior it feeds is unchanged.
  */
-import { computeStableSince, createConnectRetryPolicy, isStabilityWindowElapsed, isSuccessfulRequest, membershipDelta } from "./nvr-policy.ts";
+import { computeStableSince, createConnectRetryPolicy, createLivestreamEpisodeLatch, isInducedDisruption, isStabilityWindowElapsed, isSuccessfulRequest,
+  isWithinRebootRecency, membershipDelta, shouldResumeFromInducedReboot } from "./nvr-policy.ts";
 import { describe, test } from "node:test";
 import { NvrHealth } from "./nvr-health.ts";
 import { ProtectAuthError } from "unifi-protect";
@@ -276,5 +278,126 @@ describe("removal stability arithmetic", () => {
 
     // Null means the controller is not currently good (mid-disruption), so the gate is closed no matter the window.
     assert.equal(isStabilityWindowElapsed({ nowMs, stableSinceMs: null, windowMs }), false);
+  });
+});
+
+describe("livestream disruption gating", () => {
+
+  // The induced predicate the two livestream-subsystem sites share. We pin all four phases so a wrong set is caught - including a `!== "running"` flip that would fold
+  // `connecting` into the induced set and silence a startup/reconnection disruption the operator should see.
+  test("isInducedDisruption is true only for the induced phases", () => {
+
+    assert.equal(isInducedDisruption("running"), false);
+    assert.equal(isInducedDisruption("connecting"), false);
+    assert.equal(isInducedDisruption("rebooting"), true);
+    assert.equal(isInducedDisruption("shuttingDown"), true);
+  });
+
+  // The recency half of the per-camera quiet gate - the second predicate the interruption edge ORs together. A blip inside the window of an observed reboot is that
+  // reboot's tail (quiet); at or past the window, or with no reboot observed this process, it is a genuine drop (loud). The comparison is strict-less-than, so the
+  // window boundary is pinned on BOTH sides. The null case pairs with a SMALL nowMs so a mutant dropping the `!== null` guard would compute 0 - null === 0 < window and
+  // flip the case to true - the guard genuinely matters here rather than being masked by a large nowMs.
+  test("isWithinRebootRecency is true only within the window of an observed reboot", () => {
+
+    const windowMs = 60000;
+    const lastRebootMs = 1000;
+
+    // Observed well within the window: quiet.
+    assert.equal(isWithinRebootRecency({ lastRebootMs, nowMs: lastRebootMs + 1, windowMs }), true);
+
+    // The window boundary, both sides: one millisecond short is still within (<), exactly the window is out (the comparison is strict-less-than).
+    assert.equal(isWithinRebootRecency({ lastRebootMs, nowMs: lastRebootMs + windowMs - 1, windowMs }), true);
+    assert.equal(isWithinRebootRecency({ lastRebootMs, nowMs: lastRebootMs + windowMs, windowMs }), false);
+
+    // Comfortably past the window: loud.
+    assert.equal(isWithinRebootRecency({ lastRebootMs, nowMs: lastRebootMs + windowMs + 5000, windowMs }), false);
+
+    // No reboot observed this process. The small nowMs keeps the null guard load-bearing - dropping it would compute 0 - null < window and wrongly read as within-window.
+    assert.equal(isWithinRebootRecency({ lastRebootMs: null, nowMs: 0, windowMs }), false);
+  });
+
+  // The core latch protocol: the recovery edge reads the quiet/loud classification the interruption edge recorded, and the read drains the slot so a re-used key cannot
+  // leak a prior episode's classification into a later one.
+  test("the latch returns the recorded classification and drains on consume", () => {
+
+    const latch = createLivestreamEpisodeLatch();
+
+    latch.record("key1", "camA", true);
+    assert.equal(latch.consume("key1"), true);
+
+    // The first consume drained the slot, so a second consume of the same key sees no entry and defaults to the loud, genuine-drop level.
+    assert.equal(latch.consume("key1"), false);
+  });
+
+  // An unrecorded key (a recovery with no matching interruption, e.g. a foreign controller's key our guard never recorded) defaults to the loud level, and an explicitly
+  // loud classification round-trips as loud too.
+  test("the latch defaults an unrecorded key to loud", () => {
+
+    const latch = createLivestreamEpisodeLatch();
+
+    assert.equal(latch.consume("absent"), false);
+
+    latch.record("key1", "camA", false);
+    assert.equal(latch.consume("key1"), false);
+  });
+
+  // A single camera can run concurrent livestream sessions under distinct pool keys (e.g. an HKSV record channel and a Home-app live view on another lens). Per-key
+  // keying gives each session its own slot, so the second-and-later recoveries during a reboot read their own classification rather than aliasing onto a shared cameraId
+  // slot.
+  test("the latch isolates concurrent sessions of one camera by key", () => {
+
+    const latch = createLivestreamEpisodeLatch();
+
+    latch.record("camA:0", "camA", true);
+    latch.record("camA:1", "camA", false);
+
+    assert.equal(latch.consume("camA:0"), true);
+    assert.equal(latch.consume("camA:1"), false);
+  });
+
+  // forgetCamera reclaims every entry for the named camera (the removal-chokepoint cleanup that prevents a started-but-never-recovered episode from leaking) and leaves
+  // other cameras' entries untouched.
+  test("forgetCamera reclaims only the named camera's entries", () => {
+
+    const latch = createLivestreamEpisodeLatch();
+
+    latch.record("camA:0", "camA", true);
+    latch.record("camB:0", "camB", true);
+
+    latch.forgetCamera("camA");
+
+    assert.equal(latch.consume("camA:0"), false);
+    assert.equal(latch.consume("camB:0"), true);
+  });
+
+  // A re-used key records over the prior slot, so a recovery reads the current episode's classification, never a stale one from a prior episode sharing the same key.
+  test("recording a key overwrites a stale classification for that key", () => {
+
+    const latch = createLivestreamEpisodeLatch();
+
+    latch.record("camA:0", "camA", true);
+    latch.record("camA:0", "camA", false);
+
+    assert.equal(latch.consume("camA:0"), false);
+  });
+});
+
+describe("induced-reboot resume decision", () => {
+
+  // The recovery-edge predicate that concludes an induced reboot. The true case is a recovery edge while rebooting - the connection arriving at healthy from a
+  // non-healthy state. Each false case deviates from that true case in exactly ONE conjunct, so a mutation that drops any conjunct fails at least one assertion: the
+  // entry-healthy guard (from: "healthy"), the destination check (to: "degraded"), and the induced-phase gate across the other three phases (running / connecting /
+  // shuttingDown), including connecting so a startup edge never resumes.
+  test("shouldResumeFromInducedReboot is true only on a recovery edge while rebooting", () => {
+
+    // A genuine drop-and-recovery while we induced the reboot: resume.
+    assert.equal(shouldResumeFromInducedReboot({ from: "reconnecting", phase: "rebooting", to: "healthy" }), true);
+
+    // Single-conjunct deviations from the true case, each false.
+    assert.equal(shouldResumeFromInducedReboot({ from: "healthy", phase: "rebooting", to: "healthy" }), false);
+    assert.equal(shouldResumeFromInducedReboot({ from: "reconnecting", phase: "rebooting", to: "degraded" }), false);
+    assert.equal(shouldResumeFromInducedReboot({ from: "reconnecting", phase: "running", to: "healthy" }), false);
+    assert.equal(shouldResumeFromInducedReboot({ from: "reconnecting", phase: "connecting", to: "healthy" }), false);
+    assert.equal(shouldResumeFromInducedReboot({ from: "reconnecting", phase: "shuttingDown", to: "healthy" }), false);
   });
 });

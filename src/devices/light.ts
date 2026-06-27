@@ -1,6 +1,6 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * protect-light.ts: Light device class for UniFi Protect.
+ * light.ts: Light device class for UniFi Protect.
  */
 import type { Light, ProtectLightConfig } from "unifi-protect";
 import type { CharacteristicValue } from "homebridge";
@@ -66,7 +66,7 @@ export class ProtectLight extends ProtectDevice {
     // Acquire the service.
     const service = this.acquireService(this.hap.Service.Lightbulb);
 
-    // Add the switch to the device, if needed.
+    // Fail gracefully.
     if(!service) {
 
       this.log.error("Unable to add light.");
@@ -149,7 +149,7 @@ export class ProtectLight extends ProtectDevice {
 
       const brightness = parseInt(value);
 
-      // Unknown message - ignore it.
+      // Unparseable or out-of-range brightness - ignore it.
       if(isNaN(brightness) || (brightness < 0) || (brightness > 100)) {
 
         return;
@@ -161,8 +161,8 @@ export class ProtectLight extends ProtectDevice {
     return true;
   }
 
-  // Spawn the light's narrow-selector observers (Fork B). super spawns the universal name-sync observer; the light adds its four reactions, each waking only on its own
-  // slice through the store's reference dedup.
+  // Spawn the light's narrow-selector observers. super spawns the two universal observers (name sync and firmware/device-info refresh); the light adds its four
+  // reactions, each waking only on its own slice through the store's reference dedup.
   protected override spawnObservers(): void {
 
     super.spawnObservers();

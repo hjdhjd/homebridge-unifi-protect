@@ -61,7 +61,7 @@ export function buildPlaylist(cameras: readonly ProtectCameraConfig[], host: str
         "https://raw.githubusercontent.com/hjdhjd/homebridge-unifi-protect/main/images/homebridge-unifi-protect-4x3.png", name));
 
       // By convention, the first RTSP alias is always the highest quality on UniFi Protect cameras. Grab it and we're done. We might be tempted to use the RTSPS stream
-      // here, but many apps only supports RTSP, and we'll opt for maximizing compatibility here.
+      // here, but many apps only support RTSP, and we'll opt for maximizing compatibility here.
       parts.push(rtspUrl(channel, host, rtspPort, false) + "\n");
     };
 
@@ -142,8 +142,9 @@ export function servePlaylist(nvr: ProtectNvr): void {
   });
 
   // Tear the server down on plugin shutdown (a SHUTDOWN that is not a process exit would otherwise leak the port) and cancel any pending EADDRINUSE retry. onAbort is
-  // HBPU's SSOT for this: it registers the one-shot teardown AND runs it inline if the signal is ALREADY aborted - the pre-aborted case servePlaylist genuinely hits,
-  // since it runs from async login() which can race a SHUTDOWN. Pairing onAbort with clearing the retry handle means no path re-listens or leaks a timer after abort.
+  // homebridge-plugin-utils' SSOT for this: it registers the one-shot teardown AND runs it inline if the signal is ALREADY aborted - the pre-aborted case servePlaylist
+  // genuinely hits, since it runs from async login() which can race a SHUTDOWN. Pairing onAbort with clearing the retry handle means no path re-listens or leaks a timer
+  // after abort.
   onAbort(nvr.signal, () => {
 
     if(retryTimer) {
@@ -154,8 +155,8 @@ export function servePlaylist(nvr: ProtectNvr): void {
     server.close();
   });
 
-  // If we were already shutting down, onAbort just tore the (never-listened) server down inline above; do not listen. HBPU sanctions this onAbort + if-aborted-return
-  // pairing; server.close() on a never-listened server is a safe no-op.
+  // If we were already shutting down, onAbort just tore the (never-listened) server down inline above; do not listen. homebridge-plugin-utils sanctions this onAbort +
+  // if-aborted-return pairing; server.close() on a never-listened server is a safe no-op.
   if(nvr.signal.aborted) {
 
     return;

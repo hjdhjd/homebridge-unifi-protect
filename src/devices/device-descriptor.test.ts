@@ -3,8 +3,8 @@
  * device-descriptor.test.ts: Unit tests for the pure device descriptor (describeDevice) in the importable leaf src/devices/device-descriptor.ts.
  *
  * describeDevice is a pure free function - a config record in, a log descriptor out, no this, no HAP - so the natural coverage is to import the REAL leaf and drive it
- * with plain config objects, exactly as motion-policy.test.ts / chime-volume.test.ts drive their pure leaves. It reproduces the pre-v5 v4 getDeviceName format, so the
- * cases pin the plain and rich modes plus the marketName-empty, no-name, host-empty, and name-override edges the v4 helper handled.
+ * with plain config objects, exactly as motion-policy.test.ts / chime-volume.test.ts drive their pure leaves. It reproduces the established device-name format, so the
+ * cases pin the plain and rich modes plus the marketName-empty, no-name, host-empty, and name-override edges the descriptor handles.
  */
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
@@ -27,7 +27,7 @@ describe("describeDevice", () => {
 
   test("prefers marketName for the model, falling back to the wire type when marketName is empty", () => {
 
-    // The v5 wire can deliver an empty marketName; the descriptor falls through to the raw type - the deliberate `||`, not `??`.
+    // The controller wire can deliver an empty marketName; the descriptor falls through to the raw type - the deliberate `||`, not `??`.
     assert.equal(describeDevice({ ...camera, marketName: "" }), "Basement Foyer [camera]");
   });
 

@@ -1,6 +1,6 @@
 /* Copyright(C) 2023-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * protect-chime.ts: Chime device class for UniFi Protect.
+ * chime.ts: Chime device class for UniFi Protect.
  */
 import type { Chime, PlaySpeakerOptions, ProtectChimeConfig } from "unifi-protect";
 import type { CharacteristicValue } from "homebridge";
@@ -46,7 +46,7 @@ export class ProtectChime extends ProtectDevice {
     // Configure accessory information.
     this.configureInfo();
 
-    // Protect v5 has relocated the chime volume control to the doorbell. Remove any legacy volume service.
+    // Newer UniFi Protect controllers relocated the chime volume control to the doorbell's settings. Remove any legacy volume service.
     let service = this.accessory.getService(this.hap.Service.Lightbulb);
 
     if(service) {
@@ -77,7 +77,7 @@ export class ProtectChime extends ProtectDevice {
   // Configure ringtone-specific switches.
   private configureRingtoneSwitches(): void {
 
-    // The controller's ringtone collection, read through the live v5 projection and scoped to this controller. Always an array post-connect, so the configuration
+    // The controller's ringtone collection, read through the live projection and scoped to this controller. Always an array post-connect, so the configuration
     // pass and the prune below operate on it directly.
     const ringtones = this.nvr.client.ringtones.filter(tone => tone.nvrMac === this.nvr.ufp.mac);
 
@@ -94,8 +94,9 @@ export class ProtectChime extends ProtectDevice {
     }
   }
 
-  // Configure chime speaker switches for HomeKit. The kind discriminant ("buzzer" or "speaker") names the chime's two sound sources directly and doubles as the
-  // per-switch timer key, so all ringtone speaker switches share the one "speaker" timer exactly as they shared the "play-speaker" endpoint string before the migration.
+  // Configure one chime switch (the buzzer or a ringtone speaker) for HomeKit. The kind discriminant ("buzzer" or "speaker") names the chime's two sound sources directly
+  // and doubles as the per-switch timer key, so all ringtone speaker switches share the one "speaker" timer exactly as they shared the "play-speaker" endpoint string
+  // previously.
   private configureChimeSwitch(name: string, kind: "buzzer" | "speaker", subtype: string): boolean {
 
     // Acquire the service.
@@ -108,7 +109,7 @@ export class ProtectChime extends ProtectDevice {
       return false;
     }
 
-    // Turn the speaker on or off.
+    // Reflect and drive the play state for this sound source (buzzer or ringtone speaker).
     service.getCharacteristic(this.hap.Characteristic.On).onGet(() => {
 
       return this.timers.has(kind);
@@ -116,10 +117,11 @@ export class ProtectChime extends ProtectDevice {
 
     service.getCharacteristic(this.hap.Characteristic.On).onSet(async (value: CharacteristicValue) => {
 
-      // We only want to do something if we're being activated and we don't have an active speaker event inflight. Turning off the switch would really be a meaningless
-      // state given you can't undo the play command to the chime.
+      // We only act on an activating set. A falsy set is meaningless here: you cannot undo a play command to the chime, so we just revert the switch to its real state
+      // and return.
       if(!value) {
 
+        // Let HomeKit's optimistic write settle, then re-assert the switch's real play state. The 50ms is a cosmetic revert nudge, not a functional delay.
         setTimeout(() => service.updateCharacteristic(this.hap.Characteristic.On, this.timers.has(kind)), 50);
 
         return;
@@ -152,8 +154,8 @@ export class ProtectChime extends ProtectDevice {
     return true;
   }
 
-  // Play the specified tone on the chime - a ringtone through the speaker or the piezo buzzer, selected by the typed kind discriminant. v5 split these into two distinct
-  // commands (playSpeaker / playBuzzer), so we dispatch on kind rather than reconstructing a controller path string.
+  // Play the specified tone on the chime - a ringtone through the speaker or the piezo buzzer, selected by the typed kind discriminant. The unifi-protect library
+  // exposes these as two distinct commands (playSpeaker / playBuzzer), so we dispatch on kind rather than reconstructing a controller path string.
   private async playTone(name: string, kind: "buzzer" | "speaker", tone?: string): Promise<boolean> {
 
     // For a speaker tone, source the configured playback (repeat count and volume) for the selected ringtone from this chime's own ringSettings - the join the library
@@ -229,7 +231,7 @@ export class ProtectChime extends ProtectDevice {
     super.spawnObservers();
 
     // The ringtone library is a controller-wide collection; when it changes (a ringtone added/removed in Protect, which advances on the StateStore refresh), re-run the
-    // chime's ringtone-switch reconcile. Restores the refresh-cadence reactivity the v4 syncDevices loop gave chimes.
+    // chime's ringtone-switch reconcile. Restores the refresh-cadence reactivity the syncDevices loop gave chimes.
     this.observeState({ key: "nvr.ringtones", selector: selectRingtones, title: "the chime ringtones" }, () => this.updateDevice());
   }
 }

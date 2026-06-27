@@ -14,14 +14,14 @@
  * (hasCapability, isDoorbell) - a pure device-classification decision, homed in this dedicated camera-family policy leaf alongside motion-policy.ts and testable without
  * standing up an accessory (the camera leaf is not directly importable in a unit test due to its transitive streaming-stack dependencies).
  *
- * The four actions, by HJD ruling (the live-attach replaces the former teardown+recreate; demotion is observability-only):
+ * The four actions (the live-attach replaces the former teardown+recreate; demotion is observability-only):
  *
  * - "attach": the controller now reports a doorbell and no capability is attached yet - compose the capability onto the live camera in place (no teardown).
  * - "report-withdrawn": the controller no longer reports a doorbell but a capability is attached - log a warning only; the capability and its accessories remain (a full
  *   detach is a one-arm addition later if field observation shows demotion happens in the wild).
  * - "sweep-stale": the controller does not report a doorbell and no capability is attached - remove any doorbell-only services a demoted-while-down doorbell left behind
  *   (idempotent; a no-op on a steady plain camera).
- * - "none": steady state - a doorbell with its capability, or a plain camera with none.
+ * - "none": steady state - a doorbell with its capability (the steady plain camera resolves to the no-op "sweep-stale" instead).
  *
  * @param inputs - hasCapability is whether this camera already has a doorbell capability attached; isDoorbell is the camera's current featureFlags.isDoorbell.
  *

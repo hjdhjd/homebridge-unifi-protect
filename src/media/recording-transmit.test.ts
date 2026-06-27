@@ -14,19 +14,19 @@
  * and captured log telemetry - never a private session field.
  */
 import type { CameraRecordingConfiguration, RecordingPacket } from "homebridge";
-import { HDSProtocolSpecificErrorReason, TestRecordingProcess, TestRecordingProcessFactory } from "homebridge-plugin-utils";
-import { PROTECT_HKSV_TIMEOUT, PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION, PROTECT_SEGMENT_RESOLUTION } from "../settings.ts";
+import { HDSProtocolSpecificErrorReason, HKSV_TIMEOUT, TestRecordingProcess, TestRecordingProcessFactory } from "homebridge-plugin-utils";
+import { PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION, PROTECT_SEGMENT_RESOLUTION } from "../settings.ts";
 import type { RecordingProcessFactory, TestClock, TestRecordingProcessInit } from "homebridge-plugin-utils";
-import type { TestCameraHost, TestLogEntry } from "../testing.helpers.ts";
+import type { TestCameraHost, TestLogEntry, TestProtectNvr } from "../testing.helpers.ts";
 import { TestStreamingDelegate, makeTestCameraHost, settle } from "../testing.helpers.ts";
 import { after, describe, test } from "node:test";
 import type { ChannelProfile } from "./resolution.ts";
 import { ProtectRecordingDelegate } from "./record.ts";
 import assert from "node:assert/strict";
 
-// The exact pacing interval the delegate computes between yields: PROTECT_HKSV_TIMEOUT minus the 500ms HomeKit-timeout safety margin. Because the injected clock is
+// The exact pacing interval the delegate computes between yields: HKSV_TIMEOUT minus the 500ms HomeKit-timeout safety margin. Because the injected clock is
 // advanced by exactly this much per pull, lastPacingDelay and maxPacingDelay both compute to exactly this value, so the pacing telemetry is exactly assertable.
-const PACING_INTERVAL = PROTECT_HKSV_TIMEOUT - 500;
+const PACING_INTERVAL = HKSV_TIMEOUT - 500;
 
 // Every host this suite builds shares the one makeTestNvr AbortController. Aborting them in teardown releases the harness signals so any leaked observer (none here -
 // the recording delegate spawns none at construction) could never outlive the suite.
@@ -40,8 +40,16 @@ after(() => {
   }
 });
 
+// The count of INFO/WARN log lines whose first format string contains the given fragment - the harness records the raw parameters, so we match the message template. The
+// enable-ack re-acknowledgment test counts occurrences (not a boolean .some()), because a boolean would pass after the FIRST enable regardless of whether the second
+// re-acknowledged - the count discriminates the per-enable behavior the fix restores.
+function countLogs(entries: TestLogEntry[], level: TestLogEntry["level"], fragment: string): number {
+
+  return entries.filter((entry) => (entry.level === level) && (typeof entry.parameters[0] === "string") && entry.parameters[0].includes(fragment)).length;
+}
+
 // A minimal-but-truthy recording configuration cast to the HAP type at this confined seam - the same harness discipline the decline suite uses. The transmit path reads
-// only videoCodec.resolution (channel selection), videoCodec.parameters.bitRate (the once-per-lifetime config log), and prebufferLength. prebufferLength is well below
+// only videoCodec.resolution (channel selection), videoCodec.parameters.bitRate (the enable-ack config log), and prebufferLength. prebufferLength is well below
 // the filled buffer time (10000ms) so the early-end telemetry gate's time >= prebufferLength conjunct stays satisfied.
 function makeRecordingConfig(): CameraRecordingConfiguration {
 
@@ -62,10 +70,11 @@ function makeChannelProfile(host: TestCameraHost): ChannelProfile {
   return { channel, name: channel.name, resolution: [ 1920, 1080, 30 ], url: "rtsps://test" };
 }
 
-// A test-local recording-process factory that hands back a FRESH configured TestRecordingProcess per create call, in sequence, recording every create. HBPU's
-// TestRecordingProcessFactory returns either one shared process (which aborts at the first close, so a second event or a discontinuity restart receives an inert aborted
-// process) or fresh DEFAULTS (no segments) - neither gives fresh-CONFIGURED-per-create, which a multi-event or restart test needs so each event's process yields its own
-// segments. (An open follow-up, not this step: HBPU's factory could grow a sequenced variant so this lives in the library; kept test-local here to keep 2b single-repo.)
+// A test-local recording-process factory that hands back a FRESH configured TestRecordingProcess per create call, in sequence, recording every create.
+// homebridge-plugin-utils' TestRecordingProcessFactory returns either one shared process (which aborts at the first close, so a second event or a discontinuity restart
+// receives an inert aborted process) or fresh DEFAULTS (no segments) - neither gives fresh-CONFIGURED-per-create, which a multi-event or restart test needs so each
+// event's process yields its own segments. (An open follow-up, not this step: homebridge-plugin-utils' factory could grow a sequenced variant so this lives in the
+// library; kept test-local here to keep this single-repo.)
 function makeSequencedRecordingFactory(inits: TestRecordingProcessInit[]): RecordingProcessFactory & { createCalls: { process: TestRecordingProcess }[] } {
 
   let index = 0;
@@ -117,13 +126,14 @@ async function drainPaced(gen: AsyncGenerator<RecordingPacket>, clock: TestClock
 }
 
 // The arranged transmitting delegate plus the handles a test asserts against. The clock is the controllable TestClock the delegate's pacing awaits; logEntries captures
-// the telemetry log; host exposes the seam call logs.
+// the telemetry log; host exposes the seam call logs; nvr is the controller double whose settable phase drives the induced-vs-organic deferred/resolution log gating.
 interface TransmittingArrange {
 
   clock: TestClock;
   delegate: ProtectRecordingDelegate;
   host: TestCameraHost;
   logEntries: TestLogEntry[];
+  nvr: TestProtectNvr;
 }
 
 // Arrange an armed, buffer-filled, transmit-ready delegate from a supplied recording-process factory. Sets the host's stream and channel selector, fills the timeshift
@@ -131,7 +141,7 @@ interface TransmittingArrange {
 // fragment run, then arms recording and settles so the consume loop drains the (parking) iterator and timeshift.time reaches the configured duration.
 async function buildTransmittingDelegate(factory: RecordingProcessFactory): Promise<TransmittingArrange> {
 
-  const { clock, controller, host, logEntries } = makeTestCameraHost({ recordingProcessFactory: factory });
+  const { clock, controller, host, logEntries, nvr } = makeTestCameraHost({ recordingProcessFactory: factory });
 
   controllers.push(controller);
 
@@ -151,7 +161,35 @@ async function buildTransmittingDelegate(factory: RecordingProcessFactory): Prom
   // Drain the background consume loop up to the iterator's park, so the buffer reaches the configured duration before the first request.
   await settle();
 
-  return { clock, delegate, host, logEntries };
+  return { clock, delegate, host, logEntries, nvr };
+}
+
+// Arrange a delegate whose success-path seams (stream, channel selector, segment-yielding buffer fill, recording configuration) are wired like
+// buildTransmittingDelegate's, but which is NOT yet armed and starts with the camera OFFLINE. This lets the deferred/resolution tests own the ordering: enable while
+// offline to open a deferral episode, then bring the camera online and reconcile to drive the successful-start resolution. These tests exercise only the reconcile
+// (configureTimeshifting), never the transmit path, so no FFmpeg factory is needed - the default makeTestCameraHost factory suffices. The caller flips host.isReachable
+// and nvr.phase to steer the gating.
+function arrangeDeferralDelegate(): TransmittingArrange & { clock: TestClock } {
+
+  const { clock, controller, host, logEntries, nvr } = makeTestCameraHost();
+
+  controllers.push(controller);
+
+  host.stream = new TestStreamingDelegate();
+  host.selectRecordingChannel = (): ChannelProfile => makeChannelProfile(host);
+
+  // Over-fill the buffer so that, once the camera is online and the timeshift starts, whenEstablished resolves true on the segment-yielding double and the start
+  // succeeds.
+  host.livestreamMediaSegments = Math.ceil(PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION / PROTECT_SEGMENT_RESOLUTION) + 10;
+
+  // Begin offline: enabling recording here opens the deferral episode the reconcile head logs and the resolution later closes.
+  host.isReachable = false;
+
+  const delegate = new ProtectRecordingDelegate(host);
+
+  delegate.updateRecordingConfiguration(makeRecordingConfig());
+
+  return { clock, delegate, host, logEntries, nvr };
 }
 
 // Find the early-end telemetry log a closeRecordingStream emitted. record.ts logs error("HKSV recording event ended early: %s%s", reasonDescription, telemetry), so the
@@ -403,5 +441,206 @@ describe("recording delegate transmit-path behavior", () => {
     // The final yielded packet is the end-of-stream marker on the FFmpeg-timeout branch.
     assert.equal(packets.at(-1)?.isLast, true);
     assert.equal(packets.at(-1)?.data.length, 1);
+  });
+
+  // Test G - the enable-acknowledgment lifecycle. The "HKSV: ..." config summary fires once per enable EPISODE (not once per delegate lifetime, and not once per
+  // reconcile): exactly once on the first successful configure of an episode, again on a true re-enable after a disable, never on a redundant within-episode reconcile.
+  // This pins both halves of the log-lifecycle fix - the relocation into the reconcile's successful-start path (so the trigger is the configuration event) and the reset
+  // on disable (so the next enable re-acknowledges). We count occurrences rather than a boolean .some(): the boolean would pass after the FIRST enable regardless of
+  // whether the second re-acknowledged, so it cannot discriminate the bug this fix corrects (a set-once-never-cleared flag logged only the first enable).
+  test("acknowledges the recording configuration on each enable episode, not within an episode and not only the first", async () => {
+
+    const ffmpegProcess = new TestRecordingProcess({ initSegment: Buffer.from("init"), segments: [ Buffer.from("seg1"), Buffer.from("seg2") ] });
+    const recordingProcessFactory = new TestRecordingProcessFactory(ffmpegProcess);
+    const { delegate, logEntries } = await buildTransmittingDelegate(recordingProcessFactory);
+
+    // The arrange already armed recording once (updateRecordingActive(true) reached the reconcile's successful-start path), so the first enable acknowledged exactly
+    // once - the relocation is behavior-preserving for the first enable.
+    assert.equal(countLogs(logEntries, "info", "HKSV:"), 1, "the first enable acknowledged the configuration exactly once");
+
+    // A redundant reconcile WHILE STILL ENABLED (no disable) must NOT re-acknowledge: the timeshift is already running on the desired channel, so the reconcile takes its
+    // already-in-desired-state early return before the successful-start path. This is what proves "once per episode" rather than "once per reconcile".
+    await delegate.configureTimeshifting();
+    await settle();
+
+    assert.equal(countLogs(logEntries, "info", "HKSV:"), 1, "a redundant reconcile within the same enable episode did not re-acknowledge");
+
+    // Disable ends the episode: the "Disabling..." transition log fires and the acknowledgment flag is reset.
+    await delegate.updateRecordingActive(false);
+
+    assert.ok(countLogs(logEntries, "info", "Disabling HomeKit Secure Video event recording.") >= 1, "the disable logged its transition");
+
+    // Re-enable starts a fresh episode: the reconcile re-establishes the buffer (the segment-yielding double re-yields on the second start) and reaches the
+    // successful-start path again, so the acknowledgment fires a SECOND time. countLogs === 2 is false against the un-reset flag (which would log only the first enable,
+    // leaving the count at 1) and true after the reset - the discriminating assertion.
+    await delegate.updateRecordingActive(true);
+    await settle();
+
+    assert.equal(countLogs(logEntries, "info", "HKSV:"), 2, "the re-enable re-acknowledged the configuration, so the ack fired on each enable");
+  });
+
+  // Test H - the fed-but-stuck warning. A recording the watchdog reaped (isTimedOut) while the camera was STILL delivering segments is a genuine local stall, not a
+  // starved source. We drain the timed-out event (advancing the clock past the watchdog window, so the transmit-start arrival goes stale), then emit one fresh segment
+  // to mark the source alive at the close, so the finalization sees a recent arrival under a timeout and warns once. acknowledgeStream closes with no HAP reason - the
+  // production-faithful close for a timed-out event - so the early-end telemetry error stays gated off and only this warning can fire.
+  test("warns once when a recording times out while the camera is still delivering segments", async () => {
+
+    const ffmpegProcess = new TestRecordingProcess({ initSegment: Buffer.from("init"), isTimedOut: true, segments: [Buffer.from("seg1")] });
+    const recordingProcessFactory = new TestRecordingProcessFactory(ffmpegProcess);
+    const { clock, delegate, logEntries } = await buildTransmittingDelegate(recordingProcessFactory);
+
+    await drainPaced(delegate.handleRecordingStreamRequest(1, new AbortController().signal), clock);
+
+    // The camera is still streaming: a fresh segment arrives at the current clock, just before HomeKit closes the event.
+    delegate.timeshift.emit("segment", Buffer.from("live"));
+    delegate.acknowledgeStream();
+
+    assert.equal(countLogs(logEntries, "warn", "while the camera was still streaming"), 1);
+  });
+
+  // Test I - the starved source stays calm. The same timed-out recording, but no fresh segment arrives before the close: the source has gone quiet, so the only
+  // arrival was the transmit-start one, now stale after the drain advanced the clock past the watchdog window. The finalization sees a stale arrival under a timeout
+  // and says nothing - the benign starve the offline/deferred path already narrates. The discriminant against Test H is exactly the absence of the fresh arrival.
+  test("stays quiet when a recording times out after the source has gone quiet", async () => {
+
+    const ffmpegProcess = new TestRecordingProcess({ initSegment: Buffer.from("init"), isTimedOut: true, segments: [Buffer.from("seg1")] });
+    const recordingProcessFactory = new TestRecordingProcessFactory(ffmpegProcess);
+    const { clock, delegate, logEntries } = await buildTransmittingDelegate(recordingProcessFactory);
+
+    await drainPaced(delegate.handleRecordingStreamRequest(1, new AbortController().signal), clock);
+
+    // No fresh segment arrives - the source quieted - so the last arrival is the now-stale transmit-start one.
+    delegate.acknowledgeStream();
+
+    assert.equal(countLogs(logEntries, "warn", "while the camera was still streaming"), 0);
+  });
+
+  // Test J - a recording that did not time out is unaffected. Even with a fresh arrival right before the close, a recording the watchdog did NOT reap (isTimedOut
+  // false) never warns: the warning is gated on the timeout, since a recent arrival alone is the normal healthy case, not a stall. The discriminant against Test H
+  // is exactly the timeout flag.
+  test("stays quiet when the recording did not time out even though the source is still delivering segments", async () => {
+
+    const ffmpegProcess = new TestRecordingProcess({ initSegment: Buffer.from("init"), isTimedOut: false, segments: [Buffer.from("seg1")] });
+    const recordingProcessFactory = new TestRecordingProcessFactory(ffmpegProcess);
+    const { clock, delegate, logEntries } = await buildTransmittingDelegate(recordingProcessFactory);
+
+    await drainPaced(delegate.handleRecordingStreamRequest(1, new AbortController().signal), clock);
+
+    // A fresh segment arrives (recent arrival), but the watchdog did not reap this event, so there is no stall to warn about.
+    delegate.timeshift.emit("segment", Buffer.from("live"));
+    delegate.acknowledgeStream();
+
+    assert.equal(countLogs(logEntries, "warn", "while the camera was still streaming"), 0);
+  });
+});
+
+describe("recording delegate deferred-offline and resolution logging", () => {
+
+  // Deferred while ORGANIC. A camera goes offline (isReachable false) at the running phase while HomeKit asks us to record: the reconcile head logs the deferral at
+  // WARN - a genuine "we wanted to record but cannot" signal for a single camera unexpectedly in trouble. We assert BOTH the present level (warn === 1) AND the absent
+  // level (debug === 0) so a level flip fails the test.
+  test("logs the deferred-offline notice at warn during an organic single-camera offline", async () => {
+
+    const { delegate, logEntries } = arrangeDeferralDelegate();
+
+    // The phase is the default organic "running"; arming while offline opens the deferral episode and the reconcile head logs it.
+    await delegate.updateRecordingActive(true);
+    await settle();
+
+    assert.equal(countLogs(logEntries, "warn", "deferred until the camera is online"), 1, "an organic deferral logs at warn");
+    assert.equal(countLogs(logEntries, "debug", "deferred until the camera is online"), 0, "an organic deferral does not log at debug");
+  });
+
+  // Deferred while INDUCED. The same offline deferral, but the controller is rebooting because we asked it to: the reconcile head drops the deferral to DEBUG, since the
+  // controller-level "rebooting..." narration already covers the disruption. Both-level assertion proves the gate flipped, not merely that one line is present.
+  test("quiets the deferred-offline notice to debug during an induced controller reboot", async () => {
+
+    const { delegate, logEntries, nvr } = arrangeDeferralDelegate();
+
+    // Mark the disruption as one we induced before arming, so the deferral edge reads the rebooting phase.
+    nvr.phase = "rebooting";
+
+    await delegate.updateRecordingActive(true);
+    await settle();
+
+    assert.equal(countLogs(logEntries, "debug", "deferred until the camera is online"), 1, "an induced deferral logs at debug");
+    assert.equal(countLogs(logEntries, "warn", "deferred until the camera is online"), 0, "an induced deferral does not log at warn");
+  });
+
+  // Resolution while ORGANIC. A recording deferred at the running phase, then the camera returns and the timeshift actually starts: the successful-start path announces
+  // the resumption at WARN (matching the deferral's organic origin). The start genuinely succeeds because the segment-yielding double resolves whenEstablished true.
+  // Both-level assertion: warn === 1, debug === 0.
+  test("announces the resumption at warn when an organic deferral re-establishes", async () => {
+
+    const { delegate, host, logEntries } = arrangeDeferralDelegate();
+
+    // Open the organic deferral.
+    await delegate.updateRecordingActive(true);
+    await settle();
+
+    assert.equal(countLogs(logEntries, "warn", "deferred until the camera is online"), 1, "the organic deferral was logged");
+
+    // The camera returns; the reconcile now reaches the successful-start path and announces the resumption.
+    host.isReachable = true;
+
+    await delegate.configureTimeshifting();
+    await settle();
+
+    assert.equal(countLogs(logEntries, "warn", "has started now that the camera is online"), 1, "an organic resumption announces at warn");
+    assert.equal(countLogs(logEntries, "debug", "has started now that the camera is online"), 0, "an organic resumption does not announce at debug");
+  });
+
+  // Resolution while INDUCED - the latch-not-phase proof. A recording deferred while the controller was rebooting (captured origin: induced), then the camera returns
+  // AFTER the controller is back, so the phase is "running" again at the resolution reconcile. The resumption must announce at DEBUG, driven by the captured
+  // wasDeferredWhileInduced latch, NOT by a fresh phase read - a current-phase read at this point would see "running" and wrongly announce at warn, failing this test.
+  // This is the decisive case the captured-boolean design exists for.
+  test("announces the resumption at debug from the captured induced origin even though the phase is running at resolution", async () => {
+
+    const { delegate, host, logEntries, nvr } = arrangeDeferralDelegate();
+
+    // Open the deferral while the controller is rebooting: the origin is captured as induced.
+    nvr.phase = "rebooting";
+
+    await delegate.updateRecordingActive(true);
+    await settle();
+
+    assert.equal(countLogs(logEntries, "debug", "deferred until the camera is online"), 1, "the induced deferral was logged at debug");
+
+    // The controller has finished rebooting (phase back to running) and the camera is online again. A current-phase read here would classify the recovery as organic; the
+    // captured latch must keep it induced.
+    nvr.phase = "running";
+    host.isReachable = true;
+
+    await delegate.configureTimeshifting();
+    await settle();
+
+    assert.equal(countLogs(logEntries, "debug", "has started now that the camera is online"), 1, "the induced resumption announces at debug from the captured origin");
+    assert.equal(countLogs(logEntries, "warn", "has started now that the camera is online"), 0, "the induced resumption does not announce at warn (a phase read would)");
+  });
+
+  // No resolution when recording cannot actually run. A recording is deferred offline, then the camera becomes reachable BUT the timeshift start fails (the livestream
+  // double yields no segments, so whenEstablished resolves false and timeshift.start returns false, taking the early return before the successful-start path). The
+  // resumption must NOT be announced - recording did not actually resume - at either level. This pins the decisive correction: the announcement is past the start
+  // success, not on the bare reachability edge.
+  test("does not announce a resumption when the camera is reachable but the timeshift start fails", async () => {
+
+    const { delegate, host, logEntries } = arrangeDeferralDelegate();
+
+    // Open the deferral.
+    await delegate.updateRecordingActive(true);
+    await settle();
+
+    assert.equal(countLogs(logEntries, "warn", "deferred until the camera is online"), 1, "the deferral was logged");
+
+    // The camera becomes reachable, but starve the buffer so timeshift.start fails (whenEstablished resolves false on the segment-less double) - the reconcile takes the
+    // start-failure early return and never reaches the successful-start path.
+    host.isReachable = true;
+    host.livestreamMediaSegments = 0;
+
+    await delegate.configureTimeshifting();
+    await settle();
+
+    assert.equal(countLogs(logEntries, "warn", "has started now that the camera is online"), 0, "no resumption is announced at warn when the start fails");
+    assert.equal(countLogs(logEntries, "debug", "has started now that the camera is online"), 0, "no resumption is announced at debug when the start fails");
   });
 });

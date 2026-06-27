@@ -1,6 +1,6 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * live-attach.test.ts: The 2c-ii live-attach reclassification end to end - a plain camera the controller late-flips to a doorbell composes its DoorbellCapability onto
+ * live-attach.test.ts: The live-attach reclassification end to end - a plain camera the controller late-flips to a doorbell composes its DoorbellCapability onto
  * the running instance in place, rebuilding only the one HAP object that cannot change in place (the CameraController), and exactly when it was built for the wrong
  * doorbell-ness.
  *
@@ -35,7 +35,8 @@ function construct(nvr: TestProtectNvr, accessory: TestAccessory, projection: Te
   return new ProtectCamera(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Camera);
 }
 
-// The count of INFO/WARN log lines whose first format string contains the given fragment - the harness records the raw parameters, so we match the message template.
+// The count of log lines at the given level whose first format string contains the given fragment - the harness records the raw parameters,
+// so we match the message template.
 function countLogs(entries: TestLogEntry[], level: TestLogEntry["level"], fragment: string): number {
 
   return entries.filter((entry) => (entry.level === level) && (typeof entry.parameters[0] === "string") && entry.parameters[0].includes(fragment)).length;
@@ -181,7 +182,7 @@ describe("live-attach reclassification (suite C)", () => {
 
     const warnBaseline = logEntries.filter((entry) => entry.level === "warn").length;
 
-    // The demotion: isDoorbell drops and settles. The reconcile resolves to "report-withdrawn" - observability-only by HJD ruling.
+    // The demotion: isDoorbell drops and settles. The reconcile resolves to "report-withdrawn" - observability-only.
     store.pushCameraFeatureFlags(cameraConfig.id, { isDoorbell: false });
 
     await settle();

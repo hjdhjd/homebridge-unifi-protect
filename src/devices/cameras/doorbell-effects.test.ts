@@ -3,7 +3,7 @@
  * doorbell-effects.test.ts: The doorbell capability's observer-effect net - the two netteable observer reflections (physical-chime duration, chime volume) and the
  * doorbell-trigger ring - against the REAL constructed ProtectCamera-plus-DoorbellCapability.
  *
- * The doorbell capability registers four observers (doorbell.ts:262-291). Their WAKE is netted by doorbell-construction.test.ts; this suite nets the two reflections
+ * The doorbell capability registers four observers (doorbell.ts). Their WAKE is netted by doorbell-construction.test.ts; this suite nets the two reflections
  * whose EFFECT is observable without a controller write surface: chimeDuration -> updatePhysicalChimes (the mutually-exclusive physical-chime switch fan-out) and
  * chimeVolume -> updateChimeVolume (the volume Lightbulb's On + Brightness). The lcdMessage reflection is NOT nettable here (updateLcdSwitch iterates messageSwitches,
  * which getMessages leaves empty unless nvr.ufp.doorbellSettings is seeded - a harness add this Tier does not make), so it is owned by Tier 2; the hasPackageCamera
@@ -45,7 +45,7 @@ interface RingCall {
 }
 
 // A REAL ProtectEventDispatch whose doorbell delivery is overridden to record rather than touch HomeKit or arm a ring timer. The override's arity and parameter types
-// mirror production's doorbellEventHandler (event-dispatch.ts:523) exactly, so it type-checks as a true override; the camera's doorbell-trigger onSet calls
+// mirror production's doorbellEventHandler (event-dispatch.ts) exactly, so it type-checks as a true override; the camera's doorbell-trigger onSet calls
 // this.nvr.events.doorbellEventHandler(this), so this captures exactly that routing without firing the real ring's HomeKit effects.
 class RecordingRingDispatch extends ProtectEventDispatch {
 
@@ -57,15 +57,15 @@ class RecordingRingDispatch extends ProtectEventDispatch {
   }
 }
 
-// The construction handles a test holds, so the afterEach can unwind the per-accessory abort regardless of which build the test ran. chimeProjections are the HELD chime
-// doubles the doorbell's cross-device setChimeVolume writes through (one per seeded chime config, in order) - the test asserts each projection's updateCalls and sets its
-// updateRejection lever on the SAME instance the write hits. logEntries and mqtt are the write-drive's additional read surface: the write reports its failure through the
-// shared command-error log (logEntries) and publishes the new volume through the MQTT double (mqtt) on success.
+// The construction handles a test holds onto, so the afterEach can unwind the per-accessory abort regardless of which build the test ran. chimeProjections are the HELD
+// chime doubles the doorbell's cross-device setChimeVolume writes through (one per seeded chime config, in order) - the test asserts each projection's updateCalls
+// and sets its updateRejection lever on the SAME instance the write hits. logEntries and mqtt are the write-drive's additional read surface: the write reports its
+// failure through the shared command-error log (logEntries) and publishes the new volume through the MQTT double (mqtt) on success.
 interface BuiltDoorbell {
 
   accessory: TestAccessory;
   cameraConfig: ProtectCameraConfig;
-  // The camera's read-through projection, the SAME instance the doorbell's #device write-through reaches (camera.ts:280 passes this.device into
+  // The camera's read-through projection, the SAME instance the doorbell's #device write-through reaches (camera.ts passes this.device into
   // createDoorbellCapability), so the /message SET's setMessage -> this.#device.update lands on this projection's updateCalls. Exposed for the /message assertions.
   cameraProjection: TestCameraProjection;
   chimeProjections: TestChimeProjection[];
@@ -83,8 +83,8 @@ function loggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], substri
   return entries.some((entry) => (entry.level === level) && (typeof entry.parameters[0] === "string") && entry.parameters[0].includes(substring));
 }
 
-// Build a REAL ProtectCamera against an isDoorbell-true config (so it construction-attaches its DoorbellCapability), exactly as doorbell-construction.test.ts:35-65
-// assembles it: the doorbell camera config (with the test's extra feature flags merged over isDoorbell), an optional chime serving it, the v5 store double, the typed
+// Build a REAL ProtectCamera against an isDoorbell-true config (so it construction-attaches its DoorbellCapability), exactly as doorbell-construction.test.ts
+// assembles it: the doorbell camera config (with the test's extra feature flags merged over isDoorbell), an optional chime serving it, the store double, the typed
 // NVR / platform doubles with the test's userOptions threaded into the REAL FeatureOptions engine and an optional dispatch factory, the read-through projection, and a
 // fresh accessory. The casts are confined to this seam - the instance is the production ProtectCamera and its composed capability.
 async function buildDoorbell(options: { chimeConfigs?: ProtectChimeConfig[]; dispatch?: (nvr: ProtectNvr) => ProtectEventDispatch;
@@ -141,7 +141,7 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
       // the capability's four = sixteen. A drift here means an extra or missing observer slipped in.
       assert.equal(built.nvr.client.state.observerCount, 16, "the doorbell wires exactly sixteen observers (the camera ten, the base pair, and the capability four)");
 
-      // HARD-assert all three physical-chime switches exist FIRST: the gate is hasChime && hasFeature("Doorbell.PhysicalChime") (doorbell.ts:526). An absent service
+      // HARD-assert all three physical-chime switches exist FIRST: the gate is hasChime && hasFeature("Doorbell.PhysicalChime") (doorbell.ts). An absent service
       // would let the value assertions pass vacuously.
       const none = built.accessory.getServiceById(Service.Switch, ProtectReservedNames.SWITCH_DOORBELL_CHIME_NONE);
       const mechanical = built.accessory.getServiceById(Service.Switch, ProtectReservedNames.SWITCH_DOORBELL_CHIME_MECHANICAL);
@@ -152,7 +152,7 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
       assert.ok(digital, "the DIGITAL physical-chime switch materializes");
 
       // makeCameraConfig seeds chimeDuration 0, which is the NONE duration, so the NONE switch starts On. Push 300 - the MECHANICAL duration (a constant,
-      // doorbell.ts:816) - which wakes the chimeDuration observer -> updatePhysicalChimes -> the fan-out (On === (chimeDuration === getPhysicalChimeDuration(type))).
+      // doorbell.ts) - which wakes the chimeDuration observer -> updatePhysicalChimes -> the fan-out (On === (chimeDuration === getPhysicalChimeDuration(type))).
       assert.equal(none.getCharacteristic(Characteristic.On).value, true, "the NONE switch initialized On for the seeded chimeDuration 0");
 
       built.nvr.client.state.pushCameraPatch(built.cameraConfig.id, { chimeDuration: 300 });
@@ -189,7 +189,7 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
       built = await buildDoorbell({ chimeConfigs: [chime], userOptions: ["Enable.Doorbell.Volume.Dimmer"] });
 
-      // HARD-assert the volume Lightbulb exists FIRST: the gate is hasFeature("Doorbell.Volume.Dimmer") (doorbell.ts:603). An absent service would let the value
+      // HARD-assert the volume Lightbulb exists FIRST: the gate is hasFeature("Doorbell.Volume.Dimmer") (doorbell.ts). An absent service would let the value
       // assertions pass vacuously.
       const volumeBulb = built.accessory.getServiceById(Service.Lightbulb, ProtectReservedNames.LIGHTBULB_DOORBELL_VOLUME);
 
@@ -714,7 +714,7 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
         assert.ok(set?.setValue, "the /message SET subscription registered");
 
         // Valid JSON, but no "message" key, so the !("message" in payload) validation fork logs the error and returns before setMessage. The Number.isNaN(duration)
-        // sub-clause of this same guard (doorbell.ts:726) is a defensive guard NOT reachable through the MQTT wire: the handler always JSON.parses rawValue, and
+        // sub-clause of this same guard (in doorbell.ts) is a defensive guard NOT reachable through the MQTT wire: the handler always JSON.parses rawValue, and
         // JSON.parse never yields the literal number NaN (JSON has no NaN representation), so Number.isNaN(parsed.duration) cannot be true for any valid-JSON input.
         // It is honestly left uncovered rather than netted with a non-representable input.
         const payload = JSON.stringify({ duration: 10 });

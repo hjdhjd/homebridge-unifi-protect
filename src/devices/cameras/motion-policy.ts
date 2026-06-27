@@ -7,11 +7,11 @@
  * or controller I/O, three camera facts in and a boolean out - so the camera leaf's bare-motion observer can import it without value-importing the non-leaf
  * event-dispatch.ts (the device-layer module invariant), and its truth table is exhaustively testable without standing up a camera accessory.
  *
- * The home is the camera leaf's `lastMotion` observer. Under v5 the controller signals bare motion by advancing the camera record's `lastMotion` device-state field,
- * which the camera observes exactly as the sensor and light families observe their own motion state. The policy itself survives the v4 semantics verbatim: we trip the
- * MotionSensor from a bare motion only when smart detection cannot be the authoritative source of motion - the camera is actively recording for HKSV (where every motion
- * start must drive the recording), the camera has no smart-detection capability at all, or the user has turned smart detection off. In every other case the matching
- * smart detection is the source of truth and firing here as well would double-report the same motion.
+ * The home is the camera leaf's `lastMotion` observer. The controller signals bare motion by advancing the camera record's `lastMotion` device-state field, which the
+ * camera observes exactly as the sensor and light families observe their own motion state. The policy itself is simple: we trip the MotionSensor from a bare motion
+ * only when smart detection cannot be the authoritative source of motion - the camera is actively recording for HKSV (where every motion start must drive the
+ * recording), the camera has no smart-detection capability at all, or the user has turned smart detection off. In every other case the matching smart detection is the
+ * source of truth and firing here as well would double-report the same motion.
  */
 
 /**

@@ -1,6 +1,6 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * protect-platform.ts: homebridge-unifi-protect platform class.
+ * platform.ts: homebridge-unifi-protect platform class.
  */
 import type { API, DynamicPlatformPlugin, Logging } from "homebridge";
 import { APIEvent, FeatureOptions, FfmpegCodecs, RtpPortAllocator, recordingProcessFactory, systemClock } from "homebridge-plugin-utils";

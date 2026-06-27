@@ -34,7 +34,7 @@ export interface LeakChannelContext {
  * Decide whether a leak channel should be exposed as a HomeKit service.
  *
  * The device must HAVE the channel (the capability the controller advertises in featureFlags.waterLeak.channelNames) and it must be ENABLED by the model-correct signal.
- * Single-channel devices (UFP-SENSE, channelNames ["internal"]) drive leak via the physical mount role - their leakSettings.isInternalEnabled is a stuck capability echo
+ * Single-channel devices (UP-Sense, channelNames ["internal"]) drive leak via the physical mount role - their leakSettings.isInternalEnabled is a stuck capability echo
  * (always true), so we IGNORE it and read mountType === "leak". Multi-channel devices (USL-Environmental, ["internal","external"]) expose LIVE per-channel toggles, so we
  * honor leakSettings. ASSUMPTION (documented, accepted): channel arity is the derivable proxy for which enable signal is authoritative - single-channel => mount-role,
  * multi-channel => live leakSettings. This holds for all known hardware. It could mis-gate in two directions only a future device could introduce: a single-channel

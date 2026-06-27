@@ -2,11 +2,11 @@
  *
  * command-error.test.ts: Unit tests for the shared device command-error helper (ProtectDevice.runDeviceCommand) and the write-through command path it single-sources.
  *
- * v5 device commands are write-through: this.device.update(payload) PATCHes the controller and throws the classified FatalError on a non-2xx, rather than v4's null
- * return. runDeviceCommand is the one seam that converts that throw contract into the boolean every HomeKit onSet handler branches on, and the one place a command
+ * Device commands are write-through: this.device.update(payload) PATCHes the controller and throws the classified FatalError on a non-2xx, rather than returning null
+ * on failure. runDeviceCommand is the one seam that converts that throw contract into the boolean every HomeKit onSet handler branches on, and the one place a command
  * failure is reported - an authorization failure earns the actionable "Administrator role" guidance, any other is reported with its underlying cause, normalized so the
  * reported sentence ends in exactly one terminal period regardless of the error message's own punctuation. These tests pin that contract against the real production
- * method, then exercise the migrated command paths that route through it - setStatusLed, the night-vision and access-unlock onSet reverts, and the RTSP enablement gate -
+ * method, then exercise the command paths that route through it - setStatusLed, the night-vision and access-unlock onSet reverts, and the RTSP enablement gate -
  * through the HAP test-double.
  *
  * ProtectDevice is the smallest real surface that carries the helper: the abstract base declares no abstract members, so a near-empty concrete leaf is a faithful
@@ -111,7 +111,7 @@ describe("runDeviceCommand (real ProtectDevice)", () => {
     const { errors, instance } = makeDevice();
 
     // We deliberately reject with a non-Error value to exercise runDeviceCommand's String(error) fallback - the branch that reports a thrown value that is not an Error.
-    // v5 commands only ever throw classified Error subclasses, so this is the defensive path, and rejecting with a non-Error is the whole point of the assertion.
+    // Commands only ever throw classified Error subclasses, so this is the defensive path, and rejecting with a non-Error is the whole point of the assertion.
     // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
     const result = await instance.runCommand("set the doorbell message", () => Promise.reject("boom"));
 
@@ -123,7 +123,7 @@ describe("runDeviceCommand (real ProtectDevice)", () => {
 
     const { errors, instance } = makeDevice();
 
-    // A v5 classified error message is a full sentence ending in a period. The format string supplies its own terminal period, so without normalization the line would
+    // A classified error message is a full sentence ending in a period. The format string supplies its own terminal period, so without normalization the line would
     // end in a doubled "..". The helper strips the message's trailing period(s) so the reported sentence ends in exactly one.
     const result = await instance.runCommand("reboot the camera", () => Promise.reject(new Error("The camera is offline.")));
 

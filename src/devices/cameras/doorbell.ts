@@ -1,6 +1,6 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * protect-doorbell.ts: Doorbell capability for UniFi Protect.
+ * doorbell.ts: Doorbell capability for UniFi Protect.
  */
 import type { AcquireServiceTarget, HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
 import type { Camera, DeepPartial, ProtectCameraConfig, ProtectCameraLcdMessageConfig } from "unifi-protect";
@@ -49,7 +49,7 @@ const RESERVED_NAMES = new Set(Object.values(ProtectReservedNames).map(x => x.to
  * the chime-volume lightbulb, the auth sensor), the four read-through settings getters, the four doorbell observers, the doorbell MQTT topics, and the package-camera
  * lifecycle. The camera-coupling is localized to a private block of delegating accessors below, so each moved body resolves its this.ufp / this.accessory /
  * this.hasFeature reads through the camera with minimal change. The capability holds its own composed AbortController so a future detach unwinds exactly its observers
- * and MQTT registrations, the 2b owner-lifetime idiom one level up.
+ * and MQTT registrations, the owner-lifetime idiom one level up.
  */
 export class DoorbellCapability extends ProtectBase {
 
@@ -74,8 +74,8 @@ export class DoorbellCapability extends ProtectBase {
 
   /* The delegating accessors: the resolution to the member-access census. Each moved doorbell body read off this.ufp / this.accessory / this.hasFeature and the rest,
    * which ProtectBase does not provide. Routing them through these private accessors over the camera localizes the camera-coupling to one block and keeps the moved
-   * bodies a near-verbatim re-route. The acquireService / validService wrappers are thin re-bindings to the HBPU free functions over the camera's accessory (the same
-   * HBPU SSOT the camera's own wrappers delegate to), not logic duplication.
+   * bodies a near-verbatim re-route. The acquireService / validService wrappers are thin re-bindings to the homebridge-plugin-utils free functions over the camera's
+   * accessory (the same homebridge-plugin-utils SSOT the camera's own wrappers delegate to), not logic duplication.
    */
 
   // The live camera projection's config record, narrowed to the camera projection. The moved bodies read this.ufp.<field> exactly as the subclass did.
@@ -113,13 +113,13 @@ export class DoorbellCapability extends ProtectBase {
     return this.camera.isReservedName(name);
   }
 
-  // Acquire a service on the camera's accessory, a thin re-binding to the HBPU free function (the SSOT the camera's own wrapper also delegates to).
+  // Acquire a service on the camera's accessory, a thin re-binding to the homebridge-plugin-utils free function (the SSOT the camera's own wrapper also delegates to).
   private acquireService(serviceType: AcquireServiceTarget, name = this.accessoryName, subtype?: string, onServiceCreate?: (svc: Service) => void): Nullable<Service> {
 
     return acquireService(this.accessory, serviceType, name, subtype, onServiceCreate);
   }
 
-  // Validate a service on the camera's accessory, the same thin re-binding to the HBPU free function.
+  // Validate a service on the camera's accessory, the same thin re-binding to the homebridge-plugin-utils free function.
   private validService(serviceType: WithUUID<typeof Service>, validate: boolean, subtype?: string): boolean {
 
     return validService(this.accessory, serviceType, validate, subtype);
@@ -260,10 +260,11 @@ export class DoorbellCapability extends ProtectBase {
     // Reflect the active physical-chime mode across the chime switches.
     this.observeState({ key: "doorbell.chimeDuration", selector: state => cam(state)?.chimeDuration, title: "the chime" }, () => this.updatePhysicalChimes());
 
-    // Restore the cross-device volume reactivity v4's chimeEventHandler provided: when this doorbell's effective chime volume changes on the controller (a ring-volume
-    // edit on any assigned chime), push it to the volume Lightbulb. The selector returns the computed volume, so the store's value dedup wakes this only on a real
-    // change, not on every unrelated chime patch. A blessed refinement over v4, which pushed one chime's volume, not the mean - now consistent with the onGet. The id is
-    // hoisted to the plain string here, alongside cam, because a selector runs inside the store's dispatch, where a projection read against a removed record throws.
+    // Restore the cross-device volume reactivity the old chimeEventHandler provided: when this doorbell's effective chime volume changes on the controller (a
+    // ring-volume edit on any assigned chime), push it to the volume Lightbulb. The selector returns the computed volume, so the store's value dedup wakes this only on
+    // a real change, not on every unrelated chime patch. A deliberate refinement over the old behavior, which pushed one chime's volume, not the mean - now consistent
+    // with the onGet. The id is hoisted to the plain string here, alongside cam, because a selector runs inside the store's dispatch, where a projection read against a
+    // removed record throws.
     this.observeState({ key: "doorbell.chimeVolume", selector: state => chimeVolumeFor(selectChimes(state), id), title: "the chime volume" },
       () => this.updateChimeVolume());
   }
@@ -277,8 +278,7 @@ export class DoorbellCapability extends ProtectBase {
       return false;
     }
 
-    // Grab the consolidated list of messages from the doorbell and our configuration.
-    // Look through the combined messages from the doorbell and what the user has configured and tell HomeKit about it.
+    // Walk the consolidated list of messages from the doorbell and the user's configuration, registering a switch in HomeKit for each.
     for(const entry of this.getMessages()) {
 
       // Truncate anything longer than the character limit that the doorbell will accept.
@@ -400,7 +400,7 @@ export class DoorbellCapability extends ProtectBase {
 
   /* Reconcile the package camera's lifecycle against the controller's live capability flag, idempotently in both directions. The hasPackageCamera observer drives
    * this on a flag change, and the NVR's stability sweep drives it at every stability return - the sweep is both the construction-time arm (a capability withdrawn
-   * while HBUP was down leaves a cached BRIDGED package accessory that no other removal path can ever reach, since the orphan sweep keys on a mac the package
+   * while the plugin was down leaves a cached BRIDGED package accessory that no other removal path can ever reach, since the orphan sweep keys on a mac the package
    * deliberately lacks and the orphan guard refuses parent-alive packages) and the re-arm (a detach grace dropped by a stability loss, or a fire that failed its
    * stability re-check, is re-scheduled once the controller settles). STANDALONE EXCLUSION: homebridge never restores external accessories at startup, so a
    * standalone package ghost after a restart is invisible here - we cannot know one existed, its HomeKit-side pairing cleanup is inherently the user's, and no
@@ -835,6 +835,8 @@ export class DoorbellCapability extends ProtectBase {
     // If we've got messages on the controller, let's configure those, unless the user has disabled that feature.
     if(this.isMessagesFromControllerEnabled) {
 
+      // The controller's allMessages may omit the duration field that MessageInterface declares; the switch-build loop tolerates that with its "duration" in entry
+      // fallback to defaultMessageDuration, which is what makes this cast safe.
       doorbellMessages = (doorbellSettings.allMessages as MessageInterface[]).concat(doorbellMessages);
     }
 
@@ -842,9 +844,8 @@ export class DoorbellCapability extends ProtectBase {
     return doorbellMessages;
   }
 
-  // Validate our existing HomeKit message switch list, syncing it against the controller's current message set. This runs at configure time only: the first loop the
-  // pre-collapse code carried was provably dead (it tested membership of the exact key every entry was stored under, so its removal branch was unreachable) and is
-  // gone; this loop is the real across-restart sync, catching the scenario where Homebridge was shut down and the list of saved messages on the controller changed.
+  // Validate our existing HomeKit message switch list, syncing it against the controller's current message set. This runs at configure time only: it is the
+  // across-restart sync, catching the scenario where Homebridge was shut down and the list of saved messages on the controller changed.
   private validateMessageSwitches(): void {
 
     // Loop through the list of services on our doorbell accessory and sync the message switches. We do this to catch the scenario where Homebridge was shutdown, and the
@@ -912,7 +913,7 @@ export class DoorbellCapability extends ProtectBase {
   // Set the message on the doorbell.
   private async setMessage(payload: DeepPartial<ProtectCameraLcdMessageConfig> = {}): Promise<boolean> {
 
-    // We take the duration and save it for MQTT and then translate the payload into what Protect is expecting from us.
+    // If a duration was given, translate it into the resetAt timestamp Protect expects and drop the duration field, which the controller does not understand.
     if("duration" in payload) {
 
       payload.resetAt = payload.duration ? Date.now() + payload.duration : null;
@@ -923,9 +924,9 @@ export class DoorbellCapability extends ProtectBase {
     return this.runDeviceCommand("set the doorbell message", () => this.#device.update({ lcdMessage: payload }));
   }
 
-  // This doorbell's effective chime volume, read through the live v5 chime projections. We delegate to the shared chimeVolumeFor helper over selectChimes of the current
+  // This doorbell's effective chime volume, read through the live chime projections. We delegate to the shared chimeVolumeFor helper over selectChimes of the current
   // snapshot - the identical input the volume observer reduces - so the read-through getter and the reactive push share one definition of "this doorbell's volume".
-  // selectChimes is always an array post-connect, so the old bootstrap-missing guard is gone.
+  // selectChimes is always an array post-connect.
   private get chimeVolume(): number {
 
     return chimeVolumeFor(selectChimes(this.nvr.client.state.snapshot()), this.ufp.id);
@@ -937,8 +938,9 @@ export class DoorbellCapability extends ProtectBase {
     value = Math.max(value, 0);
 
     // A chime can be assigned to multiple doorbells, so update the ring entry for THIS doorbell on every chime that serves it. Write-through: each update PATCHes the
-    // controller and the change is reflected once the reducer's stream delivers it - we no longer fold the response back into local state (v5 state is immutable and
-    // single-sourced in the reducer), nor mutate the ring in place. We send a single-entry ringSettings array carrying only the modified ring, matching v4's payload.
+    // controller and the change is reflected once the reducer's stream delivers it - we no longer fold the response back into local state (the controller state is
+    // immutable and single-sourced in the reducer), nor mutate the ring in place. We send a single-entry ringSettings array carrying only the modified ring, matching
+    // the controller's expected payload.
     for(const chime of this.nvr.client.chimes.filter(chime => chime.config.cameraIds.includes(this.ufp.id))) {
 
       const ring = chime.config.ringSettings.find(setting => setting.cameraId === this.ufp.id);

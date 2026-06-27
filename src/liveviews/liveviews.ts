@@ -1,6 +1,6 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * protect-liveviews.ts: Liveviews class for UniFi Protect.
+ * liveviews.ts: Liveviews class for UniFi Protect.
  */
 import { PLATFORM_NAME, PLUGIN_NAME } from "../settings.ts";
 import type { ProtectAccessory, ProtectAccessoryContext } from "../types.ts";
@@ -23,10 +23,8 @@ export class ProtectLiveviews extends ProtectBase {
   // Configure our liveviews capability.
   constructor(nvr: ProtectNvr) {
 
-    // Let the base class get us set up.
     super(nvr);
 
-    // Initialize the class.
     this.isConfigured = new Set();
     this.isMqttConfigured = false;
     this.securityAccessory = null;
@@ -38,8 +36,8 @@ export class ProtectLiveviews extends ProtectBase {
     this.observeState({ key: "nvr.liveviews", selector: selectLiveviews, title: "live views" }, () => this.configureLiveviews());
   }
 
-  // Read-through of the controller's live liveview collection. This replaces the held bootstrap snapshot: every read reflects the current v5 projection, so a liveview
-  // added, renamed, or removed in Protect is visible the moment the NVR-level observe loop reconciles, with no field to reassign. Always an array post-connect.
+  // Read-through of the controller's live liveview collection. Every read reflects the current projection, so a liveview added, renamed, or removed in Protect is
+  // visible the moment the NVR-level observe loop reconciles, with no field to reassign. Always an array post-connect.
   private get liveviews(): readonly ProtectNvrLiveviewConfig[] {
 
     return this.nvr.client.liveviews;
@@ -218,7 +216,7 @@ export class ProtectLiveviews extends ProtectBase {
     }
   }
 
-  // Configure MQTT capabilities for the security system.
+  // Configure MQTT capabilities for the liveview switches.
   private configureMqtt(): void {
 
     if(this.isMqttConfigured) {
@@ -297,8 +295,7 @@ export class ProtectLiveviews extends ProtectBase {
       return;
     }
 
-    // Get the complete list of cameras in the liveview we're interested in. This cryptic line grabs the list of liveviews that have the name we're interested in (turns
-    // out, you can define multiple liveviews in Protect with the same name...who knew!), and then create a single list containing all of the cameras found.
+    // Resolve the member camera ids for this liveview.
     const targetCameraIds = this.getLiveviewCameras(liveviewSwitch.context.liveview ?? "");
 
     // Nothing configured for this view. We're done.

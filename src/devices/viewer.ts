@@ -1,6 +1,6 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * protect-viewer.ts: Viewer device class for UniFi Protect.
+ * viewer.ts: Viewer device class for UniFi Protect.
  */
 import type { CharacteristicValue, Service } from "homebridge";
 import type { ProtectViewerConfig, Viewer } from "unifi-protect";
@@ -66,7 +66,7 @@ export class ProtectViewer extends ProtectDevice {
     // Grab the current list of liveview switches we know about.
     const currentLiveviewSwitches = this.accessory.services.filter(x => (x.UUID === this.hap.Service.Switch.UUID) && x.subtype);
 
-    // Grab the current list of liveview identifiers from the controller, read through the live v5 projection. client.liveviews is always an array, so the list operations
+    // Grab the current list of liveview identifiers from the controller, read through the live projection. client.liveviews is always an array, so the list operations
     // below need no presence guard.
     const nvrLiveviewIds = this.nvr.client.liveviews.map(x => x.id);
 
@@ -190,7 +190,7 @@ export class ProtectViewer extends ProtectDevice {
 
   // Set the liveview on a viewer device in UniFi Protect. Returns true when the controller accepted the command. The action phrase is supplied by the caller so the
   // shared command-error helper can name the specific operation (a switch toggle versus an MQTT set) in any failure it reports, and the liveview-name MQTT event is
-  // published only once the controller has accepted the change rather than unconditionally as the v4 path did.
+  // published only once the controller has accepted the change rather than unconditionally as the old path did.
   private async setViewer(action: string, newLiveview: Nullable<string>): Promise<boolean> {
 
     if(!(await this.runDeviceCommand(action, () => this.device.update({ liveview: newLiveview })))) {
@@ -242,7 +242,8 @@ export class ProtectViewer extends ProtectDevice {
     return true;
   }
 
-  // Spawn the viewer's narrow-selector observers (Fork B). super spawns the universal name-sync observer; the viewer adds its single state reaction.
+  // Spawn the viewer's narrow-selector observers. super spawns the two universal observers (name sync and firmware/device-info refresh); the viewer adds
+  // its two reactions (the active-liveview and the liveview-collection observes).
   protected override spawnObservers(): void {
 
     super.spawnObservers();
@@ -254,7 +255,7 @@ export class ProtectViewer extends ProtectDevice {
     this.observeState({ key: "viewer.liveview", selector: state => viewer(state)?.liveview, title: "the active live view" }, () => this.updateLiveviewSwitchState());
 
     // The controller's liveview collection drives which switches this viewer exposes. Re-run the full reconcile when it changes - restoring the per-refresh
-    // viewer.updateDevice the v4 syncDevices loop ran. (The viewer.liveview observe above handles the active-selection reflection.)
+    // viewer.updateDevice the syncDevices loop ran. (The viewer.liveview observe above handles the active-selection reflection.)
     this.observeState({ key: "nvr.liveviews", selector: selectLiveviews, title: "the live view list" }, () => this.updateDevice());
   }
 }

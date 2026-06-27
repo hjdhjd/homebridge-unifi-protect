@@ -1,6 +1,6 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * protect-nvr-systeminfo.ts: NVR System Information device class for UniFi Protect.
+ * nvr-systeminfo.ts: NVR System Information device class for UniFi Protect.
  */
 import { PLATFORM_NAME, PLUGIN_NAME } from "../settings.ts";
 import type { ProtectAccessory, ProtectAccessoryContext } from "../types.ts";
@@ -161,10 +161,10 @@ export class ProtectNvrSystemInfo extends ProtectBase {
     return true;
   }
 
-  // Configure MQTT capabilities for the security system.
+  // Configure MQTT capabilities for the controller system information.
   private configureMqtt(): void {
 
-    // Return the current status of all sensors.
+    // Return the controller's current system information.
     this.subscribeGet("systeminfo", "system information", () => JSON.stringify(this.nvr.ufp.systemInfo));
   }
 }

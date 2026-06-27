@@ -8,7 +8,7 @@
  * removeService / configureController on Accessory, getCharacteristic / updateCharacteristic / removeCharacteristic on Service, and onGet / onSet / value on
  * Characteristic.
  *
- * Alongside the HAP double, this file owns the reusable device-construction harness: a faithful double of the v5 StateStore observe contract (TestStateStore),
+ * Alongside the HAP double, this file owns the reusable device-construction harness: a faithful double of the StateStore observe contract (TestStateStore),
  * typed builders for the camera and chime config records and the NVR / platform doubles, a read-through Camera projection double, and a stub
  * StreamingDelegateFactory that satisfies the platform's dependency-inversion seam so a REAL ProtectCamera - or a full doorbell-plus-package-camera family - can be
  * constructed end to end with no FFmpeg and no live HAP. The NVR double additionally mirrors the platform-accessory registration surface (a mutable accessories
@@ -210,7 +210,7 @@ class MotionDetectedCharacteristicType {
   public readonly hapKind = "MotionDetected" as const;
 }
 
-// The occupancy-detected characteristic. configureOccupancySensor initializes OccupancyDetected to false on the occupancy service it acquires (device.ts:684) and the
+// The occupancy-detected characteristic. configureOccupancySensor initializes OccupancyDetected to false on the occupancy service it acquires (device.ts) and the
 // occupancy MQTT getter reads it, so the kind must exist as a first-class key. device-motion is the first concern test to construct an occupancy sensor, so this is added
 // here per the "expand as production reaches a new kind" pattern that grows MotionDetected and the rest above; before it the OccupancySensor service seeded the generic
 // Name stand-in because OccupancyDetected was verified unreached.
@@ -687,10 +687,8 @@ class MotionSensorServiceType extends TestService {
   }
 }
 
-// The occupancy sensor kind. Originally added for the reachability fan-out tests (an accessory carrying both a MotionSensor and an OccupancySensor exercises
-// refreshReachability writing StatusActive across every service that declares it), where its HAP-required OccupancyDetected characteristic was verified unreached, so it
-// seeded the generic Name stand-in. device-motion's base-capability net is the first to construct an occupancy sensor through configureOccupancySensor (which initializes
-// OccupancyDetected to false), so the seed now upgrades to its kind-true OccupancyDetected characteristic, exactly as the marker doc comment describes.
+// The occupancy sensor kind. The service constructs with its kind-true OccupancyDetected characteristic because production's configureOccupancySensor initializes
+// OccupancyDetected to false on the occupancy service it acquires, exactly as the marker doc comment describes.
 class OccupancySensorServiceType extends TestService {
 
   public static readonly UUID = "OccupancySensor";
@@ -992,7 +990,7 @@ class TestStateObserver<T> {
   }
 }
 
-/* A faithful test double of the v5 StateStore observe contract. The real StateStore is a type-only export, constructed solely by ProtectClient.connect(), so a
+/* A faithful test double of the StateStore observe contract. The real StateStore is a type-only export, constructed solely by ProtectClient.connect(), so a
  * test cannot stand one up - this double implements the documented contract instead, mirroring both halves of the real implementation: the observe() wrapper
  * (lazy registration when iteration begins, the already-aborted check inside the generator body, abort wired to a drain-then-close, deregistration in the
  * generator's finally on ANY exit - abort, break, or return) and the StateObserver mechanics (see TestStateObserver above).
@@ -2094,7 +2092,7 @@ export class TestBaseDevice extends ProtectDevice {
   }
 }
 
-/* The stub StreamingDelegate, typed as the 2a-i abstraction and entirely FFmpeg-free. The controller is a distinct sentinel object tests can identity-match
+/* The stub StreamingDelegate, typed as the abstraction and entirely FFmpeg-free. The controller is a distinct sentinel object tests can identity-match
  * through the accessory's controller-event log; ffmpegOptions is the one documented cast seam on this class (only maxSourcePixels is read on the camera family's
  * paths, and only via selectRecordingChannel - never at construction), with the ceiling injectable so the recording-channel pixel cap is exercisable with a finite
  * value; hksv is null, the correct pre-HKSV-configuration state cleanup reads through this.stream?.hksv?.isRecording; shutdown records its calls; and
@@ -2124,6 +2122,8 @@ export class TestStreamingDelegate implements StreamingDelegate {
     // pass-everything-through default. A finite injected ceiling lets the recording-channel cap path select against a real constraint.
     this.ffmpegOptions = { maxSourcePixels: (): number => maxSourcePixels } as unknown as StreamingDelegate["ffmpegOptions"];
     this.hksv = null;
+
+    // The fixed probesize the stub advertises - consumers read it through camera.stream.probesize; an inert test value with no behavioral role in the suites.
     this.probesize = 16384;
   }
 
@@ -2354,8 +2354,9 @@ export class TestCameraHost implements ProtectCameraHost {
   }
 }
 
-// Write a single ISO BMFF box: a BOX_HEADER_SIZE-byte header (a 4-byte big-endian size covering the whole box, then the 4-byte ASCII type) followed by the body. We
-// import BOX_HEADER_SIZE from HBPU rather than hardcoding 8 so the offset is single-sourced with the very constant the real isKeyframe parse uses to walk these boxes.
+// Write a single ISO BMFF box: a BOX_HEADER_SIZE-byte header (a 4-byte big-endian size covering the whole box, then the 4-byte ASCII type) followed by the
+// body. We import BOX_HEADER_SIZE from homebridge-plugin-utils rather than hardcoding 8 so the offset is single-sourced with the very constant the real
+// isKeyframe parse uses to walk these boxes.
 function makeBox(type: string, body: Buffer): Buffer {
 
   const header = Buffer.alloc(BOX_HEADER_SIZE);
@@ -2389,9 +2390,9 @@ function makeMediaFragment(options: { keyframe?: boolean } = {}): { data: Buffer
   return { data: Buffer.concat([ moof, mdat ]), mdat, moof };
 }
 
-// The keyframe-bearing fragment: makeMediaFragment with its default keyframe-true selection, so the production isKeyframe parse returns true. This is a thin wrapper
-// that preserves the pre-refactor makeKeyframeFragment output byte-for-byte (the default keyframe path writes first_sample_flags 0 exactly as before), so the
-// KEYFRAME_FRAGMENT const, the segment-yielding parking double, and the keyframe self-test all read the identical bytes.
+// The keyframe-bearing fragment: makeMediaFragment with its default keyframe-true selection, so the production isKeyframe parse returns true. This is a thin
+// wrapper whose default keyframe path writes first_sample_flags 0, so the KEYFRAME_FRAGMENT const, the segment-yielding parking double, and the keyframe
+// self-test all read the identical bytes.
 export function makeKeyframeFragment(): { data: Buffer; mdat: Buffer; moof: Buffer } {
 
   return makeMediaFragment();
@@ -2701,12 +2702,13 @@ export interface TestMqttSubscription {
   type: string;
 }
 
-/* A minimal recording double of the HBPU MqttClient surface ProtectBase's wrappers and the event dispatcher reach: publish, subscribeGet, subscribeSet, and
- * unsubscribe. Registration-recording, plus handler CAPTURE - delivering a message to a registered handler (and releasing it when its signal aborts) is HBPU's
- * contract, pinned by HBPU's own tests, so the double does not stand up a broker; it captures each handler closure onto the recorded subscription so a test can find
- * it by topic / kind and invoke it directly. That lets a test exercise HBUP's own MQTT-specific dispatch (the chime's switch(value) tone dispatch and empty-payload
- * default, the viewer's liveview name lookup and unknown-name error) - the handler bodies that the HomeKit onSet machinery never reaches. What THIS double proves is
- * HBUP's side of the seam: which subscriptions a device registered, on which topics, carrying which lifetime signal, what each handler does, and what was published.
+/* A minimal recording double of the homebridge-plugin-utils MqttClient surface ProtectBase's wrappers and the event dispatcher reach: publish, subscribeGet,
+ * subscribeSet, and unsubscribe. Registration-recording, plus handler CAPTURE - delivering a message to a registered handler (and releasing it when its signal
+ * aborts) is homebridge-plugin-utils' contract, pinned by its own tests, so the double does not stand up a broker; it captures each handler closure onto the
+ * recorded subscription so a test can find it by topic / kind and invoke it directly. That lets a test exercise the plugin's own MQTT-specific dispatch (the
+ * chime's switch(value) tone dispatch and empty-payload default, the viewer's liveview name lookup and unknown-name error) - the handler bodies that the
+ * HomeKit onSet machinery never reaches. What THIS double proves is the plugin's side of the seam: which subscriptions a device registered, on which topics,
+ * carrying which lifetime signal, what each handler does, and what was published.
  */
 export class TestMqttClient {
 
@@ -2792,8 +2794,8 @@ export interface TestScheduleDeviceRemovalOptions {
  * their types still anchor the override against production. Recording arms NO reset timer, so a motion test leaks no handle.
  *
  * This serves every family and base-capability path whose motion routes through the firehose - the light family's lastMotion observer and the base motion trigger / the
- * base motion-set MQTT seam alike - injected through makeTestNvr's dispatch seam and read back off nvr.events. It is the SSOT for that recording shape: it was promoted
- * here out of light.test.ts so the light suite and the device-motion concern net share one definition rather than each carrying its own near-identical subclass.
+ * base motion-set MQTT seam alike - injected through makeTestNvr's dispatch seam and read back off nvr.events. It is the SSOT for that recording shape: the
+ * light suite and the device-motion concern net share this one definition rather than each carrying its own near-identical subclass.
  */
 export class TestRecordingDispatch extends ProtectEventDispatch {
 
@@ -2805,7 +2807,7 @@ export class TestRecordingDispatch extends ProtectEventDispatch {
   }
 }
 
-/* The NVR double, mirroring each member the camera-family construction and lifecycle paths read. The construction surface is the 2a-ii set: the v5 client shape
+/* The NVR double, mirroring each member the camera-family construction and lifecycle paths read. The construction surface comprises the unifi-protect client shape
  * (connection health for isReachable, the controllerName fallback ProtectBase.name uses for controller-scoped owners, the nvr config record behind the ufp
  * read-through, and the store double as client.state), the controller options, the platform double, a REAL un-aborted AbortSignal (composeSignals input and the
  * harness-level teardown lever), and an mqtt that defaults to null (every MQTT wrapper optional-chains into a no-op) or, opt-in, the recording double. The events
@@ -3066,7 +3068,7 @@ export function makeNvrConfig(options: { hardwareRevision?: string; marketName?:
  * @param options - chimes: the HELD chime projection doubles client.chimes exposes (omitted, the empty default), kept as the same instances across every access so the
  *                  doorbell's cross-device setChimeVolume write hits, and a test's updateRejection lever is set on, ONE projection - a per-access rebuild would silently
  *                  break the rejection drive; clock: an optional controllable TestClock installed on the platform double's clock seam and returned so a transmit test can
- *                  advance virtual time to drive the recording delegate's pacing (omitted, a fresh default TestClock seeded at 0 is created); controllerName: the v5
+ *                  advance virtual time to drive the recording delegate's pacing (omitted, a fresh default TestClock seeded at 0 is created); controllerName: the
  *                  controller label (defaults
  *                  to "Test Controller"); dispatch: an optional event-dispatch factory threaded into the NVR double's events seam (omitted, the default builds the real
  *                  ProtectEventDispatch unchanged; a test injects a recording subclass to assert the device observers' firehose routing without arming the real reset

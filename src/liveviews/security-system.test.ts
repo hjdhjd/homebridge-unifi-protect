@@ -19,7 +19,7 @@
  *   configureInfo HardwareRevision write reads - making that write non-vacuous.
  *
  * Two non-vacuity disciplines load-bearing here. First, the alarm-switch feature gate (Enable.SecuritySystem.Alarm, default off): the with-feature test passes the exact
- * string and HARD-asserts the alarm Switch exists FIRST, paired with a without-feature absence test. Second, the motion fanout is CHANGE-GATED (security-system.ts:410
+ * string and HARD-asserts the alarm Switch exists FIRST, paired with a without-feature absence test. Second, the motion fanout is CHANGE-GATED (security-system.ts
  * writes only when detectMotion !== targetState), so the member's context.detectMotion is seeded FALSY before driving toward enabled, and the test asserts the switch
  * FLIPPED false->true and the "...Motion detection enabled." log FIRED - not merely that detectMotion ended true.
  */
@@ -232,7 +232,7 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
 
     const target = built.accessory.getService(Service.SecuritySystem)?.getCharacteristic(TargetState);
 
-    // The production order is DISARM (always first), then Away, then Home (STAY_ARM), then Night (the iteration order in security-system.ts:275-278).
+    // The production order is DISARM (always first), then Away, then Home (STAY_ARM), then Night (the Away/Home/Night iteration order in security-system.ts).
     assert.deepEqual(target?.props?.validValues, [ TargetState.DISARM, TargetState.AWAY_ARM, TargetState.STAY_ARM, TargetState.NIGHT_ARM ],
       "the validValues carry every available arm state in the production order");
   });

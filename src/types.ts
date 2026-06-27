@@ -1,6 +1,6 @@
 /* Copyright(C) 2020-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * protect-types.ts: Interface and type definitions for UniFi Protect.
+ * types.ts: Interface and type definitions for UniFi Protect.
  */
 
 import type { CharacteristicValue, PlatformAccessory, PlatformConfig } from "homebridge";
@@ -90,7 +90,7 @@ export interface ProtectPlatformConfig extends PlatformConfig {
   videoProcessor?: string;
 }
 
-// A frozen lookup of the reserved subtype identifiers HBUP assigns to the HomeKit services it synthesizes. Modeled as an "as const" object rather than a TypeScript
+// A frozen lookup of the reserved subtype identifiers the plugin assigns to the HomeKit services it synthesizes. Modeled as an "as const" object rather than a TypeScript
 // enum so the declaration is erasable...the project's test runner is "node --strip-types", which executes TypeScript by erasing types and cannot run a non-erasable
 // enum (the shared tsconfig's erasableSyntaxOnly flag enforces this). The object literal carries the identical string values at the identical keys, so every
 // ProtectReservedNames.X value read is unchanged; the companion type alias below preserves the type-position uses.

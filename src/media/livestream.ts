@@ -2,15 +2,15 @@
  *
  * livestream.ts: the HomeKit-side livestream surface for UniFi Protect.
  *
- * This module is the thin HBUP-owned seam onto the v5 pooled livestream. v5 owns the livestream protocol entirely - the websocket, decode, pooling, recovery,
- * the fMP4 Segment shape, and the subscription lifecycle state. HBUP owns only the HomeKit projection: the minimal subscription surface its FFmpeg consumers
- * (the live streaming delegate and the HKSV timeshift buffer) actually depend on, and the RTSP-debug variant of that same surface.
+ * This module is the thin plugin-owned seam onto the unifi-protect library's pooled livestream. The library owns the livestream protocol entirely - the websocket,
+ * decode, pooling, recovery, the fMP4 Segment shape, and the subscription lifecycle state. The plugin owns only the HomeKit projection: the minimal subscription surface
+ * its FFmpeg consumers (the live streaming delegate and the HKSV timeshift buffer) actually depend on, and the RTSP-debug variant of that same surface.
  *
  * Three things live here:
  *
- *   - LivestreamSubscription: the HBUP-owned interface (dependency inversion). v5's pooled subscription class and the RTSP-debug adapter below are two
- *     interchangeable implementations behind it. The camera seam (ProtectCamera.livestream) returns this type.
- *   - RtspLivestreamSubscription: the RTSP-debug adapter, a pure-FFmpeg HBUP concern that produces the same Segment stream behind the same interface.
+ *   - LivestreamSubscription: the plugin-owned interface (dependency inversion). The unifi-protect library's pooled subscription class and the RTSP-debug adapter
+ *     below are two interchangeable implementations behind it. The camera seam (ProtectCamera.livestream) returns this type.
+ *   - RtspLivestreamSubscription: the RTSP-debug adapter, a pure-FFmpeg plugin concern that produces the same Segment stream behind the same interface.
  *   - logLivestreamIterationError: the shared classification and logging for errors thrown from a livestream subscription iterator, used by every consumer.
  */
 import { FfmpegLivestreamProcess, splitMoofMdat } from "homebridge-plugin-utils";
@@ -24,11 +24,11 @@ import type { CameraRecordingConfiguration } from "homebridge";
 let rtspSubscriptionCounter = 0;
 
 /**
- * The minimal livestream-subscription surface HBUP's FFmpeg consumers depend on. HBUP OWNS this abstraction (dependency inversion): v5's pooled
- * LivestreamSubscription class and the RTSP-debug adapter below are two interchangeable implementations behind it. It is a deliberate subset of v5's richer class
- * (interface segregation) - HBUP needs the segment stream, the cached init, the coarse lifecycle state (the timeshift's `isRestarting` reads it), the in-flight
- * recovery re-decision (the timeshift's transmit-start escalation calls it), disposal, identity, and the establishment latch, and nothing more (no stats/codec).
- * The coupling is a feature: a v5 change that breaks this surface fails to compile at the seam's return below.
+ * The minimal livestream-subscription surface the plugin's FFmpeg consumers depend on. The plugin OWNS this abstraction (dependency inversion): the unifi-protect
+ * library's pooled LivestreamSubscription class and the RTSP-debug adapter below are two interchangeable implementations behind it. It is a deliberate subset of the
+ * library's richer class (interface segregation) - the plugin needs the segment stream, the cached init, the coarse lifecycle state (the timeshift's `isRestarting` reads
+ * it), the in-flight recovery re-decision (the timeshift's transmit-start escalation calls it), disposal, identity, and the establishment latch, and nothing more (no
+ * stats/codec). The coupling is a feature: a unifi-protect library change that breaks this surface fails to compile at the seam's return below.
  */
 export interface LivestreamSubscription extends AsyncIterable<Segment>, AsyncDisposable {
 
@@ -53,9 +53,9 @@ interface RtspLivestreamSubscriptionOptions {
 }
 
 /**
- * The RTSP-debug adapter (Debug.Video.HKSV.UseRtsp). It implements the HBUP LivestreamSubscription interface over a single FfmpegLivestreamProcess that
- * transcodes the camera's RTSP stream into the same fMP4 Segment stream the native v5 pool produces. This is a pure-FFmpeg HBUP concern, so it stays HBUP behind
- * the seam.
+ * The RTSP-debug adapter (Debug.Video.HKSV.UseRtsp). It implements the plugin's LivestreamSubscription interface over a single FfmpegLivestreamProcess that
+ * transcodes the camera's RTSP stream into the same fMP4 Segment stream the unifi-protect library's pool produces. This is a pure-FFmpeg plugin concern, so it stays
+ * the plugin behind the seam.
  *
  * There is deliberately NO recovery loop here: a failed RTSP transcode simply ends. The lifecycle state is correspondingly simple - "connecting" before the init
  * segment resolves, "live" after, "closed" after disposal - and it never reports "recovering" (so a consumer's `isRestarting` is always false on this debug
@@ -119,12 +119,12 @@ export class RtspLivestreamSubscription implements LivestreamSubscription {
   }
 
   // Re-decide an in-flight recovery. A no-op here because the debug path has no recovery loop to re-consult: a failed RTSP transcode simply ends rather than
-  // entering a deferred-stall state that an urgency escalation could shorten. The native v5 subscription implements this against its recovery FSM.
+  // entering a deferred-stall state that an urgency escalation could shorten. The unifi-protect library's subscription implements this against its recovery FSM.
   public reassess(): void { /* No-op: the RTSP-debug path has no recovery loop to re-decide. */ }
 
-  // Resolves true once the init segment resolves (the establishment boundary), false if it rejects. This is INIT-keyed, whereas v5's whenEstablished is
-  // MEDIA-keyed (resolves on first media); both satisfy the consumer's only post-establish need (a populated initSegment), and the debug path has no media-keyed
-  // liveness gate.
+  // Resolves true once the init segment resolves (the establishment boundary), false if it rejects. This is INIT-keyed, whereas the unifi-protect library's
+  // whenEstablished is MEDIA-keyed (resolves on first media); both satisfy the consumer's only post-establish need (a populated initSegment), and the debug path has
+  // no media-keyed liveness gate.
   public async whenEstablished(): Promise<boolean> {
 
     try {
@@ -138,7 +138,8 @@ export class RtspLivestreamSubscription implements LivestreamSubscription {
     }
   }
 
-  // The subscription is its own async iterable, yielding the init Segment first (matching the v5 pool, which delivers init before media) then the media stream.
+  // The subscription is its own async iterable, yielding the init Segment first (matching the unifi-protect library's pool, which delivers init before media) then
+  // the media stream.
   public [Symbol.asyncIterator](): AsyncIterator<Segment> {
 
     return this.#iterate();
@@ -183,9 +184,9 @@ export class RtspLivestreamSubscription implements LivestreamSubscription {
 
 /**
  * Shared classification and logging for errors thrown from a livestream subscription iterator. Used by every consumer so the handling lives in one place.
- * `consumer` is the subject of the log sentence (e.g. "Timeshift buffer", "Live streaming"). Two of v5's typed iterator errors carry a known meaning we phrase
- * for the user rather than surfacing as an unexpected failure: a codec change is a benign, self-correcting restart, and an exhausted recovery episode is the
- * give-up the pool throws after repeated reconnect failures. Everything else is genuinely unexpected and logged with the error for diagnosis.
+ * `consumer` is the subject of the log sentence (e.g. "Timeshift buffer", "Live streaming"). Two of the unifi-protect library's typed iterator errors carry a known
+ * meaning we phrase for the user rather than surfacing as an unexpected failure: a codec change is a benign, self-correcting restart, and an exhausted recovery
+ * episode is the give-up the pool throws after repeated reconnect failures. Everything else is genuinely unexpected and logged with the error for diagnosis.
  *
  * @param options.consumer - The subject of the log sentence.
  * @param options.error - The error thrown from the iterator.

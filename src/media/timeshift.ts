@@ -1,6 +1,6 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * protect-timeshift.ts: UniFi Protect livestream timeshift buffer implementation to support HomeKit Secure Video.
+ * timeshift.ts: UniFi Protect livestream timeshift buffer implementation to support HomeKit Secure Video.
  */
 import type { Clock, HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
 import { PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS, PROTECT_LIVESTREAM_API_IDR_INTERVAL, PROTECT_LIVESTREAM_IDLE_TOLERANCE_MS, PROTECT_SEGMENT_RESOLUTION }
@@ -99,11 +99,11 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
     // establishing the underlying connection in the background. We start consuming segments below within the same synchronous frame, which guarantees the consumer
     // is in place before any asynchronous segment can be delivered on the subscription.
     //
-    // We declare a recovery urgency closure the v5 pool reads live when it derives its recovery-await window: zero while transmitting (latency-sensitive, so an
-    // in-flight recording reconnects immediately rather than easing off a stressed controller) and the idle tolerance otherwise (latency-tolerant, so an idle
-    // prebuffer eases off a stressed-but-reachable controller). The closure moves only the recovery tolerance; v5's media-stall detection floors at max(urgency,
-    // 2000ms) regardless, so the prebuffer stays watched at the 2-second parity window either way. A genuine reconnect surfaces inline as a discontinuity-marked
-    // segment (handled in processSegment), so there is no separate disconnect handler to attach.
+    // We declare a recovery urgency closure the unifi-protect library's pool reads live when it derives its recovery-await window: zero while transmitting
+    // (latency-sensitive, so an in-flight recording reconnects immediately rather than easing off a stressed controller) and the idle tolerance otherwise
+    // (latency-tolerant, so an idle prebuffer eases off a stressed-but-reachable controller). The closure moves only the recovery tolerance; the library's media-stall
+    // detection floors at max(urgency, 2000ms) regardless, so the prebuffer stays watched at the 2-second floor either way. A genuine reconnect surfaces inline as a
+    // discontinuity-marked segment (handled in processSegment), so there is no separate disconnect handler to attach.
     const subscription = this.protectCamera.livestream(channelProfile, { segmentLength: this._segmentLength,
       urgency: () => this._isTransmitting ? PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS : PROTECT_LIVESTREAM_IDLE_TOLERANCE_MS });
 
@@ -113,8 +113,8 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
     // subscription.
     void this.consumeSegments(subscription);
 
-    // Wait for the session to establish. v5's whenEstablished is MEDIA-keyed: it resolves true once the first media segment has been delivered (not merely on
-    // init), false if the session terminated during provisioning.
+    // Wait for the session to establish. The unifi-protect library's whenEstablished is MEDIA-keyed: it resolves true once the first media segment has been delivered
+    // (not merely on init), false if the session terminated during provisioning.
     if(!(await subscription.whenEstablished())) {
 
       void subscription[Symbol.asyncDispose]();
@@ -122,9 +122,9 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
       return false;
     }
 
-    // v5 delivers the init segment before the first media segment, so by the time the media-keyed whenEstablished resolves true, the init segment is already
-    // populated. A null init here violates the library contract and is treated as a hard failure. Dispose the local subscription directly; the instance field
-    // only ever receives a subscription that has passed every validation, so `isStarted` never flips true during the validation window.
+    // The unifi-protect library delivers the init segment before the first media segment, so by the time the media-keyed whenEstablished resolves true, the init
+    // segment is already populated. A null init here violates the library contract and is treated as a hard failure. Dispose the local subscription directly; the
+    // instance field only ever receives a subscription that has passed every validation, so `isStarted` never flips true during the validation window.
     if(!subscription.initSegment) {
 
       void subscription[Symbol.asyncDispose]();
@@ -178,7 +178,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
     }
   }
 
-  // Reboot a wedged camera to recover its livestream, the consumer half of the recovery policy's self-heal (pre-v5 parity). The v5 recovery policy gives up - and
+  // Reboot a wedged camera to recover its livestream, the consumer half of the recovery policy's self-heal. The recovery policy gives up - and
   // the iterator throws ProtectLivestreamUnavailableError carrying the attempt count - only after LIVE_SELF_HEAL_THRESHOLD consecutive failed reconnects on a
   // reachable controller (a drowning controller waits indefinitely without ever giving up, so this is never reached for an overloaded controller). When that
   // give-up arrives, self-healing is enabled, the camera is reachable, and we are not tearing the controller down ourselves, we reboot the camera to reset its
@@ -224,8 +224,8 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
   }
 
   // Process a single segment delivered by the iterator. Buffers the media, tracks keyframe boundaries for discontinuity recovery and snapshot extraction, and
-  // forwards to the recording delegate when transmitting. The v5 pool delivers a typed Segment: an init segment (read separately through the cached
-  // subscription.initSegment getter, so we skip it here) followed by media segments.
+  // forwards to the recording delegate when transmitting. The unifi-protect library's pool delivers a typed Segment: an init segment (read separately through the
+  // cached subscription.initSegment getter, so we skip it here) followed by media segments.
   private processSegment(segment: Segment): void {
 
     // The init segment is consumed via the cached initSegment getter, not buffered as media. Skip it.
@@ -236,9 +236,8 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
 
     // The first media segment after a genuine reconnect carries discontinuity:true. The resumed stream has discontinuous timestamps that corrupt FFmpeg's decoder
     // reference state, so while transmitting we drop the pre-reconnect buffer and arm the discontinuity signal to suppress forwarding until a clean keyframe
-    // arrives. The discontinuity-marked segment is NOT guaranteed to be a keyframe (v5 stamps it on the first media after a reconnect without a keyframe check), so
-    // the keyframe gate below is LOAD-BEARING: it defers the discontinuity emit until a clean keyframe arrives, reproducing pre-v5's suppress-until-keyframe
-    // behavior. Do NOT remove the gate.
+    // arrives. The discontinuity-marked segment is NOT guaranteed to be a keyframe (the unifi-protect library stamps it on the first media after a reconnect without a
+    // keyframe check), so the keyframe gate below is LOAD-BEARING: it defers the discontinuity emit until a clean keyframe arrives. Do NOT remove the gate.
     if(segment.discontinuity && this._isTransmitting) {
 
       this._pendingDiscontinuity = true;
@@ -325,7 +324,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
     // Mark ourselves transmitting FIRST, then re-decide any in-flight recovery. The urgency closure we declared at subscribe reads `_isTransmitting` live, so the
     // flag must be set before reassess() so the pool reads the active tolerance (zero) when it re-evaluates. reassess() escalates a recovery currently easing off
     // an idle stall to reconnect immediately now that a latency-sensitive recording has started; it is a no-op when the subscription is not recovering. This
-    // restores pre-v5's synchronous deferred-stall escalation - without it the escalation would lag up to one ease-off re-poll.
+    // provides synchronous deferred-stall escalation - without it the escalation would lag up to one ease-off re-poll.
     this._isTransmitting = true;
     this.subscription.reassess();
 

@@ -1,6 +1,6 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * package-defer-create.test.ts: The package camera's defer-create discipline (BC1) - stream creation waits for the real package channel.
+ * package-defer-create.test.ts: The package camera's defer-create discipline - stream creation waits for the real package channel.
  *
  * This suite constructs a real doorbell-plus-package family against a controller that has NOT yet provisioned the package channel - the provisioning window a
  * just-adopted doorbell sits in - and pins the deferral contract: no streaming delegate is created and no HomeKit camera controller is registered for the package

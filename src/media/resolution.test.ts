@@ -2,18 +2,19 @@
  *
  * resolution.test.ts: The durable golden-master and selector coverage for the resolution-selection surface (resolution.ts).
  *
- * This is the first real coverage of the C5-bug surface. Parity vs the last-known-good pre-v5 RUNTIME was proven at the 3a build by a differential harness against a
- * throwaway 6898296 oracle (parent + package list-builds and the full selector cross-product, under all streamingDefault states, all == the oracle) plus an independent
- * hand-computation of three trust-anchor fixtures; the oracle was then deleted, leaving NO second implementation in the tree. What remains here is the DURABLE record:
- * the production buildAdvertisedProfiles / buildAdvertisedResolutions output asserted against the oracle-derived, hand-verified golden-master in camera.fixtures.ts,
- * plus a checked-in selector grid that pins the per-request mapping under both biases and the pixel-cap pre-filter.
+ * This is the first real coverage of the resolution-selection surface, including the deep-low-resolution drift regime. Parity vs the prior reference implementation's
+ * runtime was proven by a parity test against a throwaway reference implementation (parent + package list-builds and the full selector cross-product, under all
+ * streamingDefault states, all == the reference) plus an independent hand-computation of three hand-verified anchor fixtures; that reference implementation was then
+ * deleted, leaving NO second implementation in the tree. What remains here is the DURABLE record: the production buildAdvertisedProfiles / buildAdvertisedResolutions
+ * output asserted against the hand-verified golden-master in camera.fixtures.ts, plus a checked-in selector grid that pins the per-request mapping under both biases and
+ * the pixel-cap pre-filter.
  *
  * The harness is pure - resolution.ts is FFmpeg-free and this-free, so no HAP double, no controller, no device instance is needed. The device wrappers selectChannel /
  * selectRecordingChannel inject this-state (streamingDefault, recordingDefault, channelProfiles, the cap) and delegate to selectChannelProfile; we reproduce the exact
  * injection here in a local closure that mirrors camera.ts line-for-line, so the selector grid proves the wrapper logic, not just the bare selector.
  *
- * The golden-master fixtures are the single source of expected behavior: when a later sub-commit (3b's D8 / D1-heal / url-reconcile) intentionally changes behavior, the
- * diff lands as a reviewed change to a checked-in fixture value and these tests flag exactly the rows that moved.
+ * The golden-master fixtures are the single source of expected behavior: when a later change intentionally alters behavior, the diff lands as a reviewed change to a
+ * checked-in fixture value and these tests flag exactly the rows that moved.
  */
 import { AI_PRO_CHANNELS, C5_WITNESS_CHANNELS, CAMERA_FIXTURES, FIXTURE_HOST, FIXTURE_RTSPS_PORT, MIXED_RTSP_DISABLED_CHANNELS, PACKAGE_FIXTURES, SANITY_FAIL_CHANNELS,
   makeChannel } from "../camera.fixtures.ts";
@@ -79,8 +80,8 @@ function selectChannelViaWrapper(entries: ChannelProfile[], streamingDefault: st
 
 describe("resolution golden-master: parent advertised list (production == checked-in fixtures)", () => {
 
-  // The list-build is the first-class system under test: the per-candidate gate's drifting current-top (the C5 locus), the dedup, the re-sort, and the fps normalization
-  // all run inside buildAdvertisedProfiles. Each fixture's expected list is the oracle-derived, hand-verified golden-master for streamingDefault "".
+  // The list-build is the first-class system under test: the per-candidate gate's drifting current-top (the drift locus), the dedup, the re-sort, and the fps
+  // normalization all run inside buildAdvertisedProfiles. Each fixture's expected list is the hand-verified golden-master for streamingDefault "".
   for(const fixture of CAMERA_FIXTURES) {
 
     test(fixture.model, () => {
@@ -119,9 +120,10 @@ describe("resolution: the RTSP-enabled / sanity-fail channel filtering", () => {
   });
 
   // The all-sanity-fail case (a 0-width channel and an empty-name channel): the native list is empty, so buildAdvertisedProfiles returns [] without throwing. This is the
-  // blessed hardening - HEAD's :979 device guard and the new return [] replace the pre-v5 crash on an empty list (the deleted oracle dereferenced rtspEntries[0] here,
-  // which is exactly why this case is asserted directly rather than against an oracle). The device level re-asserts this: camera.ts refreshChannelProfiles guards
-  // `if(!advertised.length) { return false; }` BEFORE constructing the streaming delegate or calling configureController, so an all-fail camera builds no controller.
+  // deliberate hardening - the device-level guard and the new return [] replace the earlier crash on an empty list (the throwaway reference implementation dereferenced
+  // rtspEntries[0] here, which is exactly why this case is asserted directly rather than against a reference implementation). The device level re-asserts this: camera.ts
+  // refreshChannelProfiles guards `if(!advertised.length) { return false; }` BEFORE constructing the streaming delegate or calling configureController, so an all-fail
+  // camera builds no controller.
   test("buildAdvertisedProfiles([]) returns [] (no throw) - the device short-circuit signal", () => {
 
     const empty = nativeEntries(SANITY_FAIL_CHANNELS);
@@ -138,14 +140,14 @@ describe("resolution: selector per-request mapping through the selectChannel wra
   const published = buildAdvertisedProfiles(nativeEntries(AI_PRO_CHANNELS));
 
   // The 1080p pixel cap. Note capByPixels filters on the CHANNEL's native pixels, not the entry's advertised resolution, so a 2560x1440-labeled entry backed by the
-  // 1280x720 Medium channel survives the cap while the 3840x2160 High channel (8.3M px) is dropped - matching HEAD's selectChannel, which filtered on channel pixels.
+  // 1280x720 Medium channel survives the cap while the 3840x2160 High channel (8.3M px) is dropped - matching the current selectChannel, which filters on channel pixels.
   const CAP_1080P = 1920 * 1080;
 
-  // The checked-in selector grid: { bias } x { uncapped, 1080p cap } x { target } => the expected (id, resolution) outcome, derived from the oracle at the 3a build and
-  // confirmed by the independent prod-vs-oracle sweep. Bias-lower picks the next-narrower (or lowest) channel; bias-higher picks the next-wider (or highest). Under the
-  // 1080p cap the High channel is filtered out, so every selection lands on Medium or Low. The two 1280x720 rows reflect the D8 fix (3b-i): an exact
-  // channel-dimension match now returns the native-dimensioned [1280,720,30] entry rather than the higher [2560,1440,30] synthetic that shares the Medium channel
-  // - same channel/id, honest label.
+  // The checked-in selector grid: { bias } x { uncapped, 1080p cap } x { target } => the expected (id, resolution) outcome, derived from the reference implementation and
+  // confirmed by the independent production-vs-reference sweep. Bias-lower picks the next-narrower (or lowest) channel; bias-higher picks the next-wider (or highest).
+  // Under the 1080p cap the High channel is filtered out, so every selection lands on Medium or Low. The two 1280x720 rows reflect the exact channel-dimension-match fix:
+  // an exact channel-dimension match now returns the native-dimensioned [1280,720,30] entry rather than the higher [2560,1440,30] synthetic that shares the Medium
+  // channel - same channel/id, honest label.
   const GRID: { bias: "higher" | "lower"; expected: SelectOutcome; height: number; maxPixels: number; width: number }[] = [
 
     { bias: "lower", expected: { id: 0, resolution: [ 3840, 2160, 30 ] }, height: 2160, maxPixels: Infinity, width: 3840 },
@@ -176,7 +178,7 @@ describe("resolution: selector per-request mapping through the selectChannel wra
     });
   }
 
-  // The explicit Pi+hwtranscode+Stream.Only.HIGH-above-cap witness (the design's correction #1): a constrained-hardware transcode request that pins streamingDefault to
+  // The explicit Pi+hwtranscode+Stream.Only.HIGH-above-cap witness: a constrained-hardware transcode request that pins streamingDefault to
   // "HIGH" AND caps at 1080p simultaneously. The HIGH channel (3840x2160, 8.3M px) exceeds the cap, so the pre-filter drops it BEFORE the name match runs - the name
   // branch finds no HIGH entry under the cap and returns null. This proves maxPixels filters the name branch too (it is a pre-filter, not a nearest-only request field).
   test("Pi witness: streamingDefault=HIGH + maxPixels=1080p + bias higher => null (HIGH exceeds the cap)", () => {
@@ -202,13 +204,13 @@ describe("resolution: selector per-request mapping through the selectChannel wra
   });
 });
 
-describe("resolution: the C5-witness drift (the regression locus, exercised through the full list-build)", () => {
+describe("resolution: the deep-low-resolution drift (the regression locus, exercised through the full list-build)", () => {
 
-  // The 640x480 4:3 C5-witness is the regression locus: the 1920 mandate inserts a 1920x1440 entry ABOVE the 640x480 native top, which re-sorts to the front, so the
-  // per-candidate gate's drifting current-top becomes 1920 - which is precisely what then admits the 1280x960 and 1024x768 entries (all < 1920). A frozen native-top
-  // (the C5 bug) would have dropped them. The golden-master fixture above already pins the exact list; here we additionally assert the structural invariants the bug
+  // The 640x480 4:3 deep-low-resolution witness is the regression locus: the 1920 mandate inserts a 1920x1440 entry ABOVE the 640x480 native top, which re-sorts to the
+  // front, so the per-candidate gate's drifting current-top becomes 1920 - which is precisely what then admits the 1280x960 and 1024x768 entries (all < 1920). A frozen
+  // native-top would have dropped them. The golden-master fixture above already pins the exact list; here we additionally assert the structural invariants the regression
   // violated, so the regression's signature is named explicitly in a test.
-  test("the deep-low-resolution 4:3 camera admits the under-mandate resolutions (no C5 drop)", () => {
+  test("the deep-low-resolution 4:3 camera admits the under-mandate resolutions (no under-mandate drop)", () => {
 
     const produced = buildAdvertisedProfiles(nativeEntries(C5_WITNESS_CHANNELS));
     const dims = produced.map((e) => e.resolution[0].toString() + "x" + e.resolution[1].toString());
@@ -216,7 +218,7 @@ describe("resolution: the C5-witness drift (the regression locus, exercised thro
     // The mandated 1920x1440 lands ABOVE the native top.
     assert.equal(dims.includes("1920x1440"), true);
 
-    // The under-mandate 1280x960 and 1024x768 land BECAUSE the drifting current-top rose to 1920 (the C5 bug dropped exactly these).
+    // The under-mandate 1280x960 and 1024x768 land BECAUSE the drifting current-top rose to 1920 (the regression dropped exactly these).
     assert.equal(dims.includes("1280x960"), true);
     assert.equal(dims.includes("1024x768"), true);
 
@@ -237,7 +239,7 @@ describe("resolution: the C5-witness drift (the regression locus, exercised thro
   });
 });
 
-describe("resolution: D1-heal - the advertised list is streaming-preference-free", () => {
+describe("resolution: the advertised list is streaming-preference-free", () => {
 
   // The list build takes no streaming preference: every synthetic maps to its NEAREST channel (the AI Pro id sequence 0,1,1,1,2,2,2), not a name-pinned one. Before the
   // heal, a re-run with Video.Stream.Only.HIGH pinned every synthetic to High (0,0,0,1,2,0,0) - the leak that also steered the HKSV recording default on a Pi. The

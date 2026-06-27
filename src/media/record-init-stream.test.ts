@@ -2,11 +2,12 @@
  *
  * record-init-stream.test.ts: A spawn-free behavior suite for the HKSV init-then-media segment generator.
  *
- * initThenMedia re-stitches the v2 getInitSegment()/segments() split back into v1's single-generator contract and carries the load-bearing pre-init-abort guard - when
- * getInitSegment() rejects on an abort that fired before the init arrived, the generator returns cleanly so the for-await ends without throwing out of the HAP generator.
- * In production that guard is reachable only through the recording delegate's full transmit path, which spawns FFmpeg. This suite drives the REAL exported generator
- * end-to-end against HBPU's shipped TestRecordingProcess double, whose getInitSegment() reject-on-pre-init-abort mirrors the real assembler contract, so the move's
- * behavior - happy ordering, the pre-init-abort guard, and signal forwarding - is exercised directly, spawn-free. No part of the generator is left to inspection.
+ * initThenMedia re-stitches the homebridge-plugin-utils getInitSegment()/segments() split back into a single-generator contract and carries the load-bearing
+ * pre-init-abort guard - when getInitSegment() rejects on an abort that fired before the init arrived, the generator returns cleanly so the for-await ends without
+ * throwing out of the HAP generator. In production that guard is reachable only through the recording delegate's full transmit path, which spawns FFmpeg. This suite
+ * drives the REAL exported generator end-to-end against the TestRecordingProcess double homebridge-plugin-utils ships, whose getInitSegment() reject-on-pre-init-abort
+ * mirrors the real assembler contract, so the generator's behavior - happy ordering, the pre-init-abort guard, and signal forwarding - is exercised directly,
+ * spawn-free. No part of the generator is left to inspection.
  *
  * This suite holds no harness controllers: it constructs only TestRecordingProcess instances and drives each generator to completion within its own test, so nothing is
  * left suspended. The after() hook aborts the doubles the suite created purely for defensive symmetry; there are no makeTestNvr controllers or leaked observers to
@@ -63,7 +64,7 @@ async function collect(generator: AsyncGenerator<Buffer>): Promise<Buffer[]> {
 
 describe("initThenMedia", () => {
 
-  // Happy path: a live (un-aborted) signal yields the init segment first, then the media segments in order, reproducing v1's single-generator init-first contract.
+  // Happy path: a live (un-aborted) signal yields the init segment first, then the media segments in order, reproducing the single-generator init-first contract.
   test("yields the init segment first, then the media segments in order", async () => {
 
     const controller = new AbortController();

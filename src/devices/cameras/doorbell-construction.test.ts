@@ -3,12 +3,12 @@
  * doorbell-construction.test.ts: Real doorbell (a ProtectCamera with its composed DoorbellCapability) and doorbell-plus-package-camera family construction through the
  * harness.
  *
- * Two suites prove the 2c capability collapse end to end against real production classes. Suite A constructs a REAL ProtectCamera against an isDoorbell-true config so it
+ * Two suites prove the capability collapse end to end against real production classes. Suite A constructs a REAL ProtectCamera against an isDoorbell-true config so it
  * construction-attaches its DoorbellCapability - the base constructors, the camera's configureDevice chain, the floating configure IIFE, the capability's configure
  * (the Doorbell service, LCD, physical chimes, chime volume), and the sixteen observers (the camera's plain-camera set, now including the always-armed isDoorbell
  * observer and the bare-motion lastMotion observer, plus the capability's four). Suite B constructs
  * the full doorbell-plus-package family and pins the self-observing package camera: its exact persisted context, its
- * suffixed display name through the syncedName seam, its three-observer census, and the death of every doorbell-to-package fan-out (firmware, name, availability,
+ * suffixed display name through the syncedName seam, its four-observer census, and the death of every doorbell-to-package fan-out (firmware, name, availability,
  * and reachability all now flow through the package's own observers or the NVR's endpoints iterator). The reclassification-flap regression and the
  * deleted-copy-forward hints-equality pin guard the two known hazards of the reshape, and the UUID-seed pin guards the persistence-critical identity suffix against
  * drift. The pure-test unlocks ride along: the package selectChannel lens-2/URL-host rows and the parent selectRecordingChannel pixel-ceiling row.
@@ -289,15 +289,14 @@ describe("doorbell + package camera family construction (suite B)", () => {
     assert.equal(accessory.getService(Service.AccessoryInformation)?.getCharacteristic(Characteristic.Name).value, "New Door Package Camera",
       "the HomeKit-visible name re-derives with the suffix");
 
-    // The blessed micro-delta: the package logs its own rename line, in the base shape, prefixed with the parent's decorated "Name [Model]" log prefix - the restored
-    // pre-v5 per-line format. The package shares the parent's projection name ("New Door") and the camera's market name ("Test Camera Model"), so its prefix matches the
-    // parent's exactly.
+    // The package camera carries its OWN decorated "Name [Model]" log prefix - the parent's name with the Package Camera suffix - so its log lines are attributable
+    // rather than colliding with the doorbell's. It shares the underlying projection and market name, so only the suffix on the name keeps the two prefixes distinct.
     const renameLines = logEntries.filter((entry) => (entry.level === "info") && String(entry.parameters[0]).includes("updating the HomeKit name to"));
 
     assert.equal(renameLines.filter((entry) => String(entry.parameters[0]).includes("New Door Package Camera.")).length, 1,
       "the package logs exactly one rename line of its own");
-    assert.ok(renameLines.every((entry) => String(entry.parameters[0]).startsWith("New Door [Test Camera Model]: ")),
-      "rename lines carry the decorated \"Name [Model]\" parent prefix");
+    assert.ok(renameLines.some((entry) => String(entry.parameters[0]).startsWith("New Door Package Camera [Test Camera Model]: ")),
+      "the package's rename line carries its own suffixed \"Name [Model]\" prefix, distinct from the doorbell's");
   });
 
   test("a device-state push drives the package's narrow availability projection: StatusActive only, StatusTampered never appears", async () => {
@@ -323,7 +322,7 @@ describe("doorbell + package camera family construction (suite B)", () => {
 
   test("an isDoorbell flap within one drain self-collapses: no WARN, the capability stays attached, and the controller never churns", async () => {
 
-    // The 2c-ii redefinition of the 2b flap pin: the isDoorbell observer is now always armed (the spawn guard died with the live-attach), so it may wake on the flap -
+    // The isDoorbell observer is now always armed (the spawn guard died with the live-attach), so it may wake on the flap -
     // but the reconcile re-reads LIVE state on each wake, and the flap (isDoorbell drops then returns before any consumer drains) leaves live state at its final value.
     const accessory = doorbell.accessory as unknown as TestAccessory;
     const warnBaseline = logEntries.filter((entry) => entry.level === "warn").length;

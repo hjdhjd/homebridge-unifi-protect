@@ -3,18 +3,20 @@
  * camera.fixtures.ts: The shared real-camera test corpus - canonical channel layouts and camera/package projections for the whole suite, which also serves as the
  * durable golden-master for the resolution-selection surface.
  *
- * Parity NOW is proven by the differential harness (resolution.test.ts) against the throwaway 6898296 oracle; parity FOREVER is proven here. This module checks in the
- * typed real-camera corpus (six shipping Protect models plus the deep-low-resolution C5-witness) and, for each, the EXACT advertised resolution list the production
- * buildAdvertisedProfiles must produce, projected to a stable {channelId, lens, name, resolution, url} shape. The package synthesis is checked in alongside, so the
- * package list is regression-armored too. The expected values were DERIVED from the oracle during the 3a build and independently hand-verified for the trust-anchor
- * fixtures (the 640x480 C5-witness, AI Pro, and the G6 Pro Entry 20->24fps normalization); the golden-master test asserts the production output still equals them.
+ * Parity NOW is proven by the parity test (resolution.test.ts) against the prior reference implementation; parity FOREVER is proven here. This module checks in
+ * the typed real-camera corpus (six shipping Protect models plus the deep-low-resolution witness, a 640x480 4:3 native top) and, for each, the EXACT advertised
+ * resolution list the production buildAdvertisedProfiles must produce, projected to a stable {channelId, lens, name, resolution, url} shape. The package
+ * synthesis is checked in alongside, so the package list is regression-tested too. The expected values were DERIVED from the prior reference implementation and
+ * independently hand-verified for the anchor fixtures (the 640x480 witness, AI Pro, and the G6 Pro Entry 20->24fps normalization); the golden-master test
+ * asserts the production output still equals them.
  *
- * When a later sub-commit (3b's D8/D1-heal/url-reconcile) intentionally changes behavior, the diff lands HERE as a reviewed change to a checked-in value - the
+ * When a later change intentionally alters that behavior, the diff lands HERE as a reviewed change to a checked-in value - the
  * golden-master flags exactly the rows that move, and nothing else.
  *
- * makeChannel fills a complete ProtectCameraChannelConfig from the load-bearing fields (the resolution math reads only name/width/height/fps/isRtspEnabled/id/rtspAlias);
- * the remaining interface fields are filled with inert defaults so the corpus is a real typed channel, not a cast. The rtspAlias is synthesized from the id so the URL is
- * stable and deterministic; it never affects the resolution math, only the URL string both the oracle and production compose identically.
+ * makeChannel fills a complete ProtectCameraChannelConfig from the load-bearing fields (the resolution math reads only name/width/height/fps; isRtspEnabled filters the
+ * primary channel; id and rtspAlias compose the URL). The remaining interface fields are filled with inert defaults so the corpus is a real typed channel, not a cast.
+ * The rtspAlias is synthesized from the id so the URL is stable and deterministic; it never affects the resolution math, only the URL string both the prior
+ * reference implementation and production compose identically.
  */
 import type { ProtectCameraChannelConfig } from "unifi-protect";
 import type { Resolution } from "homebridge";
@@ -123,9 +125,9 @@ export const G6_PRO_ENTRY_CHANNELS: ProtectCameraChannelConfig[] = [
   makeChannel({ fps: 3, height: 1200, id: 3, name: "Package Camera", width: 1600 })
 ];
 
-// The deep-low-native-resolution 4:3 C5-witness: a 640x480 native top, where BOTH HomeKit mandates (1920 and 1280) insert resolutions ABOVE the camera's native top.
-// This is the exact regime the C5 regression mis-handled - the per-candidate gate's drifting current-top must be re-read so the mandated 1920x1440/1280x960 entries land
-// and the under-native entries still map.
+// The deep-low-native-resolution 4:3 witness: a 640x480 native top, where BOTH HomeKit mandates (1920 and 1280) insert resolutions ABOVE the camera's native top.
+// This is the exact regime the resolution-selection regression mis-handled - the per-candidate gate's drifting current-top must be re-read so the mandated
+// 1920x1440/1280x960 entries land and the under-native entries still map.
 export const C5_WITNESS_CHANNELS: ProtectCameraChannelConfig[] = [
 
   makeChannel({ fps: 15, height: 480, id: 0, name: "High", width: 640 }),
@@ -142,7 +144,7 @@ export const MIXED_RTSP_DISABLED_CHANNELS: ProtectCameraChannelConfig[] = [
 ];
 
 // A synthetic regime where every channel fails the sanity check (a 0-width channel and an empty-name channel): the native list is empty, so the build returns [] and the
-// device re-asserts return false. This is the blessed hardening - the deleted oracle crashed on the empty list, so the case is asserted directly.
+// device re-asserts return false. This is the deliberate hardening - the prior reference implementation crashed on the empty list, so the case is asserted directly.
 export const SANITY_FAIL_CHANNELS: ProtectCameraChannelConfig[] = [
 
   makeChannel({ fps: 30, height: 0, id: 0, name: "High", width: 0 }),
@@ -275,10 +277,11 @@ export const CAMERA_FIXTURES: CameraFixture[] = [
 
     channels: C5_WITNESS_CHANNELS,
 
-    // The C5-witness, the third independent hand-verified trust anchor and the regression locus. Native top 640x480 (4:3). Both HomeKit mandates (1920 and 1280) insert
-    // entries ABOVE the native top: the 1920x1440 lands first and re-sorts to the front, so the per-candidate gate's drifting current top becomes 1920 - which is exactly
-    // what then admits the 1280x960 and 1024x768 entries (all < 1920). All map to High (640x480, ch0) under the bias-lower selection, except 320x240 which falls back to
-    // the lowest entry (Low, ch1). If the drift had been frozen to the original native top (the C5 bug), the under-native entries would have been dropped.
+    // The deep-low-resolution witness, the third independent hand-verified anchor and the regression locus. Native top 640x480 (4:3). Both HomeKit mandates (1920
+    // and 1280) insert entries ABOVE the native top: the 1920x1440 lands first and re-sorts to the front, so the per-candidate gate's drifting current top becomes
+    // 1920 - which is exactly what then admits the 1280x960 and 1024x768 entries (all < 1920). All map to High (640x480, ch0) under the bias-lower selection, except
+    // 320x240 which falls back to the lowest entry (Low, ch1). If the drift had been frozen to the original native top (the regression this fixture guards), the
+    // under-native entries would have been dropped.
     driftNarrative: "640x480 4:3 native top. The 1920 mandate inserts 1920x1440 ABOVE native and re-sorts to front; the drifting current-top then admits 1280/1024. " +
       "Final: 1920x1440, 1280x960, 1024x768, 640x480 (all High/ch0), 480x360 (Low/ch1 native), 320x240 (Low/ch1 backstop). All 15fps.",
     expected: [
@@ -295,8 +298,8 @@ export const CAMERA_FIXTURES: CameraFixture[] = [
 ];
 
 // The package-camera golden-master fixtures. Both seeds - the G6 Pro Entry's real Package Camera channel (1600x1200 @ 3fps native) and a low-fps 4:3 witness
-// ([1600,1200,2]) - expand to the same 4:3 list: the seed itself plus the under-top mandated 4:3 resolutions at 15fps. The seed retains its native fps; the appended
-// rows are all 15fps.
+// ([1600,1200,2]) - expand to the same 4:3 list: the seed itself plus the mandated 4:3 resolutions (the over-top 1920x1440 mandate and the under-top rows) at 15fps.
+// The seed retains its native fps; the appended rows are all 15fps.
 export const PACKAGE_FIXTURES: PackageFixture[] = [
 
   {
@@ -311,9 +314,8 @@ export const PACKAGE_FIXTURES: PackageFixture[] = [
   },
   {
 
-    // A low-fps 4:3 seed ([1600,1200,2]) - historically production's no-package-channel fallback (PACKAGE_DEFAULT_RESOLUTION, deleted by the 2b defer-create, which
-    // waits for the real channel instead of advertising an unstreamable list). Kept as a pure synthesis witness: the same 4:3 expansion, seeded at 2fps, pinning that
-    // the seed keeps its own frame rate.
+    // A low-fps 4:3 seed ([1600,1200,2]) kept as a pure synthesis witness: the same 4:3 expansion, seeded at 2fps, pinning that the seed retains its own frame rate
+    // while the appended rows normalize to 15fps.
     expected: [ [ 1600, 1200, 2 ], [ 1920, 1440, 15 ], [ 1280, 960, 15 ], [ 1024, 768, 15 ], [ 640, 480, 15 ], [ 480, 360, 15 ], [ 320, 240, 15 ] ],
     model: "Package fallback",
     nativeTop: [ 1600, 1200, 2 ]

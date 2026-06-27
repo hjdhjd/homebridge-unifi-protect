@@ -2,27 +2,27 @@
  *
  * device-hints.test.ts: The base-capability concern net for the shared ProtectDevice feature-option hints derivation, netted once family-agnostically.
  *
- * configureHints (device.ts:358) is a BASE ProtectDevice behavior every family runs at construction: it derives seven hints from feature options (enabled, logMotion,
+ * configureHints (device.ts) is a BASE ProtectDevice behavior every family runs at construction: it derives seven hints from feature options (enabled, logMotion,
  * motionDuration, occupancyDuration, smartOccupancy, standalone, syncName), clamps the two durations to their floors (motionDuration >= 2, occupancyDuration >= 60), and
  * logs deviations from the defaults. Per the two-layer test architecture the base derivation/clamp/log logic is netted ONCE here against the shared minimal
  * TestBaseDevice vehicle (the all-quiet makeSensorConfig carrier) rather than re-asserted inside each family suite: every concern test builds the device with a
  * userOptions set, calls the configureHintsFor window (exposed since commit 1), and asserts the resulting hints + the deviation logs.
  *
- * configureHints's PRODUCT is the hints object - a PUBLIC field (device.ts:315) consumed across the class hierarchy, the same field doorbell-construction.test.ts:260
+ * configureHints's PRODUCT is the hints object - a PUBLIC field (device.ts) consumed across the class hierarchy, the same field doorbell-construction.test.ts
  * reads directly - plus the user-visible deviation logs. So this suite reads device.hints DIRECTLY (typed Readonly<ProtectHints> at the read site for read-only intent)
  * with no harness window and no harness change; it captures the deviation logs through the NVR double's logEntries. The wider ProtectHints fields (crop,
  * hardwareDecoding, hardwareTranscoding, highResSnapshots, and the rest) are set by the CAMERA family's configureHints OVERRIDE - family-owned and out of scope here;
  * this nets the seven the BASE sets and the two clamps.
  *
- * The value-option override syntax (load-bearing, verified against HBPU featureoptions.js): Motion.Duration and Motion.OccupancySensor.Duration are value-centric options
- * (default: true, defaultValue 10 / 300). The global value override is Enable.<Option>.<N> - a single trailing numeric segment parsed as the value - so
- * Enable.Motion.Duration.20 sets the value to 20 and Enable.Motion.Duration.1 sets it to 1 (then the clamp raises it to 2). Each duration / clamp test asserts the EXACT
- * resulting device.hints value, so a no-op override (the value staying at its default) fails loudly rather than passing vacuously.
+ * The value-option override syntax (load-bearing, verified against homebridge-plugin-utils featureoptions.js): Motion.Duration and Motion.OccupancySensor.Duration are
+ * value-centric options (default: true, defaultValue 10 / 300). The global value override is Enable.<Option>.<N> - a single trailing numeric segment parsed as the value
+ * - so Enable.Motion.Duration.20 sets the value to 20 and Enable.Motion.Duration.1 sets it to 1 (then the clamp raises it to 2). Each duration / clamp test asserts the
+ * EXACT resulting device.hints value, so a no-op override (the value staying at its default) fails loudly rather than passing vacuously.
  *
  * The syncName deviation log routes through scope: the test vehicle steers Device.SyncName via the GLOBAL userOption "Enable.Device.SyncName", which resolves to scope
- * "global" - so logFeature (device.ts:803) routes to nvr.logFeature, which emits the PLURAL "Syncing Protect device names to HomeKit." message (not the singular device
+ * "global" - so logFeature (device.ts) routes to nvr.logFeature, which emits the PLURAL "Syncing Protect device names to HomeKit." message (not the singular device
  * line). The syncName test asserts that plural line AND device.hints.syncName === true (the robust core, independent of the log path). The singular "Not syncing this
- * Protect device name to HomeKit." else-branch (device.ts:386) fires only when Device.SyncName is DEVICE-scoped; this vehicle uses global userOptions, so that branch is
+ * Protect device name to HomeKit." else-branch (device.ts) fires only when Device.SyncName is DEVICE-scoped; this vehicle uses global userOptions, so that branch is
  * acknowledged-conditional, not driven here.
  *
  * The isolation model is per-test-fresh: each test calls buildHintsDevice with its own userOptions, and an afterEach unwinds the device's per-accessory abort.
@@ -90,7 +90,7 @@ describe("base ProtectDevice feature-option hints derivation (device-hints conce
       // Read the public hints field directly, typed read-only to mark the read-only intent (the field is the product configureHints derives).
       const hints: Readonly<ProtectHints> = device.hints;
 
-      // The Device option defaults TRUE (options.ts:97, the empty-name option under the Device category composed to "Device"), so enabled is true at no userOptions; the
+      // The Device option defaults TRUE (the empty-name option under the Device category composed to "Device"), so enabled is true at no userOptions; the
       // remaining four boolean-backed hints take their false / unset defaults, and the two durations take their registered defaultValues (10 / 300).
       assert.equal(hints.enabled, true, "enabled defaults to true (the Device option defaults true)");
       assert.equal(hints.logMotion, false, "logMotion defaults to false (Log.Motion defaults false)");
@@ -251,7 +251,7 @@ describe("base ProtectDevice feature-option hints derivation (device-hints conce
 
   describe("the constant fallback when the option is disabled", () => {
 
-    // These two cases exercise the `?? PROTECT_MOTION_DURATION` / `?? PROTECT_OCCUPANCY_DURATION` constant fallbacks (device.ts:362-363) distinctly from the
+    // These two cases exercise the `?? PROTECT_MOTION_DURATION` / `?? PROTECT_OCCUPANCY_DURATION` constant fallbacks (in configureHints, device.ts) distinctly from the
     // value-option-defaultValue path the defaults case covers. A value-centric duration option defaults true with a registered defaultValue, so at no userOptions
     // getFeatureNumber returns that defaultValue (10 / 300) DIRECTLY and the `??` fallback is never reached. Disabling the option makes getFeatureNumber return null
     // (verified: Disable.Motion.Duration and Disable.Motion.OccupancySensor.Duration both resolve getInteger to null), so the `??` falls through to the PROTECT_*
