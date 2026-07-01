@@ -51,10 +51,10 @@ function loggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], substri
 }
 
 // Seed a member-camera double into the NVR's configuredDevices registry AND the platform accessories array so the cross-camera motion fanout resolves it. The fanout
-// resolves each platform accessory to nvr.configuredDevices.get(accessory.UUID)?.ufp, gates on accessory.context.nvr === the controller MAC, matches the member by
-// ufp.id against the liveview's slots[].cameras, then flips its SWITCH_MOTION_SENSOR-subtyped Switch and context.detectMotion. The member's detectMotion is seeded FALSY
-// by default so a drive toward enabled is a genuine change (the write is change-gated). Returns the member accessory and its motion switch for assertion.
-function seedMember(nvr: TestProtectNvr, options: { detectMotion?: boolean; id: string; name: string; uuid: string }):
+// resolves each platform accessory to its configuredDevices entry, gates on the device's recordPresent (a vanished record is skipped) and the controller-MAC context,
+// matches the member by its non-throwing protectId against the liveview's slots[].cameras, then flips its SWITCH_MOTION_SENSOR-subtyped Switch and context.detectMotion.
+// The member's detectMotion is seeded FALSY by default so a drive toward enabled is a genuine change (the write is change-gated). Returns the member and its switch.
+function seedMember(nvr: TestProtectNvr, options: { detectMotion?: boolean; id: string; name: string; recordPresent?: boolean; uuid: string }):
 { accessory: TestAccessory; motionSwitch: TestService } {
 
   const accessory = makeTestAccessory(options.name, options.uuid);
@@ -68,8 +68,10 @@ function seedMember(nvr: TestProtectNvr, options: { detectMotion?: boolean; id: 
   motionSwitch.updateCharacteristic(Characteristic.On, accessory.context["detectMotion"]);
   nvr.platform.accessories.push(accessory);
 
-  // The managed-device double the fanout resolves through configuredDevices: the security path reads only ufp.id. Cast through ProtectDevices at the construction seam.
-  const member = { accessory, accessoryName: options.name, ufp: { id: options.id } } as unknown as ProtectDevices;
+  // The managed-device double the fanout resolves through configuredDevices: the security path now gates each member on recordPresent and matches on the non-throwing
+  // protectId. Cast through ProtectDevices at the construction seam.
+  const member = { accessory, accessoryName: options.name, protectId: options.id, recordPresent: options.recordPresent ?? true, ufp: { id: options.id } } as unknown as
+    ProtectDevices;
 
   nvr.configuredDevices.set(accessory.UUID, member);
 
@@ -361,6 +363,35 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
     assert.equal(member.motionSwitch.getCharacteristic(Characteristic.On).value, false, "disarming flipped the member's motion switch back off");
     assert.equal(member.accessory.context["detectMotion"], false, "disarming reset the member's detectMotion context");
     assert.ok(loggedAt(built.logEntries, "info", "Motion detection disabled."), "the per-member motion-disabled line fired on disarm");
+  });
+
+  test("setSecurityState skips a member whose controller record has vanished (the recordPresent gate) - DISCRIMINATING", async () => {
+
+    // A Protect-Home liveview carrying TWO member camera ids: one present, one graced (its record vanished while it lingers in the removal grace).
+    const built = buildSecuritySystem({ liveviews: [makeLiveviewConfig({ cameras: [ "camera-present", "camera-graced" ], id: "lv-home", name: "Protect-Home" })] });
+
+    activeController = built.controller;
+
+    // Both ids are in the SAME target liveview - the only difference is recordPresent. The graced member must be skipped by the security fanout's recordPresent gate
+    // BEFORE the protectId match, so removing that gate would flip its motion switch true (this is the discriminator).
+    const present = seedMember(built.nvr, { detectMotion: false, id: "camera-present", name: "Present Camera", uuid: "uuid:present-camera" });
+    const graced = seedMember(built.nvr, { detectMotion: false, id: "camera-graced", name: "Graced Camera", recordPresent: false, uuid: "uuid:graced-camera" });
+
+    await settle();
+
+    assert.equal(graced.motionSwitch.getCharacteristic(Characteristic.On).value, false, "the graced member starts with motion detection off");
+
+    // Drive the STAY_ARM scene through the real TargetState onSet.
+    await built.accessory.getService(Service.SecuritySystem)?.getCharacteristic(TargetState).triggerSet(TargetState.STAY_ARM);
+
+    // The present member flipped on (its id is in the liveview and its record is present).
+    assert.equal(present.motionSwitch.getCharacteristic(Characteristic.On).value, true, "the present member's motion switch flipped on for the armed scene");
+
+    // The DISCRIMINATING assertions: the graced member's id is ALSO in the target liveview, so deleting the recordPresent gate would flip it true; the gate skips it
+    // because its record has vanished, so its motion switch and detectMotion context stay untouched.
+    assert.equal(graced.motionSwitch.getCharacteristic(Characteristic.On).value, false,
+      "the recordPresent gate skipped the graced member - its motion switch stayed off despite its id matching the target liveview");
+    assert.equal(graced.accessory.context["detectMotion"], false, "the graced member's detectMotion context was left untouched");
   });
 
   test("setSecurityState early-returns with no liveviews configured (no state change, no publish)", async () => {

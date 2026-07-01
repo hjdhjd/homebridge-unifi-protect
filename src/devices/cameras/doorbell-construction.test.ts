@@ -5,8 +5,8 @@
  *
  * Two suites prove the capability collapse end to end against real production classes. Suite A constructs a REAL ProtectCamera against an isDoorbell-true config so it
  * construction-attaches its DoorbellCapability - the base constructors, the camera's configureDevice chain, the floating configure IIFE, the capability's configure
- * (the Doorbell service, LCD, physical chimes, chime volume), and the sixteen observers (the camera's plain-camera set, now including the always-armed isDoorbell
- * observer and the bare-motion lastMotion observer, plus the capability's four). Suite B constructs
+ * (the Doorbell service, LCD, physical chimes, chime volume), and the eighteen observers (the camera's plain-camera set, now including the always-armed isDoorbell
+ * observer, the bare-motion lastMotion observer, and the capability-reconcile featureFlags observer, plus the capability's four). Suite B constructs
  * the full doorbell-plus-package family and pins the self-observing package camera: its exact persisted context, its
  * suffixed display name through the syncedName seam, its four-observer census, and the death of every doorbell-to-package fan-out (firmware, name, availability,
  * and reachability all now flow through the package's own observers or the NVR's endpoints iterator). The reclassification-flap regression and the
@@ -86,11 +86,12 @@ describe("real doorbell construction (suite A)", () => {
     assert.equal(doorbellService.isPrimary, true, "configureDoorbellService marked the Doorbell service primary");
   });
 
-  test("the doorbell wires sixteen observers - the camera's plain-camera set plus the capability's four - and fires none at construction", () => {
+  test("the doorbell wires eighteen observers - the camera's plain-camera set plus the capability's four - and fires none at construction", () => {
 
-    // The census: the base pair (name, firmware) + the camera TEN (the always-armed isDoorbell observer and the bare-motion lastMotion observer both join the
-    // doorbell-attached camera's set) + the capability four (lcdMessage, hasPackageCamera, chimeDuration, chimeVolume) = sixteen.
-    assert.equal(store.observerCount, 16, "the sixteen-observer census holds across the capability collapse and the always-armed isDoorbell observer");
+    // The census: the base pair (name, firmware) + the camera TWELVE (the always-armed isDoorbell observer, the bare-motion lastMotion observer, the capability-reconcile
+    // featureFlags observer, and the Access-lock supportUnlock observer all join the doorbell-attached camera's set) + the capability four (lcdMessage, hasPackageCamera,
+    // chimeDuration, chimeVolume) = eighteen.
+    assert.equal(store.observerCount, 18, "the eighteen-observer census holds across the capability collapse and the always-armed isDoorbell observer");
     assert.equal(constructionWakes, 0, "observers arm against the baseline and stay silent at construction");
   });
 
@@ -240,12 +241,12 @@ describe("doorbell + package camera family construction (suite B)", () => {
       "the HomeKit-visible name carries the suffix");
   });
 
-  test("the family wires but does not fire: sixteen doorbell observers plus four package observers, zero construction wakes", () => {
+  test("the family wires but does not fire: eighteen doorbell observers plus four package observers, zero construction wakes", () => {
 
     // The package census: the inherited base pair (name, firmware) plus its bespoke camera.state availability and package-channel observers - and nothing from the
-    // camera set. The doorbell-attached camera contributes sixteen (its plain-camera ten, now including the always-armed isDoorbell observer and the bare-motion
-    // lastMotion observer, plus the capability's four plus the base pair).
-    assert.equal(store.observerCount, 20, "sixteen doorbell observers plus the package's four");
+    // camera set. The doorbell-attached camera contributes eighteen (its plain-camera twelve, now including the always-armed isDoorbell observer, the bare-motion
+    // lastMotion observer, the capability-reconcile featureFlags observer, and the Access-lock supportUnlock observer, plus the capability's four plus the base pair).
+    assert.equal(store.observerCount, 22, "eighteen doorbell observers plus the package's four");
     assert.equal(constructionWakes, 0, "no observer fired during family construction");
   });
 
@@ -310,7 +311,7 @@ describe("doorbell + package camera family construction (suite B)", () => {
     assert.ok(motionService, "the package carries its motion sensor");
     assert.equal(motionService.getCharacteristic(Characteristic.StatusActive).value, false, "the package's own state observer drove StatusActive inactive");
     assert.equal(motionService.testCharacteristic(Characteristic.StatusTampered), false,
-      "the narrow availability override never sprouts StatusTampered onto the package motion sensor");
+      "the guarded base availability projection never sprouts StatusTampered onto the package motion sensor");
 
     // Restore the connected state for the suites that follow.
     store.pushCameraPatch(cameraId, { state: "CONNECTED" });
@@ -339,7 +340,8 @@ describe("doorbell + package camera family construction (suite B)", () => {
     assert.equal(logEntries.filter((entry) => entry.level === "warn").length, warnBaseline, "the within-drain flap raises no withdrawal warning - it self-collapsed");
     assert.ok(doorbell.doorbell, "the doorbell capability survives the flap, never detached");
 
-    // No controller churn: the self-collapse means no rebuildStreamingDelegate, so no removeController/configureController fired at the flap.
+    // No controller churn: the self-collapse leaves isDoorbell at the value the controller was already built for, so the capability reconcile's audio rebuild sees no
+    // frozen audio capability appeared and skips rebuildStreamingDelegate - no removeController/configureController fired at the flap.
     assert.equal(accessory.controllerEvents.length, churnBaseline, "the flap drove zero controller churn - no rebuild");
   });
 
@@ -457,7 +459,7 @@ describe("doorbell bare-motion package forward (suite C)", () => {
 
     await settle();
 
-    assert.deepEqual(recording.calls, [{ id: doorbell.ufp.id, kind: "motion" }],
+    assert.deepEqual(recording.calls, [{ id: doorbell.protectId, kind: "motion" }],
       "with the parent suppressed, the bare-motion advance delivered exactly once - the forward to the recording package camera");
   });
 

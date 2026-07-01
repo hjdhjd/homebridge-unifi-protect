@@ -6,13 +6,12 @@ import type { API, CharacteristicValue, Service, WithUUID } from "homebridge";
 import type { AcquireServiceTarget, HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
 import type { Camera, Chime, Light, ProtectCameraConfig, ProtectState, Sensor, Viewer } from "unifi-protect";
 import { PROTECT_MOTION_DURATION, PROTECT_OCCUPANCY_DURATION} from "../settings.ts";
+import type { ProtectAccessory, ProtectDeviceConfigTypes, WithoutIdentity } from "../types.ts";
 import { ProtectReservedNames, exhaustiveGuard } from "../types.ts";
 import { acquireService, composeSignals, sanitizeName, validService } from "homebridge-plugin-utils";
-import { selectCamera, selectChime, selectLight, selectSensor, selectViewer } from "unifi-protect";
+import { isDeviceOnline, selectCamera, selectChime, selectLight, selectSensor, selectViewer } from "unifi-protect";
 import type { ObserverWakePayload } from "../diagnostics.ts";
-import type { ProtectAccessory } from "../types.ts";
 import { ProtectBase } from "./device-base.ts";
-import type { ProtectDeviceConfigTypes } from "../types.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import type { ProtectPlatform } from "../platform.ts";
 import { channels } from "../diagnostics.ts";
@@ -126,13 +125,50 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
     this.timers = new Map();
   }
 
-  // Read-through config. The live projection delivers the current config on every access - no held snapshot, no merge, no reassignment. Subclasses reading
-  // this.ufp.<field> at HomeKit-callback rates pay one getter chain in nanoseconds; if profiling later names a hot read site, scope-local-hoist the read-through
+  // Read-through to the live STATE projection, narrowed to drop device identity (id/mac/modelKey): identity is immutable and flows through the dedicated non-throwing
+  // accessors (protectId/modelKey/.id/.mac), never this throwing getter, so narrowing makes a this.ufp.<identity> dot-access a compile error rather than a latent throw
+  // once the record is gone. The live projection delivers the current config on every access - no held snapshot, no merge, no reassignment. Subclasses reading
+  // this.ufp.<state-field> at HomeKit-callback rates pay one getter chain in nanoseconds; if profiling later names a hot read site, scope-local-hoist the read-through
   // once into a local at the top of the scope and read fields off the local for the duration. Never cache as an accessory field - that re-introduces the held-state
   // model we deliberately do not keep, which would violate the single source of truth.
-  public get ufp(): Readonly<ProtectDeviceConfigTypes> {
+  public get ufp(): Readonly<WithoutIdentity<ProtectDeviceConfigTypes>> {
 
     return this.device.config;
+  }
+
+  // The controller device id, read non-throwing from the projection's own stable id field. This is the immutable IDENTITY of the device on the controller - distinct
+  // from the HomeKit/eventTimer identity (the .id getter) and the bare MAC (.mac) - and it never reads the live config, so it survives a vanished record. Membership and
+  // every controller-side lookup (reconcileMembership/membershipDelta, getDeviceById's find, the latch reclaim, cameraFor) key off this rather than the throwing ufp.id.
+  public get protectId(): string {
+
+    return this.device.id;
+  }
+
+  // The device category discriminant, read non-throwing from the projection's own modelKey field. Like protectId it never reads the live config, so the devices() filter
+  // and cameraFor can classify a device whose record has vanished without throwing.
+  public get modelKey(): ProtectDeviceConfigTypes["modelKey"] {
+
+    return this.device.modelKey;
+  }
+
+  // Whether this device's controller record is currently present. Overrides the ProtectBase seam (which is unconditionally true for a controller-scoped owner) with the
+  // library's documented presence idiom - peek() !== undefined - so the one observeState gate neutralizes a vanished record during the DelayDeviceRemoval grace. PUBLIC
+  // because the membership/removal/sweep chokepoints and the security-system fan-out gate their per-device reads on it.
+  public override get recordPresent(): boolean {
+
+    return this.device.peek() !== undefined;
+  }
+
+  // Read a STATE field through the live record non-throwing, returning the supplied default ONLY when the record is absent (a device lingering in the removal grace). A
+  // present-but-offline record reads through normally, so HomeKit shows last-known state while offline and a graceful default only once the record itself has vanished.
+  // peek() once, default-when-absent: the single chokepoint per fact that makes every pull-path STATE read (HAP onGet, MQTT getValue) unrepresentable-throwing. The
+  // per-leaf ufp override narrows this["ufp"] to the concrete config, so the read lambda sees the leaf's exact config type with no per-leaf generics, call-site type
+  // arguments, or cast - peek()'s return assigns directly to the narrowed parameter.
+  protected fromRecord<T>(read: (config: this["ufp"]) => T, absent: T): T {
+
+    const config = this.device.peek();
+
+    return config === undefined ? absent : read(config);
   }
 
   // Retrieve an existing service from an accessory, creating it if necessary.
@@ -142,8 +178,10 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
     return acquireService(this.accessory, serviceType, name, subtype, onServiceCreate);
   }
 
-  // Validate whether a service should exist, removing it if necessary.
-  protected validService(serviceType: WithUUID<typeof Service>, validate: boolean, subtype?: string): boolean {
+  // Validate whether a service should exist, removing it if necessary. The validate argument accepts either a plain boolean or a presence-aware predicate, mirroring the
+  // homebridge-plugin-utils free function this delegates to: the predicate receives the service's current presence so a gate can keep an already-present service while
+  // refusing to create a new one (the additive-eager / subtractive-conservative capability gates).
+  protected validService(serviceType: WithUUID<typeof Service>, validate: boolean | ((hasService: boolean) => boolean), subtype?: string): boolean {
 
     return validService(this.accessory, serviceType, validate, subtype);
   }
@@ -202,7 +240,9 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
       this.accessoryName = this.syncedName;
     }
 
-    return this.setInfo(this.accessory, this.ufp);
+    // setInfo reads the full identity-bearing record (marketName/type/mac/hardwareRevision/firmwareVersion), so it takes the raw record - present at configure time -
+    // rather than the narrowed live-state projection that no longer carries identity.
+    return this.setInfo(this.accessory, this.device.config);
   }
 
   // Cleanup our observe loops, timers, and any other activities as needed. Aborting the per-accessory controller tears down every observe loop this accessory
@@ -266,7 +306,7 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
   // this id.
   protected override get mqttId(): string {
 
-    return this.ufp.mac;
+    return this.mac;
   }
 
   // Configure the Protect motion sensor for HomeKit.
@@ -488,9 +528,12 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
       // If we have smart motion detection, allow users to choose which object types determine occupancy.
       if(this.hints.smartDetect) {
 
+        // The smart-occupancy object types live on the camera-specific feature flags. We read them off the live STATE view narrowed to the camera config; device identity
+        // still flows only through the dedicated accessors. Hoisting to one local reads the side-effect-free getter once and single-sources the narrowed cast.
+        const cameraConfig = this.ufp as Readonly<WithoutIdentity<ProtectCameraConfig>>;
+
         // Iterate through all the individual object detection types Protect has configured.
-        for(const smartDetectType of
-          [ ...(this.ufp as ProtectCameraConfig).featureFlags.smartDetectAudioTypes, ...(this.ufp as ProtectCameraConfig).featureFlags.smartDetectTypes ]) {
+        for(const smartDetectType of [ ...cameraConfig.featureFlags.smartDetectAudioTypes, ...cameraConfig.featureFlags.smartDetectTypes ]) {
 
           if(this.hasFeature("Motion.OccupancySensor." + smartDetectType)) {
 
@@ -565,28 +608,29 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
     return this.runDeviceCommand("turn the status indicator light " + (value ? "on" : "off"), this.statusLedCommand(value));
   }
 
-  // Utility function to return a floating point configuration parameter on a device.
+  // Utility function to return a floating point configuration parameter on a device. The device-scope mac is the raw record's bare MAC (identity, not read through the
+  // narrowed live-state projection); the controller-scope mac is the separate controller projection. These four feature-option accessors all resolve scope the same way.
   public getFeatureFloat(option: string): Nullable<number | undefined> {
 
-    return this.platform.featureOptions.getFloat(option, this.ufp.mac, this.nvr.ufp.mac);
+    return this.platform.featureOptions.getFloat(option, this.device.config.mac, this.nvr.ufp.mac);
   }
 
   // Utility function to return an integer configuration parameter on a device.
   public getFeatureNumber(option: string): Nullable<number | undefined> {
 
-    return this.platform.featureOptions.getInteger(option, this.ufp.mac, this.nvr.ufp.mac);
+    return this.platform.featureOptions.getInteger(option, this.device.config.mac, this.nvr.ufp.mac);
   }
 
   // Utility function to return a configuration parameter on a device.
   public getFeatureValue(option: string): Nullable<string | undefined> {
 
-    return this.platform.featureOptions.value(option, this.ufp.mac, this.nvr.ufp.mac);
+    return this.platform.featureOptions.value(option, this.device.config.mac, this.nvr.ufp.mac);
   }
 
   // Utility for checking feature options on a device.
   public hasFeature(option: string): boolean {
 
-    return this.platform.featureOptions.test(option, this.ufp.mac, this.nvr.ufp.mac);
+    return this.platform.featureOptions.test(option, this.device.config.mac, this.nvr.ufp.mac);
   }
 
   // Utility for returning the scope of a feature option.
@@ -621,7 +665,16 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
   // per-operation reachability.
   public get isReachable(): boolean {
 
-    return this.nvr.client.connection.isHealthy && this.device.isOnline;
+    // Controller health gates every device at once. Then the device's own online state - read non-throwing through peek() so a vanished record (a device lingering in the
+    // removal grace) reports unreachable rather than throwing, the total form this single availability helper needs to be safe on every path that consults it.
+    if(!this.nvr.client.connection.isHealthy) {
+
+      return false;
+    }
+
+    const config = this.device.peek();
+
+    return (config !== undefined) && isDeviceOnline(config);
   }
 
   // Spawn this accessory's narrow-selector state observers: one for-await loop per reaction, each yielding only when its watched slice changes by reference, so
@@ -704,7 +757,9 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
   // appends its display suffix here, so every sync path picks the decoration up without the parent fanning anything out.
   protected get syncedName(): string {
 
-    return this.ufp.name ?? this.ufp.marketName;
+    const config = this.device.peek();
+
+    return config?.name ?? config?.marketName ?? this.accessoryName;
   }
 
   // Sync the controller's device name into HomeKit when the user enabled name syncing. Restores the controller-side-rename propagation that the dissolved event
@@ -770,32 +825,47 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
     return transition;
   }
 
-  // Return a unique identifier for a Protect device. We need this for package cameras in particular, since they present multiple cameras in a single physical device.
+  // The HomeKit / event-timer identity of this device, sourced from the persisted accessory-context MAC rather than the live config so it survives a vanished record. For
+  // a real device this equals the bare .mac below; the package camera overrides it to its suffixed identity. It keys the event dispatcher's timers; the HomeKit
+  // accessory UUID is generated independently from the raw adoption config, so this read-source change is UUID-safe.
   public get id(): string {
 
-    return this.ufp.mac;
+    return this.accessory.context.mac ?? "";
   }
 
-  // Utility function to return the fully enumerated name of this device. The projection's name getter resolves config.name ?? config.displayName per the
-  // DeviceProjection convention. This is one read path, single-sourced through the projection.
+  // The bare device MAC, sourced from the persisted accessory context so it never reads the live config. For a real device this equals .id; the package camera overrides
+  // it to its parent's bare MAC, which DIVERGES from its suffixed .id. The MQTT delivery topics and mqttId scope under this bare MAC.
+  public get mac(): string {
+
+    return this.accessory.context.mac ?? "";
+  }
+
+  // Utility function to return the fully enumerated name of this device. The projection's name getter resolves config.name ?? config.displayName per the DeviceProjection
+  // convention; we read it non-throwing through peek() so a vanished record (a device in the removal grace) falls back to the persisted MAC rather than throwing
+  // into a detached firehose timer callback.
   public override get name(): string {
 
-    return this.device.name;
+    const config = this.device.peek();
+
+    return config?.name ?? config?.displayName ?? this.mac;
   }
 
   // The log-line prefix for a device, decorated with the model - "Name [Model]" - so every device-scoped line shows which hardware produced it. The format is
-  // single-sourced through describeDevice (plain mode) reading the live projection via this.ufp, so a device rename reflects immediately; the functional `name` above
-  // is left bare and untouched.
+  // single-sourced through describeDevice (plain mode) reading the live projection, so a device rename reflects immediately; the functional `name` above is left bare and
+  // untouched. We read non-throwing through peek() so a detached timer or removal log line on a vanished record falls back to the persisted MAC rather than throwing.
   protected override get logName(): string {
 
-    return describeDevice(this.ufp);
+    const config = this.device.peek();
+
+    return config ? describeDevice(config) : (this.accessory.context.mac ?? "Unknown");
   }
 
-  // Utility function to return the current accessory name of this device.
+  // Utility function to return the current accessory name of this device. The AccessoryInformation Name characteristic is the primary source and is always present; the
+  // secondary fallback reads the controller-side name non-throwing through peek() so a vanished record does not throw.
   public get accessoryName(): string {
 
     return (this.accessory.getService(this.hap.Service.AccessoryInformation)?.getCharacteristic(this.hap.Characteristic.Name).value as string | undefined) ??
-      (this.ufp.name ?? "Unknown");
+      (this.device.peek()?.name ?? "Unknown");
   }
 
   // Utility function to set the current accessory name of this device.
@@ -833,7 +903,9 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
   // automatically.
   private hasLedSettings(): this is { ufp: { ledSettings: { isEnabled: boolean } } } {
 
-    return "ledSettings" in this.ufp;
+    const config = this.device.peek();
+
+    return (config !== undefined) && ("ledSettings" in config);
   }
 
   // Utility function to return the current state of the device status indicator. This works for cameras and sensors, but Protect lights control it differently.

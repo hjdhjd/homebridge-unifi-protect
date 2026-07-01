@@ -26,6 +26,7 @@
  * published package is a publish-hygiene decision deliberately left out of scope here.
  */
 import type { API, CameraController, HAP, Resolution } from "homebridge";
+import type { AudioOptionsIdentity, StreamingDelegate, StreamingDelegateFactory } from "./media/stream-delegate.ts";
 import { BOX_HEADER_SIZE, FeatureOptions, SAMPLE_FLAG_NON_SYNC, TRUN_FLAG_DATA_OFFSET, TRUN_FLAG_FIRST_SAMPLE_FLAGS, TestClock, TestRecordingProcessFactory }
   from "homebridge-plugin-utils";
 import type { Camera, Chime, LivestreamSubscriptionState, PlaySpeakerOptions, ProtectCameraChannelConfig, ProtectCameraConfig, ProtectChimeConfig, ProtectEventMetadata,
@@ -37,7 +38,6 @@ import type { NvrPhase, ProtectNvr } from "./nvr/nvr.ts";
 import { PLATFORM_NAME, PLUGIN_NAME } from "./settings.ts";
 import type { ProtectAccessory, ProtectDevices } from "./types.ts";
 import type { ProtectNvrOptions, ProtectOptions } from "./options.ts";
-import type { StreamingDelegate, StreamingDelegateFactory } from "./media/stream-delegate.ts";
 import { featureOptionCategories, featureOptions } from "./options.ts";
 import type { ChannelProfile } from "./media/resolution.ts";
 import { DoorbellCapability } from "./devices/cameras/doorbell.ts";
@@ -88,8 +88,9 @@ class ContactSensorStateCharacteristicType {
   public readonly hapKind = "ContactSensorState" as const;
 }
 
-// The lock-state characteristics. The access-unlock delivery writes both LockCurrentState and LockTargetState, toggling each between SECURED and UNSECURED, so the
-// double carries those two named states (the only ones the plugin reads) as statics on each marker, mirroring how real HAP exposes them as constructor constants.
+// The lock-state characteristics. The camera's UniFi Access lock writes both LockCurrentState and LockTargetState - the establishment stamp sets them SECURED at create
+// or restart, and the LockTargetState onSet toggles each between SECURED and UNSECURED across a user unlock and its auto re-lock - so the double carries those two named
+// states (the only ones the plugin reads) as statics on each marker, mirroring how real HAP exposes them as constructor constants.
 class LockCurrentStateCharacteristicType {
 
   public static readonly SECURED = 1;
@@ -248,9 +249,10 @@ class ProgrammableSwitchEventCharacteristicType {
 
 // The HAP Characteristic namespace as the test-double exposes it. StatusActive is the load-bearing one...the isReachable rewire writes it across every device
 // class, so the reachability tests pivot on this characteristic. On covers the toggle pair used by switches in the double's self-test. LockCurrentState /
-// LockTargetState back the access-unlock delivery tests. The AccessoryInformation kinds (Manufacturer / Model / SerialNumber / FirmwareRevision / Name) and
-// MotionDetected back the real-construction harness; Brightness, NightVision, CameraOperatingModeIndicator, and ProgrammableSwitchEvent back the doorbell-family
-// construction harness; OccupancyDetected backs the device-motion base-capability net, where configureOccupancySensor first reaches it. BatteryLevel / StatusLowBattery
+// LockTargetState back the camera's UniFi Access lock onSet and the capability-reconcile lock self-heal tests. The AccessoryInformation kinds (Manufacturer / Model /
+// SerialNumber / FirmwareRevision / Name) and MotionDetected back the real-construction harness; Brightness, NightVision, CameraOperatingModeIndicator, and
+// ProgrammableSwitchEvent back the doorbell-family construction harness; OccupancyDetected backs the device-motion base-capability net, where configureOccupancySensor
+// first reaches it. BatteryLevel / StatusLowBattery
 // (the battery service updater) and CurrentAmbientLightLevel / CurrentRelativeHumidity / CurrentTemperature / LeakDetected (the sensor's per-mode services) back the
 // sensor-family real-construction net, where ProtectSensor first reaches them. SecuritySystemCurrentState / SecuritySystemTargetState (the security-system state machine,
 // the Current marker also the SecuritySystem service's seed) and HardwareRevision (the security-system's bespoke configureInfo) back the controller-owner net, where
@@ -501,9 +503,9 @@ export class TestService {
     return this.characteristicsByType.has(charType);
   }
 
-  // Remove a characteristic instance from this service, mirroring HAP's Service.removeCharacteristic. The camera's configureTamperDetection takes this path on a
-  // camera without tamper detection: it lazily materializes StatusTampered through getCharacteristic, then removes it. The double keys one instance per kind, so
-  // removal by the instance's kind is exact.
+  // Remove a characteristic instance from this service, mirroring HAP's Service.removeCharacteristic. The camera's configureTamperDetection takes this path only to prune
+  // an existing StatusTampered when tamper detection is turned off: it reads prior existence side-effect-free through testCharacteristic, so it never materializes the
+  // characteristic just to remove it. The double keys one instance per kind, so removal by the instance's kind is exact.
   public removeCharacteristic(characteristic: TestCharacteristic): void {
 
     this.characteristicsByType.delete(characteristic.type);
@@ -659,8 +661,8 @@ class LightbulbServiceType extends TestService {
   }
 }
 
-// The lock-mechanism kind. Added for the access-unlock delivery tests: the firehose router's accessEventHandler resolves an "Access"-subtyped LockMechanism service and
-// toggles its lock characteristics, so an accessory carrying one exercises the real unlock/re-secure path.
+// The lock-mechanism kind. The camera's configureAccessFeatures acquires an "Access"-subtyped LockMechanism service and the capability-reconcile suite drives its
+// LockTargetState onSet and self-heals it from a late supportUnlock, so an accessory carrying one exercises the real unlock / re-secure / establishment-stamp path.
 class LockMechanismServiceType extends TestService {
 
   public static readonly UUID = "LockMechanism";
@@ -1069,6 +1071,26 @@ export class TestStateStore {
     this.pushCameraPatch(id, { featureFlags: { ...record.featureFlags, ...flags } });
   }
 
+  // Push the paired Access reader's supportUnlock capability live, composing it over the targeted camera record's accessDeviceMetadata so nothing else on the metadata
+  // object moves - the accessDeviceMetadata mirror of pushCameraFeatureFlags. accessDeviceMetadata is OPTIONAL (a camera with no paired reader has none), so an
+  // undefined-to-present flip synthesizes the minimal metadata shape makeCameraConfig builds (only the gating featureFlags), while a present-metadata flip spreads the
+  // live object and overrides only supportUnlock. The lone cast is confined here, as makeCameraConfig confines its own, since the minimal metadata is not the full wire
+  // shape.
+  public pushCameraSupportUnlock(id: string, supportUnlock: boolean): void {
+
+    const record = this.state.cameras.get(id);
+
+    if(!record) {
+
+      throw new Error("The camera record to patch is not present in the store double: " + id + ".");
+    }
+
+    const metadata = record.accessDeviceMetadata;
+    const accessDeviceMetadata = { ...metadata, featureFlags: { ...metadata?.featureFlags, supportUnlock } } as unknown as ProtectCameraConfig["accessDeviceMetadata"];
+
+    this.pushCameraPatch(id, { accessDeviceMetadata });
+  }
+
   // The light-slice mirror of pushCameraPatch: replace only the targeted light record, spread-sharing its untouched fields, while every other slice of the state keeps
   // its reference - so exactly the observers watching light-derived selectors (the light's four narrow reactions) wake. The plain per-slice form, because Step 0's
   // lesson is that a key-generic push cannot correlate a slice's record type cast-free against the ReadonlyMap slices, so each slice carries its own typed helper.
@@ -1247,8 +1269,8 @@ export class TestStateStore {
  * (an empty Map, or null for nvr), so a bare makeProtectState() is the empty-everywhere baseline the observe and selector tests seed.
  *
  * @param options - cameras / chimes / lights / liveviews / ringtones / sensors / viewers: the config records to key into the matching map slice, each keyed by its
- *                  own id; nvr: the single controller config record set on the nvr slice (defaults to null). The users slice is intentionally not exposed: no test
- *                  seeds it, so it stays the empty Map the reducer starts from.
+ *                  own id; nvr: the single controller config record set on the nvr slice (defaults to null). The users and relays slices are intentionally not exposed:
+ *                  no test seeds them, so they stay the empty Maps the reducer starts from.
  *
  * @returns a full ProtectState ready to seed a TestStateStore.
  */
@@ -1265,6 +1287,7 @@ export function makeProtectState(options: { cameras?: ProtectCameraConfig[]; chi
     lights: new Map((options.lights ?? []).map((light): [string, ProtectLightConfig] => [ light.id, light ])),
     liveviews: new Map((options.liveviews ?? []).map((liveview): [string, ProtectNvrLiveviewConfig] => [ liveview.id, liveview ])),
     nvr: options.nvr ?? null,
+    relays: new Map(),
     ringtones: new Map((options.ringtones ?? []).map((ringtone): [string, ProtectRingtoneConfig] => [ ringtone.id, ringtone ])),
     sensors: new Map((options.sensors ?? []).map((sensor): [string, ProtectSensorConfig] => [ sensor.id, sensor ])),
     users: new Map(),
@@ -1307,9 +1330,9 @@ export interface TestCameraFeatureFlags {
  *
  * @returns a camera config record the construction path reads as real.
  */
-export function makeCameraConfig(options: { channels: ProtectCameraChannelConfig[]; chimeDuration?: number; enableNfc?: boolean;
-  featureFlags?: Partial<TestCameraFeatureFlags>; id?: string; isDark?: boolean; lcdMessage?: { duration?: number; resetAt?: Nullable<number>; text?: string;
-    type?: string; }; mac?: string; name?: string; videoCodec?: string; }): ProtectCameraConfig {
+export function makeCameraConfig(options: { accessDeviceMetadata?: { featureFlags: { supportUnlock: boolean } }; channels: ProtectCameraChannelConfig[];
+  chimeDuration?: number; enableNfc?: boolean; featureFlags?: Partial<TestCameraFeatureFlags>; id?: string; isDark?: boolean; lcdMessage?: { duration?: number;
+    resetAt?: Nullable<number>; text?: string; type?: string; }; mac?: string; name?: string; videoCodec?: string; }): ProtectCameraConfig {
 
   const name = options.name ?? "Test Camera";
 
@@ -1353,6 +1376,7 @@ export function makeCameraConfig(options: { channels: ProtectCameraChannelConfig
     smartDetectSettings: { enableTamperDetection: false },
     state: "CONNECTED",
     videoCodec: options.videoCodec ?? "h264",
+    ...(options.accessDeviceMetadata !== undefined ? { accessDeviceMetadata: options.accessDeviceMetadata } : {}),
     ...(options.lcdMessage !== undefined ? { lcdMessage: options.lcdMessage } : {})
   };
 
@@ -1657,6 +1681,11 @@ export class TestCameraProjection {
   public luxReading = 100;
   public luxRejection: Nullable<Error> = null;
   public readonly luxCalls: { opts?: { signal?: AbortSignal } }[] = [];
+  // The recorded UniFi Access unlock commands the lock's LockTargetState onSet dispatches when the user drives it to UNSECURED, so a test proves the onSet was actually
+  // bound (a restart re-wire records exactly one call) rather than fired by the establishment stamp alone. unlockRejection drives the runDeviceCommand failure branch
+  // (the optimistic UNSECURED reverts to SECURED), mirroring the luxRejection / updateRejection levers.
+  public unlockRejection: Nullable<Error> = null;
+  public readonly unlockCalls: { opts?: { signal?: AbortSignal } }[] = [];
   // The recorded flashlight pulses turnOnFlashlight() resolves into, so a test asserts the retry budget by count (one on a success or a heartbeat re-pulse, three on the
   // exhausted failure). flashlightRejection drives the retry-exhaustion failure path, where the catch swallows the pulse to a reflected-off switch.
   public flashlightRejection: Nullable<Error> = null;
@@ -1680,6 +1709,12 @@ export class TestCameraProjection {
     }
 
     return config;
+  }
+
+  // The non-throwing companion to config, mirroring the real projection's peek(): the current config, or undefined when the record is absent from the store double.
+  public peek(): Readonly<ProtectCameraConfig> | undefined {
+
+    return this.store.snapshot().cameras.get(this.id) ?? undefined;
   }
 
   // Whether the device is currently connected, per the library's isDeviceOnline definition.
@@ -1722,6 +1757,20 @@ export class TestCameraProjection {
     }
 
     return this.luxReading;
+  }
+
+  // Record an Access unlock command and resolve, or reject with the settable rejection so a test drives the runDeviceCommand failure -> optimistic-revert path. RECORDS
+  // the call (unlockCalls) so a test proves the lock's onSet bound and dispatched exactly one unlock - the observable proxy for the wire-every-configure re-bind a
+  // Homebridge restart relies on - and does no lock-state logic of its own, staying a faithful library projection (the controller's Access bridge is one-way and
+  // fire-and-forget).
+  public async unlock(opts?: { signal?: AbortSignal }): Promise<void> {
+
+    this.unlockCalls.push({ opts });
+
+    if(this.unlockRejection) {
+
+      throw this.unlockRejection;
+    }
   }
 
   // Record a flashlight pulse and resolve, or reject with the settable rejection so a test drives the retry-exhaustion failure path (the package camera's
@@ -1773,6 +1822,12 @@ export class TestLightProjection {
     }
 
     return config;
+  }
+
+  // The non-throwing companion to config, mirroring the real projection's peek(): the current config, or undefined when the record is absent from the store double.
+  public peek(): Readonly<ProtectLightConfig> | undefined {
+
+    return this.store.snapshot().lights.get(this.id) ?? undefined;
   }
 
   // Whether the device is currently connected, per the library's isDeviceOnline definition.
@@ -1847,6 +1902,12 @@ export class TestChimeProjection {
     }
 
     return config;
+  }
+
+  // The non-throwing companion to config, mirroring the real projection's peek(): the current config, or undefined when the record is absent from the store double.
+  public peek(): Readonly<ProtectChimeConfig> | undefined {
+
+    return this.store.snapshot().chimes.get(this.id) ?? undefined;
   }
 
   // Whether the device is currently connected, per the library's isDeviceOnline definition.
@@ -1935,6 +1996,12 @@ export class TestViewerProjection {
     return config;
   }
 
+  // The non-throwing companion to config, mirroring the real projection's peek(): the current config, or undefined when the record is absent from the store double.
+  public peek(): Readonly<ProtectViewerConfig> | undefined {
+
+    return this.store.snapshot().viewers.get(this.id) ?? undefined;
+  }
+
   // Whether the device is currently connected, per the library's isDeviceOnline definition.
   public get isOnline(): boolean {
 
@@ -1997,6 +2064,12 @@ export class TestSensorProjection {
     }
 
     return config;
+  }
+
+  // The non-throwing companion to config, mirroring the real projection's peek(): the current config, or undefined when the record is absent from the store double.
+  public peek(): Readonly<ProtectSensorConfig> | undefined {
+
+    return this.store.snapshot().sensors.get(this.id) ?? undefined;
   }
 
   // Whether the device is currently connected, per the library's isDeviceOnline definition.
@@ -2100,9 +2173,10 @@ export class TestBaseDevice extends ProtectDevice {
  */
 export class TestStreamingDelegate implements StreamingDelegate {
 
-  // The doorbell-ness this stub controller was built for, mirroring production's ProtectStreamingDelegate.builtAsDoorbell so the live-attach's staleness check
-  // (rebuild only when this.stream.builtAsDoorbell disagrees with the live isDoorbell) exercises against the real value the factory recorded at create time.
-  public readonly builtAsDoorbell: boolean;
+  // The frozen audio-options identity this stub controller was built for, mirroring production's ProtectStreamingDelegate.builtFor so the live capability reconcile's
+  // staleness check (rebuild only when a frozen audio capability has appeared since this.stream.builtFor) exercises against the real value the factory recorded at create
+  // time.
+  public readonly builtFor: AudioOptionsIdentity;
   public controller: CameraController;
   public readonly ffmpegOptions: StreamingDelegate["ffmpegOptions"];
   public hksv: StreamingDelegate["hksv"];
@@ -2110,9 +2184,9 @@ export class TestStreamingDelegate implements StreamingDelegate {
   // How many times production tore this delegate down - cleanup and the NVR disconnect walk both call shutdown.
   public shutdownCalls = 0;
 
-  public constructor(builtAsDoorbell = false, maxSourcePixels = Infinity) {
+  public constructor(builtFor: AudioOptionsIdentity = { isDoorbell: false, twoWayAudio: false }, maxSourcePixels = Infinity) {
 
-    this.builtAsDoorbell = builtAsDoorbell;
+    this.builtFor = builtFor;
 
     // The identity sentinel: a plain object the test matches by reference. The double never operates on the controller's innards - HAP's controller is opaque to
     // the camera beyond registration.
@@ -2156,10 +2230,10 @@ export class TestStreamingDelegateFactory implements StreamingDelegateFactory {
 
   public create(camera: ProtectCameraHost, resolutions: Resolution[]): StreamingDelegate {
 
-    // Capture the constructed camera's doorbell-ness, exactly as production's ProtectStreamingDelegate reads featureFlags.isDoorbell at its own construction. This makes
-    // a flag-true construction yield a delegate already built for a doorbell, so the live-attach's staleness check is a no-op (zero controller churn) when the flag was
-    // already true at construction, and only a genuine late flip - a delegate built when the flag was false - triggers a rebuild.
-    const delegate = new TestStreamingDelegate(camera.ufp.featureFlags.isDoorbell, this.maxSourcePixels);
+    // Capture the camera's frozen audio identity - both isDoorbell and the speaker-derived two-way audio hint - exactly as production's ProtectStreamingDelegate
+    // reads them at its own construction. This makes a construction whose capabilities are present yield a delegate already built for the current identity, so the
+    // capability reconcile's staleness check is a no-op (zero controller churn), and only a genuine late capability - a delegate built before it appeared - rebuilds.
+    const delegate = new TestStreamingDelegate({ isDoorbell: camera.ufp.featureFlags.isDoorbell, twoWayAudio: camera.hints.twoWayAudio }, this.maxSourcePixels);
 
     this.createCalls.push({ camera, delegate, resolutions });
 
@@ -2170,7 +2244,7 @@ export class TestStreamingDelegateFactory implements StreamingDelegateFactory {
 /* The reusable camera-host test double: the small stand-in every media-delegate test constructs a delegate against, in place of a full ProtectCamera. The
  * ProtectCameraHost interface segregation (the dependency-inversion seam on the camera side of the media stack) exists precisely so the streaming, recording,
  * snapshot, and timeshift delegates type their camera handle as this narrow contract rather than the concrete class - and this double is what cashes that in: it
- * structurally satisfies all 21 members of ProtectCameraHost (the same compile-time proof the production ProtectCamera passes), so a delegate constructs against it
+ * structurally satisfies all 22 members of ProtectCameraHost (the same compile-time proof the production ProtectCamera passes), so a delegate constructs against it
  * with no FFmpeg and no live camera.
  *
  * The shape mirrors TestStreamingDelegate's discipline: controllable fields a test sets to steer a branch (isReachable is the behavior-bearing one - the snapshot
@@ -2182,7 +2256,7 @@ export class TestStreamingDelegateFactory implements StreamingDelegateFactory {
  * throw). The four context handles (accessory/api/nvr/platform) plus ufp are typed as their production types by the interface, which the intentionally-partial
  * doubles do not structurally satisfy, so each is bridged with a confined `as unknown as <ProductionType>` seam cast - the same honest harness pattern the
  * construction suites use at their own construction-arg boundaries. The casts bridge the deliberate double->production gap only; tsc still verifies every one of the
- * 21 members is present and interface-typed, so the completeness proof holds.
+ * 22 members is present and interface-typed, so the completeness proof holds.
  *
  * Member order mirrors TestStreamingDelegate: the fields group alphabetized, then the methods group alphabetized (not one global run). The settable seam predicates
  * hasFeature / selectChannel / selectRecordingChannel are public arrow-function fields so a test can reassign them, satisfying the interface's method members.
@@ -2250,6 +2324,14 @@ export class TestCameraHost implements ProtectCameraHost {
   // inert double - the unchanged path the A1 and recording-transmit suites stay on (they never set this queue).
   public livestreamSubscriptions: LivestreamSubscription[] = [];
   public log: HomebridgePluginLogging;
+
+  // The bare device MAC for topic addressing, read through the device projection so it stays consistent with the ufp fixture's mac even if a test reassigns ufp. This is
+  // the identity the narrowed live-state view no longer carries; a delegate reads it (the MQTT snapshot topic) through protectCamera.mac.
+  public get mac(): string {
+
+    return this.ufp.mac;
+  }
+
   public nvr: ProtectNvr;
   public platform: ProtectPlatform;
   public readonly rebootCalls: number[] = [];
@@ -2803,7 +2885,7 @@ export class TestRecordingDispatch extends ProtectEventDispatch {
 
   public override motionEventHandler(protectDevice: ProtectDevice, _detectedObjects: string[] = [], _metadata?: ProtectEventMetadata): void {
 
-    this.calls.push({ id: protectDevice.ufp.id, kind: "motion" });
+    this.calls.push({ id: protectDevice.protectId, kind: "motion" });
   }
 }
 
@@ -2853,10 +2935,10 @@ export class TestProtectNvr {
   public readonly signal: AbortSignal;
 
   // The managed-device registry, mirroring ProtectNvr.configuredDevices: a Map keyed by accessory UUID whose values are the constructed device objects. The
-  // controller-owner motion fanouts resolve a member camera through it - the security-system fanout reads configuredDevices.get(accessory.UUID)?.ufp.id, the liveviews
+  // controller-owner motion fanouts resolve a member camera through it - the security-system fanout reads configuredDevices.get(accessory.UUID)?.protectId, the liveviews
   // fanout reaches it through getDeviceById. A test seeds a minimal member double through the ProtectDevices cast at the construction seam, exactly as the device-class
-  // doubles are cast elsewhere. Both fanouts read only a narrow slice of the device (ufp.id for the security path, accessory / accessoryName for the liveviews path), so
-  // the seeded double carries just that slice.
+  // doubles are cast elsewhere. Both fanouts read only a narrow slice of the device (protectId for the security path, accessory / accessoryName for the liveviews path),
+  // so the seeded double carries just that slice.
   public readonly configuredDevices = new Map<string, ProtectDevices>();
 
   // The recorded machinery: every cancelled removal UUID, the pending manually-fireable removal timers keyed by accessory UUID, and every schedule decision with its
@@ -2912,11 +2994,12 @@ export class TestProtectNvr {
     return this.platform.featureOptions.getInteger(option, this.ufp.mac);
   }
 
-  // Return the managed Protect device whose ufp.id matches, or null - the production getDeviceById one-liner (nvr.ts), mirrored so the liveviews motion fanout resolves a
-  // member camera against the seeded configuredDevices registry exactly as production does.
+  // Return the managed Protect device whose protectId matches, or null - the production one-liner (nvr.ts), mirrored so the liveviews motion fanout resolves a member
+  // camera against the seeded configuredDevices registry as production does. We match on the non-throwing protectId, so a wrapper whose store-backed record has
+  // been removed still resolves (and reports unavailable) rather than throwing - the property the recovery policy and firehose lookups depend on.
   public getDeviceById(deviceId: string): Nullable<ProtectDevices> {
 
-    return [...this.configuredDevices.values()].find((device) => device.ufp.id === deviceId) ?? null;
+    return [...this.configuredDevices.values()].find((device) => device.protectId === deviceId) ?? null;
   }
 
   // The production controller-scoped feature test, mirrored for any double-side caller that consults controller scope.

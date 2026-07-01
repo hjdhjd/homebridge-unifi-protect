@@ -7,7 +7,7 @@ import type { Camera, DeepPartial, ProtectCameraConfig, ProtectCameraLcdMessageC
 import type { CharacteristicValue, HAP, Service, WithUUID } from "homebridge";
 import { PACKAGE_CAMERA_NAME_SUFFIX, ProtectReservedNames, packageCameraId } from "../../types.ts";
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_DOORBELL_CHIME_DURATION_DIGITAL } from "../../settings.ts";
-import type { ProtectAccessory, ProtectAccessoryContext } from "../../types.ts";
+import type { ProtectAccessory, ProtectAccessoryContext, WithoutIdentity } from "../../types.ts";
 import { acquireService, composeSignals, sanitizeName, toStartCase, validService } from "homebridge-plugin-utils";
 import { selectCamera, selectChimes } from "unifi-protect";
 import { ProtectBase } from "../device-base.ts";
@@ -78,8 +78,9 @@ export class DoorbellCapability extends ProtectBase {
    * accessory (the same homebridge-plugin-utils SSOT the camera's own wrappers delegate to), not logic duplication.
    */
 
-  // The live camera projection's config record, narrowed to the camera projection. The moved bodies read this.ufp.<field> exactly as the subclass did.
-  private get ufp(): Readonly<ProtectCameraConfig> {
+  // The owning camera projection's live STATE, narrowed to drop device identity (id/mac/modelKey) - that immutable identity flows through the dedicated accessors, never
+  // the throwing config projection. The moved bodies read this.ufp.<state-field> exactly as the subclass did; the body is unchanged.
+  private get ufp(): Readonly<WithoutIdentity<ProtectCameraConfig>> {
 
     return this.#device.config;
   }
@@ -119,8 +120,10 @@ export class DoorbellCapability extends ProtectBase {
     return acquireService(this.accessory, serviceType, name, subtype, onServiceCreate);
   }
 
-  // Validate a service on the camera's accessory, the same thin re-binding to the homebridge-plugin-utils free function.
-  private validService(serviceType: WithUUID<typeof Service>, validate: boolean, subtype?: string): boolean {
+  // Validate a service on the camera's accessory, the same thin re-binding to the homebridge-plugin-utils free function. The validate argument accepts either a plain
+  // boolean or a presence-aware predicate, mirroring the free function: the predicate receives the service's current presence so a gate can keep an already-present
+  // service while refusing to create a new one.
+  private validService(serviceType: WithUUID<typeof Service>, validate: boolean | ((hasService: boolean) => boolean), subtype?: string): boolean {
 
     return validService(this.accessory, serviceType, validate, subtype);
   }
@@ -145,7 +148,14 @@ export class DoorbellCapability extends ProtectBase {
   // which scoped under its own (the camera's) MAC.
   protected override get mqttId(): string {
 
-    return this.camera.ufp.mac;
+    return this.camera.mac;
+  }
+
+  // Whether the backing camera record is present, delegated to the owning camera (the capability extends ProtectBase, not ProtectDevice, so it has no record of its own).
+  // This drives the inherited observeState gate, so the four doorbell observers no-op during the parent's removal grace exactly as the camera's own do.
+  protected override get recordPresent(): boolean {
+
+    return this.camera.recordPresent;
   }
 
   // Wake attribution: the capability has no accessory identity of its own, so it delegates to the camera's single publishObserverWake seam, keeping one publisher keyed
@@ -182,6 +192,13 @@ export class DoorbellCapability extends ProtectBase {
   private get isMessagesFromControllerEnabled(): boolean {
 
     return this.hasFeature("Doorbell.Messages.FromDoorbell");
+  }
+
+  // The doorbell's current physical-chime duration, read non-throwing through the live camera record. An absent record (a doorbell in the removal grace) reports
+  // 0 rather than throwing; the physical-chime onGet, the initial switch write, and the reactive push all read this single source.
+  private get chimeDuration(): number {
+
+    return this.#device.peek()?.chimeDuration ?? 0;
   }
 
   // Configure the doorbell capability for HomeKit, preserving the pre-collapse configure order: the package camera, the Doorbell service (through the camera's seam, at
@@ -239,8 +256,8 @@ export class DoorbellCapability extends ProtectBase {
   // delivery and the package camera's motion are firehose occurrences the router handles, not observed here.
   private spawnObservers(): void {
 
-    const cam = selectCamera(this.ufp.id);
-    const id = this.ufp.id;
+    const cam = selectCamera(this.#device.id);
+    const id = this.#device.id;
 
     // Reflect the controller's current LCD message across the doorbell's message switches.
     this.observeState({ key: "doorbell.lcdMessage", selector: state => cam(state)?.lcdMessage, title: "the doorbell message" }, () => {
@@ -365,7 +382,8 @@ export class DoorbellCapability extends ProtectBase {
 
     // Generate a UUID for the package camera, seeded by the package camera's identity - the parent's MAC address plus the persistence-critical identity suffix. We derive
     // the id through the shared leaf function rather than the package class, so the capability consumes the package's identity without value-importing its sibling class.
-    const uuid = this.hap.uuid.generate(packageCameraId(this.ufp.mac));
+    // The bare MAC comes from the raw record (present at configure time), not the narrowed live-state projection that no longer carries identity.
+    const uuid = this.hap.uuid.generate(packageCameraId(this.#device.config.mac));
 
     // Let's find it if we've already created it.
     let packageCameraAccessory = this.platform.accessories.find(x => x.UUID === uuid);
@@ -408,7 +426,8 @@ export class DoorbellCapability extends ProtectBase {
    */
   public reconcilePackageCamera(): void {
 
-    const uuid = this.hap.uuid.generate(packageCameraId(this.ufp.mac));
+    // The bare MAC comes from the raw record, not the narrowed live-state projection that no longer carries identity.
+    const uuid = this.hap.uuid.generate(packageCameraId(this.#device.config.mac));
 
     // The capability is present: cancel any pending detach grace first (a flap back during the grace window must actually cancel the timer - configurePackageCamera's
     // instance guard would otherwise short-circuit before any cancellation could happen), then bring the package camera into being if it is not already.
@@ -520,7 +539,7 @@ export class DoorbellCapability extends ProtectBase {
       // Get the current status of the physical chime mode on the doorbell.
       service.getCharacteristic(this.hap.Characteristic.On).onGet(() => {
 
-        return this.ufp.chimeDuration === this.getPhysicalChimeDuration(physicalChimeType);
+        return this.chimeDuration === this.getPhysicalChimeDuration(physicalChimeType);
       });
 
       // Activate the appropriate physical chime mode on the doorbell.
@@ -561,7 +580,7 @@ export class DoorbellCapability extends ProtectBase {
       });
 
       // Initialize the physical chime switch state.
-      service.updateCharacteristic(this.hap.Characteristic.On, this.ufp.chimeDuration === this.getPhysicalChimeDuration(physicalChimeType));
+      service.updateCharacteristic(this.hap.Characteristic.On, this.chimeDuration === this.getPhysicalChimeDuration(physicalChimeType));
       switchesEnabled.push(chimeSetting);
     }
 
@@ -682,15 +701,19 @@ export class DoorbellCapability extends ProtectBase {
     // Get the current message on the doorbell.
     this.subscribeGet("message", "doorbell message", (): string => {
 
-      if(!this.ufp.lcdMessage) {
+      // Read the LCD message non-throwing through the live camera record; an absent record (a doorbell lingering in the removal grace) reports no message rather than
+      // throwing on this pull path.
+      const lcdMessage = this.#device.peek()?.lcdMessage;
+
+      if(!lcdMessage) {
 
         return "";
       }
 
-      const doorbellDuration = (typeof this.ufp.lcdMessage.resetAt === "number") ? Math.round((this.ufp.lcdMessage.resetAt - Date.now()) / 1000) : 0;
+      const doorbellDuration = (typeof lcdMessage.resetAt === "number") ? Math.round((lcdMessage.resetAt - Date.now()) / 1000) : 0;
 
       // Return the current message.
-      return JSON.stringify({ duration: doorbellDuration, message: this.ufp.lcdMessage.text ?? "" });
+      return JSON.stringify({ duration: doorbellDuration, message: lcdMessage.text ?? "" });
     });
 
     // We support the ability to set the doorbell message like so:
@@ -775,7 +798,7 @@ export class DoorbellCapability extends ProtectBase {
       [ ProtectReservedNames.SWITCH_DOORBELL_CHIME_NONE, ProtectReservedNames.SWITCH_DOORBELL_CHIME_MECHANICAL, ProtectReservedNames.SWITCH_DOORBELL_CHIME_DIGITAL ]) {
 
       this.accessory.getServiceById(this.hap.Service.Switch, physicalChimeType)?.
-        updateCharacteristic(this.hap.Characteristic.On, this.ufp.chimeDuration === this.getPhysicalChimeDuration(physicalChimeType));
+        updateCharacteristic(this.hap.Characteristic.On, this.chimeDuration === this.getPhysicalChimeDuration(physicalChimeType));
     }
   }
 
@@ -929,7 +952,7 @@ export class DoorbellCapability extends ProtectBase {
   // selectChimes is always an array post-connect.
   private get chimeVolume(): number {
 
-    return chimeVolumeFor(selectChimes(this.nvr.client.state.snapshot()), this.ufp.id);
+    return chimeVolumeFor(selectChimes(this.nvr.client.state.snapshot()), this.#device.id);
   }
 
   private async setChimeVolume(value: number): Promise<void> {
@@ -941,9 +964,9 @@ export class DoorbellCapability extends ProtectBase {
     // controller and the change is reflected once the reducer's stream delivers it - we no longer fold the response back into local state (the controller state is
     // immutable and single-sourced in the reducer), nor mutate the ring in place. We send a single-entry ringSettings array carrying only the modified ring, matching
     // the controller's expected payload.
-    for(const chime of this.nvr.client.chimes.filter(chime => chime.config.cameraIds.includes(this.ufp.id))) {
+    for(const chime of this.nvr.client.chimes.filter(chime => chime.config.cameraIds.includes(this.#device.id))) {
 
-      const ring = chime.config.ringSettings.find(setting => setting.cameraId === this.ufp.id);
+      const ring = chime.config.ringSettings.find(setting => setting.cameraId === this.#device.id);
 
       if(!ring) {
 

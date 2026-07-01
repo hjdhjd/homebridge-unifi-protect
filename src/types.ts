@@ -32,6 +32,19 @@ export const ProtectDeviceCategories = [ "camera", "chime", "light", "sensor", "
 export type ProtectDeviceConfigTypes = ProtectCameraConfig | ProtectChimeConfig | ProtectLightConfig | ProtectSensorConfig | ProtectViewerConfig;
 export type ProtectDevices = ProtectCamera | ProtectChime | ProtectLight | ProtectSensor | ProtectViewer;
 
+// The immutable identity keys of a Protect device. They never change for the life of an accessory and are read through dedicated, always-present accessors (the
+// controller id, the model category, and the bare/suffixed MAC), so they never need - and must never be read through - the live config projection.
+type IdentityKeys = "id" | "mac" | "modelKey";
+
+// A view of a device config with the identity keys removed, leaving only the live STATE surface. Device identity is immutable and is served by dedicated non-throwing
+// accessors; the live config projection, by contrast, throws once a device's controller record is gone (a device lingering in the removal grace), so reading identity
+// through it is a latent crash. Narrowing the read-through config getters to this view makes that crash unrepresentable: a dot-access to a dropped key (this.ufp.mac and
+// friends) is a noPropertyAccessFromIndexSignature error rather than a throw at runtime. This is a homomorphic key-remap that PRESERVES the config's index signature, so
+// every genuine state field keeps its exact type and an untyped index-only read still resolves; it is distributive (the T extends unknown guard), so a union projection
+// narrows per-member rather than collapsing to the members' common keys. One deliberate escape remains: a bracket access (this.ufp["mac"]) still resolves through the
+// preserved index signature, which is a contorted, review-visible read - not the accidental dot-access pattern this guards against.
+export type WithoutIdentity<T> = T extends unknown ? { [K in keyof T as K extends IdentityKeys ? never : K]: T[K] } : never;
+
 // The typed view of a Protect accessory's persisted HomeKit context. All keys are optional: the context is reset to {} and repopulated per accessory type (a camera
 // carries mac + detectMotion, a liveview switch carries liveview + liveviewState + nvr, the controller's system-info accessory carries systemInfo + nvr, and so on), so
 // presence is itself meaningful and several code paths test it with the `in` operator. This interface replaces homebridge's UnknownContext (Record<string, any>) index

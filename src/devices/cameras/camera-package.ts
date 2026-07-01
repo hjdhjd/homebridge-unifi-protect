@@ -30,8 +30,9 @@ export class ProtectCameraPackage extends ProtectCamera {
   // template, which is what lets the package track parent renames and firmware updates without any doorbell fan-out.
   protected override spawnCameraObservers(): void {
 
-    // Bind the by-id camera selector once, mirroring the parent's discipline - the package shares the parent's projection, so the parent's id is ours too.
-    const cam = selectCamera(this.ufp.id);
+    // Bind the by-id camera selector once, as the parent does - the package shares the parent's projection, so the parent's id is ours too. We seed it from
+    // the projection's non-throwing id rather than the throwing config, so the selector binding never depends on a present record.
+    const cam = selectCamera(this.device.id);
 
     // The lifecycle state of the shared physical device drives the package accessory's availability, exactly as it drives the parent's - each side observes the same
     // slice and pushes its own narrow projection.
@@ -64,15 +65,11 @@ export class ProtectCameraPackage extends ProtectCamera {
   // lines are attributable instead of colliding with the parent doorbell's (they share the same projection, so the base logName would render identically).
   protected override get logName(): string {
 
-    return describeDevice(this.ufp, { name: this.syncedName });
-  }
+    // Derive from the live record when present, decorated with the suffixed package name; when the parent record has vanished (in the removal grace), fall back
+    // to the suffixed name alone - itself non-throwing through the base syncedName seam - so a detached package timer callback names the device instead of throwing.
+    const config = this.device.peek();
 
-  // Push the package camera's availability projection: StatusActive on the motion sensor, nothing else - exactly the surface the parent doorbell used to fan out. The
-  // inherited camera projection would also write StatusTampered, sprouting an always-false tamper characteristic onto the package motion sensor through HAP's optional-
-  // characteristic auto-add, and a LightSensor line the package never carries; the narrow override is the guard against both.
-  protected override updateAvailability(): void {
-
-    this.accessory.getService(this.hap.Service.MotionSensor)?.updateCharacteristic(this.hap.Characteristic.StatusActive, this.isReachable);
+    return config ? describeDevice(config, { name: this.syncedName }) : this.syncedName;
   }
 
   // Configure the package camera.
@@ -96,9 +93,10 @@ export class ProtectCameraPackage extends ProtectCamera {
       this.accessory.context.hksvRecordingDisabled = savedContext.hksvRecordingDisabled ?? false;
     }
 
-    // We explicitly avoid adding the MAC address of the camera - that's reserved for real Protect devices, not synthetic ones we create.
+    // We explicitly avoid adding the MAC address of the camera - that's reserved for real Protect devices, not synthetic ones we create. The parent's bare MAC seeds the
+    // package identity from the raw record at configure time, where the record is present - identity is not read through the narrowed live-state projection.
     this.accessory.context.nvr = this.nvr.ufp.mac;
-    this.accessory.context.packageCamera = this.ufp.mac;
+    this.accessory.context.packageCamera = this.device.config.mac;
 
     // Configure accessory information.
     this.configureInfo();
@@ -194,6 +192,13 @@ export class ProtectCameraPackage extends ProtectCamera {
 
     service.getCharacteristic(this.hap.Characteristic.On).onSet(async (value: CharacteristicValue) => {
 
+      // A command targeting the package camera whose shared controller record has vanished cannot be fulfilled, so we no-op gracefully rather than throwing on the
+      // live-config read below.
+      if(!this.recordPresent) {
+
+        return;
+      }
+
       // Stop heartbeating the flashlight to allow it to turn off.
       if(!value) {
 
@@ -267,10 +272,19 @@ export class ProtectCameraPackage extends ProtectCamera {
     return packageCameraId(mac);
   }
 
-  // Return a unique identifier for package cameras based on the parent device's MAC address.
+  // Return a unique identifier for package cameras based on the parent device's MAC address. Sourced from the persisted accessory context (the parent's bare MAC) rather
+  // than the live config, so it survives a vanished parent record. The SUFFIXED form keys the event dispatcher's package timers; the package accessory UUID is generated
+  // independently from the same packageCameraId derivation, so this read-source change is UUID-safe, mirroring the base id getter.
   public override get id(): string {
 
-    return ProtectCameraPackage.packageCameraId(this.ufp.mac);
+    return ProtectCameraPackage.packageCameraId(this.accessory.context.packageCamera ?? "");
+  }
+
+  // The bare device MAC for the package camera: the parent doorbell's MAC, persisted in the accessory context. This DIVERGES from the suffixed .id above - the package's
+  // MQTT delivery topics ride the parent's BARE MAC (the package shares the parent's wire scope), while its event timers key off the suffixed .id.
+  public override get mac(): string {
+
+    return this.accessory.context.packageCamera ?? "";
   }
 
   // Make our RTSP stream findable.

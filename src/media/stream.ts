@@ -4,6 +4,7 @@
  *
  * This module is heavily inspired by the homebridge and homebridge-camera-ffmpeg source code. Thank you for your contributions to the HomeKit world.
  */
+import type { AudioOptionsIdentity, StreamingDelegate, StreamingDelegateFactory } from "./stream-delegate.ts";
 import { AudioRecordingCodecType, AudioRecordingSamplerate, AudioStreamingCodecType, AudioStreamingSamplerate, BackpressureWriter, FfmpegOptions,
   FfmpegStreamingProcess, H264Level, H264Profile, HKSV_FRAGMENT_LENGTH, HOMEKIT_IDR_INTERVAL, HbpuAbortError, MediaContainerType, RtpDemuxer, SRTPCryptoSuites,
   StreamRequestTypes, VideoCodecType, formatBps, formatErrorMessage, isHbpuAbortReason } from "homebridge-plugin-utils";
@@ -11,7 +12,6 @@ import type { CameraController, CameraControllerOptions, CameraStreamingDelegate
   Service, SnapshotRequest, SnapshotRequestCallback, StartStreamRequest, StreamRequestCallback, StreamingRequest } from "homebridge";
 import type { HomebridgePluginLogging, IpFamily, Nullable, PortReservation } from "homebridge-plugin-utils";
 import { PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION, PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS, PROTECT_LIVESTREAM_API_IDR_INTERVAL } from "../settings.ts";
-import type { StreamingDelegate, StreamingDelegateFactory } from "./stream-delegate.ts";
 import type { LivestreamSubscription } from "./livestream.ts";
 import { ProtectAbortedError } from "unifi-protect";
 import type { ProtectCameraHost } from "./camera-host.ts";
@@ -79,9 +79,10 @@ interface SessionInfo {
 // Camera streaming delegate implementation for Protect.
 export class ProtectStreamingDelegate implements CameraStreamingDelegate, StreamingDelegate {
 
-  // The doorbell-ness the CameraController's frozen audio options were built for, captured at construction from the same isDoorbell read the recording audio options
-  // make below. The live-attach reads this off this.stream to detect a stale controller (a camera the controller late-flipped) and rebuild only when it diverges.
-  public readonly builtAsDoorbell: boolean;
+  // The frozen audio-options identity the CameraController was built for, captured at construction from the same two live-volatile inputs the audio options freeze below:
+  // isDoorbell (the recording and streaming sample rates) and the two-way audio hint (the streaming twoWayAudio flag). The live capability reconcile reads this off
+  // this.stream to detect a stale controller (a camera the controller late-reports as a doorbell or as having a speaker) and rebuilds only when a capability appeared.
+  public readonly builtFor: AudioOptionsIdentity;
   public controller: CameraController;
   public readonly ffmpegOptions: FfmpegOptions;
   private readonly hap: HAP;
@@ -102,7 +103,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
   // Create an instance of a HomeKit streaming delegate.
   constructor(protectCamera: ProtectCameraHost, resolutions: [number, number, number][]) {
 
-    this.builtAsDoorbell = protectCamera.ufp.featureFlags.isDoorbell;
+    this.builtFor = { isDoorbell: protectCamera.ufp.featureFlags.isDoorbell, twoWayAudio: protectCamera.hints.twoWayAudio };
     this.hap = protectCamera.api.hap;
     this.hksv = null;
     this.log = protectCamera.log;
@@ -279,12 +280,24 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
     }
 
     // Publish the snapshot as a data URL to MQTT, if configured.
-    void this.nvr.mqtt?.publish(mqttTopic(this.protectCamera.ufp.mac, "snapshot"), "data:image/jpeg;base64," + snapshot.toString("base64"));
+    void this.nvr.mqtt?.publish(mqttTopic(this.protectCamera.mac, "snapshot"), "data:image/jpeg;base64," + snapshot.toString("base64"));
   }
 
   // Prepare to launch the video stream.
   // eslint-disable-next-line @typescript-eslint/no-misused-promises -- Async implementation of a void-returning Homebridge interface method.
   public async prepareStream(request: PrepareStreamRequest, callback: PrepareStreamCallback): Promise<void> {
+
+    // If we aren't reachable, we're done before touching the live config. isReachable is total (it reads through the record non-throwing), so a camera whose controller
+    // record has vanished is reported unavailable rather than throwing on the featureFlags read below. Mirrors the startStream guard.
+    if(!this.protectCamera.isReachable) {
+
+      const errorMessage = "Unable to prepare the video stream: the camera is offline or unavailable.";
+
+      this.log.error(errorMessage);
+      callback(new Error(this.protectCamera.accessoryName + ": " + errorMessage));
+
+      return;
+    }
 
     // The per-session AbortController. We create it here so it spans prepare -> start -> stop and covers the demuxer born below; it is the single teardown
     // convergence point that stopStream aborts.

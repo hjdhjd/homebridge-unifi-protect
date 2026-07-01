@@ -38,7 +38,8 @@ class TestProtectDevice extends ProtectDevice {
 // write-through update thunk, which resolves or rejects to drive the success and failure paths.
 interface CommandHarness {
 
-  device: { config: Record<string, unknown>; isOnline: boolean; modelKey: string; name: string; update: (payload: unknown) => Promise<unknown> };
+  device: { config: Record<string, unknown>; isOnline: boolean; modelKey: string; name: string; peek: () => Record<string, unknown>;
+    update: (payload: unknown) => Promise<unknown>; };
   errors: string[];
   instance: TestProtectDevice;
 }
@@ -50,7 +51,10 @@ const makeDevice = (update: (payload: unknown) => Promise<unknown> = () => Promi
 
   const errors: string[] = [];
   const sink = (): void => undefined;
-  const device = { config: {}, isOnline: true, modelKey, name: "Test Device", update };
+  // logName reads the live record through peek() (non-throwing), so the projection mock exposes it alongside config; the empty config makes describeDevice render the
+  // same bare descriptor it did when logName read this.device.config directly.
+  const config = {};
+  const device = { config, isOnline: true, modelKey, name: "Test Device", peek: (): Record<string, unknown> => config, update };
   const hap = { Characteristic: { StatusActive: Characteristic.StatusActive } };
   const nvr = {
 

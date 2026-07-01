@@ -3,9 +3,9 @@
  * chime.ts: Chime device class for UniFi Protect.
  */
 import type { Chime, PlaySpeakerOptions, ProtectChimeConfig } from "unifi-protect";
+import type { ProtectAccessory, WithoutIdentity } from "../types.ts";
 import type { CharacteristicValue } from "homebridge";
 import { PROTECT_DOORBELL_CHIME_SPEAKER_DURATION } from "../settings.ts";
-import type { ProtectAccessory } from "../types.ts";
 import { ProtectDevice } from "./device.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
@@ -29,8 +29,9 @@ export class ProtectChime extends ProtectDevice {
     this.spawnObservers();
   }
 
-  // Read-through config, narrowed to the chime projection's config record.
-  public override get ufp(): Readonly<ProtectChimeConfig> {
+  // Read-through to the chime projection's live STATE, narrowed to drop device identity (id/mac/modelKey). Identity flows through the dedicated non-throwing accessors
+  // (protectId/modelKey/.id/.mac), never this throwing config getter; the body is unchanged, only the surfaced type narrows.
+  public override get ufp(): Readonly<WithoutIdentity<ProtectChimeConfig>> {
 
     return this.device.config;
   }
@@ -40,7 +41,10 @@ export class ProtectChime extends ProtectDevice {
 
     // Clean out the context object in case it's been polluted somehow.
     this.accessory.context = {};
-    this.accessory.context.mac = this.ufp.mac;
+
+    // Seed the identity source of truth (the persisted bare MAC) from the raw record at configure time, where the record is present - identity is not read through the
+    // narrowed live-state projection.
+    this.accessory.context.mac = this.device.config.mac;
     this.accessory.context.nvr = this.nvr.ufp.mac;
 
     // Configure accessory information.
@@ -157,6 +161,13 @@ export class ProtectChime extends ProtectDevice {
   // Play the specified tone on the chime - a ringtone through the speaker or the piezo buzzer, selected by the typed kind discriminant. The unifi-protect library
   // exposes these as two distinct commands (playSpeaker / playBuzzer), so we dispatch on kind rather than reconstructing a controller path string.
   private async playTone(name: string, kind: "buzzer" | "speaker", tone?: string): Promise<boolean> {
+
+    // A tone targeting a chime whose controller record has vanished (an unadopt lingering in the removal grace) cannot be fulfilled, so we no-op gracefully rather than
+    // throwing on the ringSettings read below.
+    if(!this.recordPresent) {
+
+      return false;
+    }
 
     // For a speaker tone, source the configured playback (repeat count and volume) for the selected ringtone from this chime's own ringSettings - the join the library
     // deliberately leaves to the consumer (the chime recipe). The buzzer takes no payload. We resolve this before issuing the command so a missing ringtone is a clean

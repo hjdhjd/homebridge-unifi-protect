@@ -3,10 +3,10 @@
  * viewer.ts: Viewer device class for UniFi Protect.
  */
 import type { CharacteristicValue, Service } from "homebridge";
+import type { ProtectAccessory, WithoutIdentity } from "../types.ts";
 import type { ProtectViewerConfig, Viewer } from "unifi-protect";
 import { selectLiveviews, selectViewer } from "unifi-protect";
 import type { Nullable } from "homebridge-plugin-utils";
-import type { ProtectAccessory } from "../types.ts";
 import { ProtectDevice } from "./device.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 
@@ -25,10 +25,18 @@ export class ProtectViewer extends ProtectDevice {
     this.spawnObservers();
   }
 
-  // Read-through config, narrowed to the viewer projection's config record.
-  public override get ufp(): Readonly<ProtectViewerConfig> {
+  // Read-through to the viewer projection's live STATE, narrowed to drop device identity (id/mac/modelKey). Identity flows through the dedicated non-throwing accessors
+  // (protectId/modelKey/.id/.mac), never this throwing config getter; the body is unchanged, only the surfaced type narrows.
+  public override get ufp(): Readonly<WithoutIdentity<ProtectViewerConfig>> {
 
     return this.device.config;
+  }
+
+  // The viewer's currently-active liveview id, read non-throwing through the record. An absent record (a viewer lingering in the removal grace) reports no active
+  // liveview rather than throwing; the switch state, the onGet, and the MQTT getValue all read this single source.
+  private get activeLiveview(): Nullable<string> {
+
+    return this.fromRecord((config) => config.liveview, null);
   }
 
   // Initialize and configure the viewer accessory for HomeKit.
@@ -36,7 +44,10 @@ export class ProtectViewer extends ProtectDevice {
 
     // Clean out the context object in case it's been polluted somehow.
     this.accessory.context = {};
-    this.accessory.context.mac = this.ufp.mac;
+
+    // Seed the identity source of truth (the persisted bare MAC) from the raw record at configure time, where the record is present - identity is not read through the
+    // narrowed live-state projection.
+    this.accessory.context.mac = this.device.config.mac;
     this.accessory.context.nvr = this.nvr.ufp.mac;
 
     // Configure accessory information.
@@ -129,7 +140,7 @@ export class ProtectViewer extends ProtectDevice {
     }
 
     // Set the state to reflect Protect.
-    switchService.updateCharacteristic(this.hap.Characteristic.On, switchService.subtype === this.ufp.liveview);
+    switchService.updateCharacteristic(this.hap.Characteristic.On, switchService.subtype === this.activeLiveview);
 
     return true;
   }
@@ -137,7 +148,9 @@ export class ProtectViewer extends ProtectDevice {
   // Return the current state of the liveview switch.
   private getLiveviewSwitchState(switchService: Service): CharacteristicValue {
 
-    return (this.ufp.liveview !== null) && (this.ufp.liveview === switchService.subtype);
+    const liveview = this.activeLiveview;
+
+    return (liveview !== null) && (liveview === switchService.subtype);
   }
 
   // Set the current state of the liveview switch.
@@ -215,7 +228,7 @@ export class ProtectViewer extends ProtectDevice {
     // Get the current liveview state via MQTT.
     this.subscribeGet("liveview", "liveview", () => {
 
-      return this.nvr.client.liveviews.find(x => x.id === this.ufp.liveview)?.name ?? "None";
+      return this.nvr.client.liveviews.find(x => x.id === this.activeLiveview)?.name ?? "None";
     });
 
     // Set the liveview state via MQTT.
@@ -248,7 +261,7 @@ export class ProtectViewer extends ProtectDevice {
 
     super.spawnObservers();
 
-    const viewer = selectViewer(this.ufp.id);
+    const viewer = selectViewer(this.device.id);
 
     // The viewer's active liveview drives which liveview switch reads on. This observe reflects only the active selection - the single switch that shows as on - by
     // re-running updateLiveviewSwitchState; the set of switches itself is reconciled by the liveview-collection observe below.

@@ -66,6 +66,11 @@ function buildMotionDevice(harnessOptions: { userOptions?: string[] } = {}): {
     userOptions: harnessOptions.userOptions });
   const recording = nvr.events as TestRecordingDispatch;
   const accessory = makeTestAccessory("Test Sensor", "uuid:test-sensor");
+
+  // The device-leaf mqttId now sources the bare MAC from the persisted accessory context, not this.ufp.mac, so seed it to match the projection's MAC for the topic-scope
+  // assertions.
+  accessory.context["mac"] = sensorConfig.mac;
+
   const projection = new TestSensorProjection(sensorConfig.id, store) as unknown as Sensor;
   const device = new TestBaseDevice(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection);
 

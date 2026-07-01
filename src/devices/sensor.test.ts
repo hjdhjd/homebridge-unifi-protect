@@ -242,6 +242,18 @@ describe("real ProtectSensor construction and family behavior", () => {
     built.sensor.cleanup();
   });
 
+  test("the Device.AmbientLightSensor option off hides the sensor's ambient light sensor (the user toggle)", async () => {
+
+    // The sensor reports ambient light, but the user disabled the Device.AmbientLightSensor toggle, so validService prunes the LightSensor. The toggle defaults on, so
+    // every other ambient-light test (no userOptions) keeps the sensor; only an explicit Disable removes it. Dropping the && this.hasFeature("Device.AmbientLightSensor")
+    // half from the gate leaves this RED - the LightSensor would materialize despite the disabled option.
+    const built = buildSensor({ lightEnabled: true }, { userOptions: ["Disable.Device.AmbientLightSensor"] });
+
+    assert.equal(built.accessory.getService(Service.LightSensor), undefined, "the disabled Device.AmbientLightSensor option hides the sensor's ambient light sensor");
+
+    built.sensor.cleanup();
+  });
+
   test("the contact sensor materializes for a present mountType door with read-through and state characteristics", async () => {
 
     const built = buildSensor({ mountType: "door" });

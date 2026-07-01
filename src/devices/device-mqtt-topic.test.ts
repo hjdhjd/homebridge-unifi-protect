@@ -72,13 +72,18 @@ interface MqttCapture {
 // The device MAC the wrappers compose into every topic tail. An arbitrary but fixed value so the assertions read literally.
 const MAC = "AABBCCDDEEFF";
 
-// Construct a real ProtectDevice against the minimal mocks the MQTT wrappers read: a projection carrying the MAC (this.ufp.mac reads through to this.device.config.mac),
-// and an nvr whose mqtt captures the composed topic for each verb. The casts are confined to this seam; the instance itself is the production class.
+// Construct a real ProtectDevice against the minimal mocks the MQTT wrappers read: the device-leaf mqttId now sources the bare MAC from the persisted accessory context
+// (context.mac), not this.ufp.mac, so we seed it on the accessory; and an nvr whose mqtt captures the composed topic for each verb. The casts are confined to this seam;
+// the instance itself is the production class.
 const makeDevice = (): { capture: MqttCapture; instance: TestProtectDevice } => {
 
   const capture: MqttCapture = { publish: [], subscribeGet: [], subscribeSet: [] };
   const sink = (): void => undefined;
   const device = { config: { mac: MAC } };
+  const accessory = makeTestAccessory();
+
+  accessory.context["mac"] = MAC;
+
   const mqtt = {
 
     publish: async (topic: string): Promise<void> => { capture.publish.push(topic); },
@@ -91,7 +96,7 @@ const makeDevice = (): { capture: MqttCapture; instance: TestProtectDevice } => 
     platform: { api: { hap: {} }, debug: sink, log: { debug: sink, error: sink, info: sink, warn: sink } },
     signal: new AbortController().signal
   };
-  const instance = new TestProtectDevice(nvr as unknown as ProtectNvr, makeTestAccessory() as unknown as ProtectAccessory, device as unknown as Camera);
+  const instance = new TestProtectDevice(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, device as unknown as Camera);
 
   return { capture, instance };
 };

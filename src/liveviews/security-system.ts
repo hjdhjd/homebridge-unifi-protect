@@ -389,10 +389,11 @@ export class ProtectSecuritySystem extends ProtectBase {
     // Iterate through the list of accessories and set the Protect scene.
     for(const targetAccessory of this.platform.accessories) {
 
-      const targetUfp = this.nvr.configuredDevices.get(targetAccessory.UUID)?.ufp;
+      const targetDevice = this.nvr.configuredDevices.get(targetAccessory.UUID);
 
-      // We only want accessories associated with this Protect controller.
-      if(!targetUfp || (targetAccessory.context.nvr !== this.nvr.ufp.mac)) {
+      // We only want accessories associated with this Protect controller whose controller record is still present. A device lingering in the removal grace has a vanished
+      // record, so we gate on recordPresent and read its non-throwing protectId below rather than reading through the throwing projection.
+      if(!targetDevice || !targetDevice.recordPresent || (targetAccessory.context.nvr !== this.nvr.ufp.mac)) {
 
         continue;
       }
@@ -401,7 +402,8 @@ export class ProtectSecuritySystem extends ProtectBase {
 
       // If we're disarming, then all Protect cameras will disable motion detection in HomeKit. Otherwise, check to see if this is one of the cameras we want to turn on
       // motion detection for.
-      if(((newState !== SecuritySystemCurrentState.DISARMED) || targetCameraIds.length) && targetCameraIds.some(thisCameraId => thisCameraId === targetUfp.id)) {
+      if(((newState !== SecuritySystemCurrentState.DISARMED) || targetCameraIds.length) &&
+        targetCameraIds.some(thisCameraId => thisCameraId === targetDevice.protectId)) {
 
         targetState = true;
       }

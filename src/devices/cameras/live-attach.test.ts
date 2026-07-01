@@ -4,15 +4,16 @@
  * the running instance in place, rebuilding only the one HAP object that cannot change in place (the CameraController), and exactly when it was built for the wrong
  * doorbell-ness.
  *
- * Suite C (live-attach) drives a real ProtectCamera constructed as a plain camera (isDoorbell false, a real stub-factory stream built with builtAsDoorbell false) and
- * pushes isDoorbell true through the always-armed observer: the capability attaches, the Doorbell service appears and is primary, the census grows to sixteen, the
- * accessory's ordered controller-event log shows EXACTLY one removeController then one configureController (the in-place rebuild), the stream's builtAsDoorbell is now
+ * Suite C (live-attach) drives a real ProtectCamera constructed as a plain camera (isDoorbell false, a real stub-factory stream built with builtFor.isDoorbell false) and
+ * pushes isDoorbell true: the always-armed isDoorbell observer attaches it, and the featureFlags observer drives the capability reconcile, whose audio rebuild
+ * fires the in-place controller rebuild a late doorbell-ness needs. The capability attaches, the Doorbell service is primary, the census grows to eighteen, the
+ * accessory's ordered controller-event log shows EXACTLY one removeController then one configureController (the rebuild), the stream's builtFor.isDoorbell is now
  * true, the ring MQTT is registered exactly once, and one promotion INFO is logged. It then pins the no-churn cases: a construction-attach (a flag-true construction)
- * yields the same service set with ZERO removeController (the stub stream is built with builtAsDoorbell true, so the rebuild gate is a no-op), an idempotent re-push does
+ * yields the same service set with ZERO removeController (the stub stream is built with builtFor.isDoorbell true, so the gate is a no-op), an idempotent re-push does
  * not re-attach or churn the controller, a within-drain flap self-collapses to no WARN and no churn, and a SETTLED demotion raises exactly one WARN while removing
  * nothing. Suite D (sweep-stale) pre-seeds a plain camera accessory with stale doorbell-only services and asserts removeServices strips exactly those - the chime
  * switches, the volume lightbulb, the auth sensor, and a message switch - while leaving the Doorbell, mute, HKSV-recording, and UFP-recording switches untouched, and
- * asserts the stub delegate's builtAsDoorbell tracks the constructed isDoorbell (the harness observability into the otherwise-frozen audio derivation).
+ * asserts the stub delegate's builtFor.isDoorbell tracks the constructed isDoorbell (the harness observability into the otherwise-frozen audio derivation).
  *
  * Honesty notes recorded rather than papered over: the hub-side behavior of the rebuilt CameraController (the HKSV factory reset, the supported-config hash change) is a
  * live-gate concern - the harness proves the remove-then-configure ORDERING and COUNT at this event, which is the assertable contract; and the post-attach ring-delivery
@@ -56,7 +57,7 @@ describe("live-attach reclassification (suite C)", () => {
 
     // Preconditions: a plain camera with no capability, a stream built for a non-doorbell, no Doorbell service, and no ring MQTT registration.
     assert.equal(camera.doorbell, null, "the plain camera carries no doorbell capability before the flip");
-    assert.equal(camera.stream?.builtAsDoorbell, false, "the construction-built stream was built for a non-doorbell");
+    assert.equal(camera.stream?.builtFor.isDoorbell, false, "the construction-built stream was built for a non-doorbell");
     assert.equal(accessory.getService(Service.Doorbell), undefined, "no Doorbell service exists before the flip");
 
     const churnBaseline = accessory.controllerEvents.length;
@@ -69,15 +70,16 @@ describe("live-attach reclassification (suite C)", () => {
 
     await settle();
 
-    // The capability composed onto the running instance, the Doorbell service is present and primary, and the census grew to sixteen (the capability four onto the
-    // plain-camera-plus-base twelve, which already carries the always-armed isDoorbell observer and the bare-motion lastMotion observer).
+    // The capability composed onto the running instance, the Doorbell service is present and primary, and the census grew to eighteen (the capability four onto the
+    // plain-camera-plus-base fourteen, which already carries the always-armed isDoorbell observer, the bare-motion lastMotion observer, the capability-reconcile
+    // featureFlags observer, and the Access-lock supportUnlock observer).
     assert.ok(camera.doorbell, "the doorbell capability attached onto the live camera");
 
     const doorbellService = accessory.getService(Service.Doorbell);
 
     assert.ok(doorbellService, "the Doorbell service now exists");
     assert.equal(doorbellService.isPrimary, true, "the Doorbell service is primary");
-    assert.equal(store.observerCount, 16, "the promoted camera carries the sixteen-observer doorbell census");
+    assert.equal(store.observerCount, 18, "the promoted camera carries the eighteen-observer doorbell census");
 
     // The in-place controller rebuild: exactly one removeController then one configureController, in that order, fired at this event (today's shipped reclassification
     // semantics - the HKSV factory reset and supported-config hash change - now carried by a rebuild of only the controller, not a teardown+recreate of the instance).
@@ -88,7 +90,7 @@ describe("live-attach reclassification (suite C)", () => {
     assert.equal(churn[1]?.kind, "configure", "the second controller event is the configureController");
 
     // The freshly built stream is now built for a doorbell, and the ring MQTT registered exactly once.
-    assert.equal(camera.stream?.builtAsDoorbell, true, "the rebuilt stream is now built for a doorbell");
+    assert.equal(camera.stream?.builtFor.isDoorbell, true, "the rebuilt stream is now built for a doorbell");
     assert.equal(mqtt?.subscriptions.filter((subscription) => subscription.topic.endsWith("/doorbell")).length, 1, "the ring-trigger MQTT registered exactly once");
 
     // Exactly one user-facing promotion INFO.
@@ -113,7 +115,7 @@ describe("live-attach reclassification (suite C)", () => {
     assert.equal(accessory.getService(Service.Doorbell)?.isPrimary, true, "the Doorbell service is present and primary");
     assert.equal(accessory.removeControllerCalls.length, 0, "a construction-attach performs zero removeController - no stale controller to rebuild");
     assert.equal(accessory.configureControllerCalls.length, 1, "the construction-attach registered its controller exactly once");
-    assert.equal(camera.stream?.builtAsDoorbell, true, "the construction-built stream was built for a doorbell from the start");
+    assert.equal(camera.stream?.builtFor.isDoorbell, true, "the construction-built stream was built for a doorbell from the start");
 
     controller.abort();
   });
@@ -262,10 +264,10 @@ describe("sweep-stale removal and the audio-derivation observability (suite D)",
     controller.abort();
   });
 
-  test("the stub delegate's builtAsDoorbell tracks the constructed isDoorbell - the harness observability into the frozen audio derivation", async () => {
+  test("the stub delegate's builtFor.isDoorbell tracks the constructed isDoorbell - the harness observability into the frozen audio derivation", async () => {
 
     // A plain camera builds a stream for a non-doorbell; a doorbell builds one for a doorbell. This is the only harness window into the otherwise constructor-frozen
-    // audio-options derivation, and it is exactly the value the live-attach's staleness gate reads.
+    // audio-options derivation, and it is exactly the value the capability reconcile's staleness gate reads.
     const plainConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { isDoorbell: false } });
     const plainStore = new TestStateStore(makeProtectState({ cameras: [plainConfig] }));
     const plain = makeTestNvr({ store: plainStore });
@@ -278,8 +280,8 @@ describe("sweep-stale removal and the audio-derivation observability (suite D)",
 
     await settle();
 
-    assert.equal(plainCamera.stream?.builtAsDoorbell, false, "a plain camera's stream is built for a non-doorbell");
-    assert.equal(doorbellCamera.stream?.builtAsDoorbell, true, "a doorbell's stream is built for a doorbell");
+    assert.equal(plainCamera.stream?.builtFor.isDoorbell, false, "a plain camera's stream is built for a non-doorbell");
+    assert.equal(doorbellCamera.stream?.builtFor.isDoorbell, true, "a doorbell's stream is built for a doorbell");
 
     plain.controller.abort();
     door.controller.abort();

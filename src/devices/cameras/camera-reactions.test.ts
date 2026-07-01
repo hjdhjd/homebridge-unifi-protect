@@ -3,7 +3,7 @@
  * camera-reactions.test.ts: The camera-leaf observe-and-fire net - the uncovered device-state reactions and the bound read / pure-context handlers, against the
  * REAL constructed ProtectCamera.
  *
- * The camera leaf registers ten state observers (camera.ts). Three are already netted by camera-construction.test.ts (camera.channels -> reconcileStreaming,
+ * The camera leaf registers twelve state observers (camera.ts). Three are already netted by camera-construction.test.ts (camera.channels -> reconcileStreaming,
  * camera.state -> updateAvailability, and the camera.state.hksv both-edge timeshift reconcile). This suite nets the device-state reactions behavior-FIRST - each is a
  * structural-sharing store push (pushCameraPatch / pushCameraFeatureFlags) followed by a settle and an assertion on the effect the reaction produced (the characteristic
  * it WROTE, or the recording dispatch it routed to), never on the private updater that wrote it - plus the bound GET read-throughs and the two pure-context onSets (HKSV
@@ -115,10 +115,10 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
       built = await buildCamera();
 
-      // The plain-camera census: the base pair (name, firmware) plus the camera's ten narrow observers. A drift here means an extra or missing observer slipped in.
+      // The plain-camera census: the base pair (name, firmware) plus the camera's twelve narrow observers. A drift here means an extra or missing observer slipped in.
       const store = built.nvr.client.state;
 
-      assert.equal(store.observerCount, 12, "the plain camera wires exactly twelve observers (the base pair plus the camera's ten)");
+      assert.equal(store.observerCount, 14, "the plain camera wires exactly fourteen observers (the base pair plus the camera's twelve)");
 
       // The videoCodec reaction is identical to the (already-netted) channels reaction: both call reconcileStreaming. Its only observable output is the WAKE KEY plus a
       // re-derive side effect (the factory is not invoked again), so a one-shot wake subscription windows the single push and the create-call count proves the re-run
@@ -227,11 +227,12 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
       assert.ok(motionService, "the camera carries its motion sensor, the host of the StatusTampered characteristic");
 
-      // At construction the camera seeds enableTamperDetection false, so configureTamperDetection's removal branch ran and StatusTampered is absent (testCharacteristic
-      // never lazily creates, so this is a pure absence check, not a value read).
+      // At construction the camera seeds enableTamperDetection false, so the tamper gate prunes; with no prior StatusTampered to remove it never creates one, and the
+      // characteristic is absent (testCharacteristic never lazily creates, so this is a pure absence check, not a value read).
       assert.equal(motionService.testCharacteristic(Characteristic.StatusTampered), false, "with tamper detection disabled, StatusTampered is absent at construction");
 
-      // The reaction: pushing enableTamperDetection true wakes the smartDetectSettings observer, which materializes StatusTampered and binds its onGet to isTampered.
+      // The reaction: pushing enableTamperDetection true wakes the smartDetectSettings observer, which drives reconcileCapabilities, so configureTamperDetection
+      // materializes StatusTampered and binds its onGet to isTampered.
       built.nvr.client.state.pushCameraPatch(built.cameraConfig.id, cameraPatch({ smartDetectSettings: { enableTamperDetection: true } }));
 
       await settle();
@@ -241,7 +242,8 @@ describe("camera-family observer reactions and bound read handlers (camera-react
       // The bound read-through: the onGet reads this.isTampered (the latched router-delivered state), which is false at rest.
       assert.equal(await motionService.getCharacteristic(Characteristic.StatusTampered).triggerGet(), false, "the StatusTampered onGet reads isTampered (false at rest)");
 
-      // The inverse reaction: pushing enableTamperDetection false wakes the observer again, which removes StatusTampered (the removal branch) and clears isTampered.
+      // The inverse reaction: pushing enableTamperDetection false wakes the observer again, which drives reconcileCapabilities, so the tamper gate prunes StatusTampered
+      // (the removal branch) and clears isTampered on the setting-off path.
       built.nvr.client.state.pushCameraPatch(built.cameraConfig.id, cameraPatch({ smartDetectSettings: { enableTamperDetection: false } }));
 
       await settle();
@@ -257,8 +259,8 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
       assert.ok(motionService, "the camera carries its motion sensor");
 
-      // The hardware precondition is the other half of the gate (camera.ts ANDs hasTamperDetection with the setting): without it, the push wakes the observer but the
-      // configure path takes its removal branch and StatusTampered never appears.
+      // The hardware precondition is the other half of the gate (capabilityGate keeps the characteristic only when the setting is on AND the characteristic exists or
+      // hasTamperDetection reports): without the capability and with no existing characteristic, the push wakes the observer but the gate never creates StatusTampered.
       built.nvr.client.state.pushCameraPatch(built.cameraConfig.id, cameraPatch({ smartDetectSettings: { enableTamperDetection: true } }));
 
       await settle();

@@ -53,7 +53,7 @@ class RecordingRingDispatch extends ProtectEventDispatch {
 
   public override doorbellEventHandler(protectDevice: ProtectCamera): void {
 
-    this.rings.push({ id: protectDevice.ufp.id });
+    this.rings.push({ id: protectDevice.protectId });
   }
 }
 
@@ -137,9 +137,10 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
       built = await buildDoorbell({ featureFlags: { hasChime: true }, userOptions: ["Enable.Doorbell.PhysicalChime"] });
 
-      // The doorbell census: the camera's plain set (ten, including the always-armed isDoorbell observer and the bare-motion lastMotion observer) plus the base pair plus
-      // the capability's four = sixteen. A drift here means an extra or missing observer slipped in.
-      assert.equal(built.nvr.client.state.observerCount, 16, "the doorbell wires exactly sixteen observers (the camera ten, the base pair, and the capability four)");
+      // The doorbell census: the camera's plain set (twelve, including the always-armed isDoorbell observer, the bare-motion lastMotion observer, the
+      // capability-reconcile featureFlags observer, and the Access-lock supportUnlock observer) plus the base pair plus the capability's four = eighteen. A drift here
+      // means an extra or missing observer slipped in.
+      assert.equal(built.nvr.client.state.observerCount, 18, "the doorbell wires eighteen observers (the camera twelve, the base pair, and the capability four)");
 
       // HARD-assert all three physical-chime switches exist FIRST: the gate is hasChime && hasFeature("Doorbell.PhysicalChime") (doorbell.ts). An absent service
       // would let the value assertions pass vacuously.

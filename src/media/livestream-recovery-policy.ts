@@ -52,8 +52,9 @@ const SOFT_DEFER_CEILING_MS = 8000;
 // the defer; a stream that tolerates strictly more than one step is "idle" and eases off.
 const SOFT_DEFER_STEP_MS = 1000;
 
-// Re-poll interval, in milliseconds, while the controller is drowning, an induced disruption (our own reboot/shutdown) is in flight, or this camera is offline. We wait
-// and re-consult rather than reconnect, so the episode does not burn reconnect attempts on a connection that cannot yet succeed - the controller or camera will return.
+// Re-poll interval, in milliseconds, while the controller is drowning, an induced disruption (our own reboot/shutdown) is in flight, or this camera is unavailable. We
+// wait and re-consult rather than reconnect, so the episode does not burn reconnect attempts on a connection that cannot yet succeed - an offline camera returns and we
+// resume, while a camera whose controller record has been removed has its subscription disposed at the removal grace's end instead.
 const LIVESTREAM_STRESS_WAIT_MS = 5000;
 
 /**
@@ -66,14 +67,14 @@ const LIVESTREAM_STRESS_WAIT_MS = 5000;
  *
  *   1. An induced disruption (our own reboot/shutdown) waits, so we do not fight our own teardown with reconnects.
  *   2. A drowning controller (the hard reachability gate) waits indefinitely and never reboots a camera.
- *   3. This one camera is offline on an otherwise-healthy controller, so wait for it to return rather than burn reconnect attempts toward the self-heal give-up.
+ *   3. This one camera is unavailable on an otherwise-healthy controller, so wait rather than burn reconnect attempts toward the self-heal give-up.
  *   4. A wedged camera on a reachable controller gives up after the self-heal threshold, so the consumer reboots it.
  *   5. An idle stream under elevated-but-reachable symptoms eases off for a bounded window.
  *   6. Otherwise - healthy, latency-sensitive, or soft budget spent - reconnect with the library default's self-tuning timing.
  *
  * @param context - The library-observable recovery context (attempts, cameraId, elapsedMs, phase, toleranceMs).
  * @param nvr - A snapshot of the plugin's controller-health and lifecycle-phase reads at the decision point.
- * @param cameraReachable - Whether the episode's camera is currently reachable, resolved by the consumer's closure (the offline-defer gate's sole input).
+ * @param cameraReachable - Whether the episode's camera is currently reachable, resolved by the consumer's closure (the unavailable-defer gate's sole input).
  *
  * @returns The recovery decision for this step.
  */
@@ -101,12 +102,13 @@ export function livestreamRecoveryDecision(context: RecoveryContext,
     return { forMs: LIVESTREAM_STRESS_WAIT_MS, kind: "wait" };
   }
 
-  // 3. This camera is offline. Steps 1-2 already cleared the controller (induced disruption, then drowning), so isReachable's controller half is necessarily true here -
-  //    which means !cameraReachable is exactly "this one camera is offline" (rebooting, lost power, off the network), read through the single availability helper
-  //    rather than a parallel device-online accessor. Reconnecting its livestream is futile until it returns, and a self-heal reboot cannot help a camera the controller
-  //    already reports offline, so wait rather than burn reconnect attempts toward the self-heal give-up. The attempts counter only advances on a failed reconnect, never
-  //    on a wait (the deliberate counter behavior above), so this defer costs zero attempts and the give-up is unreachable for an offline camera by construction. This
-  //    offline defer is an intentional refinement of the policy.
+  // 3. This camera is unavailable. Steps 1-2 cleared the controller (induced disruption, then drowning), so isReachable's controller half is necessarily true here
+  //    - which means !cameraReachable is exactly "this one camera is not reachable", whether it is offline (rebooting, lost power, off the network) or its controller
+  //    record has been removed (unadopted, lingering in the removal grace), read through the single availability helper rather than a parallel device-online accessor.
+  //    Reconnecting its livestream is futile, and a self-heal reboot cannot help here - the controller reports an offline camera unavailable, and a removed record
+  //    has no camera to reboot - so wait rather than burn reconnect attempts toward the self-heal give-up. The attempts counter only advances on a failed reconnect,
+  //    never on a wait (the deliberate counter behavior above), so this defer costs zero attempts and the give-up is unreachable for an unavailable camera by
+  //    construction. This unavailable defer is an intentional refinement of the policy.
   if(!cameraReachable) {
 
     return { forMs: LIVESTREAM_STRESS_WAIT_MS, kind: "wait" };

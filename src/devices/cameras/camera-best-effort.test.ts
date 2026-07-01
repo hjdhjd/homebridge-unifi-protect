@@ -5,7 +5,7 @@
  *
  * Both are best-effort, cadenced calls onto the live projection (this.device.lux() and this.device.turnOnFlashlight()): the lux query runs at construction and on a
  * 60-second poll, the flashlight pulse on a retry-and-timer keepalive. Because a higher-level cadence re-issues each one, a failure is swallowed to a no-op sentinel -
- * the lux query's -1 ("no reading", which the poll skips on, the init re-maps to the 0.0001 floor) and the flashlight pulse's reflected-off switch (stop the heartbeat) -
+ * the lux query's -1 ("no reading", which the poll skips on, the init floors only the first read) and the flashlight pulse's reflected-off switch (stop the heartbeat) -
  * rather than routed through runDeviceCommand, which would log every failed poll or pulse. That is the one-sentence reason these two do not share the command-error seam
  * the configuration writes use, and it is the cohesive identity this suite pins.
  *
@@ -113,7 +113,8 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
 
     test("without hasLuxCheck, no LightSensor is configured (the featureFlag absence pair)", async () => {
 
-      // The featureFlag without-pair: hasLuxCheck false (the makeCameraConfig default) gates configureAmbientLightSensor out entirely (camera.ts).
+      // The featureFlag without-pair: with the Device.AmbientLightSensor toggle on (the default) but hasLuxCheck false and no existing service, the capabilityGate
+      // predicate votes false, so no LightSensor is created and no lux query issues (camera.ts).
       const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS });
       const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
       const { controller, nvr } = makeTestNvr({ store });
@@ -278,6 +279,54 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
       } finally {
 
         mock.timers.reset();
+        camera.cleanup();
+        controller.abort();
+      }
+    });
+
+    test("a failed refresh read preserves the last-known reading at re-init (discriminating on the unconditional floor)", async () => {
+
+      // Construct with the lux capability and a genuine positive first reading (100): the init read stores 100 and the sensor displays it. Then make a subsequent read
+      // fail (the luxRejection seam, exactly as the poll-skip test drives it) and trigger a configureAmbientLightSensor RE-RUN through a featureFlags push that keeps
+      // hasLuxCheck true - a controller capability refresh, the reconnect frame the Device.AmbientLightSensor gate later makes routine. The re-run's init read returns
+      // the -1 no-reading sentinel; the guard keeps the last-known 100 in place rather than stamping the HomeKit floor.
+      const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasLuxCheck: true } });
+      const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
+      const { controller, nvr } = makeTestNvr({ store });
+      const accessory = makeTestAccessory("Test Camera", "uuid:74ACB9000001");
+      const projection = new TestCameraProjection(cameraConfig.id, store);
+
+      projection.luxReading = 100;
+
+      const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Camera);
+
+      await settle();
+
+      try {
+
+        const lightSensor = accessory.getService(Service.LightSensor);
+
+        assert.ok(lightSensor, "featureFlags.hasLuxCheck materializes the ambient LightSensor");
+
+        // The vacuity guard: the genuine first read stored 100, so the post-failure assertion proves a PRESERVED reading rather than an initial one.
+        assert.equal(await lightSensor.getCharacteristic(Characteristic.CurrentAmbientLightLevel).triggerGet(), 100,
+          "the genuine first reading stored 100 before the failed refresh");
+
+        // The next read throws (the camera momentarily unreachable mid-flight, or the lux capability transiently withdrawn), so the re-run's getLux returns -1.
+        projection.luxRejection = new Error("The lux response did not contain a numeric illuminance reading.");
+
+        // A featureFlags push that keeps hasLuxCheck true wakes the capability observer (the store spreads a new featureFlags reference, so Object.is never dedups it),
+        // which drives reconcileCapabilities and re-runs configureAmbientLightSensor against the failed read.
+        store.pushCameraFeatureFlags(cameraConfig.id, { hasLuxCheck: true });
+
+        await settle();
+
+        // The init guard adopted only a genuine reading: the failed re-read left the last-known 100 in place. Reverting the guard (the unconditional this.ambientLight =
+        // await getLux() then if(-1) 0.0001) stamps the display to the 0.0001 floor here -> RED.
+        assert.equal(await lightSensor.getCharacteristic(Characteristic.CurrentAmbientLightLevel).triggerGet(), 100,
+          "a failed refresh read preserved the last-known 100 rather than flooring the display");
+      } finally {
+
         camera.cleanup();
         controller.abort();
       }

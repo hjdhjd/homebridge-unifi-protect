@@ -16,6 +16,7 @@ import type { LivestreamSubscription } from "./livestream.ts";
 import type { Nullable } from "homebridge-plugin-utils";
 import type { ProtectDeviceContext } from "../devices/device.ts";
 import type { StreamingDelegate } from "./stream-delegate.ts";
+import type { WithoutIdentity } from "../types.ts";
 
 // The camera surface the streaming, recording, snapshot, and timeshift delegates read off the camera they serve. ProtectCamera implements this; the package
 // camera satisfies it by inheritance. Every member is read-only at the call sites, so properties are readonly and getters satisfy them directly.
@@ -29,6 +30,10 @@ export interface ProtectCameraHost extends ProtectDeviceContext {
 
   // Opens the pooled fMP4 livestream subscription for a channel profile (the live path and the HKSV timeshift buffer both draw from this).
   livestream(channelProfile: ChannelProfile, opts?: { segmentLength?: number; signal?: AbortSignal; urgency?: () => number }): LivestreamSubscription;
+
+  // The bare device MAC for topic addressing - the immutable identity the narrowed live-state projection (ufp) below no longer carries. The MQTT snapshot topic scopes
+  // under this.
+  readonly mac: string;
 
   // Reboots the camera through the controller - the consumer half of livestream self-heal.
   reboot(): Promise<void>;
@@ -48,8 +53,9 @@ export interface ProtectCameraHost extends ProtectDeviceContext {
   // Opens a send-direction two-way-audio (talkback) channel to the camera's speaker.
   talkback(opts?: { signal?: AbortSignal }): Promise<TalkbackSession>;
 
-  // The camera-narrowed Protect device projection (mac for topics; featureFlags / videoCodec / talkbackSettings / ledSettings for the media paths).
-  readonly ufp: Readonly<ProtectCameraConfig>;
+  // The camera-narrowed Protect device live-state projection (featureFlags / videoCodec / talkbackSettings / ledSettings for the media paths), with device identity
+  // dropped - the bare MAC is read through the dedicated mac member above, not this throwing projection.
+  readonly ufp: Readonly<WithoutIdentity<ProtectCameraConfig>>;
 
   // The human-readable video codec label for log lines.
   readonly videoCodecName: string;

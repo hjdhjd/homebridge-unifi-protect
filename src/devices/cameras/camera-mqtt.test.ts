@@ -47,7 +47,7 @@ class RecordingRingDispatch extends ProtectEventDispatch {
 
   public override doorbellEventHandler(protectDevice: ProtectCamera): void {
 
-    this.rings.push({ id: protectDevice.ufp.id });
+    this.rings.push({ id: protectDevice.protectId });
   }
 }
 

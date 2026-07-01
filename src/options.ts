@@ -113,6 +113,7 @@ export const featureOptions: Record<string, FeatureOptionEntry<ProtectOptionMeta
     { default: false, description: "Add a switch accessory to control the status indicator light in HomeKit.", meta: { hasCameraFeature: ["hasLedStatus"], hasLightProperty: ["lightDeviceSettings"], hasSensorProperty: ["ledSettings"], modelKey: [ "camera", "light", "sensor" ] }, name: "StatusLed.Switch" },
     { default: true, description: "Enable the night vision indicator light for this device in HomeKit.", meta: { hasFeature: ["hasLedIr"], modelKey: ["camera"] }, name: "NightVision" },
     { default: false, description: "Add a dimmer accessory to control the night vision state in HomeKit.", meta: { hasFeature: ["hasLedIr"], modelKey: ["camera"] }, name: "NightVision.Dimmer" },
+    { default: true, description: "Enable the ambient light sensor for this device in HomeKit.", meta: { hasCameraFeature: ["hasLuxCheck"], hasSensorProperty: ["lightSettings"], modelKey: [ "camera", "sensor" ] }, name: "AmbientLightSensor" },
     { default: false, description: "Make this a standalone device in HomeKit that will need to be added to HomeKit through the Home app.", name: "Standalone" },
     { default: true, description: "Attempt to restart misbehaving devices. This is always done very conservatively and only after periods of extended device-specific issues.", meta: { modelKey: ["camera"] }, name: "SelfHealing" },
     { default: false, description: "Synchronize the UniFi Protect name of this device with HomeKit. Synchronization is one-way only, syncing the device name from UniFi Protect to HomeKit.", name: "SyncName" }
@@ -253,6 +254,7 @@ const capabilityMap: Record<string, string> = {
   "hasFingerprintSensor": "Protect doorbells that have a fingerprint sensor",
   "hasLedIr": "Protect cameras that have infrared LEDs",
   "hasLedStatus": "Protect devices with a status LED",
+  "hasLuxCheck": "Protect cameras that have an ambient light sensor",
   "hasMic": "Protect cameras that have a microphone",
   "hasMotionZones": "Protect cameras that have a motion sensor",
   "hasPackageCamera": "Protect doorbells that have a package camera",

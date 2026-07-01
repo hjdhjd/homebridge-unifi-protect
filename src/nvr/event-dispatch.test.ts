@@ -10,13 +10,13 @@
  * observe-driven routing live with the camera leaf and its tests, not here. The casts are confined to the mock seam, matching the posture the reachability and nvr suites
  * already established; the instance under test is the production class.
  */
-import { ACCESS_UNLOCK_DURATION, ProtectEventDispatch } from "./event-dispatch.ts";
 import type { AuthMethod, ProtectEventMetadata, TypedEvent } from "unifi-protect";
 import { Characteristic, Service, makeTestAccessory } from "../testing.helpers.ts";
 import { describe, mock, test } from "node:test";
 import { PROTECT_DOORBELL_AUTHSENSOR_DURATION } from "../settings.ts";
 import type { ProtectCamera } from "../devices/cameras/camera.ts";
 import type { ProtectDevice } from "../devices/device.ts";
+import { ProtectEventDispatch } from "./event-dispatch.ts";
 import type { ProtectNvr } from "./nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
 import type { TestAccessory } from "../testing.helpers.ts";
@@ -55,27 +55,27 @@ class RecordingDispatch extends ProtectEventDispatch {
 
   public override motionEventHandler(protectDevice: ProtectDevice, detectedObjects: string[] = [], metadata?: ProtectEventMetadata): void {
 
-    this.calls.push({ id: protectDevice.ufp.id, kind: "motion", metadata, objects: detectedObjects });
+    this.calls.push({ id: protectDevice.protectId, kind: "motion", metadata, objects: detectedObjects });
   }
 
   public override doorbellEventHandler(protectDevice: ProtectCamera): void {
 
-    this.calls.push({ id: protectDevice.ufp.id, kind: "doorbell" });
+    this.calls.push({ id: protectDevice.protectId, kind: "doorbell" });
   }
 
-  public override accessEventHandler(protectDevice: ProtectCamera, action: string, metadata?: Record<string, unknown>): void {
+  public override accessEventHandler(protectDevice: ProtectCamera, action: string): void {
 
-    this.calls.push({ action, id: protectDevice.ufp.id, kind: "access", metadata });
+    this.calls.push({ action, id: protectDevice.protectId, kind: "access" });
   }
 
   public override tamperEventHandler(protectDevice: ProtectCamera): void {
 
-    this.calls.push({ id: protectDevice.ufp.id, kind: "tamper" });
+    this.calls.push({ id: protectDevice.protectId, kind: "tamper" });
   }
 
   public override authEventHandler(protectDevice: ProtectCamera, method: AuthMethod, metadata?: ProtectEventMetadata): void {
 
-    this.calls.push({ id: protectDevice.ufp.id, kind: "auth", metadata, method });
+    this.calls.push({ id: protectDevice.protectId, kind: "auth", metadata, method });
   }
 }
 
@@ -91,13 +91,18 @@ interface DispatchOptions {
 // Build a mock camera projection carrying only the fields the router reads: identity, the camera model key (so cameraFor narrows to it), the smart-detection capability
 // arrays, the smart-detection hint, and an optional HKSV-recording handle. Defaults model the common case - a capable camera with smart detection enabled and recording
 // - so a test names only the axis it varies.
-const makeCamera = (id: string, options: { hksvRecording?: boolean; smartCapable?: boolean; smartDetectEnabled?: boolean } = {}): unknown => {
+const makeCamera = (id: string, options: { hksvRecording?: boolean; recordPresent?: boolean; smartCapable?: boolean; smartDetectEnabled?: boolean } = {}): unknown => {
 
-  const { hksvRecording = true, smartCapable = true, smartDetectEnabled = true } = options;
+  const { hksvRecording = true, recordPresent = true, smartCapable = true, smartDetectEnabled = true } = options;
 
+  // The delivery handlers read the top-level protectId and cameraFor reads modelKey and recordPresent (the non-throwing identity / presence accessors), so the mock
+  // exposes all three alongside the projection. protectId mirrors the projection's id, exactly as the production device's protectId reads through to its config id.
   return {
 
     hints: { smartDetect: smartDetectEnabled },
+    modelKey: "camera",
+    protectId: id,
+    recordPresent,
     stream: hksvRecording ? { hksv: { isRecording: true } } : undefined,
     ufp: { featureFlags: { smartDetectAudioTypes: [], smartDetectTypes: smartCapable ? ["person"] : [] }, id, modelKey: "camera" }
   };
@@ -220,16 +225,15 @@ describe("firehose router dispatch (real ProtectEventDispatch.run)", () => {
     assert.deepEqual(dispatch.calls, [], "a smart detection is dropped when the user has smart detection turned off");
   });
 
-  test("routes a successful access door-open to the access delivery, threading the action and metadata", async () => {
+  test("routes an access door_bell occurrence to the access delivery, threading the action", async () => {
 
     const devices = new Map<string, unknown>([[ "cam1", makeCamera("cam1") ]]);
-    const metadata = { openSuccess: true };
-    const events: TypedEvent[] = [{ action: "open_door", at: 1, deviceId: "cam1", eventId: "e1", kind: "accessEvent", metadata }];
+    const events: TypedEvent[] = [{ action: "door_bell", at: 1, deviceId: "cam1", eventId: "e1", kind: "accessEvent" }];
     const { dispatch } = makeDispatch({ devices, events });
 
     await dispatch.run(liveSignal());
 
-    assert.deepEqual(dispatch.calls, [{ action: "open_door", id: "cam1", kind: "access", metadata }]);
+    assert.deepEqual(dispatch.calls, [{ action: "door_bell", id: "cam1", kind: "access" }]);
   });
 
   test("routes a camera tamper occurrence to the tamper delivery on the addressed camera", async () => {
@@ -265,7 +269,7 @@ describe("firehose router dispatch (real ProtectEventDispatch.run)", () => {
       { at: 2, cameraId: "missing", eventId: "e2", kind: "tamperDetected" },
       { at: 3, cameraId: "missing", eventId: "e3", kind: "authDetected", metadata: { nfc: { nfcId: "card-9", ulpId: "ulp-1" } }, method: "nfc" },
       { at: 4, cameraId: "missing", eventId: "e4", kind: "doorbellRing" },
-      { action: "open_door", at: 5, deviceId: "missing", eventId: "e5", kind: "accessEvent", metadata: { openSuccess: true } }
+      { action: "door_bell", at: 5, deviceId: "missing", eventId: "e5", kind: "accessEvent" }
     ];
     const { dispatch } = makeDispatch({ devices: new Map<string, unknown>(), events });
 
@@ -276,21 +280,41 @@ describe("firehose router dispatch (real ProtectEventDispatch.run)", () => {
 
   test("is a no-op when the addressed device is not a camera, for every activity kind", async () => {
 
-    // A non-camera projection (e.g. a sensor) shares the id space but is never an activity target; cameraFor narrows it out for every kind.
-    const devices = new Map<string, unknown>([[ "sensor1", { ufp: { id: "sensor1", modelKey: "sensor" } } ]]);
+    // A non-camera projection (e.g. a sensor) shares the id space but is never an activity target; cameraFor narrows it out for every kind. The mock is recordPresent so
+    // the no-delivery assertion exercises the modelKey gate rather than the presence gate.
+    const devices = new Map<string, unknown>([[ "sensor1", { modelKey: "sensor", recordPresent: true, ufp: { id: "sensor1", modelKey: "sensor" } } ]]);
     const events: TypedEvent[] = [
 
       { at: 1, cameraId: "sensor1", eventId: "e1", kind: "smartDetect", objectTypes: ["person"] },
       { at: 2, cameraId: "sensor1", eventId: "e2", kind: "tamperDetected" },
       { at: 3, cameraId: "sensor1", eventId: "e3", kind: "authDetected", metadata: { nfc: { nfcId: "card-9", ulpId: "ulp-1" } }, method: "nfc" },
       { at: 4, cameraId: "sensor1", eventId: "e4", kind: "doorbellRing" },
-      { action: "open_door", at: 5, deviceId: "sensor1", eventId: "e5", kind: "accessEvent", metadata: { openSuccess: true } }
+      { action: "door_bell", at: 5, deviceId: "sensor1", eventId: "e5", kind: "accessEvent" }
     ];
     const { dispatch } = makeDispatch({ devices, events });
 
     await dispatch.run(liveSignal());
 
     assert.deepEqual(dispatch.calls, [], "a non-camera match is not routed an activity event of any kind");
+  });
+
+  test("is a no-op when the addressed camera's controller record has vanished, for every activity kind", async () => {
+
+    // A camera lingering in the removal grace (recordPresent false) is on its way out; cameraFor narrows it out for every kind, even though it is a camera by modelKey.
+    const devices = new Map<string, unknown>([[ "cam1", makeCamera("cam1", { recordPresent: false }) ]]);
+    const events: TypedEvent[] = [
+
+      { at: 1, cameraId: "cam1", eventId: "e1", kind: "smartDetect", objectTypes: ["person"] },
+      { at: 2, cameraId: "cam1", eventId: "e2", kind: "tamperDetected" },
+      { at: 3, cameraId: "cam1", eventId: "e3", kind: "authDetected", metadata: { nfc: { nfcId: "card-9", ulpId: "ulp-1" } }, method: "nfc" },
+      { at: 4, cameraId: "cam1", eventId: "e4", kind: "doorbellRing" },
+      { action: "door_bell", at: 5, deviceId: "cam1", eventId: "e5", kind: "accessEvent" }
+    ];
+    const { dispatch } = makeDispatch({ devices, events });
+
+    await dispatch.run(liveSignal());
+
+    assert.deepEqual(dispatch.calls, [], "a camera whose controller record has vanished is not routed an activity event of any kind");
   });
 
   test("ignores state-transition kinds, which are the observe loops' concern", async () => {
@@ -328,7 +352,7 @@ describe("firehose dispatch diagnostics (hbup:firehose:dispatch)", () => {
         { at: 2, cameraId: "cam1", eventId: "e2", kind: "smartDetect", objectTypes: ["person"] },
         { at: 3, cameraId: "cam1", eventId: "e3", kind: "tamperDetected" },
         { at: 4, cameraId: "cam1", eventId: "e4", kind: "authDetected", metadata: { nfc: { nfcId: "card-9" } }, method: "nfc" },
-        { action: "open_door", at: 5, deviceId: "cam1", eventId: "e5", kind: "accessEvent", metadata: { openSuccess: true } }
+        { action: "door_bell", at: 5, deviceId: "cam1", eventId: "e5", kind: "accessEvent" }
       ];
       const { dispatch } = makeDispatch({ devices, events });
 
@@ -374,116 +398,40 @@ describe("controller telemetry publisher (real ProtectEventDispatch.publishTelem
   });
 });
 
-// Build a real ProtectEventDispatch (not the recording subclass) wired to a populated HAP double, plus a camera stand-in whose accessory is the supplied TestAccessory.
-// The access-unlock delivery carries genuine logic - the timed re-secure - so these tests drive the real method against real HAP-double services rather than recording
-// the routing. Only the surface accessEventHandler touches is mocked: the lock service / characteristic identities on hap, and the camera's id, log, and accessory.
-const makeAccessDispatch = (accessory: TestAccessory): { camera: ProtectCamera; dispatch: ProtectEventDispatch } => {
+// A real ProtectEventDispatch whose only override is doorbellEventHandler, recording the device id it was handed rather than running the ring delivery. The door_bell
+// routing test pins that accessEventHandler delegates a UniFi Access intercom press to the doorbell ring delivery without re-running that delivery's body (no Doorbell
+// service, no trigger switch, no MQTT timer), exactly the "pin routing, not HAP writes" posture the recording subclass above takes for the router.
+class DoorbellRoutingDispatch extends ProtectEventDispatch {
 
-  const noop = (): void => { /* swallow log output in tests */ };
-  const log = { debug: noop, error: noop, info: noop, warn: noop };
-  const hap = {
+  public readonly rings: string[] = [];
 
-    Characteristic: { LockCurrentState: Characteristic.LockCurrentState, LockTargetState: Characteristic.LockTargetState },
-    Service: { LockMechanism: Service.LockMechanism }
-  };
-  const nvr = { log, platform: { api: { hap }, config: {} } };
-  const dispatch = new ProtectEventDispatch(nvr as unknown as ProtectNvr);
-  const camera = { accessory, id: "cam-access", log };
+  public override doorbellEventHandler(protectDevice: ProtectCamera): void {
 
-  return { camera: camera as unknown as ProtectCamera, dispatch };
-};
+    this.rings.push(protectDevice.id);
+  }
+}
 
-describe("access unlock delivery (real ProtectEventDispatch.accessEventHandler)", () => {
+describe("access door_bell delivery (real ProtectEventDispatch.accessEventHandler)", () => {
 
-  test("a successful door-open unlocks the Access lock, then re-secures it after the window", () => {
+  test("routes a UniFi Access door_bell occurrence to the doorbell ring delivery, and ignores a non-door_bell action", () => {
 
-    mock.timers.enable({ apis: ["setTimeout"] });
+    // The real accessEventHandler reads nothing off the camera before delegating, and the spy reads only its id, so a bare nvr stub and a minimal camera stand-in are
+    // all the routing needs.
+    const noop = (): void => { /* swallow log output in tests */ };
+    const log = { debug: noop, error: noop, info: noop, warn: noop };
+    const nvr = { log, platform: { api: { hap: {} }, config: {} } };
+    const dispatch = new DoorbellRoutingDispatch(nvr as unknown as ProtectNvr);
+    const camera = { id: "cam-access" } as unknown as ProtectCamera;
 
-    try {
+    // A door_bell action is a doorbell ring: the handler delegates to doorbellEventHandler, which the spy records by id.
+    dispatch.accessEventHandler(camera, "door_bell");
 
-      const accessory = makeTestAccessory();
-      const lock = accessory.addService(Service.LockMechanism, "Access Lock", ProtectReservedNames.LOCK_ACCESS);
-      const { camera, dispatch } = makeAccessDispatch(accessory);
+    assert.deepEqual(dispatch.rings, ["cam-access"], "a UniFi Access door_bell press is routed to the doorbell ring delivery");
 
-      dispatch.accessEventHandler(camera, "open_door", { openSuccess: true });
+    // A non-door_bell Access action does not ring: on the same dispatch, a later nfc_read leaves the recorded rings unchanged.
+    dispatch.accessEventHandler(camera, "nfc_read");
 
-      assert.equal(lock.getCharacteristic(Characteristic.LockCurrentState).value, Characteristic.LockCurrentState.UNSECURED, "the lock reads unlocked immediately");
-      assert.equal(lock.getCharacteristic(Characteristic.LockTargetState).value, Characteristic.LockTargetState.UNSECURED, "the lock target is unlocked immediately");
-
-      // Advancing past the re-secure window fires the timer that returns the lock to its resting (secured) state.
-      mock.timers.tick(ACCESS_UNLOCK_DURATION);
-
-      assert.equal(lock.getCharacteristic(Characteristic.LockCurrentState).value, Characteristic.LockCurrentState.SECURED, "the lock re-secures after the window");
-      assert.equal(lock.getCharacteristic(Characteristic.LockTargetState).value, Characteristic.LockTargetState.SECURED, "the lock target re-secures after the window");
-    } finally {
-
-      mock.timers.reset();
-    }
-  });
-
-  test("ignores an access event whose action is not a door open", () => {
-
-    const accessory = makeTestAccessory();
-    const lock = accessory.addService(Service.LockMechanism, "Access Lock", ProtectReservedNames.LOCK_ACCESS);
-    const { camera, dispatch } = makeAccessDispatch(accessory);
-
-    dispatch.accessEventHandler(camera, "nfc_read", { openSuccess: true });
-
-    assert.equal(lock.testCharacteristic(Characteristic.LockCurrentState), false, "a non-door-open action never touches the lock");
-  });
-
-  test("ignores a door-open that did not succeed", () => {
-
-    const accessory = makeTestAccessory();
-    const lock = accessory.addService(Service.LockMechanism, "Access Lock", ProtectReservedNames.LOCK_ACCESS);
-    const { camera, dispatch } = makeAccessDispatch(accessory);
-
-    dispatch.accessEventHandler(camera, "open_door", { openSuccess: false });
-
-    assert.equal(lock.testCharacteristic(Characteristic.LockCurrentState), false, "an unsuccessful door-open never touches the lock");
-  });
-
-  test("is a no-op when the camera has no Access lock service", () => {
-
-    // No lock service on the accessory; the handler resolves nothing and returns without throwing.
-    const accessory = makeTestAccessory();
-    const { camera, dispatch } = makeAccessDispatch(accessory);
-
-    assert.doesNotThrow(() => dispatch.accessEventHandler(camera, "open_door", { openSuccess: true }),
-      "an accessory without an Access lock is handled cleanly");
-  });
-
-  test("a second unlock before the window cancels the pending re-lock rather than racing it", () => {
-
-    mock.timers.enable({ apis: ["setTimeout"] });
-
-    try {
-
-      const accessory = makeTestAccessory();
-      const lock = accessory.addService(Service.LockMechanism, "Access Lock", ProtectReservedNames.LOCK_ACCESS);
-      const { camera, dispatch } = makeAccessDispatch(accessory);
-
-      // First unlock schedules a re-lock at ACCESS_UNLOCK_DURATION.
-      dispatch.accessEventHandler(camera, "open_door", { openSuccess: true });
-
-      // Advance to just before that first re-lock would fire, then unlock again - which must clear the pending re-lock and schedule a fresh one.
-      mock.timers.tick(ACCESS_UNLOCK_DURATION - 1);
-      dispatch.accessEventHandler(camera, "open_door", { openSuccess: true });
-
-      // Crossing the first window's original deadline must NOT re-secure: the first timer was cleared, so the lock is still unlocked one tick past where it would
-      // have fired.
-      mock.timers.tick(1);
-      assert.equal(lock.getCharacteristic(Characteristic.LockCurrentState).value, Characteristic.LockCurrentState.UNSECURED,
-        "the cancelled re-lock does not fire at the first window's deadline");
-
-      // The fresh timer fires a full window after the second unlock, re-securing exactly once.
-      mock.timers.tick(ACCESS_UNLOCK_DURATION);
-      assert.equal(lock.getCharacteristic(Characteristic.LockCurrentState).value, Characteristic.LockCurrentState.SECURED,
-        "the rescheduled re-lock fires a full window after the second unlock");
-    } finally {
-
-      mock.timers.reset();
-    }
+    assert.deepEqual(dispatch.rings, ["cam-access"], "a non-door_bell Access action does not ring");
   });
 });
 
@@ -559,7 +507,7 @@ const makeAuthDispatch = (accessory: TestAccessory): { camera: ProtectCamera; di
   const publish = (...args: unknown[]): void => { published.push(args); };
   const nvr = { log, mqtt: { publish }, platform: { api: { hap }, config: {} } };
   const dispatch = new ProtectEventDispatch(nvr as unknown as ProtectNvr);
-  const camera = { accessory, id: "cam-auth", log, ufp: { mac: "AA:BB:CC:DD:EE:FF" } };
+  const camera = { accessory, id: "cam-auth", log, mac: "AA:BB:CC:DD:EE:FF", ufp: { mac: "AA:BB:CC:DD:EE:FF" } };
 
   return { camera: camera as unknown as ProtectCamera, dispatch, published };
 };
@@ -707,6 +655,7 @@ const makeMotionDispatch = (accessory: TestAccessory, hints: Record<string, unkn
     hints: { logMotion: true, motionDuration: 10, occupancyDuration: 10, smartDetect: true, smartOccupancy: [], ...hints },
     id: "cam-motion",
     log,
+    mac: "AA:BB:CC:DD:EE:FF",
     ufp: { mac: "AA:BB:CC:DD:EE:FF" }
   };
 

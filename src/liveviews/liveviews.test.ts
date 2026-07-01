@@ -70,8 +70,9 @@ function seedMember(nvr: TestProtectNvr, options: { detectMotion?: boolean; id: 
 
   motionSwitch.updateCharacteristic(Characteristic.On, accessory.context["detectMotion"]);
 
-  // The managed-device double the fanout resolves through getDeviceById: it reads accessory / accessoryName / context. Cast through ProtectDevices at the seam.
-  const member = { accessory, accessoryName: options.name, ufp: { id: options.id } } as unknown as ProtectDevices;
+  // The managed-device double the fanout resolves through getDeviceById, which now matches on the non-throwing protectId: it reads accessory / accessoryName / context.
+  // Cast through ProtectDevices at the seam.
+  const member = { accessory, accessoryName: options.name, protectId: options.id, ufp: { id: options.id } } as unknown as ProtectDevices;
 
   nvr.configuredDevices.set(accessory.UUID, member);
 

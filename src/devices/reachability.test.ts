@@ -36,14 +36,18 @@ class TestProtectDevice extends ProtectDevice {
 }
 
 // Construct a real ProtectDevice against the minimal mocks its constructor and the methods under test actually read: the controller-health flag (client.connection),
-// the device-online flag (the projection), the HAP StatusActive identity (wired to the very class the TestAccessory keyed its characteristics on), and a real
-// AbortSignal for composeSignals. ProtectBase binds platform.debug at construction, so that one member must be callable. Returns the mutable health / online handles
-// so a test can flip either input and re-read the real getter. The casts are confined to this seam; the instance itself is the production class.
-const makeReachableDevice = (accessory: TestAccessory): { connection: { isHealthy: boolean }; device: { isOnline: boolean }; instance: TestProtectDevice } => {
+// the device record (read non-throwing via peek()), the HAP StatusActive identity (wired to the class the TestAccessory keyed its characteristics on),
+// and a real AbortSignal for composeSignals. ProtectBase binds platform.debug at construction, so that one member must be callable. The total isReachable reads the
+// device's online state through peek().state (not the old isOnline getter), so the lever is the record's state field, and a vanished record (present false -> peek()
+// undefined) is the unreachable-without-throwing case. Returns the mutable health / record handles so a test can flip either input and re-read the real getter. The casts
+// are confined to this seam; the instance itself is the production class.
+const makeReachableDevice = (accessory: TestAccessory):
+{ connection: { isHealthy: boolean }; device: { config: { state: string }; present: boolean }; instance: TestProtectDevice } => {
 
   const captured: unknown[] = [];
   const connection = { isHealthy: true };
-  const device = { config: {}, isOnline: true, name: "Test Accessory" };
+  const device = { config: { state: "CONNECTED" }, name: "Test Accessory", peek(): { state: string } | undefined { return this.present ? this.config : undefined; },
+    present: true };
   const hap = { Characteristic: { StatusActive: Characteristic.StatusActive } };
   const sink = (...args: unknown[]): void => { captured.push(args); };
   const nvr = {
@@ -141,23 +145,38 @@ describe("reachability (real ProtectDevice)", () => {
 
     const { connection, device, instance } = makeReachableDevice(makeTestAccessory());
 
-    // Healthy controller, online device: reachable.
+    // Healthy controller, online device (state CONNECTED): reachable.
     connection.isHealthy = true;
-    device.isOnline = true;
+    device.config.state = "CONNECTED";
     assert.equal(instance.isReachable, true, "a healthy controller and an online device compose to reachable");
 
-    // Healthy controller, offline device: not reachable - the per-device fact gates this device alone.
-    device.isOnline = false;
+    // Healthy controller, offline device (state not CONNECTED): not reachable - the per-device fact gates this device alone.
+    device.config.state = "DISCONNECTED";
     assert.equal(instance.isReachable, false, "an offline device is unreachable even on a healthy controller");
 
-    // Unhealthy controller, online device: not reachable - controller health gates every device, and device.isOnline is stale during an outage.
+    // Unhealthy controller, online device: not reachable - controller health gates every device, and the device's state is stale during an outage.
     connection.isHealthy = false;
-    device.isOnline = true;
+    device.config.state = "CONNECTED";
     assert.equal(instance.isReachable, false, "a healthy-looking device is unreachable when the controller is down");
 
     // Unhealthy controller, offline device: not reachable.
-    device.isOnline = false;
+    device.config.state = "DISCONNECTED";
     assert.equal(instance.isReachable, false, "neither input present means unreachable");
+  });
+
+  test("isReachable is false (not a throw) for a vanished record, even on a healthy controller", () => {
+
+    const { connection, device, instance } = makeReachableDevice(makeTestAccessory());
+
+    // Present and online on a healthy controller: reachable.
+    connection.isHealthy = true;
+    device.config.state = "CONNECTED";
+    assert.equal(instance.isReachable, true, "a present, online device on a healthy controller is reachable");
+
+    // The controller record vanishes (the device unadopted, in the removal grace): peek() returns undefined, so the total isReachable reports unavailable rather than
+    // throwing the ReferenceError the throwing config getter would.
+    device.present = false;
+    assert.equal(instance.isReachable, false, "a vanished record reports unreachable without throwing");
   });
 
   test("refreshReachability writes the reachable state to every service carrying StatusActive and leaves services without it untouched", () => {
@@ -180,7 +199,7 @@ describe("reachability (real ProtectDevice)", () => {
 
     // Reachable: the real refreshReachability computes isReachable, walks accessory.services, and writes true to every StatusActive-bearing service.
     connection.isHealthy = true;
-    device.isOnline = true;
+    device.config.state = "CONNECTED";
     instance.refreshReachability();
 
     assert.equal(motion.getCharacteristic(Characteristic.StatusActive).value, true, "the motion sensor's StatusActive reflects the reachable state");

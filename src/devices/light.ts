@@ -3,8 +3,8 @@
  * light.ts: Light device class for UniFi Protect.
  */
 import type { Light, ProtectLightConfig } from "unifi-protect";
+import type { ProtectAccessory, WithoutIdentity } from "../types.ts";
 import type { CharacteristicValue } from "homebridge";
-import type { ProtectAccessory } from "../types.ts";
 import { ProtectDevice } from "./device.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
@@ -25,10 +25,24 @@ export class ProtectLight extends ProtectDevice {
     this.spawnObservers();
   }
 
-  // Read-through config, narrowed to the light projection's config record.
-  public override get ufp(): Readonly<ProtectLightConfig> {
+  // Read-through to the light projection's live STATE, narrowed to drop device identity (id/mac/modelKey). Identity flows through the dedicated non-throwing accessors
+  // (protectId/modelKey/.id/.mac), never this throwing config getter; the body is unchanged, only the surfaced type narrows.
+  public override get ufp(): Readonly<WithoutIdentity<ProtectLightConfig>> {
 
     return this.device.config;
+  }
+
+  // The light's power state, read non-throwing through the record. An absent record (a light lingering in the removal grace) reports off rather than throwing.
+  private get isLightOn(): boolean {
+
+    return this.fromRecord((config) => config.isLightOn, false);
+  }
+
+  // The light's HomeKit brightness, read non-throwing through the record. An absent record reports 0%; we default the MAPPED brightness output, not the raw LED level,
+  // because a raw ledLevel default of 0 would map to a brightness of -20, which HomeKit cannot represent.
+  private get ledBrightness(): number {
+
+    return this.fromRecord((config) => this.ledLevelToBrightness(config.lightDeviceSettings.ledLevel), 0);
   }
 
   // Initialize and configure the light accessory for HomeKit.
@@ -36,7 +50,10 @@ export class ProtectLight extends ProtectDevice {
 
     // Clean out the context object in case it's been polluted somehow.
     this.accessory.context = {};
-    this.accessory.context.mac = this.ufp.mac;
+
+    // Seed the identity source of truth (the persisted bare MAC) from the raw record at configure time, where the record is present - identity is not read through the
+    // narrowed live-state projection.
+    this.accessory.context.mac = this.device.config.mac;
     this.accessory.context.nvr = this.nvr.ufp.mac;
 
     // Configure accessory information.
@@ -77,7 +94,7 @@ export class ProtectLight extends ProtectDevice {
     // Turn the light on or off.
     service.getCharacteristic(this.hap.Characteristic.On).onGet(() => {
 
-      return this.ufp.isLightOn;
+      return this.isLightOn;
     });
 
     service.getCharacteristic(this.hap.Characteristic.On).onSet(async (value: CharacteristicValue) => {
@@ -97,7 +114,7 @@ export class ProtectLight extends ProtectDevice {
     // Adjust the brightness of the light.
     service.getCharacteristic(this.hap.Characteristic.Brightness).onGet(() => {
 
-      return this.ledLevelToBrightness(this.ufp.lightDeviceSettings.ledLevel);
+      return this.ledBrightness;
     });
 
     service.getCharacteristic(this.hap.Characteristic.Brightness).onSet(async (value: CharacteristicValue) => {
@@ -119,8 +136,8 @@ export class ProtectLight extends ProtectDevice {
     });
 
     // Initialize the light.
-    service.updateCharacteristic(this.hap.Characteristic.On, this.ufp.isLightOn);
-    service.updateCharacteristic(this.hap.Characteristic.Brightness, this.ledLevelToBrightness(this.ufp.lightDeviceSettings.ledLevel));
+    service.updateCharacteristic(this.hap.Characteristic.On, this.isLightOn);
+    service.updateCharacteristic(this.hap.Characteristic.Brightness, this.ledBrightness);
 
     return true;
   }
@@ -131,12 +148,12 @@ export class ProtectLight extends ProtectDevice {
     // Get the light state.
     this.subscribeGet("light", "light status", () => {
 
-      return (this.ufp.isLightOn).toString();
+      return this.isLightOn.toString();
     });
 
     this.subscribeGet("light/brightness", "light brightness", () => {
 
-      return this.ledLevelToBrightness(this.ufp.lightDeviceSettings.ledLevel).toString();
+      return this.ledBrightness.toString();
     });
 
     // Control the light.
@@ -167,7 +184,7 @@ export class ProtectLight extends ProtectDevice {
 
     super.spawnObservers();
 
-    const light = selectLight(this.ufp.id);
+    const light = selectLight(this.device.id);
 
     // Light motion, like sensor and camera motion, is a device-state field (lastMotion) the controller advances rather than a firehose occurrence, so observing the
     // timestamp is the single source for this device, firing only on a real (truthy) detection rather than re-synthesizing it from a held prior value.
@@ -182,15 +199,13 @@ export class ProtectLight extends ProtectDevice {
     // The light's power state drives the Lightbulb On characteristic.
     this.observeState({ key: "light.isLightOn", selector: state => light(state)?.isLightOn, title: "the light" }, () => {
 
-      this.accessory.getService(this.hap.Service.Lightbulb)?.updateCharacteristic(this.hap.Characteristic.On, this.ufp.isLightOn);
+      this.accessory.getService(this.hap.Service.Lightbulb)?.updateCharacteristic(this.hap.Characteristic.On, this.isLightOn);
     });
 
     // The light's LED level drives the Lightbulb Brightness, mapped from Protect's 1-6 scale to a HomeKit percentage.
     this.observeState({ key: "light.ledLevel", selector: state => light(state)?.lightDeviceSettings.ledLevel, title: "brightness" }, () => {
 
-      const brightness = this.ledLevelToBrightness(this.ufp.lightDeviceSettings.ledLevel);
-
-      this.accessory.getService(this.hap.Service.Lightbulb)?.updateCharacteristic(this.hap.Characteristic.Brightness, brightness);
+      this.accessory.getService(this.hap.Service.Lightbulb)?.updateCharacteristic(this.hap.Characteristic.Brightness, this.ledBrightness);
     });
 
     // The light's indicator setting drives the status-indicator switch, when that switch is configured.
@@ -207,10 +222,10 @@ export class ProtectLight extends ProtectDevice {
     return () => this.device.update({ lightDeviceSettings: { isIndicatorEnabled: value } });
   }
 
-  // Utility function to return the current state of the status indicator light.
+  // Utility function to return the current state of the status indicator light. An absent record reports off rather than throwing.
   public override get statusLed(): boolean {
 
-    return this.ufp.lightDeviceSettings.isIndicatorEnabled;
+    return this.fromRecord((config) => config.lightDeviceSettings.isIndicatorEnabled, false);
   }
 
   // Convert a HomeKit brightness percentage (0-100) to a Protect LED level (1-6).

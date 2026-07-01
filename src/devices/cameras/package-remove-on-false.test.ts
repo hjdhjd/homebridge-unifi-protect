@@ -111,7 +111,7 @@ describe("package camera remove-on-false (BC2)", () => {
     assert.equal(logEntries.filter((entry) => String(entry.parameters[0]).includes("no longer reports a package camera")).length, 1,
       "the removal decision is narrated exactly once");
 
-    // Post-detach, the package is gone reactively too: only the doorbell's sixteen observers remain and a state push wakes nothing attributed to the package.
+    // Post-detach, the package is gone reactively too: only the doorbell's eighteen observers remain and a state push wakes nothing attributed to the package.
     const wakes: ObserverWakePayload[] = [];
     const onWake = (message: unknown): void => { wakes.push(message as ObserverWakePayload); };
 
@@ -119,7 +119,7 @@ describe("package camera remove-on-false (BC2)", () => {
 
     try {
 
-      assert.equal(store.observerCount, 16, "only the doorbell's observers survive the detach");
+      assert.equal(store.observerCount, 18, "only the doorbell's observers survive the detach");
       store.pushCameraPatch(harness.cameraId, { state: "DISCONNECTED" });
 
       await settle();

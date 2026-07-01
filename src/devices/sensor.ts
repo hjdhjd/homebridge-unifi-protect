@@ -2,9 +2,9 @@
  *
  * sensor.ts: Sensor device class for UniFi Protect.
  */
+import type { ProtectAccessory, WithoutIdentity } from "../types.ts";
 import type { ProtectSensorConfig, Sensor } from "unifi-protect";
 import type { LeakChannelContext } from "./leak-policy.ts";
-import type { ProtectAccessory } from "../types.ts";
 import { ProtectDevice } from "./device.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
@@ -47,8 +47,10 @@ export class ProtectSensor extends ProtectDevice {
     this.spawnObservers();
   }
 
-  // Read-through config, narrowed to the sensor projection's config record.
-  public override get ufp(): Readonly<ProtectSensorConfig> {
+  // Read-through to the sensor projection's live STATE, narrowed to drop device identity (id/mac/modelKey). Identity flows through the dedicated non-throwing accessors
+  // (protectId/modelKey/.id/.mac), never this throwing config getter; the body is unchanged, only the surfaced type narrows. An untyped index-only field read (the leak
+  // helper) still resolves through the preserved index signature.
+  public override get ufp(): Readonly<WithoutIdentity<ProtectSensorConfig>> {
 
     return this.device.config;
   }
@@ -58,7 +60,10 @@ export class ProtectSensor extends ProtectDevice {
 
     // Clean out the context object in case it's been polluted somehow.
     this.accessory.context = {};
-    this.accessory.context.mac = this.ufp.mac;
+
+    // Seed the identity source of truth (the persisted bare MAC) from the raw record at configure time, where the record is present - identity is not read through the
+    // narrowed live-state projection.
+    this.accessory.context.mac = this.device.config.mac;
     this.accessory.context.nvr = this.nvr.ufp.mac;
 
     // Configure accessory information.
@@ -231,8 +236,8 @@ export class ProtectSensor extends ProtectDevice {
   // Configure the ambient light sensor for HomeKit.
   private configureAmbientLightSensor(): boolean {
 
-    // Validate whether we should have this service enabled.
-    if(!this.validService(this.hap.Service.LightSensor, this.ufp.lightSettings.isEnabled)) {
+    // Validate whether we should have this service enabled: the sensor must report ambient light AND the user must not have hidden it via Device.AmbientLightSensor.
+    if(!this.validService(this.hap.Service.LightSensor, this.ufp.lightSettings.isEnabled && this.hasFeature("Device.AmbientLightSensor"))) {
 
       return false;
     }
@@ -492,19 +497,28 @@ export class ProtectSensor extends ProtectDevice {
     service.updateCharacteristic(this.hap.Characteristic.StatusActive, this.isReachable);
 
     // Retrieve the current tamper status when requested.
-    service.getCharacteristic(this.hap.Characteristic.StatusTampered).onGet(() => sensorTamperState(this.ufp.tamperingDetectedAt));
+    service.getCharacteristic(this.hap.Characteristic.StatusTampered).onGet(() => this.tampered);
 
     // Update the tamper status.
-    service.updateCharacteristic(this.hap.Characteristic.StatusTampered, sensorTamperState(this.ufp.tamperingDetectedAt));
+    service.updateCharacteristic(this.hap.Characteristic.StatusTampered, this.tampered);
 
     return true;
   }
 
-  // Get the current alarm alert detection information.
+  // The sensor's HomeKit tamper state, read non-throwing through the record. An absent record (a sensor lingering in the removal grace) reports untampered rather than
+  // throwing; the projection's tamperingDetectedAt is mapped through the shared sensorTamperState predicate so the onGet, the initial write, and the reactive push can
+  // never disagree on what "tampered" means.
+  private get tampered(): boolean {
+
+    return sensorTamperState(this.fromRecord((config) => config.tamperingDetectedAt, null));
+  }
+
+  // Get the current alarm alert detection information. The record read is non-throwing - an absent record reports no alarm - while the state-change bookkeeping and log
+  // stay outside the read lambda.
   private get alarmDetected(): boolean {
 
     // Return true if we are not null, meaning the alarm has sounded.
-    const value = this.ufp.alarmTriggeredAt !== null;
+    const value = this.fromRecord((config) => config.alarmTriggeredAt !== null, false);
 
     // Save the state change and inform the user.
     if(value !== this.lastAlarm) {
@@ -517,29 +531,30 @@ export class ProtectSensor extends ProtectDevice {
     return value;
   }
 
-  // Get the current ambient light information.
+  // Get the current ambient light information. An absent record reports the stats sentinel rather than throwing.
   private get ambientLight(): number {
 
-    return this.ufp.stats?.light?.value ?? -1;
+    return this.fromRecord((config) => config.stats?.light?.value ?? -1, -1);
   }
 
-  // Get the current contact sensor information.
+  // Get the current contact sensor information. An absent record reports closed rather than throwing.
   private get contact(): boolean {
 
-    return this.ufp.isOpened ?? false;
+    return this.fromRecord((config) => config.isOpened ?? false, false);
   }
 
-  // Get the current humidity information.
+  // Get the current humidity information. An absent record reports the stats sentinel rather than throwing.
   private get humidity(): number {
 
-    return this.ufp.stats?.humidity?.value ?? -1;
+    return this.fromRecord((config) => config.stats?.humidity?.value ?? -1, -1);
   }
 
-  // Get the current leak sensor information.
+  // Get the current leak sensor information. The record read is non-throwing - an absent record reports no leak - while the lastLeak bookkeeping and log stay outside the
+  // read lambda.
   private leakDetected(type = "leakDetectedAt"): boolean {
 
     // Return true if we are not null, meaning a leak has been detected.
-    const value = this.ufp[type] !== null;
+    const value = this.fromRecord((config) => config[type] !== null, false);
 
     // If it's our first run, just save the state and we're done if we don't have a leak. If we do have a leak, make sure we inform the user.
     if((this.lastLeak[type] === undefined) && !value) {
@@ -560,10 +575,10 @@ export class ProtectSensor extends ProtectDevice {
     return value;
   }
 
-  // Get the current temperature information.
+  // Get the current temperature information. An absent record reports the stats sentinel rather than throwing.
   private get temperature(): number {
 
-    return this.ufp.stats?.temperature?.value ?? -1;
+    return this.fromRecord((config) => config.stats?.temperature?.value ?? -1, -1);
   }
 
   // Configure MQTT capabilities for sensors. The leak get handlers are NOT registered here: leak is the one sensor mode whose per-channel enablement is model-aware, so
@@ -584,7 +599,7 @@ export class ProtectSensor extends ProtectDevice {
 
     super.spawnObservers();
 
-    const sensor = selectSensor(this.ufp.id);
+    const sensor = selectSensor(this.device.id);
 
     // Sensor motion is a device-state field, not a firehose occurrence: the controller surfaces a UP Sense motion as a fresh motionDetectedAt timestamp on the sensor
     // record, with no `event`-channel counterpart. So the single source for "did this sensor see motion?" is the timestamp itself, and observing it is the honest
@@ -614,7 +629,7 @@ export class ProtectSensor extends ProtectDevice {
   // field, one write per state-bearing service; no second copy of "are we tampered?" is held anywhere.
   private updateTamperState(): void {
 
-    const tampered = sensorTamperState(this.ufp.tamperingDetectedAt);
+    const tampered = this.tampered;
 
     for(const service of this.accessory.services) {
 

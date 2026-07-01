@@ -1724,20 +1724,29 @@ describe("A2 controller owners, commit 2: the security-system HAP markers, recor
       "setProps captured the exact validValues array for assertion");
   });
 
-  test("getDeviceById resolves a seeded managed device by ufp.id and returns null when absent", () => {
+  test("getDeviceById resolves a seeded managed device by protectId and survives a vanished record", () => {
 
-    const store = new TestStateStore(makeProtectState());
+    // A store-backed member, not a static stub: its ufp reads through the store (and throws once the record is removed) while its protectId comes from the projection's
+    // stable id field and stays non-throwing. That is what makes the absence assertion non-vacuous - getDeviceById must keep resolving by protectId after a
+    // removeCameraRecord, not merely "not throw" against a stub that could never throw. (membershipDelta is an orthogonal set-diff guard, not a survival proxy.)
+    const camera = makeCameraConfig({ channels: [] });
+    const store = new TestStateStore(makeProtectState({ cameras: [camera] }));
     const { nvr } = makeTestNvr({ store });
-
-    // Seed a minimal managed-device double through the ProtectDevices cast at the construction seam (the same confined-cast discipline the device-class doubles use).
-    // Both controller-owner fanouts read only a narrow slice; here we seed the ufp.id the security path resolves against and key it by accessory UUID as production does.
+    const projection = new TestCameraProjection(camera.id, store);
     const accessory = makeTestAccessory("Member Camera", "uuid:member-camera");
-    const member = { accessory, accessoryName: "Member Camera", ufp: { id: "camera-1" } } as unknown as ProtectDevices;
+    const member = { accessory, accessoryName: "Member Camera", protectId: projection.id, get ufp() { return projection.config; } } as unknown as ProtectDevices;
 
     nvr.configuredDevices.set(accessory.UUID, member);
 
-    assert.equal(nvr.getDeviceById("camera-1"), member, "getDeviceById finds the seeded member by its ufp.id, mirroring the production one-liner");
+    // Present: getDeviceById resolves the member by its protectId, mirroring the production one-liner, and returns null for an unmatched id.
+    assert.equal(nvr.getDeviceById(camera.id), member, "getDeviceById finds the seeded member by its protectId");
     assert.equal(nvr.getDeviceById("camera-absent"), null, "getDeviceById returns null when no managed device matches the id");
+
+    // The record vanishes from the store. Reading the member's ufp would now throw, but getDeviceById matches on the non-throwing protectId, so it still resolves it.
+    store.removeCameraRecord(camera.id);
+
+    assert.throws(() => member.ufp, "the member's ufp reads through the store and throws once the record is removed - the absence case is genuinely store-backed");
+    assert.equal(nvr.getDeviceById(camera.id), member, "getDeviceById still resolves the member by its non-throwing protectId after the record vanished");
   });
 
   test("makeLiveviewConfig populates a single slot from the cameras option and preserves the empty-slots default otherwise", () => {

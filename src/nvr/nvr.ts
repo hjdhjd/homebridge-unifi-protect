@@ -939,7 +939,7 @@ export class ProtectNvr {
   // current snapshot (initial population) and on each subsequent observe yield (ongoing deltas) - one function, both roles.
   private reconcileMembership(category: keyof ProtectDeviceTypes, adoptedIds: readonly string[]): void {
 
-    const { toAdd, toRemove } = membershipDelta(adoptedIds, this.devices(category).map(device => device.ufp.id));
+    const { toAdd, toRemove } = membershipDelta(adoptedIds, this.devices(category).map(device => device.protectId));
 
     // Add any adopted id we have not yet configured, resolving its live config record from the projection.
     for(const id of toAdd) {
@@ -1106,7 +1106,12 @@ export class ProtectNvr {
     // or a fire that failed its stability re-check, is re-scheduled when stability returns).
     for(const device of this.devices("camera")) {
 
-      device.doorbell?.reconcilePackageCamera();
+      // Gate the package reconcile on the parent record being present: reconcilePackageCamera reads the parent's featureFlags and MAC, which would
+      // throw for a camera lingering in the removal grace. A device with a vanished record is on its way out, so skipping it is correct.
+      if(device.recordPresent) {
+
+        device.doorbell?.reconcilePackageCamera();
+      }
     }
   }
 
@@ -1489,23 +1494,34 @@ export class ProtectNvr {
 
     // Reclaim any livestream-episode latch entries for the camera being removed (a started-but-never-recovered episode would otherwise never drain). Keyed off the
     // device's id, which is the cameraId the latch entries carry; a non-camera device's id matches nothing, so this is a no-op scan of a small map for them.
-    if(protectDevice?.ufp.id) {
+    if(protectDevice?.protectId) {
 
-      this.livestreamEpisodes.forgetCamera(protectDevice.ufp.id);
+      this.livestreamEpisodes.forgetCamera(protectDevice.protectId);
     }
 
-    // See if we can pull the device's configuration details from our Protect device instance or the live controller projection.
-    const device = protectDevice?.ufp ?? (accessory.context.mac ? this.deviceConfigByMac(accessory.context.mac) : null);
+    // See if we can pull the device's configuration details from our Protect device instance or the controller projection.
+    //
+    // The by-MAC controller projection backs the removal descriptor ONLY when the wrapper's record has vanished (or there is no wrapper) - the exact condition under
+    // which the original expression fell through to it. Gating on !recordPresent preserves the original's laziness byte-for-byte: while the record is present the
+    // wrapper's own live config carries the descriptor, so the projection lookup is neither needed nor evaluated (never an added call on the record-present path).
+    const byMac = (!protectDevice?.recordPresent && accessory.context.mac) ? this.deviceConfigByMac(accessory.context.mac) : null;
+
+    // The removal descriptor: the wrapper's live config while its record is present, recombining the bare MAC the narrowed state view no longer carries. The mac is
+    // recombined ONLY to satisfy the descriptor's required-field type - the plain-mode log line below does not read it (mac would surface only under includeNetwork).
+    const descriptor = (protectDevice?.recordPresent ? { ...protectDevice.ufp, mac: protectDevice.mac } : null) ?? byMac;
+
+    // The model category drives the log label and the package-camera cascade; read it non-throwing from the wrapper while its record is present, else the by-MAC lookup.
+    const modelKey = (protectDevice?.recordPresent ? protectDevice.modelKey : null) ?? byMac?.modelKey;
 
     this.log.info("%s: Removing %s from HomeKit.%s",
-      device ? describeDevice(device) : protectDevice?.accessoryName ?? accessory.displayName,
-      device?.modelKey ?? "device",
+      descriptor ? describeDevice(descriptor) : protectDevice?.accessoryName ?? accessory.displayName,
+      modelKey ?? "device",
       accessory._associatedHAPAccessory.bridged ? "" : " You will need to manually delete the device in the Home app to complete the removal.");
 
     const deletingAccessories = [accessory];
 
     // If it's an unknown device or a camera, look for a corresponding package camera if we have one and remove it as well.
-    if(!device || (device.modelKey === "camera")) {
+    if(!descriptor || (modelKey === "camera")) {
 
       const packageCameraAccessory = this.platform.accessories.find(x => x.context.packageCamera === accessory.context.mac);
 
@@ -1560,7 +1576,7 @@ export class ProtectNvr {
   // Return all devices of a particular modelKey.
   private devices<T extends keyof ProtectDeviceTypes>(model?: T): ProtectDeviceTypes[T][] {
 
-    return [...this.configuredDevices.values()].filter(device => device.ufp.modelKey === model) as ProtectDeviceTypes[T][];
+    return [...this.configuredDevices.values()].filter(device => device.modelKey === model) as ProtectDeviceTypes[T][];
   }
 
   // Iterate every HomeKit device endpoint this controller manages: each configured device and, immediately after a camera-family device that carries one, its package
@@ -1581,28 +1597,23 @@ export class ProtectNvr {
     }
   }
 
-  // Resolve the reachability of the camera whose livestream recovery is being decided, for the recovery policy's offline-defer gate. getDeviceById can still return a
-  // camera whose unifi-protect store record has been removed (deleted at the controller, not yet reconciled out of our configuredDevices), and ProtectDevice.isReachable
-  // throws a ReferenceError in that window (its @throws documents it - isOnline reads the projection's config, which throws on an absent record). A throwing recovery
-  // policy would break the pool's recovery loop, so we convert a vanished record into "reachable" - the same disposition as an unresolvable id - and let the pending
-  // subscription disposal, not the policy, clean up the removed camera. A package-camera substream carries its PARENT camera's id, so this resolves the parent and reads
-  // the parent's reachability, which is correct since there is no separate package device.
+  // Resolve the reachability of the camera whose livestream recovery is being decided, for the recovery policy's unavailable-defer gate (step 3). Both getDeviceById and
+  // the total isReachable are non-throwing, so a camera whose controller record has vanished (unadopted, lingering in the removal grace) or whose id is unresolvable
+  // reports unavailable rather than throwing into the policy closure. That routes the episode to the bounded unavailable-defer: the policy never reboots the camera and
+  // never tears the session down, so a re-adopt within the grace resumes the stream seamlessly, and a genuine removal is cleaned up by the subscription disposal at
+  // the grace's end, not by the policy. A package-camera substream carries its PARENT camera's id, so this resolves the parent and reads the parent's reachability,
+  // which is correct since there is no separate package device.
   private episodeCameraReachable(cameraId: string): boolean {
 
-    try {
-
-      return this.getDeviceById(cameraId)?.isReachable ?? true;
-    } catch {
-
-      return true;
-    }
+    return this.getDeviceById(cameraId)?.isReachable ?? false;
   }
 
   // Return the Protect device object based on its unique device identifier, if it exists.
   public getDeviceById(deviceId: string): Nullable<ProtectDevices> {
 
-    // Find the device.
-    return [...this.configuredDevices.values()].find(device => device.ufp.id === deviceId) ?? null;
+    // Find the device. We match on the non-throwing projection id (protectId), so a wrapper whose controller record has vanished (a device in the removal grace)
+    // resolves without throwing - the property every firehose lookup, the membership engine, and the recovery policy depend on being total.
+    return [...this.configuredDevices.values()].find(device => device.protectId === deviceId) ?? null;
   }
 
   // Utility function to return a floating point configuration parameter on a device.

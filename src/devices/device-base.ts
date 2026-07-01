@@ -126,6 +126,16 @@ export abstract class ProtectBase {
     // No-op by default; the per-accessory wake milestone is published by ProtectDevice's override.
   }
 
+  // Whether this owner's backing controller record is currently present. The base returns true unconditionally: a controller-scoped owner (system information, liveviews,
+  // the security system) has no per-device record that can vanish - its backing controller record is present for the whole connection. ProtectDevice overrides this to
+  // peek() !== undefined, and DoorbellCapability delegates to its camera, so the one observeState gate below neutralizes a vanished record on every owner. The third of
+  // the three seams the shared observeState varies by leaf, alongside observeSignal and onObserverWake.
+  // eslint-disable-next-line @typescript-eslint/class-literal-property-style -- Polymorphic seam overridden by getters; the base cannot be a readonly field.
+  protected get recordPresent(): boolean {
+
+    return true;
+  }
+
   // The single narrow-selector state-observe primitive, shared by every HomeKit-projection owner - device leaves and controller-scoped owners alike. The loop wakes only
   // when its reduced slice changes by reference (the store's Object.is dedup is upstream of the yield), the handler re-reads through the owner's live projection rather
   // than trusting the yielded value so a multi-read reaction always sees a coherent snapshot, and the two seams leaves vary are the lifetime signal (observeSignal) and
@@ -149,6 +159,15 @@ export abstract class ProtectBase {
           if(signal.aborted) {
 
             break;
+          }
+
+          // The owner's controller record can vanish while its observe loops stay subscribed: a device unadopted at the controller lingers for the DelayDeviceRemoval
+          // grace, during which a wake on the removal dispatch (its slices going undefined) would re-read a vanished record and throw. We skip this wake and stay
+          // subscribed - a re-adoption within the grace resumes the handler with no respawn. CONTINUE, not break: the loop's lifetime is the owner signal, not the
+          // record's presence. The gate and the handler's synchronous prefix run in one microtask, so the presence read cannot go stale before the handler acts.
+          if(!this.recordPresent) {
+
+            continue;
           }
 
           this.onObserverWake(key);

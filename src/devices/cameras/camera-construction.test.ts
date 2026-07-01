@@ -3,7 +3,7 @@
  * camera-construction.test.ts: The first real-ProtectCamera construction test - the proof of the platform-held streaming-delegate factory seam.
  *
  * This suite constructs a REAL minimal ProtectCamera end to end - the base constructors, configureHints, configureDevice, the floating configure IIFE
- * (reconcileStreaming through the stub factory and accessory.configureController), and all twelve state-observe loops - against the reusable construction
+ * (reconcileStreaming through the stub factory and accessory.configureController), and all fourteen state-observe loops - against the reusable construction
  * harness in testing.helpers.ts: the faithful store double, the read-through Camera projection double, the typed NVR / platform doubles, and the stub
  * StreamingDelegateFactory the dependency inversion exists to admit. It then drives a structural-sharing state push through a real observer reaction and
  * unwinds everything via cleanup(), asserting the wire-but-don't-fire observe contract at each phase through the observer-wake diagnostics channel.
@@ -118,10 +118,10 @@ describe("real ProtectCamera construction through the streaming-delegate factory
     assert.equal(accessory.configureControllerCalls[0], call.delegate.controller, "the registered controller is the stub delegate's sentinel, by identity");
   });
 
-  test("construction wires but does not fire: zero observer wakes, with exactly twelve observers registered", () => {
+  test("construction wires but does not fire: zero observer wakes, with exactly fourteen observers registered", () => {
 
     assert.equal(constructionWakes, 0, "no observer wake was published during construction - observers arm against the baseline and stay silent");
-    assert.equal(store.observerCount, 12, "the two base observers plus the camera's ten are all registered against the store double");
+    assert.equal(store.observerCount, 14, "the two base observers plus the camera's twelve are all registered against the store double");
   });
 
   test("the motion sensor's HomeKit-visible surface is real: MotionDetected false, StatusActive true, StatusTampered removed", () => {
@@ -132,9 +132,10 @@ describe("real ProtectCamera construction through the streaming-delegate factory
     assert.equal(motionService.getCharacteristic(Characteristic.MotionDetected).value, false, "MotionDetected initialized to false");
     assert.equal(motionService.getCharacteristic(Characteristic.StatusActive).value, true, "StatusActive initialized from isReachable, which is true");
 
-    // The tamper-detection configure path lazily materializes StatusTampered and then, with tamper detection unavailable on this camera, removes it - the
-    // testCharacteristic predicate never lazily creates, so this is a pure absence check.
-    assert.equal(motionService.testCharacteristic(Characteristic.StatusTampered), false, "the tamper removal branch ran, so StatusTampered is absent");
+    // The tamper-detection configure path reads prior existence side-effect-free through testCharacteristic and, with tamper detection unavailable on this camera, never
+    // creates StatusTampered - the gate's prune branch has no prior characteristic to remove. The testCharacteristic predicate never lazily creates, so this is a pure
+    // absence check.
+    assert.equal(motionService.testCharacteristic(Characteristic.StatusTampered), false, "the tamper gate never created StatusTampered without the capability");
   });
 
   test("no service carries an undefined-keyed characteristic - the empty-UUID name-write pitfall stayed dead", () => {
@@ -182,7 +183,7 @@ describe("real ProtectCamera construction through the streaming-delegate factory
     assert.equal(accessory.configureControllerCalls.length, 1, "the controller was not registered again on the re-run");
   });
 
-  test("cleanup unregisters the controller, unwinds all twelve observers, and a further push wakes nothing", async () => {
+  test("cleanup unregisters the controller, unwinds all fourteen observers, and a further push wakes nothing", async () => {
 
     const call = factory.createCalls[0];
 

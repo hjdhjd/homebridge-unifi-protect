@@ -104,8 +104,8 @@ describe("camera-family device.update-backed onSet handlers (camera-onsets conce
 
       built = await buildCamera({ featureFlags: { hasIcrSensitivity: true, hasInfrared: true }, userOptions: ["Enable.Device.NightVision.Dimmer"] });
 
-      // HARD-assert the dimmer exists FIRST: the gate is hasInfrared && hasIcrSensitivity && hasFeature("Device.NightVision.Dimmer") (camera.ts), so an absent
-      // service would let the payload assertion pass vacuously.
+      // HARD-assert the dimmer exists FIRST: the gate is capabilityGate({ capability: hasInfrared && hasIcrSensitivity, toggle: hasFeature("Device.NightVision.Dimmer")
+      // }) (camera.ts), so an absent service would let the payload assertion pass vacuously.
       const dimmer = built.accessory.getServiceById(Service.Lightbulb, ProtectReservedNames.LIGHTBULB_NIGHTVISION);
 
       assert.ok(dimmer, "the infrared hardware plus Enable.Device.NightVision.Dimmer materializes the night-vision dimmer Lightbulb");
