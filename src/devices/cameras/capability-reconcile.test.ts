@@ -214,7 +214,8 @@ describe("the camera capability reconcile - the ambient light sensor pilot", () 
     "the toggle half)", async () => {
 
     // Pre-seed a cached LightSensor BEFORE construction - a restart whose toggle was edited off before the controller re-reports the capability. The camera adopts with
-    // hasLuxCheck FALSE (the makeCameraConfig default) AND the option disabled. This is the ONLY cell where the old early-return and the new folded gate diverge.
+    // hasLuxCheck FALSE (the makeCameraConfig default) AND the option disabled. This is the ONLY cell where the toggle-absolute gate removes the stale pre-seeded sensor
+    // that a capability-first skip would leave in place.
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
     const { nvr } = makeTestNvr({ store, userOptions: ["Disable.Device.AmbientLightSensor"] });
@@ -408,7 +409,8 @@ describe("the camera capability reconcile - the UniFi Access lock", () => {
     async () => {
 
       // Pre-seed a cached lock BEFORE construction - a restart whose toggle was edited off before the controller re-reports the capability. The camera adopts with
-      // supportUnlock FALSE (no accessDeviceMetadata) AND the option disabled. This is the ONLY cell where the old early-return and the new folded gate diverge.
+      // supportUnlock FALSE (no accessDeviceMetadata) AND the option disabled. This is the ONLY cell where the toggle-absolute gate removes the stale pre-seeded lock
+      // that a capability-first skip would leave in place.
       const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS });
       const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
       const { nvr } = makeTestNvr({ store, userOptions: ["Disable.UniFi.Access.Lock"] });
@@ -764,8 +766,8 @@ describe("the camera capability reconcile - the night vision dimmer", () => {
 
     try {
 
-      // The toggle half prunes the present dimmer: hasFeature is false, so validService removes it. This is PARITY - the old boolean gate already passed a boolean to
-      // validService, which removes on false, so old and new BOTH prune (there is no toggle-off divergence, unlike the lock's early-return). ONLY the dropped-toggle-half
+      // The toggle half prunes the present dimmer: hasFeature is false, so validService removes it. This is PARITY - a plain boolean also passes to validService, which
+      // removes on false, so the gate and a plain boolean BOTH prune (there is no toggle-off divergence, unlike the lock cell). ONLY the dropped-toggle-half
       // mutation discriminates here ((hasService || capability) = true -> keeps -> RED); the strict-boolean mutation does NOT (capability true && toggle false = false =
       // prune, same as production).
       assert.equal(nightVisionDimmer(accessory), undefined, "the absent Enable toggle pruned the cached night vision dimmer");
@@ -995,7 +997,7 @@ describe("the camera capability reconcile - tamper detection", () => {
       await settle();
 
       // The capabilityGate conservative clause keeps the present characteristic through the transient hasTamperDetection-false while the setting stays on. This is the
-      // ONLY cell where the old strict gate (!hasTamperDetection || !enableTamperDetection) and the new capabilityGate diverge: replacing capabilityGate(...) with the
+      // ONLY cell where capabilityGate diverges from a strict boolean gate (!hasTamperDetection || !enableTamperDetection): replacing capabilityGate(...) with the
       // strict this.ufp.featureFlags.hasTamperDetection && this.ufp.smartDetectSettings.enableTamperDetection boolean prunes the working characteristic -> RED here.
       assert.equal(motionService.testCharacteristic(Characteristic.StatusTampered), true, "the withdrawn capability never pruned the existing tamper characteristic");
 

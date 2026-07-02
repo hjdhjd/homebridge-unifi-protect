@@ -12,8 +12,8 @@
  * This suite drives a REAL constructed ProtectCamera against the camera-construction harness doubles and pins each guard behavior-FIRST: construct a camera with no
  * tamper detection (the construct reconcile prunes StatusTampered), exercise a push site, and assert the characteristic never materialized while the side that must
  * still run (StatusActive, the isTampered latch) did. Each test's discriminating mutation - removing the testCharacteristic guard at the site under test - is traced in
- * its comments and materializes the phantom, turning the absence assertion RED. The package camera (whose own bespoke updateAvailability override - its only job to
- * dodge this phantom - is deleted in this commit) now rides the guarded base; that its projection is unchanged is pinned by doorbell-construction.test.ts.
+ * its comments and materializes the phantom, turning the absence assertion RED. The package camera rides the guarded base availability projection, so it needs no bespoke
+ * updateAvailability override of its own; that its projection carries the guard is pinned by doorbell-construction.test.ts.
  */
 import { Characteristic, Service, TestCameraProjection, TestStateStore, makeCameraConfig, makeProtectState, makeTestAccessory, makeTestNvr, settle }
   from "../../testing.helpers.ts";

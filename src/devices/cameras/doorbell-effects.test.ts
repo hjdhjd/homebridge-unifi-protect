@@ -6,8 +6,8 @@
  * The doorbell capability registers four observers (doorbell.ts). Their WAKE is netted by doorbell-construction.test.ts; this suite nets the two reflections
  * whose EFFECT is observable without a controller write surface: chimeDuration -> updatePhysicalChimes (the mutually-exclusive physical-chime switch fan-out) and
  * chimeVolume -> updateChimeVolume (the volume Lightbulb's On + Brightness). The lcdMessage reflection is NOT nettable here (updateLcdSwitch iterates messageSwitches,
- * which getMessages leaves empty unless nvr.ufp.doorbellSettings is seeded - a harness add this Tier does not make), so it is owned by Tier 2; the hasPackageCamera
- * reflection is a lifecycle reconcile already netted by the family construction suite.
+ * which getMessages leaves empty unless nvr.ufp.doorbellSettings is seeded - a harness addition this suite does not make), so it is left to the LCD-message net; the
+ * hasPackageCamera reflection is a lifecycle reconcile already netted by the family construction suite.
  *
  * The doorbell-trigger ring onSet is also netted here: triggering the switch with a truthy value fires nvr.events.doorbellEventHandler(this) - it writes no
  * accessory.context and never touches the controller. The ring is captured through a TEST-LOCAL ProtectEventDispatch subclass that overrides doorbellEventHandler into a
@@ -500,7 +500,8 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
         // The body parses "70", passes the gate (not NaN, 0..100), and setCharacteristic(Brightness, 70) -> the Brightness onSet -> setChimeVolume(70).
         // setCharacteristic is fire-and-forget, so settle past the onSet before asserting. The On onSet (value > 0 truthy) early-returns, so exactly one served-chime
-        // write lands. This nets only the MQTT body's parse / gate / route - setChimeVolume's clamp / fan-out / auth are the B3 describe's concern.
+        // write lands. This nets only the MQTT body's parse / gate / route - setChimeVolume's clamp / fan-out / auth are the
+        // setChimeVolume cross-device write describe's concern.
         await set.setValue("70", "70");
         await settle();
 

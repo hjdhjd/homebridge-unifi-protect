@@ -11,8 +11,8 @@ import type { NvrLifecyclePayload, ReachabilityFanoutPayload } from "../diagnost
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_NVR_CONTROLLER_DISABLED_SETTLE_DELAY, PROTECT_NVR_REBOOT_CONFIRM_GRACE_MS, PROTECT_NVR_REBOOT_DEFERRAL_MAX,
   PROTECT_NVR_REBOOT_INTERVAL, PROTECT_NVR_REBOOT_MIN_INTERVAL, PROTECT_NVR_REBOOT_RECENCY_MS, PROTECT_NVR_REMOVAL_STABILITY_WINDOW } from "../settings.ts";
 import type { ProtectAccessory, ProtectAccessoryContext, ProtectDeviceConfigTypes, ProtectDeviceTypes, ProtectDevices } from "../types.ts";
-import { ProtectClient, channels as protectChannels, selectAdoptedCameraIds, selectAdoptedChimeIds, selectAdoptedLightIds, selectAdoptedSensorIds,
-  selectAdoptedViewerIds } from "unifi-protect";
+import { ProtectClient, channels as protectChannels, selectAdoptedCameraIds, selectAdoptedChimeIds, selectAdoptedLightIds, selectAdoptedRelayIds,
+  selectAdoptedSensorIds, selectAdoptedViewerIds } from "unifi-protect";
 import { ProtectDeviceCategories, exhaustiveGuard } from "../types.ts";
 import { computeStableSince, createConnectRetryPolicy, createLivestreamEpisodeLatch, isInducedDisruption, isStabilityWindowElapsed, isSuccessfulRequest,
   isWithinRebootRecency, membershipDelta, shouldResumeFromInducedReboot } from "./nvr-policy.ts";
@@ -28,6 +28,7 @@ import { ProtectLiveviews } from "../liveviews/liveviews.ts";
 import type { ProtectNvrOptions } from "../options.ts";
 import { ProtectNvrSystemInfo } from "./nvr-systeminfo.ts";
 import type { ProtectPlatform } from "../platform.ts";
+import { ProtectRelay } from "../devices/relay.ts";
 import { ProtectSensor } from "../devices/sensor.ts";
 import { ProtectViewer } from "../devices/viewer.ts";
 import { channels } from "../diagnostics.ts";
@@ -98,7 +99,7 @@ export class ProtectNvr {
   // Mutated only through `transition()`, never directly.
   private _phase: NvrPhase;
   public readonly platform: ProtectPlatform;
-  // The terminal plugin-shutdown abort. Aborted once, in transition("shuttingDown"); every Phase-1 observe loop and every per-accessory controller composes against
+  // The terminal plugin-shutdown abort. Aborted once, in transition("shuttingDown"); every NVR-level observe loop and every per-accessory controller composes against
   // it, so plugin shutdown tears the whole tree down as one cascade. Initialized in the constructor so it exists before any device is constructed.
   readonly #shutdownController: AbortController;
   // One-shot timer that fires when the stability window first elapses for the current good-state period, triggering the membership + orphan sweep. Cleared on disruption.
@@ -109,12 +110,13 @@ export class ProtectNvr {
   // as the unifi-protect library's own ProtectLogging seam so it is single-sourced with the contract ProtectClient.connect() expects.
   private readonly clientLog: ProtectLogging;
   // The device-category -> adopted-id-selector SSOT. The membership observe loops, the stability sweep, and the per-fire stillGone re-check all read the live adopted
-  // set through this one map, so the five content-memoized selectors are wired in exactly one place rather than re-listed at each reader.
+  // set through this one map, so the six content-memoized selectors are wired in exactly one place rather than re-listed at each reader.
   private readonly adoptedIdSelectors: Record<keyof ProtectDeviceTypes, (state: ProtectState) => readonly string[]> = {
 
     camera: selectAdoptedCameraIds,
     chime: selectAdoptedChimeIds,
     light: selectAdoptedLightIds,
+    relay: selectAdoptedRelayIds,
     sensor: selectAdoptedSensorIds,
     viewer: selectAdoptedViewerIds
   };
@@ -403,7 +405,7 @@ export class ProtectNvr {
   }
 
   /**
-   * The terminal plugin-shutdown abort signal. Aborted exactly once, in `transition("shuttingDown")`. Every Phase-1 observe loop and every per-accessory abort
+   * The terminal plugin-shutdown abort signal. Aborted exactly once, in `transition("shuttingDown")`. Every NVR-level observe loop and every per-accessory abort
    * controller composes against it, so plugin shutdown tears the whole tree down as one cascade. Pure read - the controller is private and aborted only through the
    * transition chokepoint.
    */
@@ -756,8 +758,8 @@ export class ProtectNvr {
     this.startConnectionObserver();
 
     // Spawn the typed event-firehose router and the controller telemetry publisher. The router is the one controller-level consumer of the classified activity firehose,
-    // dispatching each motion / smart-detect / doorbell-ring / access occurrence to the addressed accessory's HomeKit delivery; the telemetry publisher mirrors every raw
-    // frame to MQTT and is a no-op unless the user opted in. Both are bound to the terminal shutdown signal and unwind with the rest of the observe tree.
+    // dispatching each smart-detect / doorbell-ring / access / tamper / auth occurrence to the addressed accessory's HomeKit delivery; the telemetry publisher mirrors
+    // every raw frame to MQTT and is a no-op unless the user opted in. Both are bound to the terminal shutdown signal and unwind with the rest of the observe tree.
     this.spawnLoop("live events", () => this.events.run(this.signal));
     this.spawnLoop("controller telemetry", () => this.events.publishTelemetry(this.signal));
   }
@@ -889,7 +891,7 @@ export class ProtectNvr {
   private get deviceConfigs(): ProtectDeviceConfigTypes[] {
 
     return [ ...this.client.cameras.map(c => c.config), ...this.client.chimes.map(c => c.config), ...this.client.lights.map(c => c.config),
-      ...this.client.sensors.map(c => c.config), ...this.client.viewers.map(c => c.config) ];
+      ...this.client.relays.map(r => r.config), ...this.client.sensors.map(c => c.config), ...this.client.viewers.map(c => c.config) ];
   }
 
   // Resolve the live config record for a device id within a category, from the unifi-protect projection. The single read path the membership reconcile uses to turn a
@@ -909,6 +911,10 @@ export class ProtectNvr {
       case "light":
 
         return this.client.light(id)?.config ?? null;
+
+      case "relay":
+
+        return this.client.relay(id)?.config ?? null;
 
       case "sensor":
 
@@ -1322,6 +1328,21 @@ export class ProtectNvr {
         }
 
         this.configuredDevices.set(accessory.UUID, new ProtectLight(this, accessory, light));
+
+        break;
+      }
+
+      case "relay": {
+
+        // We have a UniFi Protect relay.
+        const relay = this.client.relay(device.id);
+
+        if(!relay) {
+
+          break;
+        }
+
+        this.configuredDevices.set(accessory.UUID, new ProtectRelay(this, accessory, relay));
 
         break;
       }

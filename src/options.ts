@@ -62,8 +62,8 @@ interface ProtectOptionMeta {
 
 // Category-level metadata mirroring the option-level channel above.
 //
-// featureByModel:  Per device-model featureFlags that must be enabled for the category to be exposed on that model (the explicit replacement for the old computed
-//                  has<Model>Feature key). For example { sensor: ["motion"] } gates the category on a sensor's "motion" feature flag.
+// featureByModel:  Per device-model featureFlags that must be enabled for the category to be exposed on that model. For example { sensor: ["motion"] } gates the
+//                  category on a sensor's "motion" feature flag.
 // isNotProperty:   Properties that must specifically not exist on the device object for this category to be exposed.
 // modelKey:        Device categories that the category applies to, or "all" for any device type.
 interface ProtectCategoryMeta {
@@ -80,14 +80,15 @@ export const featureOptionCategories: FeatureCategoryEntry<ProtectCategoryMeta>[
 
   { description: "Audio", meta: { modelKey: ["camera"] }, name: "Audio" },
   { description: "Device-wide", meta: { modelKey: ["all"] }, name: "Device" },
-  { description: "Doorbell & chime", meta: { modelKey: ["camera"] }, name: "Doorbell" },
+  { description: "Doorbell & Chime", meta: { modelKey: ["camera"] }, name: "Doorbell" },
   { description: "Logging", meta: { modelKey: [ "camera", "light", "sensor" ] }, name: "Log" },
-  { description: "Motion & occupancy", meta: { featureByModel: { sensor: ["motion"] }, isNotProperty: [ "isAdoptedByAccessApp", "isThirdPartyCamera" ], modelKey: [ "camera", "light", "sensor" ] }, name: "Motion" },
-  { description: "Protect controller", meta: { modelKey: [ "camera", "nvr" ] }, name: "Nvr" },
-  { description: "Security system", meta: { modelKey: ["nvr"] }, name: "SecuritySystem" },
-  { description: "Sensors", meta: { modelKey: ["sensor"] }, name: "Sensor" },
+  { description: "Motion & Occupancy", meta: { featureByModel: { sensor: ["motion"] }, isNotProperty: [ "isAdoptedByAccessApp", "isThirdPartyCamera" ], modelKey: [ "camera", "light", "sensor" ] }, name: "Motion" },
+  { description: "Protect Controller", meta: { modelKey: [ "camera", "nvr" ] }, name: "Nvr" },
+  { description: "Relay", meta: { modelKey: ["relay"] }, name: "Relay" },
+  { description: "Security System", meta: { modelKey: ["nvr"] }, name: "SecuritySystem" },
+  { description: "Sensor", meta: { modelKey: ["sensor"] }, name: "Sensor" },
   { description: "UniFi Access", meta: { modelKey: ["camera"] }, name: "UniFi.Access" },
-  { description: "Video & streaming", meta: { modelKey: ["camera"] }, name: "Video" },
+  { description: "Video & Streaming", meta: { modelKey: ["camera"] }, name: "Video" },
   { description: "HomeKit Secure Video", meta: { isNotProperty: ["isThirdPartyCamera"], modelKey: ["camera"] }, name: "Video.HKSV" }
 ];
 
@@ -110,7 +111,7 @@ export const featureOptions: Record<string, FeatureOptionEntry<ProtectOptionMeta
 
     { default: true, description: "Make this device available in HomeKit.", name: "" },
     { default: true, description: "Enable the status indicator light for this device in HomeKit.", meta: { hasFeature: ["hasLedStatus"], modelKey: ["camera"] }, name: "StatusLed" },
-    { default: false, description: "Add a switch accessory to control the status indicator light in HomeKit.", meta: { hasCameraFeature: ["hasLedStatus"], hasLightProperty: ["lightDeviceSettings"], hasSensorProperty: ["ledSettings"], modelKey: [ "camera", "light", "sensor" ] }, name: "StatusLed.Switch" },
+    { default: false, description: "Add a switch accessory to control the status indicator light in HomeKit.", meta: { hasCameraFeature: ["hasLedStatus"], hasLightProperty: ["lightDeviceSettings"], hasSensorProperty: ["ledSettings"], modelKey: [ "camera", "light", "relay", "sensor" ] }, name: "StatusLed.Switch" },
     { default: true, description: "Enable the night vision indicator light for this device in HomeKit.", meta: { hasFeature: ["hasLedIr"], modelKey: ["camera"] }, name: "NightVision" },
     { default: false, description: "Add a dimmer accessory to control the night vision state in HomeKit.", meta: { hasFeature: ["hasLedIr"], modelKey: ["camera"] }, name: "NightVision.Dimmer" },
     { default: true, description: "Enable the ambient light sensor for this device in HomeKit.", meta: { hasCameraFeature: ["hasLuxCheck"], hasSensorProperty: ["lightSettings"], modelKey: [ "camera", "sensor" ] }, name: "AmbientLightSensor" },
@@ -181,6 +182,13 @@ export const featureOptions: Record<string, FeatureOptionEntry<ProtectOptionMeta
     { default: false, description: "Add sensor accessories to display the Protect controller system information (currently only the temperature).", meta: { modelKey: ["nvr"] }, name: "SystemInfo" }
   ],
 
+  // Relay options.
+  "Relay": [
+
+    { default: true, description: "Make relay output 1 available in HomeKit as a switch.", meta: { modelKey: ["relay"] }, name: "Output.1" },
+    { default: true, description: "Make relay output 2 available in HomeKit as a switch.", meta: { modelKey: ["relay"] }, name: "Output.2" }
+  ],
+
   // Security system options.
   "SecuritySystem": [
 
@@ -244,6 +252,7 @@ const modelMap: Record<string, string> = {
   "camera": "Protect cameras",
   "light": "Protect lights",
   "nvr": "Protect controllers",
+  "relay": "Protect relays",
   "sensor": "Protect sensors"
 };
 

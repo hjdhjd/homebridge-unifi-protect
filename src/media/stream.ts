@@ -1170,7 +1170,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
         // Single-abort teardown. The per-session AbortController is the SOLE teardown trigger: it fans out (via its signal) to the demuxer, every FFmpeg, the
         // backpressure writer, the talkback session, and the livestream subscription. The explicit HbpuAbortError("shutdown") reason is load-bearing - the .exited
         // force-stop bridge reads isHbpuAbortReason(reason, "shutdown") to suppress the self-stop double-fire; a bare abort() would set the reason to a DOMException
-        // the discriminator never matches. This subsumes the old per-process stop() loop and the demuxer close().
+        // the discriminator never matches.
         ongoingSession.abortController.abort(new HbpuAbortError("shutdown"));
 
         // Dispose the talkback session as a backstop. The abort above already closed it through the shared signal, so this is an idempotent no-op (no double error).

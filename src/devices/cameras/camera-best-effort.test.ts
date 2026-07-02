@@ -333,7 +333,7 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
     });
   });
 
-  describe("the package-camera flashlight (camera-package.ts:164-251, the REAL doorbell-plus-package family)", () => {
+  describe("the package-camera flashlight (camera-package.ts:171-265, the REAL doorbell-plus-package family)", () => {
 
     let doorbell: ProtectCamera | undefined;
     let harnessController: AbortController | undefined;
@@ -456,7 +456,7 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
 
       // The failure path (camera-package.ts, an accepted ~2-second real cost): the retry attempts three times at a 1000ms node:timers/promises backoff
       // (un-reachable by mock.timers), the catch swallows the persistent rejection to lit = false, and the switch reflects off. mock.timers(setInterval) + reset()
-      // discards the heartbeat interval line 243 arms even on failure, so no real interval leaks; we do NOT tick it (that would cost another ~2 seconds, and the
+      // discards the heartbeat interval line 257 arms even on failure, so no real interval leaks; we do NOT tick it (that would cost another ~2 seconds, and the
       // heartbeat-arm is already netted on the happy path).
       const { projection } = await buildFlashlightFamily({ isDark: true });
 

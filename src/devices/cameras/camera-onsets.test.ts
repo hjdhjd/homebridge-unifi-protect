@@ -4,8 +4,8 @@
  * driven against the REAL constructed ProtectCamera both on the SUCCESS path (the captured update payload plus the inline / observer reflection) and on the FAILURE path
  * (the revert where production reverts, the no-revert + error-log contract where it does not, and the two runDeviceCommand error branches).
  *
- * camera-reactions.test.ts (Tier 1) explicitly deferred these four: the night-vision-dimmer On / Brightness onSets, the status-LED-switch onSet, and the recording-switch
- * onSet "all route through runDeviceCommand -> device.update and are owned by Tier 2 (the projection command surface) - this suite drives none of them." This is that
+ * camera-reactions.test.ts explicitly deferred these four: the night-vision-dimmer On / Brightness onSets, the status-LED-switch onSet, and the recording-switch
+ * onSet "all route through runDeviceCommand -> device.update and belong to the projection command surface - this suite drives none of them." This is that
  * Tier-2 suite. It is unlocked by the ONE harness add this tier needs: a recording update() member on TestCameraProjection (testing.helpers.ts), the proven
  * resolve-by-default + settable-rejection idiom (TestSensorProjection.update). The member RECORDS the payload and does NOT fold it into the store, so the command (the
  * captured updateCalls payload) and the reflection (an inline-local characteristic write, or an observer-driven push) are asserted INDEPENDENTLY - folding would make a
@@ -21,7 +21,7 @@
  * settle alone is vacuous.
  * Every timed assertion enables mock.timers, awaits the onSet to completion (which schedules the timer), ticks(50), asserts, and resets in finally. The vacuity gate is
  * two-part, carried from the device-* law: a gated service is HARD-asserted to EXIST as the FIRST discriminator (a non-optional assert.ok) before any value assertion,
- * paired with the exact Enable.* userOption string; the without-gate reaction absence is already netted by Tier 1's camera-reactions suite, so here the mandatory half is
+ * paired with the exact Enable.* userOption string; the without-gate reaction absence is already netted by the camera-reactions suite, so here the mandatory half is
  * the existence assert.
  */
 import type { Camera, ProtectCameraConfig } from "unifi-protect";

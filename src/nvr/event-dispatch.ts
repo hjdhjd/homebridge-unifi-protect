@@ -259,7 +259,7 @@ export class ProtectEventDispatch {
   // Motion event processing from UniFi Protect.
   public motionEventHandler(protectDevice: ProtectDevice, detectedObjects: string[] = [], metadata?: ProtectEventMetadata): void {
 
-    // Only notify the user if we have a motion sensor and it's active.
+    // Only proceed if a motion sensor service exists; the active/detectMotion gate is applied downstream in motionEventDelivery.
     const motionService = protectDevice.accessory.getService(this.hap.Service.MotionSensor);
 
     if(motionService) {

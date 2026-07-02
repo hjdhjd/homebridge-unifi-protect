@@ -248,8 +248,9 @@ const showProtectDetails = (device) => {
     return;
   }
 
-  // Compute the IP-address value: cameras and most devices report a host; sensors without one are reached over LoRa (SuperLink) or Bluetooth.
-  const ipValue = device.host ?? ((device.modelKey === "sensor") ? ((device.connectionType === "lora") ? "SuperLink" : "Bluetooth") + " Device" : "None");
+  // Compute the IP-address value: cameras and most devices report a host; a device without one is reached over LoRa (SuperLink) - any LoRa device (sensor or relay) - or,
+  // for a sensor specifically, over Bluetooth. Everything else reports none.
+  const ipValue = device.host ?? ((device.connectionType === "lora") ? "SuperLink Device" : ((device.modelKey === "sensor") ? "Bluetooth Device" : "None"));
 
   // Compute the status value: title-case the device state when present, otherwise report a connected controller.
   const statusValue = ("state" in device) ? (device.state.charAt(0).toUpperCase() + device.state.slice(1).toLowerCase()) : "Connected";
@@ -281,6 +282,9 @@ const featureOptionsParams = {
   },
   ui: {
 
+    // The delay before the connection-error view re-enables its retry button, overriding the library's five-second default. A UniFi Protect controller can take well
+    // over five seconds to authenticate and return its bootstrap, so twenty seconds keeps an impatient user from hammering retry while the first connection attempt is
+    // still in flight.
     controllerRetryEnableDelayMs: 20000,
     isController: isController,
     validOption: validOption,

@@ -11,7 +11,7 @@
  * The selection model is a discriminated union, SelectRequest: a "name" request pins to a named channel (the user's explicit streaming/recording-quality preference);
  * a "nearest" request finds the closest entry to a target resolution, biased higher (for transcoding, which wants a higher-quality input) or lower (the default, which
  * wants the highest channel at or below the target). The pixel cap is a mode-agnostic pre-filter (capByPixels) applied BEFORE selectChannelProfile, so it filters
- * the name branch too - matching HEAD, where a constrained-hardware request with an explicit profile preference still drops profiles above the cap.
+ * the name branch too: a constrained-hardware request with an explicit profile preference still drops profiles above the cap.
  *
  * Matches the pure-module voice of livestream-recovery-policy.ts and nvr-policy.ts: a small, exported, side-effect-free surface paired with a thin live-read wrapper.
  */
@@ -128,7 +128,7 @@ export function isPrimaryChannel(channel: ProtectCameraChannelConfig): boolean {
 
 // Construct one ChannelProfile from a channel. This is the single entry constructor that replaces the three hand-built object literals across the camera and package
 // classes: the friendly name and resolution come from the channel's native dimensions, the URL from rtspUrl, and the optional lens is omitted entirely when
-// undefined (so a primary-channel entry's projected shape is identical to HEAD's, which never set a lens key).
+// undefined, so a primary-channel entry carries no lens property; only the package entry sets one.
 export function buildChannelProfile(channel: ProtectCameraChannelConfig, options: { lens?: number; rtspPort: number; urlHost: string }): ChannelProfile {
 
   const entry: ChannelProfile = {
@@ -139,7 +139,7 @@ export function buildChannelProfile(channel: ProtectCameraChannelConfig, options
     url: rtspUrl(channel, options.urlHost, options.rtspPort)
   };
 
-  // Omit the lens key entirely when undefined, so a primary-channel entry never carries a lens property (matching HEAD, where only the package entry set it).
+  // Omit the lens key entirely when undefined, so a primary-channel entry carries no lens property; only the package entry sets one.
   if(options.lens !== undefined) {
 
     entry.lens = options.lens;
@@ -156,7 +156,7 @@ export function resolutionTableFor(nativeTop: Resolution): readonly (readonly [n
 
 // Whether a candidate resolution belongs in the advertised list given the current top entry: it is included when it is strictly smaller (by max dimension, so
 // portrait-oriented cameras use their longer dimension as the threshold) OR it is one of HomeKit's explicitly-mandated widths (1920/1280). This is the inclusion
-// predicate - the exact inverse of HEAD's `>= top && !mandate` skip-gate - and BOTH list-builds use it, so the gate is written once.
+// predicate shared by both list builds, so the gate is written once.
 export function isMandatedOrUnderTop(candidate: Resolution, currentTop: Resolution): boolean {
 
   return (Math.max(candidate[0], candidate[1]) < Math.max(currentTop[0], currentTop[1])) || [ 1920, 1280 ].includes(candidate[0]);
@@ -164,7 +164,7 @@ export function isMandatedOrUnderTop(candidate: Resolution, currentTop: Resoluti
 
 // Apply the pixel cap as a mode-agnostic pre-filter. When maxPixels is undefined there is no constraint and the entries pass through unchanged; otherwise we drop any
 // entry whose channel exceeds the cap. This runs BEFORE selectChannelProfile so it filters the name branch too - intentionally a pre-filter, not a request field, so a
-// future reader does not move it into the request and silently exempt the name branch (which HEAD does NOT exempt).
+// future reader does not move it into the request and silently exempt the name branch from the cap.
 export function capByPixels(entries: readonly ChannelProfile[], maxPixels: number | undefined): ChannelProfile[] {
 
   return (maxPixels === undefined) ? [...entries] : entries.filter((e) => ((e.channel.width * e.channel.height) <= maxPixels));
@@ -233,7 +233,7 @@ export function selectChannelProfile(entries: readonly ChannelProfile[], request
 //
 // The list build is preference-free: each candidate's closest-match uses the bias-lower nearest selection, mapping every HomeKit resolution to the highest channel at or
 // below it. The streaming-quality preference (Video.Stream.Only.X) is a request-time concern the selectChannel wrapper applies when a stream starts; it must not bias
-// which resolutions we advertise (the leak that, before this, also pinned the HKSV recording default to the streaming channel on constrained hosts).
+// which resolutions we advertise: doing so would also pin the HKSV recording default to the streaming channel on constrained hosts.
 export function buildAdvertisedProfiles(nativeEntries: readonly ChannelProfile[]): ChannelProfile[] {
 
   // Copy the native entries into a mutable working list and sort it high to low. We never mutate the caller's array.
@@ -251,8 +251,7 @@ export function buildAdvertisedProfiles(nativeEntries: readonly ChannelProfile[]
     return [];
   }
 
-  // Next, ensure we have mandatory resolutions required by HomeKit, as well as special support for Apple TV and Apple Watch, while respecting aspect ratios. We use the
-  // frame rate of the first entry, which should be our highest resolution option that's native to the camera as the upper bound for frame rate.
+  // Next, ensure we have mandatory resolutions required by HomeKit, as well as special support for Apple TV and Apple Watch, while respecting aspect ratios.
   //
   // We build the list as [width, height, fps] tuples from the aspect-appropriate base table. Typing these as Resolution tuples (not number arrays) makes every
   // per-element read index-safe. We support both 30 and 15fps for each, ranging from 4K through 320p.
@@ -329,12 +328,12 @@ export function buildAdvertisedProfiles(nativeEntries: readonly ChannelProfile[]
 }
 
 // Build the package-camera HomeKit resolution list from the package channel's native top. The package camera is a single fixed channel - there is no closest-match
-// drift, so the gate compares each candidate against the fixed nativeTop. We seed the list with nativeTop itself (matching HEAD, which seeded validResolutions with the
-// primary resolution), expand the aspect-appropriate table at the package frame-rate set, and append each candidate that belongs and is not already present. The
-// caller passes [ 15 ] for fpsSet (the package list-build's fixed frame rate) and must NOT prepend nativeTop - this function already seeds it.
+// drift, so the gate compares each candidate against the fixed nativeTop. We seed the list with nativeTop itself, expand the aspect-appropriate table at the package
+// frame-rate set, and append each candidate that belongs and is not already present. The caller passes [ 15 ] for fpsSet (the package list-build's fixed frame rate)
+// and must NOT prepend nativeTop - this function already seeds it.
 export function buildAdvertisedResolutions(options: { fpsSet: readonly number[]; nativeTop: Resolution }): Resolution[] {
 
-  // Seed with the native top, matching HEAD's `validResolutions = [ primaryResolution ]`.
+  // Seed the list with the native top resolution itself.
   const validResolutions: Resolution[] = [options.nativeTop];
 
   // Expand the aspect-appropriate base table to the package frame-rate set.

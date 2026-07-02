@@ -418,7 +418,7 @@ export class ProtectSnapshot {
   // Retrieve a cached snapshot, if available.
   private get cachedSnapshot(): Nullable<Buffer> {
 
-    // If we have an image from the last few seconds, we can use it. Otherwise, we're done.
+    // If we have an image within the cache max-age (90 seconds, PROTECT_SNAPSHOT_CACHE_MAXAGE), we can use it. Otherwise, we're done.
     if(!this._cachedSnapshot || ((Date.now() - this._cachedSnapshot.time) > (PROTECT_SNAPSHOT_CACHE_MAXAGE * 1000))) {
 
       this._cachedSnapshot = null;

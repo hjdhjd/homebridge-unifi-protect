@@ -22,7 +22,7 @@
  * the same service). CameraOperatingMode is never created in this harness: the plugin never acquireService's it - it only ever getService-reads it - and the HAP
  * CameraController that does create it, as a side effect of configureController, is replaced by the stub streaming-delegate factory, so those writes target an absent
  * service and cannot be made non-vacuous here. The night-vision-dimmer onSet, the status-LED-switch onSet, and the
- * recording-switch onSet all route through runDeviceCommand -> device.update and are owned by Tier 2 (the projection command surface) - this suite drives none of them.
+ * recording-switch onSet all route through runDeviceCommand -> device.update and belong to the projection command surface - this suite drives none of them.
  *
  * Each construction holds no observer-wake subscription except where a reaction's identity is the wake KEY itself (the videoCodec reaction, whose only observable output
  * is "the right observer woke and reconcileStreaming re-derived"); the rest assert the characteristic effect directly. Every constructed camera is unwound through

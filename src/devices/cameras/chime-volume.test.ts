@@ -3,10 +3,9 @@
  * chime-volume.test.ts: Unit tests for the pure chime-volume reduction (chimeVolumeFor) extracted to the importable leaf src/devices/chime-volume.ts.
  *
  * chimeVolumeFor is a pure free function - config records in, a number out, no this, no HAP, no command - so the natural coverage is to import the REAL leaf and drive it
- * directly with constructed ProtectChimeConfig inputs, exactly as device-reactions.test.ts imports the real sensorTamperState. The helper formerly lived as a
- * module-local const in doorbell.ts, which transitively drags in the camera and streaming stack and so could not resolve in the strip-types runner; these were modeled
- * against a byte-identical hand-copy. The extraction to a pure leaf (type-importing only ProtectChimeConfig) makes the helper importable, so these are now real-code
- * coverage of the shipping reduction rather than a model that could silently drift.
+ * directly with constructed ProtectChimeConfig inputs, exactly as device-reactions.test.ts imports the real sensorTamperState. The leaf stands alone (type-importing
+ * only ProtectChimeConfig) rather than as a module-local const in doorbell.ts, which transitively drags in the camera and streaming stack and so could not resolve in the
+ * strip-types runner; importing it in isolation makes these real-code coverage of the shipping reduction rather than a model that could silently drift.
  *
  * The reduction is the mean of the per-doorbell ring volume across every chime assigned to this doorbell, or 0 when none is assigned: cameraIds membership gates a chime
  * (a stray ring keyed to the doorbell on a chime that does not list it does not count), a chime listing the doorbell but carrying no ring for it is skipped (not diluted

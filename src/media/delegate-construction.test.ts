@@ -3,7 +3,7 @@
  * delegate-construction.test.ts: The first media-delegate construction tests - the proof the ProtectCameraHost interface segregation unlocks delegate testability.
  *
  * The ProtectCameraHost interface (the dependency-inversion seam on the camera side of the media stack) lets the recording, snapshot, and timeshift delegates type
- * their camera handle as a narrow contract instead of the concrete ProtectCamera. The promised payoff - the reason that step ran first - is that a delegate can now
+ * their camera handle as a narrow contract instead of the concrete ProtectCamera. The promised payoff is that a delegate can now
  * be unit-constructed against a small stub host instead of a full camera. This suite cashes that in for the three Tier-1 (field-copy ctor) delegates: each
  * constructs against the reusable TestCameraHost double with no real camera and no FFmpeg.
  *
@@ -13,7 +13,7 @@
  * because the host's hints.crop is false). Two-sided proves isReachable is actually READ and that a stubbed seam value flows THROUGH the delegate's logic - the
  * capability the interface unlocked - not a coincidental null.
  *
- * The streaming delegate (Tier 2) is deferred: it builds a real FfmpegOptions and a real HAP CameraController the test HAP double does not provide, and its
+ * The streaming delegate is deferred: it builds a real FfmpegOptions and a real HAP CameraController the test HAP double does not provide, and its
  * construction is already exercised through the factory seam in camera-construction.test.ts.
  */
 import { after, describe, test } from "node:test";

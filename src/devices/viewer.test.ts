@@ -1,9 +1,9 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * viewer.test.ts: The A2 viewer family - behavior tests over a REAL constructed ProtectViewer.
+ * viewer.test.ts: The viewer behavior-test family - behavior tests over a REAL constructed ProtectViewer.
  *
  * ProtectViewer was entirely uncovered before this suite. It extends ProtectDevice directly (no streaming-stack drag), so like ProtectLight it is unit-constructable, and
- * this suite is the next A2 family: a read-through projection double with a write-through update command surface, config builders, per-slice and collection push helpers,
+ * this suite is another family: a read-through projection double with a write-through update command surface, config builders, per-slice and collection push helpers,
  * and behavior-FIRST assertions (the four observers, the liveview switches, the active-liveview reflection, the set-liveview command, the two observers' reactions, and
  * the MQTT liveview get/set handlers). Every assertion drives the REAL production class through its real configureDevice / spawnObservers paths and its real setViewer
  * over the real runDeviceCommand seam.

@@ -6,7 +6,7 @@
  * motionDuration, occupancyDuration, smartOccupancy, standalone, syncName), clamps the two durations to their floors (motionDuration >= 2, occupancyDuration >= 60), and
  * logs deviations from the defaults. Per the two-layer test architecture the base derivation/clamp/log logic is netted ONCE here against the shared minimal
  * TestBaseDevice vehicle (the all-quiet makeSensorConfig carrier) rather than re-asserted inside each family suite: every concern test builds the device with a
- * userOptions set, calls the configureHintsFor window (exposed since commit 1), and asserts the resulting hints + the deviation logs.
+ * userOptions set, calls the test-only configureHintsFor window, and asserts the resulting hints + the deviation logs.
  *
  * configureHints's PRODUCT is the hints object - a PUBLIC field (device.ts) consumed across the class hierarchy, the same field doorbell-construction.test.ts
  * reads directly - plus the user-visible deviation logs. So this suite reads device.hints DIRECTLY (typed Readonly<ProtectHints> at the read site for read-only intent)
@@ -120,7 +120,7 @@ describe("base ProtectDevice feature-option hints derivation (device-hints conce
 
       assert.equal(hints.enabled, false, "Disable.Device drives enabled false");
 
-      // The other six hints stay at their defaults, so the toggle is discriminating - a derivation that hard-coded or mis-sourced a sibling hint would be caught.
+      // The five asserted hints stay at their defaults, so the toggle is discriminating - a derivation that hard-coded or mis-sourced one of them would be caught.
       assert.equal(hints.logMotion, false, "logMotion stays at its default");
       assert.equal(hints.motionDuration, 10, "motionDuration stays at its default");
       assert.equal(hints.occupancyDuration, 300, "occupancyDuration stays at its default");

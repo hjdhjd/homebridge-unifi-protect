@@ -2,7 +2,7 @@
  *
  * nvr-playlist.ts: The M3U playlist service for UniFi Protect camera livestreams.
  *
- * This module owns the controller's optional M3U playlist publisher, split along the step-11 policy/mechanism seam into two exported functions. buildPlaylist is the
+ * This module owns the controller's optional M3U playlist publisher, split along the policy/mechanism seam into two exported functions. buildPlaylist is the
  * pure content decision - the SSOT of what the playlist contains (the header, the codec/RTSP filter, the name sort, the per-camera #EXTINF guide block, the plain-RTSP
  * URL line, and the package-camera entry) - composed server-free as a string so the whole format and ordering surface is exhaustively unit-testable with constructed
  * camera configs and no TCP port. servePlaylist is the thin I/O shell: it stands up the HTTP server, wires the request/error/listening handlers, and binds a one-shot

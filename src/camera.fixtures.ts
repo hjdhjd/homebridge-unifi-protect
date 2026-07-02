@@ -166,7 +166,7 @@ function fixtureUrl(id: number): string {
 
 // The parent-camera golden-master fixtures. Each expected list is the production advertised list (preference-free - the streaming-quality preference is a request-time
 // concern, not a list-construction input), projected to the comparison shape. The names carry the SELECTED channel's native dimensions (the synthetic entries inherit
-// the matched channel's name), which is exactly what HEAD produced.
+// the matched channel's name), which is the production advertised-list behavior these fixtures pin.
 export const CAMERA_FIXTURES: CameraFixture[] = [
 
   {

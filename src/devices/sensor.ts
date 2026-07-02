@@ -48,8 +48,8 @@ export class ProtectSensor extends ProtectDevice {
   }
 
   // Read-through to the sensor projection's live STATE, narrowed to drop device identity (id/mac/modelKey). Identity flows through the dedicated non-throwing accessors
-  // (protectId/modelKey/.id/.mac), never this throwing config getter; the body is unchanged, only the surfaced type narrows. An untyped index-only field read (the leak
-  // helper) still resolves through the preserved index signature.
+  // (protectId/modelKey/.id/.mac), never this throwing config getter; this override mirrors the base getter's body and narrows only the surfaced return type. The leak
+  // helper's untyped dynamic-key read (keyed on a variable field name) still resolves through the preserved index signature.
   public override get ufp(): Readonly<WithoutIdentity<ProtectSensorConfig>> {
 
     return this.device.config;

@@ -70,7 +70,7 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
   }
 
   // Read-through to the camera projection's live STATE, narrowed to drop device identity (id/mac/modelKey). Identity flows through the dedicated non-throwing accessors
-  // (protectId/modelKey/.id/.mac), never this throwing config getter; the body is unchanged, only the surfaced type narrows.
+  // (protectId/modelKey/.id/.mac), never this throwing config getter; this override mirrors the base getter's body and narrows only the surfaced return type.
   public override get ufp(): Readonly<WithoutIdentity<ProtectCameraConfig>> {
 
     return this.device.config;
@@ -220,8 +220,8 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
     // Attach the doorbell capability when the controller already reports this camera as a doorbell. This runs at the END of configureDevice's synchronous body, after
     // the IIFE statement: the IIFE's synchronous prefix has already kicked off reconcileStreaming, while its tail (the mute switch and trigger) runs on later
     // microtasks. The capability's configure synchronously stands up the Doorbell service (through configureDoorbellService), so the service exists before that
-    // microtask tail reaches the mute-switch gate - exactly the ordering the pre-collapse doorbell subclass guaranteed by standing up the Doorbell service synchronously
-    // ahead of the IIFE. A camera the controller does not report as a doorbell attaches nothing here.
+    // microtask tail reaches the mute-switch gate: standing up the Doorbell service synchronously ahead of the IIFE tail guarantees the mute switch sees a present
+    // service. A camera the controller does not report as a doorbell attaches nothing here.
     this.reconcileDoorbellCapability("construct");
 
     return true;
@@ -409,7 +409,7 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
     // yields only on a subsequent advance, so a bootstrap-hydrated value or a reconnect-unchanged value never fires - the truthy guard only screens the 0/never-detected
     // case. Whether the advance actually trips the parent's MotionSensor is the bare-motion policy's decision: we fire only when smart detection is not the source of
     // truth for this camera (see shouldDeliverBareMotion). The package forward is INDEPENDENT of the parent's bare-motion de-dup above - a recording package camera has
-    // no motion sensor of its own, so the parent's raw motion always trips it whenever the package is recording for HKSV, regardless of whether the parent itself fired.
+    // no motion signal of its own, so the parent's raw motion always trips it whenever the package is recording for HKSV, regardless of whether the parent itself fired.
     this.observeState({ key: "camera.lastMotion", selector: state => cam(state)?.lastMotion, title: "motion detection" }, lastMotion => {
 
       if(!lastMotion) {
@@ -553,10 +553,10 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
   }
 
   // The narrow public seam onto the camera projection's pooled livestream, mirroring snapshotFromController. We map our ChannelProfile to the `source` selector
-  // (the lens=>channel-0 coercion now lives in the library), default the segment length to our 100 ms resolution (matching the old subscribe default - the native pool
+  // (the lens=>channel-0 coercion now lives in the library), default the segment length to our 100 ms resolution (the native pool
   // also floors at 100, but the RTSP adapter would otherwise default to 1000), declare the plugin's livestream defaults (a 16384-byte chunk for lower fragmentation and
   // per-segment timestamps - both enter the pool's sharing key, so they must be passed explicitly or two plugin subscribers would silently fail to share a session),
-  // preserve the friendly controller-side request label (the camera name + channel/lens, as the old manager sent), and pass the consumer's urgency closure straight
+  // preserve the friendly controller-side request label (the camera name + channel/lens), and pass the consumer's urgency closure straight
   // through to the pool's recovery/detection policy. The RTSP-debug variant is a pure-FFmpeg plugin path that produces the same Segment stream behind the same interface.
   public livestream(channelProfile: ChannelProfile, opts: { segmentLength?: number; signal?: AbortSignal; urgency?: () => number } = {}): LivestreamSubscription {
 
@@ -578,7 +578,7 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
       });
     }
 
-    // The native pooled livestream. requestId preserves the old friendly label the controller logs (name + channel, or name + "0." + lens for a secondary lens).
+    // The native pooled livestream. requestId preserves the friendly label the controller logs (name + channel, or name + "0." + lens for a secondary lens).
     const source: LivestreamSource = (channelProfile.lens !== undefined) ? { lens: channelProfile.lens, type: "lens" } :
       { channel: channelProfile.channel.id, type: "channel" };
     const requestId = this.name + ":" + ((channelProfile.lens !== undefined) ? "0." + channelProfile.lens.toString() : channelProfile.channel.id.toString());
@@ -1023,7 +1023,7 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
         }
       });
 
-      // Initialize the status light state.
+      // Initialize the night vision state.
       service?.updateCharacteristic(this.hap.Characteristic.NightVision, this.nightVision);
     }
 
@@ -1112,8 +1112,8 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
   // Reconcile the streaming delegate's constructor-frozen audio surface against the controller's live capabilities. The CameraController's two-way audio support and its
   // recording/streaming sample rates are baked from two live-volatile inputs - the speaker-derived two-way audio hint and isDoorbell - so a camera the controller reports
   // as having a speaker (or as a doorbell) only after adoption carries a controller built for the wrong audio surface, with the talk button baked off until a restart.
-  // This reconcile refreshes those hints and rebuilds the controller in place when a frozen audio capability has appeared, single-sourcing the late-doorbell rebuild the
-  // doorbell attach formerly carried. It takes no source: the additive predicate is correct on both construct (no-op, the controller is freshly built) and observe.
+  // This reconcile refreshes those hints and rebuilds the controller in place when a frozen audio capability has appeared, single-sourcing the late-doorbell controller
+  // rebuild. It takes no source: the additive predicate is correct on both construct (no-op, the controller is freshly built) and observe.
   private reconcileStreamingAudioCapabilities(): void {
 
     // Additively refresh the speaker-derived hints, mirroring the additive rebuild below: a capability appearing raises the hint (so a deferred first stream build and
@@ -1204,7 +1204,7 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
     }
 
     // Synthesize the full advertised resolution list HomeKit consumes from the native entries. The list build is preference-free: the streaming-quality preference is a
-    // request-time concern selectChannel applies, not a list-construction input. The all-channels-fail-sanity empty result re-asserts HEAD's device
+    // request-time concern selectChannel applies, not a list-construction input. The all-channels-fail-sanity empty result re-asserts the device
     // short-circuit: an advertised list of zero entries must NOT construct a streaming delegate or call configureController - we return false before reaching either.
     const advertised = buildAdvertisedProfiles(nativeEntries);
 
@@ -1844,8 +1844,8 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
 
   // Find a streaming RTSP configuration for a given target resolution. This is the device wrapper over the pure selectChannelProfile: it injects our published entries
   // and our this-state (the streaming default, which pins to a named channel, and the optional hardware pixel cap), then delegates the selection mathematics. The pixel
-  // cap is applied as a mode-agnostic pre-filter BEFORE selection - intentionally a pre-filter, not part of the request, so it filters the name branch too (matching
-  // HEAD, where a constrained request with an explicit profile preference still drops profiles above the cap); a future reader should not move it into the request.
+  // cap is applied as a mode-agnostic pre-filter BEFORE selection - intentionally a pre-filter, not part of the request, so it filters the name branch too (a
+  // constrained request with an explicit profile preference still drops profiles above the cap); a future reader should not move it into the request.
   public selectChannel(width: number, height: number, opts?: { biasHigher?: boolean; maxPixels?: number }): Nullable<ChannelProfile> {
 
     const entries = capByPixels(this.channelProfiles, opts?.maxPixels);

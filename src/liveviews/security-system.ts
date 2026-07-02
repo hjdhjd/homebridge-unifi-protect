@@ -89,6 +89,8 @@ export class ProtectSecuritySystem extends ProtectBase {
       const SecuritySystemCurrentState = this.hap.Characteristic.SecuritySystemCurrentState;
       const SecuritySystemTargetState = this.hap.Characteristic.SecuritySystemTargetState;
 
+      // The definite-assignment assertion is safe because alarmState is read only in the ALARM_TRIGGERED branch below, which is reachable only from the "alarmon" and
+      // "alarmoff" cases, and both of those cases assign alarmState before the switch falls through to that branch.
       let alarmState!: boolean;
       let targetState: CharacteristicValue;
 
@@ -287,7 +289,7 @@ export class ProtectSecuritySystem extends ProtectBase {
       availableSecurityStates.push(securityState[1] as number);
     }
 
-    // No available security states besides disarmed - something probably went wrong, so we're done.
+    // With only the disarmed state available (no Protect-Away/Home/Night liveview configured), there are no arm states to narrow to, so we're done.
     if(availableSecurityStates.length < 2) {
 
       return false;

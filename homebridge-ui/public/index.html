@@ -157,10 +157,10 @@
 <script type="module">
   /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
    *
-   * Plugin webUI script loader. Reads HBPU's manifest at load time, then injects an importmap that prefixes every ./lib/ specifier with the hashed-versioned
-   * subdir HBPU's prepare-ui CLI mirrored into place. The trailing-slash prefix mapping means transitive imports inside the bundle inherit the versioned path
-   * through relative-URL resolution - one importmap entry covers the full HBPU file tree without enumerating any of its internals. HBUP's own ui.mjs keeps a
-   * Date.now() cache-bust because it's the one hand-authored file not under HBPU's versioning.
+   * Plugin webUI script loader. Reads HBPU's manifest at load time, then injects an importmap that maps the bare "homebridge-plugin-utils/" specifier to the
+   * "./lib/<subdir>/" hashed-versioned subdir HBPU's prepare-ui CLI mirrored into place. The trailing-slash prefix mapping means transitive imports inside the bundle
+   * inherit the versioned path through relative-URL resolution - one importmap entry covers the full HBPU file tree without enumerating any of its internals. HBUP's own
+   * ui.mjs keeps a Date.now() cache-bust because it's the one hand-authored file not under HBPU's versioning.
    */
 
   const manifest = await fetch("./lib/manifest.json", { cache: "no-store" }).then((response) => response.json());

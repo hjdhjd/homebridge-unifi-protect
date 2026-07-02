@@ -45,11 +45,10 @@ const RESERVED_NAMES = new Set(Object.values(ProtectReservedNames).map(x => x.to
 
 /* The doorbell capability composed onto a ProtectCamera. It extends ProtectBase - the shared observe / MQTT / command spine - rather than ProtectCamera, because
  * doorbell-ness is temporally dynamic capability state, not a static identity: the camera the controller late-flips to a doorbell stays the same instance, and this
- * capability attaches to it live. Everything the dissolved doorbell subclass owned lives here - the doorbell services (LCD message switches, physical chimes,
- * the chime-volume lightbulb, the auth sensor), the four read-through settings getters, the four doorbell observers, the doorbell MQTT topics, and the package-camera
- * lifecycle. The camera-coupling is localized to a private block of delegating accessors below, so each moved body resolves its this.ufp / this.accessory /
- * this.hasFeature reads through the camera with minimal change. The capability holds its own composed AbortController so a future detach unwinds exactly its observers
- * and MQTT registrations, the owner-lifetime idiom one level up.
+ * capability attaches to it live. The capability owns the doorbell services (LCD message switches, physical chimes, the chime-volume lightbulb, the auth sensor), the
+ * four read-through settings getters, the four doorbell observers, the doorbell MQTT topics, and the package-camera lifecycle. The camera-coupling is localized to a
+ * private block of delegating accessors below, so each doorbell body resolves its this.ufp / this.accessory / this.hasFeature reads through the camera. The capability
+ * holds its own composed AbortController so a future detach unwinds exactly its observers and MQTT registrations, the owner-lifetime idiom one level up.
  */
 export class DoorbellCapability extends ProtectBase {
 
@@ -72,14 +71,14 @@ export class DoorbellCapability extends ProtectBase {
     this.#signal = composeSignals(this.#controller.signal, init.signal);
   }
 
-  /* The delegating accessors: the resolution to the member-access census. Each moved doorbell body read off this.ufp / this.accessory / this.hasFeature and the rest,
-   * which ProtectBase does not provide. Routing them through these private accessors over the camera localizes the camera-coupling to one block and keeps the moved
-   * bodies a near-verbatim re-route. The acquireService / validService wrappers are thin re-bindings to the homebridge-plugin-utils free functions over the camera's
-   * accessory (the same homebridge-plugin-utils SSOT the camera's own wrappers delegate to), not logic duplication.
+  /* The delegating accessors that localize the camera-coupling to one block. Each doorbell body reads this.ufp / this.accessory / this.hasFeature and the rest, which
+   * ProtectBase does not provide, so routing those reads through these private accessors over the camera keeps the coupling in one place. The acquireService /
+   * validService wrappers are thin re-bindings to the homebridge-plugin-utils free functions over the camera's accessory (the same homebridge-plugin-utils SSOT the
+   * camera's own wrappers delegate to), not logic duplication.
    */
 
   // The owning camera projection's live STATE, narrowed to drop device identity (id/mac/modelKey) - that immutable identity flows through the dedicated accessors, never
-  // the throwing config projection. The moved bodies read this.ufp.<state-field> exactly as the subclass did; the body is unchanged.
+  // the throwing config projection.
   private get ufp(): Readonly<WithoutIdentity<ProtectCameraConfig>> {
 
     return this.#device.config;
@@ -130,8 +129,8 @@ export class DoorbellCapability extends ProtectBase {
 
   /* The seam overrides, each varying exactly what ProtectBase's shared spine reads by leaf. */
 
-  // The log prefix and diagnostics name: delegate to the camera's name. The camera's name getter resolves to the live controller projection name - the exact value
-  // today's doorbell logged with - so log prefixes are identical to the pre-collapse doorbell. NOT accessoryName (the cached HomeKit Name), which would diverge.
+  // The log prefix and diagnostics name: delegate to the camera's name. The camera's name getter resolves to the live controller projection name, so log prefixes track
+  // the controller's current name for the device. NOT accessoryName (the cached HomeKit Name), which would diverge.
   public override get name(): string {
 
     return this.camera.name;
@@ -144,8 +143,7 @@ export class DoorbellCapability extends ProtectBase {
     return this.#signal;
   }
 
-  // The MQTT topic scope: the camera's MAC, so the doorbell topics (chime, message) ride the same wire scope as the camera - identical to the pre-collapse doorbell,
-  // which scoped under its own (the camera's) MAC.
+  // The MQTT topic scope: the camera's MAC, so the doorbell topics (chime, message) ride the same wire scope as the camera.
   protected override get mqttId(): string {
 
     return this.camera.mac;
@@ -159,7 +157,7 @@ export class DoorbellCapability extends ProtectBase {
   }
 
   // Wake attribution: the capability has no accessory identity of its own, so it delegates to the camera's single publishObserverWake seam, keeping one publisher keyed
-  // on the camera's accessory UUID. The four doorbell.* keys are preserved verbatim and remain diagnostics-visible under the camera's accessory.
+  // on the camera's accessory UUID. The four doorbell.* keys remain diagnostics-visible under the camera's accessory.
   protected override onObserverWake(key: string): void {
 
     this.camera.publishObserverWake(key);
@@ -201,9 +199,9 @@ export class DoorbellCapability extends ProtectBase {
     return this.#device.peek()?.chimeDuration ?? 0;
   }
 
-  // Configure the doorbell capability for HomeKit, preserving the pre-collapse configure order: the package camera, the Doorbell service (through the camera's seam, at
-  // the package-to-service point), the auth sensor, the LCD messages, the physical chimes, the chime volume, then the MQTT topics and the four observers. The Doorbell
-  // service is stood up through the camera's configureDoorbellService seam here, so the camera does not separately call it on attach.
+  // Configure the doorbell capability for HomeKit. The configure order is: the package camera, the Doorbell service (through the camera's seam, at the package-to-service
+  // point), the auth sensor, the LCD messages, the physical chimes, the chime volume, then the MQTT topics and the four observers. The Doorbell service is stood up
+  // through the camera's configureDoorbellService seam here, so the camera does not separately call it on attach.
   public configure(): void {
 
     // Configure our package camera, if we have one.
@@ -232,8 +230,8 @@ export class DoorbellCapability extends ProtectBase {
     this.spawnObservers();
   }
 
-  // Cleanup the capability: tear down the package camera first (mirroring the pre-collapse doorbell.cleanup ordering), then abort the capability's own controller,
-  // which releases its four observers and exactly its MQTT handlers on the shared parent-MAC tuple.
+  // Cleanup the capability: tear down the package camera first, then abort the capability's own controller, which releases its four observers and exactly its MQTT
+  // handlers on the shared parent-MAC tuple.
   public cleanup(): void {
 
     if(this.packageCamera) {
@@ -252,8 +250,8 @@ export class DoorbellCapability extends ProtectBase {
   }
 
   // Spawn the doorbell's narrow-selector observers. The capability does not inherit ProtectDevice.spawnObservers (it extends ProtectBase), so there is no base template
-  // to extend and no base name / info pair to worry about - the name and information observers belong to the camera. The keys are preserved verbatim. Doorbell-ring
-  // delivery and the package camera's motion are firehose occurrences the router handles, not observed here.
+  // to extend and no base name / info pair to worry about - the name and information observers belong to the camera. Doorbell-ring delivery and the package camera's
+  // motion are firehose occurrences the router handles, not observed here.
   private spawnObservers(): void {
 
     const cam = selectCamera(this.#device.id);
@@ -277,11 +275,10 @@ export class DoorbellCapability extends ProtectBase {
     // Reflect the active physical-chime mode across the chime switches.
     this.observeState({ key: "doorbell.chimeDuration", selector: state => cam(state)?.chimeDuration, title: "the chime" }, () => this.updatePhysicalChimes());
 
-    // Restore the cross-device volume reactivity the old chimeEventHandler provided: when this doorbell's effective chime volume changes on the controller (a
-    // ring-volume edit on any assigned chime), push it to the volume Lightbulb. The selector returns the computed volume, so the store's value dedup wakes this only on
-    // a real change, not on every unrelated chime patch. A deliberate refinement over the old behavior, which pushed one chime's volume, not the mean - now consistent
-    // with the onGet. The id is hoisted to the plain string here, alongside cam, because a selector runs inside the store's dispatch, where a projection read against a
-    // removed record throws.
+    // Reflect cross-device volume changes: when this doorbell's effective chime volume changes on the controller (a ring-volume edit on any assigned chime), push it to
+    // the volume Lightbulb. The selector returns the computed mean volume across the doorbell's assigned chimes, so the store's value dedup wakes this only on a real
+    // ring-volume change, not on every unrelated chime patch, and the push keeps the volume Lightbulb consistent with the onGet. The id is hoisted to the plain string
+    // here, alongside cam, because a selector runs inside the store's dispatch, where a projection read against a removed record throws.
     this.observeState({ key: "doorbell.chimeVolume", selector: state => chimeVolumeFor(selectChimes(state), id), title: "the chime volume" },
       () => this.updateChimeVolume());
   }

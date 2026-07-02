@@ -15,7 +15,7 @@ import { selectCamera } from "unifi-protect";
 
 // Package camera class. Extends ProtectCamera and represents the secondary camera channel on Protect doorbells that ship with one. The package camera is a HomeKit
 // sub-view of its parent doorbell's shared camera projection, not a Protect device of its own - it is self-observing over that shared projection, deriving its identity
-// and display name from the parent's, while its motion is driven by the parent camera's lastMotion leaf observer (the package has no motion sensor of its own, so the
+// and display name from the parent's, while its motion is driven by the parent camera's lastMotion leaf observer (the package has no motion signal of its own, so the
 // parent's bare-motion observe forwards a recording package camera's motion for it).
 export class ProtectCameraPackage extends ProtectCamera {
 
@@ -227,7 +227,7 @@ export class ProtectCameraPackage extends ProtectCamera {
 
         this.flashlightState = lit;
 
-        // Update the sensor.
+        // Update the flashlight switch.
         service.updateCharacteristic(this.hap.Characteristic.On, this.flashlightState);
 
         // Stop if we've been told to turn off.
@@ -245,6 +245,8 @@ export class ProtectCameraPackage extends ProtectCamera {
       // If it's not dark, the flashlight will not engage - reset the switch to off and we're done.
       if(!this.ufp.isDark) {
 
+        // We defer the reset ~50ms so HomeKit settles the value it just set through this onSet before we reflect it back off. A synchronous
+        // same-characteristic write inside its own onSet would be clobbered.
         setTimeout(() => service.updateCharacteristic(this.hap.Characteristic.On, false), 50);
 
         return;

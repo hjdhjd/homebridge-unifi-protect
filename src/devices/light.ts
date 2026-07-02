@@ -26,7 +26,7 @@ export class ProtectLight extends ProtectDevice {
   }
 
   // Read-through to the light projection's live STATE, narrowed to drop device identity (id/mac/modelKey). Identity flows through the dedicated non-throwing accessors
-  // (protectId/modelKey/.id/.mac), never this throwing config getter; the body is unchanged, only the surfaced type narrows.
+  // (protectId/modelKey/.id/.mac), never this throwing config getter; this override mirrors the base getter's body and narrows only the surfaced return type.
   public override get ufp(): Readonly<WithoutIdentity<ProtectLightConfig>> {
 
     return this.device.config;
@@ -216,7 +216,7 @@ export class ProtectLight extends ProtectDevice {
   }
 
   // Build the write-through command that sets the status indicator on a Protect light, which uses lightDeviceSettings.isIndicatorEnabled rather than the ledSettings
-  // field cameras and sensors expose. this.device is the narrowed Light projection here, so the update typechecks against the light config directly.
+  // field cameras, sensors, and relays expose. this.device is the narrowed Light projection here, so the update typechecks against the light config directly.
   protected override statusLedCommand(value: boolean): () => Promise<unknown> {
 
     return () => this.device.update({ lightDeviceSettings: { isIndicatorEnabled: value } });

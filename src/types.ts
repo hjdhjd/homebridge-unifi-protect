@@ -4,11 +4,12 @@
  */
 
 import type { CharacteristicValue, PlatformAccessory, PlatformConfig } from "homebridge";
-import type { ProtectCameraConfig, ProtectChimeConfig, ProtectLightConfig, ProtectSensorConfig, ProtectViewerConfig } from "unifi-protect";
+import type { ProtectCameraConfig, ProtectChimeConfig, ProtectLightConfig, ProtectRelayConfig, ProtectSensorConfig, ProtectViewerConfig } from "unifi-protect";
 import type { ProtectCamera } from "./devices/cameras/camera.ts";
 import type { ProtectChime } from "./devices/chime.ts";
 import type { ProtectLight } from "./devices/light.ts";
 import type { ProtectNvrOptions } from "./options.ts";
+import type { ProtectRelay } from "./devices/relay.ts";
 import type { ProtectSensor } from "./devices/sensor.ts";
 import type { ProtectViewer } from "./devices/viewer.ts";
 
@@ -24,13 +25,15 @@ export interface ProtectDeviceTypes {
   camera: ProtectCamera;
   chime: ProtectChime;
   light: ProtectLight;
+  relay: ProtectRelay;
   sensor: ProtectSensor;
   viewer: ProtectViewer;
 }
 
-export const ProtectDeviceCategories = [ "camera", "chime", "light", "sensor", "viewer" ];
-export type ProtectDeviceConfigTypes = ProtectCameraConfig | ProtectChimeConfig | ProtectLightConfig | ProtectSensorConfig | ProtectViewerConfig;
-export type ProtectDevices = ProtectCamera | ProtectChime | ProtectLight | ProtectSensor | ProtectViewer;
+// The runtime category array and the two unions below mirror ProtectDeviceTypes above: add or remove a supported device kind and all four must change in lockstep.
+export const ProtectDeviceCategories = [ "camera", "chime", "light", "relay", "sensor", "viewer" ];
+export type ProtectDeviceConfigTypes = ProtectCameraConfig | ProtectChimeConfig | ProtectLightConfig | ProtectRelayConfig | ProtectSensorConfig | ProtectViewerConfig;
+export type ProtectDevices = ProtectCamera | ProtectChime | ProtectLight | ProtectRelay | ProtectSensor | ProtectViewer;
 
 // The immutable identity keys of a Protect device. They never change for the life of an accessory and are read through dedicated, always-present accessors (the
 // controller id, the model category, and the bare/suffixed MAC), so they never need - and must never be read through - the live config projection.
@@ -139,6 +142,7 @@ export const ProtectReservedNames = {
   SWITCH_HKSV_RECORDING: "HKSVRecordingSwitch",
   SWITCH_MOTION_SENSOR: "MotionSensorSwitch",
   SWITCH_MOTION_TRIGGER: "MotionSensorTrigger",
+  SWITCH_RELAY_OUTPUT: "RelayOutput",
   SWITCH_STATUS_LED: "StatusLedSwitch",
   SWITCH_UFP_RECORDING_ALWAYS: "UFPRecordingSwitch.always",
   SWITCH_UFP_RECORDING_DETECTIONS: "UFPRecordingSwitch.detections",

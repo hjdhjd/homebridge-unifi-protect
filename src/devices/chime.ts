@@ -30,7 +30,7 @@ export class ProtectChime extends ProtectDevice {
   }
 
   // Read-through to the chime projection's live STATE, narrowed to drop device identity (id/mac/modelKey). Identity flows through the dedicated non-throwing accessors
-  // (protectId/modelKey/.id/.mac), never this throwing config getter; the body is unchanged, only the surfaced type narrows.
+  // (protectId/modelKey/.id/.mac), never this throwing config getter; this override mirrors the base getter's body and narrows only the surfaced return type.
   public override get ufp(): Readonly<WithoutIdentity<ProtectChimeConfig>> {
 
     return this.device.config;
@@ -99,8 +99,7 @@ export class ProtectChime extends ProtectDevice {
   }
 
   // Configure one chime switch (the buzzer or a ringtone speaker) for HomeKit. The kind discriminant ("buzzer" or "speaker") names the chime's two sound sources directly
-  // and doubles as the per-switch timer key, so all ringtone speaker switches share the one "speaker" timer exactly as they shared the "play-speaker" endpoint string
-  // previously.
+  // and doubles as the per-switch timer key, so all ringtone speaker switches share the one "speaker" timer.
   private configureChimeSwitch(name: string, kind: "buzzer" | "speaker", subtype: string): boolean {
 
     // Acquire the service.
@@ -139,12 +138,16 @@ export class ProtectChime extends ProtectDevice {
         tone = subtype.slice(ProtectReservedNames.SWITCH_DOORBELL_CHIME_SPEAKER.length + 1);
       }
 
-      // Play the tone. The shared command-error helper that playTone routes through is the single failure log, so on failure we only revert the switch to its real state.
+      // Play the tone. The shared command-error helper that playTone routes through is the single failure log, so on failure we only revert the switch to its real state
+      // and return - arming the auto-reset timer or logging playback past this point would leave a failed play showing as "playing" for the full duration.
       if(!(await this.playTone(name, kind, tone))) {
 
         setTimeout(() => service.updateCharacteristic(this.hap.Characteristic.On, this.timers.has(kind)), 50);
+
+        return;
       }
 
+      // The play started, so hold the switch on for the playback window and then auto-reset it to its real state.
       this.registerTimeout(kind,
         () => service.updateCharacteristic(this.hap.Characteristic.On, this.timers.has(kind)), PROTECT_DOORBELL_CHIME_SPEAKER_DURATION);
 
@@ -242,7 +245,7 @@ export class ProtectChime extends ProtectDevice {
     super.spawnObservers();
 
     // The ringtone library is a controller-wide collection; when it changes (a ringtone added/removed in Protect, which advances on the StateStore refresh), re-run the
-    // chime's ringtone-switch reconcile. Restores the refresh-cadence reactivity the syncDevices loop gave chimes.
+    // chime's ringtone-switch reconcile. Because the collection advances only on the StateStore refresh, this observer re-runs the reconcile at that refresh cadence.
     this.observeState({ key: "nvr.ringtones", selector: selectRingtones, title: "the chime ringtones" }, () => this.updateDevice());
   }
 }

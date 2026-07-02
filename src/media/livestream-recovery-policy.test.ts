@@ -15,7 +15,7 @@
  *   - establishing => delegate to the library default, proven by-reference (the returned decision is the default's own output).
  *   - recovering + rebooting/shuttingDown => wait (the induced-disruption guard), including the guard-precedes-the-hard-gate ordering (rebooting + throttled).
  *   - recovering + throttled, attempts=100 => wait, NEVER giveUp (the headline hazard: a throttled controller never reboots a camera).
- *   - recovering + healthy controller + this camera offline => wait (the NEW offline-defer gate, step 3), including the precedence-over-self-heal ordering (offline +
+ *   - recovering + healthy controller + this camera offline => wait (the offline-defer gate, step 3), including the precedence-over-self-heal ordering (offline +
  *     attempts >= threshold still waits) and the wedged-preserved counter-case (reachable + attempts >= threshold still gives up).
  *   - recovering + reachable + attempts >= threshold => giveUp (self-heal); attempts < threshold + healthy => reconnect.
  *   - recovering + reachable + elevated + idle + within budget => wait (soft ease-off); + active => reconnect; + budget spent => reconnect.
@@ -118,7 +118,7 @@ describe("livestreamRecoveryDecision", () => {
     });
   });
 
-  describe("offline-defer gate - the NEW step (step 3)", () => {
+  describe("offline-defer gate (step 3)", () => {
 
     // The positive case: this one camera is offline on an otherwise-healthy, non-throttled controller, so the gate defers rather than reconnecting. The controller is
     // explicitly healthy so the wait can only come from the new gate, not the hard reachability gate of step 2.

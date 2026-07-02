@@ -1,8 +1,8 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * chime.test.ts: The A2 chime family - behavior tests over a REAL constructed ProtectChime.
+ * chime.test.ts: The chime behavior-test family - behavior tests over a REAL constructed ProtectChime.
  *
- * ProtectChime extends ProtectDevice directly (no streaming-stack drag), so like ProtectLight it is unit-constructable, and this suite is the next A2 family after the
+ * ProtectChime extends ProtectDevice directly (no streaming-stack drag), so like ProtectLight it is unit-constructable, and this suite is the next such family after the
  * light reference: a read-through projection double with a play command surface, config builders, per-slice and collection push helpers, and behavior-FIRST assertions
  * (the three observers, the buzzer / ringtone speaker switches, the legacy-service removal, the play dispatch, and the MQTT tone handler). Every assertion drives the
  * REAL production class through its real configureDevice / spawnObservers paths and its real playTone over the real runDeviceCommand seam - never a modeled stand-in.
@@ -221,10 +221,11 @@ describe("real ProtectChime construction and play behavior", () => {
     fixture.chime.cleanup();
   });
 
-  test("a speaker tone with empty ringSettings is a no-op command yet still logs Playing and arms the timer", async () => {
+  test("a speaker tone with empty ringSettings is a no-op that reverts the switch without logging Playing or arming the reset", async () => {
 
-    // The chime has no ringSettings, so playTone returns false and issues NO command; but a truthy onSet still arms registerTimeout and logs "Playing %s." (only the
-    // command and publish are conditional). The bare 50ms revert it also arms is NOT in this.timers, so we await past it before this test's afterEach.
+    // The chime has no ringSettings, so playTone returns false and issues NO command. A false return reverts the switch to its real state and returns before the
+    // "Playing" log or the playback-reset timer, so a no-op never shows as playing. The bare 50ms revert it arms is NOT in this.timers, so we await past it before this
+    // test's afterEach.
     const fixture = buildChime({ ringSettings: [] }, { ringtones: [makeRingtoneConfig({ id: "empty-ring", name: "Empty Ring" })] });
 
     const speakerSwitch = fixture.accessory.getServiceById(Service.Switch, ProtectReservedNames.SWITCH_DOORBELL_CHIME_SPEAKER + ".empty-ring");
@@ -235,15 +236,15 @@ describe("real ProtectChime construction and play behavior", () => {
 
     assert.equal(fixture.projection.playSpeakerCalls.length, 0, "no command is issued when there is no ring to source playback from");
     assert.equal(fixture.mqtt.published.length, 0, "a no-op play publishes nothing");
-    assert.ok(loggedAt(fixture.logEntries, "info", "Playing Empty Ring."), "the Playing info log still fired on the no-op set");
+    assert.ok(!loggedAt(fixture.logEntries, "info", "Playing Empty Ring."), "the Playing info log does NOT fire on the no-op set");
 
-    // Let the bare 50ms revert (not in this.timers) fire within the test, then clean up the registerTimeout play-timer.
+    // Let the bare 50ms revert (not in this.timers) fire within the test; no playback-reset timer is armed on a no-op, so there is none to clean up.
     await new Promise<void>((resolve) => setTimeout(resolve, 60));
 
     fixture.chime.cleanup();
   });
 
-  test("a rejecting play reports the failure through the shared helper, publishes nothing, yet still logs Playing and arms the timer", async () => {
+  test("a rejecting play reports the failure through the shared helper, publishes nothing, and reverts without logging Playing or arming the reset", async () => {
 
     projection.playSpeakerCalls.length = 0;
     projection.playRejection = new Error("The chime is unreachable.");
@@ -258,9 +259,9 @@ describe("real ProtectChime construction and play behavior", () => {
     assert.equal(mqtt.published.length, 0, "a failed play publishes nothing");
     assert.ok(loggedAt(logEntries, "error", "Unable to play Test Ringtone: The chime is unreachable."),
       "the shared command-error helper reported the single failure line");
-    assert.ok(loggedAt(logEntries, "info", "Playing Test Ringtone."), "the Playing info log still fired despite the failure");
+    assert.ok(!loggedAt(logEntries, "info", "Playing Test Ringtone."), "the Playing info log does NOT fire on the failed play");
 
-    // Let the bare 50ms revert (armed on the false playTone return, not in this.timers) fire within the test before afterEach.
+    // Let the bare 50ms revert (armed on the false playTone return, not in this.timers) fire within the test before afterEach; no reset timer is armed on a failure.
     await new Promise<void>((resolve) => setTimeout(resolve, 60));
   });
 

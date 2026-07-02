@@ -3,9 +3,8 @@
  * motion-policy.test.ts: Unit tests for the pure bare-motion delivery policy (shouldDeliverBareMotion) extracted to the importable leaf motion-policy.ts.
  *
  * shouldDeliverBareMotion is a pure free function - three camera facts in, a boolean out, no this, no HAP - so the natural coverage is to import the REAL leaf and drive
- * it directly, exactly as chime-volume.test.ts / smart-detect-metadata.test.ts import their pure leaves. The policy formerly lived in event-dispatch.ts, which the camera
- * leaf could not value-import (the device-layer module invariant); moving it to a pure leaf type-importing nothing makes it importable by both the camera leaf and this
- * test, so this is real-code coverage of the shipping decision rather than a model that could drift.
+ * it directly, exactly as chime-volume.test.ts / smart-detect-metadata.test.ts import their pure leaves. Because the policy is a pure leaf type-importing nothing, it is
+ * importable by both the camera leaf and this test, so this is real-code coverage of the shipping decision rather than a model that could drift.
  */
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";

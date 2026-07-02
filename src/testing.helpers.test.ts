@@ -374,7 +374,7 @@ describe("the state-store double (TestStateStore)", () => {
 
 describe("makeProtectState device-slice widening", () => {
 
-  // No per-slice config builder exists yet (each lands with its own A2 family step), so each record is a minimal id-bearing literal bridged through the same
+  // No per-slice config builder exists yet (each lands with its own device-family suite), so each record is a minimal id-bearing literal bridged through the same
   // confined `as unknown as` seam cast the harness uses for makeCameraConfig / makeNvrConfig - honest about being a partial double, while keeping the population and
   // keying under test exactly the production-shaped path.
   const lightRecord = { id: "light-1" } as unknown as ProtectLightConfig;
@@ -931,7 +931,7 @@ describe("harness growth: the recording transmit doubles", () => {
     await subscription[Symbol.asyncDispose]();
   });
 
-  // The inert (default) profile is unchanged: it backs the A1 construction suites, which must stay on their segment-less path. A regression that accidentally made the
+  // The inert (default) profile is unchanged: it backs the construction suites, which must stay on their segment-less path. A regression that accidentally made the
   // default established would fill those suites' timeshift buffers and change their behavior.
   test("makeLivestreamSubscriptionDouble default profile is the unchanged inert double", async () => {
 
@@ -1376,9 +1376,7 @@ describe("A2 base-capability foundation: the shared dispatch, the sensor carrier
     assert.equal(defaults.id, "test-sensor-1", "the id defaults");
     assert.equal(defaults.mac, "74ACB9000401", "the mac defaults to a sensor-distinct value");
     assert.equal(defaults.stats, undefined, "an all-quiet sensor supplies no air-quality stats");
-    // externalLeakDetectedAt is not a named field on ProtectSensorConfigInterface - it lives behind the index signature (the production leak path index-reads it), so it
-    // is read here with bracket notation rather than dot access.
-    assert.equal(defaults["externalLeakDetectedAt"], null, "externalLeakDetectedAt (the leak index-read field) defaults null");
+    assert.equal(defaults.externalLeakDetectedAt, null, "externalLeakDetectedAt defaults null");
 
     // The overrides merge into the right slots, including the stats sub-objects as ProtectAirQualityMetricInterface ({ status, value }) shapes.
     const overridden = makeSensorConfig({ alarmEnabled: true, ambientLight: 42, batteryLow: true, batteryPercentage: 10, humidity: 55, humidityEnabled: true,
@@ -1611,7 +1609,7 @@ describe("A2 controller owners: the widened makeNvrConfig, the read-through clie
     assert.equal(defaults.host, "nvr.test", "the host is preserved byte-for-byte");
     assert.deepEqual(defaults.ports, { rtsp: 7447, rtsps: 7441 }, "the RTSP(S) ports are preserved byte-for-byte");
 
-    // hardwareRevision is intentionally absent so setInfo's HardwareRevision length-guard stays short-circuited (commit 2's security-system owns that marker).
+    // hardwareRevision is intentionally absent so setInfo's HardwareRevision length-guard stays short-circuited (the security-system config owns that marker).
     assert.equal((defaults as { hardwareRevision?: string }).hardwareRevision, undefined, "hardwareRevision is left unset so setInfo skips the HardwareRevision write");
 
     // The temperature option overrides systemInfo.cpu.temperature so the observer reaction can be driven to a known value.

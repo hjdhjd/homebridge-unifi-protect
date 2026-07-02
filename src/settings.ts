@@ -89,6 +89,12 @@ export const PROTECT_MOTION_DURATION = 10;
 // Default MQTT topic to use when publishing events. This is in the form of: unifi/protect/camera/event
 export const PROTECT_MQTT_TOPIC = "unifi/protect";
 
+// Duration, in milliseconds, after which an unconfirmed relay-output toggle intent is dropped. A relay output has only a faithful toggle primitive that is write-through:
+// the plugin records the state it is driving an output toward so a rapid second tap decides against where the output is headed rather than the pre-toggle controller
+// value that lags until the broadcast lands. This is the bounded safety window for that recorded intent - if the controller never confirms it within this window (a lost
+// broadcast), the intent is dropped so a stuck record can never wedge the switch. A few seconds comfortably covers the observed write-through latency plus margin.
+export const PROTECT_RELAY_COMMAND_TIMEOUT = 5000;
+
 // Default duration, in seconds, of occupancy events.
 export const PROTECT_OCCUPANCY_DURATION = 300;
 

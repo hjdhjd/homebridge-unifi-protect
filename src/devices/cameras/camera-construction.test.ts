@@ -257,7 +257,7 @@ describe("camera HKSV self-heal observer", () => {
       timeshift: { isStarted: false, stop: (): void => { /* No-op: the double owns no buffer to release on teardown. */ } },
       updateRecordingActive: (): void => { /* No-op: only reached at teardown, not by the observer. */ } } as unknown as TestStreamingDelegate["hksv"];
 
-    // The offline edge: the observer now reconciles unconditionally, so the reconcile fires here (was: a no-op gated on !isReachable). Asserted per-edge - exactly one
+    // The offline edge: the HKSV observer reconciles the timeshift on every lifecycle edge, so the reconcile fires here. Asserted per-edge - exactly one
     // call immediately after the DISCONNECTED push, BEFORE the CONNECTED push - so the assertion discriminates the offline edge rather than an end-of-test aggregate.
     store.pushCameraPatch(cameraConfig.id, { state: "DISCONNECTED" });
 

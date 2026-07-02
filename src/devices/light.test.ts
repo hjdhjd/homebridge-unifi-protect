@@ -1,6 +1,6 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * light.test.ts: The A2 reference family - behavior tests over a REAL constructed ProtectLight.
+ * light.test.ts: The reference family - behavior tests over a REAL constructed ProtectLight.
  *
  * ProtectLight is the simplest device class that still exercises the whole device template - accessory info, a primary Lightbulb service, the default-on motion
  * sensor, MQTT, and four narrow state observers - so this suite is the per-family pattern the chime / viewer / sensor / controller steps copy: a read-through
@@ -15,7 +15,7 @@
  *
  * The isolation model is per-test-fresh, not a single shared before(): a beforeEach builds a fresh light so recording.calls, the characteristic state, the observer
  * baselines, and store.observerCount are clean every test with no cross-test ordering coupling. The wake log is windowed per push via a captured baseline, so a wake
- * assertion is robust regardless of isolation. This buildLight-plus-beforeEach skeleton is the copyable A2 reference; only makeLightConfig, TestLightProjection, the
+ * assertion is robust regardless of isolation. This buildLight-plus-beforeEach skeleton is the copyable reference; only makeLightConfig, TestLightProjection, the
  * slice keys, the observer count (6), and the leaf-specific reactions are light-particular.
  */
 import { Characteristic, Service, TestLightProjection, TestRecordingDispatch, TestStateStore, makeLightConfig, makeProtectState, makeTestAccessory, makeTestNvr, settle }

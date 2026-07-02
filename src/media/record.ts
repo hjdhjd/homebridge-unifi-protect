@@ -27,10 +27,9 @@ const HKSV_HARDWARE_TRANSCODE_MARKER = "\u26A1\uFE0F ";
 
 /* The per-event state of a single HomeKit Secure Video recording event: its monotonic identity, the moment HomeKit's timeout clock began, the decline flag, and the
  * pacing / reserve telemetry accumulators surfaced in the teardown log. The lifetime of one of these IS the lifetime of one HKSV event - the recording delegate holds
- * the current event's session and reassigns a fresh one at the top of every request. Constructing it is the per-event reset: it collapses what were three scattered seed
- * sites (the delegate constructor, the request-entry block, and a mid-request block) into one establishment point, and a new event cannot inherit a prior event's
- * residual by construction. reserveMin seeds at positive infinity so the first reserve sample wins its Math.min comparison; the teardown reads it only when reserveCount
- * is non-zero, so the sentinel never reaches the log.
+ * the current event's session and reassigns a fresh one at the top of every request. Constructing it is the per-event reset: it establishes every per-event field in one
+ * place, so a new event cannot inherit a prior event's residual by construction. reserveMin seeds at positive infinity so the first reserve sample wins its Math.min
+ * comparison; the teardown reads it only when reserveCount is non-zero, so the sentinel never reaches the log.
  *
  * It is a pure data value object with no methods: the reserve-telemetry fragment is composed on the delegate (it reaches for logging and module-level settings concerns
  * that do not belong on a per-event record), reading these accumulators as plain data. id and pacingStartTime are write-once; the accumulators mutate across the event.
@@ -157,7 +156,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
       return;
     }
 
-    // Nothing further to do when disabling recording...the reconciler has handled the teardown. The enable-acknowledgment log now lives in runConfigureTimeshifting's
+    // Nothing further to do when disabling recording...the reconciler has handled the teardown. The enable-acknowledgment log lives in runConfigureTimeshifting's
     // successful-start path (its single source of truth - the configuration event), so it fires once per enable episode on whatever path first configures the timeshift.
     if(!active) {
 

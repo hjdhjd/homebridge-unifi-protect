@@ -108,7 +108,7 @@ export function livestreamRecoveryDecision(context: RecoveryContext,
   //    Reconnecting its livestream is futile, and a self-heal reboot cannot help here - the controller reports an offline camera unavailable, and a removed record
   //    has no camera to reboot - so wait rather than burn reconnect attempts toward the self-heal give-up. The attempts counter only advances on a failed reconnect,
   //    never on a wait (the deliberate counter behavior above), so this defer costs zero attempts and the give-up is unreachable for an unavailable camera by
-  //    construction. This unavailable defer is an intentional refinement of the policy.
+  //    construction.
   if(!cameraReachable) {
 
     return { forMs: LIVESTREAM_STRESS_WAIT_MS, kind: "wait" };

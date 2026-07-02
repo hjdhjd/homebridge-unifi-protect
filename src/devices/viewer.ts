@@ -26,7 +26,7 @@ export class ProtectViewer extends ProtectDevice {
   }
 
   // Read-through to the viewer projection's live STATE, narrowed to drop device identity (id/mac/modelKey). Identity flows through the dedicated non-throwing accessors
-  // (protectId/modelKey/.id/.mac), never this throwing config getter; the body is unchanged, only the surfaced type narrows.
+  // (protectId/modelKey/.id/.mac), never this throwing config getter; this override mirrors the base getter's body and narrows only the surfaced return type.
   public override get ufp(): Readonly<WithoutIdentity<ProtectViewerConfig>> {
 
     return this.device.config;
@@ -203,7 +203,7 @@ export class ProtectViewer extends ProtectDevice {
 
   // Set the liveview on a viewer device in UniFi Protect. Returns true when the controller accepted the command. The action phrase is supplied by the caller so the
   // shared command-error helper can name the specific operation (a switch toggle versus an MQTT set) in any failure it reports, and the liveview-name MQTT event is
-  // published only once the controller has accepted the change rather than unconditionally as the old path did.
+  // published only once the controller has accepted the change.
   private async setViewer(action: string, newLiveview: Nullable<string>): Promise<boolean> {
 
     if(!(await this.runDeviceCommand(action, () => this.device.update({ liveview: newLiveview })))) {
@@ -267,8 +267,8 @@ export class ProtectViewer extends ProtectDevice {
     // re-running updateLiveviewSwitchState; the set of switches itself is reconciled by the liveview-collection observe below.
     this.observeState({ key: "viewer.liveview", selector: state => viewer(state)?.liveview, title: "the active live view" }, () => this.updateLiveviewSwitchState());
 
-    // The controller's liveview collection drives which switches this viewer exposes. Re-run the full reconcile when it changes - restoring the per-refresh
-    // viewer.updateDevice the syncDevices loop ran. (The viewer.liveview observe above handles the active-selection reflection.)
+    // The controller's liveview collection drives which switches this viewer exposes. Re-run the full reconcile whenever that collection changes, so the switch set
+    // stays in step with the liveviews the controller offers. (The viewer.liveview observe above handles the active-selection reflection.)
     this.observeState({ key: "nvr.liveviews", selector: selectLiveviews, title: "the live view list" }, () => this.updateDevice());
   }
 }

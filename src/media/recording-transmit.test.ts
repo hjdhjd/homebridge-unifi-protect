@@ -42,7 +42,7 @@ after(() => {
 
 // The count of INFO/WARN log lines whose first format string contains the given fragment - the harness records the raw parameters, so we match the message template. The
 // enable-ack re-acknowledgment test counts occurrences (not a boolean .some()), because a boolean would pass after the FIRST enable regardless of whether the second
-// re-acknowledged - the count discriminates the per-enable behavior the fix restores.
+// re-acknowledged - the count discriminates the per-enable acknowledgment behavior.
 function countLogs(entries: TestLogEntry[], level: TestLogEntry["level"], fragment: string): number {
 
   return entries.filter((entry) => (entry.level === level) && (typeof entry.parameters[0] === "string") && entry.parameters[0].includes(fragment)).length;
@@ -73,8 +73,8 @@ function makeChannelProfile(host: TestCameraHost): ChannelProfile {
 // A test-local recording-process factory that hands back a FRESH configured TestRecordingProcess per create call, in sequence, recording every create.
 // homebridge-plugin-utils' TestRecordingProcessFactory returns either one shared process (which aborts at the first close, so a second event or a discontinuity restart
 // receives an inert aborted process) or fresh DEFAULTS (no segments) - neither gives fresh-CONFIGURED-per-create, which a multi-event or restart test needs so each
-// event's process yields its own segments. (An open follow-up, not this step: homebridge-plugin-utils' factory could grow a sequenced variant so this lives in the
-// library; kept test-local here to keep this single-repo.)
+// event's process yields its own segments. (A possible future refinement: homebridge-plugin-utils' factory could grow a sequenced variant so this lives in the
+// library; it is kept test-local here for now.)
 function makeSequencedRecordingFactory(inits: TestRecordingProcessInit[]): RecordingProcessFactory & { createCalls: { process: TestRecordingProcess }[] } {
 
   let index = 0;
@@ -445,9 +445,9 @@ describe("recording delegate transmit-path behavior", () => {
 
   // Test G - the enable-acknowledgment lifecycle. The "HKSV: ..." config summary fires once per enable EPISODE (not once per delegate lifetime, and not once per
   // reconcile): exactly once on the first successful configure of an episode, again on a true re-enable after a disable, never on a redundant within-episode reconcile.
-  // This pins both halves of the log-lifecycle fix - the relocation into the reconcile's successful-start path (so the trigger is the configuration event) and the reset
-  // on disable (so the next enable re-acknowledges). We count occurrences rather than a boolean .some(): the boolean would pass after the FIRST enable regardless of
-  // whether the second re-acknowledged, so it cannot discriminate the bug this fix corrects (a set-once-never-cleared flag logged only the first enable).
+  // This pins both halves of the acknowledgment lifecycle - the trigger on the reconcile's successful-start path (so the trigger is the configuration event) and the
+  // reset on disable (so the next enable re-acknowledges). We count occurrences rather than a boolean .some(): the boolean would pass after the FIRST enable regardless
+  // of whether the second re-acknowledged, so it cannot discriminate a set-once-never-cleared flag that logs only the first enable.
   test("acknowledges the recording configuration on each enable episode, not within an episode and not only the first", async () => {
 
     const ffmpegProcess = new TestRecordingProcess({ initSegment: Buffer.from("init"), segments: [ Buffer.from("seg1"), Buffer.from("seg2") ] });

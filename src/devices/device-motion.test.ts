@@ -74,7 +74,7 @@ function buildMotionDevice(harnessOptions: { userOptions?: string[] } = {}): {
   const projection = new TestSensorProjection(sensorConfig.id, store) as unknown as Sensor;
   const device = new TestBaseDevice(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection);
 
-  // makeTestNvr was called with mqtt: true, so the recording double is present; a guard narrows Nullable<TestMqttClient> to the non-null type without an assertion or a
+  // makeTestNvr was called with mqtt: true, so the MQTT client double is present; a guard narrows Nullable<TestMqttClient> to the non-null type without an assertion or a
   // same-type cast (either of which the house lint preset forbids in opposite directions), and fails loudly if the opt-in ever stops installing the double.
   if(!mqtt) {
 

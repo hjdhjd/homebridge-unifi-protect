@@ -38,7 +38,7 @@ class TestProtectDevice extends ProtectDevice {
 // Construct a real ProtectDevice against the minimal mocks its constructor and the methods under test actually read: the controller-health flag (client.connection),
 // the device record (read non-throwing via peek()), the HAP StatusActive identity (wired to the class the TestAccessory keyed its characteristics on),
 // and a real AbortSignal for composeSignals. ProtectBase binds platform.debug at construction, so that one member must be callable. The total isReachable reads the
-// device's online state through peek().state (not the old isOnline getter), so the lever is the record's state field, and a vanished record (present false -> peek()
+// device's online state through peek().state, so the lever is the record's state field, and a vanished record (present false -> peek()
 // undefined) is the unreachable-without-throwing case. Returns the mutable health / record handles so a test can flip either input and re-read the real getter. The casts
 // are confined to this seam; the instance itself is the production class.
 const makeReachableDevice = (accessory: TestAccessory):

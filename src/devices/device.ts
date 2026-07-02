@@ -4,12 +4,12 @@
  */
 import type { API, CharacteristicValue, Service, WithUUID } from "homebridge";
 import type { AcquireServiceTarget, HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
-import type { Camera, Chime, Light, ProtectCameraConfig, ProtectState, Sensor, Viewer } from "unifi-protect";
+import type { Camera, Chime, Light, ProtectCameraConfig, ProtectState, Relay, Sensor, Viewer } from "unifi-protect";
 import { PROTECT_MOTION_DURATION, PROTECT_OCCUPANCY_DURATION} from "../settings.ts";
 import type { ProtectAccessory, ProtectDeviceConfigTypes, WithoutIdentity } from "../types.ts";
 import { ProtectReservedNames, exhaustiveGuard } from "../types.ts";
 import { acquireService, composeSignals, sanitizeName, validService } from "homebridge-plugin-utils";
-import { isDeviceOnline, selectCamera, selectChime, selectLight, selectSensor, selectViewer } from "unifi-protect";
+import { isDeviceOnline, selectCamera, selectChime, selectLight, selectRelay, selectSensor, selectViewer } from "unifi-protect";
 import type { ObserverWakePayload } from "../diagnostics.ts";
 import { ProtectBase } from "./device-base.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
@@ -103,8 +103,8 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
   protected readonly controller: AbortController;
   // The live projection for this device. Holds (client, id), reads through to the store on every config access. Set once at construction; never reassigned -
   // the accessory's identity is its MAC, stable across reboots, so the handle never goes stale. Injected by the NVR root when constructing the accessory, which
-  // knows the concrete projection type at the point of adoption (Camera | Light | Sensor | Chime | Viewer); subclasses narrow at their own constructor.
-  protected readonly device: Camera | Light | Sensor | Chime | Viewer;
+  // knows the concrete projection type at the point of adoption (Camera | Light | Sensor | Chime | Viewer | Relay); subclasses narrow at their own constructor.
+  protected readonly device: Camera | Light | Sensor | Chime | Viewer | Relay;
   public hints: ProtectHints;
   // The per-accessory abort signal. Composed: aborts when EITHER the per-accessory controller is aborted OR the NVR's terminal shutdown signal fires. Use this when
   // spawning per-accessory observe loops, so plugin shutdown and per-accessory teardown both unwind the loop cleanly.
@@ -113,7 +113,7 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
 
   // The constructor captures the accessory and live projection handle, wires the per-accessory abort controller and its composed signal, and seeds the hints and timers
   // state; device configuration is wired separately by the NVR root after construction.
-  constructor(nvr: ProtectNvr, accessory: ProtectAccessory, device: Camera | Light | Sensor | Chime | Viewer) {
+  constructor(nvr: ProtectNvr, accessory: ProtectAccessory, device: Camera | Light | Sensor | Chime | Viewer | Relay) {
 
     super(nvr);
 
@@ -600,9 +600,9 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
     return true;
   }
 
-  // Set the status indicator light on a device. statusLedCommand resolves the device-appropriate write-through update (cameras and sensors use ledSettings; Protect
-  // lights override it), and the shared command-error helper turns its throw-or-succeed contract into the boolean the status-indicator switch onSet and the camera
-  // operating-mode indicator branch on.
+  // Set the status indicator light on a device. statusLedCommand resolves the device-appropriate write-through update (cameras, sensors, and relays use ledSettings;
+  // Protect lights override it), and the shared command-error helper turns its throw-or-succeed contract into the boolean the status-indicator switch onSet and the
+  // camera operating-mode indicator branch on.
   public async setStatusLed(value: boolean): Promise<boolean> {
 
     return this.runDeviceCommand("turn the status indicator light " + (value ? "on" : "off"), this.statusLedCommand(value));
@@ -689,8 +689,8 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
       () => this.syncNameFromController());
 
     // Device information (model, serial, firmware) is set once at configure; the firmware revision is the only field that changes at runtime, on a Protect firmware
-    // update. A narrow observe on that slice refreshes the AccessoryInformation service when (and only when) firmware changes - restoring the per-refresh
-    // configureInfo the syncDevices loop ran.
+    // update. A narrow observe on that slice refreshes the AccessoryInformation service when (and only when) firmware changes, re-running configureInfo at
+    // firmware-change cadence.
     this.observeState({ key: "device.firmwareVersion", selector: state => this.deviceConfigSelector()(state)?.firmwareVersion, title: "device information" },
       () => this.configureInfo());
   }
@@ -714,7 +714,7 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
   }
 
   // Resolve the by-id config selector for this device's category, so the base can observe a shared field (the name) without each leaf re-declaring the selector. The
-  // projection already carries its modelKey and id; we map that to the matching memoized by-id selector. The device projection is never the NVR singleton, so the five
+  // projection already carries its modelKey and id; we map that to the matching memoized by-id selector. The device projection is never the NVR singleton, so the six
   // device categories are exhaustive and the default is unreachable.
   private deviceConfigSelector(): (state: ProtectState) => Readonly<ProtectDeviceConfigTypes> | undefined {
 
@@ -735,6 +735,10 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
       case "light":
 
         return selectLight(this.device.id);
+
+      case "relay":
+
+        return selectRelay(this.device.id);
 
       case "sensor":
 
@@ -762,9 +766,8 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
     return config?.name ?? config?.marketName ?? this.accessoryName;
   }
 
-  // Sync the controller's device name into HomeKit when the user enabled name syncing. Restores the controller-side-rename propagation that the dissolved event
-  // pipeline used to perform: the cooked display name is the syncedName derivation above, and we only touch HomeKit (and log) when it actually differs from the current
-  // accessory name, so the idempotent re-read on an unrelated name-slice yield is silent.
+  // Sync the controller's device name into HomeKit when the user enabled name syncing. The cooked display name is the syncedName derivation above, and we only touch
+  // HomeKit (and log) when it actually differs from the current accessory name, so the idempotent re-read on an unrelated name-slice yield is silent.
   protected syncNameFromController(): void {
 
     if(!this.hints.syncName) {
@@ -882,16 +885,16 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
   }
 
   // Build the write-through command that sets this device's status indicator light. The command is returned as a thunk so the update is issued against a narrowed
-  // projection: cameras and sensors both carry ledSettings.isEnabled, so the base serves both by narrowing this.device through its modelKey discriminant; the light
-  // projection has no ledSettings and overrides this with its lightDeviceSettings command. Returning the thunk (rather than a bare payload) is what lets each device kind
-  // issue a typed update against its own config - the base's five-way device union could not.
+  // projection: cameras, sensors, and relays all carry ledSettings.isEnabled, so the base serves them by narrowing this.device through its modelKey discriminant; the
+  // light projection has no ledSettings and overrides this with its lightDeviceSettings command. Returning the thunk (rather than a bare payload) is what lets each
+  // device kind issue a typed update against its own config - the base's six-way device union could not.
   protected statusLedCommand(value: boolean): () => Promise<unknown> {
 
     const device = this.device;
 
-    // Cameras and sensors share the ledSettings.isEnabled command; lights override this method. Chime and viewer projections expose no status indicator and never reach
-    // here, so the fall-through is an inert no-op that keeps the signature total.
-    if((device.modelKey === "camera") || (device.modelKey === "sensor")) {
+    // Cameras, sensors, and relays share the ledSettings.isEnabled command; lights override this method. Chime and viewer projections expose no status indicator and
+    // never reach here, so the fall-through is an inert no-op that keeps the signature total.
+    if((device.modelKey === "camera") || (device.modelKey === "sensor") || (device.modelKey === "relay")) {
 
       return () => device.update({ ledSettings: { isEnabled: value } });
     }
@@ -908,7 +911,7 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
     return (config !== undefined) && ("ledSettings" in config);
   }
 
-  // Utility function to return the current state of the device status indicator. This works for cameras and sensors, but Protect lights control it differently.
+  // Utility function to return the current state of the device status indicator. This works for cameras, sensors, and relays, but Protect lights control it differently.
   public get statusLed(): boolean {
 
     if(!this.hasLedSettings()) {

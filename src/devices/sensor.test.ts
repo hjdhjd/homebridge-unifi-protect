@@ -1,12 +1,11 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * sensor.test.ts: The A2 family-layer capstone - behavior tests over a REAL constructed ProtectSensor.
+ * sensor.test.ts: Behavior tests over a REAL constructed ProtectSensor.
  *
- * ProtectSensor is the last simple ProtectDevice family with no real-construction coverage, so this suite is the device-* sequence's capstone: it constructs a REAL
- * ProtectSensor against the harness doubles and nets its full sensor-SPECIFIC public surface plus the COMPOSITION of the base capabilities it wires - never the base
- * internals. The base-capability concern nets (device-motion / device-statusled / device-info / device-hints) own the motion switch / trigger / occupancy, the
- * status-LED routing, the info writes / observers, and the hints derivation; this suite asserts only that the sensor family wires them (for example, the MotionSensor
- * service appears when motionSettings.isEnabled and the userOptions opt in) - it does not re-net their internals.
+ * This suite constructs a REAL ProtectSensor against the harness doubles and nets its full sensor-SPECIFIC public surface plus the COMPOSITION of the base capabilities
+ * it wires - never the base internals. The base-capability concern nets (device-motion / device-statusled / device-info / device-hints) own the motion switch / trigger /
+ * occupancy, the status-LED routing, the info writes / observers, and the hints derivation; this suite asserts only that the sensor family wires them (for example, the
+ * MotionSensor service appears when motionSettings.isEnabled and the userOptions opt in) - it does not re-net their internals.
  *
  * The sensor-specific surface: the always-present Battery service (configureBatteryService is unconditional, and updateBatteryStatus writes BatteryLevel /
  * StatusLowBattery), the five per-mode services (alarm sound / ambient light / contact-via-mountType / humidity / temperature) with their read-through getters, the
@@ -18,8 +17,11 @@
  *
  * The LOAD-BEARING multi-wake: the third observer (sensor.config) selects the WHOLE sensor record (selectSensor(id)), and pushSensorPatch replaces that record on every
  * patch, so sensor.config wakes on EVERY push - in ADDITION to any narrow observer (sensor.motionDetectedAt / sensor.tamperingDetectedAt) whose field changed. So a
- * narrow-field push wakes a SET in registration order: the base two (device.name, device.firmwareVersion), then sensor.motionDetectedAt, sensor.tamperingDetectedAt,
- * sensor.config. A single-observer expectation would be wrong; every wake assertion is the registration-ordered set including the accessoryId on each payload.
+ * narrow-field push wakes exactly the changed narrow observer plus sensor.config, in registration order (the narrow observer precedes config): a motionDetectedAt push
+ * wakes [sensor.motionDetectedAt, sensor.config] and a tamperingDetectedAt push wakes [sensor.tamperingDetectedAt, sensor.config], while a settings-only push wakes
+ * sensor.config alone. The full registration order is device.name, device.firmwareVersion, sensor.motionDetectedAt, sensor.tamperingDetectedAt, sensor.config, but a
+ * narrow push never wakes the base two or the unchanged narrow observer. A single-observer expectation would be wrong; every wake assertion is the
+ * registration-ordered set including the accessoryId on each payload.
  *
  * The falsy-motionDetectedAt case is a TWO-STEP: the carrier defaults motionDetectedAt to 0, so a bare 0 push is no change (no wake). We first push a truthy timestamp
  * (settle, snapshot+reset the wake window AND a recording baseline), THEN push 0 - the truthy->0 change genuinely wakes the observer while the production
@@ -107,7 +109,8 @@ describe("real ProtectSensor construction and family behavior", () => {
   });
 
   // The default fixture is the all-quiet sensor (every *Settings.isEnabled false, mountType "none", a healthy battery, no stats), so the construction test asserts the
-  // no-per-mode baseline and the "No sensors enabled." log. The per-mode / leak / observer tests build their own variants with the relevant settings flipped.
+  // no-per-mode baseline and the ABSENCE of any enabled-diff log at construction, reserving the "No sensors enabled." line for the transition test. The per-mode /
+  // leak / observer tests build their own variants with the relevant settings flipped.
   beforeEach(async () => {
 
     ({ accessory, logEntries, mqtt, projection, recording, sensor, store } = buildSensor());
