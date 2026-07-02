@@ -1541,8 +1541,11 @@ export function makeViewerConfig(options: { id?: string; liveview?: Nullable<str
  *
  * @param options - alarmEnabled: the alarm settings toggle (defaults false); alarmTriggeredAt: the alarm-trip timestamp (defaults null); ambientLight: the ambient
  *                  light reading folded into stats.light.value (omitted, no light stat); batteryLow / batteryPercentage: the battery status (default false / 100);
- *                  externalLeakDetectedAt: the external-leak timestamp the leak path index-reads (defaults null); hardwareRevision: the hardware revision the device-info
- *                  HardwareRevision write reads (OPT-IN, omitted by default so setInfo's length-guard short-circuits); humidity: the humidity reading folded into
+ *                  externalLeakDetectedAt: the external-leak timestamp the leak path index-reads (defaults null); glassBreak: whether the controller advertises the
+ *                  glass-break capability channel in featureFlags.glassBreak - the alarm-family glass-break gate's capability discriminator (defaults false, channel
+ *                  absent); glassBreakEnabled: the glass-break settings toggle folded into glassBreakSettings.isEnabled (defaults false); hardwareRevision: the hardware
+ *                  revision the device-info HardwareRevision write reads (OPT-IN, omitted by default so setInfo's length-guard short-circuits); humidity: the humidity
+ *                  reading folded into
  *                  stats.humidity.value (omitted, no humidity stat); humidityEnabled: the humidity settings toggle (defaults false); id: identity override (defaults
  *                  "test-sensor-1"); isConnected: the connection flag (defaults true); isMotionDetected: the Motion.* applicability property (defaults true); isOpened:
  *                  the contact state (defaults null); leakChannelNames: the water-leak channels the controller advertises in featureFlags.waterLeak.channelNames - the
@@ -1557,10 +1560,10 @@ export function makeViewerConfig(options: { id?: string; liveview?: Nullable<str
  * @returns a sensor config record the construction, base-capability, and sensor-family paths read as real.
  */
 export function makeSensorConfig(options: { alarmEnabled?: boolean; alarmTriggeredAt?: Nullable<number>; ambientLight?: number; batteryLow?: boolean;
-  batteryPercentage?: Nullable<number>; externalLeakDetectedAt?: Nullable<number>; hardwareRevision?: string; humidity?: number; humidityEnabled?: boolean; id?: string;
-  isConnected?: boolean; isMotionDetected?: boolean; isOpened?: Nullable<boolean>; leakChannelNames?: string[]; leakDetectedAt?: Nullable<number>;
-  leakExternalEnabled?: boolean; leakInternalEnabled?: boolean; ledEnabled?: boolean; lightEnabled?: boolean; mac?: string; motionDetectedAt?: number;
-  motionEnabled?: boolean; mountType?: string;
+  batteryPercentage?: Nullable<number>; externalLeakDetectedAt?: Nullable<number>; glassBreak?: boolean; glassBreakEnabled?: boolean; hardwareRevision?: string;
+  humidity?: number; humidityEnabled?: boolean; id?: string; isConnected?: boolean; isMotionDetected?: boolean; isOpened?: Nullable<boolean>; leakChannelNames?: string[];
+  leakDetectedAt?: Nullable<number>; leakExternalEnabled?: boolean; leakInternalEnabled?: boolean; ledEnabled?: boolean; lightEnabled?: boolean; mac?: string;
+  motionDetectedAt?: number; motionEnabled?: boolean; mountType?: string;
   name?: string; tamperingDetectedAt?: Nullable<number>; temperature?: number; temperatureEnabled?: boolean; } = {}): ProtectSensorConfig {
 
   const name = options.name ?? "Test Sensor";
@@ -1597,10 +1600,17 @@ export function makeSensorConfig(options: { alarmEnabled?: boolean; alarmTrigger
     displayName: name,
     externalLeakDetectedAt: options.externalLeakDetectedAt ?? null,
 
-    // The minimal sensor featureFlags the leak-policy leaf reads: the water-leak capability the controller advertises, keyed by channelNames. Defaults to [] (no leak
-    // capability), so the all-quiet carrier exposes no leak service and registers no leak MQTT get, matching a no-leak device (USL-Entry) with zero per-test edits.
-    featureFlags: { waterLeak: { channelCount: (options.leakChannelNames ?? []).length, channelNames: options.leakChannelNames ?? [] } },
+    // The minimal sensor featureFlags the leak-policy leaf and the alarm-family gate read: the water-leak capability the controller advertises (keyed by channelNames,
+    // defaulting to [] so the all-quiet carrier exposes no leak service and registers no leak MQTT get), plus the glass-break channel folded in ONLY when a test opts in,
+    // so the alarm-family glass-break gate (featureFlags.glassBreak !== undefined) stays absent by default and present-with-capability on demand.
+    featureFlags: { waterLeak: { channelCount: (options.leakChannelNames ?? []).length, channelNames: options.leakChannelNames ?? [] },
+      ...(options.glassBreak ? { glassBreak: { channelCount: 1 } } : {}) },
     firmwareVersion: "5.0.0",
+
+    // The glass-break sensitivity settings are a REQUIRED wire field, so they are emitted UNCONDITIONALLY: the alarm-family glass-break gate reads
+    // glassBreakSettings.isEnabled, which would throw a TypeError were the object absent the moment a test set the glassBreak channel present. Quiet defaults keep every
+    // existing baseline unchanged; the isEnabled toggle is the only per-test lever.
+    glassBreakSettings: { isEnabled: options.glassBreakEnabled ?? false, sensitivity: 0, sensitivityWhenArmed: 0 },
     humiditySettings: thresholdSettings(options.humidityEnabled ?? false),
     id: options.id ?? "test-sensor-1",
     isConnected: options.isConnected ?? true,

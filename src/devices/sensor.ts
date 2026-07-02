@@ -26,6 +26,47 @@ export function sensorTamperState(tamperingDetectedAt: number | null): boolean {
   return tamperingDetectedAt !== null;
 }
 
+/**
+ * Map a sensor's alarm-trigger timestamp to its HomeKit ContactSensorState: alarm when the controller has recorded a trigger time, clear when it has not. The single
+ * source of truth is the projection's alarmTriggeredAt, which the controller clears only on explicit user action in the Protect app (never automatically). Both alarm
+ * twins - the alarm-sound and glass-break contact sensors - read through this one predicate, so their read-through getter and reactive push can never disagree on what
+ * "alarm" means. Kept deliberately distinct from sensorTamperState because it reads a different field and capability and may later honor alarmSilencedAt; it is not
+ * collapsed into a generic latched-field predicate.
+ *
+ * @param alarmTriggeredAt - The sensor's alarmTriggeredAt: the epoch-ms time an alarm was last triggered, or null when none has been.
+ *
+ * @returns true when the sensor should report an alarm to HomeKit.
+ */
+export function sensorAlarmState(alarmTriggeredAt: number | null): boolean {
+
+  return alarmTriggeredAt !== null;
+}
+
+// The static description of the alarm family's HomeKit contact sensors - the single source for which alarm-family services exist and their gate, display label, log
+// subject, MQTT topic, name suffix, and reserved subtype. Both alarm twins read the one alarmTriggeredAt field, so this descriptor is read by the create/gate path
+// (configureAlarmContactSensors), the reactive push (updateAlarmState), and the MQTT gets (configureMqtt), keeping the enabled-sensors log, the services actually
+// created, and the topics registered from ever disagreeing. label is the enabled-sensors noun phrase and log is the transition-log subject word - two distinct display
+// strings for two distinct sentences, so both are sourced here. A future alarm-family member is one more row.
+interface AlarmContactDescriptor {
+
+  readonly gate: (config: Readonly<WithoutIdentity<ProtectSensorConfig>>) => boolean;
+  readonly label: string;
+  readonly log: string;
+  readonly mqtt: string;
+  readonly name: string;
+  readonly subtype: string;
+}
+
+// The alarm-family rows, alarm sound first so the enabled-sensors log preserves its historical position. Each gate mirrors its twin's controller enable signal: the
+// alarm-sound settings toggle, and the glass-break capability channel being present AND its own settings toggle enabled.
+const SENSOR_ALARM_CONTACTS: readonly AlarmContactDescriptor[] = [
+
+  { gate: (config) => config.alarmSettings.isEnabled, label: "alarm sound", log: "Alarm", mqtt: "alarm", name: " Alarm Sound",
+    subtype: ProtectReservedNames.CONTACT_SENSOR_ALARM_SOUND },
+  { gate: (config) => (config.featureFlags.glassBreak !== undefined) && config.glassBreakSettings.isEnabled, label: "glass break", log: "Glass break",
+    mqtt: "glassbreak", name: " Glass Break", subtype: ProtectReservedNames.CONTACT_SENSOR_GLASS_BREAK }
+];
+
 export class ProtectSensor extends ProtectDevice {
 
   private enabledSensors: string[];
@@ -112,11 +153,8 @@ export class ProtectSensor extends ProtectDevice {
     // Update the battery status for the accessory.
     this.updateBatteryStatus();
 
-    // Configure the alarm sound sensor.
-    if(this.configureAlarmSoundSensor()) {
-
-      currentEnabledSensors.push("alarm sound");
-    }
+    // Configure the alarm-family contact sensors (alarm sound and glass break), threading updateDevice's own isInitialized exactly as the leak and motion paths do.
+    currentEnabledSensors.push(...this.configureAlarmContactSensors(isInitialized));
 
     // Configure the ambient light sensor.
     if(this.configureAmbientLightSensor()) {
@@ -198,39 +236,62 @@ export class ProtectSensor extends ProtectDevice {
     }
   }
 
-  // Configure the alarm sound sensor for HomeKit.
-  private configureAlarmSoundSensor(): boolean {
+  // Configure the alarm-family contact sensors (alarm sound and glass break) for HomeKit. Both twins read the single alarmTriggeredAt field through the shared
+  // alarmDetected getter, so a single steady-state VALUE writer - the dedicated alarmTriggeredAt observer via updateAlarmState - owns their ContactSensorState after the
+  // create-time seed here. Each descriptor row is validated and acquired independently; the returned labels feed the enabled-sensors log so it can never disagree with
+  // the services actually created.
+  private configureAlarmContactSensors(isInitialized = true): string[] {
 
-    // Validate whether we should have this service enabled.
-    if(!this.validService(this.hap.Service.ContactSensor, this.ufp.alarmSettings.isEnabled, ProtectReservedNames.CONTACT_SENSOR_ALARM_SOUND)) {
+    const config = this.ufp;
+    const enabled: string[] = [];
 
-      return false;
+    for(const descriptor of SENSOR_ALARM_CONTACTS) {
+
+      // Validate whether we should have this service enabled.
+      if(!this.validService(this.hap.Service.ContactSensor, descriptor.gate(config), descriptor.subtype)) {
+
+        continue;
+      }
+
+      // Detect creation by presence before we acquire: a subtype not yet on this accessory will be created by acquireService, so this is true exactly when the service is
+      // new to its lifetime - the first configure or a late capability creating it - and false for a service restored across a restart or already present from an earlier
+      // reconcile. This drives the once-per-lifetime VALUE seed below alongside the first-configure signal.
+      const created = !this.accessory.getServiceById(this.hap.Service.ContactSensor, descriptor.subtype);
+      const service = this.acquireService(this.hap.Service.ContactSensor, this.accessoryName + descriptor.name, descriptor.subtype);
+
+      // Fail gracefully.
+      if(!service) {
+
+        this.log.error("Unable to add " + descriptor.label + " contact sensor.");
+
+        continue;
+      }
+
+      // Apply the connection and tamper status characteristics every reconcile, exactly like every other sensor service: this unconditional call is the sole per-device
+      // StatusActive driver when a device goes offline while the controller stays healthy. It does not touch ContactSensorState, so the alarm VALUE is not re-pushed.
+      this.configureStateCharacteristics(service);
+
+      // Seed the alarm VALUE bits exactly once per service lifetime - the first configure (isInitialized false) or a late capability creating the service (created): the
+      // onGet read-through, the initial characteristic value from a guaranteed-boolean local, and the initial MQTT publish. Steady-state updates are then owned by the
+      // dedicated alarmTriggeredAt observer, so the alarm VALUE leaves the per-reconcile path entirely.
+      if(!isInitialized || created) {
+
+        const detected = this.alarmDetected;
+
+        this.lastAlarm = detected;
+
+        // Retrieve the current contact sensor state when requested.
+        service.getCharacteristic(this.hap.Characteristic.ContactSensorState).onGet(() => this.alarmDetected);
+
+        // Seed the sensor and publish the initial state.
+        service.updateCharacteristic(this.hap.Characteristic.ContactSensorState, detected);
+        this.publish(descriptor.mqtt, detected.toString());
+      }
+
+      enabled.push(descriptor.label);
     }
 
-    // Acquire the service.
-    const service = this.acquireService(this.hap.Service.ContactSensor, this.accessoryName + " Alarm Sound", ProtectReservedNames.CONTACT_SENSOR_ALARM_SOUND);
-
-    // Fail gracefully.
-    if(!service) {
-
-      this.log.error("Unable to add alarm sound contact sensor.");
-
-      return false;
-    }
-
-    // Retrieve the current contact sensor state when requested.
-    service.getCharacteristic(this.hap.Characteristic.ContactSensorState).onGet(() => this.alarmDetected);
-
-    // Update the sensor.
-    service.updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.alarmDetected);
-
-    // Update the state characteristics.
-    this.configureStateCharacteristics(service);
-
-    // Publish the state.
-    this.publish("alarm", this.alarmDetected.toString());
-
-    return true;
+    return enabled;
   }
 
   // Configure the ambient light sensor for HomeKit.
@@ -513,22 +574,12 @@ export class ProtectSensor extends ProtectDevice {
     return sensorTamperState(this.fromRecord((config) => config.tamperingDetectedAt, null));
   }
 
-  // Get the current alarm alert detection information. The record read is non-throwing - an absent record reports no alarm - while the state-change bookkeeping and log
-  // stay outside the read lambda.
+  // The sensor's HomeKit alarm-family state, read non-throwing through the record. An absent record (a sensor lingering in the removal grace) reports no alarm rather
+  // than throwing; the projection's alarmTriggeredAt is mapped through the shared sensorAlarmState predicate so the onGet, the create-time seed, the MQTT get, and the
+  // reactive push can never disagree on what "alarm" means. A pure read-through: the transition log and the lastAlarm bookkeeping live in updateAlarmState.
   private get alarmDetected(): boolean {
 
-    // Return true if we are not null, meaning the alarm has sounded.
-    const value = this.fromRecord((config) => config.alarmTriggeredAt !== null, false);
-
-    // Save the state change and inform the user.
-    if(value !== this.lastAlarm) {
-
-      this.lastAlarm = value;
-
-      this.log.info("Alarm %sdetected.", value ? "" : "no longer ");
-    }
-
-    return value;
+    return sensorAlarmState(this.fromRecord((config) => config.alarmTriggeredAt, null));
   }
 
   // Get the current ambient light information. An absent record reports the stats sentinel rather than throwing.
@@ -583,17 +634,22 @@ export class ProtectSensor extends ProtectDevice {
 
   // Configure MQTT capabilities for sensors. The leak get handlers are NOT registered here: leak is the one sensor mode whose per-channel enablement is model-aware, so
   // its get registration is folded into configureLeakSensor's per-channel loop (once-guarded, and released by the channel's own unsubscribe when it is disabled). The
-  // remaining five GETs are always-on and registered unconditionally here.
+  // remaining six GETs are always-on and registered unconditionally here; the two alarm-family gets (alarm sound and glass break) are driven from the shared descriptor,
+  // so their topics and labels are single-sourced with the services they read - both reading through the one alarmDetected getter.
   private configureMqtt(): void {
 
-    this.subscribeGet("alarm", "alarm detected", () => this.alarmDetected.toString());
+    for(const descriptor of SENSOR_ALARM_CONTACTS) {
+
+      this.subscribeGet(descriptor.mqtt, descriptor.label + " detected", () => this.alarmDetected.toString());
+    }
+
     this.subscribeGet("ambientlight", "ambient light", () => this.ambientLight.toString());
     this.subscribeGet("contact", "contact sensor", () => this.contact.toString());
     this.subscribeGet("humidity", "humidity", () => this.humidity.toString());
     this.subscribeGet("temperature", "temperature", () => this.temperature.toString());
   }
 
-  // Spawn the sensor's narrow-selector observers. super spawns the two universal observers (name sync and firmware/device-info refresh); the sensor adds three
+  // Spawn the sensor's narrow-selector observers. super spawns the two universal observers (name sync and firmware/device-info refresh); the sensor adds four
   // reactions, each waking only on its own slice through the store's reference dedup.
   protected override spawnObservers(): void {
 
@@ -618,10 +674,19 @@ export class ProtectSensor extends ProtectDevice {
     this.observeState({ key: "sensor.tamperingDetectedAt", selector: state => sensor(state)?.tamperingDetectedAt, title: "tamper detection" },
       () => this.updateTamperState());
 
+    // The reactive alarm-family push: when the controller's alarmTriggeredAt changes, re-write ContactSensorState across each present alarm-family contact sensor. The
+    // alarm family now joins tamper as a dedicated-observer latched field the controller clears only on explicit user action; registered unconditionally so it is live
+    // the instant a late capability creates the service (updateAlarmState is a safe no-op while no alarm-family service exists). The onGet already reads through, so this
+    // is purely the push that keeps HomeKit current between reads.
+    this.observeState({ key: "sensor.alarmTriggeredAt", selector: state => sensor(state)?.alarmTriggeredAt, title: "alarm detection" }, () => this.updateAlarmState());
+
     // The remaining sensor reactions are a full service reconciliation (battery, the per-mode sensor services, the status indicator, StatusActive). They key off many
     // settings sub-objects and live stat values, so we observe the whole sensor record and re-derive - reproducing a refresh-on-any-change, but now structurally silent
-    // when nothing changed (the store's reference dedup). Decomposing this into per-service observers, which would also retire the idempotent StatusTampered re-apply the
-    // dedicated tamper observer above already owns, is a tracked follow-up.
+    // when nothing changed (the store's reference dedup). The alarm family and tamper now own their VALUE pushes through their dedicated observers above; what this broad
+    // observer still uniquely provides is each service's per-device StatusActive push (via the unconditional configureStateCharacteristics) and the runtime
+    // capability-flip existence reconcile. Decomposing this into per-service observers - which would also retire the idempotent StatusTampered re-apply the dedicated
+    // tamper observer already owns - is a tracked follow-up; any such retirement MUST first add a sensor.state -> refreshReachability availability observer to preserve
+    // the per-device StatusActive push this broad observer currently provides.
     this.observeState({ key: "sensor.config", selector: sensor, title: "sensor settings" }, () => this.updateDevice());
   }
 
@@ -638,5 +703,36 @@ export class ProtectSensor extends ProtectDevice {
         service.updateCharacteristic(this.hap.Characteristic.StatusTampered, tampered);
       }
     }
+  }
+
+  // Push the alarm-family state across each present alarm-family contact sensor, the twin-in-idiom of updateTamperState but TARGETED by subtype rather than fanned across
+  // every service. One read of the projection field, one write per present descriptor's service; the transition log is sourced from the PRESENT descriptor's subject word
+  // so the sentence is correct-by-construction (never a featureFlags.glassBreak probe, which is present even for a glass-break-DISABLED device) and fires only when a
+  // service exists (a device with no alarm-family service never logs). The subtype-scoped getServiceById NEVER touches the plain mount-type contact sensor or a moisture
+  // ContactSensor, so the targeted push cannot corrupt them.
+  private updateAlarmState(): void {
+
+    const detected = this.alarmDetected;
+
+    for(const descriptor of SENSOR_ALARM_CONTACTS) {
+
+      const service = this.accessory.getServiceById(this.hap.Service.ContactSensor, descriptor.subtype);
+
+      if(!service) {
+
+        continue;
+      }
+
+      // Inform the user on a state change, from the present descriptor's subject word.
+      if(detected !== this.lastAlarm) {
+
+        this.log.info("%s %sdetected.", descriptor.log, detected ? "" : "no longer ");
+      }
+
+      service.updateCharacteristic(this.hap.Characteristic.ContactSensorState, detected);
+      this.publish(descriptor.mqtt, detected.toString());
+    }
+
+    this.lastAlarm = detected;
   }
 }

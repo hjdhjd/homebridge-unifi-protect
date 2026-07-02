@@ -64,6 +64,7 @@ The topics and messages that `homebridge-unifi-protect` publishes are:
 | `chime`               | Chime               | A number between 0 and 100 that represents the current volume of the chime as a percentage.
 | `contact`             | Sensor              | `true` or `false` when a UniFi Protect sensor detects contact. Note: UniFi Protect will set this state differently depending on the placement type you select in the Protect app or the Protect webUI.
 | `doorbell`            | Camera              | `true` when the doorbell is rung. Each press of the doorbell will trigger a new event.
+| `glassbreak`          | Sensor              | `true` or `false` when a UniFi Protect sensor detects the sound of breaking glass.
 | `humidity`            | Sensor              | Humidity percentage level on a UniFi Protect sensor.
 | `leak`                | Sensor              | `true` or `false` when a UniFi Protect sensor detects a leak.
 | `leak-external`       | Sensor              | `true` or `false` when a UniFi Protect sensor detects a leak using the external leak sensor.
@@ -97,6 +98,7 @@ The topics that `homebridge-unifi-protect` subscribes to are:
 | `chime/set`             | Chime               | A number between 0 and 100 that will set the volume level for a UniFi Protect doorbell.
 | `contact/get`           | Sensor              | `true` will trigger a publish event of the current contact state for a UniFi Protect sensor. Note: UniFi Protect will set this state differently depending on the placement type you select in the Protect app or the Protect webUI.
 | `doorbell/set`          | Doorbell            | `true` will trigger the camera (if set as doorbell) or doorbell to generate a ring event.
+| `glassbreak/get`        | Sensor              | `true` will trigger a publish event of the current glass break state for a UniFi Protect sensor.
 | `humidity/get`          | Sensor              | `true` will trigger a publish event of the humidity level, as a percentage, for a UniFi Protect sensor.
 | `leak/get`              | Sensor              | `true` will trigger a publish event of the current leak sensor state for a UniFi Protect sensor.
 | `light/get`             | Light               | `true` or `false` when a UniFi Protect light is on or off.

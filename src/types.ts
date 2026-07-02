@@ -118,6 +118,7 @@ export const ProtectReservedNames = {
   CONTACT_MOTION_SMARTDETECT_LICENSE: "ContactMotionSmartDetectLicense",
   CONTACT_SENSOR: "ContactSensor",
   CONTACT_SENSOR_ALARM_SOUND: "ContactAlarmSound",
+  CONTACT_SENSOR_GLASS_BREAK: "ContactGlassBreak",
 
   // Manage our leak sensor types.
   LEAKSENSOR_EXTERNAL: "External",
