@@ -4,12 +4,12 @@
  */
 import type { API, CharacteristicValue, Service, WithUUID } from "homebridge";
 import type { AcquireServiceTarget, HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
-import type { Camera, Chime, Light, ProtectCameraConfig, ProtectState, Relay, Sensor, Viewer } from "unifi-protect";
+import type { Camera, Chime, Fob, Light, ProtectCameraConfig, ProtectState, Relay, Sensor, Viewer } from "unifi-protect";
 import { PROTECT_MOTION_DURATION, PROTECT_OCCUPANCY_DURATION} from "../settings.ts";
 import type { ProtectAccessory, ProtectDeviceConfigTypes, WithoutIdentity } from "../types.ts";
 import { ProtectReservedNames, exhaustiveGuard } from "../types.ts";
 import { acquireService, composeSignals, sanitizeName, validService } from "homebridge-plugin-utils";
-import { isDeviceOnline, selectCamera, selectChime, selectLight, selectRelay, selectSensor, selectViewer } from "unifi-protect";
+import { isDeviceOnline, selectCamera, selectChime, selectFob, selectLight, selectRelay, selectSensor, selectViewer } from "unifi-protect";
 import type { ObserverWakePayload } from "../diagnostics.ts";
 import { ProtectBase } from "./device-base.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
@@ -103,8 +103,8 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
   protected readonly controller: AbortController;
   // The live projection for this device. Holds (client, id), reads through to the store on every config access. Set once at construction; never reassigned -
   // the accessory's identity is its MAC, stable across reboots, so the handle never goes stale. Injected by the NVR root when constructing the accessory, which
-  // knows the concrete projection type at the point of adoption (Camera | Light | Sensor | Chime | Viewer | Relay); subclasses narrow at their own constructor.
-  protected readonly device: Camera | Light | Sensor | Chime | Viewer | Relay;
+  // knows the concrete projection type at the point of adoption (Camera | Light | Sensor | Chime | Viewer | Relay | Fob); subclasses narrow at their own constructor.
+  protected readonly device: Camera | Light | Sensor | Chime | Viewer | Relay | Fob;
   public hints: ProtectHints;
   // The per-accessory abort signal. Composed: aborts when EITHER the per-accessory controller is aborted OR the NVR's terminal shutdown signal fires. Use this when
   // spawning per-accessory observe loops, so plugin shutdown and per-accessory teardown both unwind the loop cleanly.
@@ -113,7 +113,7 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
 
   // The constructor captures the accessory and live projection handle, wires the per-accessory abort controller and its composed signal, and seeds the hints and timers
   // state; device configuration is wired separately by the NVR root after construction.
-  constructor(nvr: ProtectNvr, accessory: ProtectAccessory, device: Camera | Light | Sensor | Chime | Viewer | Relay) {
+  constructor(nvr: ProtectNvr, accessory: ProtectAccessory, device: Camera | Light | Sensor | Chime | Viewer | Relay | Fob) {
 
     super(nvr);
 
@@ -731,6 +731,10 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
       case "chime":
 
         return selectChime(this.device.id);
+
+      case "fob":
+
+        return selectFob(this.device.id);
 
       case "light":
 

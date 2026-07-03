@@ -78,8 +78,8 @@ class PluginUiServer extends HomebridgePluginUiServer {
 
         // Return the controller first, then the adopted devices by category. The controller is element 0 - the controller-as-device entry the feature options webUI
         // selects on initial load.
-        return [ client.nvr.config, ...adopted(client.cameras), ...adopted(client.chimes), ...adopted(client.lights), ...adopted(client.relays),
-          ...adopted(client.sensors), ...adopted(client.viewers) ];
+        return [ client.nvr.config, ...adopted(client.cameras), ...adopted(client.chimes), ...adopted(client.fobs), ...adopted(client.lights),
+          ...adopted(client.relays), ...adopted(client.sensors), ...adopted(client.viewers) ];
       } catch(error) {
 
         // The library reports failures through the log shim above, which captured a friendly message into errorInfo and already logged it. The typed transport errors,

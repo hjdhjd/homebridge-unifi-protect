@@ -39,11 +39,13 @@ async function *streamOf<T>(items: readonly T[]): AsyncGenerator<T> {
 interface DeliveryCall {
 
   action?: string;
+  button?: string;
   id: string;
-  kind: "access" | "auth" | "doorbell" | "motion" | "tamper";
+  kind: "access" | "auth" | "button" | "doorbell" | "motion" | "tamper";
   metadata?: unknown;
   method?: AuthMethod;
   objects?: string[];
+  pressType?: string;
 }
 
 // A real ProtectEventDispatch whose delivery methods are overridden to record rather than touch HomeKit. run() still resolves the target device and gates smart
@@ -77,6 +79,11 @@ class RecordingDispatch extends ProtectEventDispatch {
 
     this.calls.push({ id: protectDevice.protectId, kind: "auth", metadata, method });
   }
+
+  public override buttonEventHandler(protectDevice: ProtectDevice, button: string, pressType: string): void {
+
+    this.calls.push({ button, id: protectDevice.protectId, kind: "button", pressType });
+  }
 }
 
 // Options accepted by makeDispatch, all optional so each test names only the axes it varies.
@@ -106,6 +113,15 @@ const makeCamera = (id: string, options: { hksvRecording?: boolean; recordPresen
     stream: hksvRecording ? { hksv: { isRecording: true } } : undefined,
     ufp: { featureFlags: { smartDetectAudioTypes: [], smartDetectTypes: smartCapable ? ["person"] : [] }, id, modelKey: "camera" }
   };
+};
+
+// Build a mock fob-like device carrying only the fields the button router reads: identity (protectId) and presence (recordPresent). The buttonPressed case addresses by
+// id and gates on recordPresent WITHOUT a modelKey narrow (unlike cameraFor), so the delivery is family-agnostic - a fob, or any button-bearing device, rides this path.
+const makeFob = (id: string, options: { recordPresent?: boolean } = {}): unknown => {
+
+  const { recordPresent = true } = options;
+
+  return { modelKey: "fob", protectId: id, recordPresent };
 };
 
 // Build a real ProtectEventDispatch (via the recording subclass) over a mock NVR exposing only what the constructor and the loops read. The published array captures
@@ -332,6 +348,40 @@ describe("firehose router dispatch (real ProtectEventDispatch.run)", () => {
 
     assert.deepEqual(dispatch.calls, [], "state transitions never reach a delivery method");
   });
+
+  test("routes a fob button press to the button delivery on the addressed device, threading the button and press type", async () => {
+
+    const devices = new Map<string, unknown>([[ "fob1", makeFob("fob1") ]]);
+    const events: TypedEvent[] = [{ at: 1, button: "panic", deviceId: "fob1", eventId: "e1", kind: "buttonPressed", pressType: "press" }];
+    const { dispatch } = makeDispatch({ devices, events });
+
+    await dispatch.run(liveSignal());
+
+    assert.deepEqual(dispatch.calls, [{ button: "panic", id: "fob1", kind: "button", pressType: "press" }],
+      "the press is routed to the addressed device's button delivery with the button and press type threaded");
+  });
+
+  test("is a no-op for a button press addressing an unconfigured device id", async () => {
+
+    const events: TypedEvent[] = [{ at: 1, button: "panic", deviceId: "missing", eventId: "e1", kind: "buttonPressed", pressType: "press" }];
+    const { dispatch } = makeDispatch({ devices: new Map<string, unknown>(), events });
+
+    await dispatch.run(liveSignal());
+
+    assert.deepEqual(dispatch.calls, [], "a button press addressing an unconfigured id routes nowhere");
+  });
+
+  test("is a no-op for a button press whose device record has vanished", async () => {
+
+    // A device lingering in the removal grace (recordPresent false) is on its way out; the button router gates it out just as the camera-addressed deliveries do.
+    const devices = new Map<string, unknown>([[ "fob1", makeFob("fob1", { recordPresent: false }) ]]);
+    const events: TypedEvent[] = [{ at: 1, button: "panic", deviceId: "fob1", eventId: "e1", kind: "buttonPressed", pressType: "press" }];
+    const { dispatch } = makeDispatch({ devices, events });
+
+    await dispatch.run(liveSignal());
+
+    assert.deepEqual(dispatch.calls, [], "a device whose controller record has vanished is not routed a button press");
+  });
 });
 
 describe("firehose dispatch diagnostics (hbup:firehose:dispatch)", () => {
@@ -352,7 +402,8 @@ describe("firehose dispatch diagnostics (hbup:firehose:dispatch)", () => {
         { at: 2, cameraId: "cam1", eventId: "e2", kind: "smartDetect", objectTypes: ["person"] },
         { at: 3, cameraId: "cam1", eventId: "e3", kind: "tamperDetected" },
         { at: 4, cameraId: "cam1", eventId: "e4", kind: "authDetected", metadata: { nfc: { nfcId: "card-9" } }, method: "nfc" },
-        { action: "door_bell", at: 5, deviceId: "cam1", eventId: "e5", kind: "accessEvent" }
+        { action: "door_bell", at: 5, deviceId: "cam1", eventId: "e5", kind: "accessEvent" },
+        { at: 6, button: "panic", deviceId: "cam1", eventId: "e6", kind: "buttonPressed", pressType: "press" }
       ];
       const { dispatch } = makeDispatch({ devices, events });
 
@@ -364,8 +415,9 @@ describe("firehose dispatch diagnostics (hbup:firehose:dispatch)", () => {
         { cameraId: "cam1", kind: "smartDetect" },
         { cameraId: "cam1", kind: "tamperDetected" },
         { cameraId: "cam1", kind: "authDetected" },
-        { cameraId: "cam1", kind: "accessEvent" }
-      ], "each delivered event publishes one milestone carrying its kind and the addressed camera id");
+        { cameraId: "cam1", kind: "accessEvent" },
+        { cameraId: "cam1", kind: "buttonPressed" }
+      ], "each delivered event publishes one milestone carrying its kind and the addressed device id");
     } finally {
 
       diagnosticsChannel.unsubscribe("hbup:firehose:dispatch", onDispatch);

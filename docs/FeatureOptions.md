@@ -37,6 +37,7 @@ Feature options provide a rich mechanism for tailoring your `homebridge-unifi-pr
  * [Audio](#audio): Audio
  * [Device](#device): Device-wide
  * [Doorbell](#doorbell): Doorbell &amp; Chime
+ * [Fob](#fob): Fob
  * [Log](#log): Logging
  * [Motion](#motion): Motion &amp; Occupancy
  * [Nvr](#nvr): Protect Controller
@@ -94,6 +95,19 @@ These option(s) apply to: Protect cameras.
 | <A NAME="Doorbell.PhysicalChime.Duration.Digital"></A>`Doorbell.PhysicalChime.Duration.Digital.<value>`  | Chime duration, in milliseconds, of a digital physical chime attached to a Protect doorbell. **(default: 1000)**. <BR>*Supported on Protect doorbells that have a physical chime.*
 | <A NAME="Doorbell.PackageCamera.Flashlight"></A>`Doorbell.PackageCamera.Flashlight`                      | Add a light accessory to control the flashlight on a Protect doorbell package camera. **(default: enabled)**. <BR>*Supported on Protect doorbells that have a package camera.*
 | <A NAME="Doorbell.Trigger"></A>`Doorbell.Trigger`                                                        | Add a switch accessory to trigger doorbell ring events on a Protect camera or doorbell. **(default: disabled)**.
+
+#### <A NAME="fob"></A>Fob
+
+These option(s) apply to: Protect fobs.
+
+| Option                                               | Description
+|------------------------------------------------------|-------------------------------------------------------------
+| <A NAME="Fob.Button.Panic"></A>`Fob.Button.Panic`    | Make the Panic fob button available in HomeKit. **(default: enabled)**. <BR>*Supported on Protect fobs.*
+| <A NAME="Fob.Button.Disarm"></A>`Fob.Button.Disarm`  | Make the Disarm fob button available in HomeKit. **(default: enabled)**. <BR>*Supported on Protect fobs.*
+| <A NAME="Fob.Button.Night"></A>`Fob.Button.Night`    | Make the Night fob button available in HomeKit. **(default: enabled)**. <BR>*Supported on Protect fobs.*
+| <A NAME="Fob.Button.Arm"></A>`Fob.Button.Arm`        | Make the Arm fob button available in HomeKit. **(default: enabled)**. <BR>*Supported on Protect fobs.*
+| <A NAME="Fob.Button.Right"></A>`Fob.Button.Right`    | Make the Right fob button available in HomeKit. **(default: enabled)**. <BR>*Supported on Protect fobs.*
+| <A NAME="Fob.Button.Left"></A>`Fob.Button.Left`      | Make the Left fob button available in HomeKit. **(default: enabled)**. <BR>*Supported on Protect fobs.*
 
 #### <A NAME="log"></A>Logging
 

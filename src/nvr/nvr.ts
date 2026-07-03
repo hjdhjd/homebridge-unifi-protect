@@ -11,8 +11,8 @@ import type { NvrLifecyclePayload, ReachabilityFanoutPayload } from "../diagnost
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_NVR_CONTROLLER_DISABLED_SETTLE_DELAY, PROTECT_NVR_REBOOT_CONFIRM_GRACE_MS, PROTECT_NVR_REBOOT_DEFERRAL_MAX,
   PROTECT_NVR_REBOOT_INTERVAL, PROTECT_NVR_REBOOT_MIN_INTERVAL, PROTECT_NVR_REBOOT_RECENCY_MS, PROTECT_NVR_REMOVAL_STABILITY_WINDOW } from "../settings.ts";
 import type { ProtectAccessory, ProtectAccessoryContext, ProtectDeviceConfigTypes, ProtectDeviceTypes, ProtectDevices } from "../types.ts";
-import { ProtectClient, channels as protectChannels, selectAdoptedCameraIds, selectAdoptedChimeIds, selectAdoptedLightIds, selectAdoptedRelayIds,
-  selectAdoptedSensorIds, selectAdoptedViewerIds } from "unifi-protect";
+import { ProtectClient, channels as protectChannels, selectAdoptedCameraIds, selectAdoptedChimeIds, selectAdoptedFobIds, selectAdoptedLightIds,
+  selectAdoptedRelayIds, selectAdoptedSensorIds, selectAdoptedViewerIds } from "unifi-protect";
 import { ProtectDeviceCategories, exhaustiveGuard } from "../types.ts";
 import { computeStableSince, createConnectRetryPolicy, createLivestreamEpisodeLatch, isInducedDisruption, isStabilityWindowElapsed, isSuccessfulRequest,
   isWithinRebootRecency, membershipDelta, shouldResumeFromInducedReboot } from "./nvr-policy.ts";
@@ -23,6 +23,7 @@ import { ProtectCameraPackage } from "../devices/cameras/camera-package.ts";
 import { ProtectChime } from "../devices/chime.ts";
 import type { ProtectDevice } from "../devices/device.ts";
 import { ProtectEventDispatch } from "./event-dispatch.ts";
+import { ProtectFob } from "../devices/fob.ts";
 import { ProtectLight } from "../devices/light.ts";
 import { ProtectLiveviews } from "../liveviews/liveviews.ts";
 import type { ProtectNvrOptions } from "../options.ts";
@@ -115,6 +116,7 @@ export class ProtectNvr {
 
     camera: selectAdoptedCameraIds,
     chime: selectAdoptedChimeIds,
+    fob: selectAdoptedFobIds,
     light: selectAdoptedLightIds,
     relay: selectAdoptedRelayIds,
     sensor: selectAdoptedSensorIds,
@@ -890,8 +892,9 @@ export class ProtectNvr {
   // so those three readers never re-derive the controller's device inventory from a held snapshot - each is a thin map off the client's live projection collections.
   private get deviceConfigs(): ProtectDeviceConfigTypes[] {
 
-    return [ ...this.client.cameras.map(c => c.config), ...this.client.chimes.map(c => c.config), ...this.client.lights.map(c => c.config),
-      ...this.client.relays.map(r => r.config), ...this.client.sensors.map(c => c.config), ...this.client.viewers.map(c => c.config) ];
+    return [ ...this.client.cameras.map(c => c.config), ...this.client.chimes.map(c => c.config), ...this.client.fobs.map(f => f.config),
+      ...this.client.lights.map(c => c.config), ...this.client.relays.map(r => r.config), ...this.client.sensors.map(c => c.config),
+      ...this.client.viewers.map(c => c.config) ];
   }
 
   // Resolve the live config record for a device id within a category, from the unifi-protect projection. The single read path the membership reconcile uses to turn a
@@ -907,6 +910,10 @@ export class ProtectNvr {
       case "chime":
 
         return this.client.chime(id)?.config ?? null;
+
+      case "fob":
+
+        return this.client.fob(id)?.config ?? null;
 
       case "light":
 
@@ -1313,6 +1320,21 @@ export class ProtectNvr {
         }
 
         this.configuredDevices.set(accessory.UUID, new ProtectChime(this, accessory, chime));
+
+        break;
+      }
+
+      case "fob": {
+
+        // We have a UniFi Protect fob.
+        const fob = this.client.fob(device.id);
+
+        if(!fob) {
+
+          break;
+        }
+
+        this.configuredDevices.set(accessory.UUID, new ProtectFob(this, accessory, fob));
 
         break;
       }

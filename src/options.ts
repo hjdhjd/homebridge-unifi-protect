@@ -81,6 +81,7 @@ export const featureOptionCategories: FeatureCategoryEntry<ProtectCategoryMeta>[
   { description: "Audio", meta: { modelKey: ["camera"] }, name: "Audio" },
   { description: "Device-wide", meta: { modelKey: ["all"] }, name: "Device" },
   { description: "Doorbell & Chime", meta: { modelKey: ["camera"] }, name: "Doorbell" },
+  { description: "Fob", meta: { modelKey: ["fob"] }, name: "Fob" },
   { description: "Logging", meta: { modelKey: [ "camera", "light", "sensor" ] }, name: "Log" },
   { description: "Motion & Occupancy", meta: { featureByModel: { sensor: ["motion"] }, isNotProperty: [ "isAdoptedByAccessApp", "isThirdPartyCamera" ], modelKey: [ "camera", "light", "sensor" ] }, name: "Motion" },
   { description: "Protect Controller", meta: { modelKey: [ "camera", "nvr" ] }, name: "Nvr" },
@@ -132,6 +133,17 @@ export const featureOptions: Record<string, FeatureOptionEntry<ProtectOptionMeta
     { default: true, defaultValue: PROTECT_DOORBELL_CHIME_DURATION_DIGITAL, description: "Chime duration, in milliseconds, of a digital physical chime attached to a Protect doorbell.", group: "PhysicalChime", meta: { hasFeature: ["hasChime"] }, name: "PhysicalChime.Duration.Digital" },
     { default: true, description: "Add a light accessory to control the flashlight on a Protect doorbell package camera.", meta: { hasFeature: ["hasPackageCamera"] }, name: "PackageCamera.Flashlight" },
     { default: false, description: "Add a switch accessory to trigger doorbell ring events on a Protect camera or doorbell.", name: "Trigger" }
+  ],
+
+  // Fob options.
+  "Fob": [
+
+    { default: true, description: "Make the Panic fob button available in HomeKit.", meta: { modelKey: ["fob"] }, name: "Button.Panic" },
+    { default: true, description: "Make the Disarm fob button available in HomeKit.", meta: { modelKey: ["fob"] }, name: "Button.Disarm" },
+    { default: true, description: "Make the Night fob button available in HomeKit.", meta: { modelKey: ["fob"] }, name: "Button.Night" },
+    { default: true, description: "Make the Arm fob button available in HomeKit.", meta: { modelKey: ["fob"] }, name: "Button.Arm" },
+    { default: true, description: "Make the Right fob button available in HomeKit.", meta: { modelKey: ["fob"] }, name: "Button.Right" },
+    { default: true, description: "Make the Left fob button available in HomeKit.", meta: { modelKey: ["fob"] }, name: "Button.Left" }
   ],
 
   // Logging options.
@@ -250,6 +262,7 @@ const modelMap: Record<string, string> = {
 
   "all": "all Protect device types",
   "camera": "Protect cameras",
+  "fob": "Protect fobs",
   "light": "Protect lights",
   "nvr": "Protect controllers",
   "relay": "Protect relays",

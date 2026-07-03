@@ -4,9 +4,11 @@
  */
 
 import type { CharacteristicValue, PlatformAccessory, PlatformConfig } from "homebridge";
-import type { ProtectCameraConfig, ProtectChimeConfig, ProtectLightConfig, ProtectRelayConfig, ProtectSensorConfig, ProtectViewerConfig } from "unifi-protect";
+import type { ProtectCameraConfig, ProtectChimeConfig, ProtectFobConfig, ProtectLightConfig, ProtectRelayConfig, ProtectSensorConfig,
+  ProtectViewerConfig } from "unifi-protect";
 import type { ProtectCamera } from "./devices/cameras/camera.ts";
 import type { ProtectChime } from "./devices/chime.ts";
+import type { ProtectFob } from "./devices/fob.ts";
 import type { ProtectLight } from "./devices/light.ts";
 import type { ProtectNvrOptions } from "./options.ts";
 import type { ProtectRelay } from "./devices/relay.ts";
@@ -24,6 +26,7 @@ export interface ProtectDeviceTypes {
 
   camera: ProtectCamera;
   chime: ProtectChime;
+  fob: ProtectFob;
   light: ProtectLight;
   relay: ProtectRelay;
   sensor: ProtectSensor;
@@ -31,9 +34,10 @@ export interface ProtectDeviceTypes {
 }
 
 // The runtime category array and the two unions below mirror ProtectDeviceTypes above: add or remove a supported device kind and all four must change in lockstep.
-export const ProtectDeviceCategories = [ "camera", "chime", "light", "relay", "sensor", "viewer" ];
-export type ProtectDeviceConfigTypes = ProtectCameraConfig | ProtectChimeConfig | ProtectLightConfig | ProtectRelayConfig | ProtectSensorConfig | ProtectViewerConfig;
-export type ProtectDevices = ProtectCamera | ProtectChime | ProtectLight | ProtectRelay | ProtectSensor | ProtectViewer;
+export const ProtectDeviceCategories = [ "camera", "chime", "fob", "light", "relay", "sensor", "viewer" ];
+export type ProtectDeviceConfigTypes = ProtectCameraConfig | ProtectChimeConfig | ProtectFobConfig | ProtectLightConfig | ProtectRelayConfig | ProtectSensorConfig |
+  ProtectViewerConfig;
+export type ProtectDevices = ProtectCamera | ProtectChime | ProtectFob | ProtectLight | ProtectRelay | ProtectSensor | ProtectViewer;
 
 // The immutable identity keys of a Protect device. They never change for the life of an accessory and are read through dedicated, always-present accessors (the
 // controller id, the model category, and the bare/suffixed MAC), so they never need - and must never be read through - the live config projection.
@@ -140,6 +144,7 @@ export const ProtectReservedNames = {
   SWITCH_DOORBELL_CHIME_SPEAKER: "DoorbellChime.speaker",
   SWITCH_DOORBELL_MUTE: "DoorbellMute",
   SWITCH_DOORBELL_TRIGGER: "DoorbellTrigger",
+  SWITCH_FOB_BUTTON: "FobButton",
   SWITCH_HKSV_RECORDING: "HKSVRecordingSwitch",
   SWITCH_MOTION_SENSOR: "MotionSensorSwitch",
   SWITCH_MOTION_TRIGGER: "MotionSensorTrigger",

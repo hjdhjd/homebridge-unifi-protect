@@ -30,8 +30,8 @@ import type { AudioOptionsIdentity, StreamingDelegate, StreamingDelegateFactory 
 import { BOX_HEADER_SIZE, FeatureOptions, SAMPLE_FLAG_NON_SYNC, TRUN_FLAG_DATA_OFFSET, TRUN_FLAG_FIRST_SAMPLE_FLAGS, TestClock, TestRecordingProcessFactory }
   from "homebridge-plugin-utils";
 import type { Camera, Chime, LivestreamSubscriptionState, PlaySpeakerOptions, ProtectCameraChannelConfig, ProtectCameraConfig, ProtectChimeConfig, ProtectEventMetadata,
-  ProtectLightConfig, ProtectNvrConfig, ProtectNvrLiveviewConfig, ProtectRelayConfig, ProtectRingtoneConfig, ProtectSensorConfig, ProtectState, ProtectViewerConfig,
-  Segment, Sensor, SnapshotOptions, TalkbackSession } from "unifi-protect";
+  ProtectFobConfig, ProtectLightConfig, ProtectNvrConfig, ProtectNvrLiveviewConfig, ProtectRelayConfig, ProtectRingtoneConfig, ProtectSensorConfig, ProtectState,
+  ProtectViewerConfig, Segment, Sensor, SnapshotOptions, TalkbackSession } from "unifi-protect";
 import type { Clock, HomebridgePluginLogging, Nullable, RecordingProcessFactory } from "homebridge-plugin-utils";
 import { FIXTURE_HOST, FIXTURE_RTSPS_PORT, G2_PRO_CHANNELS } from "./camera.fixtures.ts";
 import type { NvrPhase, ProtectNvr } from "./nvr/nvr.ts";
@@ -239,12 +239,31 @@ class NightVisionCharacteristicType {
   public readonly hapKind = "NightVision" as const;
 }
 
-// The doorbell ring characteristic. The ring delivery fires sendEventNotification(SINGLE_PRESS) on the Doorbell service's ProgrammableSwitchEvent, so the marker
-// carries the named press constant as a static, mirroring how real HAP exposes it as a constructor constant. It is also the Doorbell marker's seed characteristic.
+// The programmable-switch-event characteristic. The doorbell ring delivery fires sendEventNotification(SINGLE_PRESS) and the fob button delivery fires the mapped
+// single/double/long press on this characteristic, so the marker carries all three named press constants as statics, mirroring how real HAP exposes them as constructor
+// constants. It is also the Doorbell and StatelessProgrammableSwitch markers' seed characteristic.
 class ProgrammableSwitchEventCharacteristicType {
 
+  public static readonly DOUBLE_PRESS = 1;
+  public static readonly LONG_PRESS = 2;
   public static readonly SINGLE_PRESS = 0;
   public readonly hapKind = "ProgrammableSwitchEvent" as const;
+}
+
+// The service-label-index characteristic. The fob's grouped button switches carry their STABLE 1-based table index on this characteristic (and a lone visible button has
+// its stale index removed), so the marker must be a distinct key the create/regroup paths write and remove.
+class ServiceLabelIndexCharacteristicType {
+
+  public readonly hapKind = "ServiceLabelIndex" as const;
+}
+
+// The service-label-namespace characteristic. The fob's ServiceLabel sets this to ARABIC_NUMERALS, so the marker carries the named namespace constants as statics
+// (mirroring how real HAP exposes them as constructor constants) - else a "namespace === ARABIC_NUMERALS" assertion would be a vacuous undefined === undefined.
+class ServiceLabelNamespaceCharacteristicType {
+
+  public static readonly ARABIC_NUMERALS = 1;
+  public static readonly DOTS = 0;
+  public readonly hapKind = "ServiceLabelNamespace" as const;
 }
 
 // The HAP Characteristic namespace as the test-double exposes it. StatusActive is the load-bearing one...the isReachable rewire writes it across every device
@@ -282,6 +301,8 @@ export const Characteristic = {
   SecuritySystemCurrentState: SecuritySystemCurrentStateCharacteristicType,
   SecuritySystemTargetState: SecuritySystemTargetStateCharacteristicType,
   SerialNumber: SerialNumberCharacteristicType,
+  ServiceLabelIndex: ServiceLabelIndexCharacteristicType,
+  ServiceLabelNamespace: ServiceLabelNamespaceCharacteristicType,
   StatusActive: StatusActiveCharacteristicType,
   StatusLowBattery: StatusLowBatteryCharacteristicType,
   StatusTampered: StatusTamperedCharacteristicType
@@ -419,6 +440,9 @@ export class TestService {
   // Whether production marked this the accessory's primary service (the camera's configureDoorbellService does), recorded by setPrimaryService below.
   public isPrimary = false;
   public readonly subtype: string | undefined;
+  // The services production linked to this one via addLinkedService, mirroring HAP's Service.linkedServices. The fob's ServiceLabel links each grouped button switch, so
+  // a test asserts exactly which switches were linked.
+  public readonly linkedServices: TestService[] = [];
   private readonly characteristicsByType = new Map<CharacteristicType, TestCharacteristic>();
 
   public constructor(type: ServiceType, displayName: string, subtype: string | undefined) {
@@ -441,6 +465,16 @@ export class TestService {
   public setPrimaryService(isPrimary = true): void {
 
     this.isPrimary = isPrimary;
+  }
+
+  // Link another service to this one, mirroring HAP's Service.addLinkedService (a faithful mirror: a void push, includes-guarded so a repeat link is idempotent exactly
+  // as real HAP dedups). The fob's ServiceLabel links each grouped button switch through this.
+  public addLinkedService(service: TestService): void {
+
+    if(!this.linkedServices.includes(service)) {
+
+      this.linkedServices.push(service);
+    }
   }
 
   // The public array view of the materialized characteristics, mirroring HAP's Service.characteristics surface. Order is insertion order, so a marker's seed
@@ -721,6 +755,38 @@ class SecuritySystemServiceType extends TestService {
   }
 }
 
+// The service-label kind. Added for the fob-family real-construction net: ProtectFob.configureButtons acquires a ServiceLabel service to group two or more visible button
+// switches and sets its ServiceLabelNamespace, so the kind must exist as a distinct key. Seeds its primary ServiceLabelNamespace characteristic so the real
+// acquireService recovers the Characteristic constructor from the new service's first characteristic, the Battery / sensor precedent.
+class ServiceLabelServiceType extends TestService {
+
+  public static readonly UUID = "ServiceLabel";
+  public readonly hapKind = "ServiceLabel" as const;
+
+  public constructor(displayName = "", subtype?: string) {
+
+    super(ServiceLabelServiceType, displayName, subtype);
+
+    this.getCharacteristic(ServiceLabelNamespaceCharacteristicType);
+  }
+}
+
+// The stateless-programmable-switch kind. Added for the fob-family real-construction net: ProtectFob.configureButtons acquires one per button and the event-dispatch
+// router fires its ProgrammableSwitchEvent on a delivered press, so the kind must exist as a distinct key. Seeds its HAP-required ProgrammableSwitchEvent characteristic,
+// which the button delivery fires event notifications on.
+class StatelessProgrammableSwitchServiceType extends TestService {
+
+  public static readonly UUID = "StatelessProgrammableSwitch";
+  public readonly hapKind = "StatelessProgrammableSwitch" as const;
+
+  public constructor(displayName = "", subtype?: string) {
+
+    super(StatelessProgrammableSwitchServiceType, displayName, subtype);
+
+    this.getCharacteristic(ProgrammableSwitchEventCharacteristicType);
+  }
+}
+
 class SwitchServiceType extends TestService {
 
   public static readonly UUID = "Switch";
@@ -766,6 +832,8 @@ export const Service = {
   MotionSensor: MotionSensorServiceType,
   OccupancySensor: OccupancySensorServiceType,
   SecuritySystem: SecuritySystemServiceType,
+  ServiceLabel: ServiceLabelServiceType,
+  StatelessProgrammableSwitch: StatelessProgrammableSwitchServiceType,
   Switch: SwitchServiceType,
   TemperatureSensor: TemperatureSensorServiceType
 } as const;
@@ -1177,6 +1245,42 @@ export class TestStateStore {
     this.pushRelayPatch(id, { outputs: outputs.map((output) => ({ id: output.id, name: output.name ?? null, state: output.state })) as ProtectRelayConfig["outputs"] });
   }
 
+  // The fob-slice mirror of pushCameraPatch: replace only the targeted fob record, spread-sharing its untouched fields, while every other slice keeps its reference - so
+  // exactly the observers watching fob-derived selectors wake. The two battery observers select into wirelessConnectionState.batteryStatus, so a patch carrying a fresh
+  // wirelessConnectionState wakes them (each deduped on its own primitive) while a name/firmware patch leaves that reference untouched. The plain per-slice form, for the
+  // same reason the other slice helpers are (a key-generic push cannot correlate a slice's record type cast-free against the ReadonlyMap slices).
+  public pushFobPatch(id: string, patch: Partial<ProtectFobConfig>): void {
+
+    const previous = this.state;
+    const record = previous.fobs.get(id);
+
+    if(!record) {
+
+      throw new Error("The fob record to patch is not present in the store double: " + id + ".");
+    }
+
+    const fobs = new Map(previous.fobs);
+
+    fobs.set(id, { ...record, ...patch });
+    this.push({ ...previous, fobs });
+  }
+
+  // Push a fresh battery status for a fob, composing the new batteryStatus over the targeted record's LIVE wirelessConnectionState so nothing else on that nested object
+  // moves, and replacing the whole wirelessConnectionState reference through pushFobPatch - so exactly the fob's two battery observers wake (each deduped on its own
+  // primitive). This is the fob analog of pushRelayOutputs: it reproduces the reducer's reference swap so a test can move battery state without hand-building the full
+  // LoRa link-state record. The spread over the full-typed live wirelessConnectionState keeps the shape complete with no cast at the call site.
+  public pushFobBattery(id: string, batteryStatus: { isLow: boolean; percentage: Nullable<number> }): void {
+
+    const record = this.state.fobs.get(id);
+
+    if(!record) {
+
+      throw new Error("The fob record to patch is not present in the store double: " + id + ".");
+    }
+
+    this.pushFobPatch(id, { wirelessConnectionState: { ...record.wirelessConnectionState, batteryStatus } });
+  }
+
   // The chime-slice mirror of pushCameraPatch: replace only the targeted chime record, spread-sharing its untouched fields, while every other slice keeps its
   // reference - so exactly the observers watching chime-derived selectors (the doorbell's chime-volume reduction) wake.
   public pushChimePatch(id: string, patch: Partial<ProtectChimeConfig>): void {
@@ -1299,13 +1403,13 @@ export class TestStateStore {
  * exactly as the reducer does; the lone nvr slice is a single nullable record rather than a map. Omitting any option yields the empty starting value for that slice
  * (an empty Map, or null for nvr), so a bare makeProtectState() is the empty-everywhere baseline the observe and selector tests seed.
  *
- * @param options - cameras / chimes / lights / liveviews / relays / ringtones / sensors / viewers: the config records to key into the matching map slice, each keyed by
- *                  its own id; nvr: the single controller config record set on the nvr slice (defaults to null). The users and fobs slices are intentionally not exposed:
- *                  no test seeds them (neither is surfaced in HomeKit), so they stay the empty Map the reducer starts from.
+ * @param options - cameras / chimes / fobs / lights / liveviews / relays / ringtones / sensors / viewers: the config records to key into the matching map slice, each
+ *                  keyed by its own id; nvr: the single controller config record set on the nvr slice (defaults to null). The users slice is intentionally not exposed:
+ *                  no test seeds it (it is not surfaced in HomeKit), so it stays the empty Map the reducer starts from.
  *
  * @returns a full ProtectState ready to seed a TestStateStore.
  */
-export function makeProtectState(options: { cameras?: ProtectCameraConfig[]; chimes?: ProtectChimeConfig[]; lights?: ProtectLightConfig[];
+export function makeProtectState(options: { cameras?: ProtectCameraConfig[]; chimes?: ProtectChimeConfig[]; fobs?: ProtectFobConfig[]; lights?: ProtectLightConfig[];
   liveviews?: ProtectNvrLiveviewConfig[]; nvr?: Nullable<ProtectNvrConfig>; relays?: ProtectRelayConfig[]; ringtones?: ProtectRingtoneConfig[];
   sensors?: ProtectSensorConfig[]; viewers?: ProtectViewerConfig[]; } = {}): ProtectState {
 
@@ -1315,7 +1419,7 @@ export function makeProtectState(options: { cameras?: ProtectCameraConfig[]; chi
     bootstrapId: 1,
     cameras: new Map((options.cameras ?? []).map((camera): [string, ProtectCameraConfig] => [ camera.id, camera ])),
     chimes: new Map((options.chimes ?? []).map((chime): [string, ProtectChimeConfig] => [ chime.id, chime ])),
-    fobs: new Map(),
+    fobs: new Map((options.fobs ?? []).map((fob): [string, ProtectFobConfig] => [ fob.id, fob ])),
     lights: new Map((options.lights ?? []).map((light): [string, ProtectLightConfig] => [ light.id, light ])),
     liveviews: new Map((options.liveviews ?? []).map((liveview): [string, ProtectNvrLiveviewConfig] => [ liveview.id, liveview ])),
     nvr: options.nvr ?? null,
@@ -1676,6 +1780,43 @@ export function makeRelayConfig(options: { id?: string; ledEnabled?: boolean; ma
   };
 
   return populated as unknown as ProtectRelayConfig;
+}
+
+/**
+ * Build a minimal-but-real fob config record, mirroring makeRelayConfig's single-confined-cast discipline: every field the ProtectFob construction and observe paths
+ * actually read is populated for real (the marketName / type family identity resolveFobButtons reads, the nested wirelessConnectionState.batteryStatus the battery
+ * service and its two observers read, and the identity / info fields setInfo and the base observers read), and the record is cast once to the full wire type. A bare
+ * makeFobConfig() is a recognized "USL Fob" with a full, not-low battery. The ProtectFobConfig wire type carries fields the fob's paths never touch (the away/arm state,
+ * the button-label profile, the pending arm action, the wireless connection settings); we populate the verified read set and confine the lone cast here.
+ *
+ * @param options - batteryLow: the low-battery flag the StatusLowBattery read and its observer read (defaults to false); batteryPercentage: the battery percentage the
+ *                  BatteryLevel read and its observer read (defaults to 100, nullable so the percentage-absent fallback can be exercised); id: optional identity override
+ *                  (defaults to "test-fob-1"); mac: optional MAC override (defaults to a fob-distinct value); marketName: the family marketName resolveFobButtons matches
+ *                  (defaults to "USL Fob"; override to an off-family string to force the unrecognized-model path); name: optional display name (defaults to "Test Fob");
+ *                  type: the family type prefix resolveFobButtons matches (defaults to "USL-Fob-US"; override alongside marketName to force the unrecognized-model path).
+ *
+ * @returns a fob config record the construction and observe paths read as real.
+ */
+export function makeFobConfig(options: { batteryLow?: boolean; batteryPercentage?: Nullable<number>; id?: string; mac?: string; marketName?: string; name?: string;
+  type?: string; } = {}): ProtectFobConfig {
+
+  const name = options.name ?? "Test Fob";
+
+  const populated = {
+
+    displayName: name,
+    firmwareVersion: "1.0.0",
+    id: options.id ?? "test-fob-1",
+    mac: options.mac ?? "74ACB9000601",
+    marketName: options.marketName ?? "USL Fob",
+    modelKey: "fob",
+    name: name,
+    state: "CONNECTED",
+    type: options.type ?? "USL-Fob-US",
+    wirelessConnectionState: { batteryStatus: { isLow: options.batteryLow ?? false, percentage: options.batteryPercentage ?? 100 } }
+  };
+
+  return populated as unknown as ProtectFobConfig;
 }
 
 /**
@@ -2264,6 +2405,56 @@ export class TestRelayProjection {
     }
 
     return this;
+  }
+}
+
+/* The Fob projection double, the fob-family analog of TestRelayProjection but MINUS the command levers: a fob is a pure-input device (its button presses arrive as
+ * firehose occurrences, its away/arm state is read-only), so the real ProtectFob issues no write-through commands and this double exposes none. What remains is the
+ * read-only surface the construction and observe paths read: a stable id, the "fob" modelKey discriminant, a READ-THROUGH config getter into the store double's CURRENT
+ * state (never a held snapshot - a push must change what this.config returns, or an end-to-end observe test proves nothing), the non-throwing peek() companion, and the
+ * derived name / isOnline getters using the projection's own definitions.
+ */
+export class TestFobProjection {
+
+  public readonly id: string;
+  public readonly modelKey = "fob" as const;
+  private readonly store: TestStateStore;
+
+  public constructor(id: string, store: TestStateStore) {
+
+    this.id = id;
+    this.store = store;
+  }
+
+  // Read-through config into the store double's current state, mirroring the real projection's absent-record guard.
+  public get config(): Readonly<ProtectFobConfig> {
+
+    const config = this.store.snapshot().fobs.get(this.id);
+
+    if(!config) {
+
+      throw new ReferenceError("The fob record is not present in the store double: " + this.id + ".");
+    }
+
+    return config;
+  }
+
+  // The non-throwing companion to config, mirroring the real projection's peek(): the current config, or undefined when the record is absent from the store double.
+  public peek(): Readonly<ProtectFobConfig> | undefined {
+
+    return this.store.snapshot().fobs.get(this.id) ?? undefined;
+  }
+
+  // Whether the device is currently connected, per the library's isDeviceOnline definition.
+  public get isOnline(): boolean {
+
+    return this.config.state === "CONNECTED";
+  }
+
+  // The device's display name - its user-assigned name when set, otherwise the controller's displayName, per the DeviceProjection convention.
+  public get name(): string {
+
+    return this.config.name ?? this.config.displayName;
   }
 }
 

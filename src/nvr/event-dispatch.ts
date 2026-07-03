@@ -162,6 +162,25 @@ export class ProtectEventDispatch {
           break;
         }
 
+        case "buttonPressed": {
+
+          // A security-action button was pressed on a fob (or a sensor-with-button). A button press is a firehose occurrence, so the router delivers it - resolving the
+          // target by id and addressing its subtyped StatelessProgrammableSwitch service, exactly as the smart-detect delivery addresses a subtyped contact sensor. The
+          // delivery is device-family-agnostic and needs no device-class import: it reads only the base accessory / mac / log surface, so a future button-bearing device
+          // rides the same path. A device lingering in the removal grace (recordPresent false) routes nothing.
+          const device = this.nvr.getDeviceById(event.deviceId);
+
+          if(!device?.recordPresent) {
+
+            break;
+          }
+
+          this.publishDispatch(event.kind, event.deviceId);
+          this.buttonEventHandler(device, event.button, event.pressType);
+
+          break;
+        }
+
         default: {
 
           // State transitions (deviceAdded / devicePatched / deviceRemoved / bootstrapLoaded) are the NVR observe loops' concern; the router ignores them. A firehose
@@ -700,6 +719,62 @@ export class ProtectEventDispatch {
     }
 
     protectDevice.log.info("Tamper event detected. To clear the indicator, toggle tamper detection in the Protect web UI or restart HBUP.");
+  }
+
+  // Fob button-press delivery. A press fires the addressed button's programmable-switch event in HomeKit, mapping the wire gesture to a single/double/long press value.
+  // The MQTT publish comes FIRST and is faithful to the firehose: it fires for every delivered press, including a hidden or unrecognized button and an unmapped gesture,
+  // so an automation on the raw press is never gated on which HomeKit switches happen to exist. The button subtype is addressed by the LOWERCASE wire id - the identical
+  // convention the fob leaf creates its switches under - so a hidden or unknown button resolves no service and the optional-chained notification is a clean no-op. We use
+  // sendEventNotification, never updateCharacteristic: a stateless programmable switch carries no persistent value, so this pushes the notification without caching
+  // state, and identical rapid presses each notify.
+  public buttonEventHandler(protectDevice: ProtectDevice, button: string, pressType: string): void {
+
+    // Publish the raw press first, faithful to the firehose - hidden and unknown buttons and unmapped gestures all publish.
+    void this.nvr.mqtt?.publish(mqttTopic(protectDevice.mac, "button"), JSON.stringify({ button, pressType }));
+
+    // Map the wire gesture to a HomeKit press value. An unrecognized gesture is field-diagnosable, so we surface it at info (not debug) - a wrong wire assumption would
+    // otherwise silently no-op the HomeKit half - and deliver nothing further.
+    const value = this.pressValue(pressType);
+
+    if(value === null) {
+
+      protectDevice.log.info("Received an unrecognized fob button gesture: %s.", pressType);
+
+      return;
+    }
+
+    // Fire the addressed button's programmable-switch event. An absent service (a hidden or unknown button) makes the optional chain a clean no-op.
+    protectDevice.accessory.getServiceById(this.hap.Service.StatelessProgrammableSwitch, ProtectReservedNames.SWITCH_FOB_BUTTON + "." + button)?.
+      getCharacteristic(this.hap.Characteristic.ProgrammableSwitchEvent).sendEventNotification(value);
+  }
+
+  // Map a fob's wire press gesture to HomeKit's ProgrammableSwitchEvent value, or null for an unrecognized gesture. The null sentinel is load-bearing: SINGLE_PRESS is 0,
+  // which is falsy, so the caller MUST test the result against null rather than truthiness or every single press would be swallowed. The unifi-protect library owns the
+  // classification; this is the plugin's translation of that classification onto HomeKit's fixed press values.
+  private pressValue(pressType: string): Nullable<number> {
+
+    switch(pressType) {
+
+      case "doublePress": {
+
+        return this.hap.Characteristic.ProgrammableSwitchEvent.DOUBLE_PRESS;
+      }
+
+      case "longPress": {
+
+        return this.hap.Characteristic.ProgrammableSwitchEvent.LONG_PRESS;
+      }
+
+      case "press": {
+
+        return this.hap.Characteristic.ProgrammableSwitchEvent.SINGLE_PRESS;
+      }
+
+      default: {
+
+        return null;
+      }
+    }
   }
 
   // Controller telemetry republisher. Every frame the controller emits is republished verbatim to the controller's "telemetry" MQTT topic when the user has opted in. We
