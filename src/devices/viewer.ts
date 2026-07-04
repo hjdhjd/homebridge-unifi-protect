@@ -255,8 +255,8 @@ export class ProtectViewer extends ProtectDevice {
     return true;
   }
 
-  // Spawn the viewer's narrow-selector observers. super spawns the two universal observers (name sync and firmware/device-info refresh); the viewer adds
-  // its two reactions (the active-liveview and the liveview-collection observes).
+  // Spawn the viewer's narrow-selector observers. super spawns the universal observers (name sync and firmware/device-info refresh); the viewer adds
+  // its reactions (the active-liveview and the liveview-collection observes).
   protected override spawnObservers(): void {
 
     super.spawnObservers();

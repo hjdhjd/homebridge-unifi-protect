@@ -3,15 +3,15 @@
  * leak-policy.ts: The pure per-channel leak-enablement policy for UniFi Protect sensors.
  *
  * This module owns one pure decision: whether a given leak channel on a sensor should be exposed as a HomeKit service, given the device's own capability and the
- * model-correct enable signal. It is deliberately pure - `this`-free and free of any device or controller I/O, three sensor facts in and a boolean out - so the sensor
- * leaf's three leak consumers (the service gate, the enabled-sensors log, and the leak MQTT registration) import it without value-importing a non-leaf module (the
+ * model-correct enable signal. It is deliberately pure - `this`-free and free of any device or controller I/O, sensor facts in and a boolean out - so the sensor
+ * leaf's leak consumers (the service gate, the enabled-sensors log, and the leak MQTT registration) import it without value-importing a non-leaf module (the
  * device-layer module invariant), and its truth table is exhaustively testable without standing up a sensor accessory.
  *
  * Why a leaf at all: the leak ENABLE signal differs by sensor model, and a single raw flag no longer expresses the truth for every device. The single-channel UP-Sense
  * (featureFlags.waterLeak.channelNames ["internal"]) drives leak via its physical mount role - the user sets mountType "leak" - while its leakSettings.isInternalEnabled
  * is a STUCK capability echo (always true, never moves). The multi-channel USL-Environmental (["internal","external"]) exposes LIVE per-channel toggles via
  * leakSettings.is<C>Enabled, with mountType "none". A single conditional in the gate would re-introduce the bug (the stuck-true flag wins) and leave the log and MQTT
- * keying on the raw flag - three divergent truths. Encapsulating the model split here gives one documented home, consumed identically by all three paths.
+ * keying on the raw flag - divergent truths. Encapsulating the model split here gives one documented home, consumed identically by all paths.
  */
 
 /**
@@ -39,7 +39,7 @@ export interface LeakChannelContext {
  * honor leakSettings. ASSUMPTION (documented, accepted): channel arity is the derivable proxy for which enable signal is authoritative - single-channel => mount-role,
  * multi-channel => live leakSettings. This holds for all known hardware. It could mis-gate in two directions only a future device could introduce: a single-channel
  * device whose leakSettings is genuinely LIVE (we would wrongly read mountType), or a multi-channel device whose leakSettings is a stuck echo (we would wrongly trust the
- * flag). If either ships, THIS leaf is the single chokepoint to add a per-capability override - the three consumers never need to change.
+ * flag). If either ships, THIS leaf is the single chokepoint to add a per-capability override - the consumers never need to change.
  *
  * @param context - The sensor facts the policy reads: the advertised leak channelNames, the leakSettings toggles, and the mountType.
  * @param channel - The leak channel under consideration: "internal" or "external".

@@ -196,7 +196,7 @@ export class ProtectRelay extends ProtectDevice {
     }
   }
 
-  // Spawn the relay's narrow-selector observers. super spawns the two universal observers (name sync and firmware/device-info refresh); the relay adds one observer per
+  // Spawn the relay's narrow-selector observers. super spawns the universal observers (name sync and firmware/device-info refresh); the relay adds one observer per
   // output plus the status-indicator mirror.
   protected override spawnObservers(): void {
 

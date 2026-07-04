@@ -4,7 +4,7 @@
  *
  * ProtectChime extends ProtectDevice directly (no streaming-stack drag), so like ProtectLight it is unit-constructable, and this suite is the next such family after the
  * light reference: a read-through projection double with a play command surface, config builders, per-slice and collection push helpers, and behavior-FIRST assertions
- * (the three observers, the buzzer / ringtone speaker switches, the legacy-service removal, the play dispatch, and the MQTT tone handler). Every assertion drives the
+ * (the observers, the buzzer / ringtone speaker switches, the legacy-service removal, the play dispatch, and the MQTT tone handler). Every assertion drives the
  * REAL production class through its real configureDevice / spawnObservers paths and its real playTone over the real runDeviceCommand seam - never a modeled stand-in.
  *
  * This suite covers the chime's complete playTone behavior through the real production class: the chime's speaker join,
@@ -12,7 +12,7 @@
  * netted here END-TO-END through the real switch onSet AND the real MQTT subscribeSet("tone") handler. The empty-payload (no-tone-selected) case is reachable ONLY via
  * the MQTT "chime" path - the switch onSet always carries a tone subtype on a speaker switch - so it is asserted through the captured MQTT handler.
  *
- * Two framing details the assertions honor exactly. First, the onSet's two reverts are bare setTimeout(...,50) NOT registered in this.timers, so chime.cleanup() does
+ * Two framing details the assertions honor exactly. First, the onSet's reverts are bare setTimeout(...,50) NOT registered in this.timers, so chime.cleanup() does
  * not clear them; the tests that arm a bare revert (the failed / falsy / no-op play paths) await ~60ms so the revert fires within the test (touching only this test's
  * fresh accessory). Second, a truthy onSet ALWAYS arms registerTimeout and logs "Playing %s." even on a failed or no-op play - only the controller command and the
  * publish are conditional - so those assertions are accurate, not aspirational. The afterEach(() => chime?.cleanup()) clears the registerTimeout play-timers per test

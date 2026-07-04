@@ -5,10 +5,10 @@
  *
  * Two suites prove the capability collapse end to end against real production classes. Suite A constructs a REAL ProtectCamera against an isDoorbell-true config so it
  * construction-attaches its DoorbellCapability - the base constructors, the camera's configureDevice chain, the floating configure IIFE, the capability's configure
- * (the Doorbell service, LCD, physical chimes, chime volume), and the eighteen observers (the camera's plain-camera set, now including the always-armed isDoorbell
- * observer, the bare-motion lastMotion observer, and the capability-reconcile featureFlags observer, plus the capability's four). Suite B constructs
+ * (the Doorbell service, LCD, physical chimes, chime volume), and the observers (the camera's plain-camera set, now including the always-armed isDoorbell
+ * observer, the bare-motion lastMotion observer, and the capability-reconcile featureFlags observer, plus the capability's own). Suite B constructs
  * the full doorbell-plus-package family and pins the self-observing package camera: its exact persisted context, its
- * suffixed display name through the syncedName seam, its four-observer census, and the death of every doorbell-to-package fan-out (firmware, name, availability,
+ * suffixed display name through the syncedName seam, its observer census, and the death of every doorbell-to-package fan-out (firmware, name, availability,
  * and reachability all now flow through the package's own observers or the NVR's endpoints iterator). The reclassification-flap regression and the
  * deleted-copy-forward hints-equality pin guard the two known hazards of the reshape, and the UUID-seed pin guards the persistence-critical identity suffix against
  * drift. The pure-test unlocks ride along: the package selectChannel lens-2/URL-host rows and the parent selectRecordingChannel pixel-ceiling row.
@@ -88,9 +88,9 @@ describe("real doorbell construction (suite A)", () => {
 
   test("the doorbell wires eighteen observers - the camera's plain-camera set plus the capability's four - and fires none at construction", () => {
 
-    // The census: the base pair (name, firmware) + the camera TWELVE (the always-armed isDoorbell observer, the bare-motion lastMotion observer, the capability-reconcile
-    // featureFlags observer, and the Access-lock supportUnlock observer all join the doorbell-attached camera's set) + the capability four (lcdMessage, hasPackageCamera,
-    // chimeDuration, chimeVolume) = eighteen.
+    // The census: the base observers (name, firmware) + the camera set (the always-armed isDoorbell observer, the bare-motion lastMotion observer, the
+    // capability-reconcile featureFlags observer, and the Access-lock supportUnlock observer all join the doorbell-attached camera's set) + the capability observers
+    // (lcdMessage, hasPackageCamera, chimeDuration, chimeVolume) = the doorbell's full observer set.
     assert.equal(store.observerCount, 18, "the eighteen-observer census holds across the capability collapse and the always-armed isDoorbell observer");
     assert.equal(constructionWakes, 0, "observers arm against the baseline and stay silent at construction");
   });
@@ -243,9 +243,10 @@ describe("doorbell + package camera family construction (suite B)", () => {
 
   test("the family wires but does not fire: eighteen doorbell observers plus four package observers, zero construction wakes", () => {
 
-    // The package census: the inherited base pair (name, firmware) plus its bespoke camera.state availability and package-channel observers - and nothing from the
-    // camera set. The doorbell-attached camera contributes eighteen (its plain-camera twelve, now including the always-armed isDoorbell observer, the bare-motion
-    // lastMotion observer, the capability-reconcile featureFlags observer, and the Access-lock supportUnlock observer, plus the capability's four plus the base pair).
+    // The package census: the inherited base observers (name, firmware) plus its bespoke camera.state availability and package-channel observers - and nothing from the
+    // camera set. The doorbell-attached camera contributes its full observer set (its plain-camera set, now including the always-armed isDoorbell observer, the
+    // bare-motion lastMotion observer, the capability-reconcile featureFlags observer, and the Access-lock supportUnlock observer, plus the capability's own plus the
+    // base observers).
     assert.equal(store.observerCount, 22, "eighteen doorbell observers plus the package's four");
     assert.equal(constructionWakes, 0, "no observer fired during family construction");
   });
@@ -254,7 +255,7 @@ describe("doorbell + package camera family construction (suite B)", () => {
 
     assert.ok(doorbell.packageCamera, "the package camera instance is live");
 
-    // The nine hints the package computes independently through its own configureHints from the shared parent MAC scope.
+    // The hints the package computes independently through its own configureHints from the shared parent MAC scope.
     for(const hint of [ "tsbStreaming", "hardwareDecoding", "hardwareTranscoding", "highResSnapshots", "logHksv", "transcode", "transcodeBitrate",
       "transcodeHighLatency", "transcodeHighLatencyBitrate" ] as const) {
 

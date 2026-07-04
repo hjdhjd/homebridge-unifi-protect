@@ -714,7 +714,7 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
   }
 
   // Resolve the by-id config selector for this device's category, so the base can observe a shared field (the name) without each leaf re-declaring the selector. The
-  // projection already carries its modelKey and id; we map that to the matching memoized by-id selector. The device projection is never the NVR singleton, so the six
+  // projection already carries its modelKey and id; we map that to the matching memoized by-id selector. The device projection is never the NVR singleton, so the
   // device categories are exhaustive and the default is unreachable.
   private deviceConfigSelector(): (state: ProtectState) => Readonly<ProtectDeviceConfigTypes> | undefined {
 

@@ -46,7 +46,7 @@ const RESERVED_NAMES = new Set(Object.values(ProtectReservedNames).map(x => x.to
 /* The doorbell capability composed onto a ProtectCamera. It extends ProtectBase - the shared observe / MQTT / command spine - rather than ProtectCamera, because
  * doorbell-ness is temporally dynamic capability state, not a static identity: the camera the controller late-flips to a doorbell stays the same instance, and this
  * capability attaches to it live. The capability owns the doorbell services (LCD message switches, physical chimes, the chime-volume lightbulb, the auth sensor), the
- * four read-through settings getters, the four doorbell observers, the doorbell MQTT topics, and the package-camera lifecycle. The camera-coupling is localized to a
+ * read-through settings getters, the doorbell observers, the doorbell MQTT topics, and the package-camera lifecycle. The camera-coupling is localized to a
  * private block of delegating accessors below, so each doorbell body resolves its this.ufp / this.accessory / this.hasFeature reads through the camera. The capability
  * holds its own composed AbortController so a future detach unwinds exactly its observers and MQTT registrations, the owner-lifetime idiom one level up.
  */
@@ -150,14 +150,14 @@ export class DoorbellCapability extends ProtectBase {
   }
 
   // Whether the backing camera record is present, delegated to the owning camera (the capability extends ProtectBase, not ProtectDevice, so it has no record of its own).
-  // This drives the inherited observeState gate, so the four doorbell observers no-op during the parent's removal grace exactly as the camera's own do.
+  // This drives the inherited observeState gate, so the doorbell observers no-op during the parent's removal grace exactly as the camera's own do.
   protected override get recordPresent(): boolean {
 
     return this.camera.recordPresent;
   }
 
   // Wake attribution: the capability has no accessory identity of its own, so it delegates to the camera's single publishObserverWake seam, keeping one publisher keyed
-  // on the camera's accessory UUID. The four doorbell.* keys remain diagnostics-visible under the camera's accessory.
+  // on the camera's accessory UUID. The doorbell.* keys remain diagnostics-visible under the camera's accessory.
   protected override onObserverWake(key: string): void {
 
     this.camera.publishObserverWake(key);
@@ -200,7 +200,7 @@ export class DoorbellCapability extends ProtectBase {
   }
 
   // Configure the doorbell capability for HomeKit. The configure order is: the package camera, the Doorbell service (through the camera's seam, at the package-to-service
-  // point), the auth sensor, the LCD messages, the physical chimes, the chime volume, then the MQTT topics and the four observers. The Doorbell service is stood up
+  // point), the auth sensor, the LCD messages, the physical chimes, the chime volume, then the MQTT topics and the observers. The Doorbell service is stood up
   // through the camera's configureDoorbellService seam here, so the camera does not separately call it on attach.
   public configure(): void {
 
@@ -226,11 +226,11 @@ export class DoorbellCapability extends ProtectBase {
     // registers its own MQTT separately, so there is no super-MQTT to resolve here.
     this.configureMqtt();
 
-    // Spawn the four doorbell observers on the capability's own signal.
+    // Spawn the doorbell observers on the capability's own signal.
     this.spawnObservers();
   }
 
-  // Cleanup the capability: tear down the package camera first, then abort the capability's own controller, which releases its four observers and exactly its MQTT
+  // Cleanup the capability: tear down the package camera first, then abort the capability's own controller, which releases its observers and exactly its MQTT
   // handlers on the shared parent-MAC tuple.
   public cleanup(): void {
 

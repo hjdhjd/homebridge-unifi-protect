@@ -13,7 +13,7 @@ import type { ProtectPlatform } from "../platform.ts";
 import { mqttTopic } from "../mqtt.ts";
 import util from "node:util";
 
-// An observed slice of controller state, expressed in the three projections a single observer needs. `key` is a stable, dotted, machine-facing tag ("camera.ispSettings")
+// An observed slice of controller state, expressed in the projections a single observer needs. `key` is a stable, dotted, machine-facing tag ("camera.ispSettings")
 // that identifies the slice on the observer-wake diagnostics channel - it stays put across field renames so diagnostic filters keep working. `selector` reads the slice
 // from a state snapshot. `title` is the plain-English capability the slice powers ("night vision"), interpolated into the user-facing fault report if the observer ever
 // dies. The key and the title are deliberately separate facets rather than one string: the protocol field name and the product capability genuinely diverge - the
@@ -112,7 +112,7 @@ export abstract class ProtectBase {
   // The owner-lifetime signal that scopes this owner's state observers AND its MQTT subscriptions. The base binds to the controller's terminal shutdown signal, which
   // is the correct lifetime for the controller-scoped owners (system information, liveviews) whose existence spans the whole controller connection. ProtectDevice
   // overrides this with its per-accessory composed signal, so a single accessory's teardown unwinds only its own observers and releases exactly its own MQTT handlers.
-  // This is one of the two seams the shared observeState varies by leaf, and the signal the MQTT subscribe wrappers below thread to homebridge-plugin-utils.
+  // This is one of the seams the shared observeState varies by leaf, and the signal the MQTT subscribe wrappers below thread to homebridge-plugin-utils.
   protected get observeSignal(): AbortSignal {
 
     return this.nvr.signal;
@@ -120,7 +120,7 @@ export abstract class ProtectBase {
 
   // Hook fired each time a state observer wakes, so a leaf can attribute the wake to a diagnostics subject. The base is a deliberate no-op: controller-scoped owners have
   // no single accessory identity to key a wake to, mirroring the NVR's own observe loops which likewise publish nothing here. ProtectDevice overrides this to publish the
-  // accessory-scoped wake milestone. The second of the two seams the shared observeState varies by leaf.
+  // accessory-scoped wake milestone. Another of the seams the shared observeState varies by leaf.
   protected onObserverWake(_key: string): void {
 
     // No-op by default; the per-accessory wake milestone is published by ProtectDevice's override.
@@ -128,8 +128,8 @@ export abstract class ProtectBase {
 
   // Whether this owner's backing controller record is currently present. The base returns true unconditionally: a controller-scoped owner (system information, liveviews,
   // the security system) has no per-device record that can vanish - its backing controller record is present for the whole connection. ProtectDevice overrides this to
-  // peek() !== undefined, and DoorbellCapability delegates to its camera, so the one observeState gate below neutralizes a vanished record on every owner. The third of
-  // the three seams the shared observeState varies by leaf, alongside observeSignal and onObserverWake.
+  // peek() !== undefined, and DoorbellCapability delegates to its camera, so the one observeState gate below neutralizes a vanished record on every owner. Another of
+  // the seams the shared observeState varies by leaf, alongside observeSignal and onObserverWake.
   // eslint-disable-next-line @typescript-eslint/class-literal-property-style -- Polymorphic seam overridden by getters; the base cannot be a readonly field.
   protected get recordPresent(): boolean {
 
@@ -138,8 +138,8 @@ export abstract class ProtectBase {
 
   // The single narrow-selector state-observe primitive, shared by every HomeKit-projection owner - device leaves and controller-scoped owners alike. The loop wakes only
   // when its reduced slice changes by reference (the store's Object.is dedup is upstream of the yield), the handler re-reads through the owner's live projection rather
-  // than trusting the yielded value so a multi-read reaction always sees a coherent snapshot, and the two seams leaves vary are the lifetime signal (observeSignal) and
-  // the wake attribution (onObserverWake). The slice descriptor's two names route to separate consumers: its key tags the wake on the diagnostics channel, its title
+  // than trusting the yielded value so a multi-read reaction always sees a coherent snapshot, and the seams leaves vary are the lifetime signal (observeSignal) and
+  // the wake attribution (onObserverWake). The slice descriptor's names route to separate consumers: its key tags the wake on the diagnostics channel, its title
   // names the capability in the user-facing fault report. The detached-loop resilience envelope (swallow on abort, surface a fault once) is delegated to
   // homebridge-plugin-utils' superviseLoop and the fault report to its loopFaultReporter; both single-sourced. What remains here is just the observe-specific body
   // superviseLoop supervises.
@@ -223,7 +223,7 @@ export abstract class ProtectBase {
   // typechecks against its own config; a helper that called this.device.update() itself would face the contravariance of the base's Camera | Light | Sensor | Chime |
   // Viewer union. An authorization failure is the one actionable case for the user - the account lacks the Administrator role - so it earns specific guidance; any other
   // failure is reported with its underlying cause. The action is a verb phrase ("turn the light on") interpolated into the message. This lives on ProtectBase, the lowest
-  // common ancestor of every command-issuer (every ProtectDevice subclass plus the DoorbellCapability), so the one copy serves them all; the three controller-scoped
+  // common ancestor of every command-issuer (every ProtectDevice subclass plus the DoorbellCapability), so the one copy serves them all; the controller-scoped
   // ProtectBase-only owners (the security system, the system-info owner, and liveviews) issue no Protect write commands and inherit it unused - a deliberate, accepted
   // consequence of placing it at the common ancestor.
   protected async runDeviceCommand(action: string, command: () => Promise<unknown>): Promise<boolean> {

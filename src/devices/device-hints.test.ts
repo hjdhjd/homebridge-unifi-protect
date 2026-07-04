@@ -2,8 +2,8 @@
  *
  * device-hints.test.ts: The base-capability concern net for the shared ProtectDevice feature-option hints derivation, netted once family-agnostically.
  *
- * configureHints (device.ts) is a BASE ProtectDevice behavior every family runs at construction: it derives seven hints from feature options (enabled, logMotion,
- * motionDuration, occupancyDuration, smartOccupancy, standalone, syncName), clamps the two durations to their floors (motionDuration >= 2, occupancyDuration >= 60), and
+ * configureHints (device.ts) is a BASE ProtectDevice behavior every family runs at construction: it derives its hints from feature options (enabled, logMotion,
+ * motionDuration, occupancyDuration, smartOccupancy, standalone, syncName), clamps the durations to their floors (motionDuration >= 2, occupancyDuration >= 60), and
  * logs deviations from the defaults. Per the two-layer test architecture the base derivation/clamp/log logic is netted ONCE here against the shared minimal
  * TestBaseDevice vehicle (the all-quiet makeSensorConfig carrier) rather than re-asserted inside each family suite: every concern test builds the device with a
  * userOptions set, calls the test-only configureHintsFor window, and asserts the resulting hints + the deviation logs.
@@ -12,7 +12,7 @@
  * reads directly - plus the user-visible deviation logs. So this suite reads device.hints DIRECTLY (typed Readonly<ProtectHints> at the read site for read-only intent)
  * with no harness window and no harness change; it captures the deviation logs through the NVR double's logEntries. The wider ProtectHints fields (crop,
  * hardwareDecoding, hardwareTranscoding, highResSnapshots, and the rest) are set by the CAMERA family's configureHints OVERRIDE - family-owned and out of scope here;
- * this nets the seven the BASE sets and the two clamps.
+ * this nets the hints the BASE sets and the clamps.
  *
  * The value-option override syntax (load-bearing, verified against homebridge-plugin-utils featureoptions.js): Motion.Duration and Motion.OccupancySensor.Duration are
  * value-centric options (default: true, defaultValue 10 / 300). The global value override is Enable.<Option>.<N> - a single trailing numeric segment parsed as the value
@@ -91,7 +91,7 @@ describe("base ProtectDevice feature-option hints derivation (device-hints conce
       const hints: Readonly<ProtectHints> = device.hints;
 
       // The Device option defaults TRUE (the empty-name option under the Device category composed to "Device"), so enabled is true at no userOptions; the
-      // remaining four boolean-backed hints take their false / unset defaults, and the two durations take their registered defaultValues (10 / 300).
+      // remaining boolean-backed hints take their false / unset defaults, and the durations take their registered defaultValues (10 / 300).
       assert.equal(hints.enabled, true, "enabled defaults to true (the Device option defaults true)");
       assert.equal(hints.logMotion, false, "logMotion defaults to false (Log.Motion defaults false)");
       assert.equal(hints.motionDuration, 10, "motionDuration defaults to PROTECT_MOTION_DURATION (10)");
@@ -120,7 +120,7 @@ describe("base ProtectDevice feature-option hints derivation (device-hints conce
 
       assert.equal(hints.enabled, false, "Disable.Device drives enabled false");
 
-      // The five asserted hints stay at their defaults, so the toggle is discriminating - a derivation that hard-coded or mis-sourced one of them would be caught.
+      // The remaining asserted hints stay at their defaults, so the toggle is discriminating - a derivation that hard-coded or mis-sourced one of them would be caught.
       assert.equal(hints.logMotion, false, "logMotion stays at its default");
       assert.equal(hints.motionDuration, 10, "motionDuration stays at its default");
       assert.equal(hints.occupancyDuration, 300, "occupancyDuration stays at its default");
@@ -251,7 +251,7 @@ describe("base ProtectDevice feature-option hints derivation (device-hints conce
 
   describe("the constant fallback when the option is disabled", () => {
 
-    // These two cases exercise the `?? PROTECT_MOTION_DURATION` / `?? PROTECT_OCCUPANCY_DURATION` constant fallbacks (in configureHints, device.ts) distinctly from the
+    // These cases exercise the `?? PROTECT_MOTION_DURATION` / `?? PROTECT_OCCUPANCY_DURATION` constant fallbacks (in configureHints, device.ts) distinctly from the
     // value-option-defaultValue path the defaults case covers. A value-centric duration option defaults true with a registered defaultValue, so at no userOptions
     // getFeatureNumber returns that defaultValue (10 / 300) DIRECTLY and the `??` fallback is never reached. Disabling the option makes getFeatureNumber return null
     // (verified: Disable.Motion.Duration and Disable.Motion.OccupancySensor.Duration both resolve getInteger to null), so the `??` falls through to the PROTECT_*

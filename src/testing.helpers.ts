@@ -269,9 +269,10 @@ class ServiceLabelNamespaceCharacteristicType {
 // The HAP Characteristic namespace as the test-double exposes it. StatusActive is the load-bearing one...the isReachable rewire writes it across every device
 // class, so the reachability tests pivot on this characteristic. On covers the toggle pair used by switches in the double's self-test. LockCurrentState /
 // LockTargetState back the camera's UniFi Access lock onSet and the capability-reconcile lock self-heal tests. The AccessoryInformation kinds (Manufacturer / Model /
-// SerialNumber / FirmwareRevision / Name) and MotionDetected back the real-construction harness; Brightness, NightVision, CameraOperatingModeIndicator, and
-// ProgrammableSwitchEvent back the doorbell-family construction harness; OccupancyDetected backs the device-motion base-capability net, where configureOccupancySensor
-// first reaches it. BatteryLevel / StatusLowBattery
+// SerialNumber / FirmwareRevision / Name) and MotionDetected back the real-construction harness; Brightness, NightVision, and CameraOperatingModeIndicator back the
+// doorbell-family construction harness; ProgrammableSwitchEvent backs the doorbell ring and the fob button-press deliveries, and ServiceLabelIndex /
+// ServiceLabelNamespace back the fob's grouped-button ServiceLabel; OccupancyDetected backs the device-motion base-capability net, where configureOccupancySensor first
+// reaches it. BatteryLevel / StatusLowBattery
 // (the battery service updater) and CurrentAmbientLightLevel / CurrentRelativeHumidity / CurrentTemperature / LeakDetected (the sensor's per-mode services) back the
 // sensor-family real-construction net, where ProtectSensor first reaches them. SecuritySystemCurrentState / SecuritySystemTargetState (the security-system state machine,
 // the Current marker also the SecuritySystem service's seed) and HardwareRevision (the security-system's bespoke configureInfo) back the controller-owner net, where
@@ -1081,8 +1082,8 @@ export class TestStateStore {
     this.state = initialState;
   }
 
-  // The number of currently registered observers, derived from the registration set. Fourteen after a minimal camera construction settles (the two base observers plus
-  // the camera's twelve); zero after cleanup.
+  // The number of currently registered observers, derived from the registration set. Nonzero after a minimal camera construction settles (the base observers plus the
+  // camera's own); zero after cleanup.
   public get observerCount(): number {
 
     return this.observers.size;
@@ -1161,7 +1162,7 @@ export class TestStateStore {
   }
 
   // The light-slice mirror of pushCameraPatch: replace only the targeted light record, spread-sharing its untouched fields, while every other slice of the state keeps
-  // its reference - so exactly the observers watching light-derived selectors (the light's four narrow reactions) wake. The plain per-slice form, because a key-generic
+  // its reference - so exactly the observers watching light-derived selectors (the light's narrow reactions) wake. The plain per-slice form, because a key-generic
   // push cannot correlate a slice's record type cast-free against the ReadonlyMap slices, so each slice carries its own typed helper.
   public pushLightPatch(id: string, patch: Partial<ProtectLightConfig>): void {
 
@@ -1246,7 +1247,7 @@ export class TestStateStore {
   }
 
   // The fob-slice mirror of pushCameraPatch: replace only the targeted fob record, spread-sharing its untouched fields, while every other slice keeps its reference - so
-  // exactly the observers watching fob-derived selectors wake. The two battery observers select into wirelessConnectionState.batteryStatus, so a patch carrying a fresh
+  // exactly the observers watching fob-derived selectors wake. The battery observers select into wirelessConnectionState.batteryStatus, so a patch carrying a fresh
   // wirelessConnectionState wakes them (each deduped on its own primitive) while a name/firmware patch leaves that reference untouched. The plain per-slice form, for the
   // same reason the other slice helpers are (a key-generic push cannot correlate a slice's record type cast-free against the ReadonlyMap slices).
   public pushFobPatch(id: string, patch: Partial<ProtectFobConfig>): void {
@@ -1266,7 +1267,7 @@ export class TestStateStore {
   }
 
   // Push a fresh battery status for a fob, composing the new batteryStatus over the targeted record's LIVE wirelessConnectionState so nothing else on that nested object
-  // moves, and replacing the whole wirelessConnectionState reference through pushFobPatch - so exactly the fob's two battery observers wake (each deduped on its own
+  // moves, and replacing the whole wirelessConnectionState reference through pushFobPatch - so exactly the fob's battery observers wake (each deduped on its own
   // primitive). This is the fob analog of pushRelayOutputs: it reproduces the reducer's reference swap so a test can move battery state without hand-building the full
   // LoRa link-state record. The spread over the full-typed live wirelessConnectionState keeps the shape complete with no cast at the call site.
   public pushFobBattery(id: string, batteryStatus: { isLow: boolean; percentage: Nullable<number> }): void {
@@ -1643,23 +1644,22 @@ export function makeViewerConfig(options: { id?: string; liveview?: Nullable<str
  * ProtectSensorConfig carries the whole record's type honesty (the ProtectThresholdSettings and ProtectAirQualityMetricInterface shapes are populated faithfully behind
  * it rather than imported separately).
  *
- * @param options - alarmEnabled: the alarm settings toggle (defaults false); alarmTriggeredAt: the alarm-trip timestamp (defaults null); ambientLight: the ambient
- *                  light reading folded into stats.light.value (omitted, no light stat); batteryLow / batteryPercentage: the battery status (default false / 100);
+ * @param options - alarmEnabled: the alarm settings toggle (defaults false); alarmTriggeredAt: the alarm-trip timestamp (defaults null); ambientLight: the ambient light
+ *                  reading folded into stats.light.value (omitted, no light stat); batteryLow / batteryPercentage: the battery status (default false / 100);
  *                  externalLeakDetectedAt: the external-leak timestamp the leak path index-reads (defaults null); glassBreak: whether the controller advertises the
  *                  glass-break capability channel in featureFlags.glassBreak - the alarm-family glass-break gate's capability discriminator (defaults false, channel
  *                  absent); glassBreakEnabled: the glass-break settings toggle folded into glassBreakSettings.isEnabled (defaults false); hardwareRevision: the hardware
  *                  revision the device-info HardwareRevision write reads (OPT-IN, omitted by default so setInfo's length-guard short-circuits); humidity: the humidity
- *                  reading folded into
- *                  stats.humidity.value (omitted, no humidity stat); humidityEnabled: the humidity settings toggle (defaults false); id: identity override (defaults
- *                  "test-sensor-1"); isConnected: the connection flag (defaults true); isMotionDetected: the Motion.* applicability property (defaults true); isOpened:
- *                  the contact state (defaults null); leakChannelNames: the water-leak channels the controller advertises in featureFlags.waterLeak.channelNames - the
- *                  leak-policy leaf's capability discriminator (defaults [], no leak capability); leakDetectedAt: the internal-leak timestamp (defaults null);
- *                  leakExternalEnabled / leakInternalEnabled: the leak settings toggles (default false); ledEnabled: the status-indicator LED toggle (defaults false);
- *                  lightEnabled: the light settings toggle (defaults
- *                  false); mac: identity override (defaults a sensor-distinct value); motionDetectedAt: the motion timestamp the sensor motion observer gates on
- *                  (defaults 0); motionEnabled: the motion settings toggle (defaults false); mountType: the sensor mount type (defaults "none"); name: display name
- *                  (defaults "Test Sensor"); tamperingDetectedAt: the tamper timestamp (defaults null); temperature: the temperature reading folded into
- *                  stats.temperature.value (omitted, no temperature stat); temperatureEnabled: the temperature settings toggle (defaults false).
+ *                  reading folded into stats.humidity.value (omitted, no humidity stat); humidityEnabled: the humidity settings toggle (defaults false); id: identity
+ *                  override (defaults "test-sensor-1"); isConnected: the connection flag (defaults true); isMotionDetected: the Motion.* applicability property (defaults
+ *                  true); isOpened: the contact state (defaults null); leakChannelNames: the water-leak channels the controller advertises in
+ *                  featureFlags.waterLeak.channelNames - the leak-policy leaf's capability discriminator (defaults [], no leak capability); leakDetectedAt: the
+ *                  internal-leak timestamp (defaults null); leakExternalEnabled / leakInternalEnabled: the leak settings toggles (default false); ledEnabled: the
+ *                  status-indicator LED toggle (defaults false); lightEnabled: the light settings toggle (defaults false); mac: identity override (defaults a
+ *                  sensor-distinct value); motionDetectedAt: the motion timestamp the sensor motion observer gates on (defaults 0); motionEnabled: the motion settings
+ *                  toggle (defaults false); mountType: the sensor mount type (defaults "none"); name: display name (defaults "Test Sensor"); tamperingDetectedAt: the
+ *                  tamper timestamp (defaults null); temperature: the temperature reading folded into stats.temperature.value (omitted, no temperature stat);
+ *                  temperatureEnabled: the temperature settings toggle (defaults false).
  *
  * @returns a sensor config record the construction, base-capability, and sensor-family paths read as real.
  */
@@ -1785,14 +1785,14 @@ export function makeRelayConfig(options: { id?: string; ledEnabled?: boolean; ma
 /**
  * Build a minimal-but-real fob config record, mirroring makeRelayConfig's single-confined-cast discipline: every field the ProtectFob construction and observe paths
  * actually read is populated for real (the marketName / type family identity resolveFobButtons reads, the nested wirelessConnectionState.batteryStatus the battery
- * service and its two observers read, and the identity / info fields setInfo and the base observers read), and the record is cast once to the full wire type. A bare
+ * service and its observers read, and the identity / info fields setInfo and the base observers read), and the record is cast once to the full wire type. A bare
  * makeFobConfig() is a recognized "USL Fob" with a full, not-low battery. The ProtectFobConfig wire type carries fields the fob's paths never touch (the away/arm state,
  * the button-label profile, the pending arm action, the wireless connection settings); we populate the verified read set and confine the lone cast here.
  *
  * @param options - batteryLow: the low-battery flag the StatusLowBattery read and its observer read (defaults to false); batteryPercentage: the battery percentage the
  *                  BatteryLevel read and its observer read (defaults to 100, nullable so the percentage-absent fallback can be exercised); id: optional identity override
  *                  (defaults to "test-fob-1"); mac: optional MAC override (defaults to a fob-distinct value); marketName: the family marketName resolveFobButtons matches
- *                  (defaults to "USL Fob"; override to an off-family string to force the unrecognized-model path); name: optional display name (defaults to "Test Fob");
+ *                  (defaults to "USL Fob"; override alongside type to force the unrecognized-model path); name: optional display name (defaults to "Test Fob");
  *                  type: the family type prefix resolveFobButtons matches (defaults to "USL-Fob-US"; override alongside marketName to force the unrecognized-model path).
  *
  * @returns a fob config record the construction and observe paths read as real.
@@ -1890,7 +1890,7 @@ export class TestCameraProjection {
   public readonly id: string;
   public readonly modelKey = "camera" as const;
   // The recorded update payloads the camera's real onSet write-through commands dispatch, so a test asserts the exact payload (the ispSettings / recordingSettings /
-  // ledSettings the four bound handlers issue). The shape stays general because the camera issues three distinct payload shapes through this one member.
+  // ledSettings the bound handlers issue). The shape stays general because the camera issues distinct payload shapes through this one member.
   public readonly updateCalls: { payload: unknown }[] = [];
   // The settable rejection: when set, the next update rejects with it, so a test drives the real runDeviceCommand failure branch (a plain Error or a
   // ProtectAuthorizationError).

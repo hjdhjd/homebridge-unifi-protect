@@ -28,10 +28,10 @@ export function sensorTamperState(tamperingDetectedAt: number | null): boolean {
 
 /**
  * Map a sensor's alarm-trigger timestamp to its HomeKit ContactSensorState: alarm when the controller has recorded a trigger time, clear when it has not. The single
- * source of truth is the projection's alarmTriggeredAt, which the controller clears only on explicit user action in the Protect app (never automatically). Both alarm
- * twins - the alarm-sound and glass-break contact sensors - read through this one predicate, so their read-through getter and reactive push can never disagree on what
- * "alarm" means. Kept deliberately distinct from sensorTamperState because it reads a different field and capability and may later honor alarmSilencedAt; it is not
- * collapsed into a generic latched-field predicate.
+ * source of truth is the projection's alarmTriggeredAt, which the controller clears only on explicit user action in the Protect app (never automatically). The
+ * alarm-family contact sensors read through this one predicate, so their read-through getter and reactive push can never disagree on what "alarm" means. Kept
+ * deliberately distinct from sensorTamperState because it reads a different field and capability and may later honor alarmSilencedAt; it is not collapsed into a generic
+ * latched-field predicate.
  *
  * @param alarmTriggeredAt - The sensor's alarmTriggeredAt: the epoch-ms time an alarm was last triggered, or null when none has been.
  *
@@ -43,10 +43,10 @@ export function sensorAlarmState(alarmTriggeredAt: number | null): boolean {
 }
 
 // The static description of the alarm family's HomeKit contact sensors - the single source for which alarm-family services exist and their gate, display label, log
-// subject, MQTT topic, name suffix, and reserved subtype. Both alarm twins read the one alarmTriggeredAt field, so this descriptor is read by the create/gate path
-// (configureAlarmContactSensors), the reactive push (updateAlarmState), and the MQTT gets (configureMqtt), keeping the enabled-sensors log, the services actually
-// created, and the topics registered from ever disagreeing. label is the enabled-sensors noun phrase and log is the transition-log subject word - two distinct display
-// strings for two distinct sentences, so both are sourced here. A future alarm-family member is one more row.
+// subject, MQTT topic, name suffix, and reserved subtype. The alarm-family contact sensors read the one alarmTriggeredAt field, so this descriptor is read by the
+// create/gate path (configureAlarmContactSensors), the reactive push (updateAlarmState), and the MQTT gets (configureMqtt), keeping the enabled-sensors log, the
+// services actually created, and the topics registered from ever disagreeing. label is the enabled-sensors noun phrase and log is the transition-log subject word - two
+// distinct display strings for two distinct sentences, so both are sourced here. A future alarm-family member is one more row.
 interface AlarmContactDescriptor {
 
   readonly gate: (config: Readonly<WithoutIdentity<ProtectSensorConfig>>) => boolean;
@@ -57,7 +57,7 @@ interface AlarmContactDescriptor {
   readonly subtype: string;
 }
 
-// The alarm-family rows, alarm sound first so the enabled-sensors log preserves its historical position. Each gate mirrors its twin's controller enable signal: the
+// The alarm-family rows, alarm sound first so its position in the enabled-sensors log stays stable. Each gate mirrors its twin's controller enable signal: the
 // alarm-sound settings toggle, and the glass-break capability channel being present AND its own settings toggle enabled.
 const SENSOR_ALARM_CONTACTS: readonly AlarmContactDescriptor[] = [
 
@@ -236,10 +236,10 @@ export class ProtectSensor extends ProtectDevice {
     }
   }
 
-  // Configure the alarm-family contact sensors (alarm sound and glass break) for HomeKit. Both twins read the single alarmTriggeredAt field through the shared
-  // alarmDetected getter, so a single steady-state VALUE writer - the dedicated alarmTriggeredAt observer via updateAlarmState - owns their ContactSensorState after the
-  // create-time seed here. Each descriptor row is validated and acquired independently; the returned labels feed the enabled-sensors log so it can never disagree with
-  // the services actually created.
+  // Configure the alarm-family contact sensors (alarm sound and glass break) for HomeKit. Each reads the single alarmTriggeredAt field through the shared alarmDetected
+  // getter, so a single steady-state VALUE writer - the dedicated alarmTriggeredAt observer via updateAlarmState - owns their ContactSensorState after the create-time
+  // seed here. Each descriptor row is validated and acquired independently; the returned labels feed the enabled-sensors log so it can never disagree with the services
+  // actually created.
   private configureAlarmContactSensors(isInitialized = true): string[] {
 
     const config = this.ufp;
@@ -488,7 +488,7 @@ export class ProtectSensor extends ProtectDevice {
 
       // Register the MQTT get handler exactly once per channel: subscribeGet is NOT idempotent (it accumulates handlers per call), so we guard it behind the
       // first-run flag exactly as the occupancy / motion sensors do. ONLY leak is folded onto this per-channel leaf gate, because only leak has the model-aware
-      // per-channel enable signal; the other five sensor GETs remain unconditional in configureMqtt - a pre-existing, accepted inconsistency that is out of scope here.
+      // per-channel enable signal; the other sensor GETs remain unconditional in configureMqtt - a pre-existing, accepted inconsistency that is out of scope here.
       if(!isInitialized) {
 
         this.subscribeGet(sensor.mqtt, "leak detected", () => this.leakDetected(sensor.isDetected).toString());
@@ -634,8 +634,8 @@ export class ProtectSensor extends ProtectDevice {
 
   // Configure MQTT capabilities for sensors. The leak get handlers are NOT registered here: leak is the one sensor mode whose per-channel enablement is model-aware, so
   // its get registration is folded into configureLeakSensor's per-channel loop (once-guarded, and released by the channel's own unsubscribe when it is disabled). The
-  // remaining six GETs are always-on and registered unconditionally here; the two alarm-family gets (alarm sound and glass break) are driven from the shared descriptor,
-  // so their topics and labels are single-sourced with the services they read - both reading through the one alarmDetected getter.
+  // remaining GETs are always-on and registered unconditionally here; the alarm-family gets (alarm sound and glass break) are driven from the shared descriptor, so
+  // their topics and labels are single-sourced with the services they read - each reading through the one alarmDetected getter.
   private configureMqtt(): void {
 
     for(const descriptor of SENSOR_ALARM_CONTACTS) {
@@ -649,8 +649,8 @@ export class ProtectSensor extends ProtectDevice {
     this.subscribeGet("temperature", "temperature", () => this.temperature.toString());
   }
 
-  // Spawn the sensor's narrow-selector observers. super spawns the two universal observers (name sync and firmware/device-info refresh); the sensor adds four
-  // reactions, each waking only on its own slice through the store's reference dedup.
+  // Spawn the sensor's narrow-selector observers. super spawns the universal observers (name sync and firmware/device-info refresh); the sensor adds further reactions,
+  // each waking only on its own slice through the store's reference dedup.
   protected override spawnObservers(): void {
 
     super.spawnObservers();
@@ -675,14 +675,14 @@ export class ProtectSensor extends ProtectDevice {
       () => this.updateTamperState());
 
     // The reactive alarm-family push: when the controller's alarmTriggeredAt changes, re-write ContactSensorState across each present alarm-family contact sensor. The
-    // alarm family now joins tamper as a dedicated-observer latched field the controller clears only on explicit user action; registered unconditionally so it is live
+    // alarm family joins tamper as a dedicated-observer latched field the controller clears only on explicit user action; registered unconditionally so it is live
     // the instant a late capability creates the service (updateAlarmState is a safe no-op while no alarm-family service exists). The onGet already reads through, so this
     // is purely the push that keeps HomeKit current between reads.
     this.observeState({ key: "sensor.alarmTriggeredAt", selector: state => sensor(state)?.alarmTriggeredAt, title: "alarm detection" }, () => this.updateAlarmState());
 
     // The remaining sensor reactions are a full service reconciliation (battery, the per-mode sensor services, the status indicator, StatusActive). They key off many
     // settings sub-objects and live stat values, so we observe the whole sensor record and re-derive - reproducing a refresh-on-any-change, but now structurally silent
-    // when nothing changed (the store's reference dedup). The alarm family and tamper now own their VALUE pushes through their dedicated observers above; what this broad
+    // when nothing changed (the store's reference dedup). The alarm family and tamper own their VALUE pushes through their dedicated observers above; what this broad
     // observer still uniquely provides is each service's per-device StatusActive push (via the unconditional configureStateCharacteristics) and the runtime
     // capability-flip existence reconcile. Decomposing this into per-service observers - which would also retire the idempotent StatusTampered re-apply the dedicated
     // tamper observer already owns - is a tracked follow-up; any such retirement MUST first add a sensor.state -> refreshReachability availability observer to preserve

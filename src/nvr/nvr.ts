@@ -111,7 +111,7 @@ export class ProtectNvr {
   // as the unifi-protect library's own ProtectLogging seam so it is single-sourced with the contract ProtectClient.connect() expects.
   private readonly clientLog: ProtectLogging;
   // The device-category -> adopted-id-selector SSOT. The membership observe loops, the stability sweep, and the per-fire stillGone re-check all read the live adopted
-  // set through this one map, so the six content-memoized selectors are wired in exactly one place rather than re-listed at each reader.
+  // set through this one map, so the content-memoized selectors are wired in exactly one place rather than re-listed at each reader.
   private readonly adoptedIdSelectors: Record<keyof ProtectDeviceTypes, (state: ProtectState) => readonly string[]> = {
 
     camera: selectAdoptedCameraIds,
@@ -226,7 +226,7 @@ export class ProtectNvr {
           exhaustiveGuard(next);
       }
 
-      // Re-evaluate the removal stability clock - health is one of the three facts `good` depends on. A drop out of healthy resets the clock and cancels every pending
+      // Re-evaluate the removal stability clock - health is one of the facts `good` depends on. A drop out of healthy resets the clock and cancels every pending
       // removal; a return to healthy (with phase running and the connection healthy) re-stamps it and re-arms the sweep.
       this.refreshRemovalStability();
     });
@@ -333,7 +333,7 @@ export class ProtectNvr {
       }
 
       // Classify whether to log this episode quietly, and record that so the recovery edge - which cannot read the phase reliably, the controller having returned by then
-      // - consults the same classification. Quiet is the SUPERSET of two cases the phase alone cannot cover: an interruption observed while still rebooting/shutting down
+      // - consults the same classification. Quiet is the SUPERSET of the cases the phase alone cannot cover: an interruption observed while still rebooting/shutting down
       // (induced), AND the post-return re-establishment blip of a controller reboot, whose recovery:started fires at episode entry seconds after the controller returned,
       // by which point the plugin has already concluded the reboot and resumed running - so isInducedDisruption(this.phase) reads false here and the recency half
       // catches it. This sits AFTER the ownership guard above: the unifi-protect library's recovery channels are process-global, so recording before the guard would
@@ -471,7 +471,7 @@ export class ProtectNvr {
       this.health.suspend();
     }
 
-    // Re-evaluate the removal stability clock now that phase changed - one of the three facts `good` depends on. Unconditional and last so the shuttingDown path always
+    // Re-evaluate the removal stability clock now that phase changed - one of the facts `good` depends on. Unconditional and last so the shuttingDown path always
     // runs the cancel-all (good becomes false, every pending removal is cleared) before disconnect() disposes the client. The health.resume() above ran first, so on the
     // connect() path into running, health is already healthy when this stamps the startup good-state.
     this.refreshRemovalStability();
@@ -889,7 +889,7 @@ export class ProtectNvr {
   }
 
   // The live unifi-protect device config records across every category, flattened. The single read path for the discovery dump, the by-mac lookup, and the orphan sweep,
-  // so those three readers never re-derive the controller's device inventory from a held snapshot - each is a thin map off the client's live projection collections.
+  // so those readers never re-derive the controller's device inventory from a held snapshot - each is a thin map off the client's live projection collections.
   private get deviceConfigs(): ProtectDeviceConfigTypes[] {
 
     return [ ...this.client.cameras.map(c => c.config), ...this.client.chimes.map(c => c.config), ...this.client.fobs.map(f => f.config),
@@ -1042,13 +1042,13 @@ export class ProtectNvr {
   // Recompute the controller's good-state and drive the removal stability clock. Good means running AND reachable AND healthy: phase===running excludes induced
   // disruptions, connection.isHealthy is the unifi-protect library's authoritative reachability fact (it closes the gate promptly on a socket-dropping outage - reboot,
   // network loss, TCP RST - and the symptom-rate health model alone drifts back to healthy during a quiet outage, so we must read the connection fact directly), and
-  // health.state===healthy excludes a reachable-but-stressed controller. The fourth conjunct, hasFeature("Device"), means a feature-disabled controller never reaches
+  // health.state===healthy excludes a reachable-but-stressed controller. The remaining conjunct, hasFeature("Device"), means a feature-disabled controller never reaches
   // good-state, so the stability sweep never arms during the disabled-controller startup path (login's sleep window). The conjunct ordering is LOAD-BEARING:
   // this._phase==="running" short-circuits BEFORE this.client.connection.isHealthy, guarding the pre-connect window where this.client is unset (do not reorder).
   // A library throttle makes connection.isHealthy false (it derives the throttled state), so a throttle conservatively resets the clock. On entering good-state we stamp
   // controllerStableSince (uptime-backdated only on the first entry) and arm the one-shot stability sweep; on leaving it we clear the clock, the sweep timer, and EVERY
   // pending removal - the "all bets are off, no destructive action" rule. Idempotent: re-entrant and same-state calls are no-ops. Called from transition() (phase), the
-  // health stateChange handler (health), and the connection observe loop (reachability) - the three facts good depends on.
+  // health stateChange handler (health), and the connection observe loop (reachability) - the facts good depends on.
   private refreshRemovalStability(): void {
 
     const good = (this._phase === "running") && this.client.connection.isHealthy && (this.health.state === "healthy") && this.hasFeature("Device");

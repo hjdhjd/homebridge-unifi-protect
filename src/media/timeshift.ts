@@ -30,7 +30,7 @@ interface TimeshiftBufferEvents {
   terminated: [];
 }
 
-// Return shape of getKeyframeAlignedStart. Names the two coordinates a caller needs to feed keyframe-aligned data into FFmpeg: the buffer index to begin
+// Return shape of getKeyframeAlignedStart. Names the coordinates a caller needs to feed keyframe-aligned data into FFmpeg: the buffer index to begin
 // reading from (starts on a keyframe), and the sub-segment seek offset to hand to FFmpeg's -ss parameter for fine alignment within that keyframe's window.
 interface KeyframeAlignedStart {
 
@@ -144,7 +144,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
   // rules.
   //
   // The finally block is the self-cleaning anchor for out-of-band iterator termination (ProtectLagError, the recovery give-up, unexpected errors). The id-based
-  // identity guard discriminates four teardown paths with a single compare, and is resilient to future indirection (proxies, wrappers) because subscription ids
+  // identity guard discriminates the teardown paths with a single compare, and is resilient to future indirection (proxies, wrappers) because subscription ids
   // are stable strings rather than object references:
   //
   //   - stop() called externally: stop() cleared `this.subscription` before the iterator observed the queue close, so the id compare against undefined fails

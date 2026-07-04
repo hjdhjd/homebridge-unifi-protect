@@ -1,6 +1,6 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * camera-mqtt.test.ts: The camera-leaf MQTT handler-body net - the three registered-but-never-invoked subscribeGet / subscribeSet handler bodies the camera's
+ * camera-mqtt.test.ts: The camera-leaf MQTT handler-body net - the registered-but-never-invoked subscribeGet / subscribeSet handler bodies the camera's
  * configureMqtt registers (camera.ts), driven against the REAL constructed ProtectCamera by FINDING each captured subscription on the TestMqttClient double and
  * INVOKING its getValue() / setValue(value, rawValue) closure directly.
  *
@@ -64,7 +64,7 @@ interface BuiltCamera {
   nvr: TestProtectNvr;
 }
 
-// Build a REAL plain ProtectCamera against the doubles, exactly as camera-onsets.test.ts's buildCamera assembles it, with two additions this suite needs: mqtt is always
+// Build a REAL plain ProtectCamera against the doubles, exactly as camera-onsets.test.ts's buildCamera assembles it, with the additions this suite needs: mqtt is always
 // threaded true (the captured subscriptions are the surface under test), and an optional dispatch factory installs the recording ring double. The casts are confined to
 // this seam - the instance is the production ProtectCamera and everything it runs is the production path. makeTestNvr returns mqtt as Nullable<TestMqttClient>, so the
 // helper narrows it (a throwing guard, exactly as buildDoorbell / buildLight do) before returning the non-null double; otherwise every mqtt.subscriptions.find is a

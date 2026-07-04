@@ -79,7 +79,7 @@ interface SessionInfo {
 // Camera streaming delegate implementation for Protect.
 export class ProtectStreamingDelegate implements CameraStreamingDelegate, StreamingDelegate {
 
-  // The frozen audio-options identity the CameraController was built for, captured at construction from the same two live-volatile inputs the audio options freeze below:
+  // The frozen audio-options identity the CameraController was built for, captured at construction from the same live-volatile inputs the audio options freeze below:
   // isDoorbell (the recording and streaming sample rates) and the two-way audio hint (the streaming twoWayAudio flag). The live capability reconcile reads this off
   // this.stream to detect a stale controller (a camera the controller late-reports as a doorbell or as having a speaker) and rebuilds only when a capability appeared.
   public readonly builtFor: AudioOptionsIdentity;
@@ -692,14 +692,27 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
       );
     }
 
-    // -map 0:v:0                       Selects the first available video track from the stream. Protect actually maps audio
-    //                                  and video tracks in opposite locations from where FFmpeg typically expects them. This
-    //                                  setting is a more general solution than naming the track locations directly in case
-    //                                  Protect changes this in the future.
+    // Select the streams our single tee-muxed output carries. Protect actually maps audio and video tracks in opposite locations from where FFmpeg typically expects
+    // them, so we name the track locations generally rather than positionally in case Protect changes this in the future. The video map always binds, and a bound
+    // explicit map disables FFmpeg's automatic stream selection for the whole output...that is load-bearing for the audio map's optionality: when the input carries no
+    // audio track (the livestream API can transiently deliver an fMP4 without one, and an RTSP stream can carry a track layout the index-specific map misses), the
+    // audio map simply matches nothing rather than inviting automatic selection to improvise a substitute into the audio sink.
+    //
+    // -map 0:v:0                       Selects the first available video track from the stream.
+    // -map 0:a:0?                      Selects the first available audio track from the stream, if it exists. On the RTSP path we select the second audio track instead,
+    //                                  to take advantage of the higher fidelity potentially available to us there. The livestream API only provides an AAC track.
     ffmpegArgs.push(
 
       "-map", "0:v:0"
     );
+
+    if(sessionInfo.hasAudioSupport) {
+
+      ffmpegArgs.push(
+
+        "-map", useTsb ? "0:a:0?" : "0:a:1?"
+      );
+    }
 
     // Inform the user.
     const hinting = [];
@@ -787,37 +800,13 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
       "-metadata", "comment=" + this.protectCamera.accessoryName + " Livestream"
     );
 
-    // Configure our video parameters for SRTP streaming:
-    //
-    // -payload_type num                Payload type for the RTP stream. This is negotiated by HomeKit and is usually 99 for H.264 video.
-    // -ssrc                            Synchronization source stream identifier. Random number negotiated by HomeKit to identify this stream.
-    // -f rtp                           Specify that we're using the RTP protocol.
-    // -flush_packets 1                 Ensure we flush our write buffer after each muxed packet.
-    // -packetsize 1200                 Use a packetsize of 1200 for compatibility across network environments. This should be no more than HomeKit livestreaming MTU
-    //                                  (1378 for IPv4 and 1228 for IPv6).
-    // -srtp_out_suite enc              Specify the output encryption encoding suites.
-    // -srtp_out_params params          Specify the output encoding parameters. This is negotiated by HomeKit.
-    ffmpegArgs.push(
-
-      "-payload_type", request.video.pt.toString(),
-      "-ssrc", sessionInfo.videoSSRC.toString(),
-      "-f", "rtp",
-      "-flush_packets", "1",
-      "-packetsize", "1200",
-      "-srtp_out_suite", "AES_CM_128_HMAC_SHA1_80",
-      "-srtp_out_params", sessionInfo.videoSRTP.toString("base64"),
-      "srtp://" + sessionInfo.address + ":" + sessionInfo.videoPort.toString() + "?rtcpport=" + sessionInfo.videoPort.toString()
-    );
-
     // Configure the audio portion of the command line, if we have a version of FFmpeg that supports the audio codecs we need. Options we use are:
     //
-    // -map 0:a:0?                      Selects the first available audio track from the stream, if it exists. Protect actually maps audio
-    //                                  and video tracks in opposite locations from where FFmpeg typically expects them. This
-    //                                  setting is a more general solution than naming the track locations directly in case
-    //                                  Protect changes this in the future.
     // -codec:a                         Encode using the codecs available to us on given platforms.
     // -profile:a 38                    Specify enhanced, low-delay AAC for HomeKit.
-    // -flags +global_header            Sets the global header in the bitstream. Needed for FDK-AAC to correctly initialize. For encoders like aac_at it becomes a no-op.
+    // -flags:a +global_header          Sets the global header in the audio bitstream. Needed for FDK-AAC to correctly initialize. For encoders like aac_at it becomes a
+    //                                  no-op. The :a specifier is load-bearing: with a single output, an unqualified option binds to every stream it can apply to, and
+    //                                  a global header on the video encoder would strip the in-band SPS and PPS that HomeKit requires from RTP video.
     // -ar samplerate                   Sample rate to use for this audio. This is specified by HomeKit.
     // -b:a bitrate                     Bitrate to use for this audio stream. This is specified by HomeKit.
     // -ac number                       Set the number of audio channels.
@@ -826,10 +815,8 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
       // Configure our audio parameters.
       ffmpegArgs.push(
 
-        // Take advantage of the higher fidelity potentially available to us from the Opus track in the RTSP stream. The livestream API only provides an AAC track.
-        "-map", useTsb ? "0:a:0?" : "0:a:1?",
         ...this.ffmpegOptions.audioEncoder(),
-        "-flags", "+global_header",
+        "-flags:a", "+global_header",
         "-profile:a", "38",
         "-ar", request.audio.sample_rate.toString() + "k",
         "-b:a", request.audio.max_bit_rate.toString() + "k",
@@ -846,29 +833,45 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
 
         ffmpegArgs.push("-filter:a", afOptions.join(", "));
       }
-
-      // Add the required RTP settings and encryption for the stream:
-      //
-      // -payload_type num                Payload type for the RTP stream. This is negotiated by HomeKit and is usually 110 for AAC-ELD audio.
-      // -ssrc                            Synchronization source stream identifier. Random number negotiated by HomeKit to identify this stream.
-      // -f rtp                           Specify that we're using the RTP protocol.
-      // -flush_packets 1                 Ensure we flush our write buffer after each muxed packet.
-      // -packetsize 384                  Use a packetsize as a multiple of the sample rate. HomeKit livestreaming wants a block size of 480 samples when using AAC-ELD.
-      //                                  We loosely interpret that to mean less than 480 bytes per packet and use 384 since it's divisible by 16 kHz and 24 kHz.
-      // -srtp_out_suite enc              Specify the output encryption encoding suites.
-      // -srtp_out_params params          Specify the output encoding parameters. This is negotiated by HomeKit.
-      ffmpegArgs.push(
-
-        "-payload_type", request.audio.pt.toString(),
-        "-ssrc", sessionInfo.audioSSRC.toString(),
-        "-f", "rtp",
-        "-flush_packets", "1",
-        "-packetsize", "384",
-        "-srtp_out_suite", "AES_CM_128_HMAC_SHA1_80",
-        "-srtp_out_params", sessionInfo.audioSRTP.toString("base64"),
-        "srtp://" + sessionInfo.address + ":" + sessionInfo.audioPort.toString() + "?rtcpport=" + sessionInfo.audioPort.toString()
-      );
     }
+
+    // Send the stream to HomeKit through a single tee-muxed output rather than two top-level outputs. The distinction is load-bearing: a top-level output that ends up
+    // with no streams is a fatal error for the entire command, while a tee sink is isolable...this is the shape that lets a session survive its optional audio map
+    // matching nothing. Video and audio are routed to their negotiated SRTP destinations with per-sink select filters, and only the audio sink carries onfail=ignore:
+    // an input without an audio track costs us that sink alone, degrading the session to video-only - the truth of the input - while a failure on the video sink
+    // keeps tee's default behavior and ends the session loudly. Because no input to this command is synthetic or unbounded, every output stream ends when the camera
+    // input does, and FFmpeg's organic exit on input EOF is a design invariant here...the teardown in consumeStreamSegments depends on it.
+    //
+    // The options inside each sink's brackets combine tee's own per-sink directives - format, stream routing, and failure policy - with options that pass through to
+    // that sink's RTP muxer and SRTP protocol:
+    //
+    // f=rtp                            Use the RTP muxer for this sink.
+    // select=v / select=a              Route only the selected stream type to this sink.
+    // onfail=ignore                    We set this only on the audio sink: a sink that fails to open or write is dropped while the remaining sinks continue.
+    // payload_type=num                 Payload type for the RTP stream. This is negotiated by HomeKit and is usually 99 for H.264 video and 110 for AAC-ELD audio.
+    // ssrc=num                         Synchronization source stream identifier. Random number negotiated by HomeKit to identify this stream.
+    // flush_packets=1                  Ensure we flush our write buffer after each muxed packet.
+    // packetsize=num                   Use a packetsize of 1200 for video, which should be no more than the HomeKit livestreaming MTU (1378 for IPv4 and 1228 for IPv6).
+    //                                  For audio, HomeKit livestreaming wants a block size of 480 samples when using AAC-ELD - we loosely interpret that to mean less
+    //                                  than 480 bytes per packet and use 384 since it's divisible by 16 kHz and 24 kHz.
+    // srtp_out_suite=enc               Specify the output encryption encoding suites.
+    // srtp_out_params=params           Specify the output encoding parameters. This is negotiated by HomeKit. The value is safe within tee's sink syntax: the suite's
+    //                                  fixed 30-byte key and salt encode to exactly 40 base64 characters with no "=" padding, and the remainder of the base64 alphabet
+    //                                  carries no meaning to tee's option parser.
+    const videoSink = "[f=rtp:select=v:payload_type=" + request.video.pt.toString() + ":ssrc=" + sessionInfo.videoSSRC.toString() +
+      ":flush_packets=1:packetsize=1200:srtp_out_suite=AES_CM_128_HMAC_SHA1_80:srtp_out_params=" + sessionInfo.videoSRTP.toString("base64") +
+      "]srtp://" + sessionInfo.address + ":" + sessionInfo.videoPort.toString() + "?rtcpport=" + sessionInfo.videoPort.toString();
+
+    const audioSink = !sessionInfo.hasAudioSupport ? "" :
+      "|[f=rtp:select=a:onfail=ignore:payload_type=" + request.audio.pt.toString() + ":ssrc=" + sessionInfo.audioSSRC.toString() +
+      ":flush_packets=1:packetsize=384:srtp_out_suite=AES_CM_128_HMAC_SHA1_80:srtp_out_params=" + sessionInfo.audioSRTP.toString("base64") +
+      "]srtp://" + sessionInfo.address + ":" + sessionInfo.audioPort.toString() + "?rtcpport=" + sessionInfo.audioPort.toString();
+
+    ffmpegArgs.push(
+
+      "-f", "tee",
+      videoSink + audioSink
+    );
 
     // Additional logging, but only if we're debugging.
     if(this.platform.verboseFfmpeg || this.verboseFfmpeg || this.protectCamera.hasFeature("Debug.Video.FFmpeg")) {

@@ -103,7 +103,7 @@ const makeCamera = (id: string, options: { hksvRecording?: boolean; recordPresen
   const { hksvRecording = true, recordPresent = true, smartCapable = true, smartDetectEnabled = true } = options;
 
   // The delivery handlers read the top-level protectId and cameraFor reads modelKey and recordPresent (the non-throwing identity / presence accessors), so the mock
-  // exposes all three alongside the projection. protectId mirrors the projection's id, exactly as the production device's protectId reads through to its config id.
+  // exposes them all alongside the projection. protectId mirrors the projection's id, exactly as the production device's protectId reads through to its config id.
   return {
 
     hints: { smartDetect: smartDetectEnabled },
@@ -115,8 +115,9 @@ const makeCamera = (id: string, options: { hksvRecording?: boolean; recordPresen
   };
 };
 
-// Build a mock fob-like device carrying only the fields the button router reads: identity (protectId) and presence (recordPresent). The buttonPressed case addresses by
-// id and gates on recordPresent WITHOUT a modelKey narrow (unlike cameraFor), so the delivery is family-agnostic - a fob, or any button-bearing device, rides this path.
+// Build a mock fob-like device carrying a fob model key plus the fields the button router reads: identity (protectId) and presence (recordPresent). The
+// buttonPressed case addresses by id and gates on recordPresent WITHOUT a modelKey narrow (unlike cameraFor), so the delivery is family-agnostic - a fob, or any
+// button-bearing device, rides this path.
 const makeFob = (id: string, options: { recordPresent?: boolean } = {}): unknown => {
 
   const { recordPresent = true } = options;

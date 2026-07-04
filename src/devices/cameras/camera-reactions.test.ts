@@ -3,7 +3,7 @@
  * camera-reactions.test.ts: The camera-leaf observe-and-fire net - the uncovered device-state reactions and the bound read / pure-context handlers, against the
  * REAL constructed ProtectCamera.
  *
- * The camera leaf registers twelve state observers (camera.ts). Three are already netted by camera-construction.test.ts (camera.channels -> reconcileStreaming,
+ * The camera leaf registers its state observers (camera.ts). Some are already netted by camera-construction.test.ts (camera.channels -> reconcileStreaming,
  * camera.state -> updateAvailability, and the camera.state.hksv both-edge timeshift reconcile). This suite nets the device-state reactions behavior-FIRST - each is a
  * structural-sharing store push (pushCameraPatch / pushCameraFeatureFlags) followed by a settle and an assertion on the effect the reaction produced (the characteristic
  * it WROTE, or the recording dispatch it routed to), never on the private updater that wrote it - plus the bound GET read-throughs and the two pure-context onSets (HKSV
@@ -115,7 +115,7 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
       built = await buildCamera();
 
-      // The plain-camera census: the base pair (name, firmware) plus the camera's twelve narrow observers. A drift here means an extra or missing observer slipped in.
+      // The plain-camera census: the base observers (name, firmware) plus the camera's narrow observers. A drift here means an extra or missing observer slipped in.
       const store = built.nvr.client.state;
 
       assert.equal(store.observerCount, 14, "the plain camera wires exactly fourteen observers (the base pair plus the camera's twelve)");

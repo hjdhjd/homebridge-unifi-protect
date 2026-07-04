@@ -33,7 +33,7 @@ export interface ProtectDeviceTypes {
   viewer: ProtectViewer;
 }
 
-// The runtime category array and the two unions below mirror ProtectDeviceTypes above: add or remove a supported device kind and all four must change in lockstep.
+// The runtime category array and the unions below mirror ProtectDeviceTypes above: add or remove a supported device kind and all of them must change in lockstep.
 export const ProtectDeviceCategories = [ "camera", "chime", "fob", "light", "relay", "sensor", "viewer" ];
 export type ProtectDeviceConfigTypes = ProtectCameraConfig | ProtectChimeConfig | ProtectFobConfig | ProtectLightConfig | ProtectRelayConfig | ProtectSensorConfig |
   ProtectViewerConfig;
@@ -98,7 +98,7 @@ export function packageCameraId(mac: string): string {
 export const PACKAGE_CAMERA_NAME_SUFFIX = " Package Camera";
 
 // A typed view of this plugin's slice of the homebridge PlatformConfig. PlatformConfig carries an `[x: string]: any` index signature for arbitrary user config; declaring
-// the six keys we actually read lets the platform constructor access them as typed properties (no index-signature dot-access, no per-key cast) while still satisfying the
+// the keys we actually read lets the platform constructor access them as typed properties (no index-signature dot-access, no per-key cast) while still satisfying the
 // DynamicPlatformPlugin contract, since every added key is optional.
 export interface ProtectPlatformConfig extends PlatformConfig {
 

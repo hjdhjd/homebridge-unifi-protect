@@ -6,11 +6,11 @@
  * The unifi-protect library's livestream pool owns the recovery MECHANISM: the loop that re-consults a policy on every stall, the timing windows it honors, and
  * the terminal give-up throw. It deliberately omits controller-health and lifecycle-phase from its `RecoveryContext`, because those are consumer-private - only
  * the plugin can observe them. This module is the POLICY: a pure function that correlates the library-observable context with the plugin's own controller-health
- * (`NvrHealthState`, `connection.isThrottled`/`isHealthy`) and lifecycle-phase (`NvrPhase`) reads to apply the three self-heal rules, plus a thin live-read closure
+ * (`NvrHealthState`, `connection.isThrottled`/`isHealthy`) and lifecycle-phase (`NvrPhase`) reads to apply the self-heal rules, plus a thin live-read closure
  * (wired at `ProtectClient.connect` in nvr.ts) that supplies those reads at policy-fire time. This is the same dependency-inversion split as the `reduceHealth` pure
  * core paired with its `NvrHealth` event-sink wrapper: the decision logic is an exhaustively unit-testable pure function, and the wrapper supplies only live state.
  *
- * The three self-heal rules this policy applies:
+ * The self-heal rules this policy applies:
  *
  *   1. Wait out a drowning controller. When the controller's breaker is open or it is unreachable (`isThrottled`/`!isHealthy`), back off and wait indefinitely (the
  *      library caps the backoff) without ever rebooting the camera - a camera reboot cannot fix an overloaded controller. The reachability gate is checked before the
@@ -62,8 +62,8 @@ const LIVESTREAM_STRESS_WAIT_MS = 5000;
  * controller-health and lifecycle-phase reads, it returns the {@link RecoveryDecision} the library's recovery loop will honor. It is pure - no live reads, no side
  * effects - so it is exhaustively unit-testable with constructed inputs, and the live reads are supplied by the thin closure wired at `ProtectClient.connect`.
  *
- * Establishment is delegated wholesale to the library default (it is hardware-bound and health-independent); past establishment the ordered policy is six steps, the
- * first match winning:
+ * Establishment is delegated wholesale to the library default (it is hardware-bound and health-independent); past establishment the ordered policy is a sequence of
+ * steps, the first match winning:
  *
  *   1. An induced disruption (our own reboot/shutdown) waits, so we do not fight our own teardown with reconnects.
  *   2. A drowning controller (the hard reachability gate) waits indefinitely and never reboots a camera.

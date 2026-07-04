@@ -13,7 +13,7 @@ import diagnosticsChannel from "node:diagnostics_channel";
  *
  * Channel names follow a stable `hbup:<subsystem>:<event>` taxonomy and are declared exactly once here; call sites import the publisher they need rather than
  * re-deriving the channel-name string, so a rename is a single edit and a typo is impossible at the call site. This is the mirror of the library's diagnostics
- * module, kept deliberately small: the four channels declared here - firehose dispatch, controller lifecycle, the per-accessory observer-wake, and the
+ * module, kept deliberately small: the channels declared here - firehose dispatch, controller lifecycle, the per-accessory observer-wake, and the
  * reachability fan-out - cover the plugin's internal lifecycle and per-device reaction points.
  */
 export const channels = {

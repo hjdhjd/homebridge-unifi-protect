@@ -498,7 +498,7 @@ describe("harness growth: service identity, controller log, and event notificati
 
   test("the sensor-family service markers construct and each carries its seeded primary characteristic", () => {
 
-    // The five sensor-family markers added for the ProtectSensor real-construction net. Each must construct without throwing (acquireService's create branch invokes the
+    // The sensor-family markers added for the ProtectSensor real-construction net. Each must construct without throwing (acquireService's create branch invokes the
     // namespace entry directly) AND carry its seed characteristic as the materialized first element (getCharacteristicConstructor destructures it), mirroring the
     // OccupancySensor / MotionSensor precedent. The seed pairing is the load-bearing claim: a wrong seed would let construction succeed yet break the kind-true read.
     // We pair each marker with its expected seed and assert the first characteristic IS that kind - reading characteristics[0] with a length guard so the index access
@@ -1533,7 +1533,7 @@ describe("A2 base-capability foundation: the shared dispatch, the sensor carrier
     const device = new TestBaseDevice(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection);
 
     // The base configurators read this.hints, so populate them first, then drive the device-info window. A smoke check that the public window reaches the base
-    // configureInfo: it returns true and writes the AccessoryInformation Model (the carrier marketName) - the deep device-info nets (every setInfo write, the two
+    // configureInfo: it returns true and writes the AccessoryInformation Model (the carrier marketName) - the deep device-info nets (every setInfo write, the
     // observer reactions) are device-info.test.ts's job.
     device.configureHintsFor();
 
@@ -1557,7 +1557,7 @@ describe("A2 base-capability foundation: the shared dispatch, the sensor carrier
     device.spawnObserversFor();
 
     // Observe registration is LAZY: each loop registers its observer when iteration begins, a microtask after spawnObservers schedules the loop, so settle() first or
-    // the count reads 0. After settling, the base spawnObservers has registered exactly its two universal observers (device.name, device.firmwareVersion).
+    // the count reads 0. After settling, the base spawnObservers has registered exactly its universal observers (device.name, device.firmwareVersion).
     await settle();
 
     assert.equal(store.observerCount, 2, "spawnObserversFor registers exactly the two base observers (device.name, device.firmwareVersion)");

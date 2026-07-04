@@ -77,7 +77,7 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
   }
 
   // The package camera, delegated to the doorbell capability that owns its lifecycle. Null when no doorbell capability is attached, or when an attached doorbell has no
-  // package camera. This is the single seam the two external readers (event-dispatch's package-motion branch and the NVR's deviceEndpoints iterator) consume, so the
+  // package camera. This is the single seam the external readers (event-dispatch's package-motion branch and the NVR's deviceEndpoints iterator) consume, so the
   // package's ownership can live entirely on the capability without touching either caller.
   public get packageCamera(): Nullable<ProtectCameraPackage> {
 
@@ -351,12 +351,12 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
     // from the projection's non-throwing id rather than the throwing config, so the selector binding never depends on a present record.
     const cam = selectCamera(this.device.id);
 
-    // The RTSP channel set and the negotiated video codec both shape the HomeKit streaming surface, so a change to either re-derives it. Two observers, not one tuple: a
-    // fresh tuple would never dedup on Object.is, whereas each field dedups natively as its own slice.
+    // The RTSP channel set and the negotiated video codec both shape the HomeKit streaming surface, so a change to either re-derives it. Separate observers, not one
+    // tuple: a fresh tuple would never dedup on Object.is, whereas each field dedups natively as its own slice.
     this.observeState({ key: "camera.channels", selector: state => cam(state)?.channels, title: "video streaming" }, () => void this.reconcileStreaming());
     this.observeState({ key: "camera.videoCodec", selector: state => cam(state)?.videoCodec, title: "video streaming" }, () => void this.reconcileStreaming());
 
-    // The lifecycle state enum drives two independent reactions, so each gets its own observer on the same slice. We watch state because isOnline - and therefore the
+    // The lifecycle state enum drives independent reactions, so each gets its own observer on the same slice. We watch state because isOnline - and therefore the
     // device-online half of isReachable - derives from it; the controller-health half is pushed by the NVR connection loop, not observed here.
     this.observeState({ key: "camera.state", selector: state => cam(state)?.state, title: "availability" }, () => this.updateAvailability());
     this.observeState({ key: "camera.state.hksv", selector: state => cam(state)?.state, title: "HKSV" }, () => {
@@ -1110,7 +1110,7 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
   }
 
   // Reconcile the streaming delegate's constructor-frozen audio surface against the controller's live capabilities. The CameraController's two-way audio support and its
-  // recording/streaming sample rates are baked from two live-volatile inputs - the speaker-derived two-way audio hint and isDoorbell - so a camera the controller reports
+  // recording/streaming sample rates are baked from live-volatile inputs - the speaker-derived two-way audio hint and isDoorbell - so a camera the controller reports
   // as having a speaker (or as a doorbell) only after adoption carries a controller built for the wrong audio surface, with the talk button baked off until a restart.
   // This reconcile refreshes those hints and rebuilds the controller in place when a frozen audio capability has appeared, single-sourcing the late-doorbell controller
   // rebuild. It takes no source: the additive predicate is correct on both construct (no-op, the controller is freshly built) and observe.
@@ -1720,7 +1720,7 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
   }
 
   // Register the doorbell ring-trigger MQTT subscription, exactly once, when the camera is a Protect doorbell or the user enabled the doorbell trigger.
-  // homebridge-plugin-utils subscribe is not idempotent, so the registered-once guard prevents a double-subscription across the two call sites (configureMqtt at
+  // homebridge-plugin-utils subscribe is not idempotent, so the registered-once guard prevents a double-subscription across the call sites (configureMqtt at
   // construction, and the attach arm for a late promotion). The guard is set ONLY after the gate passes and the registration happens, so a no-op construction call on a
   // plain camera (gate false) does not latch it - the later attach-time registration must not be suppressed.
   private configureDoorbellRingMqtt(): void {

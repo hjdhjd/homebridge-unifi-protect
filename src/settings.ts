@@ -57,7 +57,7 @@ export const PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS = 0;
 // stall detection past that window.
 export const PROTECT_LIVESTREAM_IDLE_TOLERANCE_MS = 2000;
 
-// Shadow reserve-depth urgency telemetry parameters for HKSV recovery. These three constants are NOT a live recovery policy: they exist only so the telemetry
+// Shadow reserve-depth urgency telemetry parameters for HKSV recovery. These constants are NOT a live recovery policy: they exist only so the telemetry
 // teardown log can report, side by side with the shipped fixed urgency, what a reserve-depth-adaptive urgency would have declared given the reserve depth the
 // event actually observed. The shadow formula is reserveMs = meanReserve * segmentLength; shadowUrgency = clamp(reserveMs - reconnectTime - safety, FLOOR,
 // reserveMs). It models the idea that the recovery tolerance could be derived from how deep the FFmpeg-produced-but-unpulled reserve ran during the event - the

@@ -3,14 +3,14 @@
  * stream-ffmpeg-process.test.ts: A spawn-free truth-table for the live-path failed-teardown policy classifier.
  *
  * classifyTeardownFailure is the pure, exported decision the live-path FFmpeg streaming process delegates to in its logFailedTeardown override: given the accumulated
- * stderr and whether this instance suppresses livestream-API hiccups, it returns one of three protocol verdicts. Lifting that decision out of the spawn-on-construction
+ * stderr and whether this instance suppresses livestream-API hiccups, it returns one of the protocol verdicts. Lifting that decision out of the spawn-on-construction
  * class is what makes it reachable here at all - the whole media suite is deliberately spawn-free and never builds a real FfmpegOptions, so the override itself cannot be
  * driven directly. This suite exercises the decision densely against the REAL exported function (and, transitively, the REAL module-private
- * LIVESTREAM_API_ERROR_PATTERNS, which we never re-declare): all three verdicts, the suppress-gating that lets a genuine failure still dump, the benign-before-probesize
- * precedence both ways, all four benign patterns pinned live, and the empty / non-matching baselines.
+ * LIVESTREAM_API_ERROR_PATTERNS, which we never re-declare): all the verdicts, the suppress-gating that lets a genuine failure still dump, the benign-before-probesize
+ * precedence both ways, all the benign patterns pinned live, and the empty / non-matching baselines.
  *
  * Honest scope note: this covers the DECISION, where all the policy risk lives, and the compile-time exhaustiveGuard in the dispatcher closes the "an unhandled verdict
- * slips through" risk (a future fourth verdict is a tsc error, not a silent canonical dump). The one residual we cannot reach is a mis-wired EFFECT inside one of the
+ * slips through" risk (a future verdict is a tsc error, not a silent canonical dump). The one residual we cannot reach is a mis-wired EFFECT inside one of the
  * three handled case bodies, because reaching the dispatcher requires constructing the class, which spawns an FFmpeg child and needs a real FfmpegOptions this suite does
  * not build. That dispatch is three lines of trivial glue verified by inspection, and homebridge-plugin-utils' own process tests cover the base super.logFailedTeardown
  * dump.
@@ -27,7 +27,7 @@ describe("classifyTeardownFailure - the live-path failed-teardown policy", () =>
     assert.equal(classifyTeardownFailure(["moov atom not found"], true), "benign-api");
   });
 
-  // All four benign patterns must stay live. We feed each known literal in its own stderr line under suppress=true and assert each maps to benign-api, pinning the real
+  // All benign patterns must stay live. We feed each known literal in its own stderr line under suppress=true and assert each maps to benign-api, pinning the real
   // module-private LIVESTREAM_API_ERROR_PATTERNS array against silent drift without re-declaring it here.
   test("each of the four benign patterns classifies as benign-api under suppress=true", () => {
 

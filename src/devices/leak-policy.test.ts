@@ -17,7 +17,7 @@ describe("per-channel leak-enablement policy (leakChannelEnabled)", () => {
 
   test("exposes a leak channel iff the device advertises it AND the model-correct enable signal is set", () => {
 
-    // The policy across the three axes: the device must HAVE the channel (channelNames), and it must be ENABLED by the model-correct signal - mountType "leak" for
+    // The policy across its axes: the device must HAVE the channel (channelNames), and it must be ENABLED by the model-correct signal - mountType "leak" for
     // single-channel mount-role devices (whose leakSettings is a stuck echo we ignore), the live leakSettings.is<C>Enabled for multi-channel environmental devices. The
     // regression case is the single-channel device with the stuck internal flag true and mountType NOT "leak": it must read false.
     // The channel-capability shapes the controller advertises: a single-channel UP-Sense exposes only "internal", a multi-channel USL-Environmental exposes both, and a

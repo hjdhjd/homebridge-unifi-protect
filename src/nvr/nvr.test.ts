@@ -283,7 +283,7 @@ describe("removal stability arithmetic", () => {
 
 describe("livestream disruption gating", () => {
 
-  // The induced predicate the two livestream-subsystem sites share. We pin all four phases so a wrong set is caught - including a `!== "running"` flip that would fold
+  // The induced predicate the livestream-subsystem sites share. We pin every phase so a wrong set is caught - including a `!== "running"` flip that would fold
   // `connecting` into the induced set and silence a startup/reconnection disruption the operator should see.
   test("isInducedDisruption is true only for the induced phases", () => {
 
@@ -386,7 +386,7 @@ describe("induced-reboot resume decision", () => {
 
   // The recovery-edge predicate that concludes an induced reboot. The true case is a recovery edge while rebooting - the connection arriving at healthy from a
   // non-healthy state. Each false case deviates from that true case in exactly ONE conjunct, so a mutation that drops any conjunct fails at least one assertion: the
-  // entry-healthy guard (from: "healthy"), the destination check (to: "degraded"), and the induced-phase gate across the other three phases (running / connecting /
+  // entry-healthy guard (from: "healthy"), the destination check (to: "degraded"), and the induced-phase gate across the other phases (running / connecting /
   // shuttingDown), including connecting so a startup edge never resumes.
   test("shouldResumeFromInducedReboot is true only on a recovery edge while rebooting", () => {
 

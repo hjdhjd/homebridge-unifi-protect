@@ -3,7 +3,7 @@
  * doorbell-effects.test.ts: The doorbell capability's observer-effect net - the two netteable observer reflections (physical-chime duration, chime volume) and the
  * doorbell-trigger ring - against the REAL constructed ProtectCamera-plus-DoorbellCapability.
  *
- * The doorbell capability registers four observers (doorbell.ts). Their WAKE is netted by doorbell-construction.test.ts; this suite nets the two reflections
+ * The doorbell capability registers its observers (doorbell.ts). Their WAKE is netted by doorbell-construction.test.ts; this suite nets the two reflections
  * whose EFFECT is observable without a controller write surface: chimeDuration -> updatePhysicalChimes (the mutually-exclusive physical-chime switch fan-out) and
  * chimeVolume -> updateChimeVolume (the volume Lightbulb's On + Brightness). The lcdMessage reflection is NOT nettable here (updateLcdSwitch iterates messageSwitches,
  * which getMessages leaves empty unless nvr.ufp.doorbellSettings is seeded - a harness addition this suite does not make), so it is left to the LCD-message net; the

@@ -14,7 +14,7 @@
  * (hasCapability, isDoorbell) - a pure device-classification decision, homed in this dedicated camera-family policy leaf alongside motion-policy.ts and testable without
  * standing up an accessory (the camera leaf is not directly importable in a unit test due to its transitive streaming-stack dependencies).
  *
- * The four actions (the live-attach replaces the former teardown+recreate; demotion is observability-only):
+ * The reconcile actions (the live-attach replaces the former teardown+recreate; demotion is observability-only):
  *
  * - "attach": the controller now reports a doorbell and no capability is attached yet - compose the capability onto the live camera in place (no teardown).
  * - "report-withdrawn": the controller no longer reports a doorbell but a capability is attached - log a warning only; the capability and its accessories remain (a full

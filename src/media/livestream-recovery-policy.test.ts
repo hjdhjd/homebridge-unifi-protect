@@ -39,7 +39,7 @@ interface NvrSnapshot {
   phase: NvrPhase;
 }
 
-// The three co-located constants the policy keeps private (only LIVE_SELF_HEAL_THRESHOLD is exported, for the consumer side - the timeshift buffer and live streaming
+// The co-located constants the policy keeps private (only LIVE_SELF_HEAL_THRESHOLD is exported, for the consumer side - the timeshift buffer and live streaming
 // delegate). We mirror them here so the boundary tests read against named values rather than bare literals, keeping the assertions legible and pinned to the policy.
 const LIVESTREAM_STRESS_WAIT_MS = 5000;
 const SOFT_DEFER_CEILING_MS = 8000;
@@ -255,9 +255,9 @@ describe("livestreamRecoveryDecision", () => {
 
   describe("decision exhaustiveness", () => {
 
-    // Every decision the policy returns must be one of RecoveryDecision's three arms. We sweep representative inputs across all six steps and assert the returned kind
+    // Every decision the policy returns must be one of RecoveryDecision's arms. We sweep representative inputs across all steps and assert the returned kind
     // is in the allowed set, so a future arm added to the union (or a step returning a malformed shape) is caught here rather than only at the library's recovery-loop
-    // boundary. This is coverage, not the offline-defer gate's discriminating test: every case here passes a reachable camera (the gate's three dedicated deepEqual
+    // boundary. This is coverage, not the offline-defer gate's discriminating test: every case here passes a reachable camera (the gate's dedicated deepEqual
     // cases above own the offline discrimination), so the sweep exercises the reachable-camera steps without conflating the two concerns.
     test("every returned decision carries a kind in the RecoveryDecision union", () => {
 

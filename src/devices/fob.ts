@@ -226,7 +226,7 @@ export class ProtectFob extends ProtectDevice {
     return true;
   }
 
-  // Spawn the fob's narrow-selector observers. super spawns the two universal observers (name sync and firmware/device-info refresh); the fob adds two battery observers,
+  // Spawn the fob's narrow-selector observers. super spawns the universal observers (name sync and firmware/device-info refresh); the fob adds battery observers,
   // one per battery field, each waking only on its own slice through the store's reference dedup and delegating to the shared battery updater. There are NO per-button
   // observers: button presses are firehose occurrences delivered by the event-dispatch router, not device-state fields observed here.
   protected override spawnObservers(): void {

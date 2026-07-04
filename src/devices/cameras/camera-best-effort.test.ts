@@ -1,6 +1,6 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * camera-best-effort.test.ts: Unit tests for the two camera operations that deliberately bypass the shared command-error helper - the ambient-light query and
+ * camera-best-effort.test.ts: Unit tests for the camera operations that deliberately bypass the shared command-error helper - the ambient-light query and
  * the package-camera flashlight heartbeat - driven against the REAL constructed classes.
  *
  * Both are best-effort, cadenced calls onto the live projection (this.device.lux() and this.device.turnOnFlashlight()): the lux query runs at construction and on a

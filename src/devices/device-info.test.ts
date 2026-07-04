@@ -2,9 +2,9 @@
  *
  * device-info.test.ts: The base-capability concern net for the shared ProtectDevice device-information surface, netted once family-agnostically.
  *
- * setInfo (device-base.ts), configureInfo (device.ts), and the two universal observers spawnObservers (device.ts) registers are BASE ProtectDevice behaviors
+ * setInfo (device-base.ts), configureInfo (device.ts), and the universal observers spawnObservers (device.ts) registers are BASE ProtectDevice behaviors
  * shared by every device family: setInfo writes the unconditional Manufacturer and the length-guarded Model / SerialNumber / HardwareRevision / FirmwareRevision;
- * configureInfo, syncName-gated, syncs the accessory name and then writes that info; and the two base observers react to controller-side changes - the device.name
+ * configureInfo, syncName-gated, syncs the accessory name and then writes that info; and the base observers react to controller-side changes - the device.name
  * observer propagates a controller-side rename into HomeKit (gated by Device.SyncName) through syncNameFromController, and the device.firmwareVersion observer refreshes
  * the FirmwareRevision characteristic on a Protect firmware update by re-running configureInfo. They are currently exercised only incidentally (family construction calls
  * configureInfo; the package camera's name-sync is asserted family-specifically in doorbell-construction.test.ts), so per the two-layer test architecture this suite nets
@@ -52,7 +52,7 @@ function loggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], substri
 // all-quiet sensor carrier. The casts are confined to the construction seam exactly as the light / chime / device-statusled suites do; the instance under test is the
 // production base, running its real configureHints / configureInfo / spawnObservers paths. We drive the wiring a family leaf would: configureHints first (configureInfo
 // and syncNameFromController read this.hints.syncName), then configureInfo (the AccessoryInformation writes plus the syncName-gated name sync), then spawnObservers (the
-// two base observers). The userOptions thread into the REAL FeatureOptions engine, so Enable.Device.SyncName - and only it - flips hints.syncName true.
+// base observers). The userOptions thread into the REAL FeatureOptions engine, so Enable.Device.SyncName - and only it - flips hints.syncName true.
 function buildInfoDevice(configOptions: Parameters<typeof makeSensorConfig>[0] = {}, harnessOptions: { userOptions?: string[] } = {}): {
   accessory: TestAccessory; device: TestBaseDevice; logEntries: TestLogEntry[]; store: TestStateStore;
 } {
@@ -130,7 +130,7 @@ describe("base ProtectDevice device-information capability (device-info concern 
 
       assert.ok(info, "the accessory carries an AccessoryInformation service for setInfo to write");
 
-      // The four writes setInfo performs against the all-quiet carrier. Manufacturer is unconditional; Model is the carrier marketName ("Test Sensor Model");
+      // The writes setInfo performs against the all-quiet carrier. Manufacturer is unconditional; Model is the carrier marketName ("Test Sensor Model");
       // SerialNumber is the carrier mac; FirmwareRevision is the carrier firmwareVersion ("5.0.0"). HardwareRevision is NOT among them here because the all-quiet carrier
       // omits hardwareRevision, so setInfo's length-guard short-circuits that write; the dedicated opt-in test below nets that guard both ways.
       assert.equal(info.getCharacteristic(Characteristic.Manufacturer).value, "Ubiquiti Inc.", "Manufacturer is the unconditional Ubiquiti string");

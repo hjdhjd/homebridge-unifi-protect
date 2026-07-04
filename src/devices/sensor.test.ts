@@ -9,21 +9,21 @@
  *
  * The sensor-specific surface: the always-present Battery service (configureBatteryService is unconditional, and updateBatteryStatus writes BatteryLevel /
  * StatusLowBattery), the per-mode services (the alarm family's alarm sound and glass-break twins / ambient light / contact-via-mountType / humidity / temperature) with
- * their read-through getters, the
- * ambient 0.0001 and humidity <0 HomeKit floors, the StatusActive / StatusTampered state characteristics each carries, and the per-mode MQTT publishes; the leak (default
- * LeakSensor, internal / external subtypes) plus the moisture variant (Sensor.MoistureSensor swaps to a subtyped ContactSensor, and the mode-flip cleanup removes the
- * opposite-type service); the four sensor observers (the motionDetectedAt firehose routed through the injected TestRecordingDispatch exactly like the light's
- * lastMotion; the tamperingDetectedAt fan-out across every state-bearing service; the alarmTriggeredAt push across each present alarm-family contact sensor; the
- * whole-record sensor.config reconcile); the six always-on GET MQTT subscriptions plus the model-aware leak GETs (registered per-channel, present-iff-enabled,
- * once-guarded, and unsubscribed when a channel is toggled off).
+ * their read-through getters, the ambient 0.0001 and humidity <0 HomeKit floors, the StatusActive / StatusTampered state characteristics each carries, and the per-mode
+ * MQTT publishes; the leak (default LeakSensor, internal / external subtypes) plus the moisture variant (Sensor.MoistureSensor swaps to a subtyped ContactSensor, and the
+ * mode-flip cleanup removes the opposite-type service); the sensor observers (the motionDetectedAt firehose routed through the injected TestRecordingDispatch
+ * exactly like the light's lastMotion; the tamperingDetectedAt fan-out across every state-bearing service; the alarmTriggeredAt push across each present alarm-family
+ * contact sensor; the whole-record sensor.config reconcile); the always-on GET MQTT subscriptions plus the model-aware leak GETs (registered per-channel,
+ * present-iff-enabled, once-guarded, and unsubscribed when a channel is toggled off).
  *
  * The LOAD-BEARING multi-wake: the whole-record observer (sensor.config) selects the WHOLE sensor record (selectSensor(id)), and pushSensorPatch replaces that record on
  * every patch, so sensor.config wakes on EVERY push - in ADDITION to any narrow observer (sensor.motionDetectedAt / sensor.tamperingDetectedAt / sensor.alarmTriggeredAt)
  * whose field changed. So a narrow-field push wakes exactly the changed narrow observer plus sensor.config, in registration order (the narrow observer precedes config):
  * a motionDetectedAt push wakes [sensor.motionDetectedAt, sensor.config], a tamperingDetectedAt push wakes [sensor.tamperingDetectedAt, sensor.config], and an
  * alarmTriggeredAt push wakes [sensor.alarmTriggeredAt, sensor.config], while a settings-only push wakes sensor.config alone. The full registration order is device.name,
- * device.firmwareVersion, sensor.motionDetectedAt, sensor.tamperingDetectedAt, sensor.alarmTriggeredAt, sensor.config, but a narrow push never wakes the base two or the
- * unchanged narrow observer. A single-observer expectation would be wrong; every wake assertion is the registration-ordered set including the accessoryId per payload.
+ * device.firmwareVersion, sensor.motionDetectedAt, sensor.tamperingDetectedAt, sensor.alarmTriggeredAt, sensor.config, but a narrow push never wakes the base observers
+ * or the unchanged narrow observer. A single-observer expectation would be wrong; every wake assertion is the registration-ordered set including the accessoryId per
+ * payload.
  *
  * The falsy-motionDetectedAt case is a TWO-STEP: the carrier defaults motionDetectedAt to 0, so a bare 0 push is no change (no wake). We first push a truthy timestamp
  * (settle, snapshot+reset the wake window AND a recording baseline), THEN push 0 - the truthy->0 change genuinely wakes the observer while the production
@@ -528,7 +528,7 @@ describe("real ProtectSensor construction and family behavior", () => {
   test("the six always-on GET MQTT subscriptions compose the device-MAC-scoped topic tails, and the default no-leak sensor registers NEITHER leak GET", () => {
 
     // The default carrier advertises no water-leak channels (channelNames []), so the leak-policy leaf gates both leak channels off and the per-channel MQTT fold-in
-    // registers NEITHER leak GET. The other six sensor GETs are always-on and registered unconditionally in configureMqtt, including both alarm-family gets (alarm sound
+    // registers NEITHER leak GET. The other sensor GETs are always-on and registered unconditionally in configureMqtt, including both alarm-family gets (alarm sound
     // and glass break) regardless of whether either service exists.
     const tails = mqtt.subscriptions.filter((subscription) => subscription.kind === "get").map((subscription) => subscription.topic);
     const mac = projection.config.mac;

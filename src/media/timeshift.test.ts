@@ -404,7 +404,7 @@ describe("timeshift buffer behavior", () => {
   });
 
   // Target (p): an explicit stop() while transmitting emits exactly one terminated, and a subsequent restart commits the new subscription cleanly with no spurious second
-  // terminated. This is the explicit-stop teardown path - the first of the four consumeSegments teardown identities: stop() synchronously clears the subscription and
+  // terminated. This is the explicit-stop teardown path - the first of the consumeSegments teardown identities: stop() synchronously clears the subscription and
   // fires the one terminated, and doubleA's iterator finally then runs while the subscription is undefined, so it no-ops via the undefined short-circuit. (The
   // id-identity guard's distinct-id arm - a prior subscription's finally running while a NEW subscription is committed - is the SEPARATE path that target (d) genuinely
   // discriminates; here doubleA's teardown completes before doubleB starts, so this test exercises the explicit-stop path, not the distinct-id arm.)
@@ -727,7 +727,7 @@ describe("timeshift buffer behavior", () => {
   });
 
   // Target (bb): reboot does NOT fire on the recovery give-up's negatives. attempts below the threshold takes the first early return; the second early-return guard's
-  // three disjuncts - self-healing disabled, the camera unreachable, and the nvr shutting down - each independently suppress the reboot. Each leaves rebootCalls empty.
+  // disjuncts - self-healing disabled, the camera unreachable, and the nvr shutting down - each independently suppress the reboot. Each leaves rebootCalls empty.
   // (The reboot().catch rejection path is a deeper defensive branch not exercised here; the host's reboot stub does not reject - acknowledged as a gap.)
   test("selfHeal does not reboot below the threshold, with self-healing off, when unreachable, or while shutting down", async () => {
 

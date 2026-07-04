@@ -1,17 +1,17 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * camera-onsets.test.ts: The camera-leaf device.update-backed onSet net - the four bound HomeKit onSet handlers that write through runDeviceCommand -> device.update,
+ * camera-onsets.test.ts: The camera-leaf device.update-backed onSet net - the bound HomeKit onSet handlers that write through runDeviceCommand -> device.update,
  * driven against the REAL constructed ProtectCamera both on the SUCCESS path (the captured update payload plus the inline / observer reflection) and on the FAILURE path
- * (the revert where production reverts, the no-revert + error-log contract where it does not, and the two runDeviceCommand error branches).
+ * (the revert where production reverts, the no-revert + error-log contract where it does not, and the runDeviceCommand error branches).
  *
- * camera-reactions.test.ts explicitly deferred these four: the night-vision-dimmer On / Brightness onSets, the status-LED-switch onSet, and the recording-switch
+ * camera-reactions.test.ts explicitly deferred these: the night-vision-dimmer On / Brightness onSets, the status-LED-switch onSet, and the recording-switch
  * onSet "all route through runDeviceCommand -> device.update and belong to the projection command surface - this suite drives none of them." This is that
  * Tier-2 suite. It is unlocked by the ONE harness add this tier needs: a recording update() member on TestCameraProjection (testing.helpers.ts), the proven
  * resolve-by-default + settable-rejection idiom (TestSensorProjection.update). The member RECORDS the payload and does NOT fold it into the store, so the command (the
  * captured updateCalls payload) and the reflection (an inline-local characteristic write, or an observer-driven push) are asserted INDEPENDENTLY - folding would make a
  * broken observer pass vacuously.
  *
- * runDeviceCommand (device-base.ts) is the chokepoint: await command() -> true on success; any throw -> false, logging one of two branches - a
+ * runDeviceCommand (device-base.ts) is the chokepoint: await command() -> true on success; any throw -> false, logging one of its branches - a
  * ProtectAuthorizationError earns the admin-role guidance, anything else earns the trailing-period-stripped "Unable to %s: %s." line. It does NOT revert; the CALLER
  * reverts gated on the boolean. So updateRejection null drives the success path, a plain Error the plain-error branch, and a ProtectAuthorizationError the admin-guidance
  * branch.

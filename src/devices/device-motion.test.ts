@@ -8,13 +8,13 @@
  * minimal TestBaseDevice vehicle, rather than re-asserted inside each family suite. Each family suite nets only that the family wires these base methods; the base
  * behavior itself is this file's job.
  *
- * The vacuity gate (load-bearing): all three Motion options default to FALSE, so the runtime service gate is the Enable.Motion.* userOptions string, NOT the carrier's
+ * The vacuity gate (load-bearing): every Motion option defaults to FALSE, so the runtime service gate is the Enable.Motion.* userOptions string, NOT the carrier's
  * isMotionDetected. The carrier's isMotionDetected only satisfies the hasProperty APPLICABILITY check (it makes the option visible to FeatureOptions) and backs the
  * read-through; it does NOT materialize a service. So every with-feature test builds with the exact alphabetical Enable.Motion.* userOptions subset and HARD-asserts the
  * service EXISTS (a non-optional assert.ok as the FIRST discriminator) - an absent service then throws rather than passing vacuously - paired with a without-feature
  * absence test that proves the same path produces nothing when the string is omitted.
  *
- * The trigger's two reverts are bare setTimeout(...,50) NOT registered in this.timers, so device.cleanup() does not clear them; the disabled-revert and the off-revert
+ * The trigger's reverts are bare setTimeout(...,50) NOT registered in this.timers, so device.cleanup() does not clear them; the disabled-revert and the off-revert
  * tests await ~60ms so the bare revert fires within the test, touching only that test's fresh accessory. The firehose routing goes through the shared
  * TestRecordingDispatch (a real ProtectEventDispatch whose motion delivery records into an array and arms no reset timer), injected through makeTestNvr's dispatch seam
  * and read off nvr.events.

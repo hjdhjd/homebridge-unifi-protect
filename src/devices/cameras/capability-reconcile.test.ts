@@ -12,7 +12,7 @@
  * wiring runs on every configure (restore the if(existing) early-return and a cached-but-unwired sensor is never re-wired - no controller lux read occurs). The
  * wake-attribution and leak scenarios are the selector-correctness and no-leaked-loop controls.
  *
- * All three capability suites share the function-form predicate's asymmetry (additive-eager on the capability, absolutely-pruning on the toggle). The Access lock and the
+ * Every capability suite shares the function-form predicate's asymmetry (additive-eager on the capability, absolutely-pruning on the toggle). The Access lock and the
  * night vision dimmer add an establishment-only push on top: a live observe reconcile over an existing service never re-pushes the display (so an in-flight unlock or
  * night-vision command is never stomped), while create and the construct path (adoption or restart) do. The lock stamps SECURED; the dimmer pushes On / Brightness from
  * the device's irLedMode reading. Each suite's discriminating mutations are traced in its tests' comments - the predicate's hasService and toggle clauses, the
