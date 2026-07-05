@@ -10,7 +10,7 @@
  *
  * The isolation model mirrors the relay reference: a per-test-fresh beforeEach builds a clean fob against a clean store so the characteristic state, the event log, and
  * the observer baselines are clean every test. The wake log is windowed per push via a captured baseline. buildFob is the copyable skeleton; only makeFobConfig,
- * TestFobProjection, the slice keys, the observer count (4: two base plus two battery), and the fob-specific button table are fob-particular.
+ * TestFobProjection, the slice keys, the fob's own battery observers, and the fob-specific button table are fob-particular.
  *
  * NOTE the create/address round-trip and pressType->constant mapping tests verify plugin-INTERNAL consistency only: they are authored against the SAME assumed wire
  * strings the production table is (the six button wire ids and the three gesture strings), so they cannot catch a wire mismatch between the plugin and a real controller

@@ -5,13 +5,16 @@
  * These abstractions are the dependency-inversion seam between the camera devices and the concrete, FFmpeg-bound ProtectStreamingDelegate. A camera depends only on
  * the StreamingDelegate surface it reads off this.stream, and constructs its delegate through the StreamingDelegateFactory the platform holds (typed as the abstraction).
  * This keeps the camera free of any direct dependency on the FFmpeg-backed implementation, and lets a test platform substitute a stub factory so construction completes
- * without a real FFmpeg/HAP environment. The imports here are type-only by design, and the lone runtime export - the pure audioCapabilityAppeared predicate - imports
- * nothing at runtime, so this module never drags FFmpeg into the dependency graph.
+ * without a real FFmpeg/HAP environment. The imports here are almost entirely type-only by design; the one runtime import is the hap `AudioStreamingSamplerate` enum the
+ * pure samplerate helper returns. The runtime exports - the pure audioCapabilityAppeared and streamingSamplerates helpers - pull in only that hap enum, so this module
+ * never drags FFmpeg into the dependency graph.
  */
 import type { CameraController, Resolution, SnapshotRequest, SnapshotRequestCallback } from "homebridge";
 import type { FfmpegOptions, Nullable } from "homebridge-plugin-utils";
+import { AudioStreamingSamplerate } from "homebridge-plugin-utils";
 import type { ProtectCameraHost } from "./camera-host.ts";
 import type { ProtectRecordingDelegate } from "./record.ts";
+import type { ProtectTimeshiftSupervisor } from "./timeshift-supervisor.ts";
 
 // The frozen audio-options inputs a CameraController is built from - the two live-volatile capabilities that shape its constructor-frozen audio surface. A camera the
 // controller late-reports as a doorbell, or as having a speaker, carries a controller built for the wrong identity; the live capability reconcile compares the
@@ -30,8 +33,16 @@ export function audioCapabilityAppeared(built: AudioOptionsIdentity, current: Au
   return (current.isDoorbell && !built.isDoorbell) || (current.twoWayAudio && !built.twoWayAudio);
 }
 
-// The surface consumers read off this.stream - the exact set grounded across camera, camera-package, record, nvr, snapshot, and event-dispatch (no more, no less). The
-// production implementation is ProtectStreamingDelegate; a test substitutes a stub. Properties are listed alphabetically.
+// The streaming audio sample rates a camera advertises to HomeKit. Doorbells and cameras streamed directly over RTSP (buffer-backed livestreaming off, or a camera not
+// capable of it) both deliver a 48 kHz source that HomeKit does not support; since 16 and 24 kHz each divide 48 cleanly, we advertise both and let HomeKit choose. A
+// buffer-backed camera's livestream API delivers 16 kHz, so it advertises just that. A pure helper, red-green testable per population.
+export function streamingSamplerates(input: { isDoorbell: boolean; usesTimeshiftLivestream: boolean }): AudioStreamingSamplerate | AudioStreamingSamplerate[] {
+
+  return (input.isDoorbell || !input.usesTimeshiftLivestream) ? [ AudioStreamingSamplerate.KHZ_16, AudioStreamingSamplerate.KHZ_24 ] : AudioStreamingSamplerate.KHZ_16;
+}
+
+// The surface consumers read off this.stream - the exact set grounded across camera, camera-package, record, nvr, and snapshot (no more, no less). The production
+// implementation is ProtectStreamingDelegate; a test substitutes a stub. Properties are listed alphabetically.
 export interface StreamingDelegate {
 
   // The frozen audio-options identity the controller was built for - its two live-volatile capabilities, doorbell-ness and two-way audio. The CameraController's audio
@@ -46,6 +57,11 @@ export interface StreamingDelegate {
   readonly probesize: number;
   resetProbesizeOverride(): void;
   shutdown(): void;
+
+  // The camera's standing-buffer supervision seam: the timeshift supervisor that owns the standing buffer's lifecycle for an HKSV-capable camera, or null when the
+  // camera cannot back HomeKit Secure Video. The controller-disconnect and camera-teardown paths reach through this to shut supervision down terminally, and the
+  // snapshot and livestream paths read the supervised buffer through it.
+  timeshift: Nullable<ProtectTimeshiftSupervisor>;
 }
 
 // The creational abstraction: build a StreamingDelegate for a camera and its advertised resolutions. Creation is deferred because the delegate needs the camera and its

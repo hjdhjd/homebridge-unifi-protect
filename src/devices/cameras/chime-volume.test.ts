@@ -1,6 +1,6 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * chime-volume.test.ts: Unit tests for the pure chime-volume reduction (chimeVolumeFor) extracted to the importable leaf src/devices/chime-volume.ts.
+ * chime-volume.test.ts: Unit tests for the pure chime-volume reduction (chimeVolumeFor) extracted to the importable leaf src/devices/cameras/chime-volume.ts.
  *
  * chimeVolumeFor is a pure free function - config records in, a number out, no this, no HAP, no command - so the natural coverage is to import the REAL leaf and drive it
  * directly with constructed ProtectChimeConfig inputs, exactly as device-reactions.test.ts imports the real sensorTamperState. The leaf stands alone (type-importing

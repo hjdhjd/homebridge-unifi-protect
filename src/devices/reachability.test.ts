@@ -6,8 +6,7 @@
  * These import the real ProtectDevice and drive its own isReachable, refreshReachability, and cleanup. That became possible once the source loads under the project's
  * "node --strip-types" test runner: every relative import specifier now resolves to its on-disk ".ts" sibling (the rig adopted the ".ts"-specifier convention the
  * shared tsconfig's rewriteRelativeImportExtensions already rewrites back to ".js" on emit), and the lone non-erasable construct - the ProtectReservedNames string
- * enum - became an erasable "as const" object. Before that, a test importing ProtectDevice failed to load rather than failed an assertion, so an earlier rig pinned a
- * lifted copy of the algorithm against the HAP test-double; this version pins the production method itself.
+ * enum - became an erasable "as const" object.
  *
  * The abstract base is exercised through the smallest possible concrete leaf: ProtectDevice declares no abstract members, so the subclass adds nothing but a window
  * onto the protected composed signal, and every method under test is the base's own. It is constructed against the minimal mocks isReachable / refreshReachability /

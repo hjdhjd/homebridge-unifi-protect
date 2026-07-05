@@ -7,23 +7,18 @@
  * deeply appreciated.
  */
 import type { API, CameraRecordingConfiguration, CameraRecordingDelegate, HAP, RecordingPacket } from "homebridge";
-import { BackpressureWriter, HDSProtocolSpecificErrorReason, HKSV_TIMEOUT, formatBps } from "homebridge-plugin-utils";
+import { BackpressureWriter, HDSProtocolSpecificErrorReason, HKSV_TIMEOUT } from "homebridge-plugin-utils";
 import type { Clock, HomebridgePluginLogging, Nullable, RecordingProcess } from "homebridge-plugin-utils";
-import { PROTECT_HKSV_SHADOW_FLOOR_MS, PROTECT_HKSV_SHADOW_RECONNECT_MS, PROTECT_HKSV_SHADOW_SAFETY_MS, PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION } from "../settings.ts";
-import type { ChannelProfile } from "./resolution.ts";
+import { PROTECT_HKSV_SHADOW_FLOOR_MS, PROTECT_HKSV_SHADOW_RECONNECT_MS, PROTECT_HKSV_SHADOW_SAFETY_MS } from "../settings.ts";
 import type { ProtectAccessory } from "../types.ts";
 import type { ProtectCameraHost } from "./camera-host.ts";
-import { ProtectTimeshiftBuffer } from "./timeshift.ts";
+import type { ProtectTimeshiftBuffer } from "./timeshift.ts";
+import type { ProtectTimeshiftSupervisor } from "./timeshift-supervisor.ts";
 import { initThenMedia } from "./record-init-stream.ts";
-import { isInducedDisruption } from "../nvr/nvr-policy.ts";
 
 // HKSV end-of-stream marker. A single zero byte yielded with `isLast=true` signals the end of a recording stream to HomeKit. Module-scoped so we allocate once
 // per process rather than per yield.
 const HKSV_END_OF_STREAM_MARKER = Buffer.alloc(1, 0);
-
-// Lightning-bolt emoji (U+26A1 HIGH VOLTAGE SIGN + U+FE0F VARIATION SELECTOR-16) used to prefix the HKSV configuration log when the host supports
-// hardware-accelerated transcoding.
-const HKSV_HARDWARE_TRANSCODE_MARKER = "\u26A1\uFE0F ";
 
 /* The per-event state of a single HomeKit Secure Video recording event: its monotonic identity, the moment HomeKit's timeout clock began, the decline flag, and the
  * pacing / reserve telemetry accumulators surfaced in the teardown log. The lifetime of one of these IS the lifetime of one HKSV event - the recording delegate holds
@@ -36,9 +31,9 @@ const HKSV_HARDWARE_TRANSCODE_MARKER = "\u26A1\uFE0F ";
  */
 class RecordingSession {
 
-  // The clock time the last segment arrived from the source this event, or null when none has yet. Read at finalization to tell a fed-but-stuck local stall - a segment
-  // arrived recently while the recording produced no output - from a starved source whose segments simply stopped; it is the input-arrival truth the output-only watchdog
-  // cannot see.
+  // The clock time the last segment arrived from the source for this event, or null when none has yet. Read at finalization to tell a fed-but-stuck local stall - a
+  // segment arrived recently while the recording produced no output - from a starved source whose segments simply stopped; it is the input-arrival truth the output-only
+  // watchdog cannot see.
   public lastInputAt: Nullable<number> = null;
   public lastPacingDelay = 0;
   public maxPacingDelay = 0;
@@ -70,11 +65,8 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
   // The injected wall-clock seam (production systemClock, a controllable TestClock under test). The delegate reads it for every time primitive - the per-event
   // pacingStartTime, the per-yield delivery anchor, the pacing-delay computation and await, and the early-end duration - so the whole pacing path is test-deterministic.
   private readonly clock: Clock;
-  private configurePromise?: Promise<boolean>;
-  private configureRequested: boolean;
   private ffmpegStream?: RecordingProcess;
   private readonly hap: HAP;
-  private hasAcknowledgedRecording: boolean;
   private lastStreamId: number;
   private readonly log: HomebridgePluginLogging;
   // The monotonic recording-event counter. Each request mints the next event identity by pre-increment into a fresh RecordingSession, so the first event is 1.
@@ -84,28 +76,25 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
   private segmentWriter?: BackpressureWriter;
   // The current (or most-recent) HKSV event's per-event state. Constructor-initialized so it is never undefined, then reassigned at the top of every request. The
   // HAP-facing close path (acknowledgeStream / closeRecordingStream) reads it after the request generator has returned, observing the most-recent event's accumulated
-  // state exactly as the former delegate-held fields did; the pre-first-event window is gated out by stopTransmitting's !_isTransmitting guard.
+  // state; the pre-first-event window is gated out by stopTransmitting's !_isTransmitting guard.
   private session: RecordingSession;
-  public channelProfile: Nullable<ChannelProfile>;
+  // The timeshift buffer supervisor that owns the buffer's lifecycle. The delegate pushes its recording demand into the supervisor and joins its reconciler; it
+  // never starts or reconciles the buffer itself.
+  private readonly supervisor: ProtectTimeshiftSupervisor;
+  // The supervisor-owned timeshift buffer, held directly because the transmit path reads and signals it on every segment. The same instance as supervisor.buffer.
   public readonly timeshift: ProtectTimeshiftBuffer;
   private transmitListener?: ((segment: Buffer) => void);
-  private wasDeferredOffline: boolean;
-  // The captured induced-origin of the current deferral episode. The deferral edge fires while the camera is offline (during an induced reboot the phase reads
-  // "rebooting"), but the resolution - logged later at the successful-start path, after the phase has already returned to "running" - can no longer read the phase
-  // reliably, so it consults what the deferral edge recorded here. Reset on the resolution (the episode closed) and on disable (the episode ended).
-  private wasDeferredWhileInduced: boolean;
 
-  // Create an instance of the HKSV recording delegate.
-  constructor(protectCamera: ProtectCameraHost) {
+  // Create an instance of the HKSV recording delegate. The supervisor is genuinely required: the streaming delegate constructs it first and hands it in, so a
+  // delegate without buffer supervision is unrepresentable and there is exactly one construction path.
+  constructor(protectCamera: ProtectCameraHost, supervisor: ProtectTimeshiftSupervisor) {
 
     this._isRecording = false;
     this._isTransmitting = false;
     this.accessory = protectCamera.accessory;
     this.api = protectCamera.api;
     this.clock = protectCamera.platform.clock;
-    this.configureRequested = false;
     this.hap = protectCamera.api.hap;
-    this.hasAcknowledgedRecording = false;
     this.lastStreamId = -1;
     this.log = protectCamera.log;
     this.nextEventId = 0;
@@ -113,10 +102,8 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     // Seed an inert session so the field is never undefined before the first event. Its values are never observed: the HAP-facing close path that reads a session is
     // gated out by stopTransmitting's !_isTransmitting guard until an event actually transmits.
     this.session = new RecordingSession({ id: 0, pacingStartTime: 0 });
-    this.channelProfile = null;
-    this.timeshift = new ProtectTimeshiftBuffer(protectCamera);
-    this.wasDeferredOffline = false;
-    this.wasDeferredWhileInduced = false;
+    this.supervisor = supervisor;
+    this.timeshift = supervisor.buffer;
   }
 
   // Process HomeKit requests to activate or deactivate HKSV recording capabilities for a camera.
@@ -130,8 +117,8 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
       this.log.info("Disabling HomeKit Secure Video event recording.");
     }
 
-    // The single source of truth for "does HomeKit want us to be recording?". The reconciler reads it to compute desired timeshift state. Set it regardless of
-    // whether reconciliation succeeds so our view stays consistent with HomeKit's.
+    // The single source of truth for "does HomeKit want us to be recording?". The supervisor receives it as pushed demand below to compute desired timeshift state.
+    // Set it regardless of whether reconciliation succeeds so our view stays consistent with HomeKit's.
     this._isRecording = active;
 
     // If we are disabling recording, force MotionDetected=false immediately. An inflight motion event would otherwise hold MotionDetected=true until its own
@@ -139,24 +126,17 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     if(!active) {
 
       this.accessory.getService(this.hap.Service.MotionSensor)?.updateCharacteristic(this.hap.Characteristic.MotionDetected, false);
-
-      // Disabling ends the current enable episode, so clear the acknowledgment flag. The next enable then re-acknowledges its configuration through the reconcile's
-      // successful-start path, restoring the per-enable symmetry with the "Disabling..." log above.
-      this.hasAcknowledgedRecording = false;
-
-      // Disabling also ends any in-flight deferral episode, so drop the captured deferral-origin. Otherwise a later re-enable could inherit a stale level and announce
-      // its resolution at the wrong verbosity. This keeps the field symmetric with hasAcknowledgedRecording, which is reset here for the same reason.
-      this.wasDeferredWhileInduced = false;
     }
 
-    // Reconcile the timeshift buffer against the updated recording state. The reconciler is bidirectional, concurrency-safe, and idempotent...see
-    // configureTimeshifting for the invariants.
-    if(!(await this.configureTimeshifting())) {
+    // Push the updated demand to the supervisor and reconcile the timeshift buffer against it. The demand setter owns the per-episode narration resets on the
+    // disable edge, so they land synchronously with the demand write even when reconcile passes coalesce. The reconciler is bidirectional, concurrency-safe, and
+    // idempotent...see the supervisor for the invariants.
+    if(!(await this.supervisor.setRecordingDemand({ config: this.recordingConfig, isRecording: active }))) {
 
       return;
     }
 
-    // Nothing further to do when disabling recording...the reconciler has handled the teardown. The enable-acknowledgment log lives in runConfigureTimeshifting's
+    // Nothing further to do when disabling recording...the reconciler has handled the teardown. The enable-acknowledgment log lives in the supervisor's
     // successful-start path (its single source of truth - the configuration event), so it fires once per enable episode on whatever path first configures the timeshift.
     if(!active) {
 
@@ -171,16 +151,10 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     // configuration...typically post-factory-reset) and the reconciler treats it as "desired state is stopped".
     this.recordingConfig = configuration;
 
-    if(configuration) {
-
-      // Tell our timeshift buffer how many seconds HomeKit has requested we prebuffer. We intentionally want a relatively large buffer to account for some
-      // Protect quirks.
-      this.timeshift.configuredDuration = PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION;
-    }
-
-    // Reconcile the timeshift buffer against the updated configuration. A new valid config on an active recording triggers a start (or a restart if the
-    // channel/lens changed); an undefined config triggers a stop.
-    void this.configureTimeshifting();
+    // Push the updated demand to the supervisor and reconcile the timeshift buffer against it. A new valid config on an active recording triggers a start (or a
+    // restart if the channel/lens changed); an undefined config triggers a stop. Buffer sizing is the supervisor's concern - it applies the standing depth before every
+    // start - so there is nothing to set here.
+    void this.supervisor.setRecordingDemand({ config: this.recordingConfig, isRecording: this._isRecording });
   }
 
   // Handle the actual recording stream request. HAP-nodejs provides an AbortSignal that fires when the recording stream closes, allowing us to interrupt pending async
@@ -240,8 +214,8 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     //
     //   - "discontinuity": the underlying livestream dropped and recovered with a clean keyframe. Non-terminal...we stop FFmpeg and the outer do-while loop
     //     restarts it with post-reconnect data.
-    //   - "terminated": the subscription died out-of-band (e.g., SubscriberLagError). Terminal...we stop FFmpeg and exit the event. The timeshift has already
-    //     self-cleaned its state, so there is no subscription to recover onto.
+    //   - "terminated": the subscription died out-of-band (the recovery give-up, a codec change, an unexpected iterator error). Terminal...we stop FFmpeg and exit
+    //     the event. The timeshift has already self-cleaned its state, so there is no subscription to recover onto.
     //
     // Both handlers call ffmpegStream.abort() and abort the combined signal to interrupt any in-flight pacing delay. The discriminator between "restart the
     // loop" and "exit the loop" is which local flag the handler sets...the outer do-while's condition gates on isDiscontinuity, not isTerminated.
@@ -359,7 +333,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
       this.timeshift.off("terminated", terminatedListener);
     }
 
-    // Post-loop teardown. Two exit states can require a final end-of-stream marker:
+    // Post-loop teardown. The following exit states require a final end-of-stream marker:
     //
     //   - isTerminated: the recording event ended abnormally - either the subscription died while we were transmitting (timeshift emitted `terminated`) or
     //     the discontinuity-recovery restart attempt failed. In both cases the timeshift is either self-cleaned or unrecoverable for this event, so there's
@@ -395,164 +369,12 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     this.stopTransmitting(reason);
   }
 
-  // Reconcile the HKSV timeshift buffer against the current desired state. The single reconciliation entry point for the HKSV timeshift lifecycle, invoked from
-  // any trigger that might have changed an input (recording active/inactive, configuration change, camera online/offline, controller reconnect). Safe to call
-  // from any caller, any number of times, concurrently. Two invariants make this correct:
-  //
-  //   1. At most one reconciliation runs at a time (shared-promise serialization).
-  //   2. Every request is honored. If inputs change mid-flight, a follow-up pass runs against the new inputs. The request-flag-and-loop pattern ensures no
-  //      input change is silently dropped by a promise-join.
-  //
-  // A plain-Promise return is intentional here: it preserves the synchronous atomicity of the check-and-set on configurePromise below. An async wrapper would
-  // introduce a microtask boundary that defeats that atomicity.
+  // Reconcile the timeshift buffer against current demand - the delegate-facing join for the recording-request lazy backstop and the test suites. A direct
+  // synchronous return of the supervisor's promise: no async wrapper, so joining callers preserve the reconciler's check-and-set atomicity with no added
+  // microtask boundary.
   public configureTimeshifting(): Promise<boolean> {
 
-    // Flag that a reconciliation was requested. An in-flight loop observes this flag after its current iteration completes and runs another pass against the
-    // latest inputs. If no loop is running, the loop below consumes the flag on its first iteration.
-    this.configureRequested = true;
-
-    // Atomic check-and-set. If a reconciliation is already in flight, return its promise and let the caller join it. The synchronous read-and-assign of
-    // configurePromise cannot be interleaved with another call in single-threaded JavaScript, so exactly one reconciliation loop runs at a time.
-    if(this.configurePromise) {
-
-      return this.configurePromise;
-    }
-
-    this.configurePromise = this.runConfigureLoop().finally((): void => { this.configurePromise = undefined; });
-
-    return this.configurePromise;
-  }
-
-  // The request-coalescing loop. Runs `runConfigureTimeshifting` in sequence while `configureRequested` is set, so any input change that fires during an
-  // in-flight iteration causes another pass against the latest state. When a full iteration completes with no concurrent request, the loop exits and the
-  // wrapper promise resolves.
-  private async runConfigureLoop(): Promise<boolean> {
-
-    let result = false;
-
-    while(this.configureRequested) {
-
-      this.configureRequested = false;
-      // eslint-disable-next-line no-await-in-loop -- Intentional: each iteration reconciles against the state observed at iteration start.
-      result = await this.runConfigureTimeshifting();
-    }
-
-    return result;
-  }
-
-  // The reconciliation body. Computes desired state from current inputs and brings the actual state into alignment.
-  //
-  // `channelProfile` is committed to instance state only after a successful start, so external readers (ProtectStreamingDelegate, ProtectSnapshot) always see an
-  // entry that actually backs a running timeshift. On stop, `channelProfile` is cleared. The field stays coupled to `timeshift.isStarted` as a matched pair.
-  private async runConfigureTimeshifting(): Promise<boolean> {
-
-    // Desired state is "running with the correct channelProfile" iff we have a configuration, the camera is online, and HomeKit has asked us to record. The local
-    // binding of recordingConfig gives TypeScript a non-null reference to work with (instance field narrowing does not survive async boundaries).
-    const recordingConfig = this.recordingConfig;
-    const shouldRun = this._isRecording && (recordingConfig !== undefined) && this.protectCamera.isReachable;
-
-    // Observability for the "user asked us to record but the camera is offline" case. isDeferredOffline is derived purely from current inputs (single source of
-    // truth); comparing against the previous observation detects the transition edge so we log exactly once per offline episode. The flag is updated after the
-    // check and is naturally reset by any reconcile where we are no longer deferred (e.g. recording succeeds, user disables HKSV, camera comes back online).
-    const isDeferredOffline = this._isRecording && !this.protectCamera.isReachable;
-
-    // Capture whether we were deferred-offline coming into this reconcile, before the update below clears it. The successful-start path consults this to announce a
-    // genuine resumption: the camera-back-online edge alone over-claims, since a reachable camera may still fail to start, have no configuration, or have been disabled
-    // in the gap.
-    const wasDeferred = this.wasDeferredOffline;
-
-    if(isDeferredOffline && !this.wasDeferredOffline) {
-
-      // The camera went offline while HomeKit asked us to record. Capture whether this is a disruption we induced (our own reboot/shutdown) so the resolution - logged
-      // later when recording actually re-establishes, after the phase has returned to running - gates the same way. An induced disruption is expected (the
-      // controller-level narration already covers it) and logs at debug; an organic single-camera offline is a genuine "we wanted to record but cannot" signal and stays
-      // at warn.
-      this.wasDeferredWhileInduced = isInducedDisruption(this.protectCamera.nvr.phase);
-
-      if(this.wasDeferredWhileInduced) {
-
-        this.log.debug("HomeKit Secure Video event recording is deferred until the camera is online.");
-      } else {
-
-        this.log.warn("HomeKit Secure Video event recording is deferred until the camera is online.");
-      }
-    }
-
-    this.wasDeferredOffline = isDeferredOffline;
-
-    if(!shouldRun) {
-
-      // Desired state is stopped. If the timeshift is running, stop it and clear the backing channelProfile so external readers observe the matched
-      // (isStarted=false, channelProfile=null) output state. Return value: true if "stopped" was the desired outcome (caller asked us to stop), false if the caller
-      // wanted us running but prerequisites were not met.
-      if(this.timeshift.isStarted) {
-
-        this.timeshift.stop();
-        this.channelProfile = null;
-      }
-
-      return !this._isRecording;
-    }
-
-    // Compute the desired RTSP entry for the HKSV-requested resolution. Held as a local until the start succeeds, at which point it is committed to
-    // this.channelProfile. External readers must never see an entry whose start failed.
-    const desiredRtspEntry = this.protectCamera.selectRecordingChannel(recordingConfig.videoCodec.resolution[0], recordingConfig.videoCodec.resolution[1]);
-
-    if(!desiredRtspEntry) {
-
-      this.log.error("Unable to configure HKSV event recording support: no valid RTSP stream profile was found for this camera.");
-
-      return false;
-    }
-
-    // If the timeshift is already running on the correct channel and lens, we are already in the desired state. this.channelProfile holds the currently-backing
-    // entry, so comparing against it answers "is the running timeshift on the entry we want?".
-    if(this.timeshift.isStarted && (desiredRtspEntry.channel.id === this.channelProfile?.channel.id) &&
-      ((desiredRtspEntry.lens === undefined) || (desiredRtspEntry.lens === this.channelProfile.lens))) {
-
-      return true;
-    }
-
-    // Bring the actual state into alignment with the desired state.
-    if(!(await this.timeshift.start(desiredRtspEntry))) {
-
-      return false;
-    }
-
-    // Commit the new backing entry now that the timeshift is actually running on it.
-    this.channelProfile = desiredRtspEntry;
-
-    // A recording that had been deferred-offline has now actually re-established (timeshift.start succeeded). Close the story the deferral opened, at the level its
-    // origin warranted. This is logged here - not on the bare reachability edge at the reconcile head - because only a successful start proves recording genuinely
-    // resumed; a reachable-but-cannot-run pass (no configuration, disabled, or a start that failed) takes an earlier return and must NOT announce a resumption that did
-    // not happen. The message says "has started now that the camera is online" rather than "resumed", since it is equally true for an offline-at-startup first start
-    // (deferred from the outset) and a mid-episode-blip resume.
-    if(wasDeferred) {
-
-      if(this.wasDeferredWhileInduced) {
-
-        this.log.debug("HomeKit Secure Video event recording has started now that the camera is online.");
-      } else {
-
-        this.log.warn("HomeKit Secure Video event recording has started now that the camera is online.");
-      }
-
-      this.wasDeferredWhileInduced = false;
-    }
-
-    // Acknowledge the HKSV recording configuration once per enable episode, now that the timeshift is actually running. This lives here (the configuration event), not in
-    // updateRecordingActive (the HomeKit toggle), so it fires on the first successful configure of each episode whatever the trigger - the toggle, a re-enable, or an
-    // offline-at-startup camera finally coming online. The flag is reset only on disable, so a mid-episode offline blip does NOT re-acknowledge on its return (the flag
-    // is still set); only a true re-enable does. That restores the per-enable symmetry with the disable log.
-    if(!this.hasAcknowledgedRecording) {
-
-      this.hasAcknowledgedRecording = true;
-      this.log.info("HKSV: %s%s [%s], %s.",
-        (this.protectCamera.hints.hardwareTranscoding && (this.protectCamera.platform.codecSupport.hostSystem !== "raspbian")) ? HKSV_HARDWARE_TRANSCODE_MARKER : "",
-        this.channelProfile.name, this.protectCamera.videoCodecName, formatBps(recordingConfig.videoCodec.parameters.bitRate * 1000));
-    }
-
-    return true;
+    return this.supervisor.reconcile();
   }
 
   // Start transmitting to the HomeKit hub our timeshifted fMP4 stream. When isRestart is true, the buffer duration check is skipped because the buffer was recently
@@ -581,9 +403,9 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
       return false;
     }
 
-    // If we don't have a recording configuration from HomeKit, a valid RTSP profile, or not enough time in our timeshift buffer, we can't continue. On a discontinuity
-    // restart, we skip the buffer duration check because the buffer was recently cleared and only contains fresh post-reconnection data.
-    if(!this.recordingConfig || !this.channelProfile || this.timeshift.isRestarting ||
+    // If we don't have a recording configuration from HomeKit, a valid RTSP profile backing the buffer, or not enough time in our timeshift buffer, we can't
+    // continue. On a discontinuity restart, we skip the buffer duration check because the buffer was recently cleared and only contains fresh post-reconnection data.
+    if(!this.recordingConfig || !this.timeshift.channelProfile || this.timeshift.isRestarting ||
       (!isRestart && (this.timeshift.time < this.timeshift.configuredDuration))) {
 
       return false;
@@ -609,13 +431,13 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
       recording: {
 
         // The Protect livestream API delivers doorbell audio at 48000 Hz and every other camera's at 16000 Hz (16-bit mono AAC). This is the input sample rate FFmpeg's
-        // audio filters operate on, and what getAudioFilters validates each filter's frequency against the Nyquist limit of - so a doorbell's true 48000 Hz keeps a
-        // user's 8-24 kHz highpass/lowpass from being silently dropped.
+        // audio filters operate on, and what getAudioFilters validates each filter's frequency against - so a doorbell's true 48000 Hz keeps a user's 8-24 kHz
+        // highpass/lowpass from being silently dropped.
         audioFilters: this.protectCamera.getAudioFilters(this.protectCamera.ufp.featureFlags.isDoorbell ? 48000 : 16000),
         audioStream: 0,
         codec: this.protectCamera.ufp.videoCodec,
         enableAudio: this.isAudioActive,
-        fps: this.channelProfile.channel.fps,
+        fps: this.timeshift.channelProfile.channel.fps,
         timeshift: alignment?.seekOffsetMs ?? Math.max(this.timeshift.time - this.recordingConfig.prebufferLength, 0),
         transcodeAudio: false
       },
@@ -795,8 +617,10 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     this.session.timeshiftedSegments = Math.max(--this.session.timeshiftedSegments, 0);
     this.session.transmittedSegments = Math.max(--this.session.transmittedSegments, 0);
 
-    // Inform the user if we've recorded something.
-    if(!this.accessory.context.hksvRecordingDisabled && this.session.timeshiftedSegments && this.session.transmittedSegments && this.channelProfile) {
+    // Inform the user if we've recorded something. The decision is session-scoped by design: the per-event counters prove a real recording happened (a transmitted
+    // segment is impossible unless the event started against a live buffer), so an accepted event logs its summary in every teardown mode - including one whose
+    // source died mid-flight, which is still a recording HomeKit accepted. Live buffer state has no vote in a per-event decision.
+    if(!this.accessory.context.hksvRecordingDisabled && this.session.timeshiftedSegments && this.session.transmittedSegments) {
 
       // Calculate approximately how many seconds we've recorded. We have more accuracy in timeshifted segments, so we'll use the more accurate statistics when we can.
       const recordedSeconds = (this.session.timeshiftedSegments * this.timeshift.segmentLength) / 1000;

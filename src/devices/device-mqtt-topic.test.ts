@@ -21,7 +21,7 @@ import assert from "node:assert/strict";
 import { makeTestAccessory } from "../testing.helpers.ts";
 
 // The smallest concrete leaf of the abstract base, mirroring command-error.test.ts: ProtectDevice declares no abstract members, so this adds nothing but a public window
-// onto the three protected MQTT wrappers, inherited unchanged.
+// onto the protected MQTT wrappers this suite exercises, inherited unchanged.
 class TestProtectDevice extends ProtectDevice {
 
   public emitPublish(topic: string, message: string): void {
@@ -72,7 +72,7 @@ interface MqttCapture {
 // The device MAC the wrappers compose into every topic tail. An arbitrary but fixed value so the assertions read literally.
 const MAC = "AABBCCDDEEFF";
 
-// Construct a real ProtectDevice against the minimal mocks the MQTT wrappers read: the device-leaf mqttId now sources the bare MAC from the persisted accessory context
+// Construct a real ProtectDevice against the minimal mocks the MQTT wrappers read: the device-leaf mqttId sources the bare MAC from the persisted accessory context
 // (context.mac), not this.ufp.mac, so we seed it on the accessory; and an nvr whose mqtt captures the composed topic for each verb. The casts are confined to this seam;
 // the instance itself is the production class.
 const makeDevice = (): { capture: MqttCapture; instance: TestProtectDevice } => {

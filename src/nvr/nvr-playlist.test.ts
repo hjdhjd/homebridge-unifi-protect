@@ -5,9 +5,9 @@
  * This suite tests buildPlaylist - the content decision (the SSOT of what the playlist contains: the header, the AV1/RTSP filter, the name sort, the per-camera #EXTINF
  * guide block, the plain-RTSP URL line, the package-camera entry, and the load-bearing primary-vs-package name asymmetry) - directly and server-free. buildPlaylist is
  * pure: it takes the camera configs plus a fixed host/port and returns the playlist string, so the whole format and ordering surface is exhaustively assertable with
- * constructed inputs and no TCP port. servePlaylist's HTTP shell and its shutdown teardown (the already-aborted guard, the server.close(), the retry-timer cancel) are
- * I/O glue verified by inspection against the four pre-mortem checks - reaching them would require binding a real TCP port, which this spawn-free suite avoids
- * (the same dispatcher-boundary discipline the buildPlaylist/servePlaylist policy/mechanism split maintains).
+ * constructed inputs and no TCP port. servePlaylist's HTTP shell and its shutdown teardown (the error handler's already-aborted guard, the pre-listen already-aborted
+ * guard, the retry-timer cancel, and the teardown's server.close()) are I/O glue verified by inspection against each of those checks - reaching them would require
+ * binding a real TCP port, which this spawn-free suite avoids (the same dispatcher-boundary discipline the buildPlaylist/servePlaylist policy/mechanism split maintains).
  */
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";

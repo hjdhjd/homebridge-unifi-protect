@@ -17,12 +17,15 @@
  * harness's segment-yielding livestream double and constructs the FFmpeg process through the platform's recording-process factory seam, so it drives the transmit path
  * FFmpeg-free with deterministic injected-clock pacing.
  */
-import { Characteristic, Service, makeTestCameraHost } from "../testing.helpers.ts";
-import { PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION, PROTECT_SEGMENT_RESOLUTION } from "../settings.ts";
+import { Characteristic, Service, makeTestCameraHost, settle } from "../testing.helpers.ts";
+import { PROTECT_SEGMENT_RESOLUTION, PROTECT_TIMESHIFT_BUFFER_MAXDURATION } from "../settings.ts";
 import { after, describe, test } from "node:test";
 import type { CameraRecordingConfiguration } from "homebridge";
+import type { ChannelProfile } from "./resolution.ts";
 import { ProtectRecordingDelegate } from "./record.ts";
+import { ProtectTimeshiftSupervisor } from "./timeshift-supervisor.ts";
 import type { RecordingPacket } from "homebridge";
+import type { TestCameraHost } from "../testing.helpers.ts";
 import assert from "node:assert/strict";
 
 // Every host this suite builds shares the one makeTestNvr AbortController. Aborting it in teardown releases the harness signal so a leaked observer (none here, the
@@ -51,6 +54,27 @@ async function drainRecordingStream(delegate: ProtectRecordingDelegate, streamId
   return packets;
 }
 
+// A minimal-but-truthy recording configuration cast to the HAP type at this confined seam. The supervisor reads only videoCodec.parameters.bitRate (the enable-ack
+// config log) off it now that channel selection is HKSV-state-independent.
+function makeRecordingConfig(): CameraRecordingConfiguration {
+
+  return { prebufferLength: 4000, videoCodec: { parameters: { bitRate: 2000 } } } as unknown as CameraRecordingConfiguration;
+}
+
+// A ChannelProfile resolved from the host's first real channel, so the buffer starts against a genuine profile. Guarded because host.ufp.channels[0] widens to
+// ProtectCameraChannelConfig | undefined under noUncheckedIndexedAccess.
+function makeChannelProfile(host: TestCameraHost): ChannelProfile {
+
+  const channel = host.ufp.channels[0];
+
+  if(!channel) {
+
+    throw new Error("The camera channel fixture is missing its first channel.");
+  }
+
+  return { channel, name: channel.name, resolution: [ 1920, 1080, 30 ], url: "rtsps://test" };
+}
+
 describe("recording delegate decline-path behavior", () => {
 
   // The decline-path contract, the suite's core. With recording never armed (isRecording is false at rest), the request-entry reconcile is skipped and the transmit gate
@@ -63,7 +87,8 @@ describe("recording delegate decline-path behavior", () => {
 
     controllers.push(controller);
 
-    const delegate = new ProtectRecordingDelegate(host);
+    const supervisor = new ProtectTimeshiftSupervisor(host);
+    const delegate = new ProtectRecordingDelegate(host, supervisor);
 
     // Recording is not armed, so the delegate is in its decline posture: the buffer is empty (time zero) and below the one-segment configured duration.
     assert.equal(delegate.isRecording, false);
@@ -85,7 +110,8 @@ describe("recording delegate decline-path behavior", () => {
 
     controllers.push(controller);
 
-    const delegate = new ProtectRecordingDelegate(host);
+    const supervisor = new ProtectTimeshiftSupervisor(host);
+    const delegate = new ProtectRecordingDelegate(host, supervisor);
 
     const first = await drainRecordingStream(delegate, 1, new AbortController().signal);
     const second = await drainRecordingStream(delegate, 2, new AbortController().signal);
@@ -99,27 +125,41 @@ describe("recording delegate decline-path behavior", () => {
 
 describe("recording delegate synchronous configuration observables", () => {
 
-  // updateRecordingConfiguration writes the timeshift buffer's configured duration synchronously when handed a configuration. The fire-and-forget reconcile it kicks off
-  // takes the shouldRun-false early return with recording unarmed, so it never reaches selectRecordingChannel and needs no stub for it. We observe the synchronous write
-  // through the public configuredDuration derivation (segmentCount * segmentLength), which equals the HKSV timeshift max duration after the configuration lands.
-  test("updateRecordingConfiguration sets the timeshift configured duration synchronously", () => {
+  // Buffer sizing is the supervisor's concern, applied immediately before every start - not a synchronous write on the recording delegate.
+  // updateRecordingConfiguration does not size the buffer: an unstarted buffer holds its one-segment seed, and the standing depth lands only when a reconcile actually
+  // starts the buffer. This pre-first-start default window is decline-safe because an unstarted buffer holds zero time, so the depth value does not change the decline
+  // behavior.
+  test("the supervisor sizes the timeshift buffer at start time, not on updateRecordingConfiguration", async () => {
 
     const { controller, host } = makeTestCameraHost();
 
     controllers.push(controller);
 
-    const delegate = new ProtectRecordingDelegate(host);
+    // Wire the success-path seams so an armed reconcile genuinely starts the buffer: a substrate channel to select and enough buffered segments for whenEstablished.
+    host.selectSubstrateChannel = (): ChannelProfile => makeChannelProfile(host);
+    host.livestreamMediaSegments = Math.ceil(PROTECT_TIMESHIFT_BUFFER_MAXDURATION / PROTECT_SEGMENT_RESOLUTION) + 10;
+
+    const supervisor = new ProtectTimeshiftSupervisor(host);
+    const delegate = new ProtectRecordingDelegate(host, supervisor);
 
     // At rest the buffer holds one segment's worth of configured duration (the timeshift seed of one segment).
     assert.equal(delegate.timeshift.configuredDuration, PROTECT_SEGMENT_RESOLUTION);
 
-    // A minimal-but-truthy recording configuration: only its truthiness drives the synchronous configuredDuration write, and the reconcile it fires early-returns before
-    // reading any of its fields (recording is unarmed). We cast a minimal literal to the HAP type at this confined seam, the same discipline the harness builders use.
-    const configuration = { prebufferLength: 4000 } as unknown as CameraRecordingConfiguration;
+    // A configuration alone, with recording unarmed, does not size the buffer: the fire-and-forget reconcile it kicks off early-returns with the buffer unstarted, so
+    // the depth stays at the seed.
+    delegate.updateRecordingConfiguration(makeRecordingConfig());
 
-    delegate.updateRecordingConfiguration(configuration);
+    await settle();
 
-    assert.equal(delegate.timeshift.configuredDuration, PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION);
+    assert.equal(delegate.timeshift.configuredDuration, PROTECT_SEGMENT_RESOLUTION, "a configuration with recording unarmed does not size the buffer");
+
+    // Arming recording drives a reconcile that starts the buffer, and the supervisor applies the standing depth immediately before that start.
+    await delegate.updateRecordingActive(true);
+
+    await settle();
+
+    assert.equal(delegate.timeshift.isStarted, true, "the armed reconcile started the buffer");
+    assert.equal(delegate.timeshift.configuredDuration, PROTECT_TIMESHIFT_BUFFER_MAXDURATION, "the supervisor sized the buffer at start time");
   });
 
   // updateRecordingActive(false) forces MotionDetected to false on the camera's MotionSensor service synchronously, before its await, so an inflight motion event cannot
@@ -131,7 +171,8 @@ describe("recording delegate synchronous configuration observables", () => {
 
     controllers.push(controller);
 
-    const delegate = new ProtectRecordingDelegate(host);
+    const supervisor = new ProtectTimeshiftSupervisor(host);
+    const delegate = new ProtectRecordingDelegate(host, supervisor);
 
     // Add the MotionSensor service the production write targets; its marker seeds a MotionDetected characteristic, pre-set true to prove the disable write flips it.
     const motionService = accessory.addService(Service.MotionSensor);
@@ -151,7 +192,8 @@ describe("recording delegate synchronous configuration observables", () => {
 
     controllers.push(controller);
 
-    const delegate = new ProtectRecordingDelegate(host);
+    const supervisor = new ProtectTimeshiftSupervisor(host);
+    const delegate = new ProtectRecordingDelegate(host, supervisor);
 
     assert.doesNotThrow(() => delegate.acknowledgeStream());
     assert.doesNotThrow(() => delegate.closeRecordingStream(7));

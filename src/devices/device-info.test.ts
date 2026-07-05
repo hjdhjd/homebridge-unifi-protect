@@ -11,20 +11,21 @@
  * the BASE behaviors family-agnostically against the shared TestBaseDevice vehicle on the all-quiet makeSensorConfig carrier rather than re-asserting them inside each
  * family suite. The package-camera-specific name decoration (syncedName's display-suffix override) is family-owned and stays in doorbell-construction.test.ts.
  *
- * The wake mechanism (load-bearing): the two base observers read through deviceConfigSelector() -> selectSensor(id) -> the STORE's sensor record (not the projection),
- * so pushSensorPatch - which updates that store record - is what wakes them, each NARROW (a name push wakes only the device.name observer, a firmware push only the
- * device.firmwareVersion observer). The rename reads this.syncedName = this.ufp.name ?? this.ufp.marketName through the projection, which reads the SAME store record,
- * so after a name push both the selector and this.ufp see the new name. Observe registration is LAZY (each loop registers on iteration start, a microtask later), so
- * every observerCount assertion and every wake assertion settles first.
+ * The wake mechanism (load-bearing): the base observers (device.name, device.firmwareVersion) read through deviceConfigSelector() -> selectSensor(id) -> the STORE's
+ * sensor record (not the projection), so pushSensorPatch - which updates that store record - is what wakes them, each NARROW (a name push wakes only the device.name
+ * observer, a firmware push only the device.firmwareVersion observer). The rename reads this.syncedName, which resolves through the non-throwing peek() accessor as
+ * peek()?.name ?? peek()?.marketName ?? this.accessoryName, observing the SAME store record, so after a name push both the selector and syncedName see the new name.
+ * Observe registration is LAZY (each loop registers on iteration start, a microtask later), so every observerCount assertion and every wake assertion settles first.
  *
  * The vacuity gates: the name-sync direction is split by the Device.SyncName feature (default FALSE). WITH Enable.Device.SyncName the rename test asserts a proven
- * before->after Name transition ("Test Sensor" -> "Renamed Sensor") plus the exact change log; WITHOUT it the test captures the Name baseline immediately before the
- * push and asserts the device.name observer STILL woke (non-vacuous) but the Name characteristic is unchanged and no rename log fires - so the if(!syncName) return
- * guard, not a dead observer, suppresses the rename (mirroring light.test.ts's falsy-motion non-vacuity pattern). HardwareRevision is netted as a non-vacuous opt-in
- * pair: makeSensorConfig omits hardwareRevision by default, so setInfo's length-guard short-circuits; the accessory's AccessoryInformation service is a plain
+ * before->after Name transition ("Test Sensor" -> "Renamed Sensor") plus the exact change log; WITHOUT it the test captures the Name baseline immediately before the push
+ * and asserts the device.name observer STILL woke (non-vacuous) but the Name characteristic is unchanged and no rename log fires - so the if(!syncName) return guard, not
+ * a dead observer, suppresses the rename (mirroring light.test.ts's falsy-motion non-vacuity pattern). HardwareRevision is netted as a non-vacuous opt-in pair:
+ * makeSensorConfig omits hardwareRevision by default, so setInfo's length-guard short-circuits; the accessory's AccessoryInformation service is a plain
  * characteristic-empty TestService that carries only the kinds setInfo itself wrote, so with the guard short-circuited the HardwareRevision kind is never materialized -
  * the absent case is asserted with testCharacteristic so the read stays a pure predicate; passing hardwareRevision opts the value in so the length-guarded write lands
- * and is read back. The accessoryName getter's ?? "Unknown" fallback is unreachable here because the carrier's ufp.name is always "Test Sensor" (never nullish).
+ * and is read back. The accessoryName getter's ?? "Unknown" fallback is unreachable here because the carrier's record name, read through peek()?.name, is always "Test
+ * Sensor" (never nullish).
  *
  * The isolation model is per-test-fresh: a beforeEach rebuilds a fresh device so the characteristic state, the observer baselines, and store.observerCount are clean
  * every test, and the wake log is windowed per push via a captured baseline. An afterEach unwinds the device's per-accessory abort.

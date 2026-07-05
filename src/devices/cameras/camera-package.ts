@@ -164,6 +164,9 @@ export class ProtectCameraPackage extends ProtectCamera {
     // Fire up the controller and inform HomeKit about it.
     this.accessory.configureController(this.stream.controller);
 
+    // Kick the supervisor so the standing timeshift buffer establishes for the package camera's streaming arm, mirroring the primary camera's stream configure.
+    void this.stream.timeshift?.reconcile();
+
     return true;
   }
 
@@ -255,7 +258,9 @@ export class ProtectCameraPackage extends ProtectCamera {
       // Activate the flashlight.
       await activateFlashlight();
 
-      // Heartbeat the flashlight at regular intervals to keep it on.
+      // Heartbeat the flashlight at regular intervals to keep it on. The controller exposes no off endpoint for this momentary command - the light
+      // self-extinguishes on its own roughly 25 seconds after the last activation - so a twenty-second cadence, matching Protect's own apps, keeps
+      // re-pulsing it with a five-second margin before that natural timeout.
       this.registerInterval("flashlight", () => void activateFlashlight(), 20 * 1000);
     });
 
@@ -300,12 +305,13 @@ export class ProtectCameraPackage extends ProtectCamera {
     }
 
     // Return the information we need for package camera channel access. We pin lens 2 and resolve the URL host through the inherited rtspHost chain
-    // (overrideAddress ?? connectionHost ?? host), so the package's RTSP URLs match the parent's instead of the former raw config.address.
+    // (overrideAddress ?? connectionHost ?? host), so the package's RTSP URLs resolve through the same override/connection-host/controller-host
+    // chain as the parent's, rather than the controller's raw address.
     return buildChannelProfile(channel, { lens: 2, rtspPort: this.nvr.ufp.ports.rtsps, urlHost: this.rtspHost });
   }
 
-  // Return a recording RTSP configuration for HKSV.
-  public override selectRecordingChannel(): Nullable<ChannelProfile> {
+  // Resolve the channel that populates the timeshift buffer. The package camera is a single fixed channel, so it delegates to selectChannel.
+  public override selectSubstrateChannel(): Nullable<ChannelProfile> {
 
     return this.selectChannel();
   }

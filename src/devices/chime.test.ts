@@ -14,9 +14,9 @@
  *
  * Two framing details the assertions honor exactly. First, the onSet's reverts are bare setTimeout(...,50) NOT registered in this.timers, so chime.cleanup() does
  * not clear them; the tests that arm a bare revert (the failed / falsy / no-op play paths) await ~60ms so the revert fires within the test (touching only this test's
- * fresh accessory). Second, a truthy onSet ALWAYS arms registerTimeout and logs "Playing %s." even on a failed or no-op play - only the controller command and the
- * publish are conditional - so those assertions are accurate, not aspirational. The afterEach(() => chime?.cleanup()) clears the registerTimeout play-timers per test
- * (the light suite needs no such hook because the light arms none).
+ * fresh accessory). Second, registerTimeout and the "Playing %s." log fire ONLY after playTone resolves true - a falsy set, a no-op play, and a rejected play all
+ * share the same bare 50ms revert-only setTimeout from the first framing detail above, with no registerTimeout armed and no "Playing" line logged. The afterEach(()
+ * => chime?.cleanup()) clears the registerTimeout play-timers per test (the light suite needs no such hook because the light arms none).
  *
  * The isolation model mirrors the light reference: a beforeEach builds a fresh chime so the capture arrays, the characteristic state, the observer baselines, and
  * store.observerCount are clean every test, and the wake log is windowed per push via a captured baseline.

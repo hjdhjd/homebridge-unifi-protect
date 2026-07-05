@@ -8,11 +8,11 @@ export const PLUGIN_NAME = "homebridge-unifi-protect";
 // The platform the plugin creates.
 export const PLATFORM_NAME = "UniFi Protect";
 
-// Maximum number of consecutive authentication failures tolerated while establishing the initial connection before we stop retrying. A controller that is still
-// sorting out its own authentication state at startup recovers within this budget, while genuinely-incorrect credentials fail fast instead of looping forever
-// (the prior defect). Any non-authentication fault (network, transient) resets the budget, so a slow-to-appear controller is retried without bound until it
-// answers. The periodic device refresh and the connection backoff now live inside the unifi-protect client (its StateStore refresh failsafe and the retry()
-// default exponential backoff, respectively), so the plugin no longer schedules either.
+// Maximum number of consecutive authentication failures tolerated while establishing the initial connection before we stop retrying. A controller that is still sorting
+// out its own authentication state at startup recovers within this budget, while genuinely-incorrect credentials fail fast instead of looping forever. Any non-
+// authentication fault (network, transient) resets the budget, so a slow-to-appear controller is retried without bound until it answers. The unifi-protect client owns
+// the periodic device refresh through its StateStore refresh failsafe. The plugin's own connect() method orchestrates the initial connection's retry and backoff through
+// createConnectRetryPolicy and the homebridge-plugin-utils retry() utility, using this constant to bound the authentication-failure budget.
 export const PROTECT_AUTH_FAILURE_LIMIT = 3;
 
 // Default delay, in seconds, before removing Protect devices that no longer exist.
@@ -77,8 +77,13 @@ export const PROTECT_HKSV_SHADOW_SAFETY_MS = 500;
 // shallow reserve clamps to "reconnect immediately" exactly as the shipped active urgency does, rather than going negative.
 export const PROTECT_HKSV_SHADOW_FLOOR_MS = PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS;
 
-// HomeKit Secure Video timeshift buffer default duration, in milliseconds. This defines how far back in time we can look when we see a motion event.
-export const PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION = PROTECT_LIVESTREAM_API_IDR_INTERVAL * 1000 * 2;
+// Standing timeshift buffer depth, in milliseconds. Sized at twice the livestream API's I-frame interval so the rolling buffer always retains at least one keyframe for
+// every consumer it feeds - HomeKit Secure Video event look-back, buffer-backed live views, and snapshots.
+export const PROTECT_TIMESHIFT_BUFFER_MAXDURATION = PROTECT_LIVESTREAM_API_IDR_INTERVAL * 1000 * 2;
+
+// The channel-selection target for a pixel-constrained hardware encoder (such as a Raspberry Pi): the substrate channel policy picks the highest-quality channel at or
+// below this on such a host. Deliberately not named with "RESOLUTION" - in this file that word denotes the buffer's time-granularity, not a pixel dimension.
+export const PROTECT_TIMESHIFT_CONSTRAINED_HOST_TARGET = { height: 1080, width: 1920 };
 
 // Default port to use to publish an M3U playlist for use in other apps that can consume one to make camera livestreams available, such as Channels DVR.
 export const PROTECT_M3U_PLAYLIST_PORT = 10110;

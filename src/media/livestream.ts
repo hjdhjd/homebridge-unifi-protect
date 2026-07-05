@@ -6,18 +6,17 @@
  * decode, pooling, recovery, the fMP4 Segment shape, and the subscription lifecycle state. The plugin owns only the HomeKit projection: the minimal subscription surface
  * its FFmpeg consumers (the live streaming delegate and the HKSV timeshift buffer) actually depend on, and the RTSP-debug variant of that same surface.
  *
- * Three things live here:
+ * This module holds:
  *
  *   - LivestreamSubscription: the plugin-owned interface (dependency inversion). The unifi-protect library's pooled subscription class and the RTSP-debug adapter
- *     below are two interchangeable implementations behind it. The camera seam (ProtectCamera.livestream) returns this type.
+ *     below are interchangeable implementations behind it. The camera seam (ProtectCamera.livestream) returns this type.
  *   - RtspLivestreamSubscription: the RTSP-debug adapter, a pure-FFmpeg plugin concern that produces the same Segment stream behind the same interface.
  *   - logLivestreamIterationError: the shared classification and logging for errors thrown from a livestream subscription iterator, used by every consumer.
  */
+import type { FMp4AudioTarget, FfmpegOptions, HomebridgePluginLogging } from "homebridge-plugin-utils";
 import { FfmpegLivestreamProcess, splitMoofMdat } from "homebridge-plugin-utils";
-import type { FfmpegOptions, HomebridgePluginLogging } from "homebridge-plugin-utils";
 import type { LivestreamSubscriptionState, Segment } from "unifi-protect";
 import { ProtectCodecChangeError, ProtectLivestreamUnavailableError } from "unifi-protect";
-import type { CameraRecordingConfiguration } from "homebridge";
 
 // Process-local monotonic counter used to mint stable RTSP-debug subscription ids. A counter is sufficient here (no cross-process uniqueness needed) and keeps
 // ids cheap, comparable, and greppable in logs.
@@ -25,10 +24,10 @@ let rtspSubscriptionCounter = 0;
 
 /**
  * The minimal livestream-subscription surface the plugin's FFmpeg consumers depend on. The plugin OWNS this abstraction (dependency inversion): the unifi-protect
- * library's pooled LivestreamSubscription class and the RTSP-debug adapter below are two interchangeable implementations behind it. It is a deliberate subset of the
+ * library's pooled LivestreamSubscription class and the RTSP-debug adapter below are interchangeable implementations behind it. It is a deliberate subset of the
  * library's richer class (interface segregation) - the plugin needs the segment stream, the cached init, the coarse lifecycle state (the timeshift's `isRestarting` reads
  * it), the in-flight recovery re-decision (the timeshift's transmit-start escalation calls it), disposal, identity, and the establishment latch, and nothing more (no
- * stats/codec). The coupling is a feature: a unifi-protect library change that breaks this surface fails to compile at the seam's return below.
+ * stats/codec). The coupling is a feature: a unifi-protect library change that breaks this surface fails to compile at ProtectCamera.livestream()'s return.
  */
 export interface LivestreamSubscription extends AsyncIterable<Segment>, AsyncDisposable {
 
@@ -39,13 +38,14 @@ export interface LivestreamSubscription extends AsyncIterable<Segment>, AsyncDis
   whenEstablished(): Promise<boolean>;
 }
 
-// The fully-resolved options the RTSP-debug adapter needs. Every value is read at the camera seam, where the stream?.hksv?.recordingConfiguration guard has
-// already narrowed the optionals, so the adapter never re-narrows or uses non-null assertions.
+// The fully-resolved options the RTSP-debug adapter needs. Every value is derived from camera facts at the camera seam, so the adapter never re-narrows or uses
+// non-null assertions. The audio target mirrors the livestream API's native delivery shape and is the adapter's sole audio-encode input - it carries no HKSV
+// recording configuration.
 interface RtspLivestreamSubscriptionOptions {
 
+  audio: FMp4AudioTarget;
   enableAudio: boolean;
   ffmpegOptions: FfmpegOptions;
-  recordingConfig: CameraRecordingConfiguration;
   segmentLength?: number;
   signal?: AbortSignal;
   url: string;
@@ -53,9 +53,10 @@ interface RtspLivestreamSubscriptionOptions {
 }
 
 /**
- * The RTSP-debug adapter (Debug.Video.HKSV.UseRtsp). It implements the plugin's LivestreamSubscription interface over a single FfmpegLivestreamProcess that
- * transcodes the camera's RTSP stream into the same fMP4 Segment stream the unifi-protect library's pool produces. This is a pure-FFmpeg plugin concern, so it stays
- * the plugin behind the seam.
+ * The RTSP-debug adapter (Debug.Video.Timeshift.UseRtsp). It implements the plugin's LivestreamSubscription interface over a single FfmpegLivestreamProcess that
+ * transcodes the camera's RTSP stream into the same fMP4 Segment stream the unifi-protect library's pool produces, feeding the standing timeshift buffer from RTSP
+ * rather than the native livestream API. This is a pure-FFmpeg plugin concern, so it stays the plugin behind the seam, and it is the mechanical seed of a future
+ * first-class RTSP-fed-buffer option.
  *
  * There is deliberately NO recovery loop here: a failed RTSP transcode simply ends. The lifecycle state is correspondingly simple - "connecting" before the init
  * segment resolves, "live" after, "closed" after disposal - and it never reports "recovering" (so a consumer's `isRestarting` is always false on this debug
@@ -84,8 +85,8 @@ export class RtspLivestreamSubscription implements LivestreamSubscription {
 
     this.#proc = new FfmpegLivestreamProcess(options.ffmpegOptions, {
 
+      audio: options.audio,
       livestream: { codec: options.videoCodec, enableAudio: options.enableAudio, url: options.url },
-      recordingConfig: options.recordingConfig,
       segmentLength: options.segmentLength,
       signal: options.signal
     });
@@ -184,9 +185,10 @@ export class RtspLivestreamSubscription implements LivestreamSubscription {
 
 /**
  * Shared classification and logging for errors thrown from a livestream subscription iterator. Used by every consumer so the handling lives in one place.
- * `consumer` is the subject of the log sentence (e.g. "Timeshift buffer", "Live streaming"). Two of the unifi-protect library's typed iterator errors carry a known
- * meaning we phrase for the user rather than surfacing as an unexpected failure: a codec change is a benign, self-correcting restart, and an exhausted recovery
- * episode is the give-up the pool throws after repeated reconnect failures. Everything else is genuinely unexpected and logged with the error for diagnosis.
+ * `consumer` is the subject of the log sentence (e.g. "Timeshift buffer", "Live streaming"). The `ProtectCodecChangeError` and `ProtectLivestreamUnavailableError`
+ * typed iterator errors from the unifi-protect library carry a known meaning we phrase for the user rather than surfacing as an unexpected failure: a codec change
+ * is a benign, self-correcting restart, and an exhausted recovery episode is the give-up the pool throws after repeated reconnect failures. Everything else is
+ * genuinely unexpected and logged with the error for diagnosis.
  *
  * @param options.consumer - The subject of the log sentence.
  * @param options.error - The error thrown from the iterator.

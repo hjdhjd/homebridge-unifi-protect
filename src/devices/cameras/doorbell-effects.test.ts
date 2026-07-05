@@ -1,7 +1,8 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * doorbell-effects.test.ts: The doorbell capability's observer-effect net - the two netteable observer reflections (physical-chime duration, chime volume) and the
- * doorbell-trigger ring - against the REAL constructed ProtectCamera-plus-DoorbellCapability.
+ * doorbell-effects.test.ts: The doorbell capability's observer-effect net - the two nettable observer reflections (physical-chime duration, chime volume), the
+ * doorbell-trigger ring, the volume-Lightbulb's cross-device chime-volume write, and the doorbell capability's MQTT handler bodies (the /chime and /message GET/SET
+ * bodies) - against the REAL constructed ProtectCamera-plus-DoorbellCapability.
  *
  * The doorbell capability registers its observers (doorbell.ts). Their WAKE is netted by doorbell-construction.test.ts; this suite nets the two reflections
  * whose EFFECT is observable without a controller write surface: chimeDuration -> updatePhysicalChimes (the mutually-exclusive physical-chime switch fan-out) and
@@ -14,6 +15,14 @@
  * recording array (the pattern event-dispatch.test.ts established), injected through makeTestNvr's dispatch seam and read back off nvr.events - NOT the shared
  * TestRecordingDispatch, which overrides only motionEventHandler. The override captures the routing (which device the ring fired for); it deliberately does not
  * re-test the handler's HomeKit effects, which are event-dispatch.ts's own concern.
+ *
+ * The volume Lightbulb's Brightness onSet is netted as a cross-device write: it routes to setChimeVolume, which PATCHes every real client.chimes entry serving this
+ * doorbell with a modified ring, clamps a negative Brightness to zero, skips a chime that does not serve this doorbell or carries no ring for it, early-returns on
+ * the first failed write, and reports both a generic failure and an authorization failure through the shared command-error log.
+ *
+ * The doorbell capability's MQTT handler bodies are netted directly against the doorbell's registered subscriptions: the /chime GET and SET (reading and routing the
+ * chime volume through the same Lightbulb path) and the /message GET and SET (reading the current LCD message and parsing, validating, translating, and routing a
+ * new one to setMessage).
  *
  * The vacuity gate is two-part (carried from the device-* law): every gated reflection HARD-asserts its gated service or switch EXISTS as the FIRST discriminator (a
  * non-optional assert.ok, so an absent service throws here rather than passing vacuously) and pairs with a without-gate test that proves the same push produces nothing
@@ -137,10 +146,10 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
       built = await buildDoorbell({ featureFlags: { hasChime: true }, userOptions: ["Enable.Doorbell.PhysicalChime"] });
 
-      // The doorbell census: the camera's plain set (twelve, including the always-armed isDoorbell observer, the bare-motion lastMotion observer, the
-      // capability-reconcile featureFlags observer, and the Access-lock supportUnlock observer) plus the base pair plus the capability's four = eighteen. A drift here
+      // The doorbell census: the camera's plain set (eleven, including the always-armed isDoorbell observer, the bare-motion lastMotion observer, the
+      // capability-reconcile featureFlags observer, and the Access-lock supportUnlock observer) plus the base pair plus the capability's four = seventeen. A drift here
       // means an extra or missing observer slipped in.
-      assert.equal(built.nvr.client.state.observerCount, 18, "the doorbell wires eighteen observers (the camera twelve, the base pair, and the capability four)");
+      assert.equal(built.nvr.client.state.observerCount, 17, "the doorbell wires seventeen observers (the camera eleven, the base pair, and the capability four)");
 
       // HARD-assert all three physical-chime switches exist FIRST: the gate is hasChime && hasFeature("Doorbell.PhysicalChime") (doorbell.ts). An absent service
       // would let the value assertions pass vacuously.

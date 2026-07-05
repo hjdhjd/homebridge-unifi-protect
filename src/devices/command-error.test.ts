@@ -52,7 +52,7 @@ const makeDevice = (update: (payload: unknown) => Promise<unknown> = () => Promi
   const errors: string[] = [];
   const sink = (): void => undefined;
   // logName reads the live record through peek() (non-throwing), so the projection mock exposes it alongside config; the empty config makes describeDevice render the
-  // same bare descriptor it did when logName read this.device.config directly.
+  // same bare descriptor logName produces.
   const config = {};
   const device = { config, isOnline: true, modelKey, name: "Test Device", peek: (): Record<string, unknown> => config, update };
   const hap = { Characteristic: { StatusActive: Characteristic.StatusActive } };

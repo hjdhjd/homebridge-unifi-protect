@@ -39,7 +39,8 @@ export class ProtectChime extends ProtectDevice {
   // Initialize and configure the chime accessory for HomeKit.
   private configureDevice(): boolean {
 
-    // Clean out the context object in case it's been polluted somehow.
+    // Reset the context object. Homebridge persists it to disk across restarts, and a UUID this accessory reuses from a prior incarnation - a different device or an
+    // older plugin schema - could still carry stray keys that do not apply to this chime.
     this.accessory.context = {};
 
     // Seed the identity source of truth (the persisted bare MAC) from the raw record at configure time, where the record is present - identity is not read through the
@@ -61,7 +62,9 @@ export class ProtectChime extends ProtectDevice {
     // Configure the buzzer on the chime.
     this.configureChimeSwitch("buzzer", "buzzer", ProtectReservedNames.SWITCH_DOORBELL_CHIME_BUZZER);
 
-    // Cleanup legacy switches.
+    // A chime's persisted accessory can still carry a speaker switch registered under this flat, un-suffixed subtype, predating the per-ringtone switches that
+    // configureRingtoneSwitches creates below. That method's own prune only tracks switches carrying a per-ringtone id suffix, so a lingering flat-subtype switch is
+    // never reachable from there and must be removed here, unconditionally, on every configure pass.
     service = this.accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_DOORBELL_CHIME_SPEAKER);
 
     if(service) {
@@ -173,8 +176,9 @@ export class ProtectChime extends ProtectDevice {
     }
 
     // For a speaker tone, source the configured playback (repeat count and volume) for the selected ringtone from this chime's own ringSettings - the join the library
-    // deliberately leaves to the consumer (the chime recipe). The buzzer takes no payload. We resolve this before issuing the command so a missing ringtone is a clean
-    // no-op rather than a failed call.
+    // deliberately leaves to the consumer (the chime recipe). The buzzer takes no payload. When the requested ringtone id has no match, we fall back to the first entry
+    // in ringSettings for its repeat count and volume while still reporting the originally requested id to the controller; only an empty ringSettings array (no
+    // ringtones configured at all) is treated as a no-op below.
     let options: PlaySpeakerOptions = {};
 
     if((kind === "speaker") && tone) {

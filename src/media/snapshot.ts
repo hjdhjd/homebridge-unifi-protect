@@ -49,7 +49,7 @@ export class ProtectSnapshot {
   public async getSnapshot(request?: SnapshotRequest): Promise<Nullable<Buffer>> {
 
     // If we aren't connected, we're done. Reachability is the single honest fact here: it composes the controller's connection health with this camera's online state, so
-    // a pre-bootstrap or throttled controller already reads as unreachable (its connection is not healthy). One check replaces the former bootstrap/throttle/online trio.
+    // a pre-bootstrap or throttled controller already reads as unreachable (its connection is not healthy).
     if(!this.protectCamera.isReachable) {
 
       return null;
@@ -176,10 +176,13 @@ export class ProtectSnapshot {
 
     // Try the keyframe cache first for a minimal buffer (init segment + single keyframe fragment), falling back to the full timeshift window if no keyframe has been
     // detected yet or the cache is stale.
-    const buffer = this.protectCamera.stream.hksv?.timeshift.getLastKeyframe() ??
-      this.protectCamera.stream.hksv?.timeshift.getLast(PROTECT_LIVESTREAM_API_IDR_INTERVAL * 1000);
+    const buffer = this.protectCamera.stream.timeshift?.buffer.getLastKeyframe() ??
+      this.protectCamera.stream.timeshift?.buffer.getLast(PROTECT_LIVESTREAM_API_IDR_INTERVAL * 1000);
 
     if(!buffer) {
+
+      // The buffer had nothing to give this request; an RTSP source serves it while a kick revives the standing buffer behind it for subsequent snapshots.
+      void this.protectCamera.stream.timeshift?.reconcile();
 
       return null;
     }
@@ -192,7 +195,7 @@ export class ProtectSnapshot {
     // -i pipe:0                  Read input from standard input.
     const ffmpegOptions = [
 
-      "-r", this.protectCamera.stream.hksv?.channelProfile?.channel.fps.toString() ?? "30",
+      "-r", this.protectCamera.stream.timeshift?.buffer.channelProfile?.channel.fps.toString() ?? "30",
       "-probesize", buffer.length.toString(),
       "-f", "mp4",
       "-i", "pipe:0"

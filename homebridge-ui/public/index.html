@@ -1,3 +1,7 @@
+<!-- Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
+
+     index.html: homebridge-unifi-protect webUI template.
+-->
 <style>
   .hbup-blockquote {
     background-color: #E6EEF9;
@@ -157,10 +161,11 @@
 <script type="module">
   /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
    *
-   * Plugin webUI script loader. Reads HBPU's manifest at load time, then injects an importmap that maps the bare "homebridge-plugin-utils/" specifier to the
-   * "./lib/<subdir>/" hashed-versioned subdir HBPU's prepare-ui CLI mirrored into place. The trailing-slash prefix mapping means transitive imports inside the bundle
-   * inherit the versioned path through relative-URL resolution - one importmap entry covers the full HBPU file tree without enumerating any of its internals. HBUP's own
-   * ui.mjs keeps a Date.now() cache-bust because it's the one hand-authored file not under HBPU's versioning.
+   * Plugin webUI script loader. Reads the homebridge-plugin-utils manifest at load time, then injects an importmap that maps the bare
+   * "homebridge-plugin-utils/" specifier to the "./lib/<subdir>/" hashed-versioned subdir that the homebridge-plugin-utils prepare-ui CLI mirrors into place. The
+   * trailing-slash prefix mapping means transitive imports inside the bundle inherit the versioned path through relative-URL resolution - one importmap entry
+   * covers the full homebridge-plugin-utils file tree without enumerating any of its internals. This plugin's own ui.mjs keeps a Date.now() cache-bust because
+   * it's the one hand-authored file not under homebridge-plugin-utils' versioning.
    */
 
   const manifest = await fetch("./lib/manifest.json", { cache: "no-store" }).then((response) => response.json());

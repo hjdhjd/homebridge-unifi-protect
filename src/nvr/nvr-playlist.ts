@@ -25,7 +25,7 @@ import util from "node:util";
 // (rtsp://, not the secure rtsps:// stream) because many consuming apps (e.g. Channels DVR) only speak plain RTSP.
 export function buildPlaylist(cameras: readonly ProtectCameraConfig[], host: string, rtspPort: number): string {
 
-  // We accumulate each piece of the playlist into an array and join once, which is byte-equivalent to the prior streamed response.write() sequence with none of the I/O.
+  // We accumulate each piece of the playlist into an array and join once, avoiding intermediate I/O until the full body is composed.
   const parts: string[] = [];
 
   // Emit the M3U header.
@@ -57,11 +57,13 @@ export function buildPlaylist(cameras: readonly ProtectCameraConfig[], host: str
       parts.push(util.format("tvc-guide-title=\"%s Livestream\" tvc-guide-description=\"UniFi Protect %s %s livestream.\" ",
         name, camera.marketName, description));
 
+      // The placeholder value of 86400 is one day in seconds. Guide-consuming apps such as Channels DVR use it as the duration of the placeholder guide entry for this
+      // livestream, since a live camera feed has no fixed program schedule to describe.
       parts.push(util.format("tvc-guide-art=\"%s\" tvc-guide-placeholders=\"86400\" tvc-guide-tags=\"HD, Live, New, UniFi Protect\", %s\n",
         "https://raw.githubusercontent.com/hjdhjd/homebridge-unifi-protect/main/images/homebridge-unifi-protect-4x3.png", name));
 
-      // By convention, the first RTSP alias is always the highest quality on UniFi Protect cameras. Grab it and we're done. We might be tempted to use the RTSPS stream
-      // here, but many apps only support RTSP, and we'll opt for maximizing compatibility here.
+      // The channel was already selected by the caller (the primary channel, or the package channel). We emit its plain rtsp:// URL rather than the secure rtsps://
+      // stream, since many consuming apps only support plain RTSP and we prioritize maximizing compatibility here.
       parts.push(rtspUrl(channel, host, rtspPort, false) + "\n");
     };
 
@@ -117,11 +119,13 @@ export function servePlaylist(nvr: ProtectNvr): void {
       return;
     }
 
-    // Explicitly handle address in use errors, given their relative common nature. Everything else, we log and abandon.
+    // Explicitly handle address in use errors, given their relatively common nature. Everything else, we log and abandon.
     if((error as NodeJS.ErrnoException).code === "EADDRINUSE") {
 
       nvr.log.error("The address and port we are attempting to use is already in use by something else. Will retry again shortly.");
 
+      // We wait 5 seconds before retrying, a short enough delay to recover quickly from a transient port conflict (for example, a prior instance of this server still
+      // releasing the port during a restart) without hammering the port with retries.
       retryTimer = setTimeout(() => {
 
         server.close();

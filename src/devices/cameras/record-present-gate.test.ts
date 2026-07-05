@@ -19,7 +19,7 @@ import assert from "node:assert/strict";
 
 // A ProtectCamera that counts its reconcileCapabilities invocations, so the test proves the async-void capability observer is LIVE (the count rises on a present-record
 // push, alongside the service that reconcile creates) and then SUPPRESSED once the record vanishes (the count holds). Construction's own reconcile is wiped from this
-// counter by ES2024 subclass field-define (the field initializes to 0 after super returns), so the count measures the live observer's invocations from a 0 baseline.
+// counter by the subclass field-define (the field initializes to 0 after super returns), so the count measures the live observer's invocations from a 0 baseline.
 class CountingCamera extends ProtectCamera {
 
   public reconcileCount = 0;

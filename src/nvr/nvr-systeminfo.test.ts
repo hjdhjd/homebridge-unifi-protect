@@ -2,7 +2,7 @@
  *
  * nvr-systeminfo.test.ts: The first controller-owner behavior net - tests over a REAL constructed ProtectNvrSystemInfo.
  *
- * ProtectNvrSystemInfo is the lightest of the three controller owners (system information, liveviews, the security system), and it shares NOTHING with the other two
+ * ProtectNvrSystemInfo is the lightest of the controller owners (alongside liveviews and the security system), and it shares NOTHING with its siblings
  * except the ProtectBase shape, so it is the right place to establish the controller-owner test pattern in isolation. This suite constructs a REAL
  * ProtectNvrSystemInfo(nvr) through the makeTestNvr double and nets its full public surface behavior-first: construction (the self-created accessory, the
  * unconditional-on-feature TemperatureSensor CPU-temp service, the initial CurrentTemperature read-through, the singular enabled-sensors log), the NVR.SystemInfo

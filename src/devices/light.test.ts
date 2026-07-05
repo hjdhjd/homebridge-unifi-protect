@@ -16,7 +16,7 @@
  * The isolation model is per-test-fresh, not a single shared before(): a beforeEach builds a fresh light so recording.calls, the characteristic state, the observer
  * baselines, and store.observerCount are clean every test with no cross-test ordering coupling. The wake log is windowed per push via a captured baseline, so a wake
  * assertion is robust regardless of isolation. This buildLight-plus-beforeEach skeleton is the copyable reference; only makeLightConfig, TestLightProjection, the
- * slice keys, the observer count (6), and the leaf-specific reactions are light-particular.
+ * slice keys, the light's per-slice observer count, and the leaf-specific reactions are light-particular.
  */
 import { Characteristic, Service, TestLightProjection, TestRecordingDispatch, TestStateStore, makeLightConfig, makeProtectState, makeTestAccessory, makeTestNvr, settle }
   from "../testing.helpers.ts";

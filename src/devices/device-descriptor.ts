@@ -18,7 +18,7 @@
 
 // The minimal config shape the descriptor reads. Every Protect device config and the NVR config satisfies it structurally, so the descriptor depends on exactly the
 // fields it renders rather than on the full config unions - which keeps it a true leaf and lets a test drive it with a plain object. host is nullable because a LoRa
-// device (a relay, a wireless sensor) reports no address at all; the render already treats a falsy host as "no address", so a null simply omits the address segment.
+// device (a relay, a fob) reports no address at all; the render already treats a falsy host as "no address", so a null simply omits the address segment.
 interface DeviceDescriptorConfig {
 
   readonly host: string | null;

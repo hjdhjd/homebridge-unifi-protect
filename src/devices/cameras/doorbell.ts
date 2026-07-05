@@ -127,7 +127,7 @@ export class DoorbellCapability extends ProtectBase {
     return validService(this.accessory, serviceType, validate, subtype);
   }
 
-  /* The seam overrides, each varying exactly what ProtectBase's shared spine reads by leaf. */
+  // The seam overrides, each varying exactly what ProtectBase's shared spine reads by leaf.
 
   // The log prefix and diagnostics name: delegate to the camera's name. The camera's name getter resolves to the live controller projection name, so log prefixes track
   // the controller's current name for the device. NOT accessoryName (the cached HomeKit Name), which would diverge.
@@ -546,6 +546,8 @@ export class DoorbellCapability extends ProtectBase {
         // one can choose from. Instead, we do nothing and leave it to the user to choose what state they really want to set.
         if(!value) {
 
+          // Let HomeKit's optimistic write settle, then re-assert the switches' real state through updateDevice. The 50ms is a cosmetic revert nudge, not a
+          // functional delay.
           setTimeout(() => this.updateDevice(), 50);
 
           return;
@@ -558,7 +560,7 @@ export class DoorbellCapability extends ProtectBase {
           return;
         }
 
-        // Update all the other physical chime switches.
+        // Force the other physical chime switches off - the three modes are mutually exclusive, so only one can be on at a time.
         for(const otherChimeSwitch of [ ProtectReservedNames.SWITCH_DOORBELL_CHIME_NONE, ProtectReservedNames.SWITCH_DOORBELL_CHIME_MECHANICAL,
           ProtectReservedNames.SWITCH_DOORBELL_CHIME_DIGITAL ]) {
 
@@ -568,7 +570,6 @@ export class DoorbellCapability extends ProtectBase {
             continue;
           }
 
-          // Update the other physical chime switches.
           this.accessory.getServiceById(this.hap.Service.Switch, otherChimeSwitch)?.updateCharacteristic(this.hap.Characteristic.On, false);
         }
 
@@ -811,6 +812,7 @@ export class DoorbellCapability extends ProtectBase {
 
       case ProtectReservedNames.SWITCH_DOORBELL_CHIME_MECHANICAL:
 
+        // Mechanical chimes use a fixed duration, unlike the digital case above, which reads a user-configurable setting.
         return 300;
 
       case ProtectReservedNames.SWITCH_DOORBELL_CHIME_NONE:
@@ -823,7 +825,7 @@ export class DoorbellCapability extends ProtectBase {
   // Get the list of messages from the doorbell and the user configuration.
   private getMessages(): MessageInterface[] {
 
-    // First, we get our builtin and configured messages from the controller.
+    // First, we get the controller's doorbell settings, the source for its builtin messages.
     const doorbellSettings = this.nvr.ufp.doorbellSettings;
 
     // Something's not right with the configuration...we're done.
@@ -868,8 +870,8 @@ export class DoorbellCapability extends ProtectBase {
   // across-restart sync, catching the scenario where Homebridge was shut down and the list of saved messages on the controller changed.
   private validateMessageSwitches(): void {
 
-    // Loop through the list of services on our doorbell accessory and sync the message switches. We do this to catch the scenario where Homebridge was shutdown, and the
-    // list of saved messages on the controller changes.
+    // The filter below selects switches whose subtype is not one of our reserved names and is not already tracked in messageSwitches - the doorbell messages that
+    // have disappeared from the controller's current set.
     for(const switchService of this.accessory.services.filter(service => (service.UUID === this.hap.Service.Switch.UUID) && service.subtype &&
       !this.isReservedName(service.subtype) && !this.messageSwitches.has(service.subtype))) {
 
@@ -957,10 +959,9 @@ export class DoorbellCapability extends ProtectBase {
     // Clamp to a non-negative volume.
     value = Math.max(value, 0);
 
-    // A chime can be assigned to multiple doorbells, so update the ring entry for THIS doorbell on every chime that serves it. Write-through: each update PATCHes the
-    // controller and the change is reflected once the reducer's stream delivers it - we no longer fold the response back into local state (the controller state is
-    // immutable and single-sourced in the reducer), nor mutate the ring in place. We send a single-entry ringSettings array carrying only the modified ring, matching
-    // the controller's expected payload.
+    // A chime can be assigned to multiple doorbells, so update the ring entry for THIS doorbell on every chime that serves it. The controller is the single,
+    // immutable source of state, so each update is write-through only: we send the PATCH and let the reducer's stream reflect the change once it arrives. We send a
+    // single-entry ringSettings array carrying only the modified ring, matching the controller's expected payload.
     for(const chime of this.nvr.client.chimes.filter(chime => chime.config.cameraIds.includes(this.#device.id))) {
 
       const ring = chime.config.ringSettings.find(setting => setting.cameraId === this.#device.id);

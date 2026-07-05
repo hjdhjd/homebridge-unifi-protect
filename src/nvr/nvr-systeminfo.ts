@@ -10,6 +10,12 @@ import { ProtectBase } from "../devices/device-base.ts";
 import type { ProtectNvr } from "./nvr.ts";
 import { selectNvr } from "unifi-protect";
 
+/* Represents the NVR controller's system information as a controller-owned accessory, not a device-backed one. It creates and keys its own accessory directly
+ * from the controller's MAC address (the MAC plus ".NVRSystemInfo") rather than receiving one from device discovery, and it defines no per-accessory cleanup
+ * method - its lifetime is scoped entirely to the owning controller and it is torn down only through the inherited controller-wide shutdown signal. After
+ * construction, its only source of reactivity is the systemInfo observer set up below, which refreshes the temperature sensor whenever the controller's system
+ * information changes. Turning off the feature option removes the accessory outright rather than merely hiding it.
+ */
 export class ProtectNvrSystemInfo extends ProtectBase {
 
   private accessory: Nullable<ProtectAccessory> | undefined;

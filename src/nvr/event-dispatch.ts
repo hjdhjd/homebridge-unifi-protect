@@ -353,6 +353,9 @@ export class ProtectEventDispatch {
 
           confidence: detection.confidence,
           name: detection.name,
+
+          // The source and target types already match here. We keep this assertion as a visible, load-bearing marker that the raw thumbnail is intentionally carried
+          // through unmodified as the enricher payload, so a future change to either type is caught by the compiler rather than silently drifting apart.
           payload: detection as ProtectEventMetadataDetectedThumbnail,
           type: detection.type ?? ""
         })));

@@ -6,7 +6,8 @@
  * resolution tables, the HomeKit-mandated-resolution synthesis (both the per-camera advertised list and the package-camera list), and the closest-match selector. It
  * is deliberately pure - FFmpeg-free, `this`-free, and free of any device or controller I/O - so the selection logic is exhaustively unit-testable with constructed
  * inputs and the device classes (camera.ts/camera-package.ts) keep only the `this`-state injection: the channel read, the host chain, the published list write, and
- * the streaming/recording hint resolution. The thin device wrappers `selectChannel`/`selectRecordingChannel` inject `this`-state and delegate to the pure functions here.
+ * the direct-RTSP and substrate hint resolution. The thin device wrappers `selectChannel`/`selectSubstrateChannel` inject `this`-state and delegate to the pure
+ * functions here.
  *
  * The selection model is a discriminated union, SelectRequest: a "name" request pins to a named channel (the user's explicit streaming/recording-quality preference);
  * a "nearest" request finds the closest entry to a target resolution, biased higher (for transcoding, which wants a higher-quality input) or lower (the default, which
@@ -63,7 +64,6 @@ export function is4x3AspectRatio(width: number, height: number): boolean {
 // methods needed.
 export function sortByResolutions(a: ChannelProfile, b: ChannelProfile): number {
 
-  // Check width.
   if(a.resolution[0] < b.resolution[0]) {
 
     return 1;
@@ -74,7 +74,6 @@ export function sortByResolutions(a: ChannelProfile, b: ChannelProfile): number 
     return -1;
   }
 
-  // Check height.
   if(a.resolution[1] < b.resolution[1]) {
 
     return 1;
@@ -85,7 +84,6 @@ export function sortByResolutions(a: ChannelProfile, b: ChannelProfile): number 
     return -1;
   }
 
-  // Check FPS.
   if(a.resolution[2] < b.resolution[2]) {
 
     return 1;
@@ -126,9 +124,9 @@ export function isPrimaryChannel(channel: ProtectCameraChannelConfig): boolean {
   return channel.isRtspEnabled && !isPackageChannel(channel);
 }
 
-// Construct one ChannelProfile from a channel. This is the single entry constructor that replaces the three hand-built object literals across the camera and package
-// classes: the friendly name and resolution come from the channel's native dimensions, the URL from rtspUrl, and the optional lens is omitted entirely when
-// undefined, so a primary-channel entry carries no lens property; only the package entry sets one.
+// Construct one ChannelProfile from a channel. This is the single entry constructor every ChannelProfile across the camera and package classes is built through: the
+// friendly name and resolution come from the channel's native dimensions, the URL from rtspUrl, and the optional lens is omitted entirely when undefined, so a
+// primary-channel entry carries no lens property; only the package entry sets one.
 export function buildChannelProfile(channel: ProtectCameraChannelConfig, options: { lens?: number; rtspPort: number; urlHost: string }): ChannelProfile {
 
   const entry: ChannelProfile = {
@@ -219,7 +217,8 @@ export function selectChannelProfile(entries: readonly ChannelProfile[], request
 
     default: {
 
-      // SelectRequest is a closed discriminated union, so this is unreachable; we satisfy the exhaustiveness checker and surface a typo at compile time.
+      // SelectRequest is a closed discriminated union under today's two variants, so this branch is unreachable; the fallback returns null as a safe default
+      // rather than a compile-time exhaustiveness guarantee.
       return null;
     }
   }
@@ -232,8 +231,8 @@ export function selectChannelProfile(entries: readonly ChannelProfile[], request
 // attempt the camera.
 //
 // The list build is preference-free: each candidate's closest-match uses the bias-lower nearest selection, mapping every HomeKit resolution to the highest channel at or
-// below it. The streaming-quality preference (Video.Stream.Only.X) is a request-time concern the selectChannel wrapper applies when a stream starts; it must not bias
-// which resolutions we advertise: doing so would also pin the HKSV recording default to the streaming channel on constrained hosts.
+// below it. The direct-RTSP quality preference (Video.Rtsp.Only.X) is a request-time concern the selectChannel wrapper applies when a stream starts; it must not bias
+// which resolutions we advertise: doing so would also pin the substrate default to the direct-RTSP channel on constrained hosts.
 export function buildAdvertisedProfiles(nativeEntries: readonly ChannelProfile[]): ChannelProfile[] {
 
   // Copy the native entries into a mutable working list and sort it high to low. We never mutate the caller's array.

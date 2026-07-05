@@ -11,7 +11,8 @@ import { AudioRecordingCodecType, AudioRecordingSamplerate, AudioStreamingCodecT
 import type { CameraController, CameraControllerOptions, CameraStreamingDelegate, HAP, PrepareStreamCallback, PrepareStreamRequest, PrepareStreamResponse, Resolution,
   Service, SnapshotRequest, SnapshotRequestCallback, StartStreamRequest, StreamRequestCallback, StreamingRequest } from "homebridge";
 import type { HomebridgePluginLogging, IpFamily, Nullable, PortReservation } from "homebridge-plugin-utils";
-import { PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION, PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS, PROTECT_LIVESTREAM_API_IDR_INTERVAL } from "../settings.ts";
+import { PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS, PROTECT_LIVESTREAM_API_IDR_INTERVAL, PROTECT_TIMESHIFT_BUFFER_MAXDURATION } from "../settings.ts";
+import type { ChannelProfile } from "./resolution.ts";
 import type { LivestreamSubscription } from "./livestream.ts";
 import { ProtectAbortedError } from "unifi-protect";
 import type { ProtectCameraHost } from "./camera-host.ts";
@@ -21,9 +22,12 @@ import { ProtectRecordingDelegate } from "./record.ts";
 import { ProtectReservedNames } from "../types.ts";
 import { ProtectSnapshot } from "./snapshot.ts";
 import { ProtectStreamingFfmpegProcess } from "./stream-ffmpeg-process.ts";
+import { ProtectTimeshiftSupervisor } from "./timeshift-supervisor.ts";
 import type { TalkbackSession } from "unifi-protect";
 import { logLivestreamIterationError } from "./livestream.ts";
 import { mqttTopic } from "../mqtt.ts";
+import { resolveSessionSource } from "./stream-source-policy.ts";
+import { streamingSamplerates } from "./stream-delegate.ts";
 
 interface OngoingSessionEntry {
 
@@ -97,7 +101,11 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
   private probesizeOverrideCount: number;
   private probesizeOverrideTimeout?: NodeJS.Timeout;
   private snapshot: ProtectSnapshot;
+  public timeshift: Nullable<ProtectTimeshiftSupervisor>;
   public verboseFfmpeg: boolean;
+
+  // Internal development only: alternates the resolved transport source between the timeshift buffer and RTSP when Debug.Video.Stream.ABTest is enabled, so a live
+  // A/B comparison can run without restarting the plugin.
   private abTest = false;
 
   // Create an instance of a HomeKit streaming delegate.
@@ -114,6 +122,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
     this.platform = protectCamera.platform;
     this.probesizeOverride = 0;
     this.probesizeOverrideCount = 0;
+    this.timeshift = null;
     this.verboseFfmpeg = false;
 
     // Configure our hardware acceleration support.
@@ -136,10 +145,19 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
         "performance and an improved user experience.");
     }
 
-    // Setup for HKSV, if enabled.
-    if(this.protectCamera.isHksvCapable) {
+    // The timeshift supervisor - the lifecycle authority for the camera's standing buffer - is constructed for any camera that can use buffer-backed livestreaming: the
+    // livestream-accessibility predicate, a strict superset of HKSV capability, so it also covers every HKSV-capable camera. This means the streaming arm and (when
+    // present) the recording arm share one buffer lifecycle owner. The recording delegate is constructed only for an HKSV-capable camera and always finds its required
+    // supervisor already in place, so a supervisor-less recording delegate is unrepresentable. An Access-adopted camera therefore gets the supervisor without a
+    // recording delegate - the streaming-only column of the OR made flesh.
+    if(!this.protectCamera.ufp.isThirdPartyCamera || this.protectCamera.ufp.isPairedWithAiPort) {
 
-      this.hksv = new ProtectRecordingDelegate(protectCamera);
+      this.timeshift = new ProtectTimeshiftSupervisor(protectCamera);
+
+      if(this.protectCamera.isHksvCapable) {
+
+        this.hksv = new ProtectRecordingDelegate(protectCamera, this.timeshift);
+      }
     }
 
     // Configure our snapshot handler.
@@ -184,7 +202,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
           ],
 
           // Maximum prebuffer length supported. In Protect, this is effectively unlimited, but HomeKit only seems to request a maximum of a 4000ms prebuffer.
-          prebufferLength: PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION,
+          prebufferLength: PROTECT_TIMESHIFT_BUFFER_MAXDURATION,
 
           video: {
 
@@ -221,10 +239,11 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
               audioChannels: 1,
               bitrate: 0,
 
-              // Protect doorbells and the Opus audio track over RTSP both use a 48 kHz audio sampling rate, which HomeKit doesn't support. Since both 16 and 24 will
-              // divide cleanly into 48, we allow HomeKit to choose its preference. Otherwise, the livestream API uses a 16 kHz sampling rate.
-              samplerate: (this.protectCamera.ufp.featureFlags.isDoorbell || !this.protectCamera.hints.tsbStreaming) ?
-                [ AudioStreamingSamplerate.KHZ_16, AudioStreamingSamplerate.KHZ_24 ] : AudioStreamingSamplerate.KHZ_16,
+              // Protect doorbells and the Opus audio track over RTSP both use a 48 kHz audio sampling rate, which HomeKit doesn't support; the samplerate helper hands
+              // HomeKit both 16 and 24 kHz to choose from there (each divides 48 cleanly) and just 16 kHz when the buffer-backed livestream API delivers it. This surface
+              // is constructor-frozen, so usesTimeshiftLivestream is sampled at construction here; a later toggle change re-derives it through the delegate rebuild.
+              samplerate: streamingSamplerates({ isDoorbell: this.protectCamera.ufp.featureFlags.isDoorbell,
+                usesTimeshiftLivestream: this.protectCamera.usesTimeshiftLivestream }),
               type: AudioStreamingCodecType.AAC_ELD
             }
           ],
@@ -541,43 +560,78 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
     // Set the initial bitrate we should use for this request based on what HomeKit is requesting.
     let targetBitrate = request.video.max_bit_rate;
 
-    // Only use API livestreaming if we have an active timeshift buffer. Otherwise, we'll fallback to RTSP streaming. We coerce to a strict boolean (the && may yield
-    // undefined when hksv is absent) because useTsb is captured as the streaming subclass's per-session suppressLivestreamApiErrors flag, which is a boolean.
-    let useTsb = (this.protectCamera.hints.tsbStreaming && this.hksv?.isRecording) ?? false;
-
-    // If we're A/B testing, switch our streaming types. This is intended for internal development purposes only.
-    if(this.abTest && this.protectCamera.hasFeature("Debug.Video.Stream.ABTest")) {
-
-      useTsb = !useTsb;
-    }
+    // Resolve which transport this live view draws from: the standing timeshift buffer's pooled socket, or a direct RTSP session. The decision is a pure policy over the
+    // camera's current facts (the buffer-backed-livestreaming toggle, the recording demand, the buffer's liveness, the package preference, the AV1 constraint, and the
+    // internal A/B test). The A/B test flip is captured and the toggle advanced here so the policy itself stays pure.
+    const abTestFlip = this.abTest && this.protectCamera.hasFeature("Debug.Video.Stream.ABTest");
 
     this.abTest = !this.abTest;
 
-    // FFmpeg doesn't support AV1 over RTSP yet.
-    if((this.protectCamera.ufp.videoCodec === "av1") && !useTsb) {
+    const decision = resolveSessionSource({
 
-      if(!this.hksv?.isRecording) {
+      abTestFlip: abTestFlip,
+      bufferStarted: this.timeshift?.buffer.isStarted ?? false,
+      hasRecordingDemand: this.hksv?.isRecording ?? false,
+      isPackageCamera: "packageCamera" in this.protectCamera.accessory.context,
+      usesTimeshiftLivestream: this.protectCamera.usesTimeshiftLivestream,
+      videoCodec: this.protectCamera.ufp.videoCodec
+    });
 
-        const errorMessage = "Unable to start video stream: FFmpeg does not currently support AV1-encoded RTSP streams. " +
-          "Enable HKSV in the Home app and ensure API-based livestreaming is enabled in HBUP (enabled by default).";
+    // A momentarily-down buffer that should be running gets a fire-and-forget wake, so it re-establishes behind whatever transport serves this request.
+    if(decision.kick) {
+
+      void this.timeshift?.reconcile();
+    }
+
+    // useTsb is captured as the streaming subclass's per-session suppressLivestreamApiErrors flag and drives the pooled-input pipeline below; both buffer-backed sources
+    // set it. The channel profile is seeded per source in one place: the running buffer's channel for "buffer", the substrate policy's channel for the transient
+    // "bufferDegraded" API session (so no direct-RTSP option leaks into it and the socket lands on the key the buffer revives onto), and left null for the direct-RTSP
+    // selection below otherwise.
+    let useTsb: boolean;
+    let channelProfile: Nullable<ChannelProfile>;
+
+    switch(decision.source) {
+
+      case "buffer": {
+
+        useTsb = true;
+        channelProfile = this.timeshift?.buffer.channelProfile ?? null;
+
+        break;
+      }
+
+      case "bufferDegraded": {
+
+        useTsb = true;
+        channelProfile = this.timeshift?.buffer.channelProfile ?? this.protectCamera.selectSubstrateChannel();
+
+        break;
+      }
+
+      case "rtsp": {
+
+        useTsb = false;
+        channelProfile = null;
+
+        break;
+      }
+
+      default: {
+
+        // "unavailable": an AV1 camera with no buffer path. FFmpeg cannot stream AV1 over RTSP, so there is no viable source. The remedy differs by capability - a camera
+        // that could use the buffer is told to re-enable buffer-backed livestreaming, while a camera that cannot use it at all has no remedy to offer.
+        const capable = !this.protectCamera.ufp.isThirdPartyCamera || this.protectCamera.ufp.isPairedWithAiPort;
+        const errorMessage = capable ?
+          "Unable to start video stream: FFmpeg does not currently support AV1-encoded RTSP streams. Enable the Video.Timeshift.Livestream feature option (enabled by " +
+            "default) to view this camera." :
+          "Unable to start video stream: FFmpeg does not currently support AV1-encoded RTSP streams, and this camera cannot use the timeshift buffer.";
 
         this.log.error(errorMessage);
         callback(new Error(this.protectCamera.accessoryName + ": " + errorMessage));
 
         return;
       }
-
-      useTsb = true;
     }
-
-    // Always try to use API livestreaming if we are looking at the package camera.
-    if(("packageCamera" in this.protectCamera.accessory.context) && !useTsb && this.hksv?.isRecording) {
-
-      useTsb = true;
-    }
-
-    // If we're using the livestream API and we're timeshifting, we override the stream quality we've determined in favor of our timeshift buffer.
-    let channelProfile = useTsb ? this.hksv?.channelProfile : null;
 
     // Find the best RTSP stream based on what we're looking for.
     if(isTranscoding) {
@@ -648,7 +702,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
     //
     // - Since we are using an already existing connection to the Protect controller, we don't need to create another connection which incurs an additional delay, as well
     //   as a resource hit on the Protect controller.
-    const tsBuffer: Nullable<Buffer> = useTsb ? (this.hksv?.timeshift.getLast(PROTECT_LIVESTREAM_API_IDR_INTERVAL * 1000) ?? null) : null;
+    const tsBuffer: Nullable<Buffer> = useTsb ? (this.timeshift?.buffer.getLast(PROTECT_LIVESTREAM_API_IDR_INTERVAL * 1000) ?? null) : null;
 
     // -hide_banner                     Suppress printing the startup banner in FFmpeg.
     // -nostats                         Suppress printing progress reports while encoding in FFmpeg.
@@ -733,7 +787,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
 
     this.log.info("%sStreaming request: %sx%s@%sfps, %s. Using %s [%s], %s [%s].", hinting.join(" "), request.video.width, request.video.height, request.video.fps,
       formatBps(targetBitrate * 1000), channelProfile.name, this.protectCamera.videoCodecName,
-      formatBps(channelProfile.channel.bitrate), useTsb ? "TSB/" + (this.protectCamera.hasFeature("Debug.Video.HKSV.UseRtsp") ? "RTSP" : "API") : "RTSP");
+      formatBps(channelProfile.channel.bitrate), useTsb ? "TSB/" + (this.protectCamera.hasFeature("Debug.Video.Timeshift.UseRtsp") ? "RTSP" : "API") : "RTSP");
 
     // When on high-performance hardware like Apple Silicon, using the TSB, and we don't have low-FPS cameras like the package camera, enable the use of the
     // CPU-intensive FFmpeg minterpolate filter to enable very smooth video, especially when there's motion involved. M3+ Apple Silicon environments are able to reliably
@@ -1244,7 +1298,8 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
     // for the user, but also ensuring we have a functional streaming experience.
     this.probesizeOverride = this.probesize * 2;
 
-    // Safety check to make sure this never gets too crazy.
+    // Safety check to make sure this never gets too crazy. A ceiling of 5000000 bytes sits far above any probesize FFmpeg has needed in practice, so it bounds the
+    // repeated doubling above without meaningfully limiting our ability to recover from a difficult stream.
     if(this.probesizeOverride > 5000000) {
 
       this.probesizeOverride = 5000000;
@@ -1254,9 +1309,12 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
     "Adjusting the settings we use for FFmpeg %s to use safer values at the expense of some additional streaming startup latency.",
     this.probesizeOverrideCount < 10 ? "temporarily" : "permanently");
 
-    // If this happens often enough, keep the override in place permanently.
+    // If this happens often enough, keep the override in place permanently. Ten retries is the threshold: enough attempts to tell a one-off hiccup apart from a
+    // persistently flaky stream before we stop paying the cost of resetting the override on every attempt.
     if(this.probesizeOverrideCount < 10) {
 
+      // Automatically clear the temporary override after ten minutes, long enough for a transient stream irregularity to have passed so the next stream attempt
+      // starts from the camera's normal baseline probesize instead of carrying the penalty indefinitely.
       this.probesizeOverrideTimeout = setTimeout(() => {
 
         this.probesizeOverride = 0;

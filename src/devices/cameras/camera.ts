@@ -2,12 +2,12 @@
  *
  * camera.ts: Camera device class for UniFi Protect.
  */
+import { AudioRecordingCodecType, AudioRecordingSamplerate, capabilityGate, toStartCase } from "homebridge-plugin-utils";
 import type { Camera, DeepPartial, LivestreamSource, ProtectCameraConfig, SnapshotOptions, TalkbackSession } from "unifi-protect";
 import type { CharacteristicValue, Service } from "homebridge";
-import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_SEGMENT_RESOLUTION } from "../../settings.ts";
+import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_SEGMENT_RESOLUTION, PROTECT_TIMESHIFT_CONSTRAINED_HOST_TARGET } from "../../settings.ts";
 import type { ProtectAccessory, WithoutIdentity } from "../../types.ts";
 import { buildAdvertisedProfiles, buildChannelProfile, capByPixels, formatResolution, isPrimaryChannel, rtspUrl, selectChannelProfile } from "../../media/resolution.ts";
-import { capabilityGate, toStartCase } from "homebridge-plugin-utils";
 import type { ChannelProfile } from "../../media/resolution.ts";
 import type { DoorbellCapability } from "./doorbell.ts";
 import type { LivestreamSubscription } from "../../media/livestream.ts";
@@ -85,8 +85,8 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
   }
 
   // The host the camera's RTSP(S) URLs resolve against: the user's address override, else the camera's own controller-reported connection host, else the controller's
-  // host. Protected so the package camera subclass resolves its own RTSP URLs through the exact same chain (replacing the package's former raw config.address, which
-  // ignored both the override and the connection host).
+  // host. Protected so the package camera subclass resolves its own RTSP URLs through the exact same override/connection-host/controller-host chain as the parent's,
+  // rather than the controller's raw address.
   protected get rtspHost(): string {
 
     return this.nvr.config.overrideAddress ?? this.ufp.connectionHost ?? this.nvr.ufp.host;
@@ -98,7 +98,7 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
     // Configure our parent's hints.
     super.configureHints();
 
-    this.hints.tsbStreaming = this.hasFeature("Video.Stream.UseApi");
+    this.hints.tsbStreaming = this.hasFeature("Video.Timeshift.Livestream");
     this.hints.crop = this.hasFeature("Video.Crop");
     this.hints.hardwareDecoding = true;
     this.hints.hardwareTranscoding = this.hasFeature("Video.Transcode.Hardware");
@@ -108,6 +108,9 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
     this.hints.logDoorbell = this.hasFeature("Log.Doorbell");
     this.hints.logHksv = this.hasFeature("Log.HKSV");
     this.hints.nightVision = this.ufp.featureFlags.hasInfrared && this.hasFeature("Device.NightVision");
+
+    // A regular camera stream is dense and continuous, so a modest probe is enough for FFmpeg to lock onto its format reliably without adding noticeable startup
+    // latency; the package camera's sparser stream needs a deeper probe of its own (see its own probesize override).
     this.hints.probesize = 16384;
     this.hints.smartDetect = this.ufp.featureFlags.hasSmartDetect && this.hasFeature("Motion.SmartDetect");
     this.hints.smartDetectSensors = this.hints.smartDetect && this.hasFeature("Motion.SmartDetect.ObjectSensors");
@@ -273,9 +276,9 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
    * had the flag been true at adoption. The construct arm does only the capability compose: the normal construction flow covers everything else. The observe arm, a
    * promotion of a running plain camera, additionally: re-runs the mute switch and trigger (the construction IIFE tail already ran them while the flag was false, and the
    * Doorbell service now exists); registers the ring-trigger MQTT (a late promotion the construction configureMqtt could not have registered); and narrates the promotion
-   * once. The controller rebuild a late doorbell-ness needs is no longer driven here: an isDoorbell change also wakes the featureFlags observer, so the capability
-   * reconcile's reconcileStreamingAudioCapabilities rebuilds the streaming delegate when a frozen audio capability has appeared (a late doorbell-ness or a late speaker),
-   * single-sourcing that rebuild across both late inputs.
+   * once. The late-doorbell controller rebuild lives in reconcileStreamingAudioCapabilities, driven by the featureFlags observer, so this method only composes the
+   * capability: an isDoorbell change also wakes that observer, and reconcileStreamingAudioCapabilities rebuilds the streaming delegate when a frozen audio capability
+   * has appeared (a late doorbell-ness or a late speaker), single-sourcing that rebuild across both late inputs.
    */
   private attachDoorbellCapability(source: ReconcileSource): void {
 
@@ -333,8 +336,8 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
    * spawns the family-specific set. Camera-family leaves extend spawnCameraObservers, never this template - a deliberate asymmetry with the other device families, which
    * extend spawnObservers directly. Only the camera family has a leaf-of-a-leaf (the package camera under the doorbell) that must suppress part of its parent's observer
    * set, and the seam is what lets it replace exactly the camera reactions while still inheriting the base pair. The package replaces spawnCameraObservers without a
-   * super call (its own bespoke set); the doorbell's own reactions are no longer a camera subclass - they spawn through the composed DoorbellCapability's own configure,
-   * keyed on the capability's signal - so the camera's set is the plain-camera set and the per-class observer count pins in the construction tests are the enforcement.
+   * super call (its own bespoke set); the doorbell's own reactions are not a camera subclass - they spawn through the composed DoorbellCapability's own configure, keyed
+   * on the capability's signal - so the camera's set is the plain-camera set and the per-class observer count pins in the construction tests are the enforcement.
    */
   protected override spawnObservers(): void {
 
@@ -359,14 +362,6 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
     // The lifecycle state enum drives independent reactions, so each gets its own observer on the same slice. We watch state because isOnline - and therefore the
     // device-online half of isReachable - derives from it; the controller-health half is pushed by the NVR connection loop, not observed here.
     this.observeState({ key: "camera.state", selector: state => cam(state)?.state, title: "availability" }, () => this.updateAvailability());
-    this.observeState({ key: "camera.state.hksv", selector: state => cam(state)?.state, title: "HKSV" }, () => {
-
-      // The camera's lifecycle state changed. Reconcile the timeshift against current reachability so ONE edge handles both directions: on the offline edge the
-      // reconciler stops an in-flight recording through the honest terminated path (a clean isLast marker, no stall-watchdog WARN) and logs the deferred-until-online
-      // notice; on the online edge it re-establishes the buffer an offline-at-startup configure could not. configureTimeshifting is concurrency-safe and idempotent - its
-      // own configureRequested coalescing collapses a within-drain flap to the final value - so an already-correct state is a no-op.
-      void this.stream?.hksv?.configureTimeshifting();
-    });
 
     // The tamper-detection setting governs whether the StatusTampered characteristic exists at all; the tamper occurrence itself is a firehose event the router delivers.
     // The setting slice wakes the one capability reconcile, so a user toggling tamper detection and the controller reporting hasTamperDetection late share the same
@@ -562,15 +557,19 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
 
     const segmentLength = opts.segmentLength ?? PROTECT_SEGMENT_RESOLUTION;
 
-    // The RTSP-debug path (Debug.Video.HKSV.UseRtsp) transcodes the camera's RTSP stream through FFmpeg instead of the controller's native livestream. The
-    // hksv.recordingConfiguration guard establishes the precondition the adapter needs; within this block this.stream and this.stream.hksv are non-null.
-    if(this.hasFeature("Debug.Video.HKSV.UseRtsp") && this.stream?.hksv?.recordingConfiguration) {
+    // The RTSP-debug path (Debug.Video.Timeshift.UseRtsp) transcodes the camera's RTSP stream through FFmpeg to feed the timeshift buffer instead of the controller's
+    // native livestream. It is gated on the debug feature alone - no HKSV recording precondition - so it engages from startup for the standing buffer. The audio target
+    // mirrors the livestream API's native delivery, derived from camera facts rather than any HKSV recording configuration.
+    if(this.hasFeature("Debug.Video.Timeshift.UseRtsp") && this.stream) {
+
+      // Mono AAC-LC at the camera's native sample rate: 48 kHz for doorbells, 16 kHz for every other camera.
+      const samplerate = this.ufp.featureFlags.isDoorbell ? AudioRecordingSamplerate.KHZ_48 : AudioRecordingSamplerate.KHZ_16;
 
       return new RtspLivestreamSubscription({
 
-        enableAudio: this.stream.hksv.isAudioActive,
+        audio: { channels: 1, codec: AudioRecordingCodecType.AAC_LC, samplerate: samplerate },
+        enableAudio: this.ufp.featureFlags.hasMic && this.hasFeature("Audio"),
         ffmpegOptions: this.stream.ffmpegOptions,
-        recordingConfig: this.stream.hksv.recordingConfiguration,
         segmentLength: segmentLength,
         signal: opts.signal,
         url: channelProfile.url,
@@ -674,6 +673,7 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
       // set the lock to UNSECURED as part of the set request that brought us into this handler, so we just need to schedule the re-lock.
       this.log.info("Unlocked.");
 
+      // Two seconds is long enough for the momentary UNSECURED state to register visibly in the Home app before we revert it back to SECURED.
       this.registerTimeout("accessUnlock", () => {
 
         service.updateCharacteristic(this.hap.Characteristic.LockTargetState, this.hap.Characteristic.LockTargetState.SECURED);
@@ -1247,26 +1247,45 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
       }
     }
 
-    // Check for explicit RTSP profile preferences.
+    // Check for explicit RTSP profile preferences. A pin carries only a genuine user choice; the substrate channel policy computes its own default when neither is set.
     for(const rtspProfile of [ "LOW", "MEDIUM", "HIGH" ]) {
 
-      // Check to see if the user has requested a specific streaming profile for this camera.
-      if(this.hasFeature("Video.Stream.Only." + rtspProfile)) {
+      // Check to see if the user has pinned a specific direct-RTSP livestream profile for this camera.
+      if(this.hasFeature("Video.Rtsp.Only." + rtspProfile)) {
 
-        this.hints.streamingDefault = rtspProfile;
+        this.hints.rtspDefault = rtspProfile;
       }
 
-      // Check to see if the user has requested a specific recording profile for this camera.
-      if(this.hasFeature("Video.HKSV.Record.Only." + rtspProfile)) {
+      // Check to see if the user has pinned a specific channel to populate the timeshift buffer for this camera.
+      if(this.hasFeature("Video.Timeshift.Only." + rtspProfile)) {
 
-        this.hints.recordingDefault = rtspProfile;
+        this.hints.substrateDefault = rtspProfile;
       }
     }
 
-    // Inform the user if we've set a streaming default.
-    if(this.hints.streamingDefault) {
+    // Inform the user if they've pinned a direct-RTSP livestream profile.
+    if(this.hints.rtspDefault) {
 
-      this.log.info("Video streaming configured to use only: %s.", toStartCase(this.hints.streamingDefault.toLowerCase()));
+      this.log.info("Direct RTSP livestreaming is configured to use only: %s.", toStartCase(this.hints.rtspDefault.toLowerCase()));
+    }
+
+    // Inform the user if they've pinned the channel that populates the timeshift buffer.
+    if(this.hints.substrateDefault) {
+
+      this.log.info("The timeshift buffer is configured to use only: %s.", toStartCase(this.hints.substrateDefault.toLowerCase()));
+    }
+
+    // Inform the user when they've opted out of buffer-backed livestreaming, so live views come straight from the camera over RTSP.
+    if(!this.hints.tsbStreaming) {
+
+      this.log.info("Livestreaming directly from the camera over RTSP.");
+    }
+
+    // If the user has redirected the timeshift buffer to feed from the camera's RTSP stream, warn that this is for debugging only.
+    if(this.hasFeature("Debug.Video.Timeshift.UseRtsp")) {
+
+      this.log.warn("Feeding the timeshift buffer from the camera's RTSP stream is for debugging purposes only and unsupported. " +
+        "It consumes more resources on both the Protect controller and the system running HBUP.");
     }
 
     // Inform the user if they've selected the legacy snapshot API.
@@ -1278,35 +1297,11 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
     // Configure the video stream with our resolutions.
     this.stream = this.platform.streamingDelegateFactory.create(this, this.channelProfiles.map(x => x.resolution));
 
-    // If the user hasn't overriden our defaults, make sure we account for constrained hardware environments.
-    if(!this.hints.recordingDefault) {
-
-      switch(this.platform.codecSupport.hostSystem) {
-
-        case "raspbian":
-
-          // On constrained hosts like a Raspberry Pi, we default to recording from the highest-quality channel at or below 1080p. The 1920x1080 target with the
-          // downward (bias-lower) nearest selection bounds the default to exactly that, so no extra pixel cap is needed. We select preference-free, not via
-          // selectChannel - because the recording default must not inherit the streaming-quality preference; a user can still pin a specific channel.
-          this.hints.recordingDefault = selectChannelProfile(this.channelProfiles, { bias: "lower", height: 1080, mode: "nearest", width: 1920 })?.channel.name ?? "";
-
-          break;
-
-        default:
-
-          // We default to no preference for the default Protect camera channel.
-          this.hints.recordingDefault = this.hints.hardwareTranscoding ? "High" : "";
-
-          break;
-      }
-    } else {
-
-      // Inform the user if we've set a recording default.
-      this.log.info("HomeKit Secure Video event recording configured to use only: %s.", toStartCase(this.hints.recordingDefault.toLowerCase()));
-    }
-
     // Fire up the controller and inform HomeKit about it.
     this.accessory.configureController(this.stream.controller);
+
+    // Kick the supervisor so the standing timeshift buffer establishes for this camera's streaming arm, independent of any HomeKit Secure Video recording demand.
+    void this.stream.timeshift?.reconcile();
 
     return true;
   }
@@ -1321,10 +1316,10 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
       void this.stream.hksv.updateRecordingActive(false);
     }
 
-    // Tear down this camera's livestream consumers so their pool subscriptions are released. The camera no longer owns livestream sessions - the stream (live) and
+    // Tear down this camera's livestream consumers so their pool subscriptions are released. The camera does not own livestream sessions - the stream (live) and
     // timeshift (HKSV) consumers own the subscriptions, and disposing them decrements the pool refcount to zero. Mirrors nvr.disconnect()'s per-camera teardown.
     this.stream?.shutdown();
-    this.stream?.hksv?.timeshift.stop();
+    this.stream?.timeshift?.shutdown();
 
     // Unregister our controller.
     if(this.stream) {
@@ -1338,9 +1333,8 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
    * late doorbell-ness or a late speaker. The teardown's removeController runs synchronously; clearing this.stream re-opens the create-once gate; reconcileStreaming's
    * create-half (configureStreamingDelegate) lands on the next microtask after refreshChannelProfiles resolves, so remove-before-configure ordering holds, and exactly
    * one removeController plus one configureController fire here. This is today's shipped reclassification semantics - the HKSV factory reset (removeController) and
-   * the supported-config hash change - preserved at exactly this transition, no longer carried by a teardown+recreate of the whole instance. The create-half's isDeleted
-   * guard prevents a re-register if the accessory is removed mid-window. (It inherits today's benign fire-and-forget updateRecordingActive(false) teardown race - parity,
-   * not introduced here.)
+   * the supported-config hash change - preserved at exactly this transition. The create-half's isDeleted guard prevents a re-register if the accessory is removed
+   * mid-window. (It inherits today's benign fire-and-forget updateRecordingActive(false) teardown race - parity, not introduced here.)
    */
   private rebuildStreamingDelegate(): void {
 
@@ -1351,13 +1345,6 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
 
   // Configure HomeKit Secure Video support.
   private configureHksv(): boolean {
-
-    // If we've enabled RTSP-based HKSV recording, warn that this is unsupported.
-    if(this.hasFeature("Debug.Video.HKSV.UseRtsp")) {
-
-      this.log.warn("Enabling RTSP-based HKSV events are for debugging purposes only and unsupported." +
-        " It consumes more resources on both the Protect controller and the system running HBUP.");
-    }
 
     // If we have smart motion events enabled, let's warn the user that things will not work quite the way they expect.
     if(this.isHksvCapable && this.hints.smartDetect) {
@@ -1785,6 +1772,28 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
     }
 
     this.accessory.getService(this.hap.Service.LightSensor)?.updateCharacteristic(this.hap.Characteristic.StatusActive, this.isReachable);
+
+    // Wake the supervisor on every availability change, both directions. The offline edge stops an in-flight buffer through the honest terminated path, and the online
+    // edge re-establishes a buffer an offline-at-startup reconcile could not - so this is deliberately NOT reachability-gated. The optional chain no-ops for a camera
+    // without a supervisor, and the reconcile's own coalescing makes any sweep-driven extra call a harmless no-op.
+    void this.stream?.timeshift?.reconcile();
+  }
+
+  // Push the reachability projection, then wake the supervisor when the camera is reachable. Overrides the base to add the streaming-arm kick: the base rewrites
+  // StatusActive from isReachable and reports the transition, and on a reachable camera we reconcile so a buffer that could not establish while the camera was unhealthy
+  // re-establishes in place. The kick is reachability-gated - the unhealthy edge preserves recover-in-place and must not tear a live buffer down here - but is NOT keyed
+  // on the returned transition, which is null when no service carries StatusActive, so the buffer still revives on a camera that advertises no StatusActive
+  // characteristic.
+  public override refreshReachability(): Nullable<{ now: boolean; was: boolean }> {
+
+    const transition = super.refreshReachability();
+
+    if(this.isReachable) {
+
+      void this.stream?.timeshift?.reconcile();
+    }
+
+    return transition;
   }
 
   // Push the night-vision characteristics from the camera's ISP settings: the operating-mode indicator and, when the dimmer is enabled, its on/brightness state. Driven
@@ -1842,30 +1851,48 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
     }
   }
 
-  // Find a streaming RTSP configuration for a given target resolution. This is the device wrapper over the pure selectChannelProfile: it injects our published entries
-  // and our this-state (the streaming default, which pins to a named channel, and the optional hardware pixel cap), then delegates the selection mathematics. The pixel
-  // cap is applied as a mode-agnostic pre-filter BEFORE selection - intentionally a pre-filter, not part of the request, so it filters the name branch too (a
+  // Find a direct-RTSP livestream configuration for a given target resolution. This is the device wrapper over the pure selectChannelProfile: it injects our published
+  // entries and our this-state (the direct-RTSP default, which pins to a named channel, and the optional hardware pixel cap), then delegates the selection mathematics.
+  // The pixel cap is applied as a mode-agnostic pre-filter BEFORE selection - intentionally a pre-filter, not part of the request, so it filters the name branch too (a
   // constrained request with an explicit profile preference still drops profiles above the cap); a future reader should not move it into the request.
   public selectChannel(width: number, height: number, opts?: { biasHigher?: boolean; maxPixels?: number }): Nullable<ChannelProfile> {
 
     const entries = capByPixels(this.channelProfiles, opts?.maxPixels);
-    const request: SelectRequest = this.hints.streamingDefault ? { mode: "name", name: this.hints.streamingDefault } :
+    const request: SelectRequest = this.hints.rtspDefault ? { mode: "name", name: this.hints.rtspDefault } :
       { bias: opts?.biasHigher ? "higher" : "lower", height: height, mode: "nearest", width: width };
 
     return selectChannelProfile(entries, request);
   }
 
-  // Find a recording RTSP configuration for a given target resolution. The recording wrapper biases higher (transcoding wants a higher-quality input), pins on the
-  // recording default rather than the streaming default, and applies the "record"-context hardware source ceiling from FfmpegOptions (single-sourced with the
-  // recording encoder choice). Inert today: maxSourcePixels("record") is Infinity on every host (HKSV software-encodes wherever a pixel cap would apply), so capByPixels
-  // passes everything through; it engages only when a future predicate change hardware-encodes recording on a pixel-limited host, flipping with the encoder.
-  public selectRecordingChannel(width: number, height: number): Nullable<ChannelProfile> {
+  // Resolve the channel that populates the standing timeshift buffer feeding HomeKit Secure Video, buffer-backed live views, and snapshots. The policy is
+  // source-independent and HomeKit-Secure-Video-state-independent by construction, in order: (1) a user pin wins outright - an exact name match, null on a miss, the
+  // loud user-pin failure; (2) a pixel-constrained encoder host (a Raspberry Pi) takes the highest-quality channel at or below its constrained target, biased downward,
+  // preference-free so the buffer does not inherit the direct-RTSP quality preference; (3) otherwise the highest-quality channel the host's encoder can consume, taken
+  // structurally as the first entry after the record-context pixel cap, with no name lookup. The record-context cap is Infinity on every host today (HKSV
+  // software-encodes wherever a pixel cap would apply), so capByPixels passes everything and step 3 is simply the highest channel; it engages only when a future
+  // predicate change hardware-encodes on a pixel-limited host.
+  public selectSubstrateChannel(): Nullable<ChannelProfile> {
 
+    // The published entries filtered by the host encoder's source ceiling. The cap is a mode-agnostic pre-filter applied BEFORE selection, so it filters the name-pin
+    // branch too - a pin to a channel the cap drops honestly selects nothing rather than substituting. It is Infinity on every host today (HKSV software-encodes wherever
+    // a pixel cap would apply), so this passes everything through; it engages only when a future predicate change hardware-encodes on a pixel-limited host.
     const entries = capByPixels(this.channelProfiles, this.stream?.ffmpegOptions.maxSourcePixels("record"));
-    const request: SelectRequest = this.hints.recordingDefault ? { mode: "name", name: this.hints.recordingDefault } :
-      { bias: "higher", height: height, mode: "nearest", width: width };
 
-    return selectChannelProfile(entries, request);
+    // (1) A user pin wins outright: exact name match, null on a miss.
+    if(this.hints.substrateDefault) {
+
+      return selectChannelProfile(entries, { mode: "name", name: this.hints.substrateDefault });
+    }
+
+    // (2) A pixel-constrained encoder host: the highest-quality channel at or below the constrained target, biased downward and preference-free.
+    if(this.platform.codecSupport.hostSystem === "raspbian") {
+
+      return selectChannelProfile(entries, { bias: "lower", height: PROTECT_TIMESHIFT_CONSTRAINED_HOST_TARGET.height, mode: "nearest",
+        width: PROTECT_TIMESHIFT_CONSTRAINED_HOST_TARGET.width });
+    }
+
+    // (3) Otherwise, the highest-quality channel the host's encoder can consume - the first surviving entry, taken structurally with no name lookup.
+    return entries[0] ?? null;
   }
 
   // Utility property to return the camera's current video codec, formatted for display.
@@ -1878,6 +1905,17 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
   public get isHksvCapable(): boolean {
 
     return (!this.ufp.isThirdPartyCamera && !this.ufp.isAdoptedByAccessApp) || (this.ufp.isThirdPartyCamera && this.ufp.isPairedWithAiPort);
+  }
+
+  // Whether buffer-backed livestreaming is enabled and this camera is capable of it - the streaming demand arm of the standing timeshift buffer. This is the streaming
+  // arm's OWN capability predicate (livestream-API accessibility), deliberately not the borrowed isHksvCapable, whose real meaning is motion-event capability for
+  // HomeKit Secure Video. Because it does not exclude Access-adopted Ubiquiti cameras, those cameras join the streaming arm and the toggle does real work for them. The
+  // one remaining provisional corner: a non-AiPort third-party camera stays excluded pending its own livestream-accessibility verification, and this predicate is the
+  // single definition to widen when that is settled. Evaluated live; the one restart-scoped consumer that samples it at construction (the streaming delegate's
+  // samplerate advertisement) is documented at that call site.
+  public get usesTimeshiftLivestream(): boolean {
+
+    return this.hints.tsbStreaming && (!this.ufp.isThirdPartyCamera || this.ufp.isPairedWithAiPort);
   }
 
   // The active recording mode, read non-throwing through the record. An absent record (a camera in the removal grace) reports an empty mode - which matches none

@@ -47,6 +47,7 @@ Feature options provide a rich mechanism for tailoring your `homebridge-unifi-pr
  * [UniFi.Access](#unifi.access): UniFi Access
  * [Video](#video): Video &amp; Streaming
  * [Video.HKSV](#video.hksv): HomeKit Secure Video
+ * [Video.Timeshift](#video.timeshift): Timeshift Buffer
 
 Options whose key ends in `.<value>` take a value - replace `.<value>` with your setting; all other options are simple on/off toggles. The default shown for each option is what applies when you leave it unset.
 
@@ -203,14 +204,13 @@ These option(s) apply to: Protect cameras.
 | Option                                                                                           | Description
 |--------------------------------------------------------------------------------------------------|-------------------------------------------------------------
 | <A NAME="Video.Transcode.Hardware"></A>`Video.Transcode.Hardware`                                | Use hardware-accelerated transcoding when available (Apple Macs, Intel Quick Sync Video-enabled CPUs, Raspberry Pi 4). **(default: enabled)**.
-| <A NAME="Video.Stream.UseApi"></A>`Video.Stream.UseApi`                                          | Use the native Protect livestream API to view livestreams. **(default: enabled)**.
 | <A NAME="Video.Transcode"></A>`Video.Transcode`                                                  | When streaming to low-latency clients (e.g. at home), transcode livestreams, instead of transmuxing them. **(default: enabled)**.
 | <A NAME="Video.Transcode.Bitrate"></A>`Video.Transcode.Bitrate.<value>`                          | Bitrate, in kilobits per second, to use when transcoding to low-latency (e.g. at home) clients, ignoring the bitrate HomeKit requests. HomeKit typically requests lower video quality than you may desire in your environment. **(default: 2000)**.
 | <A NAME="Video.Transcode.HighLatency"></A>`Video.Transcode.HighLatency`                          | When streaming to high-latency clients (e.g. cellular connections), transcode livestreams instead of transmuxing them. **(default: enabled)**.
 | <A NAME="Video.Transcode.HighLatency.Bitrate"></A>`Video.Transcode.HighLatency.Bitrate.<value>`  | Bitrate, in kilobits per second, to use when transcoding to high-latency (e.g. cellular) clients, ignoring the bitrate HomeKit requests. HomeKit typically requests lower video quality than you may desire in your environment. **(default: 1000)**.
-| <A NAME="Video.Stream.Only.High"></A>`Video.Stream.Only.High`                                    | When viewing livestreams, force the use of the high quality video stream from the Protect controller. **(default: disabled)**.
-| <A NAME="Video.Stream.Only.Medium"></A>`Video.Stream.Only.Medium`                                | When viewing livestreams, force the use of the medium quality video stream from the Protect controller. **(default: disabled)**.
-| <A NAME="Video.Stream.Only.Low"></A>`Video.Stream.Only.Low`                                      | When viewing livestreams, force the use of the low quality video stream from the Protect controller. **(default: disabled)**.
+| <A NAME="Video.Rtsp.Only.High"></A>`Video.Rtsp.Only.High`                                        | When livestreaming directly from the camera over RTSP, force the use of the high quality video stream from the Protect controller. **(default: disabled)**.
+| <A NAME="Video.Rtsp.Only.Medium"></A>`Video.Rtsp.Only.Medium`                                    | When livestreaming directly from the camera over RTSP, force the use of the medium quality video stream from the Protect controller. **(default: disabled)**.
+| <A NAME="Video.Rtsp.Only.Low"></A>`Video.Rtsp.Only.Low`                                          | When livestreaming directly from the camera over RTSP, force the use of the low quality video stream from the Protect controller. **(default: disabled)**.
 | <A NAME="Video.Crop"></A>`Video.Crop`                                                            | Crop the camera video stream. Enabling this option will also force transcoding of livestreams. **(default: disabled)**.
 | <A NAME="Video.Crop.X"></A>`Video.Crop.X.<value>`                                                | Left offset of the crop window, as a percentage of the original image width. **(default: 0)**.
 | <A NAME="Video.Crop.Y"></A>`Video.Crop.Y.<value>`                                                | Top offset of the crop window, as a percentage of the original image height. **(default: 0)**.
@@ -226,9 +226,17 @@ These option(s) apply to: Protect cameras.
 |------------------------------------------------------------------------------|-------------------------------------------------------------
 | <A NAME="Video.HKSV.StatusLedIndicator"></A>`Video.HKSV.StatusLedIndicator`  | Use the camera status indicator light to show when an HKSV event is being recorded. **(default: disabled)**.
 | <A NAME="Video.HKSV.Recording.Switch"></A>`Video.HKSV.Recording.Switch`      | Add a switch accessory to enable or disable HKSV event recording. **(default: disabled)**.
-| <A NAME="Video.HKSV.Record.Only.High"></A>`Video.HKSV.Record.Only.High`      | When recording HomeKit Secure Video events, force the use of the high quality video stream from the Protect controller. **(default: disabled)**.
-| <A NAME="Video.HKSV.Record.Only.Medium"></A>`Video.HKSV.Record.Only.Medium`  | When recording HomeKit Secure Video events, force the use of the medium quality video stream from the Protect controller. **(default: disabled)**.
-| <A NAME="Video.HKSV.Record.Only.Low"></A>`Video.HKSV.Record.Only.Low`        | When recording HomeKit Secure Video events, force the use of the low quality video stream from the Protect controller. **(default: disabled)**.
+
+#### <A NAME="video.timeshift"></A>Timeshift Buffer
+
+These option(s) apply to: Protect cameras.
+
+| Option                                                                   | Description
+|--------------------------------------------------------------------------|-------------------------------------------------------------
+| <A NAME="Video.Timeshift.Livestream"></A>`Video.Timeshift.Livestream`    | Maintain a rolling timeshift buffer of the camera's livestream to power live viewing, HomeKit Secure Video, and snapshots. Disabling this streams live views directly from the camera over RTSP instead. **(default: enabled)**.
+| <A NAME="Video.Timeshift.Only.High"></A>`Video.Timeshift.Only.High`      | Populate the timeshift buffer that feeds HomeKit Secure Video, buffer-backed live views, and snapshots from the high quality video stream from the Protect controller. **(default: disabled)**.
+| <A NAME="Video.Timeshift.Only.Medium"></A>`Video.Timeshift.Only.Medium`  | Populate the timeshift buffer that feeds HomeKit Secure Video, buffer-backed live views, and snapshots from the medium quality video stream from the Protect controller. **(default: disabled)**.
+| <A NAME="Video.Timeshift.Only.Low"></A>`Video.Timeshift.Only.Low`        | Populate the timeshift buffer that feeds HomeKit Secure Video, buffer-backed live views, and snapshots from the low quality video stream from the Protect controller. **(default: disabled)**.
 
 <!-- FEATURE OPTIONS:END -->
 

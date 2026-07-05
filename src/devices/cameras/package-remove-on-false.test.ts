@@ -37,7 +37,7 @@ const PACKAGE_ID = "74ACB9000001.PackageCamera";
 const PACKAGE_UUID = "uuid:74ACB9000001.PackageCamera";
 
 // One assembled doorbell-plus-package family and its harness handles. The doorbell is a real ProtectCamera that construction-attached its capability; the capability is
-// exposed directly so the suite can drive its reconcilePackageCamera (the package lifecycle now lives on the capability).
+// exposed directly so the suite can drive its reconcilePackageCamera (the package lifecycle lives on the capability).
 interface FamilyHarness {
 
   apiCalls: TestApiCall[];
@@ -111,7 +111,7 @@ describe("package camera remove-on-false (BC2)", () => {
     assert.equal(logEntries.filter((entry) => String(entry.parameters[0]).includes("no longer reports a package camera")).length, 1,
       "the removal decision is narrated exactly once");
 
-    // Post-detach, the package is gone reactively too: only the doorbell's eighteen observers remain and a state push wakes nothing attributed to the package.
+    // Post-detach, the package is gone reactively too: only the doorbell's own observers remain and a state push wakes nothing attributed to the package.
     const wakes: ObserverWakePayload[] = [];
     const onWake = (message: unknown): void => { wakes.push(message as ObserverWakePayload); };
 
@@ -119,7 +119,7 @@ describe("package camera remove-on-false (BC2)", () => {
 
     try {
 
-      assert.equal(store.observerCount, 18, "only the doorbell's observers survive the detach");
+      assert.equal(store.observerCount, 17, "only the doorbell's observers survive the detach");
       store.pushCameraPatch(harness.cameraId, { state: "DISCONNECTED" });
 
       await settle();
@@ -300,8 +300,8 @@ describe("package camera remove-on-false (BC2)", () => {
     assert.ok(stillGone, "the scheduled detach recorded its stillGone predicate");
 
     // Unwind the doorbell's observers before removing the record - hygiene that isolates the captured stillGone closure from any live observer reaction. The captured
-    // closure is exactly what the production fire would run, and it must hold its absence tolerance independently of any live instance. (Every doorbell selector now
-    // hoists its plain id at spawn, including the chime-volume selector, so the live instance no longer throws against a removed record either.)
+    // closure is exactly what the production fire would run, and it must hold its absence tolerance independently of any live instance. (Every doorbell selector
+    // hoists its plain id at spawn, including the chime-volume selector, so the live instance does not throw against a removed record either.)
     harness.doorbell.cleanup();
 
     await settle();

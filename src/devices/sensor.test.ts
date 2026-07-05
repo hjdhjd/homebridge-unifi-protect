@@ -308,8 +308,8 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     enabled.sensor.cleanup();
 
-    // The REGRESSION case: the stuck internal flag is true but the mount role is off. The old gate keyed on the flag and wrongly exposed the LeakSensor; the leaf reads
-    // mountType on a single-channel device, so no leak service materializes.
+    // This single-channel sensor advertises the stuck internal leakSettings flag as true while its mount role is off. The leaf reads mountType (not leakSettings) for
+    // single-channel devices, so no leak service materializes here.
     const stuckFlag = buildSensor({ leakChannelNames: ["internal"], leakInternalEnabled: true, mountType: "none" });
 
     assert.equal(stuckFlag.accessory.getServiceById(Service.LeakSensor, ProtectReservedNames.LEAKSENSOR_INTERNAL), undefined,
@@ -387,7 +387,7 @@ describe("real ProtectSensor construction and family behavior", () => {
   test("a multi-channel sensor materializes internal and external LeakSensor services with read-through and the isConnected-gated publishes", async () => {
 
     // A multi-channel USL-Environmental (channelNames ["internal","external"]) drives each leak channel via its live leakSettings flag, so both flags enabled exposes
-    // both LeakSensor services - the path the leak-policy leaf preserves byte-for-byte from the pre-fix behavior.
+    // both LeakSensor services, matching the documented multi-channel leak-policy behavior.
     const built = buildSensor({ leakChannelNames: [ "internal", "external" ], leakDetectedAt: 1700000000000, leakExternalEnabled: true, leakInternalEnabled: true });
 
     const internal = built.accessory.getServiceById(Service.LeakSensor, ProtectReservedNames.LEAKSENSOR_INTERNAL);

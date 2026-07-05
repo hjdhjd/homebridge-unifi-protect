@@ -19,10 +19,14 @@ import { describeDevice } from "./device-descriptor.ts";
 
 const RESERVED_NAMES = new Set(Object.values(ProtectReservedNames).map(x => x.toUpperCase()));
 
-// Device-specific options and settings.
+// Device-specific options and settings. Every field is resolved once from feature options and device capabilities at configure time, so consumers read a plain
+// value rather than re-resolving a feature option on every access.
 export interface ProtectHints {
 
+  // Whether snapshot and stream cropping is enabled for this camera.
   crop: boolean;
+
+  // The crop window, expressed as percentages of the source frame (x/y offset, width/height).
   cropOptions: {
 
     height: number;
@@ -30,32 +34,86 @@ export interface ProtectHints {
     x: number;
     y: number;
   };
+
+  // Whether this device is exposed to HomeKit at all.
   enabled: boolean;
+
+  // Whether hardware-accelerated decoding is used for this camera's incoming stream.
   hardwareDecoding: boolean;
+
+  // Whether hardware-accelerated encoding is used when transcoding this camera's stream.
   hardwareTranscoding: boolean;
+
+  // Whether snapshots are pulled from the camera's high-resolution stream rather than its default profile.
   highResSnapshots: boolean;
+
+  // Whether the status LED lights while an HKSV recording is in progress.
   hksvRecordingIndicator: boolean;
+
+  // Whether the status LED feature is enabled for this camera, gated on the camera actually reporting a status LED.
   ledStatus: boolean;
+
+  // Whether doorbell ring events are logged.
   logDoorbell: boolean;
+
+  // Whether HomeKit Secure Video recording activity is logged.
   logHksv: boolean;
+
+  // Whether motion events are logged.
   logMotion: boolean;
+
+  // The minimum number of seconds a motion event stays active before it can be cleared.
   motionDuration: number;
+
+  // Whether night vision (infrared) control is exposed to HomeKit for this camera.
   nightVision: boolean;
+
+  // The minimum number of seconds an occupancy event stays active before it can be cleared.
   occupancyDuration: number;
+
+  // The FFmpeg probe size, in bytes, used when opening this camera's stream.
   probesize: number;
-  recordingDefault: string;
+
+  // The single RTSP stream profile (LOW, MEDIUM, or HIGH) pinned for direct RTSP livestreaming; empty when Protect is left to negotiate the best available profile.
+  rtspDefault: string;
+
+  // Whether smart object detection is enabled for this camera.
   smartDetect: boolean;
+
+  // Whether smart-detect object types are also exposed to HomeKit as individual contact sensors.
   smartDetectSensors: boolean;
+
+  // The smart-detect object types selected to drive the occupancy sensor; populated only for cameras with smart detection enabled.
   smartOccupancy: string[];
+
+  // Whether this accessory is published to HomeKit as a standalone accessory rather than bridged through the platform.
   standalone: boolean;
-  streamingDefault: string;
+
+  // The single RTSP stream profile (LOW, MEDIUM, or HIGH) pinned to feed the timeshift buffer; empty when Protect is left to negotiate the best available profile.
+  substrateDefault: string;
+
+  // Whether the Protect device name is synced to HomeKit.
   syncName: boolean;
+
+  // Whether the camera's video stream is transcoded rather than passed through.
   transcode: boolean;
+
+  // The target bitrate, in kilobits per second, used when transcoding; -1 leaves the bitrate unconstrained.
   transcodeBitrate: number;
+
+  // Whether high-latency transcoding settings apply to this camera's stream.
   transcodeHighLatency: boolean;
+
+  // The target bitrate, in kilobits per second, used when transcoding under high-latency conditions; -1 leaves the bitrate unconstrained.
   transcodeHighLatencyBitrate: number;
+
+  // Whether live viewing reads through the standing timeshift buffer rather than a direct RTSP connection to the camera.
   tsbStreaming: boolean;
+
+  // Whether two-way audio is available for this camera.
   twoWayAudio: boolean;
+
+  // Whether two-way audio is sent directly to the camera over UDP rather than through the Protect controller's talkback channel.
   twoWayAudioDirect: boolean;
 }
 
@@ -105,6 +163,8 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
   // the accessory's identity is its MAC, stable across reboots, so the handle never goes stale. Injected by the NVR root when constructing the accessory, which
   // knows the concrete projection type at the point of adoption (Camera | Light | Sensor | Chime | Viewer | Relay | Fob); subclasses narrow at their own constructor.
   protected readonly device: Camera | Light | Sensor | Chime | Viewer | Relay | Fob;
+  // The per-device resolved feature-hint bag. Seeded as an empty cast below because every device leaf's constructor calls configureHints() synchronously right
+  // after super(), before spawnObservers() or any HomeKit callback can read this.hints, so no consumer ever observes the bag before it holds every hint.
   public hints: ProtectHints;
   // The per-accessory abort signal. Composed: aborts when EITHER the per-accessory controller is aborted OR the NVR's terminal shutdown signal fires. Use this when
   // spawning per-accessory observe loops, so plugin shutdown and per-accessory teardown both unwind the loop cleanly.
@@ -302,8 +362,7 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
   }
 
   // The device-leaf MQTT scope: a device's MAC is its leading topic path segment, so every device publish / subscribe / unsubscribe scopes under
-  // {topicPrefix}/{mac}/{subtopic}. This overrides the controller-scoped base default; the four MQTT wrappers themselves are inherited from ProtectBase, varying only by
-  // this id.
+  // {topicPrefix}/{mac}/{subtopic}. This overrides the controller-scoped base default; the MQTT wrappers inherited from ProtectBase all vary only by this id.
   protected override get mqttId(): string {
 
     return this.mac;
@@ -529,7 +588,9 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
       if(this.hints.smartDetect) {
 
         // The smart-occupancy object types live on the camera-specific feature flags. We read them off the live STATE view narrowed to the camera config; device identity
-        // still flows only through the dedicated accessors. Hoisting to one local reads the side-effect-free getter once and single-sources the narrowed cast.
+        // still flows only through the dedicated accessors. Hoisting to one local reads the side-effect-free getter once and single-sources the narrowed cast. This
+        // method is shared by every device family, but this branch is reachable only when hints.smartDetect is true, and hints.smartDetect is set exclusively by
+        // ProtectCamera's own configureHints override - no light or sensor ever sets it - so this.ufp is guaranteed to be a camera config whenever this line runs.
         const cameraConfig = this.ufp as Readonly<WithoutIdentity<ProtectCameraConfig>>;
 
         // Iterate through all the individual object detection types Protect has configured.
@@ -609,7 +670,7 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
   }
 
   // Utility function to return a floating point configuration parameter on a device. The device-scope mac is the raw record's bare MAC (identity, not read through the
-  // narrowed live-state projection); the controller-scope mac is the separate controller projection. These four feature-option accessors all resolve scope the same way.
+  // narrowed live-state projection); the controller-scope mac is the separate controller projection. Every feature-option accessor resolves scope the same way.
   public getFeatureFloat(option: string): Nullable<number | undefined> {
 
     return this.platform.featureOptions.getFloat(option, this.device.config.mac, this.nvr.ufp.mac);
@@ -652,7 +713,7 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
     this.nvr.logFeature(option, nvrMessage);
   }
 
-  // Utility function for reserved identifiers for switches.
+  // Utility function to check whether a proposed identifier collides with any reserved subtype name the plugin uses, spanning switches, sensors, lightbulbs, and locks.
   public isReservedName(name?: string): boolean {
 
     return name ? RESERVED_NAMES.has(name.toUpperCase()) : false;
@@ -891,7 +952,7 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
   // Build the write-through command that sets this device's status indicator light. The command is returned as a thunk so the update is issued against a narrowed
   // projection: cameras, sensors, and relays all carry ledSettings.isEnabled, so the base serves them by narrowing this.device through its modelKey discriminant; the
   // light projection has no ledSettings and overrides this with its lightDeviceSettings command. Returning the thunk (rather than a bare payload) is what lets each
-  // device kind issue a typed update against its own config - the base's six-way device union could not.
+  // device kind issue a typed update against its own config - the base's device union, spanning every supported device kind, could not.
   protected statusLedCommand(value: boolean): () => Promise<unknown> {
 
     const device = this.device;
@@ -907,7 +968,9 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
   }
 
   // Structural type guard for devices that have LED settings. We check structurally rather than by device type so that future devices with ledSettings are handled
-  // automatically.
+  // automatically. This future-proofing covers only the read side backing the statusLed getter below; the write side, statusLedCommand, still gates on an explicit
+  // modelKey allow-list, so a new device kind whose config carries ledSettings would read correctly here but silently no-op when someone tries to set it, until that
+  // kind's modelKey is added to statusLedCommand's allow-list.
   private hasLedSettings(): this is { ufp: { ledSettings: { isEnabled: boolean } } } {
 
     const config = this.device.peek();

@@ -18,8 +18,9 @@ import diagnosticsChannel from "node:diagnostics_channel";
  */
 export const channels = {
 
-  // The typed-firehose router dispatched an activity event (motion, smart detection, doorbell ring, access) to a HomeKit delivery method. Fires once per routed event
-  // that reaches a delivery method, carrying the discriminated kind and, when a target accessory was resolved, the addressed camera id.
+  // The typed-firehose router dispatched an activity event (smart detection, tamper, doorbell ring, access, authentication, or button press) to a HomeKit delivery
+  // method. Fires once per routed event that reaches a delivery method, carrying the discriminated kind and, when a target accessory was resolved, the addressed
+  // camera id.
   firehoseDispatch: diagnosticsChannel.channel("hbup:firehose:dispatch"),
 
   // An NVR-level lifecycle transition: the terminal shutdown abort, the controller-state milestones observed from the connection monitor, and the post-connect
@@ -37,8 +38,8 @@ export const channels = {
 } as const;
 
 /**
- * Payload published on {@link channels.firehoseDispatch}. `kind` is the dispatched event's discriminated kind (e.g. `motionDetected`, `smartDetect`, `doorbellRing`,
- * `accessEvent`); `cameraId` is the addressed camera/device id, present whenever the router resolved a target accessory.
+ * Payload published on {@link channels.firehoseDispatch}. `kind` is the dispatched event's discriminated kind (e.g. `smartDetect`, `tamperDetected`, `doorbellRing`,
+ * `accessEvent`, `authDetected`, `buttonPressed`); `cameraId` is the addressed camera/device id, present whenever the router resolved a target accessory.
  */
 export interface FirehoseDispatchPayload {
 

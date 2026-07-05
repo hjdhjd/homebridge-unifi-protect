@@ -118,6 +118,9 @@ describe("livestreamRecoveryDecision", () => {
     });
   });
 
+  // This block is labeled by the production policy's own step number (the offline-defer gate is step 3 in livestream-recovery-policy.ts), not by the
+  // row-based test-matrix numbering used for the neighboring blocks in this file - the two numbering schemes are independent and do not correspond
+  // position for position.
   describe("offline-defer gate (step 3)", () => {
 
     // The positive case: this one camera is offline on an otherwise-healthy, non-throttled controller, so the gate defers rather than reconnecting. The controller is

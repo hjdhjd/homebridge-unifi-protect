@@ -3,8 +3,8 @@
  * leak-policy.test.ts: Unit tests for the pure per-channel leak-enablement policy (leakChannelEnabled) extracted to the importable leaf src/devices/leak-policy.ts.
  *
  * leakChannelEnabled is a pure free function - a sensor-facts context plus a channel in, a boolean out, no this, no HAP - so the natural coverage is to import the REAL
- * leaf and drive its truth table directly, exactly as motion-policy.test.ts / chime-volume.test.ts import their pure leaves. The leaf owns the model split that the bug
- * fix turns on (single-channel mount-role vs multi-channel live leakSettings), so this truth table is the highest-value pin: it includes the regression case (the stuck
+ * leaf and drive its truth table directly, exactly as motion-policy.test.ts / chime-volume.test.ts import their pure leaves. The leaf owns the model split between
+ * single-channel mount-role devices and multi-channel live-leakSettings devices, so this truth table is the highest-value pin: it includes the regression case (the stuck
  * internal flag on a single-channel device that must NOT expose leak when the mount role is off) and the single-channel external suppression (the channel the device
  * never advertises).
  */
@@ -34,7 +34,8 @@ describe("per-channel leak-enablement policy (leakChannelEnabled)", () => {
       { channel: "internal", context: { channelNames: solo, leakSettings: { isExternalEnabled: false, isInternalEnabled: false }, mountType: "leak" },
         expected: true, label: "single-channel, mountType leak, stuck flag false yet mount role on -> exposed (mount role is authoritative)" },
 
-      // The REGRESSION case: the stuck internal flag is true but the mount role is off; the old gate keyed on the flag and wrongly exposed leak. The leaf reads false.
+      // The REGRESSION case: the stuck internal flag is true but the mount role is off. A single-channel device's stuck leakSettings flag must never override the
+      // mount-role signal, so the leaf reads false.
       { channel: "internal", context: { channelNames: solo, leakSettings: { isExternalEnabled: false, isInternalEnabled: true }, mountType: "none" },
         expected: false, label: "single-channel REGRESSION, mountType none, stuck flag true -> NOT exposed" },
       { channel: "internal", context: { channelNames: solo, leakSettings: { isExternalEnabled: false, isInternalEnabled: true }, mountType: "door" },

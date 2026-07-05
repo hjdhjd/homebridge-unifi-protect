@@ -1,9 +1,11 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * capability-reconcile.test.ts: The camera capability-reconcile chokepoint end to end - a controller that finishes reporting a camera's hardware capabilities AFTER
- * adoption reflects them live, without a Homebridge restart. The ambient light sensor (gated on featureFlags.hasLuxCheck plus the Device.AmbientLightSensor user toggle)
- * is the pilot capability; the UniFi Access lock (gated on accessDeviceMetadata.featureFlags.supportUnlock plus the UniFi.Access.Lock user toggle) is the second; the
- * night vision dimmer (gated on featureFlags.hasInfrared and hasIcrSensitivity plus the Device.NightVision.Dimmer user toggle) is the third.
+ * adoption reflects them live, without a Homebridge restart. The capabilities this suite exercises are the ambient light sensor (gated on featureFlags.hasLuxCheck plus
+ * the Device.AmbientLightSensor user toggle), the UniFi Access lock (gated on accessDeviceMetadata.featureFlags.supportUnlock plus the UniFi.Access.Lock user toggle),
+ * the night vision dimmer (gated on featureFlags.hasInfrared and hasIcrSensitivity plus the Device.NightVision.Dimmer user toggle), tamper detection (gated on
+ * featureFlags.hasTamperDetection plus the smartDetectSettings.enableTamperDetection controller setting), and two-way audio (gated on featureFlags.hasSpeaker, which
+ * rebuilds the streaming controller in place rather than toggling a HomeKit service).
  *
  * The suite drives a REAL constructed ProtectCamera against the camera-construction harness doubles (the faithful store, the read-through Camera projection, the stub
  * streaming-delegate factory) and exercises the capability observers and the reconcileCapabilities chokepoint they drive. Each scenario is behavior-FIRST - a
@@ -231,7 +233,7 @@ describe("the camera capability reconcile - the ambient light sensor pilot", () 
 
     try {
 
-      // The folded gate prunes on toggle-off even with hasLuxCheck false: hasFeature is false, so validService removes the present sensor. Reverting to the old
+      // The folded gate prunes on toggle-off even with hasLuxCheck false: hasFeature is false, so validService removes the present sensor. Introducing an
       // if(!hasLuxCheck) return false early-return leaves the sensor un-pruned (the early-return fires before validService) -> RED; dropping the hasFeature && half makes
       // the predicate (hasService || hasLuxCheck) true and keeps the sensor -> RED. This single test pins both the early-return removal and the toggle half.
       assert.equal(accessory.getService(Service.LightSensor), undefined,
@@ -426,7 +428,7 @@ describe("the camera capability reconcile - the UniFi Access lock", () => {
 
       try {
 
-        // The folded gate prunes on toggle-off even with supportUnlock false: hasFeature is false, so validService removes the present lock. Reverting to the old
+        // The folded gate prunes on toggle-off even with supportUnlock false: hasFeature is false, so validService removes the present lock. Introducing an
         // if(!supportUnlock) return false early-return leaves the lock un-pruned (the early-return fires before validService) -> RED; dropping the hasFeature && half
         // makes the predicate (hasService || supportsUnlock) true and keeps the lock -> RED. This single test pins both the early-return removal and the toggle half.
         assert.equal(accessLock(accessory), undefined, "the disabled feature option pruned the cached lock even with supportUnlock false");
@@ -714,7 +716,7 @@ describe("the camera capability reconcile - the night vision dimmer", () => {
       await settle();
 
       // The capabilityGate hasService || clause keeps the present dimmer through the transient hasInfrared-false while the toggle stays on. This is the ONLY cell
-      // where the dimmer's old boolean gate and the new capabilityGate diverge: replacing capabilityGate(...) with the strict hasNightVisionHardware &&
+      // where capabilityGate and a strict boolean gate diverge: replacing capabilityGate(...) with the strict hasNightVisionHardware &&
       // this.hasFeature(...) boolean passes validService(false), which PRUNES the working dimmer -> RED.
       assert.ok(nightVisionDimmer(accessory), "the withdrawn capability never pruned the existing night vision dimmer");
       assert.equal(nightVisionDimmerCount(accessory), 1, "the dimmer is retained, not duplicated, across the withdrawal");
@@ -1015,7 +1017,8 @@ describe("the camera capability reconcile - tamper detection", () => {
   test("the setting off prunes an existing StatusTampered and clears the latch (parity; pins the toggle half and the latch-clear)", async () => {
 
     // A camera adopted WITH the tamper capability, the setting toggled on then off. The setting half is absolute: a user toggle-off is the documented latch-clear path,
-    // so it prunes the characteristic and clears the one-way latch. Old and new BOTH prune on the setting-off (no divergence - the divergence is the capability half).
+    // so it prunes the characteristic and clears the one-way latch. Both capabilityGate and a strict boolean gate prune on the setting-off (no divergence - the
+    // divergence is the capability half).
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasTamperDetection: true } });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
     const { nvr } = makeTestNvr({ store });

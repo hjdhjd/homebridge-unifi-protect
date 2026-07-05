@@ -3,11 +3,10 @@
  * camera.fixtures.ts: The shared real-camera test corpus - canonical channel layouts and camera/package projections for the whole suite, which also serves as the
  * durable golden-master for the resolution-selection surface.
  *
- * Parity NOW is proven by the parity test (resolution.test.ts) against the prior reference implementation; parity FOREVER is proven here. This module checks in
- * the typed real-camera corpus (six shipping Protect models plus the deep-low-resolution witness, a 640x480 4:3 native top) and, for each, the EXACT advertised
- * resolution list the production buildAdvertisedProfiles must produce, projected to a stable {channelId, lens, name, resolution, url} shape. The package
- * synthesis is checked in alongside, so the package list is regression-tested too. The expected values were DERIVED from the prior reference implementation and
- * independently hand-verified for the anchor fixtures (the 640x480 witness, AI Pro, and the G6 Pro Entry 20->24fps normalization); the golden-master test
+ * Parity is proven here: this module checks in the typed real-camera corpus (the real shipping Protect models plus the deep-low-resolution witness, a
+ * 640x480 4:3 native top) and, for each, the EXACT advertised resolution list the production buildAdvertisedProfiles must produce, projected to a stable
+ * {channelId, lens, name, resolution, url} shape. The package synthesis is checked in alongside, so the package list is regression-tested too. The expected
+ * values are hand-verified for the anchor fixtures (the 640x480 witness, AI Pro, and the G6 Pro Entry 20->24fps normalization); the golden-master test
  * asserts the production output still equals them.
  *
  * When a later change intentionally alters that behavior, the diff lands HERE as a reviewed change to a checked-in value - the
@@ -15,8 +14,8 @@
  *
  * makeChannel fills a complete ProtectCameraChannelConfig from the load-bearing fields (the resolution math reads only name/width/height/fps; isRtspEnabled filters the
  * primary channel; id and rtspAlias compose the URL). The remaining interface fields are filled with inert defaults so the corpus is a real typed channel, not a cast.
- * The rtspAlias is synthesized from the id so the URL is stable and deterministic; it never affects the resolution math, only the URL string both the prior
- * reference implementation and production compose identically.
+ * The rtspAlias is synthesized from the id so the URL is stable and deterministic; it never affects the resolution math, only the URL string, which
+ * production composes the same way every time.
  */
 import type { ProtectCameraChannelConfig } from "unifi-protect";
 import type { Resolution } from "homebridge";
@@ -80,7 +79,7 @@ export function makeChannel(options: { fps: number; height: number; id: number; 
   };
 }
 
-// The six real shipping Protect models from the grounded corpus, as typed channel arrays. The G6 Pro Entry's Package Camera channel is included so the parent build
+// The real shipping Protect models from the grounded corpus, as typed channel arrays. The G6 Pro Entry's Package Camera channel is included so the parent build
 // correctly filters it out (and the package build can select it).
 export const G2_PRO_CHANNELS: ProtectCameraChannelConfig[] = [
 
@@ -144,7 +143,8 @@ export const MIXED_RTSP_DISABLED_CHANNELS: ProtectCameraChannelConfig[] = [
 ];
 
 // A synthetic regime where every channel fails the sanity check (a 0-width channel and an empty-name channel): the native list is empty, so the build returns [] and the
-// device re-asserts return false. This is the deliberate hardening - the prior reference implementation crashed on the empty list, so the case is asserted directly.
+// device re-asserts return false. This is deliberate hardening for the empty-list case: the build must return an empty list rather than throw, and the case
+// is asserted directly rather than left implicit.
 export const SANITY_FAIL_CHANNELS: ProtectCameraChannelConfig[] = [
 
   makeChannel({ fps: 30, height: 0, id: 0, name: "High", width: 0 }),
@@ -191,7 +191,7 @@ export const CAMERA_FIXTURES: CameraFixture[] = [
     channels: AI_PRO_CHANNELS,
 
     // AI Pro is a 16:9 4K camera with a 1280x720 middle and a 640x360 low. The 2560x1440/1920x1080 mandated entries map to Medium (the next-lower channel under the
-    // bias), the 1280x720 maps to Medium exactly, and the 480x270/320x180 mandated entries map to Low - one of the three independent hand-verified trust anchors.
+    // bias), the 1280x720 maps to Medium exactly, and the 480x270/320x180 mandated entries map to Low - a hand-verified trust anchor.
     driftNarrative: "16:9 4K. The 2560/1920/1280 entries select Medium (1280x720); 640/480/320 select Low (640x360). No fps normalization (all 30fps native).",
     expected: [
 
@@ -255,8 +255,8 @@ export const CAMERA_FIXTURES: CameraFixture[] = [
     channels: G6_PRO_ENTRY_CHANNELS,
 
     // G6 Pro Entry is a portrait doorbell whose channels run at a native 20fps. 20 is not one of HomeKit's accepted {15,24,30}, so the post-loop fps normalization
-    // rewrites EVERY advertised entry's fps to 24 (20 > 15, so the 24 bucket). Its Package Camera channel is filtered out of this parent list. One of the three
-    // independent hand-verified trust anchors: the 20->24fps normalization across the 16:9 table.
+    // rewrites EVERY advertised entry's fps to 24 (20 > 15, so the 24 bucket). Its Package Camera channel is filtered out of this parent list. A hand-verified
+    // trust anchor: the 20->24fps normalization across the 16:9 table.
     driftNarrative: "Native 20fps, not in {15,24,30}, so every advertised entry normalizes to 24fps. Portrait 3024x4096 reads 16:9. Package Camera channel filtered out.",
     expected: [
 
@@ -277,7 +277,7 @@ export const CAMERA_FIXTURES: CameraFixture[] = [
 
     channels: C5_WITNESS_CHANNELS,
 
-    // The deep-low-resolution witness, the third independent hand-verified anchor and the regression locus. Native top 640x480 (4:3). Both HomeKit mandates (1920
+    // The deep-low-resolution witness, a hand-verified anchor and the regression locus. Native top 640x480 (4:3). Both HomeKit mandates (1920
     // and 1280) insert entries ABOVE the native top: the 1920x1440 lands first and re-sorts to the front, so the per-candidate gate's drifting current top becomes
     // 1920 - which is exactly what then admits the 1280x960 and 1024x768 entries (all < 1920). All map to High (640x480, ch0) under the bias-lower selection, except
     // 320x240 which falls back to the lowest entry (Low, ch1). If the drift had been frozen to the original native top (the regression this fixture guards), the

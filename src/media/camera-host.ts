@@ -41,8 +41,8 @@ export interface ProtectCameraHost extends ProtectDeviceContext {
   // Resolves the best-fit channel profile for a requested live/snapshot resolution.
   selectChannel(width: number, height: number, opts?: { biasHigher?: boolean; maxPixels?: number }): Nullable<ChannelProfile>;
 
-  // Resolves the channel profile for an HKSV-requested recording resolution.
-  selectRecordingChannel(width: number, height: number): Nullable<ChannelProfile>;
+  // Resolves the channel profile that populates the standing timeshift buffer feeding HomeKit Secure Video, buffer-backed live views, and snapshots.
+  selectSubstrateChannel(): Nullable<ChannelProfile>;
 
   // Acquires a snapshot via the controller's snapshot command (the narrow controller-snapshot seam).
   snapshotFromController(opts?: SnapshotOptions): Promise<Buffer>;
@@ -56,6 +56,10 @@ export interface ProtectCameraHost extends ProtectDeviceContext {
   // The camera-narrowed Protect device live-state projection (featureFlags / videoCodec / talkbackSettings / ledSettings for the media paths), with device identity
   // dropped - the bare MAC is read through the dedicated mac member above, not this throwing projection.
   readonly ufp: Readonly<WithoutIdentity<ProtectCameraConfig>>;
+
+  // Whether buffer-backed livestreaming is enabled and the camera is capable of it - the streaming demand arm of the standing buffer, read live by the supervisor, the
+  // session-source decision, and the samplerate advertisement.
+  readonly usesTimeshiftLivestream: boolean;
 
   // The human-readable video codec label for log lines.
   readonly videoCodecName: string;

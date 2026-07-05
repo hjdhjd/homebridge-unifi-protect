@@ -72,7 +72,8 @@ export class ProtectNvr {
   // uptime at the first good-state entry so a long-up controller is trusted immediately; reset on any disruption. The clock the removal stability gate reads.
   private controllerStableSince: Nullable<number>;
   // Pending delayed device removals, keyed by accessory UUID (the one key that resolves both a membership-leave AND a startup cache-orphan, since an orphan has no live
-  // device id). Scheduled only when the controller is stable; cleared wholesale on any disruption; the fire re-checks the live adopted set before removing.
+  // device id). Scheduled only when the controller is stable; cleared wholesale on any disruption; the fire re-checks live controller state through the caller-supplied
+  // predicate (see scheduleDeviceRemoval's own documentation for the full set of checks a predicate can perform).
   private deviceRemovalTimers: Map<string, NodeJS.Timeout>;
   public readonly events: ProtectEventDispatch;
   private featureLog: Record<string, boolean>;
@@ -421,8 +422,8 @@ export class ProtectNvr {
    * reflects the current reduced state with no merge and no reassignment. A read before the first successful connect() throws (the getter dereferences
    * `this.client`, which is unset until connect() assigns it) - this is deliberate: a too-early read should fail loudly, not silently return a stale snapshot, which
    * is the held-state footgun this read-through design avoids. No code path reaches that throw: the constructor and the only other pre-connect path (`login()`'s
-   * global enable gate) both avoid `ufp` - the gate consults feature options by global scope, not the controller mac, and `ProtectEventDispatch` construction is now
-   * structural-only (it no longer reads `hasFeature`/`ufp`).
+   * global enable gate) both avoid `ufp` - the gate consults feature options by global scope, not the controller mac, and `ProtectEventDispatch` construction is
+   * structural-only and does not read `hasFeature`/`ufp`.
    */
   public get ufp(): Readonly<ProtectNvrConfig> {
 
@@ -443,7 +444,8 @@ export class ProtectNvr {
   // entry to `shuttingDown`, then drives `health.suspend()` / `health.resume()` so the symptom observer matches whether we're in an induced disruption or organic
   // operation. The `logApiErrors` getter is pure-derived from `_phase` and needs no explicit update here.
   //
-  // Idempotent on same-phase transitions. Components that need to react to phase changes can subscribe via the existing API or query `phase` directly.
+  // Idempotent on same-phase transitions. `shuttingDown` is observable through `nvr.signal`'s abort event; every other phase change is observed by polling `phase`
+  // directly.
   private transition(next: NvrPhase): void {
 
     if(this._phase === next) {
@@ -571,10 +573,9 @@ export class ProtectNvr {
     ];
   }
 
-  // React to a controller reboot detection, whether we induced it or it happened organically. We record when we observed it (our own-clock recency anchor), publish the
-  // lifecycle milestone (the unifi-protect library already logs the detection at warn, so we do not duplicate it), and reset each camera's probesize self-tuning. We
-  // no longer conclude an induced reboot here: the resume now rides the connection's recovery edge in startConnectionObserver, so it is driven by the connection's own
-  // health journey rather than this detection event.
+  // React to a controller reboot detection, whether we induced it or it happened organically. This handler records the observation (our own-clock recency anchor),
+  // publishes the lifecycle milestone (the unifi-protect library already logs the detection at warn, so we do not duplicate it), and resets each camera's probesize
+  // self-tuning; the induced-reboot resume is driven separately by the connection's recovery edge in startConnectionObserver, so it is not this handler's concern.
   private onControllerRebooted(): void {
 
     // Record our own-clock observation of this reboot. This is the SSOT moment the plugin learns a reboot happened (induced or organic), so it anchors the recency window
@@ -598,8 +599,8 @@ export class ProtectNvr {
     }
   }
 
-  // The connection returned to healthy after a loss. Publish the milestone; the induced-reboot resume is no longer driven here but by the connection's recovery edge in
-  // startConnectionObserver (the same non-healthy -> healthy edge this recovery represents), so this handler's sole remaining duty is the lifecycle publish.
+  // The connection returned to healthy after a loss. This handler's sole duty is publishing the controllerRecovered lifecycle milestone; the induced-reboot resume is
+  // driven by the connection's recovery edge in startConnectionObserver (the same non-healthy -> healthy edge this recovery represents).
   private onControllerRecovered(): void {
 
     this.publishLifecycle("controllerRecovered");
@@ -612,9 +613,9 @@ export class ProtectNvr {
   // We clear the no-op confirmation timer (a real recovery edge proves the reboot took effect) and reset the pre-reboot health history: the controller is freshly
   // booted, so any stress or library-throttle state latched before the reboot is no longer relevant. The suspend held across the whole rebooting phase kept induced
   // symptoms out of the buffer, but the latched state enum and the throttle flag clear only on a reset or a fresh clearing observation, so we reset explicitly here -
-  // restoring the clean baseline the connect()-driven reset gives us. The library narrates the recovery itself, so we no longer log a redundant "back online"
-  // line. (The no-op path produces no recovery edge and resumes via the rebootConfirmTimer instead, which deliberately does NOT reset: a controller that never actually
-  // rebooted keeps its still-relevant health history.)
+  // restoring the clean baseline the connect()-driven reset gives us. The library already narrates the recovery itself, so this method does not log a duplicate
+  // "back online" line. (The no-op path produces no recovery edge and resumes via the rebootConfirmTimer instead, which deliberately does NOT reset: a controller
+  // that never actually rebooted keeps its still-relevant health history.)
   private resumeFromInducedReboot(): void {
 
     if(this._phase !== "rebooting") {
@@ -637,10 +638,10 @@ export class ProtectNvr {
   private async disconnect(): Promise<void> {
 
     // Tear down all connection-dependent camera resources. Active HomeKit streaming sessions and HKSV timeshift buffers both depend on the controller connection.
-    // Shutting them down proactively prevents error noise from livestream self-healing and FFmpeg processes communicating with a disconnected controller. Disposing these
-    // consumers is what releases their underlying unifi-protect livestream pool subscriptions: the camera no longer owns sessions, so there is no separate manager
-    // to shut down. This is a HARD ORDERING INVARIANT - the connection-dependent consumers (and the pool subscriptions they hold) are torn down in this loop BEFORE the
-    // unifi-protect client is disposed below, so no subscription outlives the client it draws from. The endpoints iterator walks package cameras alongside their parents.
+    // Shutting them down proactively prevents error noise from livestream self-healing and FFmpeg processes communicating with a disconnected controller. The camera
+    // does not own its own session manager, so disposing these consumers is what releases their underlying unifi-protect livestream pool subscriptions. This is a HARD
+    // ORDERING INVARIANT - the connection-dependent consumers (and the pool subscriptions they hold) are torn down in this loop BEFORE the unifi-protect client is
+    // disposed below, so no subscription outlives the client it draws from. The endpoints iterator walks package cameras alongside their parents.
     for(const device of this.deviceEndpoints()) {
 
       if(!(device instanceof ProtectCamera)) {
@@ -649,7 +650,7 @@ export class ProtectNvr {
       }
 
       device.stream?.shutdown();
-      device.stream?.hksv?.timeshift.stop();
+      device.stream?.timeshift?.shutdown();
     }
 
     // Detach the connection-health subscriptions so they do not outlive the client whose connection monitor they observe.
@@ -1494,9 +1495,9 @@ export class ProtectNvr {
     return true;
   }
 
-  // Remove an individual Protect accessory from HomeKit. The pure immediate remover: every guard and the package-camera cascade are preserved, but the DelayDeviceRemoval
-  // grace lives one level up now (in scheduleDeviceRemoval), so by the time we are called the decision to remove was already made and graced. The disabled-controller
-  // sweep, the self-reject in addHomeKitDevice, and a fired removal grace all call straight through here.
+  // Remove an individual Protect accessory from HomeKit. The pure immediate remover: every guard and the package-camera cascade run here. The DelayDeviceRemoval grace
+  // is decided in scheduleDeviceRemoval before this method runs, so by the time removeHomeKitDevice is called the decision to remove was already made and graced. The
+  // disabled-controller sweep, the self-reject in addHomeKitDevice, and a fired removal grace all call straight through here.
   public removeHomeKitDevice(accessory: ProtectAccessory): void {
 
     // Ensure that this accessory hasn't already been removed.
@@ -1544,9 +1545,8 @@ export class ProtectNvr {
 
     // See if we can pull the device's configuration details from our Protect device instance or the controller projection.
     //
-    // The by-MAC controller projection backs the removal descriptor ONLY when the wrapper's record has vanished (or there is no wrapper) - the exact condition under
-    // which the original expression fell through to it. Gating on !recordPresent preserves the original's laziness byte-for-byte: while the record is present the
-    // wrapper's own live config carries the descriptor, so the projection lookup is neither needed nor evaluated (never an added call on the record-present path).
+    // The by-MAC controller projection backs the removal descriptor only when the wrapper's record has vanished (or there is no wrapper). While the record is
+    // present, the wrapper's own live config carries the descriptor, so the projection lookup is never evaluated on that path - it is lazy by construction.
     const byMac = (!protectDevice?.recordPresent && accessory.context.mac) ? this.deviceConfigByMac(accessory.context.mac) : null;
 
     // The removal descriptor: the wrapper's live config while its record is present, recombining the bare MAC the narrowed state view no longer carries. The mac is
@@ -1619,6 +1619,8 @@ export class ProtectNvr {
   // Return all devices of a particular modelKey.
   private devices<T extends keyof ProtectDeviceTypes>(model?: T): ProtectDeviceTypes[T][] {
 
+    // The cast is safe because every device's modelKey is set consistently with its concrete class per the ProtectDeviceTypes mapping, so the runtime filter above
+    // and the type-level narrowing below agree even though TypeScript cannot infer that relationship through the generic parameter on its own.
     return [...this.configuredDevices.values()].filter(device => device.modelKey === model) as ProtectDeviceTypes[T][];
   }
 

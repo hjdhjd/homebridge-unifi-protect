@@ -1,6 +1,6 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * timeshift.ts: UniFi Protect livestream timeshift buffer implementation to support HomeKit Secure Video.
+ * timeshift.ts: UniFi Protect livestream timeshift buffer implementation - a standing, rolling fMP4 window over a camera's livestream.
  */
 import type { Clock, HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
 import { PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS, PROTECT_LIVESTREAM_API_IDR_INTERVAL, PROTECT_LIVESTREAM_IDLE_TOLERANCE_MS, PROTECT_SEGMENT_RESOLUTION }
@@ -15,18 +15,27 @@ import type { Segment } from "unifi-protect";
 import { isKeyframe } from "homebridge-plugin-utils";
 import { logLivestreamIterationError } from "./livestream.ts";
 
-// Typed event map for the timeshift buffer. Consumers (recording delegate) listen for these.
+// Why the standing buffer stopped, carried by the `stopped` event. "ended" is a recoverable end - a deliberate stop, a codec-change restart, or an unexpected iterator
+// death - that the supervisor re-establishes from immediately; "giveUp" is the recovery policy's exhaustion, which the supervisor leaves to the availability edge and
+// self-heal rather than re-arming into a tight loop.
+export type TimeshiftStopCause = "ended" | "giveUp";
+
+// Typed event map for the timeshift buffer. The recording delegate listens for the transmit-session events; the supervisor listens for `stopped`.
 //
 // - `segment`: the next fMP4 fragment is ready for a transmitting consumer.
 // - `discontinuity`: the underlying livestream dropped and recovered while transmitting; the buffer now has a clean keyframe, and the consumer should restart
 //   its decoder with fresh data. Non-terminal - the subscription is still alive and will continue delivering segments.
-// - `terminated`: the backing subscription has ended while the consumer was transmitting - either via iterator-level termination (ProtectLagError, the recovery
-//   give-up, an unexpected error) or via an explicit stop() (controller disconnect, reconciler teardown). The buffer is empty and `isStarted` is now false.
+// - `stopped`: the backing subscription has ended for any reason - a deliberate stop, an out-of-band iterator death, or the recovery give-up - carrying the cause so
+//   the supervisor decides whether to re-establish immediately or leave the revival to the availability edge. Emitted unconditionally on every teardown, whether or
+//   not a consumer was transmitting.
+// - `terminated`: the backing subscription has ended while the consumer was transmitting - either via iterator-level termination (the recovery give-up, a codec
+//   change, an unexpected error) or via an explicit stop() (controller disconnect, reconciler teardown). The buffer is empty and `isStarted` is now false.
 //   Terminal for the current transmit session: the consumer should end its event cleanly rather than wait for downstream stall timeouts.
 interface TimeshiftBufferEvents {
 
   discontinuity: [];
   segment: [Buffer];
+  stopped: [cause: TimeshiftStopCause];
   terminated: [];
 }
 
@@ -39,8 +48,8 @@ interface KeyframeAlignedStart {
 }
 
 // A single buffered timeshift entry. The fMP4 fragment and its keyframe classification are bound together in one struct so the segment and its keyframe flag are
-// stored, trimmed, and cleared as an indivisible unit. This makes a desync between a fragment and its keyframe flag structurally unrepresentable, replacing the
-// former pair of index-parallel arrays whose lockstep invariant was enforced only by convention.
+// stored, trimmed, and cleared as an indivisible unit. This makes a desync between a fragment and its keyframe flag structurally unrepresentable rather than an
+// invariant a caller must uphold by convention.
 interface TimeshiftSegment {
 
   data: Buffer;
@@ -50,9 +59,17 @@ interface TimeshiftSegment {
 // UniFi Protect livestream timeshift buffer.
 export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> {
 
+  // The channel profile backing the running livestream. Committed in start() in the same synchronous frame the subscription commits and cleared in
+  // finalizeSubscription() on every teardown path, so it forms a matched pair with `isStarted`: external readers never observe a profile the buffer is not
+  // actually running on, whether the buffer stopped deliberately or died out-of-band.
+  private _channelProfile: Nullable<ChannelProfile>;
   private _isTransmitting: boolean;
   private _lastKeyframeTime: number;
   private _pendingDiscontinuity: boolean;
+  // The cause the next `stopped` emit will carry. Defaults to "ended" (the recoverable case) and is raised to "giveUp" only when the iterator throws the recovery
+  // policy's exhaustion error. Reset to "ended" at every start() head and after every emit, so a latched "giveUp" from an establishment-phase give-up (which never
+  // reaches finalizeSubscription because the local subscription was never committed) can never mislabel the next out-of-band death.
+  private _pendingStopCause: TimeshiftStopCause;
   private _segments: TimeshiftSegment[];
   // Segment resolution for the timeshift buffer. Fixed at PROTECT_SEGMENT_RESOLUTION (100ms) because a small value gives HKSV a better event recording experience
   // at a trivial CPU cost on modern systems.
@@ -73,9 +90,11 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
     // Initialize the event emitter.
     super();
 
+    this._channelProfile = null;
     this._isTransmitting = false;
     this._lastKeyframeTime = 0;
     this._pendingDiscontinuity = false;
+    this._pendingStopCause = "ended";
     this._segments = [];
     this.clock = protectCamera.platform.clock;
     this.log = protectCamera.log;
@@ -85,6 +104,11 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
 
   // Start the livestream and begin maintaining our timeshift buffer.
   public async start(channelProfile: ChannelProfile): Promise<boolean> {
+
+    // Reset the pending stop cause at the head of every start. An establishment-phase give-up (whenEstablished false) disposes a local subscription that was never
+    // committed, so it never reaches finalizeSubscription to emit and clear the cause; without this reset a latched "giveUp" would mislabel the next out-of-band death
+    // and wrongly suppress its re-establish.
+    this._pendingStopCause = "ended";
 
     // Stop the timeshift buffer if it's already running.
     if(this.isStarted) {
@@ -108,9 +132,8 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
       urgency: () => this._isTransmitting ? PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS : PROTECT_LIVESTREAM_IDLE_TOLERANCE_MS });
 
     // Drive the segment iterator in the background. The for-await loop runs until the subscription is disposed (graceful return), terminated with a typed error
-    // (ProtectLagError if our consumer queue overflowed, ProtectLivestreamUnavailableError if the recovery policy gave up, a codec change, or another unexpected
-    // failure), or otherwise rejects. Errors are classified and logged and the loop exits cleanly...stop() is the single release point that disposes the
-    // subscription.
+    // (ProtectLivestreamUnavailableError if the recovery policy gave up, ProtectCodecChangeError if the stream format changed, or another unexpected failure), or
+    // otherwise rejects. Errors are classified and logged and the loop exits cleanly...stop() is the single release point that disposes the subscription.
     void this.consumeSegments(subscription);
 
     // Wait for the session to establish. The unifi-protect library's whenEstablished is MEDIA-keyed: it resolves true once the first media segment has been delivered
@@ -132,8 +155,11 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
       return false;
     }
 
-    // Every check has passed. Commit the subscription as the backing state; isStarted flips from false to true atomically with this assignment.
+    // Every check has passed. Commit the subscription as the backing state; isStarted flips from false to true atomically with this assignment, and the channel
+    // profile commits in the same synchronous frame, so the (isStarted, channelProfile) pair is never observable out of sync. The failed-start paths above never
+    // assign the profile, so external readers never see an entry whose start did not succeed.
     this.subscription = subscription;
+    this._channelProfile = channelProfile;
 
     return true;
   }
@@ -143,15 +169,15 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
   // into the iterator. Error classification is centralised in logLivestreamIterationError so every livestream consumer uses identical phrasing and suppression
   // rules.
   //
-  // The finally block is the self-cleaning anchor for out-of-band iterator termination (ProtectLagError, the recovery give-up, unexpected errors). The id-based
+  // The finally block is the self-cleaning anchor for out-of-band iterator termination (the recovery give-up, a codec change, unexpected errors). The id-based
   // identity guard discriminates the teardown paths with a single compare, and is resilient to future indirection (proxies, wrappers) because subscription ids
   // are stable strings rather than object references:
   //
   //   - stop() called externally: stop() cleared `this.subscription` before the iterator observed the queue close, so the id compare against undefined fails
   //     and we no-op (stop() already fired the terminated emit if applicable).
   //   - start() validation failed: the local subscription was disposed before `this.subscription` was committed to it, so the ids don't match and we no-op.
-  //   - terminal typed error (e.g., ProtectLagError): the subscription was committed and is now disposed without our teardown running, so the ids match
-  //     and we reset backing state to match reality via finalizeSubscription.
+  //   - terminal typed error (e.g., ProtectLivestreamUnavailableError): the subscription was committed and is now disposed without our teardown running, so the ids
+  //     match and we reset backing state to match reality via finalizeSubscription.
   //   - session-level termination (controller manager shutdown): the subscription's iterator closes from outside, the ids match, and we self-clean.
   //
   // This keeps `isStarted` honest...no observable window where the getter reports true against a dead subscription.
@@ -164,6 +190,10 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
         this.processSegment(segment);
       }
     } catch(error) {
+
+      // Classify the cause the finalize below will emit: the recovery policy's exhaustion is a "giveUp" the supervisor must not re-arm into a tight loop, while any
+      // other iterator death (a codec change, an unexpected error) is a recoverable "ended" the supervisor re-establishes from immediately.
+      this._pendingStopCause = (error instanceof ProtectLivestreamUnavailableError) ? "giveUp" : "ended";
 
       // Logging and self-healing are separate concerns: classify and log the iterator error for the user, then decide whether this error is the recovery
       // policy's give-up and a wedged camera should be rebooted to reset its livestream endpoint.
@@ -204,14 +234,17 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
 
   // Reset transmit-session state after the backing subscription has ended. Called from both stop() (explicit teardown) and the consumeSegments finally
   // (out-of-band iterator termination). Having a single anchor for "subscription is done" state mutations is the reason we cannot forget to emit `terminated`
-  // on some code paths but not others...every route that ends a transmit-active subscription flows through here.
+  // on some code paths but not others...every route that ends a transmit-active subscription flows through here. The channel profile clears here too, before the
+  // `terminated` emit, so every listener already observes the cleared (isStarted false, channelProfile null) matched pair when the emit fires.
   //
   // When `_isTransmitting` was true at entry, we emit `terminated` so the consumer (recording delegate) can end its event immediately rather than waiting for
   // downstream stall timeouts (FFmpeg's internal timeout is 6-8 seconds). When not transmitting, no consumer cares and the emit would be noise.
   private finalizeSubscription(): void {
 
     const wasTransmitting = this._isTransmitting;
+    const cause = this._pendingStopCause;
 
+    this._channelProfile = null;
     this._isTransmitting = false;
     this._pendingDiscontinuity = false;
     this.subscription = undefined;
@@ -221,6 +254,11 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
 
       this.emit("terminated");
     }
+
+    // The supervisor listens for this on every teardown, transmitting or not, so it can decide whether to re-establish immediately ("ended") or leave the revival to
+    // the availability edge ("giveUp"). Reset the pending cause afterward so the next teardown defaults to the recoverable case unless the iterator raises it again.
+    this.emit("stopped", cause);
+    this._pendingStopCause = "ended";
   }
 
   // Process a single segment delivered by the iterator. Buffers the media, tracks keyframe boundaries for discontinuity recovery and snapshot extraction, and
@@ -427,6 +465,13 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
     // If we don't have our fMP4 initialization segment, we're done. Otherwise, return the current timeshift buffer in full.
     return (this.subscription?.initSegment && this._segments.length) ?
       Buffer.concat([ this.subscription.initSegment.data, ...this._segments.map((s) => s.data) ]) : null;
+  }
+
+  // Return the channel profile the running livestream is backed by, or null when the buffer is not running. Kept as a matched pair with `isStarted` on every start
+  // and teardown path, so a non-null read always describes the entry actually behind the buffer.
+  public get channelProfile(): Nullable<ChannelProfile> {
+
+    return this._channelProfile;
   }
 
   // Return whether the underlying livestream connection is currently restarting itself.

@@ -3,7 +3,7 @@
  * camera-construction.test.ts: The first real-ProtectCamera construction test - the proof of the platform-held streaming-delegate factory seam.
  *
  * This suite constructs a REAL minimal ProtectCamera end to end - the base constructors, configureHints, configureDevice, the floating configure IIFE
- * (reconcileStreaming through the stub factory and accessory.configureController), and all fourteen state-observe loops - against the reusable construction
+ * (reconcileStreaming through the stub factory and accessory.configureController), and every state-observe loop the camera registers - against the reusable construction
  * harness in testing.helpers.ts: the faithful store double, the read-through Camera projection double, the typed NVR / platform doubles, and the stub
  * StreamingDelegateFactory the dependency inversion exists to admit. It then drives a structural-sharing state push through a real observer reaction and
  * unwinds everything via cleanup(), asserting the wire-but-don't-fire observe contract at each phase through the observer-wake diagnostics channel.
@@ -21,7 +21,7 @@ import type { Camera, ProtectCameraConfig } from "unifi-protect";
 import type { CameraFixture, EntryProjection } from "../../camera.fixtures.ts";
 import { Characteristic, Service, TestCameraProjection, TestStateStore, makeCameraConfig, makeProtectState, makeTestAccessory, makeTestNvr, settle }
   from "../../testing.helpers.ts";
-import type { TestAccessory, TestProtectNvr, TestStreamingDelegate, TestStreamingDelegateFactory } from "../../testing.helpers.ts";
+import type { TestAccessory, TestProtectNvr, TestStreamingDelegate, TestStreamingDelegateFactory, TestTimeshiftSupervisor } from "../../testing.helpers.ts";
 import { after, before, describe, test } from "node:test";
 import type { ObserverWakePayload } from "../../diagnostics.ts";
 import type { ProtectAccessory } from "../../types.ts";
@@ -118,10 +118,10 @@ describe("real ProtectCamera construction through the streaming-delegate factory
     assert.equal(accessory.configureControllerCalls[0], call.delegate.controller, "the registered controller is the stub delegate's sentinel, by identity");
   });
 
-  test("construction wires but does not fire: zero observer wakes, with exactly fourteen observers registered", () => {
+  test("construction wires but does not fire: zero observer wakes, with exactly thirteen observers registered", () => {
 
     assert.equal(constructionWakes, 0, "no observer wake was published during construction - observers arm against the baseline and stay silent");
-    assert.equal(store.observerCount, 14, "the two base observers plus the camera's twelve are all registered against the store double");
+    assert.equal(store.observerCount, 13, "the two base observers plus the camera's eleven are all registered against the store double");
   });
 
   test("the motion sensor's HomeKit-visible surface is real: MotionDetected false, StatusActive true, StatusTampered removed", () => {
@@ -183,7 +183,7 @@ describe("real ProtectCamera construction through the streaming-delegate factory
     assert.equal(accessory.configureControllerCalls.length, 1, "the controller was not registered again on the re-run");
   });
 
-  test("cleanup unregisters the controller, unwinds all fourteen observers, and a further push wakes nothing", async () => {
+  test("cleanup unregisters the controller, unwinds all thirteen observers, and a further push wakes nothing", async () => {
 
     const call = factory.createCalls[0];
 
@@ -221,12 +221,12 @@ describe("camera HKSV self-heal observer", () => {
     healController?.abort();
   });
 
-  // Behavior-first coverage of the both-edge HKSV reconcile observer (camera.state.hksv, camera.ts): every camera lifecycle-state edge reconciles the timeshift against
-  // current reachability through configureTimeshifting, so ONE observer handles both directions - the offline edge ends an in-flight recording through the honest
-  // terminated path, and the online edge re-establishes the buffer an offline-at-startup configure could not. We build our OWN camera here rather than reuse the
-  // suite-scoped one (that suite uses before(), not beforeEach(), so its camera must not be mutated), set the factory-returned delegate's hksv to a recording double the
-  // observer drives via configureTimeshifting, then drive a genuine offline->online state edge. The DISCONNECTED push must come first: makeCameraConfig seeds state
-  // "CONNECTED", so pushing CONNECTED straight onto an already-CONNECTED record dedups to a no-op and the observer never fires.
+  // Behavior-first coverage of the both-edge availability kick (the camera.state observer drives updateAvailability, camera.ts): every camera lifecycle-state edge wakes
+  // the supervisor's reconcile, so ONE observer handles both directions - the offline edge ends an in-flight recording through the honest terminated path, and the online
+  // edge re-establishes the buffer an offline-at-startup reconcile could not. We build our OWN camera here rather than reuse the suite-scoped one (that suite uses
+  // before(), not beforeEach(), so its camera must not be mutated), spy on the factory-installed timeshift double's reconcile, then drive a genuine offline->online state
+  // edge. The DISCONNECTED push must come first: makeCameraConfig seeds state "CONNECTED", so pushing CONNECTED straight onto an already-CONNECTED record dedups to a
+  // no-op and the observer never fires.
   test("reconciles the timeshift on every lifecycle edge, ending on offline and re-establishing on online", async () => {
 
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS });
@@ -241,40 +241,68 @@ describe("camera HKSV self-heal observer", () => {
 
     await settle();
 
-    // The observer calls stream.hksv.configureTimeshifting() on every lifecycle edge; we count each call so the assertions observe the reconcile firing per edge rather
-    // than a private field. The double also retains isRecording, timeshift.stop, and updateRecordingActive: all three are load-bearing at teardown, where
-    // teardownStreamingDelegate calls updateRecordingActive(false) (gated on isRecording: true) then timeshift.stop() - the optional chain stops at hksv, so a missing
-    // timeshift would throw a TypeError at cleanup. The confined cast bridges the recording double to the StreamingDelegate["hksv"] type the field is declared as.
-    const configureTimeshiftingCalls: boolean[] = [];
+    // The availability observer calls updateAvailability on every lifecycle edge, which wakes the supervisor's reconcile through the standing-buffer kick; we read the
+    // factory-installed timeshift double's reconcile tally so the assertions observe the reconcile firing per edge rather than a private field. The hksv double retains
+    // isRecording and updateRecordingActive: both are load-bearing at teardown, where teardownStreamingDelegate calls updateRecordingActive(false) gated on
+    // isRecording: true. The confined casts bridge the doubles to the StreamingDelegate types their fields are declared as.
     const delegate = factory.createCalls[0]?.delegate;
 
     assert.ok(delegate, "the factory recorded its create call so the camera holds a stub delegate");
 
-    // The configureTimeshifting spy records one entry per call and resolves true; the count of entries is the per-edge reconcile tally the assertions read.
-    const configureTimeshifting = (): Promise<boolean> => Promise.resolve(configureTimeshiftingCalls.push(true) > 0);
+    delegate.hksv = { isRecording: true, updateRecordingActive: (): void => { /* No-op: only reached at teardown, not by the observer. */ } } as unknown as
+      TestStreamingDelegate["hksv"];
 
-    delegate.hksv = { configureTimeshifting, isRecording: true,
-      timeshift: { isStarted: false, stop: (): void => { /* No-op: the double owns no buffer to release on teardown. */ } },
-      updateRecordingActive: (): void => { /* No-op: only reached at teardown, not by the observer. */ } } as unknown as TestStreamingDelegate["hksv"];
+    // Discount the construction-time activation kick: the factory-installed double already recorded one reconcile from configureStreamingDelegate, so reset the tally to
+    // zero before driving the lifecycle edges.
+    const timeshift = delegate.timeshift as unknown as TestTimeshiftSupervisor;
 
-    // The offline edge: the HKSV observer reconciles the timeshift on every lifecycle edge, so the reconcile fires here. Asserted per-edge - exactly one
-    // call immediately after the DISCONNECTED push, BEFORE the CONNECTED push - so the assertion discriminates the offline edge rather than an end-of-test aggregate.
+    timeshift.reconcileCalls = 0;
+
+    // The offline edge: the availability observer wakes the reconcile on every lifecycle edge, so the reconcile fires here. Asserted per-edge - exactly one call
+    // immediately after the DISCONNECTED push, BEFORE the CONNECTED push - so the assertion discriminates the offline edge rather than an end-of-test aggregate.
     store.pushCameraPatch(cameraConfig.id, { state: "DISCONNECTED" });
 
     await settle();
 
-    assert.equal(configureTimeshiftingCalls.length, 1, "the offline edge reconciled the timeshift (ending an in-flight recording honestly) rather than no-oping");
+    assert.equal(timeshift.reconcileCalls, 1, "the offline edge reconciled the timeshift (ending an in-flight recording honestly) rather than no-oping");
 
-    // The online edge: the observer reconciles again, re-establishing the buffer an offline-at-startup configure could not. Pin the cumulative tally to exactly two - one
+    // The online edge: the observer reconciles again, re-establishing the buffer an offline-at-startup reconcile could not. Pin the cumulative tally to exactly two - one
     // reconcile per edge - so the assertion states the exact count rather than a vague "fired again".
     store.pushCameraPatch(cameraConfig.id, { state: "CONNECTED" });
 
     await settle();
 
-    assert.equal(configureTimeshiftingCalls.length, 2, "the online edge reconciled again, so the observer fired exactly once per lifecycle edge");
+    assert.equal(timeshift.reconcileCalls, 2, "the online edge reconciled again, so the observer fired exactly once per lifecycle edge");
 
     camera.cleanup();
 
     await settle();
+  });
+
+  // The construction-time activation kick: configureStreamingDelegate wakes the supervisor right after it stands up the controller, so the standing buffer establishes
+  // for the streaming arm independent of any recording demand. We read the factory-installed double's reconcile tally immediately after construction, before any state
+  // edge could add one.
+  test("construction kicks the supervisor once so the standing buffer establishes for the streaming arm", async () => {
+
+    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS });
+    const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
+    const { controller, factory, nvr } = makeTestNvr({ store });
+
+    const accessory = makeTestAccessory("Activation Kick Camera", "33333333-4444-5555-6666-777777777777");
+    const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory,
+      new TestCameraProjection(cameraConfig.id, store) as unknown as Camera);
+
+    await settle();
+
+    const timeshift = factory.createCalls[0]?.delegate.timeshift as unknown as TestTimeshiftSupervisor;
+
+    assert.ok(timeshift, "the factory installed a timeshift double on the created delegate");
+    assert.equal(timeshift.reconcileCalls, 1, "configureStreamingDelegate kicked the supervisor exactly once at construction");
+
+    camera.cleanup();
+
+    await settle();
+
+    controller.abort();
   });
 });

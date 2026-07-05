@@ -220,12 +220,12 @@ export abstract class ProtectBase {
   // Run a device command and report whether it succeeded. Device commands are write-through: they PATCH the controller and throw the classified FatalError on failure
   // (rather than returning null), so this is the single place that converts a thrown command error into the boolean a HomeKit onSet handler branches on, and the single
   // place a command failure is reported. The command is supplied as a thunk by the caller, where this.device is narrowed to the concrete projection, so the update
-  // typechecks against its own config; a helper that called this.device.update() itself would face the contravariance of the base's Camera | Light | Sensor | Chime |
-  // Viewer union. An authorization failure is the one actionable case for the user - the account lacks the Administrator role - so it earns specific guidance; any other
-  // failure is reported with its underlying cause. The action is a verb phrase ("turn the light on") interpolated into the message. This lives on ProtectBase, the lowest
-  // common ancestor of every command-issuer (every ProtectDevice subclass plus the DoorbellCapability), so the one copy serves them all; the controller-scoped
-  // ProtectBase-only owners (the security system, the system-info owner, and liveviews) issue no Protect write commands and inherit it unused - a deliberate, accepted
-  // consequence of placing it at the common ancestor.
+  // typechecks against its own config; a helper that called this.device.update() itself would face the contravariance of the base's full device-projection union. An
+  // authorization failure is the one actionable case for the user - the account lacks the Administrator role - so it earns specific guidance; any other failure is
+  // reported with its underlying cause. The action is a verb phrase ("turn the light on") interpolated into the message. This lives on ProtectBase, the lowest common
+  // ancestor of every command-issuer (every ProtectDevice subclass plus the DoorbellCapability), so the one copy serves them all; the controller-scoped ProtectBase-only
+  // owners (the security system, the system-info owner, and liveviews) issue no Protect write commands and inherit it unused - a deliberate, accepted consequence of
+  // placing it at the common ancestor.
   protected async runDeviceCommand(action: string, command: () => Promise<unknown>): Promise<boolean> {
 
     try {

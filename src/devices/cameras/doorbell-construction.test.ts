@@ -8,10 +8,10 @@
  * (the Doorbell service, LCD, physical chimes, chime volume), and the observers (the camera's plain-camera set, now including the always-armed isDoorbell
  * observer, the bare-motion lastMotion observer, and the capability-reconcile featureFlags observer, plus the capability's own). Suite B constructs
  * the full doorbell-plus-package family and pins the self-observing package camera: its exact persisted context, its
- * suffixed display name through the syncedName seam, its observer census, and the death of every doorbell-to-package fan-out (firmware, name, availability,
- * and reachability all now flow through the package's own observers or the NVR's endpoints iterator). The reclassification-flap regression and the
+ * suffixed display name through the syncedName seam, its observer census, and the fact that firmware, name, availability, and reachability all flow through
+ * the package's own observers or the NVR's endpoints iterator. The reclassification-flap regression and the
  * deleted-copy-forward hints-equality pin guard the two known hazards of the reshape, and the UUID-seed pin guards the persistence-critical identity suffix against
- * drift. The pure-test unlocks ride along: the package selectChannel lens-2/URL-host rows and the parent selectRecordingChannel pixel-ceiling row.
+ * drift. The pure-test unlocks ride along: the package selectChannel lens-2/URL-host rows and the parent selectSubstrateChannel pixel-ceiling row.
  *
  * Each suite holds ONE observer-wake subscription across all its phases, windowing the wake log per phase; the zero-wake-during-construction assertions are
  * vacuity-proofed by the same subscription later observing positive wakes. Test files run in separate processes under the node:test runner, so the subscriptions
@@ -86,12 +86,12 @@ describe("real doorbell construction (suite A)", () => {
     assert.equal(doorbellService.isPrimary, true, "configureDoorbellService marked the Doorbell service primary");
   });
 
-  test("the doorbell wires eighteen observers - the camera's plain-camera set plus the capability's four - and fires none at construction", () => {
+  test("the doorbell wires seventeen observers - the camera's plain-camera set plus the capability's four - and fires none at construction", () => {
 
     // The census: the base observers (name, firmware) + the camera set (the always-armed isDoorbell observer, the bare-motion lastMotion observer, the
     // capability-reconcile featureFlags observer, and the Access-lock supportUnlock observer all join the doorbell-attached camera's set) + the capability observers
     // (lcdMessage, hasPackageCamera, chimeDuration, chimeVolume) = the doorbell's full observer set.
-    assert.equal(store.observerCount, 18, "the eighteen-observer census holds across the capability collapse and the always-armed isDoorbell observer");
+    assert.equal(store.observerCount, 17, "the seventeen-observer census holds across the capability collapse and the always-armed isDoorbell observer");
     assert.equal(constructionWakes, 0, "observers arm against the baseline and stay silent at construction");
   });
 
@@ -241,13 +241,13 @@ describe("doorbell + package camera family construction (suite B)", () => {
       "the HomeKit-visible name carries the suffix");
   });
 
-  test("the family wires but does not fire: eighteen doorbell observers plus four package observers, zero construction wakes", () => {
+  test("the family wires but does not fire: seventeen doorbell observers plus four package observers, zero construction wakes", () => {
 
     // The package census: the inherited base observers (name, firmware) plus its bespoke camera.state availability and package-channel observers - and nothing from the
     // camera set. The doorbell-attached camera contributes its full observer set (its plain-camera set, now including the always-armed isDoorbell observer, the
     // bare-motion lastMotion observer, the capability-reconcile featureFlags observer, and the Access-lock supportUnlock observer, plus the capability's own plus the
     // base observers).
-    assert.equal(store.observerCount, 22, "eighteen doorbell observers plus the package's four");
+    assert.equal(store.observerCount, 21, "seventeen doorbell observers plus the package's four");
     assert.equal(constructionWakes, 0, "no observer fired during family construction");
   });
 
@@ -324,7 +324,7 @@ describe("doorbell + package camera family construction (suite B)", () => {
 
   test("an isDoorbell flap within one drain self-collapses: no WARN, the capability stays attached, and the controller never churns", async () => {
 
-    // The isDoorbell observer is now always armed (the spawn guard died with the live-attach), so it may wake on the flap -
+    // The isDoorbell observer is unconditionally armed on every camera, so it may wake on the flap -
     // but the reconcile re-reads LIVE state on each wake, and the flap (isDoorbell drops then returns before any consumer drains) leaves live state at its final value.
     const accessory = doorbell.accessory as unknown as TestAccessory;
     const warnBaseline = logEntries.filter((entry) => entry.level === "warn").length;
@@ -350,7 +350,7 @@ describe("doorbell + package camera family construction (suite B)", () => {
 
     nvr.client.connection.isHealthy = false;
 
-    // The doorbell's own refresh runs first, exactly as the NVR endpoints iterator would drive it - and must no longer touch the package accessory.
+    // The doorbell's own refresh runs first, exactly as the NVR endpoints iterator would drive it - and its refresh does not touch the package accessory.
     const doorbellTransition = doorbell.refreshReachability();
 
     assert.deepEqual(doorbellTransition, { now: false, was: true }, "the doorbell reports its own reachability flip");
@@ -553,13 +553,12 @@ describe("pure-test unlocks: package channel selection and the recording pixel c
     overrideHarness.controller.abort();
   });
 
-  test("a finite recording pixel ceiling drops channels above the cap from selectRecordingChannel", async () => {
+  test("a finite substrate pixel ceiling drops channels above the cap from selectSubstrateChannel", async () => {
 
-    // The capped camera, with hardware transcoding disabled so no recording default pins a named channel: a 720p ceiling drops the 4K High channel, so a 4K
-    // recording request lands on Medium through the bias-higher nearest selection over what survives the cap.
+    // The capped camera with no substrate pin: a 720p ceiling drops the 4K High channel, so the structural default lands on the highest surviving channel, Medium.
     const cappedConfig = makeCameraConfig({ channels: G6_INSTANT_CHANNELS });
     const cappedStore = new TestStateStore(makeProtectState({ cameras: [cappedConfig] }));
-    const capped = makeTestNvr({ store: cappedStore, userOptions: ["Disable.Video.Transcode.Hardware"] });
+    const capped = makeTestNvr({ store: cappedStore });
 
     capped.factory.maxSourcePixels = 1280 * 720;
 
@@ -568,7 +567,7 @@ describe("pure-test unlocks: package channel selection and the recording pixel c
 
     await settle();
 
-    assert.equal(cappedCamera.selectRecordingChannel(3840, 2160)?.channel.name, "Medium", "the ceiling drops High, so the request selects Medium");
+    assert.equal(cappedCamera.selectSubstrateChannel()?.channel.name, "Medium", "the ceiling drops High, so the structural default selects Medium");
 
     cappedCamera.cleanup();
 
@@ -576,11 +575,11 @@ describe("pure-test unlocks: package channel selection and the recording pixel c
 
     capped.controller.abort();
 
-    // The name-branch parity row: at defaults, hardware transcoding pins the recording default to the named High channel, and the cap pre-filter applies to the
-    // name branch too - so a capped request against a pinned-but-dropped channel honestly selects nothing rather than silently substituting.
+    // The name-branch parity row: a user pins the substrate channel to High, and the cap pre-filter applies to the name branch too - so a capped request against a
+    // pinned-but-dropped channel honestly selects nothing rather than silently substituting.
     const pinnedConfig = makeCameraConfig({ channels: G6_INSTANT_CHANNELS });
     const pinnedStore = new TestStateStore(makeProtectState({ cameras: [pinnedConfig] }));
-    const pinned = makeTestNvr({ store: pinnedStore });
+    const pinned = makeTestNvr({ store: pinnedStore, userOptions: ["Enable.Video.Timeshift.Only.High"] });
 
     pinned.factory.maxSourcePixels = 1280 * 720;
 
@@ -589,7 +588,7 @@ describe("pure-test unlocks: package channel selection and the recording pixel c
 
     await settle();
 
-    assert.equal(pinnedCamera.selectRecordingChannel(3840, 2160), null, "the cap pre-filter applies to the name-pinned branch, matching HEAD's selection semantics");
+    assert.equal(pinnedCamera.selectSubstrateChannel(), null, "the cap pre-filter applies to the name-pinned branch, so the dropped High pin selects nothing");
 
     pinnedCamera.cleanup();
 
@@ -597,7 +596,7 @@ describe("pure-test unlocks: package channel selection and the recording pixel c
 
     pinned.controller.abort();
 
-    // The uncapped control: the default Infinity ceiling passes everything through, so the same request selects High.
+    // The uncapped control: the default Infinity ceiling passes everything through, so the structural default selects the native High channel.
     const openConfig = makeCameraConfig({ channels: G6_INSTANT_CHANNELS });
     const openStore = new TestStateStore(makeProtectState({ cameras: [openConfig] }));
     const open = makeTestNvr({ store: openStore });
@@ -606,7 +605,7 @@ describe("pure-test unlocks: package channel selection and the recording pixel c
 
     await settle();
 
-    assert.equal(openCamera.selectRecordingChannel(3840, 2160)?.channel.name, "High", "the uncapped control selects the native High channel");
+    assert.equal(openCamera.selectSubstrateChannel()?.channel.name, "High", "the uncapped control selects the native High channel");
 
     openCamera.cleanup();
 

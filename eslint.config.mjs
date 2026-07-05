@@ -6,6 +6,7 @@ import hbPluginUtils from "homebridge-plugin-utils/eslint";
 
 export default hbPluginUtils({
 
+  // These are the JS and config files that sit outside the main TypeScript project, so the parser needs its default-project fallback to lint them at all.
   allowDefaultProject: [ "eslint.config.mjs", "homebridge-ui/*.@(js|mjs)", "homebridge-ui/public/*.@(js|mjs)", "homebridge-ui/public/lib/*.@(js|mjs)" ],
 
   // Test, fixture, and helper files are co-located with production code under src/. They follow the same modern style rules as production but legitimately
@@ -24,7 +25,7 @@ export default hbPluginUtils({
   //   await internally. Enforcing `require-await` here would force a cosmetic `await Promise.resolve()` inside every such callback - we'd rather let the test
   //   express the intent directly. The test code paths are exercised by the runner regardless of the keyword.
   //
-  // We turn off only those four rules for test infrastructure so the rest of the strict preset still applies. Mirrors the same admission v5 (unifi-protect) uses
+  // We turn off the following rules for test infrastructure so the rest of the strict preset still applies. Mirrors the same admission unifi-protect uses
   // so a single test idiom carries across both repos.
   extraConfigs: [
     // server.js runs in Node, so it needs console and fetch declared as readonly globals - the js preset applied to that file pattern does not supply them on its own.

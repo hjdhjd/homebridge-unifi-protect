@@ -90,7 +90,8 @@ export const featureOptionCategories: FeatureCategoryEntry<ProtectCategoryMeta>[
   { description: "Sensor", meta: { modelKey: ["sensor"] }, name: "Sensor" },
   { description: "UniFi Access", meta: { modelKey: ["camera"] }, name: "UniFi.Access" },
   { description: "Video & Streaming", meta: { modelKey: ["camera"] }, name: "Video" },
-  { description: "HomeKit Secure Video", meta: { isNotProperty: ["isThirdPartyCamera"], modelKey: ["camera"] }, name: "Video.HKSV" }
+  { description: "HomeKit Secure Video", meta: { isNotProperty: ["isThirdPartyCamera"], modelKey: ["camera"] }, name: "Video.HKSV" },
+  { description: "Timeshift Buffer", meta: { isNotProperty: ["isThirdPartyCamera"], modelKey: ["camera"] }, name: "Video.Timeshift" }
 ];
 
 export const featureOptions: Record<string, FeatureOptionEntry<ProtectOptionMeta>[]> = {
@@ -223,14 +224,13 @@ export const featureOptions: Record<string, FeatureOptionEntry<ProtectOptionMeta
   "Video": [
 
     { default: true, description: "Use hardware-accelerated transcoding when available (Apple Macs, Intel Quick Sync Video-enabled CPUs, Raspberry Pi 4).", name: "Transcode.Hardware" },
-    { default: true, description: "Use the native Protect livestream API to view livestreams.", meta: { isNotProperty: ["isThirdPartyCamera"] }, name: "Stream.UseApi" },
     { default: true, description: "When streaming to low-latency clients (e.g. at home), transcode livestreams, instead of transmuxing them.", name: "Transcode" },
     { default: true, defaultValue: PROTECT_TRANSCODE_BITRATE, description: "Bitrate, in kilobits per second, to use when transcoding to low-latency (e.g. at home) clients, ignoring the bitrate HomeKit requests. HomeKit typically requests lower video quality than you may desire in your environment.", group: "Transcode", name: "Transcode.Bitrate" },
     { default: true, description: "When streaming to high-latency clients (e.g. cellular connections), transcode livestreams instead of transmuxing them.", name: "Transcode.HighLatency" },
     { default: true, defaultValue: PROTECT_TRANSCODE_HIGH_LATENCY_BITRATE, description: "Bitrate, in kilobits per second, to use when transcoding to high-latency (e.g. cellular) clients, ignoring the bitrate HomeKit requests. HomeKit typically requests lower video quality than you may desire in your environment.", group: "Transcode.HighLatency", name: "Transcode.HighLatency.Bitrate" },
-    { default: false, description: "When viewing livestreams, force the use of the high quality video stream from the Protect controller.", name: "Stream.Only.High" },
-    { default: false, description: "When viewing livestreams, force the use of the medium quality video stream from the Protect controller.", name: "Stream.Only.Medium" },
-    { default: false, description: "When viewing livestreams, force the use of the low quality video stream from the Protect controller.", name: "Stream.Only.Low" },
+    { default: false, description: "When livestreaming directly from the camera over RTSP, force the use of the high quality video stream from the Protect controller.", name: "Rtsp.Only.High" },
+    { default: false, description: "When livestreaming directly from the camera over RTSP, force the use of the medium quality video stream from the Protect controller.", name: "Rtsp.Only.Medium" },
+    { default: false, description: "When livestreaming directly from the camera over RTSP, force the use of the low quality video stream from the Protect controller.", name: "Rtsp.Only.Low" },
     { default: false, description: "Crop the camera video stream. Enabling this option will also force transcoding of livestreams.", name: "Crop" },
     { default: true, defaultValue: 0, description: "Left offset of the crop window, as a percentage of the original image width.", group: "Crop", name: "Crop.X" },
     { default: true, defaultValue: 0, description: "Top offset of the crop window, as a percentage of the original image height.", group: "Crop", name: "Crop.Y" },
@@ -243,10 +243,16 @@ export const featureOptions: Record<string, FeatureOptionEntry<ProtectOptionMeta
   "Video.HKSV": [
 
     { default: false, description: "Use the camera status indicator light to show when an HKSV event is being recorded.", name: "StatusLedIndicator" },
-    { default: false, description: "Add a switch accessory to enable or disable HKSV event recording.", name: "Recording.Switch" },
-    { default: false, description: "When recording HomeKit Secure Video events, force the use of the high quality video stream from the Protect controller.", name: "Record.Only.High" },
-    { default: false, description: "When recording HomeKit Secure Video events, force the use of the medium quality video stream from the Protect controller.", name: "Record.Only.Medium" },
-    { default: false, description: "When recording HomeKit Secure Video events, force the use of the low quality video stream from the Protect controller.", name: "Record.Only.Low" }
+    { default: false, description: "Add a switch accessory to enable or disable HKSV event recording.", name: "Recording.Switch" }
+  ],
+
+  // Timeshift buffer options.
+  "Video.Timeshift": [
+
+    { default: true, description: "Maintain a rolling timeshift buffer of the camera's livestream to power live viewing, HomeKit Secure Video, and snapshots. Disabling this streams live views directly from the camera over RTSP instead.", name: "Livestream" },
+    { default: false, description: "Populate the timeshift buffer that feeds HomeKit Secure Video, buffer-backed live views, and snapshots from the high quality video stream from the Protect controller.", name: "Only.High" },
+    { default: false, description: "Populate the timeshift buffer that feeds HomeKit Secure Video, buffer-backed live views, and snapshots from the medium quality video stream from the Protect controller.", name: "Only.Medium" },
+    { default: false, description: "Populate the timeshift buffer that feeds HomeKit Secure Video, buffer-backed live views, and snapshots from the low quality video stream from the Protect controller.", name: "Only.Low" }
   ]
 };
 /* eslint-enable @stylistic/max-len */

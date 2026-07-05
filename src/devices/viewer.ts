@@ -42,7 +42,9 @@ export class ProtectViewer extends ProtectDevice {
   // Initialize and configure the viewer accessory for HomeKit.
   private configureDevice(): boolean {
 
-    // Clean out the context object in case it's been polluted somehow.
+    // Homebridge persists this context object in its accessory cache across restarts, so a viewer accessory recovered from an earlier plugin version, or one whose
+    // UUID HomeKit reused for a different device, can still carry stale keys; we reset it here before repopulating it below so key presence remains a reliable
+    // signal for this accessory's current context contract, not leftover state.
     this.accessory.context = {};
 
     // Seed the identity source of truth (the persisted bare MAC) from the raw record at configure time, where the record is present - identity is not read through the

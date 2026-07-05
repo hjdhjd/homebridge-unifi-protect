@@ -118,7 +118,7 @@ describe("camera-family observer reactions and bound read handlers (camera-react
       // The plain-camera census: the base observers (name, firmware) plus the camera's narrow observers. A drift here means an extra or missing observer slipped in.
       const store = built.nvr.client.state;
 
-      assert.equal(store.observerCount, 14, "the plain camera wires exactly fourteen observers (the base pair plus the camera's twelve)");
+      assert.equal(store.observerCount, 13, "the plain camera wires exactly thirteen observers (the base pair plus the camera's eleven)");
 
       // The videoCodec reaction is identical to the (already-netted) channels reaction: both call reconcileStreaming. Its only observable output is the WAKE KEY plus a
       // re-derive side effect (the factory is not invoked again), so a one-shot wake subscription windows the single push and the create-call count proves the re-run

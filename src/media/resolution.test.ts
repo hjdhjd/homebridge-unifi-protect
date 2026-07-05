@@ -2,15 +2,12 @@
  *
  * resolution.test.ts: The durable golden-master and selector coverage for the resolution-selection surface (resolution.ts).
  *
- * This is the first real coverage of the resolution-selection surface, including the deep-low-resolution drift regime. Parity vs the prior reference implementation's
- * runtime was proven by a parity test against a throwaway reference implementation (parent + package list-builds and the full selector cross-product, under all
- * streamingDefault states, all == the reference) plus an independent hand-computation of three hand-verified anchor fixtures; that reference implementation was then
- * deleted, leaving NO second implementation in the tree. What remains here is the DURABLE record: the production buildAdvertisedProfiles / buildAdvertisedResolutions
- * output asserted against the hand-verified golden-master in camera.fixtures.ts, plus a checked-in selector grid that pins the per-request mapping under both biases and
- * the pixel-cap pre-filter.
+ * This is the durable coverage of the resolution-selection surface, including the deep-low-resolution drift regime. The golden-master fixtures in camera.fixtures.ts
+ * are the single source of expected behavior for the production buildAdvertisedProfiles / buildAdvertisedResolutions output; there is no live second implementation
+ * in the tree to compare against. A checked-in selector grid separately pins the per-request mapping under both biases and the pixel-cap pre-filter.
  *
  * The harness is pure - resolution.ts is FFmpeg-free and this-free, so no HAP double, no controller, no device instance is needed. The device wrappers selectChannel /
- * selectRecordingChannel inject this-state (streamingDefault, recordingDefault, channelProfiles, the cap) and delegate to selectChannelProfile; we reproduce the exact
+ * selectSubstrateChannel inject this-state (rtspDefault, substrateDefault, channelProfiles, the cap) and delegate to selectChannelProfile; we reproduce the exact
  * injection here in a local closure that mirrors camera.ts line-for-line, so the selector grid proves the wrapper logic, not just the bare selector.
  *
  * The golden-master fixtures are the single source of expected behavior: when a later change intentionally alters behavior, the diff lands as a reviewed change to a
@@ -68,11 +65,11 @@ function nativeEntries(channels: ProtectCameraChannelConfig[]): ChannelProfile[]
 
 // The exact streaming-wrapper logic from camera.ts selectChannel, reproduced over explicit entries and this-state so the selector grid proves the WRAPPER, not just the
 // bare selector. The pixel cap is a mode-agnostic pre-filter applied before the name/nearest branch, exactly as the wrapper does (so it filters the name branch too).
-function selectChannelViaWrapper(entries: ChannelProfile[], streamingDefault: string, width: number, height: number,
+function selectChannelViaWrapper(entries: ChannelProfile[], rtspDefault: string, width: number, height: number,
   opts?: { biasHigher?: boolean; maxPixels?: number }): Nullable<ChannelProfile> {
 
   const capped = capByPixels(entries, opts?.maxPixels);
-  const request: SelectRequest = streamingDefault ? { mode: "name", name: streamingDefault } :
+  const request: SelectRequest = rtspDefault ? { mode: "name", name: rtspDefault } :
     { bias: opts?.biasHigher ? "higher" : "lower", height: height, mode: "nearest", width: width };
 
   return selectChannelProfile(capped, request);
@@ -81,7 +78,7 @@ function selectChannelViaWrapper(entries: ChannelProfile[], streamingDefault: st
 describe("resolution golden-master: parent advertised list (production == checked-in fixtures)", () => {
 
   // The list-build is the first-class system under test: the per-candidate gate's drifting current-top (the drift locus), the dedup, the re-sort, and the fps
-  // normalization all run inside buildAdvertisedProfiles. Each fixture's expected list is the hand-verified golden-master for streamingDefault "".
+  // normalization all run inside buildAdvertisedProfiles. Each fixture's expected list is the hand-verified golden-master for rtspDefault "".
   for(const fixture of CAMERA_FIXTURES) {
 
     test(fixture.model, () => {
@@ -119,9 +116,8 @@ describe("resolution: the RTSP-enabled / sanity-fail channel filtering", () => {
     assert.equal(produced.length > 0, true);
   });
 
-  // The all-sanity-fail case (a 0-width channel and an empty-name channel): the native list is empty, so buildAdvertisedProfiles returns [] without throwing. This is the
-  // deliberate hardening - the device-level guard and the new return [] replace the earlier crash on an empty list (the throwaway reference implementation dereferenced
-  // rtspEntries[0] here, which is exactly why this case is asserted directly rather than against a reference implementation). The device level re-asserts this: camera.ts
+  // The all-sanity-fail case (a 0-width channel and an empty-name channel): the native list is empty, so buildAdvertisedProfiles([]) returns [] without throwing, and
+  // this case is asserted directly since there is no second implementation in the tree to compare against. The device level re-asserts this: camera.ts
   // refreshChannelProfiles guards `if(!advertised.length) { return false; }` BEFORE constructing the streaming delegate or calling configureController, so an all-fail
   // camera builds no controller.
   test("buildAdvertisedProfiles([]) returns [] (no throw) - the device short-circuit signal", () => {
@@ -178,10 +174,10 @@ describe("resolution: selector per-request mapping through the selectChannel wra
     });
   }
 
-  // The explicit Pi+hwtranscode+Stream.Only.HIGH-above-cap witness: a constrained-hardware transcode request that pins streamingDefault to
+  // The explicit Pi+hwtranscode+Rtsp.Only.HIGH-above-cap witness: a constrained-hardware transcode request that pins rtspDefault to
   // "HIGH" AND caps at 1080p simultaneously. The HIGH channel (3840x2160, 8.3M px) exceeds the cap, so the pre-filter drops it BEFORE the name match runs - the name
   // branch finds no HIGH entry under the cap and returns null. This proves maxPixels filters the name branch too (it is a pre-filter, not a nearest-only request field).
-  test("Pi witness: streamingDefault=HIGH + maxPixels=1080p + bias higher => null (HIGH exceeds the cap)", () => {
+  test("Pi witness: rtspDefault=HIGH + maxPixels=1080p + bias higher => null (HIGH exceeds the cap)", () => {
 
     const result = outcome(selectChannelViaWrapper(published, "HIGH", 3840, 2160, { biasHigher: true, maxPixels: CAP_1080P }));
 
@@ -241,9 +237,9 @@ describe("resolution: the deep-low-resolution drift (the regression locus, exerc
 
 describe("resolution: the advertised list is streaming-preference-free", () => {
 
-  // The list build takes no streaming preference: every synthetic maps to its NEAREST channel (the AI Pro id sequence 0,1,1,1,2,2,2), not a name-pinned one. Before the
-  // heal, a re-run with Video.Stream.Only.HIGH pinned every synthetic to High (0,0,0,1,2,0,0) - the leak that also steered the HKSV recording default on a Pi. The
-  // streaming preference now lives ONLY at request time, in the selectChannel wrapper.
+  // The list build takes no streaming preference: every synthetic maps to its NEAREST channel (the AI Pro id sequence 0,1,1,1,2,2,2), not a name-pinned one.
+  // buildAdvertisedProfiles is preference-free by construction: the streaming preference (Video.Rtsp.Only.X) is applied only at request time, in the selectChannel
+  // wrapper, never during list construction.
   test("buildAdvertisedProfiles maps to nearest channels; the streaming preference applies only at request time", () => {
 
     const list = buildAdvertisedProfiles(nativeEntries(AI_PRO_CHANNELS));
@@ -257,7 +253,8 @@ describe("resolution: the advertised list is streaming-preference-free", () => {
 
 describe("resolution: rtspUrl - the two scheme branches", () => {
 
-  // The default (secure) branch is the SRTP-enabled stream URL the plugin connects to: rtsps://host:port/alias?enableSrtp - the historical secure-only composition.
+  // The default (secure) branch is the SRTP-enabled stream URL the plugin connects to: rtsps://host:port/alias?enableSrtp - the branch the plugin's own RTSP
+  // connections use.
   test("the default branch composes the secure rtsps URL with the enableSrtp query", () => {
 
     const channel = makeChannel({ fps: 30, height: 1080, id: 0, name: "High", width: 1920 });

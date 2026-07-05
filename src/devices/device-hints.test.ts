@@ -14,7 +14,7 @@
  * hardwareDecoding, hardwareTranscoding, highResSnapshots, and the rest) are set by the CAMERA family's configureHints OVERRIDE - family-owned and out of scope here;
  * this nets the hints the BASE sets and the clamps.
  *
- * The value-option override syntax (load-bearing, verified against homebridge-plugin-utils featureoptions.js): Motion.Duration and Motion.OccupancySensor.Duration are
+ * The value-option override syntax (load-bearing, verified against homebridge-plugin-utils featureOptions.js): Motion.Duration and Motion.OccupancySensor.Duration are
  * value-centric options (default: true, defaultValue 10 / 300). The global value override is Enable.<Option>.<N> - a single trailing numeric segment parsed as the value
  * - so Enable.Motion.Duration.20 sets the value to 20 and Enable.Motion.Duration.1 sets it to 1 (then the clamp raises it to 2). Each duration / clamp test asserts the
  * EXACT resulting device.hints value, so a no-op override (the value staying at its default) fails loudly rather than passing vacuously.

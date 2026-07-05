@@ -71,7 +71,7 @@ const firstRunOnSubmit = async ({ commit, config }) => {
   return true;
 };
 
-// Return whether a given device is a controller.
+// The Protect API represents the controller itself as a device whose model key is "nvr" - every other model key belongs to a device the controller manages.
 const isController = (device) => device.modelKey === "nvr";
 
 // Return the list of controllers from our plugin configuration. The framework injects our primary platform-config entry; we map each configured controller to the
@@ -96,7 +96,7 @@ const getDevices = async (selectedController, { config }) => {
     return [];
   }
 
-  // Retrieve the current list of devices from the Protect controller.
+  // The browser cannot reach the Protect controller directly, so we bridge the request through the plugin's UI server, which holds the controller credentials.
   const devices = await homebridge.request("/getDevices", { address: controller.address, password: controller.password, username: controller.username });
 
   // Add the fields that the webUI framework is looking for to render.
@@ -124,6 +124,10 @@ const getDevices = async (selectedController, { config }) => {
 // Only show feature options that are valid for the capabilities of this device.
 const validOption = (device, option) => {
 
+  // Each device's capability metadata takes a different shape, so five independent meta-gates test for exclusion below, and any one hiding the option is
+  // enough: hasAccessFeature reads the Access device's feature flags, hasFeature reads the Protect device's feature flags, hasProperty checks whether the
+  // named property is merely present on the device, modelKey compares the device's own model against the option's supported models, and hasSmartObjectType
+  // compares the device's smart-detection capabilities against the option's supported smart-object types.
   if(device && (device.modelKey !== "nvr") && (
     (option.meta?.hasAccessFeature && (!device.accessDeviceMetadata?.featureFlags ||
       !option.meta?.hasAccessFeature.some(x => device.accessDeviceMetadata.featureFlags[x]))) ||

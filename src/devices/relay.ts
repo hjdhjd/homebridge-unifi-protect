@@ -68,7 +68,8 @@ export class ProtectRelay extends ProtectDevice {
   // Initialize and configure the relay accessory for HomeKit.
   private configureDevice(): boolean {
 
-    // Clean out the context object in case it's been polluted somehow.
+    // Clean out the context object. This accessory may be the object Homebridge restored from its persisted accessory cache, and that cached object can still carry
+    // context keys left behind by an earlier plugin version or by a different accessory type that previously resolved to this device's identity.
     this.accessory.context = {};
 
     // Seed the identity source of truth (the persisted bare MAC) from the raw record at configure time, where the record is present - identity is not read through the
@@ -93,7 +94,7 @@ export class ProtectRelay extends ProtectDevice {
 
   // Configure a HomeKit switch for each output the controller reports, iterating the live outputs array rather than hardcoding a fixed pair. Each output is keyed by its
   // wire id (0-based, the stable identity) into a per-output service subtype, is user-visible as 1-based ("Output 1"), and is individually show/hide-able through its own
-  // feature option - hiding one output prunes exactly its switch and leaves the others intact. The visibility catalog enumerates the two outputs the supported relay
+  // feature option - hiding one output prunes exactly its switch and leaves the others intact. The visibility catalog enumerates each output the supported relay
   // hardware reports; an output beyond the catalog has no per-output option and resolves hidden by the feature-option default, so a larger relay would need its catalog
   // entries extended alongside this iteration.
   private configureOutputs(): void {
@@ -239,9 +240,9 @@ export class ProtectRelay extends ProtectDevice {
 
   // Tear down this relay's runtime state alongside the base teardown. The base cleanup aborts the observe loops and clears every registered timer (including the pending-
   // intent safety timers), but the #pendingDesired intent map is a separate structure it does not own, so we clear it here. It latches on this persistent object, so it
-  // must not survive teardown: a device removal, reconfigure, or shutdown all route through here. A controller reboot does NOT tear the device down (the observe loops
-  // ride the surviving connection), so the bounded safety timer - not cleanup - is what self-heals a stale intent across a reboot, dropping any unconfirmed intent within
-  // its window so a post-reboot output reset can never be shadowed by a lingering lie.
+  // must not survive a device removal, which is the path that invokes this override. A controller reboot does NOT tear the device down (the observe loops ride the
+  // surviving connection), so the bounded safety timer - not cleanup - is what self-heals a stale intent across a reboot, dropping any unconfirmed intent within its
+  // window so a post-reboot output reset can never be shadowed by a lingering lie.
   public override cleanup(): void {
 
     super.cleanup();

@@ -8,8 +8,8 @@
  * rides the all-quiet makeSensorConfig carrier - which always carries ledSettings - as the shared vehicle. Per the two-layer test architecture the base
  * camera/sensor/relay routing is netted ONCE here against the shared minimal TestBaseDevice vehicle rather than re-asserted inside each family suite. The light's
  * statusLedCommand override (its lightDeviceSettings command) is LIGHT-family-specific and stays owned by light.test.ts; the chime / viewer projections expose no status
- * indicator and never configure the switch, so the statusLed false-branch ("ledSettings" in ufp false) is unreachable via this carrier and is honestly out of this
- * file's reach.
+ * indicator and never configure the switch, so the statusLed false-branch (the hasLedSettings structural check finding no "ledSettings" key on the peeked device record)
+ * is unreachable via this carrier and is honestly out of this file's reach.
  *
  * The vacuity gate (load-bearing, carried from device-motion): the Device.StatusLed.Switch option defaults to FALSE, so the runtime service gate is the
  * Enable.Device.StatusLed.Switch userOptions string, NOT the carrier's ledSettings. The carrier's ledSettings only backs the read-through (the switch's On state) and

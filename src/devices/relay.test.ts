@@ -11,7 +11,7 @@
  *
  * The isolation model mirrors the light reference: a per-test-fresh beforeEach builds a clean relay against a clean store so #pendingDesired, the recorded toggles, the
  * characteristic state, and the observer baselines are clean every test. The wake log is windowed per push via a captured baseline. buildRelay is the copyable skeleton;
- * only makeRelayConfig, TestRelayProjection, the slice keys, the observer count (5: two base, one per output, plus ledSettings), and the relay-specific reactions are
+ * only makeRelayConfig, TestRelayProjection, the slice keys, the observer count (two base, one per output, plus ledSettings), and the relay-specific reactions are
  * relay-particular.
  */
 import { Characteristic, Service, TestRelayProjection, TestStateStore, makeProtectState, makeRelayConfig, makeTestAccessory, makeTestNvr, settle }

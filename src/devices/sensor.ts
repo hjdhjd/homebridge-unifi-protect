@@ -99,7 +99,8 @@ export class ProtectSensor extends ProtectDevice {
   // Initialize and configure the sensor accessory for HomeKit.
   private configureDevice(): boolean {
 
-    // Clean out the context object in case it's been polluted somehow.
+    // Homebridge persists the accessory context in its own on-disk cache across restarts, so we reset it here to discard any stray keys left over from a
+    // prior configuration of this same accessory rather than trust whatever the cache happens to contain.
     this.accessory.context = {};
 
     // Seed the identity source of truth (the persisted bare MAC) from the raw record at configure time, where the record is present - identity is not read through the

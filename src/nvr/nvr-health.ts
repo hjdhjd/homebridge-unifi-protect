@@ -261,9 +261,10 @@ export interface NvrHealthEvents {
  *   - `suspend()` / `resume()` are normally driven from `ProtectNvr.transition()` rather than called directly. The NVR's phase is the single source of truth for
  *      "induced vs organic disruption"; this class follows along. Calling `suspend()` directly is fine for tests but in production code should go through phase
  *      transitions so all derived effects (logApiErrors, future signals) stay aligned.
- *   - `reset()` clears the symptom buffer and forces the state back to `healthy` without emitting `stateChange`. Called by `ProtectNvr.connect()` after a
- *      successful reconnect; pre-disruption symptoms are no longer relevant. We deliberately do not emit on reset because that would surface a "responsive
- *      again" message at every reset boundary, which is misleading...the reset is internal bookkeeping, not a recovery event.
+ *   - `reset()` clears the symptom buffer and forces the state back to `healthy` without emitting `stateChange`. Called after a successful reconnect, whether
+ *      following a disconnect (`ProtectNvr.connect()`) or an induced reboot (`ProtectNvr.resumeFromInducedReboot()`); pre-disruption symptoms are no longer
+ *      relevant. We deliberately do not emit on reset because that would surface a "responsive again" message at every reset boundary, which is
+ *      misleading...the reset is internal bookkeeping, not a recovery event.
  *   - There is no "force healthy" method. Use `reset()` if you need to clear state. A force-healthy that emits a recovery event would be a footgun.
  *   - Initial state is `healthy`; the plugin assumes normalcy until proven otherwise. The NVR suspends observation in `connecting` phase so initial-connect
  *      errors do not bias the baseline.

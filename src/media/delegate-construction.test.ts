@@ -4,7 +4,7 @@
  *
  * The ProtectCameraHost interface (the dependency-inversion seam on the camera side of the media stack) lets the recording, snapshot, and timeshift delegates type
  * their camera handle as a narrow contract instead of the concrete ProtectCamera. The promised payoff is that a delegate can now
- * be unit-constructed against a small stub host instead of a full camera. This suite cashes that in for the three Tier-1 (field-copy ctor) delegates: each
+ * be unit-constructed against a small stub host instead of a full camera. This suite cashes that in for the Tier-1 (field-copy ctor) delegates: each
  * constructs against the reusable TestCameraHost double with no real camera and no FFmpeg.
  *
  * The construction proof for a field-copy ctor is necessarily thin, so the real-behavior anchor is the snapshot delegate's reachability gate, tested TWO-SIDED: with
@@ -21,6 +21,7 @@ import { PROTECT_SEGMENT_RESOLUTION } from "../settings.ts";
 import { ProtectRecordingDelegate } from "./record.ts";
 import { ProtectSnapshot } from "./snapshot.ts";
 import { ProtectTimeshiftBuffer } from "./timeshift.ts";
+import { ProtectTimeshiftSupervisor } from "./timeshift-supervisor.ts";
 import assert from "node:assert/strict";
 import { makeTestCameraHost } from "../testing.helpers.ts";
 
@@ -48,7 +49,8 @@ describe("media-delegate construction against the ProtectCameraHost stub", () =>
 
     controllers.push(controller);
 
-    const recording = new ProtectRecordingDelegate(host);
+    const supervisor = new ProtectTimeshiftSupervisor(host);
+    const recording = new ProtectRecordingDelegate(host, supervisor);
 
     assert.equal(recording.isRecording, false);
     assert.equal(recording.isTransmitting, false);

@@ -30,7 +30,7 @@ export class ProtectSecuritySystem extends ProtectBase {
 
     let securityState: CharacteristicValue = this.hap.Characteristic.SecuritySystemCurrentState.STAY_ARM;
 
-    // Save the security system state before we wipeout the context.
+    // Save the security system state before we wipe out the context.
     if(this.accessory.context.securityState !== undefined) {
 
       securityState = this.accessory.context.securityState;
@@ -41,16 +41,12 @@ export class ProtectSecuritySystem extends ProtectBase {
     this.accessory.context.nvr = this.nvr.ufp.mac;
     this.accessory.context.securityState = securityState;
 
-    // Configure accessory information.
     this.configureInfo();
 
-    // Configure MQTT services.
     this.configureMqtt();
 
-    // Configure the security system service.
     this.configureSecuritySystem();
 
-    // Configure the security alarm.
     this.configureSecurityAlarm();
 
     return true;
@@ -286,6 +282,8 @@ export class ProtectSecuritySystem extends ProtectBase {
         continue;
       }
 
+      // The array literal above mixes strings and numbers with no explicit tuple type, so it widens to an array of "string | number" pairs and this
+      // element infers as that union. The cast is safe because this index always holds the numeric HomeKit state constant, never the liveview name string.
       availableSecurityStates.push(securityState[1] as number);
     }
 

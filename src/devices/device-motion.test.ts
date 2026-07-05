@@ -54,8 +54,8 @@ const SENSOR_MAC = "74ACB9000401";
 // The reusable construction helper: build a REAL TestBaseDevice (a concrete ProtectDevice leaf whose ctor only super()s) against the harness doubles, seeded with the
 // all-quiet sensor carrier and the recording dispatch injected through the NVR double's dispatch seam. The casts are confined to the construction seam exactly as the
 // light / chime suites do; the instance under test is the production base, running its real configureHints / configureMotionSensor / configureOccupancySensor paths. We
-// drive the wiring a family leaf would: configureHints first (the motion configurators read this.hints), then the two motion configurators with isEnabled true. The
-// userOptions thread into the REAL FeatureOptions engine, so the Enable.Motion.* strings - and only those - materialize the services.
+// drive the wiring a family leaf would: configureHints first (the motion configurators read this.hints), then the base's motion-capability configurators with isEnabled
+// true. The userOptions thread into the REAL FeatureOptions engine, so the Enable.Motion.* strings - and only those - materialize the services.
 function buildMotionDevice(harnessOptions: { userOptions?: string[] } = {}): {
   accessory: TestAccessory; device: TestBaseDevice; logEntries: TestLogEntry[]; mqtt: TestMqttClient; recording: TestRecordingDispatch;
 } {
@@ -67,7 +67,7 @@ function buildMotionDevice(harnessOptions: { userOptions?: string[] } = {}): {
   const recording = nvr.events as TestRecordingDispatch;
   const accessory = makeTestAccessory("Test Sensor", "uuid:test-sensor");
 
-  // The device-leaf mqttId now sources the bare MAC from the persisted accessory context, not this.ufp.mac, so seed it to match the projection's MAC for the topic-scope
+  // The device-leaf mqttId sources the bare MAC from the persisted accessory context, not this.ufp.mac, so seed it to match the projection's MAC for the topic-scope
   // assertions.
   accessory.context["mac"] = sensorConfig.mac;
 
@@ -249,7 +249,7 @@ describe("base ProtectDevice motion capability (device-motion concern net)", () 
       assert.ok(occupancy, "the Motion.OccupancySensor feature materializes the OccupancySensor service");
       assert.ok(loggedAt(built.logEntries, "info", "Enabling occupancy sensor."), "the enabling line logged (no smart-detect suffix on the base carrier)");
 
-      // OccupancyDetected initializes false (the A.5 characteristic the harness now carries on the OccupancySensor service).
+      // OccupancyDetected initializes false (the A.5 characteristic the harness carries on the OccupancySensor service).
       assert.equal(occupancy.getCharacteristic(Characteristic.OccupancyDetected).value, false, "OccupancyDetected initialized to false");
 
       // StatusActive reads isReachable, a non-trivial harness-driven value: the carrier is isConnected: true and CONNECTED and the client connection is healthy, so
