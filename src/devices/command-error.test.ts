@@ -4,7 +4,7 @@
  *
  * Device commands are write-through: this.device.update(payload) PATCHes the controller and throws the classified FatalError on a non-2xx, rather than returning null
  * on failure. runDeviceCommand is the one seam that converts that throw contract into the boolean every HomeKit onSet handler branches on, and the one place a command
- * failure is reported - an authorization failure earns the actionable "Administrator role" guidance, any other is reported with its underlying cause, normalized so the
+ * failure is reported - an authorization failure earns the actionable "full management role" guidance, any other is reported with its underlying cause, normalized so the
  * reported sentence ends in exactly one terminal period regardless of the error message's own punctuation. These tests pin that contract against the real production
  * method, then exercise the command paths that route through it - setStatusLed, the night-vision and access-unlock onSet reverts, and the RTSP enablement gate -
  * through the HAP test-double.
@@ -98,7 +98,7 @@ describe("runDeviceCommand (real ProtectDevice)", () => {
     const result = await instance.runCommand("turn the light on", () => Promise.reject(new ProtectAuthorizationError("forbidden")));
 
     assert.equal(result, false, "an authorization failure reports failure");
-    assert.match(onlyError(errors), /Unable to turn the light on\. Please ensure this username has the Administrator role in UniFi Protect\./);
+    assert.match(onlyError(errors), /Unable to turn the light on\. Please ensure this username has the full management role in UniFi Protect\./);
   });
 
   test("any other Error returns false and reports the action with its underlying cause", async () => {
@@ -176,7 +176,7 @@ describe("setStatusLed (real migrated command path)", () => {
     const result = await instance.setStatusLed(false);
 
     assert.equal(result, false);
-    assert.match(onlyError(errors), /Unable to turn the status indicator light off\. Please ensure this username has the Administrator role in UniFi Protect\./);
+    assert.match(onlyError(errors), /Unable to turn the status indicator light off\. Please ensure this username has the full management role in UniFi Protect\./);
   });
 });
 
@@ -217,7 +217,7 @@ describe("migrated onSet revert through the HAP test-double", () => {
     await nightVisionOnSet(harness, service)(true);
 
     assert.equal(onChar.value, false, "the failed command reverts the switch to off");
-    assert.match(onlyError(harness.errors), /Administrator role/);
+    assert.match(onlyError(harness.errors), /full management role/);
   });
 });
 
@@ -281,7 +281,7 @@ describe("access unlock onSet (real runDeviceCommand)", () => {
     await unlockOnSet(harness, service, () => Promise.reject(new ProtectAuthorizationError("forbidden")))();
 
     assert.equal(target.value, Characteristic.LockTargetState.SECURED, "an authorization failure still reverts the lock to SECURED");
-    assert.match(onlyError(harness.errors), /Unable to unlock the Access device\. Please ensure this username has the Administrator role in UniFi Protect\./);
+    assert.match(onlyError(harness.errors), /Unable to unlock the Access device\. Please ensure this username has the full management role in UniFi Protect\./);
   });
 });
 

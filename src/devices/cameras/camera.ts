@@ -1183,7 +1183,8 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
     if(!cameraChannels.length) {
 
       this.log.info("No RTSP profiles found for this camera. " +
-        "Enable at least one RTSP profile in the UniFi Protect webUI or assign an admin role to the local Protect user you configured for use with this plugin.");
+        "Enable at least one RTSP profile in the UniFi Protect webUI or assign the full management role to the local Protect user " +
+        "you configured for use with this plugin.");
 
       return false;
     }

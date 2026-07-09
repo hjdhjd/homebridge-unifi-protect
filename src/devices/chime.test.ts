@@ -275,7 +275,7 @@ describe("real ProtectChime construction and play behavior", () => {
 
     await speakerSwitch.getCharacteristic(Characteristic.On).triggerSet(true);
 
-    assert.ok(loggedAt(logEntries, "error", "Unable to play Test Ringtone. Please ensure this username has the Administrator role in UniFi Protect."),
+    assert.ok(loggedAt(logEntries, "error", "Unable to play Test Ringtone. Please ensure this username has the full management role in UniFi Protect."),
       "an authorization failure earns the admin-role guidance");
 
     await new Promise<void>((resolve) => setTimeout(resolve, 60));

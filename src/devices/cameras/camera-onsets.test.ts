@@ -209,7 +209,7 @@ describe("camera-family device.update-backed onSet handlers (camera-onsets conce
         mock.timers.tick(50);
 
         assert.equal(onChar.value, false, "the authorization-failed On set reverted the dimmer On to false");
-        assert.ok(loggedAt(built.logEntries, "error", "Unable to set night vision to custom. Please ensure this username has the Administrator role in UniFi Protect."),
+        assert.ok(loggedAt(built.logEntries, "error", "Unable to set night vision to custom. Please ensure this username has the full management role in UniFi Protect."),
           "the authorization branch earned the admin-role guidance");
       } finally {
 
@@ -431,7 +431,7 @@ describe("camera-family device.update-backed onSet handlers (camera-onsets conce
       assert.equal(built.projection.updateCalls.length, 1, "the rejecting status-LED set still attempted the command");
       assert.equal(onChar.value, true, "the camera status-LED onSet reverts no characteristic - the cached set value holds");
       assert.ok(loggedAt(built.logEntries, "error",
-        "Unable to turn the status indicator light on. Please ensure this username has the Administrator role in UniFi Protect."),
+        "Unable to turn the status indicator light on. Please ensure this username has the full management role in UniFi Protect."),
       "the authorization branch reported the admin-role guidance through the shared helper");
     });
   });

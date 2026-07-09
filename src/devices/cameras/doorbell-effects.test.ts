@@ -410,7 +410,7 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
       await volumeBulb.getCharacteristic(Characteristic.Brightness).triggerSet(25);
 
       assert.equal(built.mqtt.published.filter((entry) => entry.topic === chimeTopic).length, 0, "an authorization failure publishes nothing");
-      assert.ok(loggedAt(built.logEntries, "error", "Unable to set the chime volume. Please ensure this username has the Administrator role in UniFi Protect."),
+      assert.ok(loggedAt(built.logEntries, "error", "Unable to set the chime volume. Please ensure this username has the full management role in UniFi Protect."),
         "an authorization failure on the chime-volume write earns the admin-role guidance for the doorbell action");
     });
   });

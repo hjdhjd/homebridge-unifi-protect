@@ -237,7 +237,7 @@ describe("base ProtectDevice status-indicator switch capability (device-statusle
       await statusLedSwitch.getCharacteristic(Characteristic.On).triggerSet(true);
 
       assert.ok(loggedAt(built.logEntries, "error",
-        "Unable to turn the status indicator light on. Please ensure this username has the Administrator role in UniFi Protect."),
+        "Unable to turn the status indicator light on. Please ensure this username has the full management role in UniFi Protect."),
       "the authorization failure earns the Administrator-role guidance");
     });
   });
