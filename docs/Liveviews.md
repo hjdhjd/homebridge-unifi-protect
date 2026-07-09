@@ -6,7 +6,7 @@
 # Homebridge UniFi Protect
 
 [![Downloads](https://img.shields.io/npm/dt/homebridge-unifi-protect?color=%230559C9&logo=icloud&logoColor=%23FFFFFF&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect)
-[![Version](https://img.shields.io/npm/v/homebridge-unifi-protect?color=%230559C9&label=Homebridge%20UniFi%20Protect&logo=ubiquiti&logoColor=%23FFFFFF&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect)
+[![Version](https://img.shields.io/npm/v/homebridge-unifi-protect?color=%230559C9&label=Latest%20Version&logo=ubiquiti&logoColor=%23FFFFFF&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect)
 [![UniFi Protect@Homebridge Discord](https://img.shields.io/discord/432663330281226270?color=0559C9&label=Discord&logo=discord&logoColor=%23FFFFFF&style=for-the-badge)](https://discord.gg/QXqfHEW)
 [![verified-by-homebridge](https://img.shields.io/badge/homebridge-verified-blueviolet?color=%23491F59&style=for-the-badge&logoColor=%23FFFFFF&logo=homebridge)](https://github.com/homebridge/homebridge/wiki/Verified-Plugins)
 
@@ -29,7 +29,7 @@ Well, the Protect webUI already has a nice feature called liveviews that allows 
 
 Finally, you might want to create a way to toggle multiple cameras at once in the form of a switch, either in addition to, or instead of, a security system accessory, so we support that too to give you as much flexibility as you'd like in tailoring your experience.
 
-Please note: **by design, you must have at least one camera configured in a given liveview scene. The reason for this is to ensure there is no ambiguity regarding which cameras will and will not have motion detection enabled (for HBUP and HomeKit purposes) at any given time. The `Off` state in the [security system](#security-system) accessory is intentionally the only one that will universally disable motion detection across *all* cameras (presuming you don't override this behavior as described below). HBUP will ignore any liveview scenes with no cameras in them.**
+Please note: **by design, you must have at least one camera configured in a given liveview scene. The reason for this is to ensure there is no ambiguity regarding which cameras will and will not have motion detection enabled (for HBUP and HomeKit purposes) at any given time. The `Off` state in the [security system](#security-system) accessory is intentionally the only one that will universally disable motion detection across *all* cameras (presuming you don't override this behavior as described below). A camera-less liveview scene still surfaces, but it has nothing to act on...it turns motion detection on or off for exactly zero cameras, so you'll want at least one camera in each.**
 
 ### <A NAME="security-system"></A>Configuring the Liveview Security System Feature
 
@@ -40,9 +40,9 @@ First, we need to understand the security system accessory in [HomeKit](https://
 | **Home**              | Your home is occupied and the residents are active.
 | **Away**              | Your home is unoccupied.
 | **Night**             | Your home is occupied, and the residents are sleeping.
-| **Off**               | disarmed.
+| **Off**               | Disarmed.
 
-Next, you have the UniFi Protect *Liveview* functionality in the Protect webUI. You can manage your liveviews by going to `https://your-protect-controller/protect/liveview`. You can add, remove, or modify any liveviews you have setup in this interface.
+Next, you have the UniFi Protect *Liveview* functionality in the Protect webUI. You'll find it by opening your Protect controller in a browser and looking for the *Multiviews* section...Ubiquiti has renamed the feature from *liveviews* to *multiviews*, but it's the same thing, and HBUP - along with this documentation and the plugin's feature options - continues to call them liveviews. You can add, remove, or modify any liveviews you have setup in this interface.
 
 Now, to put all the pieces together. What `homebridge-unifi-protect` does is:
 

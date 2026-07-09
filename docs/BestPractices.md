@@ -6,7 +6,7 @@
 # Homebridge UniFi Protect
 
 [![Downloads](https://img.shields.io/npm/dt/homebridge-unifi-protect?color=%230559C9&logo=icloud&logoColor=%23FFFFFF&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect)
-[![Version](https://img.shields.io/npm/v/homebridge-unifi-protect?color=%230559C9&label=Homebridge%20UniFi%20Protect&logo=ubiquiti&logoColor=%23FFFFFF&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect)
+[![Version](https://img.shields.io/npm/v/homebridge-unifi-protect?color=%230559C9&label=Latest%20Version&logo=ubiquiti&logoColor=%23FFFFFF&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect)
 [![UniFi Protect@Homebridge Discord](https://img.shields.io/discord/432663330281226270?color=0559C9&label=Discord&logo=discord&logoColor=%23FFFFFF&style=for-the-badge)](https://discord.gg/QXqfHEW)
 [![verified-by-homebridge](https://img.shields.io/badge/homebridge-verified-blueviolet?color=%23491F59&style=for-the-badge&logoColor=%23FFFFFF&logo=homebridge)](https://github.com/homebridge/homebridge/wiki/Verified-Plugins)
 
@@ -17,11 +17,11 @@
 `homebridge-unifi-protect` is a [Homebridge](https://homebridge.io) plugin that provides HomeKit support to the [UniFi Protect](https://ui.com/camera-security) device ecosystem. [UniFi Protect](https://ui.com/camera-security) is [Ubiquiti's](https://www.ui.com) video security platform, with rich camera, doorbell, and NVR controller hardware options for you to choose from, as well as an app which you can use to view, configure and manage your video camera and doorbells.
 
 ### Best Practices
-I firmly believe that good software is opinionated. It should have a strong sense of what it's [north star is](https://github.com/hjdhjd/homebridge-unifi-protect#why), and what the user experience journey looks like. My north stars for `homebridge-unifi-protect`:
+I firmly believe that good software is opinionated. It should have a strong sense of what its [north star is](https://github.com/hjdhjd/homebridge-unifi-protect#why), and what the user experience journey looks like. My north stars for `homebridge-unifi-protect`:
 
   * Create the very best HomeKit user experience for UniFi Protect users by making Protect integration as seamless as possible within the HomeKit ecosystem.
-  * Enable to users to get up and running with minimal required end user configuration and have things *just work*.
-  * Have things work in as native a manner as possible and honor the *intent* behind the design decisions Apple has chosen to make with HomeKit. In the areas where I've provided functionality that deviates from that principle, it will always disabled by default unless a user explicitly wishes to use that capability.
+  * Enable users to get up and running with minimal required end user configuration and have things *just work*.
+  * Have things work in as native a manner as possible and honor the *intent* behind the design decisions Apple has chosen to make with HomeKit. In the areas where I've provided functionality that deviates from that principle, it will always be disabled by default unless a user explicitly wishes to use that capability.
 
 These best practices will evolve over time, but I wanted to provide some thoughts on some of the design choices I've made, and how you can enhance and tailor your own experience.
 
@@ -33,19 +33,19 @@ If you want to optimize performance and responsiveness of this plugin, you shoul
 #### User Accounts
 **Importance: high**
 
-You **must** create a local user account in order for `homebridge-unifi-protect` to work correctly. You **should** enable this local use to have the *full management role* for UniFi Protect.
+You **must** create a local user account in order for `homebridge-unifi-protect` to work correctly. You **should** enable this local user to have the *full management role* for UniFi Protect.
 
-But wait, you're thinking, am I just giving a random plugin the ability to do crazy things on my system?! Nope. The *full management role* in UniFi Protect allows HBUP the ability to change individual camera settings, create liveviews, and do a handful of other relatively benign things. You're not giving this local user account the keys to your kingdom, but you are allowing the account to directly configure the UniFi Protect controller to more optimally work with `homebridge-unifi-protect`. If you don't feel comfortable doing so, that's always your perrogative. HBUP will log warnings when things aren't configured as optimally as it would prefer to, or when it encounters permissions issues due to it's role.
+But wait, you're thinking, am I just giving a random plugin the ability to do crazy things on my system?! Nope. The *full management role* in UniFi Protect allows HBUP the ability to change individual camera settings, create liveviews, and do a handful of other relatively benign things. You're not giving this local user account the keys to your kingdom, but you are allowing the account to directly configure the UniFi Protect controller to more optimally work with `homebridge-unifi-protect`. If you don't feel comfortable doing so, that's always your prerogative. HBUP will log warnings when things aren't configured as optimally as it would prefer to, or when it encounters permissions issues due to its role.
 
 #### Default Settings
 **Importance: high**
 
-In short: **start with the HBUP defaults.** The defaults exist for a reason and have been thought through with intention. I would strongly suggestion you resist the urge to tweak or experiment with all the settings you can adjust in HBUP until you're up and running - validate streaming, validate motion detection, etc. Things should *just work* by default. If they do, then you can begin tailoring the experience to your liking. I would recommend playing with a single feature at a time to give yourself the opportunity to familiarize yourself with HBUP.
+In short: **start with the HBUP defaults.** The defaults exist for a reason and have been thought through with intention. I would strongly suggest you resist the urge to tweak or experiment with all the settings you can adjust in HBUP until you're up and running - validate streaming, validate motion detection, etc. Things should *just work* by default. If they do, then you can begin tailoring the experience to your liking. I would recommend playing with a single feature at a time to give yourself the opportunity to familiarize yourself with HBUP.
 
 #### HomeKit Secure Video
 **Importance: medium**
 
-[HomeKit Secure Video](https://support.apple.com/guide/iphone/set-up-security-cameras-iph7bc5df9d9/ios) (HKSV) is one of the most used features in HBUP. It is also, unsurprisingly, CPU and and GPU intensive. The more cameras and the more motion events you have in your environment, the more HKSV analysis you will have. You can read more about [HKSV in HBUP](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/HomeKitSecureVideo.md) if you'd like to dive in further.
+[HomeKit Secure Video](https://support.apple.com/guide/iphone/set-up-security-cameras-iph7bc5df9d9/ios) (HKSV) is one of the most used features in HBUP. It is also, unsurprisingly, CPU and GPU intensive. The more cameras and the more motion events you have in your environment, the more HKSV analysis you will have. You can read more about [HKSV in HBUP](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/HomeKitSecureVideo.md) if you'd like to dive in further.
 
 For the best HKSV experience:
 
@@ -80,9 +80,9 @@ Go into iOS, iPadOS, or macOS and turn on notifications for all your cameras, *a
 
 Enabling notifications on all your cameras will ensure that iOS is alerted to when motion occurs and, crucially, *updates the snapshots of the cameras in the background*. What this means for you is that your HomeKit experience will feel more responsive and faster, because anytime there's a motion event, the Home app will refresh that image automatically in the background.
 
-"But wait!" you say..."how do I not get spammed?!" Under each notification setting you'll see additional options for `Time` and `People`. **This** is where you can set how often you want to your iPhone to alert you to a motion event. The options are quite robust and very flexible. So...if you only want to be alerted when you aren't home, use the `People` option to only alert you when you (or everyone in your house if you choose) aren't home.
+"But wait!" you say..."how do I not get spammed?!" Under each notification setting you'll see additional options for `Time` and `People`. **This** is where you can set how often you want your iPhone to alert you to a motion event. The options are quite robust and very flexible. So...if you only want to be alerted when you aren't home, use the `People` option to only alert you when you (or everyone in your house if you choose) aren't home.
 
-What this allows you to do is to have your cake and eat it too - when the Home app is alerted that a motion event has occurred, it will refresh it's snapshot in the background, every time. You only get alerted with a push notification if you really wanted to be and you can customize those notifications in flexible ways within the Home app.
+What this allows you to do is to have your cake and eat it too - when the Home app is alerted that a motion event has occurred, it will refresh its snapshot in the background, every time. You only get alerted with a push notification if you really wanted to be and you can customize those notifications in flexible ways within the Home app.
 
 ##### Motion Switches
 Motion switches exist as a way to tell HBUP to stop sending motion event updates to HomeKit when Protect detects them. There are situations where this may be what you really want to do so, but for the most part, this isn't really useful. What most users tend to want is control over the push notifications they receive on the iPhones and iPads. That's best done within the Home app notification settings for the camera, and not by disabling event updates from the camera to HomeKit. That's why, by default, motion switches are disabled - most users don't need them and they degrade from a responsive user experience in the Home app itself.

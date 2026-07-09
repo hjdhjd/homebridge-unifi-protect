@@ -6,7 +6,7 @@
 # Homebridge UniFi Protect
 
 [![Downloads](https://img.shields.io/npm/dt/homebridge-unifi-protect?color=%230559C9&logo=icloud&logoColor=%23FFFFFF&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect)
-[![Version](https://img.shields.io/npm/v/homebridge-unifi-protect?color=%230559C9&label=Homebridge%20UniFi%20Protect&logo=ubiquiti&logoColor=%23FFFFFF&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect)
+[![Version](https://img.shields.io/npm/v/homebridge-unifi-protect?color=%230559C9&label=Latest%20Version&logo=ubiquiti&logoColor=%23FFFFFF&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect)
 [![UniFi Protect@Homebridge Discord](https://img.shields.io/discord/432663330281226270?color=0559C9&label=Discord&logo=discord&logoColor=%23FFFFFF&style=for-the-badge)](https://discord.gg/QXqfHEW)
 [![verified-by-homebridge](https://img.shields.io/badge/homebridge-verified-blueviolet?color=%23491F59&style=for-the-badge&logoColor=%23FFFFFF&logo=homebridge)](https://github.com/homebridge/homebridge/wiki/Verified-Plugins)
 
@@ -18,53 +18,55 @@
 
 ### Protect Controller Autoconfiguration
 
-This plugin will attempt to autoconfigure all devices it detects attached to a UniFi Protect controller in order to create a more seamless end user experience. In order to do so, the UniFi Protect controller local user account that you configure this plugin to use utilizes the full management role enabled for UniFi Protect. Enabling the full management role is *optional* and primarily required if you want this plugin to configure your UniFi Protect controller to make all RTSP streams available and providing some of the functionality you can selectively enable in additional feature options. You can also choose to manually enable all RTSP streams on all cameras yourself, if you prefer.
+This plugin autoconfigures the devices it finds on a UniFi Protect controller so that everything works as seamlessly as possible, with minimal effort on your part. Most of that comes down to one thing: making sure every camera has at least one RTSP stream enabled, which is what HomeKit ultimately needs.
 
-Why is enabling all RTSP streams a good idea? There's no performance penalty on the Protect controller end. More importantly, it provides flexibility in the stream quality that's available to use in HBUP which you can further tailor in a granular way using feature options. For this plugin to work correctly, you will need to enable at least one RTSP stream on each camera that you want to see in HomeKit.
+You've got two ways to get there. Give the local user account you configure HBUP with the *full management role* in UniFi Protect, and HBUP will enable the RTSP streams for you...along with a handful of other niceties you can selectively turn on through feature options. That role is entirely optional, though. If you'd rather keep the account's permissions to a minimum, just enable at least one RTSP stream on each camera you want in HomeKit yourself, and you're all set.
 
-Which leads to the final point on autoconfiguration - ***sane*** defaults. [This plugin's north star](https://github.com/hjdhjd/homebridge-unifi-protect#readme) is to make it as easy and seamless to integrate with HomeKit as possible in order to provide a terrific user experience -- and that includes great video streaming performance. By default, this plugin dynamically selects the best streaming quality to use by understanding HomeKit's limitations and using the RTSP profile (High, Medium, or Low) that most closely resembles the quality being requested by the streaming client.
+Why enable all the RTSP streams? There's no performance penalty on the Protect controller for having them on, and it gives HBUP more quality levels to work with...which you can then tailor in a granular way through feature options. Whichever route you take, keep the one hard requirement in mind: at least one RTSP stream enabled on every camera you want to see in HomeKit.
 
-Of course, you can override which RTSP profiles are used in your specific environment. See the video section of the HBUP feature options webUI for more detail.
+### How HBUP Sources Your Video
+
+By default, HBUP keeps a small rolling *timeshift buffer* of each camera's livestream...think of it as a few seconds of continuously updated video that's always ready to go. That single buffer feeds everything that needs your camera's video: your live views in the Home app, HomeKit Secure Video event recordings, and snapshots. Keeping one shared, always-warm buffer is what lets a live view start almost instantly, and it's what lets HKSV capture the moments *before* a motion event rather than starting cold. It's on by default.
+
+The alternative is to stream each live view directly from the camera over RTSP, on demand. If you'd prefer that, disable the `Video.Timeshift.Livestream` feature option under the *Timeshift Buffer* section, and live views will come straight from the camera over RTSP instead. HomeKit Secure Video and snapshots keep using the buffer either way, so opting live views out of the buffer doesn't change how your events are recorded.
+
+One caveat: a camera that streams AV1 can't use the direct-RTSP path...the bundled version of FFmpeg can't carry AV1 over RTSP. For an AV1 camera the buffer is the only way to get a live view, so leave `Video.Timeshift.Livestream` enabled (it is, by default). If you turn it off on an AV1 camera, HBUP will tell you exactly that in the log.
 
 ### Transcoding and Transmuxing
 
-Consistent with the ethos of this plugin, HBUP always strives to default to combining the highest possible quality combined with the best quality that can be delivered within the performance capabilities of the hardware environment HBUP is run on.
+Consistent with the ethos of this plugin, HBUP always strives to combine the highest possible quality with the best performance the hardware it's running on can deliver.
 
 Briefly:
 
-* *Transcoding* involves a CPU-intensive conversion of a video stream from one format or quality level to another. The process can be made significantly faster (with caveats and compromises) and less resource intensive through the use of GPU hardware acceleration.
-* *Transmuxing* involves repackaging a video stream from one container format or another. No change in format or quality occurs. Notably, it is not a resource intensive activity.
+* *Transcoding* involves a CPU-intensive conversion of a video stream from one format or quality level to another. It can be made significantly faster (with caveats and compromises) and less resource-intensive through the use of GPU hardware acceleration.
+* *Transmuxing* involves repackaging a video stream from one container format to another. No change in format or quality occurs, and notably, it isn't a resource-intensive activity.
 
-#### Transcoding Customization
+#### Customizing How HBUP Transcodes
 
-HomeKit bitrates are notoriously conservative from a bandwidth and quality perspective - they're downright low and result can result in far less than ideal video quality. You can further customize the bitrates used for local and non-local streaming when transcoded, using HBUP's feature options.
+HomeKit bitrates are notoriously conservative from a bandwidth and quality perspective...they're downright low, and can result in far less than ideal video quality. You can customize the bitrates HBUP uses for local and non-local streaming when transcoding through the appropriate [feature options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md#video).
 
-The default behavior can be tailored to your preferences, using the appropriate [feature options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md#video).
+#### How HBUP Selects Stream Quality
 
-#### How HBUP Stream Quality Selection Works When Transcding
-When transcoding, these are the rules used to determine which Protect camera streams (Protect has three stream qualities available: High, Medium, and Low) are used for transcoding.
+Protect offers up to three stream qualities per camera - High, Medium, and Low. When HBUP transcodes, here's how it picks which one to draw from.
 
-##### Livestreams
+For live views:
 
-In order, the following occurs:
+* On a hardware-accelerated platform, HBUP starts from the highest-quality stream available...fixed-function hardware transcoders (most GPUs) simply do better work with more to chew on.
+* On a platform without hardware acceleration, HBUP matches the quality being requested as closely as it can, with a slight bias toward going higher rather than lower, and hands that to the software transcoder.
 
-* If you have HomeKit Secure Video enabled, we will always use the existing video that's being captured through the Protect API. The quality setting used for HKSV event recording will be the input quality for a HomeKit livestream session. You can change this behavior through disabling the use of the livestream API using the appropriate [feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md#video). If use of the Protect API has been disabled for livestreams, or you aren't using HKSV, keep reading.
-* If you’re on a hardware accelerated platform, we always use the highest quality camera stream that's available to us as a starting point when transcoding. It always yields better performance and quality results for fixed-function hardware transcoders (e.g. most GPUs).
-* If you’re not on a hardware accelerated platform, we always try to match the quality that’s being requested, with a bias of going higher versus lower, and then passing that along to the software transcoder.
+For HomeKit Secure Video event recording:
 
-##### HomeKit Secure Video Event Recording
-
-* By default, the highest available stream quality is used to give you the best event recording output you can get before HomeKit further processes and compresses it.
-* On Raspberry Pi platform, the software interface to the onboard GPU transcoder has issues dealing with very high bitrate stream quality and HBUP will default to a starting point of **Medium** because of those capability constraints.
+* By default, HBUP feeds the buffer from the highest available stream quality, so your recordings start from the best source available before HomeKit does its own processing and compression.
+* On pixel-constrained hardware like a Raspberry Pi, HBUP caps that source at 1080p, because the Pi's onboard transcoder struggles with very high bitrate streams.
 
 #### Customizing Defaults
-The behavior described above can be tailored to your environment and taste through the HBUP feature options webUI. Specifically, you can:
 
-* Choose to not use the Protect livestream API for livestreaming. **Default: use the Protect livestream API when possible.**
-* Choose to transmux instead of transcode for local clients or not. **Default: transcode local clients.**
-* Choose to transmux instead of transcode for high-latency / remote clients. **Default: transcode high-latency / remote clients.**
-* Which Protect stream qualities to make available for HBUP. **Default: all stream qualities are available (High, Medium, and Low) that are configured on the Protect camera.**
-* Bypass the intelligence applied by HBUP when selecting which Protect stream quality to use for transcoding livestreams by forcing the use of a specific Protect stream quality. **Default: HBUP will decide based on the transcoding rules above.**
-* Change the Protect stream quality used for HomeKit Secure Video event recording. **Default: HBUP will use the highest quality Protect stream available.**
+Everything above can be tailored to your environment and taste in the HBUP feature options webUI. Specifically, you can:
 
-***In general, I would discourage most users from changing the defaults unless they have a specific need to do so. But if you're reading this, probably like to tinker with things. 😄 I have taken a lot of time and care to design these behaviors and defaults - they really do exist for good reasons.***
+* Stream live views directly from the camera over RTSP instead of from the buffer. **Default: buffer-backed live viewing (`Video.Timeshift.Livestream`, on).**
+* Transmux instead of transcode for local clients. **Default: transcode local clients.**
+* Transmux instead of transcode for high-latency / remote clients. **Default: transcode high-latency / remote clients.**
+* Force a specific Protect stream quality for direct-RTSP live views, using `Video.Rtsp.Only.High` / `Medium` / `Low`. **Default: HBUP decides, using the rules above.**
+* Force the stream quality the timeshift buffer feeds from - the source HKSV, buffer-backed live views, and snapshots all draw on - using `Video.Timeshift.Only.High` / `Medium` / `Low`. **Default: the highest available quality.**
+
+***In general, I'd discourage most people from changing these defaults unless they have a specific need to. But if you're reading this, you probably like to tinker. 😄 I've taken a lot of time and care to design these behaviors and defaults...they really do exist for good reasons.***

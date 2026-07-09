@@ -4,6 +4,7 @@
 [![homebridge-unifi-protect: Native HomeKit support for UniFi Protect](https://raw.githubusercontent.com/hjdhjd/homebridge-unifi-protect/main/images/homebridge-unifi-protect.svg)](https://github.com/hjdhjd/homebridge-unifi-protect)
 
 # Homebridge UniFi Protect
+
 [![Downloads](https://img.shields.io/npm/dt/homebridge-unifi-protect?color=%230559C9&logo=icloud&logoColor=%23FFFFFF&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect)
 [![Version](https://img.shields.io/npm/v/homebridge-unifi-protect?color=%230559C9&label=Latest%20Version&logo=ubiquiti&logoColor=%23FFFFFF&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect)
 [![UniFi Protect@Homebridge Discord](https://img.shields.io/discord/432663330281226270?color=0559C9&label=Discord&logo=discord&logoColor=%23FFFFFF&style=for-the-badge)](https://discord.gg/QXqfHEW)
@@ -13,7 +14,7 @@
 </DIV>
 </SPAN>
 
-`homebridge-unifi-protect` is a [Homebridge](https://homebridge.io) plugin that provides HomeKit support to the [UniFi Protect](https://ui.com/camera-security) device ecosystem. [UniFi Protect](https://ui.com/us/camera-security) is [Ubiquiti's](https://www.ui.com) video security platform, with rich camera, doorbell, and NVR controller hardware options for you to choose from, as well as an app which you can use to view, configure and manage your video camera and doorbells.
+`homebridge-unifi-protect` is a [Homebridge](https://homebridge.io) plugin that provides HomeKit support to the [UniFi Protect](https://ui.com/camera-security) device ecosystem. [UniFi Protect](https://ui.com/camera-security) is [Ubiquiti's](https://www.ui.com) video security platform, with rich camera, doorbell, and NVR controller hardware options for you to choose from, as well as an app which you can use to view, configure and manage your video camera and doorbells.
 
 ## <A NAME="why"></A>Why Use This Plugin For UniFi Protect Support In HomeKit?
 This plugin attempts to bridge a gap in the UniFi Protect ecosystem by providing native HomeKit support on par with what you would expect from a first-party native HomeKit solution. My north star has always been to create a plugin that *just works* with minimal required configuration by you to get up and running. All you need is the hostname or IP address of the Protect controller and local user credentials on the Protect controller. That's it. The defaults are sane and correct for the vast majority of people. For the adventurous, there are rich capabilities you can explore to enable you to further tailor your experience. All provided through an elegant webUI accessed through the Homebridge Config UI that allows you to explore all of the more sophisticated capabilities of this plugin in an approachable way.
@@ -25,13 +26,13 @@ For the more technically inclined - this plugin has continued to pioneer the Hom
 ### Features
 - ***Easy* configuration - all you need is your UniFi Protect controller IP address, username, and password to get started.** The defaults work quite well for the vast majority of users. When you want more, there are [additional options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md) you can play with, if you choose.
 
-- **Full HomeKit support for the UniFi Protect ecosystem.** All generally available UniFi Protect devices are supported, including cameras (with tamper detection on supported models), chimes, doorbells, lights, sensors (including SuperLink sensors), and Viewports.
+- **Full HomeKit support for the UniFi Protect ecosystem.** All generally available UniFi Protect devices are supported, including cameras (with tamper detection and ambient light sensors on supported models), chimes, doorbells, lights, sensors (including the growing SuperLink family, such as fobs, glass break sensors, and relays), and Viewports.
 
 - **[Complete HomeKit Secure Video support for all UniFi Protect cameras.](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/HomeKitSecureVideo.md)** Complete HomeKit Secure Video support, without the need for additional plugins or software beyond FFmpeg. Another community first - all without the need for additional tools to get a complete solution. Third party cameras using an AI Port are also fully supported.
 
 - **Third-party camera support.** ONVIF-compatible third-party cameras added to Protect are supported with some constraints: no motion sensor is exposed by the Protect controller, which means HKSV is unavailable for these cameras. However, if a third-party camera is paired with an AI Port, full HKSV support becomes available as the AI Port provides the necessary motion detection capabilities.
 
-- **Incredibly high performance.** I've spent the time to optimize the video streaming experience to ensure it feels very responsive, and *just works*. For those that have hardware-accelerated CPUs and GPUs, live video stream load times using the Home app on iOS average at 0.2-0.3 seconds on a day-to-day basis, which is often better than the native UniFi Protect app! Supported hardware-accelerated platforms are currently: Apple Macs (both Intel and Apple Silicon), Intel Quick Sync Video-enabled CPUs, and Raspberry Pi 4. When not using hardware acceleration, or on slower systems, you can expect live video streams to load within 1-2 seconds.
+- **Incredibly high performance.** I've spent the time to optimize the video streaming experience to ensure it feels very responsive, and *just works*. HBUP keeps a standing timeshift buffer of each camera that powers live viewing, HomeKit Secure Video, and snapshots...a big part of why live views start so quickly. For those that have hardware-accelerated CPUs and GPUs, live video stream load times using the Home app on iOS average at 0.2-0.3 seconds on a day-to-day basis, which is often better than the native UniFi Protect app! Supported hardware-accelerated platforms are currently: Apple Macs (both Intel and Apple Silicon), Intel Quick Sync Video-enabled CPUs, and Raspberry Pi 4. When not using hardware acceleration, or on slower systems, you can expect live video streams to load within 1-2 seconds.
 
 - **[Full UniFi Protect Doorbell support.](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Doorbell.md).** This plugin provides complete support for [UniFi Protect Doorbells](https://store.ui.com/us/en?category=cameras-doorbells). We support all features of UniFi Protect doorbells including - doorbell rings, two-way audio, package camera support, and the use of the onboard LCD screen for messages. Two-way audio has caveats you should be aware of.
 
@@ -51,7 +52,7 @@ For the more technically inclined - this plugin has continued to pioneer the Hom
 
 - **MQTT support.** [MQTT](https://mqtt.org) support is available for those that want to [make UniFi Protect accessible to an MQTT broker](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/MQTT.md).
 
-- **UniFi Access integration.** For UniFi Access readers that are paired with a Protect camera on the same controller, HBUP exposes a lock accessory allowing you to unlock the door from HomeKit. Note: due to Protect API limitations, only unlocking is supported - locking must be done through the Access app or automatically by the Access system.
+- **UniFi Access integration.** For UniFi Access readers paired with a Protect camera on the same controller, HBUP exposes a lock accessory allowing you to unlock the door from HomeKit. Note: due to Protect API limitations, only unlocking is supported - locking must be done through the Access app or automatically by the Access system. A UniFi Access intercom's doorbell press also surfaces in HomeKit as a doorbell ring.
 
 - **And more...**
 
@@ -70,11 +71,12 @@ I hope to continue to work on this one to get AEC working for two-way audio. [Yo
 
 * Additional Topics
   * [Feature Options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md): granular options to allow you to set the camera quality individually, show or hide specific cameras, controllers, and more.
-  * [Autoconfiguration](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Autoconfiguration.md): how Protect controller autoconfiguration, transcoding and transmuxing work in HBUP, and why.
+  * [Autoconfiguration](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Autoconfiguration.md): how HBUP sources and selects your video (the timeshift buffer, stream selection, transcoding, and transmuxing), autoconfigures your controller, and why.
   * [Audio Options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/AudioOptions.md): options to further tailor how audio is handled from Protect, such as background noise reduction.
   * [Doorbells](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Doorbell.md): how UniFi Protect doorbell support works in this plugin, and how to use all the available features including doorbell messages.
   * [HomeKit Secure Video](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/HomeKitSecureVideo.md): how HomeKit Secure Video support works in this plugin with UniFi Protect.
   * [Liveview Scenes](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Liveviews.md): use the UniFi Protect liveviews feature (available in the UniFi Protect controller webUI) to create motion-detection scenes.
+  * [Viewports](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Viewports.md): control what a UniFi Protect Viewport displays on screen, right from HomeKit.
   * [MQTT](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/MQTT.md): how to configure MQTT support.
   * [Plugin Configuration Reference](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/ConfigurationReference.md): complete list of configuration options available in this plugin.
 

@@ -6,7 +6,7 @@
 # Homebridge UniFi Protect
 
 [![Downloads](https://img.shields.io/npm/dt/homebridge-unifi-protect?color=%230559C9&logo=icloud&logoColor=%23FFFFFF&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect)
-[![Version](https://img.shields.io/npm/v/homebridge-unifi-protect?color=%230559C9&label=Homebridge%20UniFi%20Protect&logo=ubiquiti&logoColor=%23FFFFFF&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect)
+[![Version](https://img.shields.io/npm/v/homebridge-unifi-protect?color=%230559C9&label=Latest%20Version&logo=ubiquiti&logoColor=%23FFFFFF&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect)
 [![UniFi Protect@Homebridge Discord](https://img.shields.io/discord/432663330281226270?color=0559C9&label=Discord&logo=discord&logoColor=%23FFFFFF&style=for-the-badge)](https://discord.gg/QXqfHEW)
 [![verified-by-homebridge](https://img.shields.io/badge/homebridge-verified-blueviolet?color=%23491F59&style=for-the-badge&logoColor=%23FFFFFF&logo=homebridge)](https://github.com/homebridge/homebridge/wiki/Verified-Plugins)
 
@@ -18,7 +18,7 @@
 
 ### Configuration Reference
 
-This is a complete reference of the HBUP settings JSON. The defaults should work well for almost everyone and configuration of this plugin should be done exclusively within the HBUP webUI and not manually editing JSONs which can be error-prone and lead to undesired behavior.
+You shouldn't need this for day-to-day use...the defaults suit almost everyone, and the right place to configure HBUP is the webUI, where every option is validated for you. Hand-editing the JSON in your Homebridge `config.json` is error-prone and easy to get subtly wrong. This page is here for when you come across a setting and want to know exactly what it does.
 
 ```js
 "platforms": [
@@ -53,18 +53,22 @@ This is a complete reference of the HBUP settings JSON. The defaults should work
 ]
 ```
 
-| Fields                 | Description                                             | Default                                                                               | Required |
-|------------------------|---------------------------------------------------------|---------------------------------------------------------------------------------------|----------|
-| platform               | Must always be `UniFi Protect`.                         | UniFi Protect                                                                         | Yes      |
-| address                | Host or IP address of your UniFi Protect controller.    |                                                                                       | Yes      |
-| username               | Your UniFi Protect username.                            |                                                                                       | Yes      |
-| password               | Your UniFi Protect password.                            |                                                                                       | Yes      |
-| overrideAddress        | Override the address used when HBUP accesses camera URLs.|                                                                                      | No       |
-| doorbellMessages       | Configure [doorbell messages](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Doorbell.md) for your UniFi Protect controller. | [] | No |
-| ringDelay              | Delay between doorbell rings. Setting this to a non-zero value will prevent multiple rings of a doorbell over the specified duration. | 0                                                                                     | No       |
-| videoProcessor         | Specify path of ffmpeg. HBUP uses it's own ffmpeg version, and in general you should not specify a different one unless there is a specific need. | builtin or falling back to "ffmpeg" in your PATH. | No       |
-| options                | Configure plugin [feature options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md).   | []                 | No       |
-| name                   | Controller name to use for homebridge logging purposes. | UniFi Protect controller name                                                         | No       |
-| mqttUrl                | The URL of your MQTT broker. **This must be in URL form**, e.g.: `mqtt://user:password@1.2.3.4`. |                                              | No       |
-| mqttTopic              | The base topic to use when publishing MQTT messages.    | "unifi/protect"                                                                       | No       |
-| verboseFfmpeg          | Enable additional logging for video streaming.          | false                                                                                 | No       |
+The settings come in two groups: platform-level fields that apply to the whole plugin, and controller-level fields inside each entry of the `controllers` array. The `Level` column below tells you which is which (note that `name` exists at both levels, meaning two different things).
+
+| Field            | Level      | Description                                             | Default                          | Required |
+|------------------|------------|---------------------------------------------------------|----------------------------------|----------|
+| platform         | Platform   | Must always be `UniFi Protect`.                         | UniFi Protect                    | Yes      |
+| name             | Platform   | An optional name for the plugin instance, shown in the Homebridge logs. | UniFi Protect    | No       |
+| controllers      | Platform   | The list of UniFi Protect controllers to connect to. Each entry takes the controller-level fields below. |  | Yes      |
+| videoProcessor   | Platform   | Path to FFmpeg. HBUP bundles its own FFmpeg build, and in general you shouldn't point this at a different one unless you have a specific need. | builtin, or falling back to `ffmpeg` in your PATH | No |
+| verboseFfmpeg    | Platform   | Enable additional logging for video streaming.          | false                            | No       |
+| ringDelay        | Platform   | Delay between doorbell rings. Setting this to a non-zero value will prevent multiple rings of a doorbell over the specified duration. | 0 | No |
+| options          | Platform   | Configure plugin [feature options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md). | [] | No |
+| name             | Controller | A name for the controller, used for Homebridge logging purposes. | the controller's own name | No |
+| address          | Controller | Host or IP address of your UniFi Protect controller.    |                                  | Yes      |
+| username         | Controller | The username of the local UniFi Protect account you use with HBUP. |                       | Yes      |
+| password         | Controller | The password of that local UniFi Protect account.       |                                  | Yes      |
+| overrideAddress  | Controller | Override the address HBUP uses when livestreaming from the controller...useful in VPN and remote-access scenarios. Unavailable for stacked Protect controller configurations. |  | No |
+| doorbellMessages | Controller | Configure [doorbell messages](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Doorbell.md) for this controller. | [] | No |
+| mqttUrl          | Controller | The URL of your MQTT broker. **This must be in URL form**, e.g.: `mqtt://user:password@1.2.3.4`. |          | No       |
+| mqttTopic        | Controller | The base topic to use when publishing MQTT messages.    | unifi/protect                    | No       |

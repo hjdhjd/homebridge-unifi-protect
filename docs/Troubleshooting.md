@@ -6,7 +6,7 @@
 # Homebridge UniFi Protect
 
 [![Downloads](https://img.shields.io/npm/dt/homebridge-unifi-protect?color=%230559C9&logo=icloud&logoColor=%23FFFFFF&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect)
-[![Version](https://img.shields.io/npm/v/homebridge-unifi-protect?color=%230559C9&label=Homebridge%20UniFi%20Protect&logo=ubiquiti&logoColor=%23FFFFFF&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect)
+[![Version](https://img.shields.io/npm/v/homebridge-unifi-protect?color=%230559C9&label=Latest%20Version&logo=ubiquiti&logoColor=%23FFFFFF&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect)
 [![UniFi Protect@Homebridge Discord](https://img.shields.io/discord/432663330281226270?color=0559C9&label=Discord&logo=discord&logoColor=%23FFFFFF&style=for-the-badge)](https://discord.gg/QXqfHEW)
 [![verified-by-homebridge](https://img.shields.io/badge/homebridge-verified-blueviolet?color=%23491F59&style=for-the-badge&logoColor=%23FFFFFF&logo=homebridge)](https://github.com/homebridge/homebridge/wiki/Verified-Plugins)
 
@@ -25,10 +25,13 @@ Before going further, there are some quick checklist activities you should check
 * Are you running a beta version of iOS, iPadOS, macOS, tvOS, or UniFi Protect?
   * If so, I'm afraid you're on your own. **`homebridge-unifi-protect` does not support any beta versions of Apple or Ubiquiti platforms**. Beta software is beta for a reason - it's under active development and often has bugs or issues. Ubiquiti's beta firmwares in particular, I've found, to vary wildly in usability and quality.
 
+* Are you running Homebridge 2.0 or later?
+  * HBUP 8 requires it. A Homebridge 1.x install won't load the plugin at all, so if HBUP simply isn't showing up after upgrading, this is the very first thing to check. You'll also want to be on Node 22.20 or later.
+
 * Are you running on the latest versions of `Homebridge` and `homebridge-unifi-protect`?
 
 * Are you running in a firewalled environment?
-  * It's popular in some circles to have a separate network at home for your IoT devices . Unfortunately, this is also a common source of issues relating to video streaming, almost always related to firewall rules or mDNS issues.
+  * It's popular in some circles to have a separate network at home for your IoT devices. Unfortunately, this is also a common source of issues relating to video streaming, almost always related to firewall rules or mDNS issues.
 
 * Have you reviewed the [best practices documentation](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/BestPractices.md)?
 
@@ -46,7 +49,7 @@ Getting `homebridge-unifi-protect` connected to UniFi Protect is the foundationa
 * You can login, but nothing seems to work, or you can't see any cameras.
   * This is almost certainly a permissions problem.
     * If you can see cameras in HomeKit, but can't stream video:
-      * Look in the Homebridge logs, you should see messages suggesting that you enable the administrator role for the user you're using to login to Protect.
+      * Look in the Homebridge logs, you should see messages suggesting that you enable the full management role for the user you're using to login to Protect.
       * Granting the full management role to the user you use for this plugin will provide you the most streamlined experience with the least amount of manual configuration on your part, and I'd strongly encourage you to do so.
     * If you can't see any cameras in HomeKit:
       * Check to make sure the user you're using for `homebridge-unifi-protect` has at least the view-only role, but ideally you'd enable the full management role for the user you are using with this plugin.
@@ -55,7 +58,7 @@ Getting `homebridge-unifi-protect` connected to UniFi Protect is the foundationa
 ### <A NAME="network"></A>Network Issues
 If you run homebridge in Docker, or a VM or VM-like environment, you might run into a network issue without realizing it due to situations with multiple network interface cards (NICs). By default, Homebridge listens for HomeKit requests on all the network interfaces it finds when it starts up. Homebridge, not `homebridge-unifi-protect`, decides which interface to use when streaming video.
 
-**If your symptoms are something along the lines of "snapshots work, but video streaming doesn't", it's almost certainly a network interface issue.**
+**If your symptoms are something along the lines of "snapshots work, but video streaming doesn't", it's almost certainly a network interface issue.** (There's one other cause of that exact symptom - an AV1 camera on the direct-RTSP path - covered in the video streaming section below.)
 
 [You will need to select the correct advertised network interface in Homebridge](https://github.com/homebridge/homebridge/wiki/mDNS-Options#how-to-select-advertised-network-interfaces).
 
@@ -66,44 +69,48 @@ If you run homebridge in Docker, or a VM or VM-like environment, you might run i
 13:57:08.547542 IP 192.168.2.16.59594 > 192.168.0.55.62642: UDP, length 120
 ```
 
-The ports will correspond to those seen in the `FFmpeg` command if you turn on verbose logging. If you are seeing no entries then chances are you have firewall or routing issues. If you are seeing entries, but no video is streaming, then this is likely that the Home App is not expecting the *source IP* to be what it is. In the above case, even though the only ***advertised*** port was the "other" ethernet, it was not arriving via that route. Changing the advertisment to match should fix this.
+The ports will correspond to those seen in the `FFmpeg` command if you turn on verbose logging. If you are seeing no entries then chances are you have firewall or routing issues. If you are seeing entries, but no video is streaming, then this is likely that the Home App is not expecting the *source IP* to be what it is. In the above case, even though the only ***advertised*** port was the "other" ethernet, it was not arriving via that route. Changing the advertisement to match should fix this.
 
 ### <A NAME="video"></A>Video Streaming
 There are lots of things that can go wrong with video streaming, unfortunately. I want to start by providing a bit of background on how streaming actually works in HomeKit, homebridge and this plugin before getting into where things can break.
 
 #### Background
-Read about [video autoconfiguration in HBUP](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Autoconfiguration.md) for a primer on how stream selection, transcoding, and transmuxing works in HBUP.
+Read about [how HBUP sources and selects your video](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Autoconfiguration.md#how-hbup-sources-your-video) for a primer on the timeshift buffer, stream selection, transcoding, and transmuxing in HBUP. The short version:
 
-  * The key to HomeKit video streaming, is understanding that **HomeKit decides what quality it wants to request, not the end user, nor HBUP**. What this means in practice is that you have no control over what HomeKit requests and what it can handle in response to that request when it comes to video streaming size and quality. There are options in HBUP to override these quality settings, but I would encourage you to get up and running first before tweaking options.
+  * The key to HomeKit video streaming is understanding that **HomeKit decides what quality it wants to request, not the end user, nor HBUP**. What this means in practice is that you have no control over what HomeKit requests and what it can handle in response when it comes to video streaming size and quality. There are options in HBUP to override these quality settings, but I'd encourage you to get up and running first before tweaking options.
 
-  * UniFi Protect typically allows you to have up to three different RTSP streams available per camera (for most camera types). Each stream represents a different quality level - *High*, *Medium*, and *Low*, and you may choose to stream using any of them so long as they are enabled (HBUP [autoconfigures](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Autoconfiguration.md) all the available RTSP streams, if it has the permissions to do so in Protect).
+  * By default, HBUP serves your live views from a standing timeshift buffer of the camera's livestream...the same buffer that feeds HomeKit Secure Video and snapshots. You can opt individual live views over to direct RTSP instead. Either way, Protect gives HBUP up to three quality levels per camera - *High*, *Medium*, and *Low* - to draw from, and HBUP picks the one closest to what HomeKit asked for.
 
-When HomeKit requests a stream of a specific quality, HBUP selects a stream that's closest to what's being requested, and send that back to your device. You can see that when you look at the Homebridge logs:
+You can see all of this in the Homebridge logs when you stream a camera:
 
 ```
-Streaming request from 1.2.3.4: 1280x720@30fps, 299 kbps. Transcoding 1280x720@30fps (Medium), 2,000 kbps.
+Streaming request: 1280x720@30fps, 299 kbps. Using Medium [H.264], 2,000 kbps [TSB/API].
 ```
 
-What the above means is that a HomeKit client, in this case an iPhone, is requesting a stream of quality 1280x720@30fps at a bitrate of 299kbps. In response, HBUP looks at the available RTSP streams on the camera, an AI Pro, and selected the `Medium` RTSP profile to use.
+Reading that line: a HomeKit client (an iPhone here) requested 1280x720@30fps at 299 kbps. HBUP is serving it from the *Medium*-quality H.264 stream, whose source bitrate is 2,000 kbps. The trailing tag is the transport: **`TSB/API`** means the video is coming from the timeshift buffer (fed by the livestream API), which is the default. If you'd opted that camera's live views over to direct RTSP, you'd see **`RTSP`** there instead. That tag is a handy first thing to glance at when something's off - it tells you exactly where your video is coming from.
 
 #### Video Streaming Issues
-This brings us to where the problems people encounter can come from. When that stream comes from Protect to HBUP, it's processed by `FFmpeg` before being sent on it's way to your iPhone. I've taken time to tune the parameters used within FFmpeg for Protect to get things working just right. Despite that, it's not always perfect.
+This brings us to where the problems people encounter can come from. Whether the video comes from the buffer or direct RTSP, it's processed by `FFmpeg` before being sent on its way to your iPhone. I've taken time to tune the parameters used within FFmpeg for Protect to get things working just right. Despite that, it's not always perfect.
 
 Almost all of the streaming issues that aren't one of the simpler ones described above (firewall rules, etc.) boil down to two related things:
 
  * The quality of the stream is pushing more data at a faster rate than either FFmpeg can consume or the HomeKit device can consume (or both!).
  * When transcoding, the hardware that HBUP is running on is unable to keep up with the requirements of the stream that's being pushed through it.
 
-##### Use The Low Stream
-While the defaults work for most users, most of the time, sometimes the specifics of your own environment will make things off *just enough* that streaming doesn't work. The first, and easiest, step in addressing it is simple: **force HBUP to use a lower stream quality**. You can do that by forcing the use of the `Low` RTSP stream in the HBUP feature options webUI under the video section. If this works, then you're done and your HomeKit life is once more complete and all is right with the world. You can experiment and see if the `Medium` RTSP stream works after you're up and running.
+There's also one specific gotcha worth calling out: **an AV1-encoded camera can't stream over direct RTSP**...the bundled version of FFmpeg can't carry AV1 that way. If you've disabled `Video.Timeshift.Livestream` on an AV1 camera, live views will fail (the log will say so in plain language) while snapshots keep working - the same symptom as a network-interface issue, but a completely different cause. The fix is simple: re-enable `Video.Timeshift.Livestream` (it's on by default), and the camera streams from the buffer as intended.
 
-I know that instinctively people may not like the idea of having higher-end Protect cameras and using what they perceive to be a low-quality stream. To that, I'd say a couple of things...the quality of the stream is actually *very* good relative to the very conservative bitrates HomeKit tends to request. Those bitrates can be overriden by tweaking your feature options, but in general, lower quality video streaming is just the nature of the HomeKit beast, I'm afraid. For the purposes of glancing at video on occasion, it's more than sufficient.
+##### Use A Lower Stream Quality
+While the defaults work for most users, most of the time, sometimes the specifics of your own environment will make things off *just enough* that streaming doesn't work. The first, and easiest, step in addressing it is simple: **have HBUP feed from a lower stream quality**.
+
+On a default setup, your live views come from the timeshift buffer, so the option you want is `Video.Timeshift.Only.Low`, under the *Timeshift Buffer* section of the HBUP feature options webUI - that forces the buffer (which also feeds HKSV and snapshots) to draw from the Low stream. If instead you've switched a camera's live views to direct RTSP, the equivalent knob is `Video.Rtsp.Only.Low` under the *Video* section. If lowering the quality works, then you're done and your HomeKit life is once more complete and all is right with the world. You can experiment and see if the *Medium* stream works after you're up and running.
+
+I know that instinctively people may not like the idea of having higher-end Protect cameras and using what they perceive to be a low-quality stream. To that, I'd say a couple of things...the quality of the stream is actually *very* good relative to the very conservative bitrates HomeKit tends to request. Those bitrates can be overridden by tweaking your feature options, but in general, lower quality video streaming is just the nature of the HomeKit beast, I'm afraid. For the purposes of glancing at video on occasion, it's more than sufficient.
 
 ##### Transcoding
 Transcoding is used by HBUP to ensure that video streams are in the form that HomeKit expects when it comes to format, quality, and dimensions. HBUP will take the closest match it can find to the request from HomeKit and will transcode the video stream in realtime to match the parameters being requested by HomeKit. When transcoding, you'll see a log entry in Homebridge like this:
 
 ```
-Streaming request from 1.2.3.4: 1280x720@30fps, 299 kbps. Transcoding 1280x720@30fps (Medium), 2,000 kbps.
+Streaming request: 1280x720@30fps, 299 kbps. Using Medium [H.264], 2,000 kbps [TSB/API].
 ```
 
 Transcoding has two significant implications:
@@ -111,26 +118,19 @@ Transcoding has two significant implications:
   * It will consume more CPU on the device where you run Homebridge. If your device is underpowered, it may struggle to use higher quality streams.
   * The quality of the final stream will be reduced to comply with HomeKit's requested parameters. This is because HomeKit defaults to a very modest bitrate - 299kbps in the above example versus the 2,000kbps being provided by Protect - which represents a 6.5x reduction in quality!
 
-You can tune when HBUP chooses to transcode by adjusting the options under the video section of the HBUP feature options webUI. If you're struggling with potential CPU constraints in your environment, you can force the use of a lower stream quality which should reduce the CPU load on your hardware. I would recommend starting with the `Low` quality stream and working your way up when it comes to quality to see what works best in your environment.
+You can tune when HBUP chooses to transcode by adjusting the options under the video section of the HBUP feature options webUI. If you're struggling with potential CPU constraints in your environment, feeding from a lower stream quality should reduce the CPU load on your hardware. I'd recommend starting with the *Low* quality stream and working your way up to see what works best in your environment.
 
 ##### Final Thoughts
-For quickly trying to get things up and running when you're struggling, always start by forcing the stream quality to `Low`. From there, experiment with the options to tune it to your environment.
+For quickly trying to get things up and running when you're struggling, always start by feeding from the *Low* stream quality (`Video.Timeshift.Only.Low` on a default setup). From there, experiment with the options to tune it to your environment.
 
 ### Self-Healing and Camera Restarts
 
-HBUP includes a self-healing feature that monitors camera connectivity. If a camera's livestream API connection continuously times out over an extended period, HBUP will attempt to restart the camera to restore functionality. This behavior is:
+Every so often a camera's livestream connection just won't behave - it keeps timing out no matter what. When that happens persistently, HBUP will try restarting the camera to get it back to a good state. It's deliberately conservative about this: a restart only happens after sustained, repeated failures, never for the occasional timeout or a brief network blip, and it's always logged so you can see exactly when it happened. If you'd rather deal with a misbehaving camera yourself, you can turn self-healing off per-camera with the `Device.SelfHealing` feature option.
 
-  * **Conservative**: Restarts only occur after sustained, repeated failures - not for occasional timeouts or brief network issues.
-  * **Logged**: Any restart will be logged so you can see when it occurs.
-  * **Configurable**: You can disable self-healing per-device using the `Device.SelfHealing` feature option if you prefer manual control.
-
-If you're seeing frequent camera restarts, this may indicate an underlying issue with your network, the camera firmware, or the Protect controller. Check your Homebridge logs for patterns.
+If you're seeing frequent restarts, that's usually a sign of something underneath...your network, the camera's firmware, or the controller itself. Have a look through your Homebridge logs for a pattern.
 
 ### Tamper Detection
 
-Protect cameras with tamper detection capability (currently AI and G6 series) can have their tamper status reflected in HomeKit. Tamper detection must first be enabled in the Protect webUI under Recording Settings for the camera - HBUP will then expose this status in HomeKit. You can view the tamper status by opening the detail view of the camera's motion sensor.
+On cameras that support tamper detection, HBUP surfaces the tamper status in HomeKit...you'll find it in the detail view of the camera's motion sensor. You do need to enable tamper detection first in the Protect webUI, under the camera's Recording Settings, and HBUP takes it from there. Like a camera's other capabilities, this attaches live - enable it at the controller and it shows up in HomeKit without a Homebridge restart.
 
-Unlike Protect sensors which maintain a persistent tampered state, cameras only log tamper events. To clear a tamper event:
-
-  * Disable and re-enable tamper detection in the Protect webUI, or
-  * Restart HBUP.
+One quirk to know about: unlike Protect's sensors, which hold a persistent tampered state, cameras only *log* a tamper event. So to clear one in HomeKit, either disable and re-enable tamper detection in the Protect webUI, or restart HBUP.

@@ -6,7 +6,7 @@
 # Homebridge UniFi Protect
 
 [![Downloads](https://img.shields.io/npm/dt/homebridge-unifi-protect?color=%230559C9&logo=icloud&logoColor=%23FFFFFF&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect)
-[![Version](https://img.shields.io/npm/v/homebridge-unifi-protect?color=%230559C9&label=Homebridge%20UniFi%20Protect&logo=ubiquiti&logoColor=%23FFFFFF&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect)
+[![Version](https://img.shields.io/npm/v/homebridge-unifi-protect?color=%230559C9&label=Latest%20Version&logo=ubiquiti&logoColor=%23FFFFFF&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect)
 [![UniFi Protect@Homebridge Discord](https://img.shields.io/discord/432663330281226270?color=0559C9&label=Discord&logo=discord&logoColor=%23FFFFFF&style=for-the-badge)](https://discord.gg/QXqfHEW)
 [![verified-by-homebridge](https://img.shields.io/badge/homebridge-verified-blueviolet?color=%23491F59&style=for-the-badge&logoColor=%23FFFFFF&logo=homebridge)](https://github.com/homebridge/homebridge/wiki/Verified-Plugins)
 
@@ -25,8 +25,10 @@
   * Camera-specific RTSP information.
   * Doorbell message events. See [doorbell message events](#doorbell-messages) for additional details.
   * Doorbell ring events. Including triggering via MQTT.
+  * Fob button presses.
   * Liveview-related events, including the security system accessory and security alarm.
   * Motion events.
+  * Relay output state and control.
   * Snapshot events, including publishing the actual images over MQTT.
   * And many more, documented below.
 
@@ -59,8 +61,9 @@ The topics and messages that `homebridge-unifi-protect` publishes are:
 | Topic                 | Protect Device Type | Message Published
 |-----------------------|---------------------|------------------
 | `alarm`               | Sensor              | `true` or `false` when a UniFi Protect sensor detects a recognized alarm sound.
-| `ambientlight`        | Sensor              | Ambient light level, in lux, on a UniFi Protect sensor.
-| `authenticate`        | Doorbell            | `{type: "fingerprint" or "nfc", id:cardId}`. Publishes upon a successful authentication using fingerprint or NFC. Type is `fingerprint` or `nfc` depending on which authentication type was used. If an NFC card was used, `id` will contain the NFC card ID as detected by the doorbell.
+| `ambientlight`        | Multiple            | Ambient light level, in lux, from a UniFi Protect sensor or a camera's ambient light sensor.
+| `authenticate`        | Doorbell            | `{type: "fingerprint"}` or `{type: "nfc", id: cardId}`. Publishes upon a successful authentication using fingerprint or NFC. `id` is included only for NFC and contains the card ID as detected by the doorbell.
+| `button`              | Fob                 | `{"button": "arm", "pressType": "single"}` when a UniFi Protect fob button is pressed. `button` is the button that was pressed and `pressType` is the gesture. Published for every press, including buttons you've hidden in HomeKit.
 | `chime`               | Chime               | A number between 0 and 100 that represents the current volume of the chime as a percentage.
 | `contact`             | Sensor              | `true` or `false` when a UniFi Protect sensor detects contact. Note: UniFi Protect will set this state differently depending on the placement type you select in the Protect app or the Protect webUI.
 | `doorbell`            | Camera              | `true` when the doorbell is rung. Each press of the doorbell will trigger a new event.
@@ -77,6 +80,7 @@ The topics and messages that `homebridge-unifi-protect` publishes are:
 | <CODE>motion/smart/<I>object</I></CODE> | Cameras | `true` when a smart motion event is detected for *object*. `false` when the smart motion event is reset. Valid *object* types include visual detection (`animal`, `face`, `licensePlate`, `package`, `person`, `vehicle`) and audio detection (`alrmBabyCry`, `alrmBark`, `alrmBurglar`, `alrmCarHorn`, `alrmCmonx`, `alrmGlassBreak`, `alrmSiren`, `alrmSmoke`, `alrmSpeak`, `smoke_cmonx`). If what you want to listen for is whether a motion event is sent to HomeKit, use the `motion` topic instead.
 | <CODE>motion/smart/<I>object</I>/metadata</CODE> | Cameras | `JSON` when metadata associated with a smart motion detection event is available from Protect such as license plate information, vehicle type, or color. Currently, this is only valid for `vehicle` smart motion events.
 | `occupancy`           | Multiple            | `true` when occupancy is detected. `false` when occupancy is no longer detected.
+| `relay/<output>`      | Relay               | `true` or `false` for the on/off state of a relay output. Outputs are numbered starting at 1.
 | `rtsp`                | Camera              | `{name: "URL"}`. Represents a JSON containing all the valid RTSP URLs that can be used to stream from this camera. `Name` is the name assigned by UniFi Protect to the RTSP URL. `URL` represents the URL that can be used for streaming.
 | `securitysystem`      | Camera              | One of `Alarm`, `Away`, `Home`, `Night`, `Off`. This message is published every time the security state is set.
 | `snapshot`            | Camera              | A [data URL](https://developer.mozilla.org/en-US/docs/Web/HTTP/Basics_of_HTTP/Data_URIs) containing a base64-encoded JPEG of the snapshot that was requested (either by HomeKit or MQTT).
@@ -101,6 +105,7 @@ The topics that `homebridge-unifi-protect` subscribes to are:
 | `glassbreak/get`        | Sensor              | `true` will trigger a publish event of the current glass break state for a UniFi Protect sensor.
 | `humidity/get`          | Sensor              | `true` will trigger a publish event of the humidity level, as a percentage, for a UniFi Protect sensor.
 | `leak/get`              | Sensor              | `true` will trigger a publish event of the current leak sensor state for a UniFi Protect sensor.
+| `leak-external/get`     | Sensor              | `true` will trigger a publish event of the current external leak sensor state for a UniFi Protect sensor.
 | `light/get`             | Light               | `true` or `false` when a UniFi Protect light is on or off.
 | `light/set`             | Light               | `true` or `false` to turn on or off a UniFi Protect light.
 | `light/brightness/get`  | Light               | `true` will trigger a publish event of the light brightness level, as a percentage, for a UniFi Protect light.
@@ -114,10 +119,13 @@ The topics that `homebridge-unifi-protect` subscribes to are:
 | `motion/get`            | Multiple            | `true` will trigger a publish event of the motion sensor state.
 | `motion/set`            | Multiple            | `true` will trigger a motion event on the motion sensor.
 | `occupancy/get`         | Multiple            | `true` will trigger a publish event of the occupancy sensor state.
+| `relay/<output>/get`    | Relay               | `true` will trigger a publish of the relay output's current on/off state.
+| `relay/<output>/set`    | Relay               | `true` or `false` to turn a relay output on or off.
 | `rtsp/get`              | Camera              | `true` will request that the plugin publish a message to the `rtsp` topic containing a JSON of RTSP URLs for the camera or doorbell.
 | `securitysystem/get`    | Camera              | `true` will trigger a publish event of the current state of the security system accessory.
 | `securitysystem/set`    | Camera              | One of `AlarmOff`, `AlarmOn`, `Away`, `Home`, `Night`, `Off`. This will set the respective state on the security system accessory.
 | `snapshot/set`          | Camera              | `true` will trigger the camera to generate a snapshot.
+| `systeminfo/get`        | Controller          | `true` will trigger a publish of the current controller system information to the `systeminfo` topic.
 | `temperature/get`       | Sensor              | `true` will trigger a publish event of the temperature, in Celsius, for a UniFi Protect sensor.
 | `tone/set`              | Chime               | A value of either `buzzer` or `chime` will play the selected tone on a UniFi Protect chime.
 

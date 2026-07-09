@@ -6,7 +6,7 @@
 # Homebridge UniFi Protect
 
 [![Downloads](https://img.shields.io/npm/dt/homebridge-unifi-protect?color=%230559C9&logo=icloud&logoColor=%23FFFFFF&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect)
-[![Version](https://img.shields.io/npm/v/homebridge-unifi-protect?color=%230559C9&label=Homebridge%20UniFi%20Protect&logo=ubiquiti&logoColor=%23FFFFFF&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect)
+[![Version](https://img.shields.io/npm/v/homebridge-unifi-protect?color=%230559C9&label=Latest%20Version&logo=ubiquiti&logoColor=%23FFFFFF&style=for-the-badge)](https://www.npmjs.com/package/homebridge-unifi-protect)
 [![UniFi Protect@Homebridge Discord](https://img.shields.io/discord/432663330281226270?color=0559C9&label=Discord&logo=discord&logoColor=%23FFFFFF&style=for-the-badge)](https://discord.gg/QXqfHEW)
 [![verified-by-homebridge](https://img.shields.io/badge/homebridge-verified-blueviolet?color=%23491F59&style=for-the-badge&logoColor=%23FFFFFF&logo=homebridge)](https://github.com/homebridge/homebridge/wiki/Verified-Plugins)
 
@@ -23,10 +23,10 @@ If you're reading this, chances are you own, or would like to own, a [UniFi Prot
     * `homebridge-unifi-protect` supports two-way audio, and it works well with one notable caveat: a lack of acoustic echo cancelation, or AEC.
 
   * Doorbell Ring Support
-    * `homebridge-unifi-protect` fully supports doorbell ring notifications. When you ring the doorbell, you'll get a notification on your iOS/macOS devices, including a snapshot of whose at the door. These snapshots tied to notifications are often called *rich notifications*.
+    * `homebridge-unifi-protect` fully supports doorbell ring notifications. When you ring the doorbell, you'll get a notification on your iOS/macOS devices, including a snapshot of who's at the door. These snapshots tied to notifications are often called *rich notifications*. A UniFi Access intercom's doorbell press is delivered to HomeKit as a ring in exactly the same way.
 
   * Doorbell Camera and Motion Detection Support
-    * Since the Protect doorbells are essentially a camera as far as UniFi Protect goes, `homebridge-unifi-protect` supports all the same features as other UniFi Protect cameras, including motion detection and blazing fast and responsive video streaming.
+    * Since the Protect doorbells are essentially a camera as far as UniFi Protect goes, `homebridge-unifi-protect` supports all the same features as other UniFi Protect cameras, including motion detection and video streaming.
 
   * Package Camera Support
     * For UniFi Protect doorbells that have package cameras, HBUP supports those as well, making them available to you in HomeKit - including full support for HomeKit Secure Video for package cameras.
@@ -34,12 +34,21 @@ If you're reading this, chances are you own, or would like to own, a [UniFi Prot
   * Doorbell Messages
     * Some UniFi Protect doorbells feature an LCD screen that can display messages for people at the doorbell to see. Messages can be set indefinitely, selected from a preexisting list after the doorbell is rung, or you can type in a message in realtime at any point. `homebridge-unifi-protect` has full support for setting messages on your doorbell, including automation capabilities should you choose to use them.
 
+  * Chime Control
+    * For doorbells with a physical chime attached, you can control which chime fires - none, mechanical, or digital - right from HomeKit, and set the volume of the doorbell's own chime with a dimmer. Both are off by default; you enable them under the *Doorbell & Chime* feature options.
+
+  * Doorbell Mute
+    * An optional switch that controls whether HomeKit chimes at all when the doorbell is pressed...handy for quiet hours. Off by default.
+
+  * Authentication Sensor
+    * On doorbells with a fingerprint reader or NFC, an optional contact sensor trips when someone successfully authenticates, so you can build automations around a recognized fingerprint or card tap. Off by default.
+
 ### <A NAME="doorbell-twoway"></A>Two-way Audio
   * Protect cameras and doorbells that support two-way audio are *full-duplex*, meaning they transmit and receive audio simultaneously. This creates a problem - without using some method to eliminate your own voice from what gets picked up by the speaker, ***you will inevitably hear your own voice back whenever you use the microphone in the Home app***, however the person standing in front of the doorbell will hear things normally.
 
   * Unfortunately, AEC is not a solved problem in the open source community quite yet, though there are great commercial options. There are a couple of glimmers of hope: Protect cameras appear to actually support AEC, though there doesn't appear to be a straightforward way to access this capability at the moment. The second is that, things *do* work quite well, aside from the unfortunate challenge around AEC for the person using the Home app.
 
-  * Two-way audio is enabled by default. You can disable it, through the two-way audio feature option under the Audio section of the HBUP feature options webUI.
+  * Two-way audio is enabled by default. You can disable it through the two-way audio feature option under the Audio section of the HBUP feature options webUI, and it attaches live...if a camera or doorbell gains two-way audio, it shows up without a Homebridge restart. There's also a *direct* two-way audio option in the same section that sends audio straight to the camera, bypassing the controller, which can work around bugs in some Protect firmware versions.
 
   * Finally, since someone will inevitably ask: Ring and Nest-Cam (terrific plugins by terrific developers) - don't have this problem because Ring and Nest send all audio back to Ring and Nest's servers where audio is processed and dealt with, including AEC.
 
@@ -80,7 +89,7 @@ There are a few challenges in implementing this feature for HomeKit, but the mos
 
 Here's how it works:
 
-  * `homebridge-unifi-protect` will read, in realtime, any messages that are saved in UniFi Protect. That means at a minimum, you'll always have the built in *Do not disturb* and *Leave package at door* messages available to you, in addition to any other messages you choose to setup in the UniFi Protect app.
+  * The doorbell messages feature is off by default; you enable it under the Doorbell feature options. Once it's on, `homebridge-unifi-protect` reads, in realtime, any messages saved in UniFi Protect (that behavior is on by default too, though you can turn it off if you'd rather only use messages you configure in Homebridge). That means at a minimum, you'll always have the built in *Do not disturb* and *Leave package at door* messages available to you, in addition to any other messages you choose to setup in the UniFi Protect app.
 
     * This gives you the flexibility to add and remove messages at a whim, and this plugin will make sure those messages are available for you to use in HomeKit on a dynamic basis. What you get, is the simplicity of having a single place for all the messages you want to use with your doorbell - whether it's using the UniFi Protect iOS app or the Home app.
 
@@ -94,7 +103,7 @@ Here's how it works:
 
   * All configured messages - those that come from UniFi Protect and those that you configure in Homebridge - will be made available as individual switches on the doorbell accessory in the Home app. You can set or clear a given message by activating or deactivating the associated switch in the Home app.
 
-    * Any message switch that's made available through HomeKit will reflect it's true state, whether it was activated within the Home app or through the UniFi Protect app. You'll always know what's being displayed on the doorbell, so long as it's *not* an ad hoc message that hasn't been saved in the UniFi Protect interface.
+    * Any message switch that's made available through HomeKit will reflect its true state, whether it was activated within the Home app or through the UniFi Protect app. You'll always know what's being displayed on the doorbell, so long as it's *not* an ad hoc message that hasn't been saved in the UniFi Protect interface.
 
   * When someone rings the doorbell, you'll receive a rich notification. If you swipe down on that notification, you'll see a complete list of all the message switches associated with the doorbell. While two-way audio isn't available through HomeKit, you *can* select any of the preset messages you've configured to communicate with the person who rang the doorbell.
 
