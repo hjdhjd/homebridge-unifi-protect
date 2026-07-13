@@ -68,6 +68,11 @@ interface SessionInfo {
   // RTP port reservations.
   rtpPortReservations: PortReservation[];
 
+  // The package-camera flashlight this session lit, if any, recorded so the single prepared-session disposal path (and a normal stop) can turn it back off. It is set at
+  // the toggle site in startStream, after the session survives channel selection but before the establishment wait - the one window a failed start could otherwise leave
+  // it latched on with no ongoing entry to reach it.
+  toggleLight?: Service;
+
   // This should be saved if multiple suites are supported.
   videoCryptoSuite: SRTPCryptoSuites;
   videoPort: number;
@@ -538,6 +543,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
 
       this.log.error(errorMessage);
       callback(new Error(this.protectCamera.accessoryName + ": " + errorMessage));
+      this.disposePreparedSession(request.sessionID, sessionInfo);
 
       return;
     }
@@ -629,6 +635,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
 
         this.log.error(errorMessage);
         callback(new Error(this.protectCamera.accessoryName + ": " + errorMessage));
+        this.disposePreparedSession(request.sessionID, sessionInfo);
 
         return;
       }
@@ -672,25 +679,24 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
         request.video.width, request.video.height, request.video.fps, request.video.max_bit_rate.toLocaleString("en-US"));
 
       callback(new Error(this.protectCamera.accessoryName + ": " + errorMessage));
+      this.disposePreparedSession(request.sessionID, sessionInfo);
 
       return;
     }
 
-    let flashlightService;
-
-    // If we are streaming the package camera, and it's dark outside, activate the flashlight on the camera.
+    // If we are streaming the package camera, and it's dark outside, activate the flashlight on the camera. We record the lit service on the session itself so the single
+    // prepared-session disposal path can turn it back off on any failed start, and stopStream can turn it off on a normal stop - the session field is the one record of
+    // the toggle.
     if("packageCamera" in this.protectCamera.accessory.context) {
 
-      flashlightService = this.protectCamera.accessory.getServiceById(this.hap.Service.Lightbulb, ProtectReservedNames.LIGHTBULB_PACKAGE_FLASHLIGHT);
+      const flashlightService = this.protectCamera.accessory.getServiceById(this.hap.Service.Lightbulb, ProtectReservedNames.LIGHTBULB_PACKAGE_FLASHLIGHT);
 
       // If we're already on, we assume the user's activated it and we'll leave it untouched. Otherwise, we'll toggle it on and off when we begin and end streaming.
       if(this.protectCamera.ufp.isDark && flashlightService && !flashlightService.getCharacteristic(this.hap.Characteristic.On).value) {
 
         // We explicitly want to call the set handler for the flashlight.
         flashlightService.setCharacteristic(this.hap.Characteristic.On, true);
-      } else {
-
-        flashlightService = undefined;
+        sessionInfo.toggleLight = flashlightService;
       }
     }
 
@@ -1002,13 +1008,25 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
       // Drive the segment iterator in the background.
       void this.consumeStreamSegments(ffmpegStream, subscription, segmentWriter, tsBuffer);
 
-      // Wait for the session to establish. If it fails (provisioning deadline expired), tear down the spawned FFmpeg, the writer, and the subscription, then bail.
-      // The FFmpeg was spawned above before this await, so we must abort it here too rather than leaving it to sit until its returnPort watchdog fires.
+      // Wait for the session to establish. If it fails (provisioning deadline expired), dispose the prepared session and bail. The FFmpeg was spawned above before this
+      // await, so it must be torn down here rather than left to sit until its returnPort watchdog fires; aborting the umbrella controller inside the disposal helper
+      // cascades through the shared signal to the FFmpeg, the writer, and the subscription, so no separate manual teardown of the three is needed.
       if(!(await subscription.whenEstablished())) {
 
-        ffmpegStream.abort();
-        segmentWriter.abort();
-        void subscription[Symbol.asyncDispose]();
+        this.disposePreparedSession(request.sessionID, sessionInfo);
+
+        return;
+      }
+
+      // Re-validate the pending session's identity now that the establishment wait has returned. A concurrent stopStream during the wait aborts this session's
+      // controller and drops it from the pending map, yet whenEstablished can still resolve true off another subscriber sharing the pooled socket - so without this
+      // check we would register an ongoing entry for a session already torn down, with no path left to ever remove it. On a mismatch we dispose defensively (safe to
+      // repeat: the concurrent stop's abort already ran) and bail. We do not answer the StreamRequestCallback here: it is owned by the FFmpeg ready bridge above, which
+      // the abort settles exactly once, so an explicit callback would double-answer. This closes the stop-during-establishment race; an organic FFmpeg exit during the
+      // same wait is an adjacent race tracked separately.
+      if(this.pendingSessions.get(request.sessionID) !== sessionInfo) {
+
+        this.disposePreparedSession(request.sessionID, sessionInfo);
 
         return;
       }
@@ -1021,7 +1039,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
       ffmpeg: [ffmpegStream],
       rtpDemuxer: sessionInfo.rtpDemuxer,
       rtpPortReservations: sessionInfo.rtpPortReservations,
-      toggleLight: flashlightService
+      toggleLight: sessionInfo.toggleLight
     });
 
     this.pendingSessions.delete(request.sessionID);
@@ -1215,6 +1233,28 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
     }
   }
 
+  // Dispose a prepared (pending) session. This is the single teardown body for a session that was prepared but never became a registered ongoing session: every failed
+  // start in startStream and stopStream's own pending branch route through it. Aborting the umbrella AbortController is the convergence point - it fans out through the
+  // shared signal to the demuxer and any FFmpeg, backpressure writer, and livestream subscription hung off it - while the port reservations and the pending-map entry
+  // are released explicitly (the abort alone does not free them), and a package-camera flashlight this session lit is turned back off. It is safe to call more than once:
+  // AbortController.abort and PortReservation disposal are both safe to repeat, so routing several paths (including one that may already have partially torn down in a
+  // race) through this one body never double-releases.
+  private disposePreparedSession(sessionId: string, sessionInfo: SessionInfo): void {
+
+    sessionInfo.abortController.abort(new HbpuAbortError("shutdown"));
+
+    // Turn the package-camera flashlight back off if this session lit it. We explicitly want to call the set handler for the flashlight.
+    sessionInfo.toggleLight?.setCharacteristic(this.hap.Characteristic.On, false);
+
+    // Release the port reservations. Disposal is a pure in-memory release that resolves on the same microtask (no I/O), so the fire-and-forget keeps this synchronous.
+    for(const reservation of sessionInfo.rtpPortReservations) {
+
+      void reservation[Symbol.asyncDispose]();
+    }
+
+    this.pendingSessions.delete(sessionId);
+  }
+
   // Close a video stream.
   public stopStream(sessionId: string): void {
 
@@ -1249,24 +1289,17 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
         }
       }
 
-      // On the off chance we were signaled to prepare to start streaming, but never actually started streaming, cleanup after ourselves.
+      // On the off chance we were signaled to prepare to start streaming, but never actually started streaming, cleanup after ourselves through the shared disposal
+      // helper. It aborts the pending session's controller (tearing down the RtpDemuxer that prepareStream bound, which releasing the ports alone would not close),
+      // releases the reservations, turns off a lit flashlight, and deletes the pending-map entry - so no separate pending delete is needed below.
       const pendingSession = this.pendingSessions.get(sessionId);
 
       if(pendingSession) {
 
-        // Abort the pending session's controller. This tears down the RtpDemuxer that prepareStream bound (which releasing the pending session's ports alone would not
-        // close) and releases the pending reservations through the shared signal.
-        pendingSession.abortController.abort(new HbpuAbortError("shutdown"));
-
-        // Release our port reservations.
-        for(const reservation of pendingSession.rtpPortReservations) {
-
-          void reservation[Symbol.asyncDispose]();
-        }
+        this.disposePreparedSession(sessionId, pendingSession);
       }
 
-      // Delete the entries.
-      this.pendingSessions.delete(sessionId);
+      // Delete the ongoing entry. The pending entry, if there was one, was already deleted by the disposal helper.
       this.ongoingSessions.delete(sessionId);
     } catch(error) {
 
