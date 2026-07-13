@@ -1314,7 +1314,7 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
     // If we've got HomeKit Secure Video enabled and recording, disable it.
     if(this.stream?.hksv?.isRecording) {
 
-      void this.stream.hksv.updateRecordingActive(false);
+      this.stream.hksv.updateRecordingActive(false);
     }
 
     // Tear down this camera's livestream consumers so their pool subscriptions are released. The camera does not own livestream sessions - the stream (live) and
@@ -1698,7 +1698,7 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
         return;
       }
 
-      void this.stream?.handleSnapshotRequest();
+      this.stream?.handleSnapshotRequest();
     });
 
     // Register the doorbell ring-trigger subscription, gated and once-guarded so a late promotion can register it without the construction call double-subscribing.

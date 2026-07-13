@@ -154,7 +154,7 @@ describe("recording delegate synchronous configuration observables", () => {
     assert.equal(delegate.timeshift.configuredDuration, PROTECT_SEGMENT_RESOLUTION, "a configuration with recording unarmed does not size the buffer");
 
     // Arming recording drives a reconcile that starts the buffer, and the supervisor applies the standing depth immediately before that start.
-    await delegate.updateRecordingActive(true);
+    delegate.updateRecordingActive(true);
 
     await settle();
 
@@ -162,9 +162,10 @@ describe("recording delegate synchronous configuration observables", () => {
     assert.equal(delegate.timeshift.configuredDuration, PROTECT_TIMESHIFT_BUFFER_MAXDURATION, "the supervisor sized the buffer at start time");
   });
 
-  // updateRecordingActive(false) forces MotionDetected to false on the camera's MotionSensor service synchronously, before its await, so an inflight motion event cannot
-  // hold HomeKit's view stale past the just-disabled state. The write is guarded by an optional chain that no-ops when no MotionSensor exists, so the test must first add
-  // one. With recording unarmed the awaited reconcile resolves cleanly (it reports "stopped was the desired outcome"), so the call returns without throwing.
+  // updateRecordingActive(false) forces MotionDetected to false on the camera's MotionSensor service synchronously - the write runs before the reconcile's first await,
+  // and guardedDispatch invokes the handler synchronously, so the write lands immediately (before an inflight motion event could hold HomeKit's view stale past the
+  // just-disabled state) even though the method itself is fire-and-forget. The write is guarded by an optional chain that no-ops when no MotionSensor exists, so the test
+  // must first add one.
   test("updateRecordingActive(false) forces MotionDetected false on the motion sensor", async () => {
 
     const { accessory, controller, host } = makeTestCameraHost();
@@ -179,9 +180,48 @@ describe("recording delegate synchronous configuration observables", () => {
 
     motionService.updateCharacteristic(Characteristic.MotionDetected, true);
 
-    await delegate.updateRecordingActive(false);
+    delegate.updateRecordingActive(false);
 
     assert.equal(accessory.getService(Service.MotionSensor)?.getCharacteristic(Characteristic.MotionDetected).value, false);
+  });
+
+  // guardedDispatch owns updateRecordingActive's async reconcile: HomeKit calls the void-returning method fire-and-forget, so a rejecting reconcile must be caught and
+  // logged rather than surfacing as an unhandled rejection. We force setRecordingDemand to reject and prove both halves of the contract - the fault is logged and nothing
+  // floats - with a test-scoped unhandledRejection listener, since the suites carry no ready-made float-detection seam. Pre-fix, when the method was a bare async whose
+  // rejected promise HomeKit discarded, the same throw floated instead.
+  test("a throwing recording activation is logged and never floats an unhandled rejection", async () => {
+
+    const { controller, host, logEntries } = makeTestCameraHost();
+
+    controllers.push(controller);
+
+    const supervisor = new ProtectTimeshiftSupervisor(host);
+    const delegate = new ProtectRecordingDelegate(host, supervisor);
+
+    // Force the reconcile to reject so the void-returning handler must absorb the fault.
+    supervisor.setRecordingDemand = async (): Promise<boolean> => { throw new Error("reconcile boom"); };
+
+    // Install a test-scoped listener to capture any unhandled rejection that escapes the delegate during the drive, then remove it immediately after.
+    const floats: unknown[] = [];
+    const onFloat = (reason: unknown): void => { floats.push(reason); };
+
+    process.on("unhandledRejection", onFloat);
+
+    try {
+
+      // HomeKit invokes this fire-and-forget; the internal reconcile rejects.
+      delegate.updateRecordingActive(true);
+
+      await settle();
+      await settle();
+    } finally {
+
+      process.off("unhandledRejection", onFloat);
+    }
+
+    assert.equal(floats.length, 0, "the throwing activation did not float an unhandled rejection");
+    assert.ok(logEntries.some((entry) => (entry.level === "error") && (entry.parameters[1] === "recording activation")),
+      "the throwing activation surfaced through the guardedDispatch failure log");
   });
 
   // A smoke check that the HAP-facing close and acknowledge entry points do not throw at rest. With nothing transmitting, stopTransmitting early-returns at its

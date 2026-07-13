@@ -52,7 +52,7 @@ export interface StreamingDelegate {
   readonly builtFor: AudioOptionsIdentity;
   controller: CameraController;
   readonly ffmpegOptions: FfmpegOptions;
-  handleSnapshotRequest(request?: SnapshotRequest, callback?: SnapshotRequestCallback): Promise<void>;
+  handleSnapshotRequest(request?: SnapshotRequest, callback?: SnapshotRequestCallback): void;
   hksv: Nullable<ProtectRecordingDelegate>;
   readonly probesize: number;
   resetProbesizeOverride(): void;

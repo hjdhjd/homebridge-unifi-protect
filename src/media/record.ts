@@ -7,7 +7,7 @@
  * deeply appreciated.
  */
 import type { API, CameraRecordingConfiguration, CameraRecordingDelegate, HAP, RecordingPacket } from "homebridge";
-import { BackpressureWriter, HDSProtocolSpecificErrorReason, HKSV_TIMEOUT } from "homebridge-plugin-utils";
+import { BackpressureWriter, HDSProtocolSpecificErrorReason, HKSV_TIMEOUT, guardedDispatch } from "homebridge-plugin-utils";
 import type { Clock, HomebridgePluginLogging, Nullable, RecordingProcess } from "homebridge-plugin-utils";
 import { PROTECT_HKSV_SHADOW_FLOOR_MS, PROTECT_HKSV_SHADOW_RECONNECT_MS, PROTECT_HKSV_SHADOW_SAFETY_MS } from "../settings.ts";
 import type { ProtectAccessory } from "../types.ts";
@@ -106,9 +106,16 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     this.timeshift = supervisor.buffer;
   }
 
-  // Process HomeKit requests to activate or deactivate HKSV recording capabilities for a camera.
-  // eslint-disable-next-line @typescript-eslint/no-misused-promises -- Async implementation of a void-returning Homebridge interface method.
-  public async updateRecordingActive(active: boolean): Promise<void> {
+  // Process HomeKit requests to activate or deactivate HKSV recording capabilities for a camera. HomeKit invokes this without awaiting, so the async reconcile is routed
+  // through guardedDispatch: a fault is logged rather than floating as an unhandled rejection. There is no callback to answer. The synchronous portion of the work (the
+  // demand write, the disable-edge motion reset) runs before the handler's first await, so guardedDispatch's synchronous invocation preserves those immediate effects.
+  public updateRecordingActive(active: boolean): void {
+
+    guardedDispatch({ handler: () => this.applyRecordingActive(active), label: "recording activation", log: this.log });
+  }
+
+  // Apply a HomeKit recording-active change: record the demand, force the motion sensor off on a disable, and reconcile the timeshift buffer against the new demand.
+  private async applyRecordingActive(active: boolean): Promise<void> {
 
     // Log only on the active-to-inactive transition, not on idempotent "already inactive" calls. `this.isRecording` is still the pre-update value here since we
     // haven't written `_isRecording` yet.

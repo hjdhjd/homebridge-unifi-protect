@@ -118,7 +118,7 @@ async function arrangeEnabledDelegate(): Promise<SupervisorArrange> {
   const delegate = new ProtectRecordingDelegate(host, supervisor);
 
   delegate.updateRecordingConfiguration(makeRecordingConfig());
-  await delegate.updateRecordingActive(true);
+  delegate.updateRecordingActive(true);
 
   // Drain the background consume loop up to the iterator's park, so the buffer is fully established before the test proceeds.
   await settle();
@@ -136,7 +136,7 @@ describe("timeshift supervisor deferred-offline and resolution logging", () => {
     const { delegate, logEntries } = arrangeDeferralDelegate();
 
     // The phase is the default organic "running"; arming while offline opens the deferral episode and the reconcile head logs it.
-    await delegate.updateRecordingActive(true);
+    delegate.updateRecordingActive(true);
     await settle();
 
     assert.equal(countLogs(logEntries, "warn", "deferred until the camera is online"), 1, "an organic deferral logs at warn");
@@ -152,7 +152,7 @@ describe("timeshift supervisor deferred-offline and resolution logging", () => {
     // Mark the disruption as one we induced before arming, so the deferral edge reads the rebooting phase.
     nvr.phase = "rebooting";
 
-    await delegate.updateRecordingActive(true);
+    delegate.updateRecordingActive(true);
     await settle();
 
     assert.equal(countLogs(logEntries, "debug", "deferred until the camera is online"), 1, "an induced deferral logs at debug");
@@ -167,7 +167,7 @@ describe("timeshift supervisor deferred-offline and resolution logging", () => {
     const { delegate, host, logEntries } = arrangeDeferralDelegate();
 
     // Open the organic deferral.
-    await delegate.updateRecordingActive(true);
+    delegate.updateRecordingActive(true);
     await settle();
 
     assert.equal(countLogs(logEntries, "warn", "deferred until the camera is online"), 1, "the organic deferral was logged");
@@ -193,7 +193,7 @@ describe("timeshift supervisor deferred-offline and resolution logging", () => {
     // Open the deferral while the controller is rebooting: the origin is captured as induced.
     nvr.phase = "rebooting";
 
-    await delegate.updateRecordingActive(true);
+    delegate.updateRecordingActive(true);
     await settle();
 
     assert.equal(countLogs(logEntries, "debug", "deferred until the camera is online"), 1, "the induced deferral was logged at debug");
@@ -219,7 +219,7 @@ describe("timeshift supervisor deferred-offline and resolution logging", () => {
     const { delegate, host, logEntries } = arrangeDeferralDelegate();
 
     // Open the deferral.
-    await delegate.updateRecordingActive(true);
+    delegate.updateRecordingActive(true);
     await settle();
 
     assert.equal(countLogs(logEntries, "warn", "deferred until the camera is online"), 1, "the deferral was logged");
@@ -260,14 +260,14 @@ describe("timeshift supervisor enable-acknowledgment lifecycle", () => {
     assert.equal(countLogs(logEntries, "info", "HKSV:"), 1, "a redundant reconcile within the same enable episode did not re-acknowledge");
 
     // Disable ends the episode: the "Disabling..." transition log fires and the acknowledgment flag is reset.
-    await delegate.updateRecordingActive(false);
+    delegate.updateRecordingActive(false);
 
     assert.ok(countLogs(logEntries, "info", "Disabling HomeKit Secure Video event recording.") >= 1, "the disable logged its transition");
 
     // Re-enable starts a fresh episode: the reconcile re-establishes the buffer (the segment-yielding double re-yields on the second start) and reaches the
     // successful-start path again, so the acknowledgment fires a SECOND time. countLogs === 2 is false against the un-reset flag (which would log only the first enable,
     // leaving the count at 1) and true after the reset - the discriminating assertion.
-    await delegate.updateRecordingActive(true);
+    delegate.updateRecordingActive(true);
     await settle();
 
     assert.equal(countLogs(logEntries, "info", "HKSV:"), 2, "the re-enable re-acknowledged the configuration, so the ack fired on each enable");
@@ -535,7 +535,7 @@ async function arrangeControllableRecording(): Promise<{ doubles: ControllableLi
   const delegate = new ProtectRecordingDelegate(host, supervisor);
 
   delegate.updateRecordingConfiguration(makeRecordingConfig());
-  await delegate.updateRecordingActive(true);
+  delegate.updateRecordingActive(true);
   await settle();
 
   return { doubles, host, supervisor };

@@ -7,7 +7,7 @@
 import type { AudioOptionsIdentity, StreamingDelegate, StreamingDelegateFactory } from "./stream-delegate.ts";
 import { AudioRecordingCodecType, AudioRecordingSamplerate, AudioStreamingCodecType, AudioStreamingSamplerate, BackpressureWriter, FfmpegOptions,
   FfmpegStreamingProcess, H264Level, H264Profile, HKSV_FRAGMENT_LENGTH, HOMEKIT_IDR_INTERVAL, HbpuAbortError, MediaContainerType, RtpDemuxer, SRTPCryptoSuites,
-  StreamRequestTypes, VideoCodecType, formatBps, formatErrorMessage, isHbpuAbortReason } from "homebridge-plugin-utils";
+  StreamRequestTypes, VideoCodecType, formatBps, formatErrorMessage, guardedDispatch, isHbpuAbortReason } from "homebridge-plugin-utils";
 import type { CameraController, CameraControllerOptions, CameraStreamingDelegate, HAP, PrepareStreamCallback, PrepareStreamRequest, PrepareStreamResponse, Resolution,
   Service, SnapshotRequest, SnapshotRequestCallback, StartStreamRequest, StreamRequestCallback, StreamingRequest } from "homebridge";
 import type { HomebridgePluginLogging, IpFamily, Nullable, PortReservation } from "homebridge-plugin-utils";
@@ -280,36 +280,52 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
     this.controller = new this.hap.CameraController(options);
   }
 
-  // HomeKit image snapshot request handler.
-  // eslint-disable-next-line @typescript-eslint/no-misused-promises -- Async implementation of a void-returning Homebridge interface method.
-  public async handleSnapshotRequest(request?: SnapshotRequest, callback?: SnapshotRequestCallback): Promise<void> {
+  // HomeKit image snapshot request handler. HomeKit invokes this without awaiting the returned value, so the async work is routed through guardedDispatch: a fault never
+  // floats as an unhandled rejection, and when HomeKit supplied a callback it is answered exactly once (a fault before the answer is delivered to HomeKit through the
+  // callback itself). The callback is optional here - an internal MQTT-only snapshot omits it - so we take the callback overload when it is present and the callback-less
+  // overload when it is not.
+  public handleSnapshotRequest(request?: SnapshotRequest, callback?: SnapshotRequestCallback): void {
+
+    if(callback) {
+
+      guardedDispatch({ callback, handler: (answer) => this.acquireAndPublishSnapshot(request, answer), label: "snapshot request", log: this.log });
+
+      return;
+    }
+
+    guardedDispatch({ handler: () => this.acquireAndPublishSnapshot(request), label: "snapshot request", log: this.log });
+  }
+
+  // Acquire a snapshot and publish it to MQTT. Answers the supplied callback (when HomeKit provided one) with the image or a retrieval failure, then publishes the
+  // snapshot as a data URL. Shared by both handleSnapshotRequest dispatch branches so the acquisition and publish path is written once.
+  private async acquireAndPublishSnapshot(request?: SnapshotRequest, answer?: SnapshotRequestCallback): Promise<void> {
 
     const snapshot = await this.snapshot.getSnapshot(request);
 
     // No snapshot was returned - we're done here.
     if(!snapshot) {
 
-      if(callback) {
-
-        callback(new Error(this.protectCamera.accessoryName + ": Unable to retrieve a snapshot"));
-      }
+      answer?.(new Error(this.protectCamera.accessoryName + ": Unable to retrieve a snapshot"));
 
       return;
     }
 
     // Return the image to HomeKit.
-    if(callback) {
-
-      callback(undefined, snapshot);
-    }
+    answer?.(undefined, snapshot);
 
     // Publish the snapshot as a data URL to MQTT, if configured.
     void this.nvr.mqtt?.publish(mqttTopic(this.protectCamera.mac, "snapshot"), "data:image/jpeg;base64," + snapshot.toString("base64"));
   }
 
-  // Prepare to launch the video stream.
-  // eslint-disable-next-line @typescript-eslint/no-misused-promises -- Async implementation of a void-returning Homebridge interface method.
-  public async prepareStream(request: PrepareStreamRequest, callback: PrepareStreamCallback): Promise<void> {
+  // Prepare to launch the video stream. HomeKit invokes this without awaiting, so the async preparation is routed through guardedDispatch: a fault never floats and the
+  // callback is answered exactly once (a fault before the response is delivered to HomeKit through the callback itself).
+  public prepareStream(request: PrepareStreamRequest, callback: PrepareStreamCallback): void {
+
+    guardedDispatch({ callback, handler: (answer) => this.runPrepareStream(request, answer), label: "stream preparation", log: this.log });
+  }
+
+  // Reserve the RTP plumbing and build the pending session for a stream, answering the guarded callback with the prepared response or a failure.
+  private async runPrepareStream(request: PrepareStreamRequest, callback: PrepareStreamCallback): Promise<void> {
 
     // If we aren't reachable, we're done before touching the live config. isReachable is total (it reads through the record non-throwing), so a camera whose controller
     // record has vanished is reported unavailable rather than throwing on the featureFlags read below. Mirrors the startStream guard.
@@ -1201,9 +1217,16 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
     }
   }
 
-  // Process incoming stream requests.
-  // eslint-disable-next-line @typescript-eslint/no-misused-promises -- Async implementation of a void-returning Homebridge interface method.
-  public async handleStreamRequest(request: StreamingRequest, callback: StreamRequestCallback): Promise<void> {
+  // Process incoming stream requests. HomeKit invokes this without awaiting; the START case is async (startStream), so the whole dispatch is routed through
+  // guardedDispatch to keep a fault from floating and to answer the callback exactly once. The RECONFIGURE and STOP cases are synchronous and answer immediately.
+  public handleStreamRequest(request: StreamingRequest, callback: StreamRequestCallback): void {
+
+    guardedDispatch({ callback, handler: (answer) => this.runStreamRequest(request, answer), label: "stream request", log: this.log });
+  }
+
+  // Dispatch a HomeKit stream request to its handler, answering the guarded callback. START launches the session (and answers through the FFmpeg ready bridge inside
+  // startStream); RECONFIGURE and STOP answer synchronously.
+  private async runStreamRequest(request: StreamingRequest, callback: StreamRequestCallback): Promise<void> {
 
     switch(request.type) {
 

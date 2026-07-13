@@ -2623,8 +2623,8 @@ export class TestStreamingDelegate implements StreamingDelegate {
     this.timeshift = null;
   }
 
-  // The snapshot entry point is async fire-and-forget on the paths that reach it; the stub resolves immediately.
-  public async handleSnapshotRequest(): Promise<void> {
+  // The snapshot entry point is void fire-and-forget on the paths that reach it; the stub does nothing.
+  public handleSnapshotRequest(): void {
 
     // Nothing to do - the stub takes no snapshots.
   }

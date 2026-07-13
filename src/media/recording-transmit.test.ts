@@ -159,7 +159,7 @@ async function buildTransmittingDelegate(factory: RecordingProcessFactory): Prom
   const delegate = new ProtectRecordingDelegate(host, supervisor);
 
   delegate.updateRecordingConfiguration(makeRecordingConfig());
-  await delegate.updateRecordingActive(true);
+  delegate.updateRecordingActive(true);
 
   // Drain the background consume loop up to the iterator's park, so the buffer reaches the configured duration before the first request.
   await settle();
@@ -241,7 +241,7 @@ describe("recording delegate transmit-path behavior", () => {
     const delegate = new ProtectRecordingDelegate(host, supervisor);
 
     delegate.updateRecordingConfiguration(makeRecordingConfig());
-    await delegate.updateRecordingActive(true);
+    delegate.updateRecordingActive(true);
     await settle();
 
     const packets: RecordingPacket[] = [];
