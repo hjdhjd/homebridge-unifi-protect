@@ -58,23 +58,32 @@ class PluginUiServer extends HomebridgePluginUiServer {
 
       try {
 
-        // Connect to the controller. unifi-protect's connect() performs login and the initial bootstrap atomically, throwing a typed error on failure; await
-        // using guarantees the client and its realtime connection are disposed on every exit path. We disable the periodic refresh failsafe since this is a
-        // one-shot discovery probe.
-        await using client = await ProtectClient.connect({ host: controller.address, log: log, password: controller.password, refreshIntervalMs: false,
+        // Connect to the controller. unifi-protect's connect() performs login and the initial bootstrap atomically, throwing a typed error on failure. This file ships
+        // as raw JavaScript executed directly by the host's Node runtime with no transpile step, so an `await using` declaration (explicit-resource-management syntax,
+        // which the Node 24 runtime provides) cannot appear here while the package's engines floor is below Node 24. The inner try/finally is the equivalent: it
+        // guarantees the client and its realtime connection are released on every exit path, success or throw. We disable the periodic refresh failsafe since this is a
+        // one-shot discovery probe. When the engines floor reaches Node 24, an `await using` declaration is the preferred form.
+        const client = await ProtectClient.connect({ host: controller.address, log: log, password: controller.password, refreshIntervalMs: false,
           username: controller.username });
 
-        // Sort adopted devices by display name, falling back to the market name when a device has no user-assigned name.
-        const byName = (a, b) => (a.name ?? a.marketName).localeCompare(b.name ?? b.marketName);
+        try {
 
-        // Project each live device collection to its raw config record, keep only the devices adopted by this controller, and sort. We read the config records rather
-        // than the command-bearing projections because the webUI consumes plain controller fields and serializes them across the request boundary.
-        const adopted = (devices) => devices.map(device => device.config).filter(isDeviceAdopted).sort(byName);
+          // Sort adopted devices by display name, falling back to the market name when a device has no user-assigned name.
+          const byName = (a, b) => (a.name ?? a.marketName).localeCompare(b.name ?? b.marketName);
 
-        // Return the controller first, then the adopted devices by category. The controller is element 0 - the controller-as-device entry the feature options webUI
-        // selects on initial load.
-        return [ client.nvr.config, ...adopted(client.cameras), ...adopted(client.chimes), ...adopted(client.fobs), ...adopted(client.lights),
-          ...adopted(client.relays), ...adopted(client.sensors), ...adopted(client.viewers) ];
+          // Project each live device collection to its raw config record, keep only the devices adopted by this controller, and sort. We read the config records rather
+          // than the command-bearing projections because the webUI consumes plain controller fields and serializes them across the request boundary.
+          const adopted = (devices) => devices.map(device => device.config).filter(isDeviceAdopted).sort(byName);
+
+          // Return the controller first, then the adopted devices by category. The controller is element 0 - the controller-as-device entry the feature options webUI
+          // selects on initial load.
+          return [ client.nvr.config, ...adopted(client.cameras), ...adopted(client.chimes), ...adopted(client.fobs), ...adopted(client.lights),
+            ...adopted(client.relays), ...adopted(client.sensors), ...adopted(client.viewers) ];
+        } finally {
+
+          // Release the client and its realtime connection on every exit path... the raw-JavaScript equivalent of an `await using` declaration's scope-bound disposal.
+          await client[Symbol.asyncDispose]();
+        }
       } catch(error) {
 
         // The library reports failures through the log shim above, which captured a friendly message into errorInfo and already logged it. The typed transport errors,
