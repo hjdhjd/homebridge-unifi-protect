@@ -10,8 +10,8 @@
  * The connection-input mapping is verified against the real NvrHealth with an injected clock, so the test proves both the new mapping and that the reducer/window
  * behavior it feeds is unchanged.
  */
-import { canTransition, computeStableSince, createConnectRetryPolicy, createLivestreamEpisodeLatch, isInducedDisruption, isStabilityWindowElapsed,
-  isSuccessfulRequest, isWithinRebootRecency, membershipDelta, shouldResumeFromInducedReboot } from "./nvr-policy.ts";
+import { canTransition, computeStableSince, createConnectRetryPolicy, createLivestreamEpisodeLatch, isInducedDisruption, isRequestForController,
+  isStabilityWindowElapsed, isSuccessfulRequest, isWithinRebootRecency, membershipDelta, shouldResumeFromInducedReboot } from "./nvr-policy.ts";
 import { describe, test } from "node:test";
 import { NvrHealth } from "./nvr-health.ts";
 import type { NvrPhase } from "./nvr.ts";
@@ -432,5 +432,36 @@ describe("phase transition legality", () => {
     assert.equal(canTransition({ from: "connecting", to: "shuttingDown" }), true);
     assert.equal(canTransition({ from: "rebooting", to: "shuttingDown" }), true);
     assert.equal(canTransition({ from: "running", to: "shuttingDown" }), true);
+  });
+});
+
+describe("controller request-host filter", () => {
+
+  // The process-global HTTP diagnostics channel carries every client's requests, so each NVR keeps only its own by an EXACT host match. The cross-contamination row is
+  // the one a substring test gets wrong: "192.168.1.2" is a substring of "192.168.1.20", so the pre-fix .includes() filter let a controller observe a neighbor's
+  // requests. The remaining rows pin the parser-derived behavior: a hostname prefix does not match, the compare is case-insensitive, a bracketed IPv6 URL matches a bare
+  // configured IPv6 literal, a port on the URL is ignored, and a malformed URL matches nothing.
+  test("isRequestForController matches only the exact configured host", () => {
+
+    // The controller's own request counts.
+    assert.equal(isRequestForController({ address: "192.168.1.2", url: "https://192.168.1.2/proxy/protect/api/bootstrap" }), true);
+
+    // The cross-contamination case: a neighbor whose address merely contains ours must not match.
+    assert.equal(isRequestForController({ address: "192.168.1.2", url: "https://192.168.1.20/proxy/protect/api/bootstrap" }), false);
+
+    // A configured host that is a prefix of the URL's hostname does not match - equality, not containment.
+    assert.equal(isRequestForController({ address: "controller", url: "https://controller.example.com/api" }), false);
+
+    // The URL parser lowercases the hostname, so a mixed-case configured host still matches.
+    assert.equal(isRequestForController({ address: "Controller.Local", url: "https://controller.local/api" }), true);
+
+    // A bare configured IPv6 literal matches the URL parser's bracketed hostname form.
+    assert.equal(isRequestForController({ address: "fe80::1", url: "https://[fe80::1]/api" }), true);
+
+    // The hostname excludes the port, so a port on the request URL is irrelevant to the match.
+    assert.equal(isRequestForController({ address: "192.168.1.2", url: "https://192.168.1.2:7443/api" }), true);
+
+    // A malformed URL cannot be parsed, so it belongs to no controller.
+    assert.equal(isRequestForController({ address: "192.168.1.2", url: "notaurl" }), false);
   });
 });

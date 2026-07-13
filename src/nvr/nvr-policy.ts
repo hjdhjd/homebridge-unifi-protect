@@ -158,6 +158,36 @@ export function membershipDelta(adoptedIds: readonly string[], configuredIds: re
 }
 
 /**
+ * Whether a completed HTTP request belongs to this controller, from the unifi-protect library's process-global `http:request:end` diagnostic payload. The channel
+ * carries every request from every client in the process, so each NVR filters by exact host so its health stays scoped to its own controller. The URL's parsed
+ * hostname is compared to the configured address for host EQUALITY, not substring containment - a substring test would let a controller at "192.168.1.2" observe
+ * every request to "192.168.1.20". The parser lowercases the hostname and drops the port, and it keeps an IPv6 literal bracketed ("[fe80::1]") while the configured
+ * address is a bare literal, so brackets are stripped from both sides and the compare is case-insensitive. A malformed URL matches nothing.
+ *
+ * @param options - The configured controller `address` and the request `url`.
+ *
+ * @returns `true` when the request's host is exactly this controller's.
+ */
+export function isRequestForController(options: { address: string; url: string }): boolean {
+
+  const { address, url } = options;
+
+  let hostname: string;
+
+  try {
+
+    hostname = new URL(url).hostname;
+  } catch {
+
+    return false;
+  }
+
+  const stripBrackets = (host: string): string => host.replace(/^\[|\]$/g, "");
+
+  return stripBrackets(hostname).toLowerCase() === stripBrackets(address).toLowerCase();
+}
+
+/**
  * Whether a completed HTTP request was successful, from the unifi-protect library's `http:request:end` diagnostic payload: no transport-level error, and a 2xx status.
  * Everything else - a transport error, an absent status, or a non-2xx response - is a failure. Isolated so the request-outcome-to-health-symptom mapping the NVR feeds
  * into NvrHealth is testable apart from the diagnostics-channel subscription that drives it.
