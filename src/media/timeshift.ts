@@ -20,9 +20,15 @@ import { logLivestreamIterationError } from "./livestream.ts";
 // self-heal rather than re-arming into a tight loop.
 export type TimeshiftStopCause = "ended" | "giveUp";
 
+// The role an emitted "segment" event carries, owned by the buffer and stated in the type so a consumer never reconstructs it from event ordering. "blob" is the single
+// prebuffer concatenation transmitStart emits at the head of a transmit session (the init segment plus the sliced buffer window, representing MANY fragments as one
+// emission); "live" is one ordinary per-fragment forward. The recording delegate writes both to FFmpeg but counts only "live" toward its per-fragment tally - the blob's
+// real fragment count is seeded from transmitStart's return instead, since one blob emission is not one fragment.
+export type SegmentRole = "blob" | "live";
+
 // Typed event map for the timeshift buffer. The recording delegate listens for the transmit-session events; the supervisor listens for `stopped`.
 //
-// - `segment`: the next fMP4 fragment is ready for a transmitting consumer.
+// - `segment`: the next fMP4 emission is ready for a transmitting consumer, tagged with its role (a one-shot prebuffer blob or one live fragment).
 // - `discontinuity`: the underlying livestream dropped and recovered while transmitting; the buffer now has a clean keyframe, and the consumer should restart
 //   its decoder with fresh data. Non-terminal - the subscription is still alive and will continue delivering segments.
 // - `stopped`: the backing subscription has ended for any reason - a deliberate stop, an out-of-band iterator death, or the recovery give-up - carrying the cause so
@@ -34,7 +40,7 @@ export type TimeshiftStopCause = "ended" | "giveUp";
 interface TimeshiftBufferEvents {
 
   discontinuity: [];
-  segment: [Buffer];
+  segment: [ data: Buffer, role: SegmentRole ];
   stopped: [cause: TimeshiftStopCause];
   terminated: [];
 }
@@ -339,11 +345,11 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
       this._segments.shift();
     }
 
-    // Forward the admitted segment to a transmitting consumer (the recording delegate) for FFmpeg consumption. Suppression is already handled above: reaching here means
-    // _pendingDiscontinuity is false.
+    // Forward the admitted segment to a transmitting consumer (the recording delegate) for FFmpeg consumption, tagged as a live fragment so the consumer counts it toward
+    // its per-fragment tally. Suppression is already handled above: reaching here means _pendingDiscontinuity is false.
     if(this._isTransmitting) {
 
-      this.emit("segment", segment.data);
+      this.emit("segment", segment.data, "live");
     }
   }
 
@@ -370,8 +376,10 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
   }
 
   // Start transmitting our timeshift buffer. When startIndex is provided, we emit only the buffer slice from that index forward rather than the entire buffer. This
-  // enables keyframe-aligned emission...we send FFmpeg data starting from a known keyframe boundary for clean decoder initialization.
-  public transmitStart(startIndex?: number): boolean {
+  // enables keyframe-aligned emission...we send FFmpeg data starting from a known keyframe boundary for clean decoder initialization. Returns null when the start is
+  // declined (the livestream is not ready), or the real number of buffered fragments the prebuffer blob carried (INCLUDING zero) when it began - the count the recording
+  // delegate seeds its per-fragment tally from, since the single blob emission is not one fragment.
+  public transmitStart(startIndex?: number): Nullable<number> {
 
     // Precondition: the timeshift buffer must already be started and have received its initialization segment before transmission can begin. The HKSV recording
     // delegate reconciles via configureTimeshifting before invoking transmitStart, so reaching this method without the timeshift running indicates a contract
@@ -381,7 +389,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
       this.log.error("HKSV event recording unavailable: the livestream connection is not ready. This can occur when the Protect controller or camera is " +
         "rebooting, and usually resolves on its own.");
 
-      return false;
+      return null;
     }
 
     // Transmit the timeshift buffer, starting from the keyframe-aligned index if provided, or the entire buffer otherwise. We map the segment structs to their
@@ -389,7 +397,9 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
     const slicedSegments = ((startIndex !== undefined) && (startIndex > 0) && (startIndex < this._segments.length)) ? this._segments.slice(startIndex) :
       this._segments;
 
-    this.emit("segment", Buffer.concat([ this.subscription.initSegment.data, ...slicedSegments.map((s) => s.data) ]));
+    // Emit the prebuffer as ONE blob-tagged "segment" event: the recording listener writes it to FFmpeg but does not count it as a single live fragment, because it
+    // represents slicedSegments.length fragments - the count we return below for the delegate to seed its tally from.
+    this.emit("segment", Buffer.concat([ this.subscription.initSegment.data, ...slicedSegments.map((s) => s.data) ]), "blob");
 
     // Mark ourselves transmitting FIRST, then re-decide any in-flight recovery. The urgency closure we declared at subscribe reads `_isTransmitting` live, so the
     // flag must be set before reassess() so the pool reads the active tolerance (zero) when it re-evaluates. reassess() escalates a recovery currently easing off
@@ -398,7 +408,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
     this._isTransmitting = true;
     this.subscription.reassess();
 
-    return true;
+    return slicedSegments.length;
   }
 
   // Stop transmitting our timeshift buffer.

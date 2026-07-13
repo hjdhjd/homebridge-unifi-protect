@@ -10,11 +10,10 @@ import type { API, CameraRecordingConfiguration, CameraRecordingDelegate, HAP, R
 import { BackpressureWriter, HDSProtocolSpecificErrorReason, HKSV_TIMEOUT, guardedDispatch } from "homebridge-plugin-utils";
 import type { Clock, HomebridgePluginLogging, Nullable, RecordingProcess } from "homebridge-plugin-utils";
 import { PROTECT_HKSV_SHADOW_FLOOR_MS, PROTECT_HKSV_SHADOW_RECONNECT_MS, PROTECT_HKSV_SHADOW_SAFETY_MS } from "../settings.ts";
+import type { ProtectTimeshiftBuffer, SegmentRole } from "./timeshift.ts";
 import type { ProtectAccessory } from "../types.ts";
 import type { ProtectCameraHost } from "./camera-host.ts";
-import type { ProtectTimeshiftBuffer } from "./timeshift.ts";
 import type { ProtectTimeshiftSupervisor } from "./timeshift-supervisor.ts";
-import { initThenMedia } from "./record-init-stream.ts";
 
 // HKSV end-of-stream marker. A single zero byte yielded with `isLast=true` signals the end of a recording stream to HomeKit. Module-scoped so we allocate once
 // per process rather than per yield.
@@ -83,7 +82,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
   private readonly supervisor: ProtectTimeshiftSupervisor;
   // The supervisor-owned timeshift buffer, held directly because the transmit path reads and signals it on every segment. The same instance as supervisor.buffer.
   public readonly timeshift: ProtectTimeshiftBuffer;
-  private transmitListener?: ((segment: Buffer) => void);
+  private transmitListener?: ((segment: Buffer, role: SegmentRole) => void);
 
   // Create an instance of the HKSV recording delegate. The supervisor is genuinely required: the streaming delegate constructs it first and hands it in, so a
   // delegate without buffer supervision is unrepresentable and there is exactly one construction path.
@@ -185,7 +184,8 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
 
     // If HKSV is disabled, the timeshift buffer is restarting, the camera is offline, the buffer isn't full, or transmission setup fails, we're done. The timeshift.time
     // check covers both "timeshift never started" (time is zero) and "timeshift started but prebuffer not yet filled". The trailing !this.ffmpegStream is load-bearing
-    // for TypeScript narrowing at the subsequent direct access (the initThenMedia invocation)...TypeScript does not track field assignments across method calls.
+    // for TypeScript narrowing at the subsequent direct access (the recording process's stream() invocation)...TypeScript does not track field assignments across method
+    // calls.
     if(this.accessory.context.hksvRecordingDisabled || this.timeshift.isRestarting || !this.protectCamera.isReachable ||
       (this.timeshift.time < this.timeshift.configuredDuration) || !this.startTransmitting() || !this.ffmpegStream) {
 
@@ -206,9 +206,9 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
 
     // We pace our segment yields to HKSV relative to the last delivery...each segment is yielded pacingInterval after the previous one was actually sent. This ensures
     // HomeKit's timeout is satisfied while building a buffer of pre-produced segments from FFmpeg. When the Protect controller's livestream API stalls, we continue
-    // yielding pre-produced segments, absorbing stalls that would otherwise cause recording timeouts. While we wait between yields, the initThenMedia generator is
-    // paused and FFmpeg's output accumulates in the assembler's internal segment reserve. We subtract 500ms from HKSV_TIMEOUT as safety headroom so each yield lands
-    // before HomeKit's per-segment timeout fires rather than racing it.
+    // yielding pre-produced segments, absorbing stalls that would otherwise cause recording timeouts. While we wait between yields, the recording process's kind-tagged
+    // stream() generator is paused and FFmpeg's output accumulates in the assembler's internal segment reserve. We subtract 500ms from HKSV_TIMEOUT as safety headroom so
+    // each yield lands before HomeKit's per-segment timeout fires rather than racing it.
     const pacingInterval = HKSV_TIMEOUT - 500;
 
     // Create an AbortController for interrupting pacing delays. HAP's signal handles stream closure, but we also need to abort when a livestream discontinuity is
@@ -297,9 +297,11 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
           }
         }
 
-        // Process our FFmpeg-generated segments and send them back to HKSV. The init segment is yielded first (counted, paced, then discounted at teardown), then media.
+        // Process our FFmpeg-generated segments and send them back to HKSV. The recording process's kind-tagged stream yields one init segment first, then one media
+        // fragment each; we transmit both but count only media toward the transmitted-video tally, so a restarted process's fresh init segment is uncounted by
+        // construction rather than requiring any compensating adjustment.
         // eslint-disable-next-line no-await-in-loop -- Intentional: the outer loop handles FFmpeg restarts on discontinuity.
-        for await (const segment of initThenMedia(this.ffmpegStream, combinedSignal)) {
+        for await (const segment of this.ffmpegStream.stream({ signal: combinedSignal })) {
 
           // If we've stopped transmitting, a discontinuity fired, or the recording is terminating, exit the segment loop. isDiscontinuity and isTerminated
           // are mutated asynchronously by the event listeners above.
@@ -309,8 +311,12 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
             break;
           }
 
-          // Keep track of how many segments we're sending to HKSV.
-          this.session.transmittedSegments++;
+          // Count only media fragments as transmitted video. The init segment is a one-shot fMP4 header, not a fragment of recorded time, and each mid-event restart
+          // delivers its own fresh init - counting it would inflate the duration by one per restart.
+          if(segment.kind === "media") {
+
+            this.session.transmittedSegments++;
+          }
 
           // Pace segment delivery to HomeKit relative to the last yield, then yield the segment.
           await this.paceSegmentDelivery(lastYieldTime, pacingInterval, combinedSignal);
@@ -325,8 +331,8 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
             break;
           }
 
-          // Send HKSV the fMP4 segment. The delivery time anchors the next pacing delay.
-          yield { data: segment, isLast: false };
+          // Send HKSV the fMP4 segment bytes. The delivery time anchors the next pacing delay.
+          yield { data: segment.bytes, isLast: false };
 
           lastYieldTime = this.clock.now();
         }
@@ -459,20 +465,30 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     this.segmentWriter = new BackpressureWriter(() => this.ffmpegStream?.stdin ?? null, {});
 
     // Listen in for events from the timeshift buffer and feed FFmpeg. The write() promise resolves on a successful flush and rejects on a typed teardown error
-    // (BackpressureClosedStreamError or the abort reason). We count the timeshifted segment only on the success continuation, so the count advances solely after a
-    // successful write, and quietly absorb a benign teardown rejection so there is no floating rejection.
-    this.timeshift.on("segment", this.transmitListener = (segment: Buffer): void => {
+    // (BackpressureClosedStreamError or the abort reason). We write EVERY emission - the one-shot prebuffer blob and every live fragment - to FFmpeg, but count only a
+    // successful LIVE write toward the timeshifted tally: the blob is many fragments as one emission, whose count is seeded from transmitStart's return below, so
+    // counting it as one here would under-credit. The count advances solely after a successful write; a benign teardown rejection is quietly absorbed so nothing floats.
+    this.timeshift.on("segment", this.transmitListener = (segment: Buffer, role: SegmentRole): void => {
 
       // Stamp when a segment arrived from the source, before we attempt to feed FFmpeg. This reads source liveness - the camera delivered a segment - independent of
       // whether FFmpeg accepts it. A wedged FFmpeg parks the write below on backpressure so its success continuation never fires; a stamp there would misread a
       // still-live source as starved. The finalization compares this arrival time to the watchdog window to tell a local stall from a quieted source.
       this.session.lastInputAt = this.clock.now();
-      this.segmentWriter?.write(segment).then(() => this.session.timeshiftedSegments++, (error: unknown) => this.log.debug("Backpressure write dropped.", { error }));
+      this.segmentWriter?.write(segment).then(() => {
+
+        if(role === "live") {
+
+          this.session.timeshiftedSegments++;
+        }
+      }, (error: unknown) => this.log.debug("Backpressure write dropped.", { error }));
     });
 
-    // Check that nothing went wrong when we started transmitting the stream. If it failed, we tear down this attempt's FFmpeg process, timeshift buffer, and segment
-    // writer and bail; the next recording event re-establishes a fresh pipeline.
-    if(!this.timeshift.transmitStart(alignment?.startIndex)) {
+    // Begin transmitting the standing buffer as a keyframe-aligned prebuffer blob. transmitStart returns null when it cannot start (we tear down this attempt and bail),
+    // or the real number of fragments the blob carried. We seed the timeshifted tally with that count as an INCREMENT (+=, never assignment): every mid-event
+    // discontinuity restart re-runs startTransmitting, and each restart's blob must ACCUMULATE onto the running tally rather than reset it.
+    const blobFragments = this.timeshift.transmitStart(alignment?.startIndex);
+
+    if(blobFragments === null) {
 
       // Stop our FFmpeg process and our timeshift buffer.
       this.segmentWriter.abort();
@@ -488,6 +504,10 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
 
       return false;
     }
+
+    // Seed the timeshifted tally with the blob's real fragment count. This is an INCREMENT: the listener above did not count the blob emission (it is tagged "blob"),
+    // and each mid-event restart re-runs this method, so each restart's blob accumulates onto the running tally rather than replacing it.
+    this.session.timeshiftedSegments += blobFragments;
 
     // Indicate we are recording, if configured to do so.
     if(this.protectCamera.hints.hksvRecordingIndicator && !this.protectCamera.ufp.ledSettings.isEnabled) {
@@ -619,17 +639,13 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
       return;
     }
 
-    // We actually have one less segment than we think we do since we counted the fMP4 stream header as well, which shouldn't count toward our total of transmitted video
-    // segments.
-    this.session.timeshiftedSegments = Math.max(--this.session.timeshiftedSegments, 0);
-    this.session.transmittedSegments = Math.max(--this.session.transmittedSegments, 0);
-
     // Inform the user if we've recorded something. The decision is session-scoped by design: the per-event counters prove a real recording happened (a transmitted
     // segment is impossible unless the event started against a live buffer), so an accepted event logs its summary in every teardown mode - including one whose
     // source died mid-flight, which is still a recording HomeKit accepted. Live buffer state has no vote in a per-event decision.
     if(!this.accessory.context.hksvRecordingDisabled && this.session.timeshiftedSegments && this.session.transmittedSegments) {
 
-      // Calculate approximately how many seconds we've recorded. We have more accuracy in timeshifted segments, so we'll use the more accurate statistics when we can.
+      // The duration is the seconds of video actually transmitted to HomeKit: the timeshifted tally counts every fragment written to the recording pipeline (the
+      // prebuffer blob's real fragment count plus each live fragment), so multiplying it by the segment length gives the transmitted-video length exactly.
       const recordedSeconds = (this.session.timeshiftedSegments * this.timeshift.segmentLength) / 1000;
 
       let recordedTime;
@@ -664,7 +680,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
       // Inform the user if they've enabled logging.
       if((reason === HDSProtocolSpecificErrorReason.NORMAL) && this.protectCamera.hints.logHksv) {
 
-        this.log.info("HKSV: %s %s event.", recordedTime, timeUnit);
+        this.log.info("HKSV: transmitted a %s %s recording to HomeKit.", recordedTime, timeUnit);
       }
     }
 

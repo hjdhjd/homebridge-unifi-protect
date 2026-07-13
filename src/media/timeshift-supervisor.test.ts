@@ -566,8 +566,9 @@ describe("timeshift supervisor buffer channel-profile lifecycle", () => {
 
     assert.equal(await supervisor.buffer.start(makeChannelProfile(host)), true, "the start succeeded");
 
-    // Transmit so the out-of-band death fires the terminated emit, and capture exactly what a listener observes at emit time.
-    assert.equal(supervisor.buffer.transmitStart(), true, "transmission began");
+    // Transmit so the out-of-band death fires the terminated emit, and capture exactly what a listener observes at emit time. transmitStart returns the blob fragment
+    // count (zero here - the buffer holds no fragments yet); a non-null return means transmission began.
+    assert.notEqual(supervisor.buffer.transmitStart(), null, "transmission began");
 
     const observedAtEmit: { channelProfile: unknown; isStarted: boolean }[] = [];
 

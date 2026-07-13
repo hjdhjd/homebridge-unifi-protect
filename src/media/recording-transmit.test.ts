@@ -182,8 +182,8 @@ describe("recording delegate transmit-path behavior", () => {
 
   // Test A - the accept path. The delegate constructs its FFmpeg process through the factory exactly once, opens the livestream on the resolved channel, feeds the
   // timeshift's concatenated buffer to the process's stdin, and yields the init segment plus the three media segments the process produces, each NOT marked last. After
-  // the close, the early-end telemetry reports the off-by-one-discounted yield count, the exact deterministic pacing delay, and the finite reserve depth (proving the
-  // POSITIVE_INFINITY reserveMin sentinel was overwritten and never logged).
+  // the close, the early-end telemetry reports the media yield count (the init segment is transmitted but not counted, so three media = three), the exact deterministic
+  // pacing delay, and the finite reserve depth (proving the POSITIVE_INFINITY reserveMin sentinel was overwritten and never logged).
   test("accepts a recording event, constructs the FFmpeg process once, and yields paced fMP4 packets with exact telemetry", async () => {
 
     const ffmpegProcess = new TestRecordingProcess({ bufferedSegments: 5, initSegment: Buffer.from("init"),
@@ -214,7 +214,7 @@ describe("recording delegate transmit-path behavior", () => {
 
     const telemetry = findEndedEarlyTelemetry(logEntries);
 
-    // The event id, the off-by-one-discounted yield count (four transmitted minus the one init-header discount), the exact deterministic pacing delay, and the finite
+    // The event id, the media yield count (three media fragments; the init segment was transmitted but not counted), the exact deterministic pacing delay, and the finite
     // reserve (min(Infinity, 5) = 5, NOT "Infinity").
     assert.ok(telemetry.includes("event: 1"), telemetry);
     assert.ok(telemetry.includes("segments yielded: 3"), telemetry);
@@ -355,6 +355,51 @@ describe("recording delegate transmit-path behavior", () => {
     assert.ok(rest.length >= 1, "Expected the restarted process to resume yielding segments after the discontinuity.");
   });
 
+  // Test D2 - #25 restart accounting. A discontinuity restart must UNCOUNT the restarted process's fresh init item AND ACCUMULATE its prebuffer blob onto the running
+  // tally rather than reset it. We drive an event, restart it on a discontinuity, drain to completion, and read the close telemetry: "segments to FFmpeg"
+  // (timeshiftedSegments) carries BOTH prebuffer blobs - each the 40-fragment keyframe window (prebufferLength / segmentLength = 4000 / 100), so 80 - proving the
+  // restart's blob incremented rather than reset the tally (a reset would show 40). "segments yielded" (transmittedSegments) counts only media across both processes,
+  // with both fresh init items uncounted.
+  test("a discontinuity restart accumulates the restart blob and leaves the fresh init uncounted", async () => {
+
+    const factory = makeSequencedRecordingFactory([
+      { initSegment: Buffer.from("init1"), segments: [ Buffer.from("s1"), Buffer.from("s2") ] },
+      { initSegment: Buffer.from("init2"), segments: [ Buffer.from("s3"), Buffer.from("s4") ] }
+    ]);
+    const { clock, delegate, logEntries } = await buildTransmittingDelegate(factory);
+
+    const gen = delegate.handleRecordingStreamRequest(1, new AbortController().signal);
+
+    // Pull the first process's init.
+    const first = gen.next();
+
+    await settle();
+    clock.advance(PACING_INTERVAL);
+    await first;
+
+    // Park in the next pace, then fire the discontinuity so the delegate restarts through the second process.
+    const interrupted = gen.next();
+
+    await settle();
+    delegate.timeshift.emit("discontinuity");
+    await interrupted;
+
+    // Drain the restarted stream to completion, then close to emit the telemetry carrying the per-event counters.
+    await drainPaced(gen, clock);
+
+    delegate.closeRecordingStream(1, HDSProtocolSpecificErrorReason.TIMEOUT);
+
+    const telemetry = findEndedEarlyTelemetry(logEntries);
+
+    // Two 40-fragment prebuffer blobs accumulated onto the tally (a reset would show 40).
+    assert.ok(telemetry.includes("segments to FFmpeg: 80"), telemetry);
+
+    // Media only in the yield count: one media from the first process before the discontinuity interrupts, two from the restarted process, and NEITHER process's fresh
+    // init item - counting the two inits would show five, not three.
+    assert.ok(telemetry.includes("segments yielded: 3"), telemetry);
+    assert.equal(factory.createCalls.length, 2, "the restart created a second process");
+  });
+
   // Test E - terminated exit. While the generator is parked in its pacing delay, timeshift.stop() fires (the real public method): finalizeSubscription emits terminated
   // since the delegate is transmitting, and disposes the subscription (releasing the parked livestream double). The post-loop teardown yields a final end-of-stream
   // marker on the terminated branch.
@@ -427,8 +472,8 @@ describe("recording delegate transmit-path behavior", () => {
     await first;
 
     // Feed two more segments through the transmit listener while the event is live, so the per-event timeshifted counter survives the header discount at the close.
-    delegate.timeshift.emit("segment", Buffer.from("live1"));
-    delegate.timeshift.emit("segment", Buffer.from("live2"));
+    delegate.timeshift.emit("segment", Buffer.from("live1"), "live");
+    delegate.timeshift.emit("segment", Buffer.from("live2"), "live");
     await settle();
 
     // Walk the generator to its next pacing delay, then - while parked - terminate the subscription out from under the event. The source is gone (no further segments),
@@ -448,11 +493,14 @@ describe("recording delegate transmit-path behavior", () => {
     // HomeKit accepted what it received and closes the event normally.
     delegate.closeRecordingStream(1, HDSProtocolSpecificErrorReason.NORMAL);
 
-    // The summary fires from the session's own counters: two timeshifted segments after the header discount, at 100ms each.
-    const summary = logEntries.find((e) => (e.level === "info") && (String(e.parameters[0]) === "HKSV: %s %s event."));
+    // The summary fires from the session's own counters, and reports transmitted-video seconds exactly (finding #25). The tally is the prebuffer blob's real fragment
+    // count plus the two live fragments: the blob is the keyframe-aligned prebuffer window, prebufferLength / segmentLength = 4000 / 100 = 40 fragments, so the tally is
+    // 40 + 2 = 42 fragments at 100ms each = 4.2 seconds, rounded to 4. Pre-fix, the blob was mis-credited as a single segment (then discounted to zero), so this same
+    // event reported 0.2 seconds.
+    const summary = logEntries.find((e) => (e.level === "info") && (String(e.parameters[0]) === "HKSV: transmitted a %s %s recording to HomeKit."));
 
     assert.ok(summary, "Expected the recorded-event summary log entry.");
-    assert.equal(summary.parameters[1], "0.2");
+    assert.equal(summary.parameters[1], "4");
     assert.equal(summary.parameters[2], "second");
   });
 
@@ -484,7 +532,7 @@ describe("recording delegate transmit-path behavior", () => {
     await drainPaced(delegate.handleRecordingStreamRequest(1, new AbortController().signal), clock);
 
     // The camera is still streaming: a fresh segment arrives at the current clock, just before HomeKit closes the event.
-    delegate.timeshift.emit("segment", Buffer.from("live"));
+    delegate.timeshift.emit("segment", Buffer.from("live"), "live");
     delegate.acknowledgeStream();
 
     assert.equal(countLogs(logEntries, "warn", "while the camera was still streaming"), 1);
@@ -519,7 +567,7 @@ describe("recording delegate transmit-path behavior", () => {
     await drainPaced(delegate.handleRecordingStreamRequest(1, new AbortController().signal), clock);
 
     // A fresh segment arrives (recent arrival), but the watchdog did not reap this event, so there is no stall to warn about.
-    delegate.timeshift.emit("segment", Buffer.from("live"));
+    delegate.timeshift.emit("segment", Buffer.from("live"), "live");
     delegate.acknowledgeStream();
 
     assert.equal(countLogs(logEntries, "warn", "while the camera was still streaming"), 0);
