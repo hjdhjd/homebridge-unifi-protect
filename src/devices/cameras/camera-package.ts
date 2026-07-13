@@ -24,6 +24,12 @@ export class ProtectCameraPackage extends ProtectCamera {
   // computed state: the field defines to false after the base constructor returns, and every reader of the field runs post-construction (the onGet and onSet handlers).
   private flashlightState = false;
 
+  // The monotonic generation of the latest flashlight intent, bumped on every on and off. Transient intent state, never persisted - the flashlight is a write-only
+  // momentary command with no confirming observer, so only the capture-and-check half of the relay's pending-intent pattern applies: the truthy onSet captures the
+  // generation it opened, and every deferred continuation of that activation (the retry resolution, the not-dark reset, the heartbeat-arming decision) re-checks its
+  // captured generation before acting, so a superseding off or a newer on cleanly wins the race.
+  #flashlightGeneration = 0;
+
   // Spawn the package camera's bespoke observer set, deliberately REPLACING the camera set rather than extending it - no super call. The camera reactions must never
   // spawn here: the reclassification observer would arm a flap-triggered doorbell-capability attach against the package accessory (an isDoorbell flap on the shared
   // parent record would attach the doorbell capability onto the package - duplicate doorbell services and context corruption), and the channels/videoCodec observers
@@ -205,14 +211,20 @@ export class ProtectCameraPackage extends ProtectCamera {
         return;
       }
 
-      // Stop heartbeating the flashlight to allow it to turn off.
+      // Stop heartbeating the flashlight to allow it to turn off. Bump the intent generation so any in-flight activation's deferred continuations see themselves
+      // superseded and bail; the off path defers nothing of its own, so it does not capture the generation it opened.
       if(!value) {
 
         this.clearTimer("flashlight");
         this.flashlightState = false;
+        this.#flashlightGeneration++;
 
         return;
       }
+
+      // Open a new activation intent and capture its generation. Every deferred continuation below compares against this captured value, so a superseding off or a newer
+      // on that bumps the counter makes this activation's continuations no-op.
+      const generation = ++this.#flashlightGeneration;
 
       // Utility function to activate the package camera's flashlight.
       const activateFlashlight = async (): Promise<boolean> => {
@@ -229,6 +241,13 @@ export class ProtectCameraPackage extends ProtectCamera {
         } catch {
 
           lit = false;
+        }
+
+        // A superseding off or newer on landed while the retry was in flight, so this activation is stale: latch nothing, push nothing, and leave the timer to whichever
+        // action superseded us.
+        if(generation !== this.#flashlightGeneration) {
+
+          return false;
         }
 
         this.flashlightState = lit;
@@ -251,15 +270,30 @@ export class ProtectCameraPackage extends ProtectCamera {
       // If it's not dark, the flashlight will not engage - reset the switch to off and we're done.
       if(!this.ufp.isDark) {
 
-        // We defer the reset ~50ms so HomeKit settles the value it just set through this onSet before we reflect it back off. A synchronous
-        // same-characteristic write inside its own onSet would be clobbered.
-        setTimeout(() => service.updateCharacteristic(this.hap.Characteristic.On, false), 50);
+        // We defer the reset ~50ms so HomeKit settles the value it just set through this onSet before we reflect it back off. A synchronous same-characteristic write
+        // inside its own onSet would be clobbered. The captured-generation re-check keeps a legitimate later activation (isDark flipped true within the window) from
+        // being stomped off by this stale reset.
+        setTimeout(() => {
+
+          if(generation === this.#flashlightGeneration) {
+
+            service.updateCharacteristic(this.hap.Characteristic.On, false);
+          }
+        }, 50);
 
         return;
       }
 
       // Activate the flashlight.
       await activateFlashlight();
+
+      // A superseding off or newer on landed while the first activation was in flight, so this intent is stale: do not arm the heartbeat. Gate on the generation, not on
+      // activateFlashlight's return value - a failed FIRST activation of a still-current intent still arms the heartbeat by design (the retry's swallow-and-re-issue
+      // semantics), and only a superseded intent skips it.
+      if(generation !== this.#flashlightGeneration) {
+
+        return;
+      }
 
       // Heartbeat the flashlight at regular intervals to keep it on. The controller exposes no off endpoint for this momentary command - the light
       // self-extinguishes on its own roughly 25 seconds after the last activation - so a twenty-second cadence, matching Protect's own apps, keeps

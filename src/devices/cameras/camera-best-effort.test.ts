@@ -350,7 +350,7 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
     // package camera materializes immediately and its flashlight Lightbulb is configured. The HELD projection is the SAME instance the package camera shares
     // (doorbell.ts passes the doorbell's own #device to createPackageCamera), so a test sets flashlightRejection and reads flashlightCalls on it directly. isDark is
     // threaded at construction (makeCameraConfig.isDark) so the dark-guard resolves deterministically.
-    async function buildFlashlightFamily(options: { isDark: boolean }): Promise<{ projection: TestCameraProjection; store: TestStateStore }> {
+    async function buildFlashlightFamily(options: { isDark: boolean }): Promise<{ cameraId: string; projection: TestCameraProjection; store: TestStateStore }> {
 
       const cameraConfig = makeCameraConfig({ channels: G6_PRO_ENTRY_CHANNELS, featureFlags: { hasPackageCamera: true, isDoorbell: true }, isDark: options.isDark,
         name: "Front Door" });
@@ -364,7 +364,7 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
 
       await settle();
 
-      return { projection, store };
+      return { cameraId: cameraConfig.id, projection, store };
     }
 
     // Resolve the package camera's flashlight On characteristic, hard-asserting the package camera is live and the gated Lightbulb exists FIRST (Doorbell.PackageCamera.
@@ -474,6 +474,73 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
 
         assert.equal(projection.flashlightCalls.length, 3, "the retry exhausts its full three-attempt budget against a persistent rejection");
         assert.equal(await onChar.triggerGet(), false, "an exhausted pulse reflects the flashlight off via flashlightState");
+      } finally {
+
+        mock.timers.reset();
+      }
+    });
+
+    test("an off during an in-flight activation wins: no re-latch, no heartbeat arm", async () => {
+
+      const { projection } = await buildFlashlightFamily({ isDark: true });
+
+      mock.timers.enable({ apis: ["setInterval"] });
+
+      try {
+
+        const onChar = flashlightOn();
+
+        // Fire the on WITHOUT awaiting - its handler suspends at the retry await, having issued its one pulse - then drive the off to completion (which bumps the intent
+        // generation), then let the on resume into its now-superseded continuation.
+        const activating = onChar.triggerSet(true);
+
+        await onChar.triggerSet(false);
+        await activating;
+
+        // The off won: the flashlight reads off through the onGet (flashlightState), un-re-latched by the stale activation's post-retry continuation. The onGet is the
+        // authoritative read here - the code never pushes updateCharacteristic on this path, so the characteristic's cached set-value is a harness artifact of the last
+        // triggerSet to resolve, not a state the code wrote.
+        assert.equal(await onChar.triggerGet(), false, "the off during the in-flight activation wins - the flashlight reads off");
+
+        // The superseded activation skipped registerInterval, so the heartbeat was never armed: ticking past its cadence issues no further pulse. A shape that gated only
+        // inside activateFlashlight would arm the heartbeat from the stale closure, and this tick would grow the pulse count.
+        const callsBefore = projection.flashlightCalls.length;
+
+        mock.timers.tick(20000);
+
+        await settle();
+
+        assert.equal(projection.flashlightCalls.length, callsBefore, "the superseded activation never armed the heartbeat, so no further pulse fires");
+      } finally {
+
+        mock.timers.reset();
+      }
+    });
+
+    test("a legitimate activation within the not-dark reset window is not stomped off", async () => {
+
+      const { cameraId, store } = await buildFlashlightFamily({ isDark: false });
+
+      mock.timers.enable({ apis: [ "setInterval", "setTimeout" ] });
+
+      try {
+
+        const onChar = flashlightOn();
+
+        // Not dark: the on schedules a 50ms deferred off-reset under its captured generation.
+        await onChar.triggerSet(true);
+
+        // The camera becomes dark, and a fresh on latches the flashlight - a NEW generation the earlier deferred reset must not stomp.
+        store.pushCameraPatch(cameraId, { isDark: true });
+        await onChar.triggerSet(true);
+
+        assert.equal(await onChar.triggerGet(), true, "the later dark activation lit the flashlight on");
+
+        // Advance the earlier activation's 50ms window: its reset re-checks its captured generation, sees itself superseded, and does nothing - the flashlight stays on.
+        mock.timers.tick(50);
+
+        assert.equal(await onChar.triggerGet(), true, "the later activation's On survives the earlier not-dark reset window");
+        assert.equal(onChar.value, true, "the switch characteristic stays on, not stomped off by the stale not-dark reset");
       } finally {
 
         mock.timers.reset();
