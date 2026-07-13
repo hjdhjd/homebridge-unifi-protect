@@ -85,6 +85,15 @@ interface SessionInfo {
   videoSSRC: number;
 }
 
+// Classify a talkback teardown as a clean stop rather than a fault: either the session's own AbortController fired (our own teardown), or the shipped typed caller-abort
+// surfaced. Both talkback failure sites in startStream - the open-call catch and the in-flight send catch - consume this one definition, so the clean-versus-fault
+// decision lives in a single place. The signal.aborted arm is required, not the error type alone: a clean send-stop rejects with ProtectNetworkError rather than
+// ProtectAbortedError, because the shared signal's abort listener races ahead of send's own onAbort.
+function isCleanTalkbackStop(error: unknown, signal: AbortSignal): boolean {
+
+  return signal.aborted || (error instanceof ProtectAbortedError);
+}
+
 // Camera streaming delegate implementation for Protect.
 export class ProtectStreamingDelegate implements CameraStreamingDelegate, StreamingDelegate {
 
@@ -1195,10 +1204,9 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
         // return-audio FFmpeg ended or faulted), proactively closing on return-audio exit; it is idempotent with the stopStream abort backstop.
         void tb.send(ffmpegReturnAudio.stdout, { signal: sessionInfo.abortController.signal }).catch((error: unknown) => {
 
-          // On a clean STOP the in-flight send rejects with ProtectNetworkError (the session closes via the shared signal, so its constructor-registered abort
-          // listener rejects send's fault race before send's own onAbort runs), NOT ProtectAbortedError - so the load-bearing arm is signal.aborted, not the error
-          // type. A type-only check would log a spurious error on every clean two-way-audio STOP. A genuine mid-stream fault still surfaces as an error.
-          if(sessionInfo.abortController.signal.aborted || (error instanceof ProtectAbortedError)) {
+          // A clean in-flight stop is the normal end of every two-way-audio session, so we note it at debug and stay quiet. A genuine mid-stream fault still surfaces as
+          // an error. The shared predicate owns the clean-versus-fault decision.
+          if(isCleanTalkbackStop(error, sessionInfo.abortController.signal)) {
 
             this.log.debug("Return audio channel closed.", { error });
 
@@ -1209,10 +1217,16 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
         }).finally(() => void tb[Symbol.asyncDispose]());
       } catch(error) {
 
-        // camera.talkback() threw (ProtectUnsupportedError for no speaker, or a negotiation/open failure). The unifi-protect library's TalkbackSession owns the
-        // socket-level expected-disconnect filtering, so the surface consolidates to this open-failure message plus the mid-stream fault message; we continue
-        // without talkback.
-        this.log.error("Unable to connect to the return audio channel: %s.", formatErrorMessage(error));
+        // Classify the talkback open failure through the shared predicate. A clean stop - the session's own teardown, or the shipped typed caller-abort - means the
+        // caller hung up during negotiation before the session opened, so we note it plainly rather than as an error. A genuine fault (a camera with no speaker, a
+        // negotiation or open failure) keeps the error path. Either way we continue without talkback.
+        if(isCleanTalkbackStop(error, sessionInfo.abortController.signal)) {
+
+          this.log.info("The talkback connection was stopped.");
+        } else {
+
+          this.log.error("Unable to connect to the return audio channel: %s.", formatErrorMessage(error));
+        }
       }
     }
   }
