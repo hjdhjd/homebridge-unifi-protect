@@ -161,14 +161,11 @@ export class ProtectViewer extends ProtectDevice {
     const viewState = value === true ? switchService.subtype ?? null : null;
     const action = viewState ? "set the liveview to " + switchService.displayName : "clear the liveview";
 
-    // setViewer reports any failure through the shared command-error helper, naming this operation via the action phrase, so we only handle the success side-effect here.
-    if(!(await this.setViewer(action, viewState))) {
-
-      return;
-    }
-
-    // Update all the other liveview switches.
-    this.updateLiveviewSwitchState();
+    // setViewer reports any failure through the shared command-error helper, naming this operation via the action phrase. On success we do NOT re-read the switch layout
+    // synchronously: the tapped switch's own On value is HAP's post-onSet write, and every OTHER switch reflects when the viewer.liveview observer sees the controller's
+    // broadcast - the same shape the MQTT set path already has. The projection's update() is write-through and never folds the command into the store, so a synchronous
+    // re-read here would re-assert the pre-command state that the observer will correctly replace once the broadcast lands.
+    await this.setViewer(action, viewState);
   }
 
   // Add liveview switches to HomeKit for viewer devices.

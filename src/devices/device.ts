@@ -758,7 +758,7 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
 
   // Per-accessory lifetime: this accessory's composed signal scopes its observers and its MQTT subscriptions, so cleanup / reconfigure / shutdown each unwind only
   // this accessory's loops - and release exactly this accessory's MQTT handlers - through the controller abort. Overrides the base default (the controller's terminal
-  // shutdown signal) that the controller-scoped owners use.
+  // shutdown signal) that the teardown-less controller-scoped owners, system information and liveviews, ride.
   protected override get observeSignal(): AbortSignal {
 
     return this.signal;

@@ -9,6 +9,7 @@ import type { Nullable } from "homebridge-plugin-utils";
 import { ProtectBase } from "../devices/device-base.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import type { ProtectNvrLiveviewConfig } from "unifi-protect";
+import { ProtectReservedNames } from "../types.ts";
 import { ProtectSecuritySystem } from "./security-system.ts";
 import { sanitizeName } from "homebridge-plugin-utils";
 import { selectLiveviews } from "unifi-protect";
@@ -43,6 +44,14 @@ export class ProtectLiveviews extends ProtectBase {
     return this.nvr.client.liveviews;
   }
 
+  // Whether a platform accessory is a liveview switch this controller owns. Liveview accessories are scoped to their owning controller by the context MAC written at
+  // reconcile time, so on a multi-controller install this owner reconciles, sweeps, and addresses only its own switches and never another controller's. This is the one
+  // home for the scoping rule, consumed by the orphan sweep and both MQTT lookups.
+  private isOwnedLiveviewSwitch(accessory: ProtectAccessory): boolean {
+
+    return ("liveview" in accessory.context) && (accessory.context.nvr === this.nvr.ufp.mac);
+  }
+
   // Reconcile the liveview-derived accessories against the controller's current liveview collection. The NVR-level observe loop drives this on each change to the live
   // liveview projection, and once at startup for the initial population.
   public configureLiveviews(): void {
@@ -65,10 +74,14 @@ export class ProtectLiveviews extends ProtectBase {
 
         this.log.info("No plugin-specific liveviews found. Disabling the security system accessory associated with this UniFi Protect controller.");
 
-        // Unregister the accessory and delete its remnants from HomeKit and the plugin.
-        this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [this.securityAccessory]);
-        this.platform.accessories.splice(this.platform.accessories.indexOf(this.securityAccessory), 1);
+        // Remove the accessory through the shared removal tail, which unregisters a bridged accessory and splices it out of the platform list. The tail logs nothing by
+        // design, so the user-facing narration above stays here with the owner.
+        this.nvr.removeAccessoryFromHomeKit(this.securityAccessory);
       }
+
+      // Release the security system's MQTT registrations before dropping the instance, so its get/set handlers no longer command this controller's cameras once its
+      // accessory is gone. A later re-add builds a fresh instance that subscribes anew.
+      this.securitySystem?.cleanup();
 
       this.securityAccessory = null;
       this.securitySystem = null;
@@ -107,14 +120,10 @@ export class ProtectLiveviews extends ProtectBase {
   // Configure any liveview-associated switches.
   private configureSwitches(): void {
 
-    // Iterate through the list of accessories and remove any orphan liveviews due to removal or renaming on the Protect controller.
-    for(const accessory of this.platform.accessories) {
-
-      // We're only interested in liveview accessories.
-      if(!("liveview" in accessory.context)) {
-
-        continue;
-      }
+    // Sweep away any orphan liveview switches whose liveview was removed or renamed on the controller. We iterate a filtered SNAPSHOT of this controller's own liveview
+    // switches (the scoping predicate keys on the context MAC), so the sweep never disturbs another controller's switches and the removal splice never races the
+    // iterator it walks.
+    for(const accessory of this.platform.accessories.filter(x => this.isOwnedLiveviewSwitch(x))) {
 
       // We found a switch matching this liveview. Move along...
       if(this.liveviews.some(x => x.name.toUpperCase() === ("Protect-" + (accessory.context.liveview ?? "")).toUpperCase())) {
@@ -125,10 +134,10 @@ export class ProtectLiveviews extends ProtectBase {
       // The switch has no associated liveview - let's get rid of it.
       this.log.info("Removing plugin-specific liveview switch: %s. The liveview has been either removed or renamed in UniFi Protect.", accessory.context.liveview);
 
-      // Unregister the accessory and delete its remnants from HomeKit and the plugin.
+      // Forget the configured name and remove the accessory through the shared removal tail, which unregisters a bridged accessory and splices it out of the platform
+      // list. The tail logs nothing by design, so the user-facing narration above stays here with the owner.
       this.isConfigured.delete((accessory.context.liveview ?? "").toUpperCase());
-      this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
-      this.platform.accessories.splice(this.platform.accessories.indexOf(accessory), 1);
+      this.nvr.removeAccessoryFromHomeKit(accessory);
     }
 
     // Initialize the regular expression here so we don't have to reinitialize it in each iteration below.
@@ -229,8 +238,8 @@ export class ProtectLiveviews extends ProtectBase {
     // Return the current status of all the liveviews.
     this.subscribeGet("liveviews", "liveview scenes", () => {
 
-      // Get the list of liveviews.
-      const liveviews = this.platform.accessories.filter(x => "liveview" in x.context)
+      // Get the list of this controller's liveviews.
+      const liveviews = this.platform.accessories.filter(x => this.isOwnedLiveviewSwitch(x))
         .map(x => ({ name: x.context.liveview ?? "", state: x.getService(this.hap.Service.Switch)?.getCharacteristic(this.hap.Characteristic.On).value }));
 
       return JSON.stringify(liveviews);
@@ -242,15 +251,15 @@ export class ProtectLiveviews extends ProtectBase {
       interface mqttLiveviewJSON {
 
         name: string;
-        state: boolean;
+        state: unknown;
       }
 
-      let incomingPayload;
+      let incomingPayload: unknown;
 
       // Catch any errors in parsing what we get over MQTT.
       try {
 
-        incomingPayload = JSON.parse(rawValue) as mqttLiveviewJSON[];
+        incomingPayload = JSON.parse(rawValue);
       } catch {
 
         this.log.error("Unable to process MQTT message: \"%s\". Invalid JSON.", rawValue);
@@ -259,8 +268,9 @@ export class ProtectLiveviews extends ProtectBase {
         return;
       }
 
-      // Sanity check.
-      if(!incomingPayload.length) {
+      // The payload must be a non-empty array of liveview entries. A top-level null, primitive, or object is the same handled failure as malformed JSON - we reject it
+      // here rather than reaching the length read on a non-array value.
+      if(!Array.isArray(incomingPayload) || !incomingPayload.length) {
 
         this.log.error("Unable to process MQTT message: \"%s\". The payload contained no liveviews.", rawValue);
 
@@ -268,10 +278,10 @@ export class ProtectLiveviews extends ProtectBase {
       }
 
       // Update state on the liveviews.
-      for(const entry of incomingPayload) {
+      for(const entry of incomingPayload as mqttLiveviewJSON[]) {
 
-        // Lookup this liveview.
-        const accessory = this.platform.accessories.find(x => ("liveview" in x.context) && ((x.context.liveview ?? "").toUpperCase() === entry.name.toUpperCase()));
+        // Lookup this controller's liveview matching the requested name.
+        const accessory = this.platform.accessories.find(x => this.isOwnedLiveviewSwitch(x) && ((x.context.liveview ?? "").toUpperCase() === entry.name.toUpperCase()));
 
         // If we can't find it, move on.
         if(!accessory) {
@@ -279,8 +289,9 @@ export class ProtectLiveviews extends ProtectBase {
           continue;
         }
 
-        // Set the switch state and update the switch in HomeKit.
-        accessory.getService(this.hap.Service.Switch)?.updateCharacteristic(this.hap.Characteristic.On, entry.state);
+        // Drive the switch's own onSet with the coerced state so the scene actually applies to the member cameras, exactly as a HomeKit tap would - a status-only
+        // updateCharacteristic never runs the handler and cannot apply a scene.
+        accessory.getService(this.hap.Service.Switch)?.setCharacteristic(this.hap.Characteristic.On, !!entry.state);
         this.log.info("Liveview scene updated via MQTT: %s.", accessory.context.liveview);
       }
     });
@@ -315,8 +326,10 @@ export class ProtectLiveviews extends ProtectBase {
         continue;
       }
 
-      // Update the motion sensor switch, if it exists.
-      protectDevice.accessory.getService(this.hap.Service.Switch)?.updateCharacteristic(this.hap.Characteristic.On, targetState);
+      // Update the member camera's motion-sensor switch, if it exists. We target the SWITCH_MOTION_SENSOR subtype so the write always lands on the motion switch and
+      // never on some other Switch service that happens to sit first on the camera accessory.
+      protectDevice.accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_MOTION_SENSOR)?.
+        updateCharacteristic(this.hap.Characteristic.On, targetState);
 
       // Set the motion detection state. We do this after setting any motion detection switch in order to ensure we fire events in the right order for the motion
       // detection switch.

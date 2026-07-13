@@ -2,7 +2,7 @@
  *
  * security-system.ts: Security system accessory for UniFi Protect.
  */
-import { acquireService, validService } from "homebridge-plugin-utils";
+import { acquireService, composeSignals, validService } from "homebridge-plugin-utils";
 import type { CharacteristicValue } from "homebridge";
 import type { ProtectAccessory } from "../types.ts";
 import { ProtectBase } from "../devices/device-base.ts";
@@ -12,17 +12,41 @@ import { ProtectReservedNames } from "../types.ts";
 export class ProtectSecuritySystem extends ProtectBase {
 
   public accessory: ProtectAccessory;
+  // The per-owner abort controller. Aborting it (on accessory removal) unwinds this owner's MQTT registrations without waiting for the plugin to shut down.
+  private readonly controller: AbortController;
   private isAlarmTriggered: boolean;
+  // The composed owner-lifetime signal that scopes this owner's MQTT registrations: aborts when EITHER this owner's controller is aborted OR the NVR's terminal
+  // shutdown signal fires.
+  private readonly signal: AbortSignal;
 
   // Create an instance.
   constructor(nvr: ProtectNvr, accessory: ProtectAccessory) {
 
     super(nvr);
 
+    // Build the owner-lifetime signal BEFORE configureDevice runs, so the MQTT subscriptions it registers thread the composed signal rather than the base controller
+    // signal.
     this.accessory = accessory;
+    this.controller = new AbortController();
     this.isAlarmTriggered = false;
+    this.signal = composeSignals(this.controller.signal, nvr.signal);
 
     this.configureDevice();
+  }
+
+  // The owner-lifetime signal scoping this owner's MQTT registrations. The security system is the one controller-scoped owner whose lifetime is shorter than the
+  // controller connection: its accessory comes and goes with the Protect-* liveviews, so its registrations must unwind with the accessory, not with the plugin. This
+  // overrides the base seam, which returns the controller-lifetime nvr.signal that the teardown-less controller-scoped owners ride.
+  protected override get observeSignal(): AbortSignal {
+
+    return this.signal;
+  }
+
+  // Release this owner's MQTT registrations when its accessory is removed. Deleting the last Protect-* liveview removes the security accessory, and this abort unwinds
+  // exactly this owner's securitysystem get/set handlers so they no longer command the cameras. A later re-add builds a fresh instance whose constructor subscribes anew.
+  public cleanup(): void {
+
+    this.controller.abort();
   }
 
   // Configure a security system accessory for HomeKit.
@@ -287,15 +311,21 @@ export class ProtectSecuritySystem extends ProtectBase {
       availableSecurityStates.push(securityState[1] as number);
     }
 
-    // With only the disarmed state available (no Protect-Away/Home/Night liveview configured), there are no arm states to narrow to, so we're done.
-    if(availableSecurityStates.length < 2) {
+    // Narrow the visible target states to those we can actually reach, always applying whatever we computed. Removing the last Protect-Away/Home/Night liveview
+    // re-narrows the Home app's menu to disarm-only rather than latching the previous shape, and adding one back re-widens it.
+    const securityService = this.accessory.getService(this.hap.Service.SecuritySystem);
 
-      return false;
+    securityService?.getCharacteristic(this.hap.Characteristic.SecuritySystemTargetState).setProps({ validValues: availableSecurityStates });
+
+    // If the currently selected target state is no longer one of the available values - its arm liveview was removed out from under it - snap the displayed selection to
+    // disarm so the Home app shows the truth. This is a display-only correction: updateCharacteristic pushes a status value and fires no onSet, so no scene sweep runs
+    // and the Protect controller state is left untouched.
+    const currentTarget = securityService?.getCharacteristic(this.hap.Characteristic.SecuritySystemTargetState).value;
+
+    if((typeof currentTarget === "number") && !availableSecurityStates.includes(currentTarget)) {
+
+      securityService?.updateCharacteristic(this.hap.Characteristic.SecuritySystemTargetState, this.hap.Characteristic.SecuritySystemTargetState.DISARM);
     }
-
-    // Only show the available values we've configured.
-    this.accessory.getService(this.hap.Service.SecuritySystem)?.
-      getCharacteristic(this.hap.Characteristic.SecuritySystemTargetState).setProps({ validValues: availableSecurityStates });
 
     return true;
   }
@@ -394,6 +424,14 @@ export class ProtectSecuritySystem extends ProtectBase {
       // We only want accessories associated with this Protect controller whose controller record is still present. A device lingering in the removal grace has a vanished
       // record, so we gate on recordPresent and read its non-throwing protectId below rather than reading through the throwing projection.
       if(!targetDevice || !targetDevice.recordPresent || (targetAccessory.context.nvr !== this.nvr.ufp.mac)) {
+
+        continue;
+      }
+
+      // Protect liveviews contain only cameras, so arm and disarm sweep motion detection across the camera family alone. A sensor or light can never be a liveview
+      // member, could never be re-enabled by any arm state, and its motion delivery must never be latched off by a scene change - so we skip it here. The modelKey
+      // accessor is non-throwing by design, safe to read after the recordPresent gate above.
+      if(targetDevice.modelKey !== "camera") {
 
         continue;
       }

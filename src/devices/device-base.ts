@@ -109,10 +109,12 @@ export abstract class ProtectBase {
     return this.name;
   }
 
-  // The owner-lifetime signal that scopes this owner's state observers AND its MQTT subscriptions. The base binds to the controller's terminal shutdown signal, which
-  // is the correct lifetime for the controller-scoped owners (system information, liveviews) whose existence spans the whole controller connection. ProtectDevice
-  // overrides this with its per-accessory composed signal, so a single accessory's teardown unwinds only its own observers and releases exactly its own MQTT handlers.
-  // This is one of the seams the shared observeState varies by leaf, and the signal the MQTT subscribe wrappers below thread to homebridge-plugin-utils.
+  // The owner-lifetime signal that scopes this owner's state observers AND its MQTT subscriptions. The base binds to the controller's terminal shutdown signal, the
+  // correct lifetime for the teardown-less controller-scoped owners (system information, liveviews) that live for the whole controller connection. Two kinds of owner
+  // override the seam with a composed signal so their own teardown unwinds only their own observers and releases exactly their own MQTT handlers: every ProtectDevice
+  // (its per-accessory controller composed with nvr.signal), and the security system (whose accessory comes and goes with the Protect-* liveviews, so its lifetime is
+  // shorter than the controller connection). This is one of the seams the shared observeState varies by leaf, and the signal the MQTT subscribe wrappers below thread
+  // to homebridge-plugin-utils.
   protected get observeSignal(): AbortSignal {
 
     return this.nvr.signal;

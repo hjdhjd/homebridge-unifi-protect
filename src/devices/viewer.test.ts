@@ -151,6 +151,25 @@ describe("real ProtectViewer construction and set-liveview behavior", () => {
       "the accepted change published the liveview name on the device-scoped topic");
   });
 
+  test("turning a liveview switch on writes nothing to the sibling switch - reflection is left to the broadcast observer", async () => {
+
+    const target = accessory.getServiceById(Service.Switch, "liveview-2");
+    const sibling = accessory.getServiceById(Service.Switch, "liveview-1");
+
+    assert.ok(target && sibling, "both liveview switches exist");
+
+    // The write log records every updateCharacteristic-driven write (triggerSet's own post-handler cache write does not append). Capture the sibling's baseline, tap the
+    // other switch, and confirm the handler wrote nothing to the sibling - the buggy synchronous re-read re-asserted the stale pre-command layout, a re-write only the
+    // write log reveals since the final cached value is unchanged.
+    const siblingWritesBefore = sibling.getCharacteristic(Characteristic.On).writes.length;
+
+    await target.getCharacteristic(Characteristic.On).triggerSet(true);
+
+    assert.equal(projection.updateCalls.length, 1, "the command was dispatched");
+    assert.equal(sibling.getCharacteristic(Characteristic.On).writes.length, siblingWritesBefore,
+      "the handler produced no write to the sibling switch - it is left for the viewer.liveview observer to reflect once the broadcast lands");
+  });
+
   test("turning the active liveview switch off clears the liveview and publishes nothing", async () => {
 
     const active = accessory.getServiceById(Service.Switch, "liveview-1");

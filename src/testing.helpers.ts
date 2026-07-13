@@ -336,6 +336,10 @@ export class TestCharacteristic {
   // The last props object production set via setProps, captured so a test can assert the security-system owner's updateDevice narrowed the target state's validValues.
   // Undefined until production calls setProps; a silent no-op double would make the arm-states reconcile net vacuous.
   public props: TestCharacteristicProps | undefined = undefined;
+  // An append-only log of every updateCharacteristic-driven write (each pushed by updateValue), alongside the single-value cache. A stale re-write of a value the
+  // characteristic already holds cannot be told apart by the final cached value, so a test that must prove the code did NOT write to a sibling reads this log rather
+  // than .value. triggerSet's own post-handler cache write does not append here - only production's updateCharacteristic pushes do.
+  public readonly writes: unknown[] = [];
   private currentValue: unknown = null;
   private getHandler: (() => unknown) | undefined = undefined;
   private setHandler: ((value: unknown) => void | Promise<void>) | undefined = undefined;
@@ -355,6 +359,7 @@ export class TestCharacteristic {
   public updateValue(value: unknown): this {
 
     this.currentValue = value;
+    this.writes.push(value);
 
     return this;
   }
@@ -3545,18 +3550,20 @@ export class TestProtectNvr {
  *
  * @param options - hardwareRevision: OPT-IN with no default (stays undefined) - the security-system owner writes nvr.ufp.hardwareRevision onto HardwareRevision
  *                  unconditionally, so buildSecuritySystem (in security-system.test.ts) opts a value in to net that write non-vacuously, while the default omission
- *                  keeps ProtectBase.setInfo's HardwareRevision length-guard short-circuited for the device-info concern net; marketName / name / type: identity
- *                  overrides setInfo and the system-info accessory read; temperature: the optional systemInfo.cpu.temperature override, so the observer's reactive
- *                  refresh can be asserted on a known value.
+ *                  keeps ProtectBase.setInfo's HardwareRevision length-guard short-circuited for the device-info concern net; mac: the controller MAC override
+ *                  (defaults to "74ACB9FFFFFF"), so a multi-controller test seeds two stores with distinct controller identities and the owners scope their accessories
+ *                  apart; marketName / name / type: identity overrides setInfo and the system-info accessory read; temperature: the optional systemInfo.cpu.temperature
+ *                  override, so the observer's reactive refresh can be asserted on a known value.
  *
  * @returns an NVR config record the construction path reads as real.
  */
-export function makeNvrConfig(options: { hardwareRevision?: string; marketName?: string; name?: string; temperature?: number; type?: string } = {}): ProtectNvrConfig {
+export function makeNvrConfig(options: { hardwareRevision?: string; mac?: string; marketName?: string; name?: string; temperature?: number; type?: string } = {}):
+ProtectNvrConfig {
 
   const populated = {
 
     host: "nvr.test",
-    mac: "74ACB9FFFFFF",
+    mac: options.mac ?? "74ACB9FFFFFF",
     marketName: options.marketName ?? "UniFi Dream Machine SE",
     name: options.name ?? "Test Controller",
     ports: { rtsp: 7447, rtsps: FIXTURE_RTSPS_PORT },
@@ -3592,8 +3599,12 @@ export function makeNvrConfig(options: { hardwareRevision?: string; marketName?:
  *                  timer); mqtt: pass true to install the recording MQTT double (the default null makes every MQTT wrapper a no-op, matching an unconfigured broker);
  *                  overrideAddress: the controller-level address override for rtspHost-chain tests; recordingProcessFactory: an optional test recording-process factory
  *                  installed on the platform double's recordingProcessFactory seam (omitted, a fresh default factory is created so the recording delegate constructs its
- *                  FFmpeg process through the test double); store: the state-store double backing client.state; userOptions: feature-option config strings (the
- *                  production options array shape, e.g. "Enable.Device.SyncName" or "Disable.Nvr.DelayDeviceRemoval") applied to the REAL FeatureOptions engine.
+ *                  FFmpeg process through the test double); sharedPlatform: an optional { accessories, apiCalls } pair captured from a previously built double, so a
+ *                  second controller reconciles over the SAME platform accessories array and registration recorder as the first, mirroring production's one shared
+ *                  ProtectPlatform - the seam a multi-controller test uses to prove one controller's reconcile leaves the other's switches untouched (omitted, each call
+ *                  builds its own fresh accessories array and apiCalls recorder); store: the state-store double backing client.state; userOptions: feature-option config
+ *                  strings (the production options array shape, e.g. "Enable.Device.SyncName" or "Disable.Nvr.DelayDeviceRemoval") applied to the REAL FeatureOptions
+ *                  engine.
  *
  * @returns apiCalls: every homebridge accessory-registration call the platform double recorded; clock: the controllable TestClock installed on the platform double (the
  *          same instance the recording delegate reads via platform.clock, so a transmit test advances it to release pacing); controller: the AbortController behind
@@ -3601,12 +3612,15 @@ export function makeNvrConfig(options: { hardwareRevision?: string; marketName?:
  *          recording MQTT double when requested, else null; nvr: the NVR double.
  */
 export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: TestClock; controllerName?: string; dispatch?: (nvr: ProtectNvr) => ProtectEventDispatch;
-  mqtt?: boolean; overrideAddress?: string; recordingProcessFactory?: RecordingProcessFactory; store: TestStateStore; userOptions?: string[]; }):
+  mqtt?: boolean; overrideAddress?: string; recordingProcessFactory?: RecordingProcessFactory;
+  sharedPlatform?: { accessories: TestAccessory[]; apiCalls: TestApiCall[] }; store: TestStateStore; userOptions?: string[]; }):
 { apiCalls: TestApiCall[]; clock: TestClock; controller: AbortController; factory: TestStreamingDelegateFactory; logEntries: TestLogEntry[];
   mqtt: Nullable<TestMqttClient>; nvr: TestProtectNvr; } {
 
-  const accessories: TestAccessory[] = [];
-  const apiCalls: TestApiCall[] = [];
+  // Reuse the caller-supplied accessories array and registration recorder when sharing a platform across controllers, so a second controller sees and reconciles over
+  // the first's switches; otherwise each call gets its own fresh pair, keeping every existing single-controller call unchanged.
+  const accessories = options.sharedPlatform?.accessories ?? [];
+  const apiCalls = options.sharedPlatform?.apiCalls ?? [];
 
   // The HELD chime projection doubles client.chimes returns: the SAME instances captured once here, never a per-access rebuild. The doorbell's setChimeVolume filters
   // client.chimes and calls update() on the matching projection, and a test asserts that projection's updateCalls / sets its updateRejection lever, so they must be
