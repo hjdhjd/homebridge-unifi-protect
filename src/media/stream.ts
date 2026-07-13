@@ -373,11 +373,12 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
 
       // Setup our video plumbing.
       videoReturnPort = (await reservePort(request.addressVersion)).port;
-    } catch {
+    } catch(error) {
 
-      // The allocator could not satisfy a reservation (or the caller aborted mid-reservation). Inform the user, tear down anything already built, release the
-      // already-acquired handles, and fail the prepare. This routes to callback(error) rather than logging then calling back with unusable ports.
-      this.log.error("Unable to reserve the UDP ports needed to begin streaming.");
+      // The reservation failed, or the caller aborted mid-reservation. We surface the underlying reason so a runtime fault is never mistaken for port exhaustion, then
+      // tear down anything already built, release the already-acquired handles, and fail the prepare. This routes to callback(error) rather than logging then calling
+      // back with unusable ports.
+      this.log.error("Unable to reserve the UDP ports needed to begin streaming: %s.", formatErrorMessage(error));
 
       abortController.abort();
 
