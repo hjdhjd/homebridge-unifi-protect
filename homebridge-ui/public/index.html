@@ -168,9 +168,13 @@
    * Plugin webUI script loader. Reads the homebridge-plugin-utils manifest at load time, then injects an importmap that maps the bare
    * "homebridge-plugin-utils/" specifier to the "./lib/<subdir>/" hashed-versioned subdir that the homebridge-plugin-utils prepare-ui CLI mirrors into place. The
    * trailing-slash prefix mapping means transitive imports inside the bundle inherit the versioned path through relative-URL resolution - one importmap entry
-   * covers the full homebridge-plugin-utils file tree without enumerating any of its internals. This plugin's own ui.mjs keeps a Date.now() cache-bust because
-   * it's the one hand-authored file not under homebridge-plugin-utils' versioning.
+   * covers the full homebridge-plugin-utils file tree without enumerating any of its internals. This plugin's own hand-authored modules - ui.mjs and the
+   * protect-config.mjs interpreter it imports - each carry a Date.now() cache-bust because they sit outside homebridge-plugin-utils' hashed versioning; the shared
+   * stamp keeps a single page load coherent across them.
    */
+
+  const cb = Date.now();
+  const bust = (path) => new URL(path, import.meta.url).href + "?cb=" + cb;
 
   const manifest = await fetch("./lib/manifest.json", { cache: "no-store" }).then((response) => response.json());
 
@@ -178,8 +182,9 @@
 
     imports: {
 
-      "homebridge-plugin-utils/": new URL("./lib/" + manifest.subdir + "/", import.meta.url).href,
-      "./ui.mjs": new URL("./ui.mjs", import.meta.url).href + "?cb=" + Date.now()
+      "./protect-config.mjs": bust("./protect-config.mjs"),
+      "./ui.mjs": bust("./ui.mjs"),
+      "homebridge-plugin-utils/": new URL("./lib/" + manifest.subdir + "/", import.meta.url).href
     }
   };
 
