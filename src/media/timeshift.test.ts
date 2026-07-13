@@ -2,16 +2,16 @@
  *
  * timeshift.test.ts: Behavior coverage of the HKSV timeshift buffer - the first standalone net over ProtectTimeshiftBuffer.
  *
- * The timeshift buffer's public surface (the segment/discontinuity/terminated events, the start/stop/transmit lifecycle, the buffer/getLast/getLastKeyframe/
+ * The timeshift buffer's public surface (the segment/discontinuity/terminated events, the start/stop/transmit lifecycle, the buffer/getLast/snapshotSource/
  * getKeyframeAlignedStart read helpers, and the selfHeal reboot) has only ever been exercised indirectly through the recording-delegate suites. This suite drives it as a
  * STANDALONE unit - there is no recording delegate in the loop, so the timeshift's own emission decisions are asserted directly rather than conflated with a consumer's.
  *
  * The SUT is fed by the harness's controllable livestream-subscription double, which a test pushes segments into one at a time (init / keyframe / non-keyframe /
  * discontinuity-marked) and can end or throw-into. The keyframe-staleness gate - the timeshift's only time-dependent behavior - is made deterministic by the injected
- * TestClock (the very clock the timeshift reads via platform.clock), advanced explicitly rather than real-waited. The CRITICAL precondition for every getLastKeyframe
- * assertion is the nonzero clock base: getLastKeyframe's guard returns null when _lastKeyframeTime is falsy (zero), so a keyframe pushed at TestClock virtual-time 0 is
- * indistinguishable from "no keyframe" - every getLastKeyframe-non-null (and staleness-boundary) test advances the clock to a nonzero base BEFORE pushing its keyframe,
- * or the staleness compare is never reached and the test is vacuous.
+ * TestClock (the very clock the timeshift reads via platform.clock), advanced explicitly rather than real-waited. The CRITICAL precondition for every snapshotSource
+ * freshness assertion is the nonzero clock base: snapshotSource's guard reads "empty" when _lastKeyframeTime is falsy (zero), so a keyframe pushed at TestClock
+ * virtual-time 0 is indistinguishable from "no keyframe" - every snapshotSource-fresh (and staleness-boundary) test advances the clock to a nonzero base BEFORE pushing
+ * its keyframe, or the staleness compare is never reached and the test is vacuous.
  *
  * All assertions are behavior-first: emitted events, returned buffers, recorded seam calls (livestreamCalls, rebootCalls, the double's reassessCalls/disposed), and the
  * public getters - never a private field (_segments, _pendingDiscontinuity, _isTransmitting, _lastKeyframeTime, subscription). Because both the per-push forward and
@@ -25,11 +25,12 @@ import { PROTECT_LIVESTREAM_API_IDR_INTERVAL } from "../settings.ts";
 import { ProtectLivestreamUnavailableError } from "unifi-protect";
 import { ProtectTimeshiftBuffer } from "./timeshift.ts";
 import type { Segment } from "unifi-protect";
+import type { SegmentRole } from "./timeshift.ts";
 import type { TestClock } from "homebridge-plugin-utils";
 import assert from "node:assert/strict";
 
-// The keyframe-staleness threshold the timeshift compares against: PROTECT_LIVESTREAM_API_IDR_INTERVAL (5s) doubled, in milliseconds. A keyframe older than this reads as
-// stale and getLastKeyframe returns null; younger reads fresh. The suite drives the boundary deterministically by advancing the TestClock across exactly this much.
+// The keyframe-staleness threshold the timeshift compares against: PROTECT_LIVESTREAM_API_IDR_INTERVAL (5s) doubled, in milliseconds. A keyframe older than this makes
+// snapshotSource read "stale"; younger reads "fresh". The suite drives the boundary deterministically by advancing the TestClock across exactly this much.
 const STALENESS_THRESHOLD_MS = PROTECT_LIVESTREAM_API_IDR_INTERVAL * 2 * 1000;
 
 // Every host this suite builds shares its makeTestNvr AbortController. Aborting them in teardown releases the harness signals so no background consume loop (the
@@ -195,6 +196,33 @@ describe("timeshift buffer behavior", () => {
     assert.equal(host.livestreamCalls.length, 2, "the second start opened a second livestream");
   });
 
+  // #22: a segment still draining from a REPLACED subscription must not contaminate the restarted buffer. We queue a segment on doubleA, then restart WITHOUT settling -
+  // start() disposes doubleA (which drains its queued segment before honoring disposal) and commits doubleB, so doubleA's stale segment reaches consumeSegments' loop
+  // body while doubleA is no longer this.subscription. The loop-body identity guard skips it (continue), so it never enters doubleB's buffer. This is the double-restart
+  // interleaving the finally-only guard does not cover: the naive single-restart is already saved by the finally, so it would not turn red.
+  test("a segment draining from a replaced subscription does not contaminate the restarted buffer", async () => {
+
+    const doubleA = makeControllableLivestreamDouble();
+    const doubleB = makeControllableLivestreamDouble();
+    const { host, timeshift } = await buildStartedTimeshift({ double: doubleA, subscriptions: [ doubleA, doubleB ] });
+
+    // Queue a segment on doubleA, then restart in the same synchronous frame (no settle between) so doubleA's segment drains after doubleB is committed.
+    doubleA.push(makeMediaSegment(makeKeyframeFragment()));
+
+    await timeshift.start(makeChannelProfile(host));
+
+    await settle();
+
+    assert.equal(timeshift.time, 0, "the stale segment from the replaced subscription did not enter the restarted buffer");
+
+    // The new subscription delivers a segment: only doubleB's segment is admitted, so the buffer holds exactly one segment.
+    doubleB.push(makeMediaSegment(makeKeyframeFragment()));
+
+    await settle();
+
+    assert.equal(timeshift.time, timeshift.segmentLength, "only the new subscription's segment is buffered");
+  });
+
   // Target (e): stop on a started timeshift flips isStarted false and disposes the subscription.
   test("stop disposes the subscription and reports not started", async () => {
 
@@ -222,8 +250,8 @@ describe("timeshift buffer behavior", () => {
     assert.equal(timeshift.time, 0, "the init segment does not add buffer time");
   });
 
-  // Target (g): a media keyframe is buffered and keyframe-tracked. time advances by one segment, and - with a nonzero clock base - getLastKeyframe returns non-null. The
-  // nonzero base is the falsy-zero guard precondition: a keyframe at clock 0 sets _lastKeyframeTime 0, which getLastKeyframe's guard treats as "no keyframe".
+  // Target (g): a media keyframe is buffered and keyframe-tracked. time advances by one segment, and - with a nonzero clock base - snapshotSource reads "fresh". The
+  // nonzero base is the falsy-zero guard precondition: a keyframe at clock 0 sets _lastKeyframeTime 0, which snapshotSource's guard treats as "no keyframe" (empty).
   test("a media keyframe is buffered and keyframe-tracked", async () => {
 
     const { clock, double, timeshift } = await buildStartedTimeshift();
@@ -234,7 +262,7 @@ describe("timeshift buffer behavior", () => {
     await settle();
 
     assert.equal(timeshift.time, 100, "the keyframe adds one segment of buffer time");
-    assert.ok(timeshift.getLastKeyframe(), "getLastKeyframe returns the keyframe at a nonzero clock base");
+    assert.equal(timeshift.snapshotSource().kind, "fresh", "snapshotSource reads fresh with a keyframe at a nonzero clock base");
   });
 
   // Target (h): the buffer trims at its configured segment count. With a small configured duration (200ms = 2 segments), pushing more than two media segments caps time
@@ -261,6 +289,13 @@ describe("timeshift buffer behavior", () => {
     const { double, events, timeshift } = await buildStartedTimeshift();
     const keyframe = makeKeyframeFragment();
 
+    // Capture each emission's role directly, pinning the producer side of the tagging contract: transmitStart's prebuffer concat must carry "blob" and a per-fragment
+    // forward must carry "live". The recording delegate's counting split branches on these tags - the mutation that turns this red is flipping processSegment's forward
+    // to "blob" (or transmitStart's emit to "live"), which would silently corrupt the transmitted-video tally.
+    const roles: SegmentRole[] = [];
+
+    timeshift.on("segment", (_data, role) => roles.push(role));
+
     double.push(makeMediaSegment(keyframe));
 
     await settle();
@@ -273,6 +308,7 @@ describe("timeshift buffer behavior", () => {
     await settle();
 
     assert.ok(events.segment.some((payload) => payload.equals(pushed.data)), "a forwarded segment carries the pushed fragment's payload");
+    assert.deepEqual(roles, [ "blob", "live" ], "the prebuffer emission is tagged blob and the per-fragment forward is tagged live");
   });
 
   // Target (j): the per-push forward does NOT fire while not transmitting. Pushing media without transmitStart yields no "segment" event carrying that fragment's data.
@@ -334,9 +370,10 @@ describe("timeshift buffer behavior", () => {
     assert.ok(events.segment.some((payload) => payload.equals(cleanKeyframe.data)), "forwarding resumes with the clean keyframe's payload");
   });
 
-  // Target (l): the discontinuity arm requires transmitting. While NOT transmitting, a discontinuity-marked segment then a keyframe emit NO discontinuity event - the
-  // arm's _isTransmitting conjunct is false, so the gate never arms off-transmit. This is the negative contrast to (k).
-  test("the discontinuity gate does not arm while not transmitting", async () => {
+  // Target (l): the discontinuity EVENT is transmit-gated. Buffer hygiene arms and clears on every reconnect, transmitting or not, but the consumer-facing discontinuity
+  // notification only fires while transmitting. While NOT transmitting, a discontinuity-marked segment then a keyframe run the buffer hygiene and disarm silently - no
+  // discontinuity event fires, because no consumer is listening for a decoder restart. This is the negative contrast to (k).
+  test("the discontinuity event stays transmit-gated on an idle reconnect", async () => {
 
     const { double, events, timeshift } = await buildStartedTimeshift();
 
@@ -350,6 +387,82 @@ describe("timeshift buffer behavior", () => {
 
     assert.equal(timeshift.isTransmitting, false, "the timeshift is not transmitting");
     assert.equal(events.discontinuity, 0, "no discontinuity event fires off-transmit");
+  });
+
+  // Buffer hygiene (#4/#21) runs on EVERY reconnect: a non-empty IDLE buffer is cleared on a discontinuity, and admission is suppressed until the recovery keyframe, so
+  // the standing buffer never holds mixed-timeline or pre-keyframe data even when no HKSV session is transmitting. A NON-empty buffer is used deliberately - clearing an
+  // already-empty one is observationally vacuous.
+  test("an idle reconnect clears the standing buffer and suppresses admission until the recovery keyframe", async () => {
+
+    const { double, timeshift } = await buildStartedTimeshift();
+
+    // Fill the idle buffer (not transmitting) with a keyframe and a following fragment.
+    double.push(makeMediaSegment(makeKeyframeFragment()));
+
+    await settle();
+
+    double.push(makeMediaSegment(makeNonKeyframeFragment()));
+
+    await settle();
+
+    assert.ok(timeshift.buffer, "the idle buffer holds pre-reconnect segments");
+
+    // A discontinuity-marked non-keyframe: buffer hygiene clears the stale timeline and admission suppression drops this mid-GOP fragment.
+    double.push(makeMediaSegment(makeNonKeyframeFragment(), { discontinuity: true }));
+
+    await settle();
+
+    assert.equal(timeshift.buffer, null, "the idle reconnect cleared the buffer and the mid-GOP fragment was not admitted");
+
+    // A further pre-keyframe fragment stays suppressed.
+    double.push(makeMediaSegment(makeNonKeyframeFragment()));
+
+    await settle();
+
+    assert.equal(timeshift.buffer, null, "admission stays suppressed until the recovery keyframe");
+
+    // The recovery keyframe is admitted, resuming the buffer.
+    double.push(makeMediaSegment(makeKeyframeFragment()));
+
+    await settle();
+
+    assert.ok(timeshift.buffer, "the recovery keyframe is admitted and the buffer resumes");
+  });
+
+  // Admission suppression (#4/#21) survives a mid-window HKSV session close: transmitStop does not clear the pending discontinuity, so a session ending between the
+  // reconnect and the recovery keyframe leaves suppression in force and the standing buffer timeline-clean for the next consumer.
+  test("admission suppression survives a mid-window HKSV session close", async () => {
+
+    const { double, timeshift } = await buildStartedTimeshift();
+
+    double.push(makeMediaSegment(makeKeyframeFragment()));
+
+    await settle();
+    timeshift.transmitStart();
+
+    // A discontinuity-marked non-keyframe arms suppression and clears the buffer while transmitting.
+    double.push(makeMediaSegment(makeNonKeyframeFragment(), { discontinuity: true }));
+
+    await settle();
+
+    assert.equal(timeshift.buffer, null, "the discontinuity cleared the buffer and the mid-GOP fragment was not admitted");
+
+    // The HKSV session closes mid-window. Suppression must survive it.
+    timeshift.transmitStop();
+
+    // A further non-keyframe after the close stays suppressed.
+    double.push(makeMediaSegment(makeNonKeyframeFragment()));
+
+    await settle();
+
+    assert.equal(timeshift.buffer, null, "admission stayed suppressed across the session close");
+
+    // The recovery keyframe is admitted.
+    double.push(makeMediaSegment(makeKeyframeFragment()));
+
+    await settle();
+
+    assert.ok(timeshift.buffer, "the recovery keyframe is admitted after the session close");
   });
 
   // finalizeSubscription single-anchor / terminated.
@@ -457,14 +570,14 @@ describe("timeshift buffer behavior", () => {
     const timeshift = new ProtectTimeshiftBuffer(host);
     const result = timeshift.transmitStart();
 
-    assert.equal(result, false, "transmitStart declines when not started");
+    assert.equal(result, null, "transmitStart returns null (declines) when not started");
     assert.ok(logEntries.some((entry) => (entry.level === "error") && String(entry.parameters[0]).includes("HKSV event recording unavailable")),
       "transmitStart logs the not-ready error");
   });
 
-  // Target (r): transmitStart success. With a started, buffer-filled timeshift, transmitStart emits a "segment" event whose payload is the init + buffer concat, flips
-  // isTransmitting true, and calls reassess once.
-  test("transmitStart emits the init-plus-buffer concat and escalates recovery", async () => {
+  // Target (r): transmitStart success. With a started, buffer-filled timeshift (two buffered fragments), transmitStart emits a "segment" event whose payload is the
+  // init + buffer concat, returns the real blob fragment count (two, the whole buffer with no startIndex), flips isTransmitting true, and calls reassess once.
+  test("transmitStart emits the init-plus-buffer concat, returns the blob fragment count, and escalates recovery", async () => {
 
     const { double, events, timeshift } = await buildStartedTimeshift();
     const first = makeKeyframeFragment();
@@ -479,7 +592,7 @@ describe("timeshift buffer behavior", () => {
 
     const result = timeshift.transmitStart();
 
-    assert.equal(result, true, "transmitStart succeeds on a started, filled timeshift");
+    assert.equal(result, 2, "transmitStart returns the two-fragment blob count on a started, filled timeshift");
     assert.equal(timeshift.isTransmitting, true, "isTransmitting is true after transmitStart");
     assert.equal(double.reassessCalls, 1, "transmitStart escalates recovery exactly once");
 
@@ -526,9 +639,10 @@ describe("timeshift buffer behavior", () => {
     assert.ok(slicedConcat.length < wholeConcat.length, "the startIndex slice is shorter than the whole-buffer fallback");
   });
 
-  // Target (t): transmitStop flips isTransmitting false, and it clears the pending discontinuity - a discontinuity-marked push followed by transmitStop then a keyframe
-  // does not emit discontinuity (the pending flag was cleared at transmitStop).
-  test("transmitStop stops transmitting and clears the pending discontinuity", async () => {
+  // Target (t): transmitStop flips isTransmitting false but does NOT clear the pending discontinuity - admission suppression survives a session close so the standing
+  // buffer stays timeline-clean for the next consumer. A discontinuity-marked push, then transmitStop, then a keyframe emits no discontinuity event: the keyframe disarms
+  // suppression, but the event is transmit-gated and we are no longer transmitting.
+  test("transmitStop stops transmitting without emitting a later discontinuity", async () => {
 
     const { double, events, timeshift } = await buildStartedTimeshift();
 
@@ -547,7 +661,7 @@ describe("timeshift buffer behavior", () => {
 
     await settle();
 
-    assert.equal(events.discontinuity, 0, "transmitStop cleared the pending discontinuity, so the later keyframe does not emit discontinuity");
+    assert.equal(events.discontinuity, 0, "the later keyframe emits no discontinuity: the event is transmit-gated and transmitStop stopped transmitting");
   });
 
   // Read helpers.
@@ -615,26 +729,30 @@ describe("timeshift buffer behavior", () => {
     assert.equal(none.timeshift.getKeyframeAlignedStart(100), null, "getKeyframeAlignedStart is null when no keyframe precedes the start");
   });
 
-  // Target (x): getLastKeyframe fresh - with a nonzero clock base, a buffered keyframe yields a non-null result (init + the keyframe fragment); null when no keyframe has
-  // been buffered (started-but-empty, the reachable arm). The nonzero base is the falsy-zero guard precondition.
-  test("getLastKeyframe returns the fresh keyframe at a nonzero clock base, and null when none buffered", async () => {
+  // Target (x): snapshotSource fresh serves - with a nonzero clock base, a buffered keyframe yields a "fresh" answer carrying the minimal init + keyframe buffer and the
+  // capture fps; "empty" when no keyframe has been buffered (started-but-empty, no staleness to claim). The nonzero base is the falsy-zero guard precondition.
+  test("snapshotSource reads fresh with content and fps at a nonzero clock base, and empty when none buffered", async () => {
 
     const { clock, double, timeshift } = await buildStartedTimeshift();
 
-    assert.equal(timeshift.getLastKeyframe(), null, "getLastKeyframe is null with no keyframe buffered");
+    assert.equal(timeshift.snapshotSource().kind, "empty", "snapshotSource is empty with no keyframe buffered");
 
     clock.advance(1000);
     double.push(makeMediaSegment(makeKeyframeFragment()));
 
     await settle();
 
-    assert.ok(timeshift.getLastKeyframe(), "getLastKeyframe returns the fresh keyframe at a nonzero clock base");
+    const source = timeshift.snapshotSource();
+
+    assert.equal(source.kind, "fresh", "snapshotSource reads fresh with a keyframe at a nonzero clock base");
+    assert.ok((source.kind === "fresh") && (source.data.length > 0), "the fresh answer carries the init + keyframe buffer content");
+    assert.ok((source.kind === "fresh") && (source.fps > 0), "the fresh answer carries the capture fps");
   });
 
   // Target (y): the staleness gate (the Clock payoff). Advance the clock to a nonzero base T, push a keyframe (_lastKeyframeTime = T, nonzero), then advance so
-  // clock.now() - T crosses the threshold - getLastKeyframe returns null VIA THE STALENESS COMPARE (not the falsy-zero guard). A control just under the threshold reads
-  // non-null. The keyframe MUST be pushed at nonzero T or the test is vacuous (the guard would mask the compare).
-  test("getLastKeyframe goes stale past the threshold and stays fresh under it", async () => {
+  // clock.now() - T crosses the threshold - snapshotSource reads "stale" VIA THE STALENESS COMPARE (not the falsy-zero guard). A control just under the threshold reads
+  // "fresh". The keyframe MUST be pushed at nonzero T or the test is vacuous (the guard would mask the compare).
+  test("snapshotSource goes stale past the threshold and stays fresh under it", async () => {
 
     // Fresh control: advance to a nonzero base, push the keyframe, advance to just UNDER the threshold - the keyframe reads fresh via the staleness compare.
     const fresh = await buildStartedTimeshift();
@@ -645,9 +763,9 @@ describe("timeshift buffer behavior", () => {
     await settle();
     fresh.clock.advance(STALENESS_THRESHOLD_MS - 1);
 
-    assert.ok(fresh.timeshift.getLastKeyframe(), "getLastKeyframe is non-null just under the staleness threshold");
+    assert.equal(fresh.timeshift.snapshotSource().kind, "fresh", "snapshotSource reads fresh just under the staleness threshold");
 
-    // Stale case: same nonzero-base keyframe, then advance to just OVER the threshold - the keyframe reads stale via the compare, returning null.
+    // Stale case: same nonzero-base keyframe, then advance to just OVER the threshold - the keyframe reads stale via the compare.
     const stale = await buildStartedTimeshift();
 
     stale.clock.advance(1000);
@@ -656,18 +774,19 @@ describe("timeshift buffer behavior", () => {
     await settle();
     stale.clock.advance(STALENESS_THRESHOLD_MS + 1);
 
-    assert.equal(stale.timeshift.getLastKeyframe(), null, "getLastKeyframe is null just over the staleness threshold, via the staleness compare");
+    assert.equal(stale.timeshift.snapshotSource().kind, "stale", "snapshotSource reads stale just over the staleness threshold, via the staleness compare");
   });
 
-  // Target (x-trim): getLastKeyframe returns null when the only keyframe has been trimmed out of the buffer even though _lastKeyframeTime is still fresh. The buffer trim
-  // shifts the oldest segment without resetting the keyframe time, so this reaches getLastKeyframe's final return - the guard and the staleness compare both pass, but
-  // the backward walk finds no keyframe in the buffer. A reachable branch distinct from the no-keyframe-yet and stale arms.
-  test("getLastKeyframe returns null when its only keyframe has been trimmed out of a fresh buffer", async () => {
+  // Target (x-trim): snapshotSource reads "empty" when the only keyframe has been trimmed out of the buffer even though _lastKeyframeTime is still fresh. The buffer trim
+  // shifts the oldest segment without resetting the keyframe time, so this reaches snapshotSource's final return - the guard and the staleness compare both pass, but the
+  // backward walk finds no keyframe in the buffer, so it declines as "empty" (there is content, but none of it is decodable, and no staleness to claim). A reachable
+  // branch distinct from the no-keyframe-yet and stale arms.
+  test("snapshotSource reads empty when its only keyframe has been trimmed out of a fresh buffer", async () => {
 
     const { clock, double, timeshift } = await buildStartedTimeshift({ configuredDuration: 200 });
 
     // Buffer one keyframe at a nonzero base, then push two non-keyframes so the keyframe is evicted (configuredDuration 200ms caps the buffer at two 100ms segments). The
-    // clock stays at the nonzero base, so the keyframe time is fresh and only the empty backward walk returns null. Non-keyframes never update the keyframe time.
+    // clock stays at the nonzero base, so the keyframe time is fresh and only the empty backward walk declines. Non-keyframes never update the keyframe time.
     clock.advance(1000);
     double.push(makeMediaSegment(makeKeyframeFragment()));
 
@@ -679,7 +798,7 @@ describe("timeshift buffer behavior", () => {
 
     await settle();
 
-    assert.equal(timeshift.getLastKeyframe(), null, "getLastKeyframe is null once its only keyframe has been trimmed out, despite a fresh keyframe time");
+    assert.equal(timeshift.snapshotSource().kind, "empty", "snapshotSource reads empty once its only keyframe has been trimmed out, despite a fresh keyframe time");
   });
 
   // getters.

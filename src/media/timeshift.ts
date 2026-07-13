@@ -56,6 +56,12 @@ interface TimeshiftSegment {
   isKeyframe: boolean;
 }
 
+// The freshness-aware snapshot source answer. The snapshot path reads this single three-state value instead of composing getLast/getLastKeyframe of its own: "fresh"
+// carries the minimal keyframe buffer (init segment + the most recent keyframe fragment) and the capture fps the snapshot pipeline needs; "stale" declines because a
+// keyframe was seen but is older than the staleness threshold, so the livestream has stalled and a served image would be frozen; "empty" declines because no fresh
+// keyframe is buffered yet, WITHOUT claiming staleness (a fresh buffer with no keyframe, and a stalled buffer with an old keyframe, must not be conflated).
+export type SnapshotSource = { data: Buffer; fps: number; kind: "fresh" } | { kind: "empty" } | { kind: "stale" };
+
 // UniFi Protect livestream timeshift buffer.
 export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> {
 
@@ -75,7 +81,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
   // at a trivial CPU cost on modern systems.
   private readonly _segmentLength: number = PROTECT_SEGMENT_RESOLUTION;
   // The injected wall-clock seam (production systemClock, a controllable TestClock under test). The timeshift reads it for keyframe-staleness timing - the
-  // _lastKeyframeTime write on each keyframe and the now-versus-then staleness compare in getLastKeyframe - so that path is test-deterministic without a real-time
+  // _lastKeyframeTime write on each keyframe and the now-versus-then staleness compare in snapshotSource - so that path is test-deterministic without a real-time
   // wait. This mirrors the recording delegate's clock field-copy exactly (record.ts), reaching the clock through the platform handle the camera already carries.
   private readonly clock: Clock;
   private readonly log: HomebridgePluginLogging;
@@ -128,7 +134,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
     // (latency-tolerant, so an idle prebuffer eases off a stressed-but-reachable controller). The closure moves only the recovery tolerance; the library's media-stall
     // detection floors at max(urgency, 2000ms) regardless, so the prebuffer stays watched at the 2-second floor either way. A genuine reconnect surfaces inline as a
     // discontinuity-marked segment (handled in processSegment), so there is no separate disconnect handler to attach.
-    const subscription = this.protectCamera.livestream(channelProfile, { segmentLength: this._segmentLength,
+    const subscription = this.protectCamera.livestream(channelProfile, { discardOnDispose: true, segmentLength: this._segmentLength,
       urgency: () => this._isTransmitting ? PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS : PROTECT_LIVESTREAM_IDLE_TOLERANCE_MS });
 
     // Drive the segment iterator in the background. The for-await loop runs until the subscription is disposed (graceful return), terminated with a typed error
@@ -186,6 +192,15 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
     try {
 
       for await (const segment of subscription) {
+
+        // Identity guard in the loop body, mirroring the finally's guard. A segment can still drain from THIS subscription's queue after it has been replaced: the pool
+        // delivers already-queued segments before honoring disposal, so a restart (dispose old, commit new) can hand this loop a stale segment from the old subscription.
+        // Admitting it would contaminate the freshly-committed buffer with the old subscription's timeline, so we skip it. We continue rather than break - this loop's
+        // lifetime belongs to its own subscription's terminal, and breaking here would abandon draining it to that terminal cleanly.
+        if(this.subscription?.id !== subscription.id) {
+
+          continue;
+        }
 
         this.processSegment(segment);
       }
@@ -272,44 +287,61 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
       return;
     }
 
-    // The first media segment after a genuine reconnect carries discontinuity:true. The resumed stream has discontinuous timestamps that corrupt FFmpeg's decoder
-    // reference state, so while transmitting we drop the pre-reconnect buffer and arm the discontinuity signal to suppress forwarding until a clean keyframe
-    // arrives. The discontinuity-marked segment is NOT guaranteed to be a keyframe (the unifi-protect library stamps it on the first media after a reconnect without a
-    // keyframe check), so the keyframe gate below is LOAD-BEARING: it defers the discontinuity emit until a clean keyframe arrives. Do NOT remove the gate.
-    if(segment.discontinuity && this._isTransmitting) {
+    // Buffer hygiene runs on EVERY reconnect, transmitting or not. The first media segment after a genuine reconnect carries discontinuity:true, and its timeline is
+    // discontinuous from the pre-reconnect buffer - retaining the old segments would leave the standing buffer mixed-timeline for live views, HKSV, and snapshots alike,
+    // not only while an HKSV session happens to be transmitting. We drop the stale-timeline segments and arm _pendingDiscontinuity so the buffer resumes admitting only
+    // once a clean recovery keyframe arrives. Clearing while idle is the intended trade: a fresh HKSV landing right after the clear gets a short, clean prebuffer rather
+    // than a corrupt mixed-timeline one.
+    if(segment.discontinuity) {
 
       this._pendingDiscontinuity = true;
       this.clearBuffer();
     }
 
-    // Add the livestream segment to the end of the timeshift buffer and track whether it's a keyframe. We parse the fMP4 TRUN sample flags to detect sync samples
-    // rather than relying on timing heuristics, giving us a definitive answer on every segment. The fragment and its keyframe flag are pushed as one struct, so the
-    // two can never drift out of lockstep.
+    // Parse the fMP4 TRUN sample flags to classify this fragment as a keyframe (sync sample) rather than relying on timing heuristics, giving a definitive answer on
+    // every segment.
     const isKeyframeSegment = isKeyframe(segment.data);
 
+    // Track when we last saw a keyframe for staleness detection, and disarm the discontinuity suppression on the recovery keyframe. This disarm runs BEFORE the
+    // admission-suppression check below, so the recovery keyframe itself both ends suppression AND is admitted; gating admission before the disarm would skip the very
+    // keyframe the buffer is waiting to resume on. The discontinuity-marked segment is NOT guaranteed to be a keyframe (the unifi-protect library stamps it on the first
+    // media after a reconnect without a keyframe check), so this keyframe gate is required, not incidental - it is what defers the resume until a clean keyframe arrives.
+    if(isKeyframeSegment) {
+
+      this._lastKeyframeTime = this.clock.now();
+
+      if(this._pendingDiscontinuity) {
+
+        this._pendingDiscontinuity = false;
+
+        // Consumer notification stays transmit-gated: only an active HKSV transmitter needs to restart its decoder on the clean keyframe. An idle reconnect cleans the
+        // buffer without notifying anyone.
+        if(this._isTransmitting) {
+
+          this.emit("discontinuity");
+        }
+      }
+    }
+
+    // Admission suppression: while _pendingDiscontinuity is still armed, this is a pre-keyframe mid-GOP fragment from the resumed stream. Admitting it would put
+    // discontinuous-timeline data back into the just-cleared buffer, so we drop it and wait. The recovery keyframe disarmed above, so it falls through and is admitted.
+    if(this._pendingDiscontinuity) {
+
+      return;
+    }
+
+    // Admit the segment: append it with its keyframe flag as one struct (so the fragment and its flag never drift), then trim the front to the configured window. A
+    // single shift removes a fragment and its keyframe flag together.
     this._segments.push({ data: segment.data, isKeyframe: isKeyframeSegment });
 
-    // Trim the beginning of the buffer to our configured size. A single shift removes the fragment and its keyframe flag together.
     if(this._segments.length > this.segmentCount) {
 
       this._segments.shift();
     }
 
-    // Track when we last saw a keyframe for staleness detection in snapshot extraction.
-    if(isKeyframeSegment) {
-
-      this._lastKeyframeTime = this.clock.now();
-
-      // If we were waiting for a keyframe after a discontinuity, the buffer now has a clean starting point. Signal the recording delegate to restart FFmpeg.
-      if(this._pendingDiscontinuity) {
-
-        this._pendingDiscontinuity = false;
-        this.emit("discontinuity");
-      }
-    }
-
-    // If we're transmitting and not suppressing due to a pending discontinuity, forward the segment to the recording delegate for FFmpeg consumption.
-    if(this._isTransmitting && !this._pendingDiscontinuity) {
+    // Forward the admitted segment to a transmitting consumer (the recording delegate) for FFmpeg consumption. Suppression is already handled above: reaching here means
+    // _pendingDiscontinuity is false.
+    if(this._isTransmitting) {
 
       this.emit("segment", segment.data);
     }
@@ -374,8 +406,11 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
 
     // We're done transmitting, flag it, and allow our buffer to resume maintaining itself. The urgency closure now reads the idle tolerance on the next recovery
     // re-decision, so subsequent stalls can ease off again; there is no explicit elevation handle to release.
+    //
+    // We deliberately do NOT clear _pendingDiscontinuity here. It now governs buffer admission independent of transmit state, so an HKSV session closing mid-reconnect
+    // must not end the suppression - the buffer stays suppressed until the recovery keyframe arrives, keeping the standing buffer timeline-clean for the next consumer.
+    // _pendingDiscontinuity is cleared only by that recovery keyframe (in processSegment) or by a full teardown (finalizeSubscription).
     this._isTransmitting = false;
-    this._pendingDiscontinuity = false;
 
     return true;
   }
@@ -404,36 +439,38 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
       Buffer.concat([ this.subscription.initSegment.data, ...this._segments.slice(-segmentsRequested).map((s) => s.data) ]) : null;
   }
 
-  // Return the most recent keyframe segment with its initialization segment, for efficient snapshot extraction. This produces a minimal buffer (init segment + one
-  // fMP4 fragment) instead of the multi-second buffer from getLast(). Returns null if no keyframe has been detected yet or if the last keyframe is stale (older than
-  // 2x the IDR interval), indicating the livestream may have stalled.
-  public getLastKeyframe(): Nullable<Buffer> {
+  // The freshness-aware snapshot source: the single owner of the "is the buffer fresh enough to snapshot from?" decision. Returns fresh content (the minimal init +
+  // most-recent-keyframe buffer and the capture fps), a stale decline (a keyframe was seen but is older than 2x the IDR interval, so the livestream has likely stalled
+  // and a served image would be frozen), or an empty decline (no fresh keyframe buffered yet, no staleness to claim). This folds the retired getLastKeyframe's staleness
+  // compare and keyframe walk, so the snapshot path composes no fallback of its own and never serves the staleness-blind getLast window.
+  public snapshotSource(): SnapshotSource {
 
-    if(!this._lastKeyframeTime || !this.subscription?.initSegment) {
+    // No init segment, or no keyframe seen yet: nothing to give and no staleness to claim.
+    if(!this.subscription?.initSegment || !this._lastKeyframeTime) {
 
-      return null;
+      return { kind: "empty" };
     }
 
-    // If the last keyframe is older than 2x the IDR interval, the livestream is likely stalled and we should let the caller fall through to other snapshot sources.
+    // A keyframe was seen but is older than 2x the IDR interval: the livestream has likely stalled, so decline rather than serve a frozen image.
     if((this.clock.now() - this._lastKeyframeTime) > (PROTECT_LIVESTREAM_API_IDR_INTERVAL * 2 * 1000)) {
 
-      return null;
+      return { kind: "stale" };
     }
 
-    // Walk backwards through the buffer to find the most recent keyframe segment. Each entry binds its fragment to its keyframe flag in one struct, so a keyframe
-    // entry always carries its matching fragment; the local read satisfies noUncheckedIndexedAccess without a non-null assertion and degrades safely to null when
-    // the index is out of range.
+    // Walk backwards to the most recent keyframe fragment and hand back the minimal init + keyframe buffer plus the capture fps. Each entry binds its fragment to its
+    // keyframe flag in one struct, so a keyframe entry always carries its matching fragment; the local read satisfies noUncheckedIndexedAccess and degrades to the empty
+    // answer when no keyframe fragment remains (the only keyframe was trimmed out of the window even though the staleness clock still reads fresh).
     for(let i = this._segments.length - 1; i >= 0; i--) {
 
       const seg = this._segments[i];
 
       if(seg?.isKeyframe) {
 
-        return Buffer.concat([ this.subscription.initSegment.data, seg.data ]);
+        return { data: Buffer.concat([ this.subscription.initSegment.data, seg.data ]), fps: this._channelProfile?.channel.fps ?? 30, kind: "fresh" };
       }
     }
 
-    return null;
+    return { kind: "empty" };
   }
 
   // Find the nearest keyframe at or before the prebuffer start point in the timeshift buffer. This enables keyframe-aligned emission to FFmpeg...instead of sending

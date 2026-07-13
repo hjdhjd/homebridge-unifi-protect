@@ -5,6 +5,7 @@
 import { AudioRecordingCodecType, AudioRecordingSamplerate, capabilityGate, toStartCase } from "homebridge-plugin-utils";
 import type { Camera, DeepPartial, LivestreamSource, ProtectCameraConfig, SnapshotOptions, TalkbackSession } from "unifi-protect";
 import type { CharacteristicValue, Service } from "homebridge";
+import type { LivestreamHostOptions, ProtectCameraHost } from "../../media/camera-host.ts";
 import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_SEGMENT_RESOLUTION, PROTECT_TIMESHIFT_CONSTRAINED_HOST_TARGET } from "../../settings.ts";
 import type { ProtectAccessory, WithoutIdentity } from "../../types.ts";
 import { buildAdvertisedProfiles, buildChannelProfile, capByPixels, formatResolution, isPrimaryChannel, rtspUrl, selectChannelProfile } from "../../media/resolution.ts";
@@ -12,7 +13,6 @@ import type { ChannelProfile } from "../../media/resolution.ts";
 import type { DoorbellCapability } from "./doorbell.ts";
 import type { LivestreamSubscription } from "../../media/livestream.ts";
 import type { Nullable } from "homebridge-plugin-utils";
-import type { ProtectCameraHost } from "../../media/camera-host.ts";
 import type { ProtectCameraPackage } from "./camera-package.ts";
 import { ProtectDevice } from "../device.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
@@ -551,9 +551,10 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
   // (the lens=>channel-0 coercion now lives in the library), default the segment length to our 100 ms resolution (the native pool
   // also floors at 100, but the RTSP adapter would otherwise default to 1000), declare the plugin's livestream defaults (a 16384-byte chunk for lower fragmentation and
   // per-segment timestamps - both enter the pool's sharing key, so they must be passed explicitly or two plugin subscribers would silently fail to share a session),
-  // preserve the friendly controller-side request label (the camera name + channel/lens), and pass the consumer's urgency closure straight
-  // through to the pool's recovery/detection policy. The RTSP-debug variant is a pure-FFmpeg plugin path that produces the same Segment stream behind the same interface.
-  public livestream(channelProfile: ChannelProfile, opts: { segmentLength?: number; signal?: AbortSignal; urgency?: () => number } = {}): LivestreamSubscription {
+  // preserve the friendly controller-side request label (the camera name + channel/lens), and pass the consumer's urgency closure and discardOnDispose preference
+  // straight through to the pool's recovery/detection policy. The RTSP-debug variant is a pure-FFmpeg plugin path that produces the same Segment stream behind the same
+  // interface; it ignores discardOnDispose by construction, since its own FFmpeg-fed subscription has no pooled queue to discard.
+  public livestream(channelProfile: ChannelProfile, opts: LivestreamHostOptions = {}): LivestreamSubscription {
 
     const segmentLength = opts.segmentLength ?? PROTECT_SEGMENT_RESOLUTION;
 
@@ -582,8 +583,8 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
       { channel: channelProfile.channel.id, type: "channel" };
     const requestId = this.name + ":" + ((channelProfile.lens !== undefined) ? "0." + channelProfile.lens.toString() : channelProfile.channel.id.toString());
 
-    return this.device.livestream({ chunkSize: 16384, requestId: requestId, segmentLength: segmentLength, signal: opts.signal, source: source, timestamps: true,
-      urgency: opts.urgency });
+    return this.device.livestream({ chunkSize: 16384, discardOnDispose: opts.discardOnDispose, requestId: requestId, segmentLength: segmentLength, signal: opts.signal,
+      source: source, timestamps: true, urgency: opts.urgency });
   }
 
   // Reboot this camera through the controller. This is the narrow public seam onto the camera projection's reboot command, mirroring snapshotFromController - the

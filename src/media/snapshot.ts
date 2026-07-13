@@ -4,7 +4,6 @@
  */
 import { FfmpegExec, runWithAbort } from "homebridge-plugin-utils";
 import type { HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
-import { PROTECT_LIVESTREAM_API_IDR_INTERVAL } from "../settings.ts";
 import type { ProtectCameraHost } from "./camera-host.ts";
 import type { SnapshotOptions } from "unifi-protect";
 import type { SnapshotRequest } from "homebridge";
@@ -174,20 +173,23 @@ export class ProtectSnapshot {
       return null;
     }
 
-    // Try the keyframe cache first for a minimal buffer (init segment + single keyframe fragment), falling back to the full timeshift window if no keyframe has been
-    // detected yet or the cache is stale.
-    const buffer = this.protectCamera.stream.timeshift?.buffer.getLastKeyframe() ??
-      this.protectCamera.stream.timeshift?.buffer.getLast(PROTECT_LIVESTREAM_API_IDR_INTERVAL * 1000);
+    // Ask the buffer for its freshness-aware answer, then serve ONLY fresh content. A stale or empty buffer declines here so acquisition falls through to the RTSP/API
+    // sources and caches nothing from the buffer - a stalled buffer must never serve, and then cache, a frozen image. There is no reconcile kick on a decline: the
+    // supervisor's identity-keyed already-running check makes a same-lens kick a no-op, and recovering a stalled subscription is the pool's media watchdog's job.
+    const source = this.protectCamera.stream.timeshift?.buffer.snapshotSource();
 
-    if(!buffer) {
+    if(source?.kind !== "fresh") {
 
-      // The buffer had nothing to give this request; an RTSP source serves it while a kick revives the standing buffer behind it for subsequent snapshots.
-      void this.protectCamera.stream.timeshift?.reconcile();
+      // A stale buffer is worth a debug line; an empty buffer declines silently, since there is no staleness to claim.
+      if(source?.kind === "stale") {
+
+        this.log.debug("The timeshift buffer is stale; using another snapshot source for this request.");
+      }
 
       return null;
     }
 
-    // Use our timeshift buffer to create a snapshot image. Options we use are:
+    // Use the fresh keyframe buffer to create a snapshot image. Options we use are:
     //
     // -r fps                     Set the input frame rate for the video stream.
     // -probesize number          How many bytes should be analyzed for stream information.
@@ -195,13 +197,13 @@ export class ProtectSnapshot {
     // -i pipe:0                  Read input from standard input.
     const ffmpegOptions = [
 
-      "-r", this.protectCamera.stream.timeshift?.buffer.channelProfile?.channel.fps.toString() ?? "30",
-      "-probesize", buffer.length.toString(),
+      "-r", source.fps.toString(),
+      "-probesize", source.data.length.toString(),
       "-f", "mp4",
       "-i", "pipe:0"
     ];
 
-    return this.snapFromFfmpeg(ffmpegOptions, signal, request, buffer);
+    return this.snapFromFfmpeg(ffmpegOptions, signal, request, source.data);
   }
 
   // Snapshots using the Protect RTSP endpoints as the source.

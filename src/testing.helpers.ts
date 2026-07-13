@@ -49,6 +49,7 @@ import { ProtectDevice } from "./devices/device.ts";
 import { ProtectEventDispatch } from "./nvr/event-dispatch.ts";
 import type { ProtectHints } from "./devices/device.ts";
 import type { ProtectPlatform } from "./platform.ts";
+import type { SnapshotSource } from "./media/timeshift.ts";
 
 // Identity class for a HAP Characteristic kind. Each characteristic kind is its own marker class; production code passes the class as a key to
 // getCharacteristic / updateCharacteristic. Carries a hapKind instance property so test failures surface the kind directly in inspect output and so the class is
@@ -2540,8 +2541,8 @@ export interface TestTimeshiftBuffer {
 
   channelProfile: Nullable<ChannelProfile>;
   getLast: (duration: number) => Nullable<Buffer>;
-  getLastKeyframe: () => Nullable<Buffer>;
   isStarted: boolean;
+  snapshotSource: () => SnapshotSource;
 }
 
 // A steerable timeshift-supervisor double the streaming-delegate factory installs at create time, so the construction-time activation kick and the per-lifecycle-edge
@@ -2564,8 +2565,8 @@ export function makeTimeshiftSupervisorDouble(): TestTimeshiftSupervisor {
 
     channelProfile: null,
     getLast: (): Nullable<Buffer> => null,
-    getLastKeyframe: (): Nullable<Buffer> => null,
-    isStarted: false
+    isStarted: false,
+    snapshotSource: (): SnapshotSource => ({ kind: "empty" })
   };
 
   const supervisor: TestTimeshiftSupervisor = {
