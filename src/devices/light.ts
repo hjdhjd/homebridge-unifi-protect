@@ -48,13 +48,9 @@ export class ProtectLight extends ProtectDevice {
   // Initialize and configure the light accessory for HomeKit.
   private configureDevice(): boolean {
 
-    // Clean out the context object in case it's been polluted somehow.
-    this.accessory.context = {};
-
-    // Seed the identity source of truth (the persisted bare MAC) from the raw record at configure time, where the record is present - identity is not read through the
-    // narrowed live-state projection.
-    this.accessory.context.mac = this.device.config.mac;
-    this.accessory.context.nvr = this.nvr.ufp.mac;
+    // Reset the persisted context to a clean slate, discarding any stray keys left over from a prior configuration of this same accessory, while preserving the user's
+    // motion-detection choice across the restart - a persisted detectMotion of false must survive rather than being wiped back to the default.
+    this.resetAccessoryContext({ detectMotion: true });
 
     // Configure accessory information.
     this.configureInfo();

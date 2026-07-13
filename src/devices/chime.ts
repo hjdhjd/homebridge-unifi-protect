@@ -39,14 +39,9 @@ export class ProtectChime extends ProtectDevice {
   // Initialize and configure the chime accessory for HomeKit.
   private configureDevice(): boolean {
 
-    // Reset the context object. Homebridge persists it to disk across restarts, and a UUID this accessory reuses from a prior incarnation - a different device or an
-    // older plugin schema - could still carry stray keys that do not apply to this chime.
-    this.accessory.context = {};
-
-    // Seed the identity source of truth (the persisted bare MAC) from the raw record at configure time, where the record is present - identity is not read through the
-    // narrowed live-state projection.
-    this.accessory.context.mac = this.device.config.mac;
-    this.accessory.context.nvr = this.nvr.ufp.mac;
+    // Reset the persisted context to a clean slate and reseed identity. Homebridge persists the context to disk across restarts, and a UUID this accessory reuses from a
+    // prior incarnation - a different device or an older plugin schema - could still carry stray keys that do not apply to this chime, which persists no user state.
+    this.resetAccessoryContext();
 
     // Configure accessory information.
     this.configureInfo();

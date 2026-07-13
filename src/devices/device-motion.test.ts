@@ -266,6 +266,70 @@ describe("base ProtectDevice motion capability (device-motion concern net)", () 
 
       assert.equal(built.accessory.getService(Service.OccupancySensor), undefined, "omitting Enable.Motion.OccupancySensor materializes no occupancy service");
     });
+
+    test("an occupancy service created during a steady-state reconcile runs its full init block", async () => {
+
+      // Fold C28: Motion.OccupancySensor must be enabled so validService re-creates the service on the enable. The constructor's first configure stood the service up
+      // and registered its GET; a disable removes it, then a steady-state reconcile (isInitialized TRUE - the shape a runtime enable takes) must re-create the service
+      // AND run the init block, which pre-fix it skipped because isInitialized was true and there was no creation-detection reset.
+      const built = buildMotionDevice({ userOptions: ["Enable.Motion.OccupancySensor"] });
+
+      device = built.device;
+
+      const occupancyGets = (): number => built.mqtt.subscriptions.filter((subscription) => (subscription.kind === "get") && (subscription.topic ===
+        (SENSOR_MAC + "/occupancy"))).length;
+
+      built.device.configureOccupancySensorFor(false, false);
+
+      const baseline = occupancyGets();
+
+      built.device.configureOccupancySensorFor(true, true);
+
+      const occupancy = built.accessory.getService(Service.OccupancySensor);
+
+      assert.ok(occupancy, "the reconcile re-created the occupancy service");
+      assert.ok(occupancyGets() > baseline, "the reconcile-created service re-registered its occupancy MQTT GET - the init block ran");
+      assert.equal(await occupancy.getCharacteristic(Characteristic.StatusActive).triggerGet(), true,
+        "StatusActive carries an onGet reading isReachable after the re-creation");
+    });
+
+    test("re-creating the occupancy service does not accumulate duplicate smart-occupancy types", async () => {
+
+      // Fold C34: the smart-detect occupancy branch (only cameras reach it in production) is driven here on the base carrier by seeding the config's smart-detect type
+      // list and flipping hints.smartDetect true, so the init block's push loop runs. The creation-detection reset must clear smartOccupancy before each re-run, so a
+      // re-created service repopulates from empty rather than accumulating a duplicate - a latent hazard today, since the reachable runtime re-entry carries smartDetect
+      // false.
+      const sensorConfig = makeSensorConfig();
+      const seededFlags = sensorConfig.featureFlags as unknown as Record<string, unknown>;
+
+      seededFlags["smartDetectAudioTypes"] = [];
+      seededFlags["smartDetectTypes"] = ["person"];
+
+      const store = new TestStateStore(makeProtectState({ sensors: [sensorConfig] }));
+      const { nvr } = makeTestNvr({ mqtt: true, store, userOptions: [ "Enable.Motion.OccupancySensor", "Enable.Motion.OccupancySensor.person" ] });
+      const accessory = makeTestAccessory("Test Sensor", "uuid:test-sensor");
+
+      accessory.context["mac"] = sensorConfig.mac;
+
+      const projection = new TestSensorProjection(sensorConfig.id, store) as unknown as Sensor;
+      const built = new TestBaseDevice(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection);
+
+      device = built;
+
+      built.configureHintsFor();
+      built.hints.smartDetect = true;
+
+      // The first configure resolves the single smart-occupancy type.
+      built.configureOccupancySensorFor(true, false);
+
+      assert.deepEqual(built.hints.smartOccupancy, ["person"], "the first configure resolved the single smart-occupancy type");
+
+      // Disable, then reconcile-create so the init block runs a SECOND time; the reset must keep the resolved list free of duplicates.
+      built.configureOccupancySensorFor(false, false);
+      built.configureOccupancySensorFor(true, true);
+
+      assert.deepEqual(built.hints.smartOccupancy, ["person"], "the re-created service repopulated smartOccupancy from empty rather than accumulating a duplicate");
+    });
   });
 
   describe("the base motion get/set MQTT seam", () => {

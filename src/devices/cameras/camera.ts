@@ -7,7 +7,7 @@ import type { Camera, DeepPartial, LivestreamSource, ProtectCameraConfig, Snapsh
 import type { CharacteristicValue, Service } from "homebridge";
 import type { LivestreamHostOptions, ProtectCameraHost } from "../../media/camera-host.ts";
 import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_SEGMENT_RESOLUTION, PROTECT_TIMESHIFT_CONSTRAINED_HOST_TARGET } from "../../settings.ts";
-import type { ProtectAccessory, WithoutIdentity } from "../../types.ts";
+import type { ProtectAccessory, ProtectPersistedContextState, WithoutIdentity } from "../../types.ts";
 import { buildAdvertisedProfiles, buildChannelProfile, capByPixels, formatResolution, isPrimaryChannel, rtspUrl, selectChannelProfile } from "../../media/resolution.ts";
 import type { ChannelProfile } from "../../media/resolution.ts";
 import type { DoorbellCapability } from "./doorbell.ts";
@@ -138,27 +138,22 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
   // Configure a camera accessory for HomeKit.
   protected configureDevice(): boolean {
 
-    // Save our context for reference before we recreate it.
-    const savedContext = this.accessory.context;
-
-    // Clean out the context object in case it's been polluted somehow.
-    this.accessory.context = {};
-    this.accessory.context.detectMotion = savedContext.detectMotion ?? true;
-
-    // Seed the identity source of truth (the persisted bare MAC) from the raw record at configure time, where the record is present - identity is not read through the
-    // narrowed live-state projection.
-    this.accessory.context.mac = this.device.config.mac;
-    this.accessory.context.nvr = this.nvr.ufp.mac;
+    // Preserve the persisted user-state keys across the context reset: motion detection always, plus the HKSV-recording and doorbell-mute switch states when their
+    // features are enabled. The values here are the resting defaults a fresh accessory starts from; resetAccessoryContext keeps whatever was actually persisted and
+    // falls back to these only when nothing was, so a user's saved choice survives the restart.
+    const preserved: ProtectPersistedContextState = { detectMotion: true };
 
     if(this.hasFeature("Video.HKSV.Recording.Switch")) {
 
-      this.accessory.context.hksvRecordingDisabled = savedContext.hksvRecordingDisabled ?? false;
+      preserved.hksvRecordingDisabled = false;
     }
 
     if(this.hasFeature("Doorbell.Mute")) {
 
-      this.accessory.context.doorbellMuted = savedContext.doorbellMuted ?? false;
+      preserved.doorbellMuted = false;
     }
+
+    this.resetAccessoryContext(preserved);
 
     // Inform the user that motion detection will suck.
     if(this.recordingMode === "never") {

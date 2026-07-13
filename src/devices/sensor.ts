@@ -99,14 +99,9 @@ export class ProtectSensor extends ProtectDevice {
   // Initialize and configure the sensor accessory for HomeKit.
   private configureDevice(): boolean {
 
-    // Homebridge persists the accessory context in its own on-disk cache across restarts, so we reset it here to discard any stray keys left over from a
-    // prior configuration of this same accessory rather than trust whatever the cache happens to contain.
-    this.accessory.context = {};
-
-    // Seed the identity source of truth (the persisted bare MAC) from the raw record at configure time, where the record is present - identity is not read through the
-    // narrowed live-state projection.
-    this.accessory.context.mac = this.device.config.mac;
-    this.accessory.context.nvr = this.nvr.ufp.mac;
+    // Reset the persisted context to a clean slate, discarding any stray keys left over from a prior configuration of this same accessory, while preserving the user's
+    // motion-detection choice across the restart - a persisted detectMotion of false must survive rather than being wiped back to the default.
+    this.resetAccessoryContext({ detectMotion: true });
 
     // Configure accessory information.
     this.configureInfo();
@@ -461,6 +456,11 @@ export class ProtectSensor extends ProtectDevice {
         continue;
       }
 
+      // Detect creation by presence before we acquire: a subtype not yet on this accessory will be created by acquireService below, so this reads true exactly when the
+      // channel's service is newly created this pass. We use a presence probe here, NOT an onServiceCreate closure flip: the loop shares one isInitialized parameter
+      // across channels, and a closure flip on one channel would leak the reset into the next channel's iteration and double-register its GET.
+      const created = !this.accessory.getServiceById(serviceType, sensor.subtype);
+
       // Acquire the service.
       const service = this.acquireService(serviceType, this.accessoryName + (sensor.name ?? ""), sensor.subtype);
 
@@ -487,10 +487,11 @@ export class ProtectSensor extends ProtectDevice {
         this.publish(sensor.mqtt, this.leakDetected(sensor.isDetected).toString());
       }
 
-      // Register the MQTT get handler exactly once per channel: subscribeGet is NOT idempotent (it accumulates handlers per call), so we guard it behind the
-      // first-run flag exactly as the occupancy / motion sensors do. ONLY leak is folded onto this per-channel leaf gate, because only leak has the model-aware
+      // Register the MQTT get handler exactly once per channel: subscribeGet accumulates a handler on every call, so a second call would double-register the channel's
+      // GET; we guard it on the first configure (isInitialized false) OR a channel enabled at runtime (created) - a channel toggled on after first configure must
+      // register its GET now rather than stay dead until a restart. ONLY leak is folded onto this per-channel leaf gate, because only leak has the model-aware
       // per-channel enable signal; the other sensor GETs remain unconditional in configureMqtt - a pre-existing, accepted inconsistency that is out of scope here.
-      if(!isInitialized) {
+      if(!isInitialized || created) {
 
         this.subscribeGet(sensor.mqtt, "leak detected", () => this.leakDetected(sensor.isDetected).toString());
       }

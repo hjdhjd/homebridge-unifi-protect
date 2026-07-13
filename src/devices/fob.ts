@@ -92,13 +92,9 @@ export class ProtectFob extends ProtectDevice {
   // Initialize and configure the fob accessory for HomeKit.
   private configureDevice(): boolean {
 
-    // Clean out the context object in case it's been polluted somehow.
-    this.accessory.context = {};
-
-    // Seed the identity source of truth (the persisted bare MAC) from the raw record at configure time, where the record is present - identity is not read through the
-    // narrowed live-state projection.
-    this.accessory.context.mac = this.device.config.mac;
-    this.accessory.context.nvr = this.nvr.ufp.mac;
+    // Reset the persisted context to a clean slate and reseed identity, discarding any stray keys a prior configuration of this same accessory left behind. The fob
+    // persists no user state, so nothing is preserved across the reset.
+    this.resetAccessoryContext();
 
     // Configure accessory information.
     this.configureInfo();

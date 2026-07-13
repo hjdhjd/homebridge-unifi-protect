@@ -37,7 +37,7 @@ import diagnosticsChannel from "node:diagnostics_channel";
 // The casts are confined to the construction seam exactly as camera-construction.test.ts does; the instance under test is the production class, running its real
 // configureHints / configureDevice / spawnObservers paths. The injected recording dispatch is read off nvr.events after construction rather than captured from the
 // factory closure - reading it back avoids both the assignment-expression smell and a TS2454 definite-assignment error on a factory-captured binding.
-function buildLight(configOptions: Parameters<typeof makeLightConfig>[0] = {}, harnessOptions: { userOptions?: string[] } = {}): {
+function buildLight(configOptions: Parameters<typeof makeLightConfig>[0] = {}, harnessOptions: { accessory?: TestAccessory; userOptions?: string[] } = {}): {
   accessory: TestAccessory; light: ProtectLight; lightConfig: ProtectLightConfig; lightProjection: TestLightProjection; mqtt: TestMqttClient;
   recording: TestRecordingDispatch; store: TestStateStore;
 } {
@@ -47,7 +47,7 @@ function buildLight(configOptions: Parameters<typeof makeLightConfig>[0] = {}, h
   const { mqtt, nvr } = makeTestNvr({ dispatch: (innerNvr: ProtectNvr): ProtectEventDispatch => new TestRecordingDispatch(innerNvr), mqtt: true, store,
     userOptions: harnessOptions.userOptions });
   const recording = nvr.events as TestRecordingDispatch;
-  const accessory = makeTestAccessory("Test Light", "uuid:test-light");
+  const accessory = harnessOptions.accessory ?? makeTestAccessory("Test Light", "uuid:test-light");
 
   // The projection is named (not cast inline) so the MQTT SET-body tests read its updateCalls / set its updateRejection on the SAME instance the light's onSet
   // write-through reaches; the lone construction-seam cast is confined to the new ProtectLight(...) call.
@@ -108,6 +108,28 @@ describe("real ProtectLight construction and observer behavior", () => {
     assert.equal(store.observerCount, 6, "the two base observers plus the light's four are registered against the store double");
     assert.equal(constructionWakes, 0, "no observer wake was published during construction - observers arm against the baseline and stay silent");
     assert.ok(accessory.getService(Service.MotionSensor), "configureMotionSensor is default-on, so the light carries a MotionSensor service the motion tests depend on");
+  });
+
+  test("preserves a persisted detectMotion of false across the context reset", async () => {
+
+    // The mirror of the sensor half: pre-seed the accessory as if the user had turned motion detection off, then build with Motion.Switch enabled so the switch takes its
+    // service branch rather than its force-reset branch (the light's configureMotionSensor is default-on, so the switch is reached). The context reset must carry the
+    // user's choice across the restart rather than wiping it back to the default.
+    const seeded = makeTestAccessory("Test Light", "uuid:test-light");
+
+    seeded.context["detectMotion"] = false;
+
+    const built = buildLight({}, { accessory: seeded, userOptions: ["Enable.Motion.Switch"] });
+
+    await settle();
+
+    try {
+
+      assert.equal(built.accessory.context["detectMotion"], false, "a persisted detectMotion of false survives the context reset rather than being wiped back to true");
+    } finally {
+
+      built.light.cleanup();
+    }
   });
 
   test("cleanup unwinds all six observers, and a value-changing push afterward wakes nothing", async () => {

@@ -188,6 +188,28 @@ describe("real ProtectSensor construction and family behavior", () => {
     built.sensor.cleanup();
   });
 
+  test("preserves a persisted detectMotion of false across the context reset", async () => {
+
+    // Fold C27: the motion sensor and its Motion.Switch must both be enabled so configureMotionSwitch takes its service branch rather than its disabled branch, whose
+    // force-reset would stamp detectMotion back to true and mask the fix. Pre-seed the accessory as if the user had turned motion detection off in a prior session; the
+    // context reset must carry that choice across the restart rather than wiping it back to the default.
+    const seeded = makeTestAccessory("Test Sensor", "uuid:test-sensor");
+
+    seeded.context["detectMotion"] = false;
+
+    const built = buildSensor({ motionEnabled: true }, { accessory: seeded, userOptions: ["Enable.Motion.Switch"] });
+
+    await settle();
+
+    try {
+
+      assert.equal(built.accessory.context["detectMotion"], false, "a persisted detectMotion of false survives the context reset rather than being wiped back to true");
+    } finally {
+
+      built.sensor.cleanup();
+    }
+  });
+
   test("cleanup unwinds all six observers, and a value-changing push afterward wakes nothing", async () => {
 
     sensor?.cleanup();
@@ -599,7 +621,7 @@ describe("real ProtectSensor construction and family behavior", () => {
     built.sensor.cleanup();
   });
 
-  test("a channel toggled off unsubscribes its leak GET before the validService removal, mirroring the occupancy / motion ordering", async () => {
+  test("a channel toggled off unsubscribes its leak GET, and toggled back on re-registers it without disturbing its sibling", async () => {
 
     // A multi-channel sensor with the external flag on registers the external leak GET at construction. Pushing the external flag off wakes the sensor.config reconcile,
     // which runs the leak-policy leaf for the now-disabled channel and unsubscribes its GET BEFORE the validService continue removes the service.
@@ -619,6 +641,24 @@ describe("real ProtectSensor construction and family behavior", () => {
       "toggling the external flag off removed the external LeakSensor");
     assert.ok(built.mqtt.unsubscribes.filter((entry) => entry.topic === "leak-external/get").length > unsubBaseline,
       "the disabled external channel unsubscribed its leak GET on the topic tail");
+
+    // Push the external flag back ON. The leak-policy leaf re-enables the channel, and the created-probe re-registers its GET rather than leaving it dead until a
+    // restart. The untouched internal channel must NOT re-register - a forbidden onServiceCreate closure-flip would leak the reset into the sibling and double-register
+    // its GET.
+    const mac = built.projection.config.mac;
+    const externalGets = (): number => built.mqtt.subscriptions.filter((entry) => (entry.kind === "get") && (entry.topic === (mac + "/leak-external"))).length;
+    const internalGets = (): number => built.mqtt.subscriptions.filter((entry) => (entry.kind === "get") && (entry.topic === (mac + "/leak"))).length;
+    const externalBefore = externalGets();
+    const internalBefore = internalGets();
+
+    built.store.pushSensorPatch("test-sensor-1", { leakSettings: { isExternalEnabled: true, isInternalEnabled: true } });
+
+    await settle();
+
+    assert.ok(built.accessory.getServiceById(Service.LeakSensor, ProtectReservedNames.LEAKSENSOR_EXTERNAL),
+      "toggling the external flag back on re-created the external LeakSensor");
+    assert.ok(externalGets() > externalBefore, "the re-enabled external channel re-registered its leak GET rather than staying dead until a restart");
+    assert.equal(internalGets(), internalBefore, "the untouched internal channel did not re-register its GET - no closure-flip leak into the sibling");
 
     built.sensor.cleanup();
   });

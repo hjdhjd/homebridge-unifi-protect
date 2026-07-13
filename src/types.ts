@@ -70,6 +70,12 @@ export interface ProtectAccessoryContext {
   systemInfo?: boolean;
 }
 
+// The user-state context keys that survive a context reset. These are the ONLY keys resetAccessoryContext preserves - identity and owner-bookkeeping keys (mac, nvr,
+// packageCamera, liveview, securityState, systemInfo) are re-derived every configure, never carried across. Naming the set as a narrowed, homogeneous (all-boolean) type
+// is also what lets the preserve helper write each key directly: over the wide, heterogeneous ProtectAccessoryContext the same per-key write fails strict tsc with a
+// correlated-union error, but over this narrowed type it compiles clean.
+export type ProtectPersistedContextState = Partial<Pick<ProtectAccessoryContext, "detectMotion" | "doorbellMuted" | "hksvRecordingDisabled">>;
+
 // A Protect accessory: a homebridge PlatformAccessory whose context is our typed ProtectAccessoryContext. This alias is the single name threaded through every accessory
 // field, parameter, and creation site, so the context contract lives in exactly one place.
 export type ProtectAccessory = PlatformAccessory<ProtectAccessoryContext>;

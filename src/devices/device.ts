@@ -6,7 +6,7 @@ import type { API, CharacteristicValue, Service, WithUUID } from "homebridge";
 import type { AcquireServiceTarget, HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
 import type { Camera, Chime, Fob, Light, ProtectCameraConfig, ProtectState, Relay, Sensor, Viewer } from "unifi-protect";
 import { PROTECT_MOTION_DURATION, PROTECT_OCCUPANCY_DURATION} from "../settings.ts";
-import type { ProtectAccessory, ProtectDeviceConfigTypes, WithoutIdentity } from "../types.ts";
+import type { ProtectAccessory, ProtectDeviceConfigTypes, ProtectPersistedContextState, WithoutIdentity } from "../types.ts";
 import { ProtectReservedNames, exhaustiveGuard } from "../types.ts";
 import { acquireService, composeSignals, sanitizeName, validService } from "homebridge-plugin-utils";
 import { isDeviceOnline, selectCamera, selectChime, selectFob, selectLight, selectRelay, selectSensor, selectViewer } from "unifi-protect";
@@ -305,6 +305,34 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
     return this.setInfo(this.accessory, this.device.config);
   }
 
+  // Reset the accessory's persisted HomeKit context to a clean slate, preserving only the user-state keys that must survive across restarts. Homebridge persists the
+  // context in its own on-disk cache, so we discard any stray keys a prior configuration of this same accessory left behind rather than trust the cache, then restore
+  // each preserved key from what was actually saved (falling back to the passed default when nothing was persisted) and reseed the identity keys. The preserved
+  // parameter is the narrowed ProtectPersistedContextState, so the direct per-key write below is sound: the homogeneous boolean type sidesteps the correlated-union
+  // failure the wide context type exhibits under a plain loop.
+  protected resetAccessoryContext(preserved: ProtectPersistedContextState = {}): void {
+
+    const savedContext = this.accessory.context;
+
+    this.accessory.context = {};
+
+    for(const key of Object.keys(preserved) as (keyof ProtectPersistedContextState)[]) {
+
+      this.accessory.context[key] = savedContext[key] ?? preserved[key];
+    }
+
+    this.seedContextIdentity();
+  }
+
+  // Seed the accessory's identity keys from the raw record at configure time, where the record is present - identity is not read through the narrowed live-state
+  // projection, and it is re-derived every configure, never preserved across a context reset. The base seeds the persisted bare MAC and the controller MAC; the package
+  // camera - the one family whose identity is synthetic - overrides this to seed its parent-derived identity instead.
+  protected seedContextIdentity(): void {
+
+    this.accessory.context.mac = this.device.config.mac;
+    this.accessory.context.nvr = this.nvr.ufp.mac;
+  }
+
   // Cleanup our observe loops, timers, and any other activities as needed. Aborting the per-accessory controller tears down every observe loop this accessory
   // spawned through this.signal; the timers Map is HomeKit-side pacing state and is cleared alongside.
   public cleanup(): void {
@@ -561,8 +589,12 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
       return false;
     }
 
-    // Acquire the service.
-    const service = this.acquireService(this.hap.Service.OccupancySensor);
+    // Acquire the service, flipping isInitialized false when this call actually CREATES the service so a service stood up during a steady-state reconcile runs the full
+    // init block below rather than being left half-configured. Mirrors configureMotionSensor's onServiceCreate reset.
+    const service = this.acquireService(this.hap.Service.OccupancySensor, undefined, undefined, () => {
+
+      isInitialized = false;
+    });
 
     if(!service) {
 
@@ -574,6 +606,10 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
     // Have we previously initialized this sensor? We assume not by default, but this allows for scenarios where you may be dynamically reconfiguring a sensor at
     // runtime (e.g. UniFi sensors can be reconfigured for various sensor modes in realtime).
     if(!isInitialized) {
+
+      // Reset the resolved smart-occupancy type list before rebuilding it, so a live re-creation of the service repopulates from empty rather than accumulating
+      // duplicates across runs.
+      this.hints.smartOccupancy = [];
 
       // Initialize the state of the occupancy sensor.
       service.updateCharacteristic(this.hap.Characteristic.OccupancyDetected, false);
@@ -601,18 +637,15 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
             this.hints.smartOccupancy.push(smartDetectType);
           }
         }
-
-        // If the user has disabled all the object types, warn them.
-        if(!this.hints.smartOccupancy.length) {
-
-          this.hints.smartOccupancy.push("no smart motion detection object type configured");
-        }
       }
 
       // Configure our MQTT support.
       this.subscribeGet("occupancy", "occupancy", () => service.getCharacteristic(this.hap.Characteristic.OccupancyDetected).value ? "true" : "false");
 
-      this.log.info("Enabling occupancy sensor%s.", this.hints.smartDetect ? " using smart motion detection: " + this.hints.smartOccupancy.join(", ")  : "");
+      // Keep smartOccupancy a pure list of detection types - a display sentinel in that set would be a label living in a protocol set the occupancy gate tests membership
+      // against. The all-types-disabled case is rendered here at the log site instead, so the human-facing text is unchanged while the set stays type-only.
+      this.log.info("Enabling occupancy sensor%s.", this.hints.smartDetect ? " using smart motion detection: " +
+        (this.hints.smartOccupancy.length ? this.hints.smartOccupancy.join(", ") : "no smart motion detection object type configured") : "");
     }
 
     return true;

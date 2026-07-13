@@ -8,6 +8,7 @@ import type { ChannelProfile } from "../../media/resolution.ts";
 import type { CharacteristicValue } from "homebridge";
 import type { Nullable } from "homebridge-plugin-utils";
 import { ProtectCamera } from "./camera.ts";
+import type { ProtectPersistedContextState } from "../../types.ts";
 import type { ProtectState } from "unifi-protect";
 import { describeDevice } from "../device-descriptor.ts";
 import { retry } from "homebridge-plugin-utils";
@@ -79,24 +80,17 @@ export class ProtectCameraPackage extends ProtectCamera {
     // scope, so the only hint set here is the package-specific probesize floor - package camera streams are sparse enough that FFmpeg needs a deeper probe to lock on.
     this.hints.probesize = 32768;
 
-    // Save our context for reference before we recreate it.
-    const savedContext = this.accessory.context;
-
-    // Clean out the context object in case it's been polluted somehow.
-    this.accessory.context = {};
-
-    // Inherit our HKSV and motion awareness states from our parent camera.
-    this.accessory.context.detectMotion = savedContext.detectMotion ?? true;
+    // Preserve the persisted user-state keys across the context reset: motion detection always, plus the HKSV-recording switch state when its feature is enabled. The
+    // values here are the resting defaults; resetAccessoryContext keeps whatever was actually persisted and falls back to these only when nothing was. The
+    // seedContextIdentity override below seeds the package's synthetic identity rather than a real MAC.
+    const preserved: ProtectPersistedContextState = { detectMotion: true };
 
     if(this.hasFeature("Video.HKSV.Recording.Switch")) {
 
-      this.accessory.context.hksvRecordingDisabled = savedContext.hksvRecordingDisabled ?? false;
+      preserved.hksvRecordingDisabled = false;
     }
 
-    // We explicitly avoid adding the MAC address of the camera - that's reserved for real Protect devices, not synthetic ones we create. The parent's bare MAC seeds the
-    // package identity from the raw record at configure time, where the record is present - identity is not read through the narrowed live-state projection.
-    this.accessory.context.nvr = this.nvr.ufp.mac;
-    this.accessory.context.packageCamera = this.device.config.mac;
+    this.resetAccessoryContext(preserved);
 
     // Configure accessory information.
     this.configureInfo();
@@ -117,6 +111,15 @@ export class ProtectCameraPackage extends ProtectCamera {
 
     // We're done.
     return true;
+  }
+
+  // Seed the package camera's synthetic identity. Unlike a real device, the package camera carries no MAC of its own - it is reserved for real Protect devices - so we
+  // seed the controller MAC and the parent's bare MAC as the packageCamera identity instead. Identity is re-derived every configure from the raw record, never preserved
+  // across a context reset; the package is the one family whose identity is synthetic, which is why it overrides the base seeding.
+  protected override seedContextIdentity(): void {
+
+    this.accessory.context.nvr = this.nvr.ufp.mac;
+    this.accessory.context.packageCamera = this.device.config.mac;
   }
 
   /* Configure the package camera's HomeKit video stream from the real package channel, deferring when the controller has not yet provisioned it. Idempotent through

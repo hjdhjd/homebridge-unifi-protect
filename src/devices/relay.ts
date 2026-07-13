@@ -68,14 +68,10 @@ export class ProtectRelay extends ProtectDevice {
   // Initialize and configure the relay accessory for HomeKit.
   private configureDevice(): boolean {
 
-    // Clean out the context object. This accessory may be the object Homebridge restored from its persisted accessory cache, and that cached object can still carry
-    // context keys left behind by an earlier plugin version or by a different accessory type that previously resolved to this device's identity.
-    this.accessory.context = {};
-
-    // Seed the identity source of truth (the persisted bare MAC) from the raw record at configure time, where the record is present - identity is not read through the
-    // narrowed live-state projection.
-    this.accessory.context.mac = this.device.config.mac;
-    this.accessory.context.nvr = this.nvr.ufp.mac;
+    // Reset the persisted context to a clean slate and reseed identity. This accessory may be the object Homebridge restored from its persisted accessory cache, which
+    // can still carry context keys left behind by an earlier plugin version or a different accessory type sharing this device's cached identity; the relay persists no
+    // user state, so nothing is preserved across the reset.
+    this.resetAccessoryContext();
 
     // Configure accessory information.
     this.configureInfo();
