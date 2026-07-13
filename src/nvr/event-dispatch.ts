@@ -6,15 +6,33 @@ import type { AuthMethod, ProtectEventMetadata, ProtectEventMetadataDetectedThum
 import type { HAP, Service } from "homebridge";
 import type { HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
 import { PROTECT_DOORBELL_AUTHSENSOR_DURATION, PROTECT_DOORBELL_TRIGGER_DURATION } from "../settings.ts";
+import { ProtectReservedNames, packageCameraId } from "../types.ts";
 import type { FirehoseDispatchPayload } from "../diagnostics.ts";
 import type { ProtectCamera } from "../devices/cameras/camera.ts";
 import type { ProtectDevice } from "../devices/device.ts";
 import type { ProtectNvr } from "./nvr.ts";
-import { ProtectReservedNames } from "../types.ts";
 import { SMART_DETECT_ENRICHERS } from "./smart-detect-metadata.ts";
 import type { SmartDetectEventItem } from "./smart-detect-metadata.ts";
 import { channels } from "../diagnostics.ts";
 import { mqttTopic } from "../mqtt.ts";
+
+// The subkey infix that namespaces a camera's per-smart-detection-type timers and high-water marks under its device id: a full key reads
+// "<id>.Motion.SmartDetect.ObjectSensors.<type>", and a per-plate window extends it with ".<plate>". Written once here so the key build, the plate derivation, and the
+// removal-settle classification all read the same shape rather than re-spelling the literal by hand.
+const SMART_DETECT_KEY_INFIX = ".Motion.SmartDetect.ObjectSensors.";
+
+// The subkey suffix that namespaces a camera's occupancy reset timer under its device id: a full key reads "<id>.Motion.OccupancySensor". Written once so the arm site
+// and the removal-settle classification agree.
+const OCCUPANCY_KEY_SUFFIX = ".Motion.OccupancySensor";
+
+// Whether a candidate timer key belongs to a device id under exact-boundary semantics: the key IS the id, or it extends the id as "id." - never a bare prefix match, so
+// "AABB" never captures the unrelated "AABBCC". An options object because both arguments are plain strings and a positional swap would silently invert the test.
+function matchesEventKeyBoundary(options: { boundary: string; candidate: string }): boolean {
+
+  const { boundary, candidate } = options;
+
+  return (candidate === boundary) || candidate.startsWith(boundary + ".");
+}
 
 /**
  * The controller's typed event surface, projected onto HomeKit. A thin router over the classified event firehose, plus the HomeKit delivery methods that router
@@ -248,7 +266,7 @@ export class ProtectEventDispatch {
 
     for(const [ key, timer ] of this.eventTimers) {
 
-      if((key === id) || key.startsWith(id + ".")) {
+      if(matchesEventKeyBoundary({ boundary: id, candidate: key })) {
 
         clearTimeout(timer);
         this.eventTimers.delete(key);
@@ -257,7 +275,7 @@ export class ProtectEventDispatch {
 
     for(const key of this.smartDetectLoggedAttributes.keys()) {
 
-      if((key === id) || key.startsWith(id + ".")) {
+      if(matchesEventKeyBoundary({ boundary: id, candidate: key })) {
 
         this.smartDetectLoggedAttributes.delete(key);
       }
@@ -273,6 +291,54 @@ export class ProtectEventDispatch {
   public hasInflightMotion(id: string): boolean {
 
     return this.eventTimers.has(id);
+  }
+
+  /* Retire a device from the dispatcher on removal: settle every latched boolean MQTT topic it still owns, then reclaim its timers and enrichment high-water marks.
+   * A device removed mid-window would otherwise strand its motion / occupancy / smart-type topics latched "true" forever - clearEventTimersForDevice clears the
+   * pending reset timers WITHOUT firing them, and it is precisely those timers that own each terminal "false" publish. So we derive the owed set from exactly the
+   * windows the sweep is about to reclaim (the keys matching the device's exact boundary), classify each key by its subkey shape, and publish one terminal "false"
+   * per distinct topic before clearing. The dispatcher owns its topics' lifecycle, so removal is where it settles what it would otherwise leave latched.
+   *
+   * The parent's boundary prefix also reclaims the cascaded package camera's timers (the documented hazard on clearEventTimersForDevice), and the parent and its
+   * package publish bare motion on the same bare-MAC topic under independently-keyed windows (the parent's own id, the package's suffixed id), so the per-topic dedup
+   * collapses their shared motion reset to a single "false" that lands whenever EITHER window was inflight.
+   */
+  public retireDevice(protectDevice: ProtectDevice): void {
+
+    const id = protectDevice.id;
+    const packageId = packageCameraId(protectDevice.mac);
+    const smartPrefix = id + SMART_DETECT_KEY_INFIX;
+    const owedTopics = new Set<string>();
+
+    // Classify each timer key the sweep will reclaim into the terminal topic it owes, deduped by composed topic string. The bare-motion window - the parent's own id or
+    // the package camera's suffixed id - owes the shared motion topic; an occupancy window owes the occupancy topic; a single-segment smart-detect window owes its
+    // per-type topic; a plate-nested smart-detect window (more than one segment past the infix) never publishes MQTT and owes nothing.
+    for(const key of this.eventTimers.keys()) {
+
+      if(!matchesEventKeyBoundary({ boundary: id, candidate: key })) {
+
+        continue;
+      }
+
+      if((key === id) || (key === packageId)) {
+
+        owedTopics.add(mqttTopic(protectDevice.mac, "motion"));
+      } else if(key.endsWith(OCCUPANCY_KEY_SUFFIX)) {
+
+        owedTopics.add(mqttTopic(protectDevice.mac, "occupancy"));
+      } else if(key.startsWith(smartPrefix) && !key.slice(smartPrefix.length).includes(".")) {
+
+        owedTopics.add(mqttTopic(protectDevice.mac, "motion/smart/" + key.slice(smartPrefix.length)));
+      }
+    }
+
+    // Publish each owed terminal "false" exactly once, then reclaim the timers and high-water marks under the same exact-boundary rule.
+    for(const topic of owedTopics) {
+
+      void this.nvr.mqtt?.publish(topic, "false");
+    }
+
+    this.clearEventTimersForDevice(id);
   }
 
   // Motion event processing from UniFi Protect.
@@ -330,8 +396,17 @@ export class ProtectEventDispatch {
 
       protectDevice.log.debug("Resetting motion event.");
 
-      // Publish to MQTT, if the user has configured it.
-      void this.nvr.mqtt?.publish(mqttTopic(protectDevice.mac, "motion"), "false");
+      // The parent camera and its package camera publish motion on the same bare-MAC topic under independently-keyed windows, so whichever window ends LAST owns the
+      // terminal reset - the same sibling-ownership rule the package detach applies in doorbell.ts. A real device's id is its mac exactly and the package camera's id
+      // carries the ".PackageCamera" suffix (the identity contract in device.ts), so the sibling is the package id for a parent and the bare mac for the package; we hold
+      // the shared "false" while the sibling's own window is still inflight. The per-accessory HomeKit reset and the timer bookkeeping above stay unconditional - only
+      // this shared MQTT topic has the ownership question. With no package camera the sibling probe simply finds nothing, so a lone camera publishes exactly as before.
+      const siblingId = (protectDevice.id === protectDevice.mac) ? packageCameraId(protectDevice.mac) : protectDevice.mac;
+
+      if(!this.hasInflightMotion(siblingId)) {
+
+        void this.nvr.mqtt?.publish(mqttTopic(protectDevice.mac, "motion"), "false");
+      }
 
       // Delete the timer from our motion event tracker.
       this.eventTimers.delete(protectDevice.id);
@@ -372,7 +447,15 @@ export class ProtectEventDispatch {
     // Iterate over the smart events that Protect has detected.
     for(const event of smartEvents) {
 
-      const key = protectDevice.id + ".Motion.SmartDetect.ObjectSensors." + event.type;
+      const key = protectDevice.id + SMART_DETECT_KEY_INFIX + event.type;
+
+      // Two simultaneous same-type detections are distinct detections, so the enrichment high-water mark is keyed by the detection's own identity - the wire's objectId,
+      // falling back to the tracker id, then the rendered name - rather than by the type alone. Without this the second vehicle's enriched log and metadata publish would
+      // be suppressed by the first vehicle's high-water mark. Legacy object-type detections carry no payload or name, so their identity is empty and they keep the
+      // type-level key; they never reach the enrichment gate anyway, since their attribute set is always empty. The reset timer and contact sensors stay keyed by the
+      // type window (there is one HomeKit sensor per type), so only the high-water mark carries the finer identity.
+      const detectionId = event.payload?.objectId ?? event.payload?.attributes?.trackerId ?? event.name;
+      const highWaterKey = detectionId ? (key + "." + detectionId) : key;
 
       // A retrigger within the motion window must re-arm the reset timer below but never re-trip the sensor or re-announce on MQTT, so the once-per-window side
       // effects are gated on this being a newly-seen detection.
@@ -404,9 +487,18 @@ export class ProtectEventDispatch {
         void this.nvr.mqtt?.publish(mqttTopic(protectDevice.mac, "motion/smart/" + event.type), "false");
         protectDevice.log.debug("Resetting smart object motion event.");
 
-        // Delete the timer and the logged-attribute high-water mark so the next motion window for this type starts fresh.
+        // Delete the timer, then sweep every logged-attribute high-water mark under this type's window boundary - the bare type-level key and every identity-suffixed
+        // key beneath it - so the next motion window for this type starts fresh. Identity marks accumulate for the LIFE of the type window during sustained activity by
+        // design; the window's close here (or device removal) is their single reclaim boundary.
         this.eventTimers.delete(key);
-        this.smartDetectLoggedAttributes.delete(key);
+
+        for(const markKey of this.smartDetectLoggedAttributes.keys()) {
+
+          if(matchesEventKeyBoundary({ boundary: key, candidate: markKey })) {
+
+            this.smartDetectLoggedAttributes.delete(markKey);
+          }
+        }
       }, protectDevice.hints.motionDuration * 1000));
 
       // Vehicles can carry a license plate. If the user has configured a contact sensor for a specific plate, trip the matching one. This per-plate contact-sensor
@@ -449,7 +541,7 @@ export class ProtectEventDispatch {
 
         if(isNewDetection) {
 
-          this.smartDetectLoggedAttributes.set(key, 0);
+          this.smartDetectLoggedAttributes.set(highWaterKey, 0);
           coalescedTypes.push(event.type);
         }
 
@@ -459,12 +551,12 @@ export class ProtectEventDispatch {
       // We have rich metadata. To suppress the in-window noise while still surfacing the fullest telemetry, we act only when the attribute set strictly grows beyond what
       // we last rendered for this detection (the first detection included, since the high-water mark is absent until then). The controller commonly reads a vehicle's
       // plate, color, and type a beat after the initial detection, so this logs the enriched line as it fills in rather than on every update.
-      if(attributes.length <= (this.smartDetectLoggedAttributes.get(key) ?? 0)) {
+      if(attributes.length <= (this.smartDetectLoggedAttributes.get(highWaterKey) ?? 0)) {
 
         continue;
       }
 
-      this.smartDetectLoggedAttributes.set(key, attributes.length);
+      this.smartDetectLoggedAttributes.set(highWaterKey, attributes.length);
 
       // This type now owns an enriched line for the delivery, so it must be excluded from the coalesced bare line below even if it was also seen bare via objectTypes.
       enrichedTypes.add(event.type);
@@ -494,9 +586,9 @@ export class ProtectEventDispatch {
       protectDevice.log.info("Smart motion detected: %s.", coalescedLine.join(", "));
     }
 
-    // If we don't have smart detection enabled, or if we do have it enabled and we have a smart detection event that's detected something of interest, let's process
-    // our occupancy event updates.
-    if(!protectDevice.hints.smartDetect || detectedObjects.some(x => protectDevice.hints.smartOccupancy.includes(x))) {
+    // Occupancy considers every smart detection the sensors actually saw - the unified list of legacy object types AND thumbnail detections alike - so a thumbnail-only
+    // detection (an empty object-type list carrying a person thumbnail) still trips occupancy. With smart detection disabled, bare motion trips occupancy directly.
+    if(!protectDevice.hints.smartDetect || smartEvents.some(event => protectDevice.hints.smartOccupancy.includes(event.type))) {
 
       // First, let's determine if the user has an occupancy sensor configured, before we process anything.
       const occupancyService = protectDevice.accessory.getService(this.hap.Service.OccupancySensor);
@@ -504,9 +596,9 @@ export class ProtectEventDispatch {
       if(occupancyService) {
 
         // Kill any inflight reset timer.
-        if(this.eventTimers.has(protectDevice.id + ".Motion.OccupancySensor")) {
+        if(this.eventTimers.has(protectDevice.id + OCCUPANCY_KEY_SUFFIX)) {
 
-          clearTimeout(this.eventTimers.get(protectDevice.id + ".Motion.OccupancySensor"));
+          clearTimeout(this.eventTimers.get(protectDevice.id + OCCUPANCY_KEY_SUFFIX));
         }
 
         // If the occupancy sensor isn't already triggered, let's do so now.
@@ -522,12 +614,12 @@ export class ProtectEventDispatch {
           if(protectDevice.hints.logMotion) {
 
             protectDevice.log.info("Occupancy detected%s.",
-              protectDevice.hints.smartDetect ? ": " + protectDevice.hints.smartOccupancy.filter(x => detectedObjects.includes(x)).join(", ") : "");
+              protectDevice.hints.smartDetect ? ": " + protectDevice.hints.smartOccupancy.filter(x => smartEvents.some(event => event.type === x)).join(", ") : "");
           }
         }
 
         // Reset our occupancy state after occupancyDuration.
-        this.eventTimers.set(protectDevice.id + ".Motion.OccupancySensor", setTimeout(() => {
+        this.eventTimers.set(protectDevice.id + OCCUPANCY_KEY_SUFFIX, setTimeout(() => {
 
           // Reset the occupancy sensor.
           occupancyService.updateCharacteristic(this.hap.Characteristic.OccupancyDetected, false);
@@ -542,7 +634,7 @@ export class ProtectEventDispatch {
           }
 
           // Delete the timer from our occupancy event tracker.
-          this.eventTimers.delete(protectDevice.id + ".Motion.OccupancySensor");
+          this.eventTimers.delete(protectDevice.id + OCCUPANCY_KEY_SUFFIX);
         }, protectDevice.hints.occupancyDuration * 1000));
       }
     }

@@ -1638,6 +1638,14 @@ export class ProtectNvr {
     // Cleanup our device instance.
     protectDevice?.cleanup();
 
+    // Settle and reclaim the dispatcher's timers and enrichment marks for this device. They are keyed by the persisted device id and outlive the wrapper otherwise, so
+    // removal both settles every latched boolean topic they own and reclaims the timers themselves; the exact-boundary sweep also reclaims the cascaded package
+    // camera's timers through the parent-id prefix, by design here where the package accessory is already in deletingAccessories.
+    if(protectDevice) {
+
+      this.events.retireDevice(protectDevice);
+    }
+
     // Finally, remove it from our list of configured devices and HomeKit.
     this.configuredDevices.delete(accessory.UUID);
 

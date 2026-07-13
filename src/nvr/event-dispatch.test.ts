@@ -12,13 +12,13 @@
  */
 import type { AuthMethod, ProtectEventMetadata, TypedEvent } from "unifi-protect";
 import { Characteristic, Service, makeTestAccessory } from "../testing.helpers.ts";
+import { ProtectReservedNames, packageCameraId } from "../types.ts";
 import { describe, mock, test } from "node:test";
 import { PROTECT_DOORBELL_AUTHSENSOR_DURATION } from "../settings.ts";
 import type { ProtectCamera } from "../devices/cameras/camera.ts";
 import type { ProtectDevice } from "../devices/device.ts";
 import { ProtectEventDispatch } from "./event-dispatch.ts";
 import type { ProtectNvr } from "./nvr.ts";
-import { ProtectReservedNames } from "../types.ts";
 import type { TestAccessory } from "../testing.helpers.ts";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
@@ -945,5 +945,257 @@ describe("smart-detection delivery (real ProtectEventDispatch.motionEventHandler
     assert.deepEqual(logged.filter(line => line.startsWith("Smart motion detected")),
       [ "Smart motion detected: vehicle (color: black [68% confidence]).", "Smart motion detected: vehicle (color: black [68% confidence])." ],
       "after the device's timers are cleared, the next detection logs afresh rather than being suppressed by a stale high-water mark");
+  }));
+
+  test("trips occupancy, its MQTT topic, and its log from a thumbnail-only smart detection", () => withMockTimers(() => {
+
+    const accessory = makeTestAccessory();
+
+    accessory.addService(Service.MotionSensor, "Motion");
+
+    const occupancy = accessory.addService(Service.OccupancySensor, "Occupancy");
+    const { camera, dispatch, logged, published } = makeMotionDispatch(accessory, { smartOccupancy: ["person"] });
+
+    // The firehose delivered a person via a thumbnail with an EMPTY object-type list - the shape the pre-fix occupancy gate missed because it read only detectedObjects
+    // rather than the unified smart-event list.
+    dispatch.motionEventHandler(camera, [], { detectedThumbnails: [{ type: "person" }] });
+
+    assert.equal(occupancy.getCharacteristic(Characteristic.OccupancyDetected).value, true, "a thumbnail-only person detection trips occupancy");
+    assert.ok(published.some(entry => (String(entry[0]) === "AA:BB:CC:DD:EE:FF/occupancy") && (entry[1] === "true")), "the occupancy MQTT topic publishes \"true\"");
+    assert.ok(logged.includes("Occupancy detected: person."), "the occupancy log names the thumbnail-derived type rather than rendering an empty list");
+  }));
+
+  test("does not trip occupancy for a smart detection outside the configured occupancy set", () => withMockTimers(() => {
+
+    const accessory = makeTestAccessory();
+
+    accessory.addService(Service.MotionSensor, "Motion");
+
+    const occupancy = accessory.addService(Service.OccupancySensor, "Occupancy");
+    const { camera, dispatch } = makeMotionDispatch(accessory, { smartOccupancy: ["person"] });
+
+    // A vehicle thumbnail is a genuine smart detection, but the user's occupancy set is person-only, so occupancy stays clear - the widened gate does not widen the set.
+    dispatch.motionEventHandler(camera, [], { detectedThumbnails: [{ type: "vehicle" }] });
+
+    assert.notEqual(occupancy.getCharacteristic(Characteristic.OccupancyDetected).value, true, "a detection outside the occupancy set leaves occupancy clear");
+  }));
+
+  test("with smart detection off, bare motion still trips occupancy", () => withMockTimers(() => {
+
+    const accessory = makeTestAccessory();
+
+    accessory.addService(Service.MotionSensor, "Motion");
+
+    const occupancy = accessory.addService(Service.OccupancySensor, "Occupancy");
+    const { camera, dispatch } = makeMotionDispatch(accessory, { smartDetect: false });
+
+    // The parity case: with smart detection disabled the first gate disjunct still trips occupancy on bare motion, unchanged by the unified-list rewrite.
+    dispatch.motionEventHandler(camera, []);
+
+    assert.equal(occupancy.getCharacteristic(Characteristic.OccupancyDetected).value, true, "bare motion trips occupancy when smart detection is disabled");
+  }));
+
+  test("logs and publishes two simultaneous same-type detections, keyed by detection identity", () => withMockTimers(() => {
+
+    const accessory = makeTestAccessory();
+
+    accessory.addService(Service.MotionSensor, "Motion");
+
+    const { camera, dispatch, logged, published } = makeMotionDispatch(accessory);
+
+    // Two vehicles in one delivery with DISTINCT objectId (two genuine detections) but the SAME plate string, so a plate-keyed miscoding would still collapse them onto
+    // one high-water mark - only keying on the wire's objectId tells the two apart, which is what lets the second one's enrichment through.
+    dispatch.motionEventHandler(camera, [], { detectedThumbnails: [
+      { attributes: { color: { confidence: 68, val: "black" } }, name: "ABC123", objectId: "obj-1", type: "vehicle" },
+      { attributes: { color: { confidence: 71, val: "white" } }, name: "ABC123", objectId: "obj-2", type: "vehicle" }
+    ] });
+
+    assert.equal(logged.filter(line => line.startsWith("Smart motion detected: vehicle (")).length, 2,
+      "two distinct same-type detections each log their own enriched line");
+    assert.equal(published.filter(entry => String(entry[0]).endsWith("/motion/smart/vehicle/metadata")).length, 2,
+      "two distinct same-type detections each publish their own metadata");
+  }));
+
+  test("re-logs the SAME identity in a fresh window after the type window closes and sweeps its mark", () => withMockTimers(() => {
+
+    const accessory = makeTestAccessory();
+
+    accessory.addService(Service.MotionSensor, "Motion");
+
+    const { camera, dispatch, logged, published } = makeMotionDispatch(accessory, { motionDuration: 10 });
+    const thumbnail = { detectedThumbnails: [{ attributes: { color: { confidence: 68, val: "black" } }, objectId: "obj-1", type: "vehicle" }] };
+
+    dispatch.motionEventHandler(camera, [], thumbnail);
+
+    // Close the type window: the reset timer fires and must sweep the identity-suffixed high-water mark under the type boundary, not only the bare type key.
+    mock.timers.tick(10 * 1000);
+
+    // The same identity with the same attribute count in a fresh window must log and publish again - an implementation that swept only the bare type key would leave the
+    // identity mark latched and suppress this.
+    dispatch.motionEventHandler(camera, [], thumbnail);
+
+    assert.equal(logged.filter(line => line.startsWith("Smart motion detected: vehicle (")).length, 2,
+      "the same identity re-logs in a fresh window because the window-close swept its high-water mark");
+    assert.equal(published.filter(entry => String(entry[0]).endsWith("/motion/smart/vehicle/metadata")).length, 2,
+      "the same identity re-publishes its metadata in a fresh window");
+  }));
+});
+
+// Build a real ProtectEventDispatch plus a factory for camera stand-ins that share its timers and mqtt spy, for the removal-settle and sibling-window tests. Each camera
+// the factory builds carries its own accessory with a MotionSensor (and an OccupancySensor when asked), the motion hints the delivery reads, and a caller-chosen id/mac -
+// so a parent (id === mac, as in production) and its package camera (id === packageCameraId(mac), same mac) can arm independently-keyed windows on one shared MQTT topic.
+// smartDetect is off so a bare motionEventHandler delivery trips both the bare-motion window and, when an occupancy service exists, the occupancy window.
+const makeRetireDispatch = (): { dispatch: ProtectEventDispatch; makeCam: (id: string, mac: string, options?: { occupancy?: boolean }) => ProtectCamera;
+  published: unknown[][]; } => {
+
+  const published: unknown[][] = [];
+  const noop = (): void => { /* swallow log output in tests */ };
+  const log = { debug: noop, error: noop, info: noop, warn: noop };
+  const hap = {
+
+    Characteristic: { ContactSensorState: Characteristic.ContactSensorState, MotionDetected: Characteristic.MotionDetected,
+      OccupancyDetected: Characteristic.OccupancyDetected, On: Characteristic.On },
+    Service: { ContactSensor: Service.ContactSensor, MotionSensor: Service.MotionSensor, OccupancySensor: Service.OccupancySensor, Switch: Service.Switch }
+  };
+  const publish = (...args: unknown[]): void => { published.push(args); };
+  const nvr = { log, mqtt: { publish }, platform: { api: { hap }, config: {} } };
+  const dispatch = new ProtectEventDispatch(nvr as unknown as ProtectNvr);
+  const makeCam = (id: string, mac: string, options: { occupancy?: boolean } = {}): ProtectCamera => {
+
+    const accessory = makeTestAccessory();
+
+    accessory.addService(Service.MotionSensor, "Motion");
+
+    if(options.occupancy) {
+
+      accessory.addService(Service.OccupancySensor, "Occupancy");
+    }
+
+    return { accessory, hints: { logMotion: false, motionDuration: 10, occupancyDuration: 10, smartDetect: false, smartOccupancy: [] }, id, log, mac,
+      ufp: { mac } } as unknown as ProtectCamera;
+  };
+
+  return { dispatch, makeCam, published };
+};
+
+// The "false" publishes a retire landed on a given MQTT topic tail, read back from the mqtt spy tuples ([composed {mac}/{topic} tail, payload]).
+const falsePublishes = (published: unknown[][], topicTail: string): unknown[][] => {
+
+  return published.filter(entry => (String(entry[0]) === ("AA:BB:CC:DD:EE:FF/" + topicTail)) && (entry[1] === "false"));
+};
+
+describe("device retirement settle (real ProtectEventDispatch.retireDevice)", () => {
+
+  const mac = "AA:BB:CC:DD:EE:FF";
+
+  test("settles the latched motion and occupancy topics once each, then reclaims the timers", () => withMockTimers(() => {
+
+    const { dispatch, makeCam, published } = makeRetireDispatch();
+    const camera = makeCam(mac, mac, { occupancy: true });
+
+    // Arm both the bare-motion window and the occupancy window (bare motion trips occupancy with smart detection off), latching both topics "true".
+    dispatch.motionEventHandler(camera, []);
+
+    // Retiring the device publishes each owed terminal "false" exactly once and clears the timers.
+    dispatch.retireDevice(camera);
+
+    assert.equal(falsePublishes(published, "motion").length, 1, "the motion topic settles to \"false\" exactly once on retirement");
+    assert.equal(falsePublishes(published, "occupancy").length, 1, "the occupancy topic settles to \"false\" exactly once on retirement");
+
+    // The reset timers were cleared, not fired: advancing well past both durations produces no further publish and the device holds no inflight motion.
+    mock.timers.tick(60 * 1000);
+
+    assert.equal(falsePublishes(published, "motion").length, 1, "no stale motion reset fires after the timers were reclaimed");
+    assert.equal(falsePublishes(published, "occupancy").length, 1, "no stale occupancy reset fires after the timers were reclaimed");
+    assert.equal(dispatch.hasInflightMotion(mac), false, "the device holds no inflight motion timer after retirement");
+  }));
+
+  test("collapses the parent and package cameras' shared motion topic to a single terminal publish", () => withMockTimers(() => {
+
+    const { dispatch, makeCam, published } = makeRetireDispatch();
+    const parent = makeCam(mac, mac);
+    const packageCamera = makeCam(packageCameraId(mac), mac);
+
+    // Both incarnations arm independently-keyed bare-motion windows (the parent by its own id, the package by its suffixed id) on the one shared bare-MAC topic.
+    dispatch.motionEventHandler(parent, []);
+    dispatch.motionEventHandler(packageCamera, []);
+
+    // Retiring the parent reclaims the package's timers too through the parent-id prefix, and the per-topic dedup collapses their shared reset to one "false".
+    dispatch.retireDevice(parent);
+
+    assert.equal(falsePublishes(published, "motion").length, 1, "the shared motion topic settles to \"false\" exactly once, never twice, when both windows are inflight");
+  }));
+
+  test("settles the shared motion topic when ONLY the package camera's window is inflight", () => withMockTimers(() => {
+
+    const { dispatch, makeCam, published } = makeRetireDispatch();
+    const parent = makeCam(mac, mac);
+    const packageCamera = makeCam(packageCameraId(mac), mac);
+
+    // Only the package camera's window is inflight - the parent never fired. An exact-id probe (matching only the parent's own id) would find no motion window here and
+    // leave the shared topic latched "true"; deriving the owed set from every key the sweep reclaims settles it correctly.
+    dispatch.motionEventHandler(packageCamera, []);
+    dispatch.retireDevice(parent);
+
+    assert.equal(falsePublishes(published, "motion").length, 1, "the shared motion topic still settles to \"false\" when only the package camera's window was inflight");
+  }));
+});
+
+describe("shared motion topic sibling ownership (real ProtectEventDispatch.motionEventHandler)", () => {
+
+  const mac = "AA:BB:CC:DD:EE:FF";
+
+  test("holds the shared motion reset until the last sibling window ends, when the package window ends first", () => withMockTimers(() => {
+
+    const { dispatch, makeCam, published } = makeRetireDispatch();
+    const parent = makeCam(mac, mac);
+    const packageCamera = makeCam(packageCameraId(mac), mac);
+
+    // Arm the package window first, then the parent window three seconds later, so the parent outlasts the package (each window is 10 seconds).
+    dispatch.motionEventHandler(packageCamera, []);
+    mock.timers.tick(3000);
+    dispatch.motionEventHandler(parent, []);
+
+    // Advance to the package window's end while the parent's window is still inflight: the shared "false" must be held, not published.
+    mock.timers.tick(7000);
+
+    assert.equal(falsePublishes(published, "motion").length, 0, "the shared motion topic is not reset while the parent's sibling window is still inflight");
+
+    // Advance to the parent window's end: the last window has now closed, so exactly one terminal "false" lands.
+    mock.timers.tick(3000);
+
+    assert.equal(falsePublishes(published, "motion").length, 1, "the shared motion topic resets exactly once, when the last sibling window ends");
+  }));
+
+  test("holds the shared motion reset until the last sibling window ends, when the parent window ends first", () => withMockTimers(() => {
+
+    const { dispatch, makeCam, published } = makeRetireDispatch();
+    const parent = makeCam(mac, mac);
+    const packageCamera = makeCam(packageCameraId(mac), mac);
+
+    // The mirror case: arm the parent window first, then the package window three seconds later, so the package outlasts the parent.
+    dispatch.motionEventHandler(parent, []);
+    mock.timers.tick(3000);
+    dispatch.motionEventHandler(packageCamera, []);
+
+    mock.timers.tick(7000);
+
+    assert.equal(falsePublishes(published, "motion").length, 0, "the shared motion topic is not reset while the package's sibling window is still inflight");
+
+    mock.timers.tick(3000);
+
+    assert.equal(falsePublishes(published, "motion").length, 1, "the shared motion topic resets exactly once, when the package window ends last");
+  }));
+
+  test("a lone camera with no package sibling publishes its terminal motion reset exactly once", () => withMockTimers(() => {
+
+    const { dispatch, makeCam, published } = makeRetireDispatch();
+    const camera = makeCam(mac, mac);
+
+    // The parity case: with no package camera, the sibling probe finds nothing inflight, so the reset publishes exactly as it always has.
+    dispatch.motionEventHandler(camera, []);
+    mock.timers.tick(10000);
+
+    assert.equal(falsePublishes(published, "motion").length, 1, "a lone camera resets its motion topic once when its window ends");
   }));
 });
