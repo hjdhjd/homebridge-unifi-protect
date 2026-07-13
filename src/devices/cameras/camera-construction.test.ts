@@ -118,10 +118,10 @@ describe("real ProtectCamera construction through the streaming-delegate factory
     assert.equal(accessory.configureControllerCalls[0], call.delegate.controller, "the registered controller is the stub delegate's sentinel, by identity");
   });
 
-  test("construction wires but does not fire: zero observer wakes, with exactly thirteen observers registered", () => {
+  test("construction wires but does not fire: zero observer wakes, with exactly fourteen observers registered", () => {
 
     assert.equal(constructionWakes, 0, "no observer wake was published during construction - observers arm against the baseline and stay silent");
-    assert.equal(store.observerCount, 13, "the two base observers plus the camera's eleven are all registered against the store double");
+    assert.equal(store.observerCount, 14, "the two base observers plus the camera's twelve are all registered against the store double");
   });
 
   test("the motion sensor's HomeKit-visible surface is real: MotionDetected false, StatusActive true, StatusTampered removed", () => {
@@ -183,7 +183,7 @@ describe("real ProtectCamera construction through the streaming-delegate factory
     assert.equal(accessory.configureControllerCalls.length, 1, "the controller was not registered again on the re-run");
   });
 
-  test("cleanup unregisters the controller, unwinds all thirteen observers, and a further push wakes nothing", async () => {
+  test("cleanup unregisters the controller, unwinds all fourteen observers, and a further push wakes nothing", async () => {
 
     const call = factory.createCalls[0];
 

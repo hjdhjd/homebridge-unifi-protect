@@ -356,6 +356,11 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
     this.observeState({ key: "camera.channels", selector: state => cam(state)?.channels, title: "video streaming" }, () => void this.reconcileStreaming());
     this.observeState({ key: "camera.videoCodec", selector: state => cam(state)?.videoCodec, title: "video streaming" }, () => void this.reconcileStreaming());
 
+    // The published channel profiles bake their RTSP URLs against the connection host at derivation time (rtspHost feeds buildChannelProfile), so a camera IP change must
+    // re-derive them. The reconcile chokepoint's derivation half is safe to re-run and its create-once delegate half is already guarded, so routing the host change here
+    // re-bakes the profile URLs without disturbing the standing streaming delegate.
+    this.observeState({ key: "camera.connectionHost", selector: state => cam(state)?.connectionHost, title: "video streaming" }, () => void this.reconcileStreaming());
+
     // The lifecycle state enum drives independent reactions, so each gets its own observer on the same slice. We watch state because isOnline - and therefore the
     // device-online half of isReachable - derives from it; the controller-health half is pushed by the NVR connection loop, not observed here.
     this.observeState({ key: "camera.state", selector: state => cam(state)?.state, title: "availability" }, () => this.updateAvailability());

@@ -118,7 +118,7 @@ describe("camera-family observer reactions and bound read handlers (camera-react
       // The plain-camera census: the base observers (name, firmware) plus the camera's narrow observers. A drift here means an extra or missing observer slipped in.
       const store = built.nvr.client.state;
 
-      assert.equal(store.observerCount, 13, "the plain camera wires exactly thirteen observers (the base pair plus the camera's eleven)");
+      assert.equal(store.observerCount, 14, "the plain camera wires exactly fourteen observers (the base pair plus the camera's twelve)");
 
       // The videoCodec reaction is identical to the (already-netted) channels reaction: both call reconcileStreaming. Its only observable output is the WAKE KEY plus a
       // re-derive side effect (the factory is not invoked again), so a one-shot wake subscription windows the single push and the create-call count proves the re-run
@@ -148,6 +148,25 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
         diagnosticsChannel.unsubscribe("hbup:observer:wake", onWake);
       }
+    });
+
+    test("a connectionHost change re-derives the published profile URLs against the new host", async () => {
+
+      built = await buildCamera();
+
+      // The published channel profiles bake their RTSP URLs against the connection host at derivation time, so a profile selected before the change carries the seeded
+      // host and one selected after the change must carry the new one - the connectionHost observer re-runs the reconcile that re-bakes them.
+      const before = built.camera.selectChannel(1200, 1600)?.url;
+
+      assert.ok(before && !before.includes("10.0.0.5"), "the initial baked profile URL does not carry the new host");
+
+      built.nvr.client.state.pushCameraPatch(built.cameraConfig.id, { connectionHost: "10.0.0.5" });
+
+      await settle();
+
+      const after = built.camera.selectChannel(1200, 1600)?.url;
+
+      assert.ok(after?.includes("10.0.0.5"), "the connectionHost observer re-derived the profile URL against the changed connection host");
     });
   });
 

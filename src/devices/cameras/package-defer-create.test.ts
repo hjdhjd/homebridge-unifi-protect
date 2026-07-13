@@ -94,11 +94,11 @@ describe("package camera defer-create (BC1)", () => {
     assert.equal(deferralLineCount(), 1, "the deferral is narrated to the user exactly once, at construction");
   });
 
-  test("the family wires twenty-one observers: seventeen doorbell plus the package's four, including the package-channel observer", () => {
+  test("the family wires twenty-two observers: eighteen doorbell plus the package's four, including the package-channel observer", () => {
 
-    // The doorbell-attached camera carries seventeen (the always-armed isDoorbell observer, the bare-motion lastMotion observer, the capability-reconcile featureFlags
+    // The doorbell-attached camera carries eighteen (the always-armed isDoorbell observer, the bare-motion lastMotion observer, the capability-reconcile featureFlags
     // observer, and the Access-lock supportUnlock observer all joined the set), and the package camera its bespoke four.
-    assert.equal(store.observerCount, 21, "seventeen doorbell observers plus the package's four (name, firmware, state, and the package channel)");
+    assert.equal(store.observerCount, 22, "eighteen doorbell observers plus the package's four (name, firmware, state, and the package channel)");
   });
 
   test("the channel's arrival wakes the package-channel observer and builds the stream from the REAL channel, silently", async () => {
@@ -174,7 +174,7 @@ describe("package camera defer-create (BC1)", () => {
     assert.equal(deferralLineCount(), 1, "the construction-time narration remains the only deferral line across every push");
   });
 
-  test("family cleanup unwinds all twenty-one observers", async () => {
+  test("family cleanup unwinds all twenty-two observers", async () => {
 
     const accessory = packageAccessory();
 

@@ -6,7 +6,7 @@
  *
  * Suite C (live-attach) drives a real ProtectCamera constructed as a plain camera (isDoorbell false, a real stub-factory stream built with builtFor.isDoorbell false) and
  * pushes isDoorbell true: the always-armed isDoorbell observer attaches it, and the featureFlags observer drives the capability reconcile, whose audio rebuild
- * fires the in-place controller rebuild a late doorbell-ness needs. The capability attaches, the Doorbell service is primary, the census grows to seventeen, the
+ * fires the in-place controller rebuild a late doorbell-ness needs. The capability attaches, the Doorbell service is primary, the census grows to eighteen, the
  * accessory's ordered controller-event log shows EXACTLY one removeController then one configureController (the rebuild), the stream's builtFor.isDoorbell is now
  * true, the ring MQTT is registered exactly once, and one promotion INFO is logged. It then pins the no-churn cases: a construction-attach (a flag-true construction)
  * yields the same service set with ZERO removeController (the stub stream is built with builtFor.isDoorbell true, so the gate is a no-op), an idempotent re-push does
@@ -70,8 +70,8 @@ describe("live-attach reclassification (suite C)", () => {
 
     await settle();
 
-    // The capability composed onto the running instance, the Doorbell service is present and primary, and the census grew to seventeen (the capability four onto the
-    // plain-camera-plus-base thirteen, which already carries the always-armed isDoorbell observer, the bare-motion lastMotion observer, the capability-reconcile
+    // The capability composed onto the running instance, the Doorbell service is present and primary, and the census grew to eighteen (the capability four onto the
+    // plain-camera-plus-base fourteen, which already carries the always-armed isDoorbell observer, the bare-motion lastMotion observer, the capability-reconcile
     // featureFlags observer, and the Access-lock supportUnlock observer).
     assert.ok(camera.doorbell, "the doorbell capability attached onto the live camera");
 
@@ -79,7 +79,7 @@ describe("live-attach reclassification (suite C)", () => {
 
     assert.ok(doorbellService, "the Doorbell service now exists");
     assert.equal(doorbellService.isPrimary, true, "the Doorbell service is primary");
-    assert.equal(store.observerCount, 17, "the promoted camera carries the seventeen-observer doorbell census");
+    assert.equal(store.observerCount, 18, "the promoted camera carries the eighteen-observer doorbell census");
 
     // The rebuild fires exactly one removeController then one configureController, in that order, at this event, since the CameraController is the one HAP
     // object that cannot change in place and must be torn down and reconfigured to pick up the HKSV factory reset and supported-config hash change.
