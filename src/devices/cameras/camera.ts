@@ -3,15 +3,18 @@
  * camera.ts: Camera device class for UniFi Protect.
  */
 import { AudioRecordingCodecType, AudioRecordingSamplerate, capabilityGate, toStartCase } from "homebridge-plugin-utils";
-import type { Camera, DeepPartial, LivestreamSource, ProtectCameraConfig, SnapshotOptions, TalkbackSession } from "unifi-protect";
+import type { Camera, LivestreamSource, ProtectCameraConfig, SnapshotOptions, TalkbackSession } from "unifi-protect";
 import type { CharacteristicValue, Service } from "homebridge";
 import type { LivestreamHostOptions, ProtectCameraHost } from "../../media/camera-host.ts";
 import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_SEGMENT_RESOLUTION, PROTECT_TIMESHIFT_CONSTRAINED_HOST_TARGET } from "../../settings.ts";
 import type { ProtectAccessory, ProtectPersistedContextState, WithoutIdentity } from "../../types.ts";
 import { buildAdvertisedProfiles, buildChannelProfile, capByPixels, formatResolution, isPrimaryChannel, rtspUrl, selectChannelProfile } from "../../media/resolution.ts";
+import { nightVisionActive, nightVisionBrightnessForMode, nightVisionCommandForLevel, nightVisionModeForToggleOn, nightVisionToggleCommand,
+  parseNightVisionMode } from "./night-vision-policy.ts";
 import type { ChannelProfile } from "../../media/resolution.ts";
 import type { DoorbellCapability } from "./doorbell.ts";
 import type { LivestreamSubscription } from "../../media/livestream.ts";
+import type { NightVisionCommand } from "./night-vision-policy.ts";
 import type { Nullable } from "homebridge-plugin-utils";
 import type { ProtectCameraPackage } from "./camera-package.ts";
 import { ProtectDevice } from "../device.ts";
@@ -1016,9 +1019,10 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
       service?.getCharacteristic(this.hap.Characteristic.NightVision)?.onGet(() => this.nightVision);
       service?.getCharacteristic(this.hap.Characteristic.NightVision)?.onSet(async (value: CharacteristicValue) => {
 
+        const command = nightVisionToggleCommand(value === true);
+
         // Push the new night vision setting to the controller, reporting any failure through the shared command-error helper and reverting the characteristic on failure.
-        if(!(await this.runDeviceCommand("set night vision to " + (value ? "auto" : "off"),
-          () => this.device.update({ ispSettings: { irLedMode: value ? "auto" : "off" } })))) {
+        if(!(await this.runDeviceCommand("set night vision to " + command.irLedMode, () => this.device.update({ ispSettings: command })))) {
 
           setTimeout(() => service.updateCharacteristic(this.hap.Characteristic.NightVision, !value), 50);
 
@@ -1452,32 +1456,15 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
         this.log.info("Night vision %s.", value ? "enabled" : "disabled");
       }
 
-      let mode: string;
-
-      switch(service.getCharacteristic(this.hap.Characteristic.Brightness).value) {
-
-        case 5:
-
-          mode = "autoFilterOnly";
-
-          break;
-
-        case 10:
-
-          mode = "auto";
-
-          break;
-
-        default:
-
-          mode = [ "autoFilterOnly", "customFilterOnly" ].includes(this.ufp.ispSettings.irLedMode) ? "customFilterOnly" : "custom";
-
-          break;
-      }
+      // Turning on picks a mode from the current (quantized) brightness through the policy leaf; turning off sends "off". The On pick never turns the mode off and never
+      // sends an icrCustomValue, so the controller keeps its current custom value.
+      const command: NightVisionCommand = (value === true) ?
+        nightVisionModeForToggleOn({ currentLevel: service.getCharacteristic(this.hap.Characteristic.Brightness).value as number,
+          currentMode: parseNightVisionMode(this.ufp.ispSettings.irLedMode) }) :
+        { irLedMode: "off" };
 
       // Push the new night vision setting to the controller, reporting any failure through the shared command-error helper and reverting the characteristic on failure.
-      if(!(await this.runDeviceCommand("set night vision to " + (value ? mode : "off"),
-        () => this.device.update({ ispSettings: { irLedMode: value ? mode : "off" } })))) {
+      if(!(await this.runDeviceCommand("set night vision to " + command.irLedMode, () => this.device.update({ ispSettings: command })))) {
 
         setTimeout(() => service.updateCharacteristic(this.hap.Characteristic.On, !value), 50);
 
@@ -1496,84 +1483,18 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
         return;
       }
 
-      let level = value as number;
-      let nightvision: DeepPartial<ProtectCameraConfig> = {};
-
-      // If we're less than 5% in brightness, assume we want to disable night vision.
-      if(level < 5) {
-
-        level = 0;
-      }
-
-      // If we're greater than 5%, but less than 10%, assume we want to set night vision to autoFilterOnly.
-      if((level > 5) && (level < 10)) {
-
-        level = 5;
-      }
-
-      // If we're greater than 10%, but less than 20%, assume we want to set night vision to auto.
-      if((level > 10) && (level < 20)) {
-
-        level = 10;
-      }
-
-      // If we're more than 90% in brightness, assume we want to force night vision to be always on.
-      if(level > 90) {
-
-        level = 100;
-      }
-
-      // Let's determine what we're setting on the Protect device.
-      switch(level) {
-
-        case 0:
-
-          nightvision = { ispSettings:{ irLedMode: "off" } };
-
-          break;
-
-        case 5:
-
-          nightvision = { ispSettings:{ irLedMode: "autoFilterOnly" } };
-
-          break;
-
-        case 10:
-
-          nightvision = { ispSettings:{ irLedMode: "auto" } };
-
-          break;
-
-        case 100:
-
-          nightvision = { ispSettings:{ irLedMode: "on" } };
-
-          break;
-
-        default:
-
-          level = Math.round((level - 20) / 7);
-          nightvision = {
-
-            ispSettings: {
-
-              icrCustomValue: level,
-              irLedMode: [ "autoFilterOnly", "customFilterOnly" ].includes(this.ufp.ispSettings.irLedMode) ? "customFilterOnly" : "custom"
-            }
-          };
-          level = (level * 7) + 20;
-
-          break;
-      }
+      // Map the raw brightness to its controller command and the brightness to reflect back, through the policy leaf: it quantizes the level to a stop, picks the mode
+      // (mode-preserving for the custom pair), and computes the reflected brightness from the icr transform.
+      const { command, reflectedLevel } = nightVisionCommandForLevel({ currentMode: parseNightVisionMode(this.ufp.ispSettings.irLedMode), level: value as number });
 
       // Push the new night vision settings to the controller, reporting any failure through the shared command-error helper.
-      if(!(await this.runDeviceCommand("adjust the night vision settings", () => this.device.update(nightvision)))) {
+      if(!(await this.runDeviceCommand("adjust the night vision settings", () => this.device.update({ ispSettings: command })))) {
 
         return;
       }
 
       // Make sure we properly reflect what brightness we're actually at, given the differences in setting granularity between Protect and HomeKit.
-      setTimeout(() => service.updateCharacteristic(this.hap.Characteristic.Brightness, level), 50);
+      setTimeout(() => service.updateCharacteristic(this.hap.Characteristic.Brightness, reflectedLevel), 50);
     });
 
     // Establish the dimmer at startup (a fresh adoption or create, or a restart's construct) only - never on a live reconcile re-run. The camera.ispSettings observer
@@ -1936,44 +1857,25 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
   // throwing.
   private get nightVision(): boolean {
 
-    return this.fromRecord((config) => config.ispSettings.irLedMode !== "off", false);
+    return this.fromRecord((config) => nightVisionActive(parseNightVisionMode(config.ispSettings.irLedMode)), false);
   }
 
-  // Utility property to return the current night vision state of a camera, mapped to a brightness characteristic. An absent record reports 0 rather than throwing.
+  // Utility property to return the current night vision state of a camera, mapped to a brightness characteristic. An absent record reports 0 rather than throwing, and an
+  // unrecognized wire value is surfaced here (the classifier's null is what triggers the error log) before the policy leaf maps the narrow mode to a brightness.
   private get nightVisionBrightness(): number {
 
     return this.fromRecord((config) => {
 
-      switch(config.ispSettings.irLedMode) {
+      const mode = parseNightVisionMode(config.ispSettings.irLedMode);
 
-        case "off":
+      if(mode === null) {
 
-          return 0;
+        this.log.error("Unknown night vision value detected: %s.", config.ispSettings.irLedMode);
 
-        case "autoFilterOnly":
-
-          return 5;
-
-        case "auto":
-
-          return 10;
-
-        case "on":
-
-          return 100;
-
-        case "custom":
-        case "customFilterOnly":
-
-          // The Protect infrared cutoff removal setting ranges from 0 - 10. HomeKit expects percentages, so we convert it like so.
-          return (config.ispSettings.icrCustomValue * 7) + 20;
-
-        default:
-
-          this.log.error("Unknown night vision value detected: %s.", config.ispSettings.irLedMode);
-
-          return 0;
+        return 0;
       }
+
+      return nightVisionBrightnessForMode({ icrCustomValue: config.ispSettings.icrCustomValue, mode });
     }, 0);
   }
 

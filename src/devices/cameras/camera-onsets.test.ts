@@ -137,6 +137,24 @@ describe("camera-family device.update-backed onSet handlers (camera-onsets conce
       }
     });
 
+    test("a successful On set with Brightness seeded to 100 issues the irLedMode on write", async () => {
+
+      built = await buildCamera({ featureFlags: { hasIcrSensitivity: true, hasInfrared: true }, userOptions: ["Enable.Device.NightVision.Dimmer"] });
+
+      const dimmer = built.accessory.getServiceById(Service.Lightbulb, ProtectReservedNames.LIGHTBULB_NIGHTVISION);
+
+      assert.ok(dimmer, "the night-vision dimmer exists");
+
+      // Seed Brightness 100 - the mode picker quantizes it and turns night vision ON. The drift the fix closes: without a 100 arm on the On path, a 100 brightness fell
+      // to the custom arm and silently downgraded the mode instead of setting irLedMode on.
+      dimmer.updateCharacteristic(Characteristic.Brightness, 100);
+
+      await dimmer.getCharacteristic(Characteristic.On).triggerSet(true);
+
+      assert.deepEqual(built.projection.updateCalls, [{ payload: { ispSettings: { irLedMode: "on" } } }],
+        "the On set at Brightness 100 issued the irLedMode on write rather than a custom-arm downgrade");
+    });
+
     test("a successful Off set issues the irLedMode off write", async () => {
 
       built = await buildCamera({ featureFlags: { hasIcrSensitivity: true, hasInfrared: true }, userOptions: ["Enable.Device.NightVision.Dimmer"] });
