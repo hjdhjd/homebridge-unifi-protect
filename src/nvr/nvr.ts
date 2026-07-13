@@ -733,6 +733,17 @@ export class ProtectNvr {
         this.removeHomeKitDevice(accessory);
       }
 
+      // removeHomeKitDevice's ownership guards early-return the system-information, liveview, and security-system accessories, deferring their removal to
+      // ProtectNvrSystemInfo and ProtectLiveviews. On the disabled path those owners are never constructed, so nothing else will ever reclaim those accessories - this
+      // sweep is their removal path. The filter yields an independent snapshot to iterate, so the shared tail is free to splice the live platform list as it removes
+      // each one. The narration is deliberately short: these accessories are always bridged and carry no model key, so removeHomeKitDevice's fuller "Removing <model>
+      // from HomeKit" line would render malformed here.
+      for(const accessory of this.platform.accessories.filter(x => x.context.nvr === this.ufp.mac)) {
+
+        this.log.info("%s: Removing from HomeKit.", accessory.displayName);
+        this.removeAccessoryFromHomeKit(accessory);
+      }
+
       return;
     }
 
