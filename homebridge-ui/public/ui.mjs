@@ -282,9 +282,11 @@ const showProtectDetails = (device) => {
     return;
   }
 
-  // Compute the IP-address value: cameras and most devices report a host; a device without one is reached over LoRa (SuperLink), or, for a sensor specifically,
-  // over Bluetooth. Everything else reports none.
-  const ipValue = device.host ?? ((device.connectionType === "lora") ? "SuperLink Device" : ((device.modelKey === "sensor") ? "Bluetooth Device" : "None"));
+  // Compute the IP-address value: cameras and most devices report a host. A device without one is reached over LoRa (SuperLink) or, for a sensor specifically, over
+  // Bluetooth. The relay is a LoRa device but reports a null connectionType on the wire, so we key it by model instead; everything else reports none.
+  const isSuperLink = (device.connectionType === "lora") || (device.modelKey === "relay");
+
+  const ipValue = device.host ?? (isSuperLink ? "SuperLink Device" : ((device.modelKey === "sensor") ? "Bluetooth Device" : "None"));
 
   // Compute the status value: title-case the device state when present, otherwise report a connected controller.
   const statusValue = ("state" in device) ? (device.state.charAt(0).toUpperCase() + device.state.slice(1).toLowerCase()) : "Connected";
