@@ -235,6 +235,172 @@ describe("timeshift supervisor deferred-offline and resolution logging", () => {
     assert.equal(countLogs(logEntries, "warn", "has started now that the camera is online"), 0, "no resumption is announced at warn when the start fails");
     assert.equal(countLogs(logEntries, "debug", "has started now that the camera is online"), 0, "no resumption is announced at debug when the start fails");
   });
+
+  // #24: the deferred-offline resumption must survive a FAILED first post-online start and still fire on the pass that actually re-establishes. A recording is deferred
+  // offline, the camera comes back but the first start fails (segment-less double), then the buffer re-fills and the second start succeeds. The resumption narration is
+  // owed by the persistent deferralResolutionPending, not the per-pass edge-detect input, so the earlier failure does not lose it. Pre-fix, the single conflated flag was
+  // cleared by the failing pass and the resumption was permanently lost.
+  test("the deferred-offline resumption survives a failed first post-online start and fires on the real restart", async () => {
+
+    const { delegate, host, logEntries } = arrangeDeferralDelegate();
+
+    // Open the deferral (offline + recording).
+    delegate.updateRecordingActive(true);
+    await settle();
+
+    assert.equal(countLogs(logEntries, "warn", "deferred until the camera is online"), 1, "the deferral was logged");
+
+    // The camera becomes reachable, but starve the buffer so the first start fails (whenEstablished resolves false on the segment-less double).
+    host.isReachable = true;
+    host.livestreamMediaSegments = 0;
+
+    await delegate.configureTimeshifting();
+    await settle();
+
+    assert.equal(countLogs(logEntries, "warn", "has started now that the camera is online"), 0, "no resumption is announced while the first start fails");
+
+    // The buffer re-fills and the second start succeeds. The resumption fires on THIS real restart, even though the edge-detect input was cleared by the failing pass.
+    host.livestreamMediaSegments = Math.ceil(PROTECT_TIMESHIFT_BUFFER_MAXDURATION / PROTECT_SEGMENT_RESOLUTION) + 10;
+
+    await delegate.configureTimeshifting();
+    await settle();
+
+    assert.equal(countLogs(logEntries, "warn", "has started now that the camera is online"), 1, "the resumption fires on the real restart after the earlier failure");
+  });
+
+  // Negative control for the demand-disable reset, asserted on the FIELD. A recording is deferred offline (a resolution becomes owed), then disabled. The disable edge
+  // must drop the pending-resolution narration so a later start cannot resurrect the disabled episode's resolution. We read the field directly through a test subclass:
+  // the log-absence is coincidentally green whether or not the reset ran, because the disable's own reconcile pass clears the edge-detect input regardless.
+  test("a demand-disable during a deferral clears the pending-resolution narration field", async () => {
+
+    class InspectableSupervisor extends ProtectTimeshiftSupervisor {
+
+      public get pendingResolution(): boolean {
+
+        return this.deferralResolutionPending;
+      }
+    }
+
+    const { controller, host } = makeTestCameraHost();
+
+    controllers.push(controller);
+
+    host.stream = new TestStreamingDelegate();
+    host.selectSubstrateChannel = (): ChannelProfile => makeChannelProfile(host);
+    host.isReachable = false;
+
+    const supervisor = new InspectableSupervisor(host);
+
+    // Open the deferral: recording demanded while the camera is offline.
+    await supervisor.setRecordingDemand({ config: makeRecordingConfig(), isRecording: true });
+    await settle();
+
+    assert.equal(supervisor.pendingResolution, true, "the deferral opened, so a resolution narration is owed");
+
+    // Disable recording during the deferral. The disable edge must clear the pending-resolution field so the disabled episode owes nothing.
+    await supervisor.setRecordingDemand({ config: makeRecordingConfig(), isRecording: false });
+    await settle();
+
+    assert.equal(supervisor.pendingResolution, false, "the demand-disable cleared the pending-resolution narration field");
+  });
+});
+
+describe("timeshift supervisor never-rejecting reconcile", () => {
+
+  // #17/G2-D1: a reconcile pass that throws must be caught at the loop's chokepoint - the reconcile is reached through many fire-and-forget void kicks, so an escaping
+  // rejection would float and poison the shared configurePromise every joined caller reads. We arrange a deferral edge (camera offline while recording), whose
+  // bookkeeping runs first, then make the buffer's stop throw at the stop point that follows in the same pass. The catch must swallow the throw into a false verdict,
+  // log exactly one retry line, and leave the pass's deferral bookkeeping intact - which we prove through the resumption that fires when the camera returns online,
+  // since that resumption consults the very deferral field the throwing pass had already updated. Pre-fix, the uncaught throw rejected the awaited reconcile.
+  test("a throwing reconcile pass is caught, reports false, logs once, and preserves the deferral bookkeeping", async () => {
+
+    const { host, logEntries, supervisor } = await arrangeEnabledDelegate();
+
+    // Take the camera offline and make the buffer's stop throw. The offline pass opens the deferral (its warn and field update run first), then throws at buffer.stop.
+    host.isReachable = false;
+    supervisor.buffer.stop = (): boolean => { throw new Error("stop boom"); };
+
+    // Capture any unhandled rejection the throwing pass might float through the reconcile chokepoint.
+    const floats: unknown[] = [];
+    const onFloat = (reason: unknown): void => { floats.push(reason); };
+
+    process.on("unhandledRejection", onFloat);
+
+    let verdict: boolean;
+
+    try {
+
+      verdict = await supervisor.reconcile();
+
+      await settle();
+    } finally {
+
+      process.off("unhandledRejection", onFloat);
+    }
+
+    assert.equal(floats.length, 0, "the throwing pass did not float an unhandled rejection through the reconcile chokepoint");
+    assert.equal(verdict, false, "the caught failure reported a false verdict, never a stale-truthy success");
+    assert.ok(countLogs(logEntries, "warn", "deferred until the camera is online") >= 1, "the deferral bookkeeping ran before the throw - the deferral warn fired");
+    assert.equal(countLogs(logEntries, "error", "could not be updated and will be retried"), 1, "the caught failure logged exactly one retry line");
+
+    // The loop survived and the deferral field the throwing pass set is intact: bring the camera back online and a fresh reconcile recovers, firing the resumption that
+    // consults that very field.
+    host.isReachable = true;
+
+    const recoveredVerdict = await supervisor.reconcile();
+
+    await settle();
+
+    assert.equal(recoveredVerdict, true, "a fresh reconcile after the fault recovers - the loop was not killed");
+    assert.ok(countLogs(logEntries, "warn", "has started now that the camera is online") >= 1,
+      "the resumption fires on recovery, proving the throwing pass had already updated the deferral bookkeeping before it threw");
+  });
+});
+
+describe("timeshift supervisor exit-window coalesce", () => {
+
+  // A supervisor that drives a reconcile() request into the exit window exactly once, counting loop exits. The override fires at the loop's exit, before the wrapper
+  // promise's .finally clears configurePromise, so the injected reconcile() sees configurePromise still truthy and joins it - setting the request flag with no loop to
+  // consume it, the #23 race. Post-fix the .finally re-check starts a fresh loop (a second exit); pre-fix the request is silently dropped (one exit).
+  class ExitWindowSupervisor extends ProtectTimeshiftSupervisor {
+
+    public loopExits = 0;
+    private injected = false;
+
+    protected override onReconcileLoopExit(): void {
+
+      this.loopExits++;
+
+      if(!this.injected) {
+
+        this.injected = true;
+        void this.reconcile();
+      }
+    }
+  }
+
+  // #23: a reconcile request landing in the loop-exit-to-finally-clear microtask window must not be dropped. We inject exactly one such request via the sequencing seam
+  // and observe the re-kick's effect by outcome, not timing: a second loop runs (loopExits === 2). The injection itself is the positive control - the request genuinely
+  // lands inside the window, since the seam's reconcile() joins a still-truthy configurePromise; pre-fix, the same interleaving runs only one loop.
+  test("a reconcile request in the exit window coalesces into a fresh loop", async () => {
+
+    const { controller, host } = makeTestCameraHost();
+
+    controllers.push(controller);
+
+    host.stream = new TestStreamingDelegate();
+    host.selectSubstrateChannel = (): ChannelProfile => makeChannelProfile(host);
+    host.livestreamMediaSegments = Math.ceil(PROTECT_TIMESHIFT_BUFFER_MAXDURATION / PROTECT_SEGMENT_RESOLUTION) + 10;
+
+    const supervisor = new ExitWindowSupervisor(host);
+
+    // Drive one reconcile; the seam injects a second request into the exit window of this loop.
+    await supervisor.reconcile();
+
+    await settle();
+
+    assert.equal(supervisor.loopExits, 2, "the exit-window request coalesced into a fresh loop - a second loop ran");
+  });
 });
 
 describe("timeshift supervisor enable-acknowledgment lifecycle", () => {

@@ -1897,10 +1897,12 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
     return entries[0] ?? null;
   }
 
-  // Utility property to return the camera's current video codec, formatted for display.
+  // Utility property to return the camera's current video codec, formatted for display. Read non-throwing through the record: a camera in the removal grace whose record
+  // has vanished reports an empty label rather than throwing, so every consumer - including the reconcile pass's HKSV acknowledgment, reached after an await where the
+  // record could vanish - is safe on the vanished-record path.
   public get videoCodecName(): string {
 
-    return (this.ufp.videoCodec.replace("h265", "hevc")).toUpperCase();
+    return this.fromRecord((config) => config.videoCodec.replace("h265", "hevc"), "").toUpperCase();
   }
 
   // Utility property to return whether the camera is HKSV capable or not.
@@ -1913,11 +1915,12 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
   // arm's OWN capability predicate (livestream-API accessibility), deliberately not the borrowed isHksvCapable, whose real meaning is motion-event capability for
   // HomeKit Secure Video. Because it does not exclude Access-adopted Ubiquiti cameras, those cameras join the streaming arm and the toggle does real work for them. The
   // one remaining provisional corner: a non-AiPort third-party camera stays excluded pending its own livestream-accessibility verification, and this predicate is the
-  // single definition to widen when that is settled. Evaluated live; the one restart-scoped consumer that samples it at construction (the streaming delegate's
-  // samplerate advertisement) is documented at that call site.
+  // single definition to widen when that is settled. The capability read goes through the record non-throwing (fromRecord), so a camera whose record has vanished in the
+  // removal grace reports false rather than throwing on every consumer that reads it - the reconcile pass, the session-source decision, and the samplerate advertisement.
+  // Evaluated live; the one restart-scoped consumer that samples it at construction (the streaming delegate's samplerate advertisement) is documented at that call site.
   public get usesTimeshiftLivestream(): boolean {
 
-    return this.hints.tsbStreaming && (!this.ufp.isThirdPartyCamera || this.ufp.isPairedWithAiPort);
+    return this.hints.tsbStreaming && this.fromRecord((config) => !config.isThirdPartyCamera || config.isPairedWithAiPort, false);
   }
 
   // The active recording mode, read non-throwing through the record. An absent record (a camera in the removal grace) reports an empty mode - which matches none

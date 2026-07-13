@@ -88,4 +88,36 @@ describe("the observeState recordPresent gate during the removal grace", () => {
       camera.cleanup();
     }
   });
+
+  // #17/G2-D1: the camera capability getters read the throwing ufp projection, and the reconcile pass reads them on every kick - including after an await where the
+  // record can vanish. Hardened through fromRecord, they must report safe defaults over a vanished record rather than throwing. Pre-fix the raw ufp read threw
+  // ReferenceError, which the supervisor's reconcile pass then floated through its many fire-and-forget kicks.
+  test("the camera capability getters return safe defaults over a vanished record instead of throwing", async () => {
+
+    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS });
+    const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
+    const { nvr } = makeTestNvr({ store });
+    const accessory = makeTestAccessory("Test Camera", "uuid:record-present-gate-getters");
+    const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
+
+    await settle();
+
+    try {
+
+      // With the record present, the getters read through the live projection normally.
+      assert.equal(camera.usesTimeshiftLivestream, true, "usesTimeshiftLivestream reads true through the present record");
+      assert.ok(camera.videoCodecName.length > 0, "videoCodecName reads a non-empty label through the present record");
+
+      // The record vanishes (the camera unadopted, lingering in the removal grace). The getters must report their safe defaults, not throw on the vanished ufp read.
+      store.removeCameraRecord(cameraConfig.id);
+
+      await settle();
+
+      assert.equal(camera.usesTimeshiftLivestream, false, "usesTimeshiftLivestream returns its false default over the vanished record");
+      assert.equal(camera.videoCodecName, "", "videoCodecName returns its empty default over the vanished record");
+    } finally {
+
+      camera.cleanup();
+    }
+  });
 });
