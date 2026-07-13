@@ -43,6 +43,28 @@ const DOORBELL_RESERVED_SUBTYPES: readonly string[] = [ ProtectReservedNames.CON
 // shaped "type.text") is the removal target while every reserved subtype is left to its own owner.
 const RESERVED_NAMES = new Set(Object.values(ProtectReservedNames).map(x => x.toUpperCase()));
 
+/**
+ * The effective LCD message for a doorbell, given the raw slice and the current time: an empty object once the message's resetAt deadline has passed, otherwise the
+ * slice unchanged. The controller signals a message's expiry by patching lcdMessage rather than clearing it, and an empty-object patch is a no-op the store cannot
+ * observe, so both the switch sync and the MQTT get consult this one predicate to treat a past resetAt as a clear. An absent resetAt (a non-expiring message), a
+ * still-future resetAt, and an already-empty slice all pass through unchanged. Exported so its truth-table rows exercise it directly.
+ *
+ * @param options - The raw `lcdMessage` slice and the current time in milliseconds as `nowMs`.
+ *
+ * @returns The effective message slice, blanked to `{}` when expired.
+ */
+export function effectiveLcdMessage(options: { lcdMessage: DeepPartial<ProtectCameraLcdMessageConfig>; nowMs: number }): DeepPartial<ProtectCameraLcdMessageConfig> {
+
+  const { lcdMessage, nowMs } = options;
+
+  if((typeof lcdMessage.resetAt === "number") && (lcdMessage.resetAt <= nowMs)) {
+
+    return {};
+  }
+
+  return lcdMessage;
+}
+
 /* The doorbell capability composed onto a ProtectCamera. It extends ProtectBase - the shared observe / MQTT / command spine - rather than ProtectCamera, because
  * doorbell-ness is temporally dynamic capability state, not a static identity: the camera the controller late-flips to a doorbell stays the same instance, and this
  * capability attaches to it live. The capability owns the doorbell services (LCD message switches, physical chimes, the chime-volume lightbulb, the auth sensor), the
@@ -56,6 +78,11 @@ export class DoorbellCapability extends ProtectBase {
   readonly camera: ProtectCamera;
   readonly #device: Camera;
   private messageSwitches = new Map<string, MessageSwitchInterface>();
+
+  // The self-re-syncing expiry timer for the active LCD message. The controller signals a message's expiry by patching lcdMessage, an empty-object patch the store
+  // cannot observe, so the capability schedules its own re-sync at the message's resetAt deadline. Owned outright here and cleared in cleanup(), where the capability's
+  // whole lifecycle ends - the state lives exactly where its owner's teardown runs, so demotion (which has no detach) needs no separate handling.
+  #lcdMessageExpiryTimer: Nullable<NodeJS.Timeout> = null;
   public packageCamera: Nullable<ProtectCameraPackage> = null;
   readonly #signal: AbortSignal;
 
@@ -240,6 +267,14 @@ export class DoorbellCapability extends ProtectBase {
       this.packageCamera = null;
     }
 
+    // Clear the message expiry timer alongside the controller abort - the capability's whole lifecycle ends here, so this timer must not fire against a torn-down
+    // capability.
+    if(this.#lcdMessageExpiryTimer) {
+
+      clearTimeout(this.#lcdMessageExpiryTimer);
+      this.#lcdMessageExpiryTimer = null;
+    }
+
     this.#controller.abort();
   }
 
@@ -257,14 +292,8 @@ export class DoorbellCapability extends ProtectBase {
     const cam = selectCamera(this.#device.id);
     const id = this.#device.id;
 
-    // Reflect the controller's current LCD message across the doorbell's message switches.
-    this.observeState({ key: "doorbell.lcdMessage", selector: state => cam(state)?.lcdMessage, title: "the doorbell message" }, () => {
-
-      if(this.ufp.lcdMessage) {
-
-        this.updateLcdSwitch(this.ufp.lcdMessage);
-      }
-    });
+    // Reflect the controller's current LCD message across the doorbell's message switches, re-deriving expiry each time the message slice changes.
+    this.observeState({ key: "doorbell.lcdMessage", selector: state => cam(state)?.lcdMessage, title: "the doorbell message" }, () => this.syncLcdMessageState());
 
     // The package camera capability can be provisioned after adoption (a doorbell that was not fully provisioned when first adopted) - and withdrawn: reconcile the
     // package camera's lifecycle in both directions whenever the controller's capability flag changes. The reconcile cancels any pending detach grace on a true flip
@@ -350,11 +379,9 @@ export class DoorbellCapability extends ProtectBase {
       });
     }
 
-    // Update the message switch state in HomeKit.
-    if(this.ufp.lcdMessage) {
-
-      this.updateLcdSwitch(this.ufp.lcdMessage);
-    }
+    // Synchronize the message switch state with the controller's current LCD message, arming the expiry timer if the current message is still active. On a restart after
+    // a message expired while the plugin was down, this reads the past resetAt as a clear and latches no switch on.
+    this.syncLcdMessageState();
 
     // Check to see if any of our existing doorbell messages have disappeared.
     this.validateMessageSwitches();
@@ -699,11 +726,11 @@ export class DoorbellCapability extends ProtectBase {
     // Get the current message on the doorbell.
     this.subscribeGet("message", "doorbell message", (): string => {
 
-      // Read the LCD message non-throwing through the live camera record; an absent record (a doorbell lingering in the removal grace) reports no message rather than
-      // throwing on this pull path.
-      const lcdMessage = this.#device.peek()?.lcdMessage;
+      // Read the LCD message non-throwing through the live camera record - an absent record (a doorbell lingering in the removal grace) reads as no message - and run it
+      // through the shared expiry predicate, so an expired message reports no message rather than a stale negative duration.
+      const lcdMessage = effectiveLcdMessage({ lcdMessage: this.#device.peek()?.lcdMessage ?? {}, nowMs: Date.now() });
 
-      if(!lcdMessage) {
+      if(!Object.keys(lcdMessage).length) {
 
         return "";
       }
@@ -743,8 +770,11 @@ export class DoorbellCapability extends ProtectBase {
         return;
       }
 
-      // At a minimum, make sure a message was specified. If we have a duration, make sure it's a valid number.
-      if(!("message" in inboundPayload) || (("duration" in inboundPayload) && Number.isNaN(inboundPayload.duration))) {
+      // Validate the payload's runtime types - the JSON.parse cast is compile-time only. The message must be a string (which subsumes the presence check), and any
+      // duration present must be a real number: a non-numeric duration, INCLUDING a numeric-looking string like "30", is rejected per the documented numeric contract
+      // rather than silently coerced through arithmetic.
+      if((typeof inboundPayload.message !== "string") ||
+        (("duration" in inboundPayload) && ((typeof inboundPayload.duration !== "number") || Number.isNaN(inboundPayload.duration)))) {
 
         this.log.error("Unable to process MQTT message: \"%s\". The message must include a \"message\" field and any duration must be numeric.", rawValue);
 
@@ -878,6 +908,35 @@ export class DoorbellCapability extends ProtectBase {
       // The message has been deleted on the doorbell - remove it from HomeKit and inform the user about it.
       this.log.info("Removing saved doorbell message: %s.", switchService.subtype?.slice(switchService.subtype.indexOf(".") + 1));
       this.accessory.removeService(switchService);
+    }
+  }
+
+  /* Synchronize the message switches with the controller's current LCD message, re-deriving expiry each time. Invoked by the lcdMessage observer, by the configure-time
+   * sync, and by the expiry timer's own callback, so all three read one truth. The live slice is read non-throwing - an absent record (a doorbell in the removal grace)
+   * reads as a clear, which is exactly right mid-removal - and passes through the shared expiry predicate, so an expired message blanks the switches while an active one
+   * sets them. We then arm or clear the local expiry timer from the effective payload: the controller signals expiry by patching lcdMessage, but the store cannot
+   * observe an empty-object patch (its structural sharing returns the same record), so the plugin re-synchronizes itself at the resetAt deadline it already knows.
+   * Because the timer's callback re-enters here, an expiry fires as a re-read of live truth: an already-replaced message re-asserts the replacement rather than
+   * blanking, an expired one clears, and a wire clear that landed first makes the re-sync a harmless repeat. The leg is capped at the largest delay a timer expresses
+   * exactly (Node clamps a larger delay to about a millisecond, which would spin a tight refire loop for a beyond-24.8-day message), so the re-entrant re-arm sleeps in
+   * legs until the real deadline.
+   */
+  private syncLcdMessageState(): void {
+
+    const nowMs = Date.now();
+    const effective = effectiveLcdMessage({ lcdMessage: this.#device.peek()?.lcdMessage ?? {}, nowMs });
+
+    this.updateLcdSwitch(effective);
+
+    if(this.#lcdMessageExpiryTimer) {
+
+      clearTimeout(this.#lcdMessageExpiryTimer);
+      this.#lcdMessageExpiryTimer = null;
+    }
+
+    if(typeof effective.resetAt === "number") {
+
+      this.#lcdMessageExpiryTimer = setTimeout(() => this.syncLcdMessageState(), Math.min(effective.resetAt - nowMs, 2147483647));
     }
   }
 

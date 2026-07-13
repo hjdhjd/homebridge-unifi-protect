@@ -25,7 +25,7 @@ import { Characteristic, Service, TestChimeProjection, TestStateStore, makeChime
   from "../testing.helpers.ts";
 import type { Chime, ProtectRingtoneConfig } from "unifi-protect";
 import type { TestAccessory, TestLogEntry, TestMqttClient } from "../testing.helpers.ts";
-import { after, afterEach, before, beforeEach, describe, test } from "node:test";
+import { after, afterEach, before, beforeEach, describe, mock, test } from "node:test";
 import type { ObserverWakePayload } from "../diagnostics.ts";
 import type { ProtectAccessory } from "../types.ts";
 import { ProtectAuthorizationError } from "unifi-protect";
@@ -343,5 +343,51 @@ describe("real ProtectChime construction and play behavior", () => {
       "the removed ringtone's speaker switch was pruned");
     assert.ok(accessory.getServiceById(Service.Switch, ProtectReservedNames.SWITCH_DOORBELL_CHIME_SPEAKER + ".new-a"), "a switch was added for the first new ringtone");
     assert.ok(accessory.getServiceById(Service.Switch, ProtectReservedNames.SWITCH_DOORBELL_CHIME_SPEAKER + ".new-b"), "a switch was added for the second new ringtone");
+  });
+
+  test("concurrent ringtone plays keep independent per-switch reset timers, so neither strands the other on", async () => {
+
+    // Two ringtones with their own switches. Each play's auto-reset is keyed by the switch's own subtype, so tapping the second never displaces the first's reset - a
+    // shared "speaker" key would, stranding the first switch on forever. The chime speaker window is PROTECT_DOORBELL_CHIME_SPEAKER_DURATION (3500ms).
+    const fixture = buildChime({ ringSettings: [{ cameraId: "doorbell-1", repeatTimes: 1, ringtoneId: "ring-a", volume: 50 }] },
+      { ringtones: [ makeRingtoneConfig({ id: "ring-a", name: "Ring A" }), makeRingtoneConfig({ id: "ring-b", name: "Ring B" }) ] });
+    const switchA = fixture.accessory.getServiceById(Service.Switch, ProtectReservedNames.SWITCH_DOORBELL_CHIME_SPEAKER + ".ring-a");
+    const switchB = fixture.accessory.getServiceById(Service.Switch, ProtectReservedNames.SWITCH_DOORBELL_CHIME_SPEAKER + ".ring-b");
+
+    assert.ok(switchA && switchB, "both ringtone switches exist");
+
+    mock.timers.enable({ apis: ["setTimeout"] });
+
+    try {
+
+      // Tap A at t0, arming its reset at t0 + 3500.
+      await switchA.getCharacteristic(Characteristic.On).triggerSet(true);
+
+      // Advance to t0 + 1500 and tap B, arming its reset at t0 + 5000.
+      mock.timers.tick(1500);
+      await switchB.getCharacteristic(Characteristic.On).triggerSet(true);
+
+      // Checkpoint 1 (~t0 + 2000, inside A's own 3500ms window): A still reads playing, undisplaced by B's tap.
+      mock.timers.tick(500);
+
+      assert.equal(await switchA.getCharacteristic(Characteristic.On).triggerGet(), true, "A's switch still reads playing inside its own window");
+
+      // Checkpoint 2 (~t0 + 4000: A's window closed at 3500, B's still open until 5000): A resets off, B stays on.
+      mock.timers.tick(2000);
+
+      assert.equal(switchA.getCharacteristic(Characteristic.On).value, false, "A's switch resets off when its own window closes - it is not stranded on by B's play");
+      assert.equal(await switchA.getCharacteristic(Characteristic.On).triggerGet(), false, "A's play-timer is gone after its own window");
+      assert.equal(await switchB.getCharacteristic(Characteristic.On).triggerGet(), true, "B's switch remains playing until its own later window closes");
+
+      // Checkpoint 3 (past t0 + 5000): B's window closes and it resets off too.
+      mock.timers.tick(1500);
+
+      assert.equal(switchB.getCharacteristic(Characteristic.On).value, false, "B's switch resets off when its own window closes");
+      assert.equal(await switchB.getCharacteristic(Characteristic.On).triggerGet(), false, "B's play-timer is gone after its own window");
+    } finally {
+
+      mock.timers.reset();
+      fixture.chime.cleanup();
+    }
   });
 });

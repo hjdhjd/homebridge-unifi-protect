@@ -3558,8 +3558,8 @@ export class TestProtectNvr {
  *
  * @returns an NVR config record the construction path reads as real.
  */
-export function makeNvrConfig(options: { hardwareRevision?: string; mac?: string; marketName?: string; name?: string; temperature?: number; type?: string } = {}):
-ProtectNvrConfig {
+export function makeNvrConfig(options: { doorbellSettings?: ProtectNvrConfig["doorbellSettings"]; hardwareRevision?: string; mac?: string; marketName?: string;
+  name?: string; temperature?: number; type?: string; } = {}): ProtectNvrConfig {
 
   const populated = {
 
@@ -3575,6 +3575,10 @@ ProtectNvrConfig {
       storage: { available: 500, devices: [], isRecycling: false, size: 1000, type: "hdd", used: 500 }
     },
     type: options.type ?? "UDMPRO",
+
+    // OPT-IN only: the doorbell settings the message-switch net seeds so getMessages sees a truthy source and its builtin-message list. Kept absent by default (the
+    // conditional spread keeps the key missing rather than present-as-undefined) so every non-doorbell consumer reads the same shape as before.
+    ...(options.doorbellSettings !== undefined ? { doorbellSettings: options.doorbellSettings } : {}),
 
     // OPT-IN only: when the caller passes a value (the security-system owner does), it lands on the record; otherwise the field stays absent so setInfo's length-guard
     // remains short-circuited and the committed device-info default-omission assertion stays accurate. The conditional spread keeps the key absent rather than
@@ -3613,7 +3617,8 @@ ProtectNvrConfig {
  *          recording MQTT double when requested, else null; nvr: the NVR double.
  */
 export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: TestClock; controllerName?: string; dispatch?: (nvr: ProtectNvr) => ProtectEventDispatch;
-  mqtt?: boolean; overrideAddress?: string; recordingProcessFactory?: RecordingProcessFactory;
+  doorbellMessages?: ProtectNvrOptions["doorbellMessages"]; doorbellSettings?: ProtectNvrConfig["doorbellSettings"]; mqtt?: boolean; overrideAddress?: string;
+  recordingProcessFactory?: RecordingProcessFactory;
   sharedPlatform?: { accessories: TestAccessory[]; apiCalls: TestApiCall[] }; store: TestStateStore; userOptions?: string[]; }):
 { apiCalls: TestApiCall[]; clock: TestClock; controller: AbortController; factory: TestStreamingDelegateFactory; logEntries: TestLogEntry[];
   mqtt: Nullable<TestMqttClient>; nvr: TestProtectNvr; } {
@@ -3631,8 +3636,9 @@ export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: T
   const controller = new AbortController();
 
   // The stable fallback the client.nvr.config getter returns when the store carries no nvr slice, built once so every fallback read is the SAME reference (the existing
-  // camera consumers - which never seed the nvr slice - keep reading a fixed record with a stable reference).
-  const defaultNvrConfig = makeNvrConfig();
+  // camera consumers - which never seed the nvr slice - keep reading a fixed record with a stable reference). The doorbell settings the message-switch net seeds ride
+  // this fallback, since the camera-family store the doorbell tests build never seeds an nvr slice.
+  const defaultNvrConfig = makeNvrConfig(options.doorbellSettings !== undefined ? { doorbellSettings: options.doorbellSettings } : {});
   const factory = new TestStreamingDelegateFactory();
   const logEntries: TestLogEntry[] = [];
   const recordingProcessFactory = options.recordingProcessFactory ?? new TestRecordingProcessFactory();
@@ -3711,8 +3717,8 @@ export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: T
   const nvr = new TestProtectNvr({
 
     client: client,
-    config: { address: "nvr.test", mqttTopic: "test/protect", password: "test-password", username: "test-user",
-      ...(options.overrideAddress !== undefined ? { overrideAddress: options.overrideAddress } : {}) },
+    config: { address: "nvr.test", ...(options.doorbellMessages !== undefined ? { doorbellMessages: options.doorbellMessages } : {}), mqttTopic: "test/protect",
+      password: "test-password", username: "test-user", ...(options.overrideAddress !== undefined ? { overrideAddress: options.overrideAddress } : {}) },
     dispatch: options.dispatch,
     log: log,
     mqtt: mqtt,

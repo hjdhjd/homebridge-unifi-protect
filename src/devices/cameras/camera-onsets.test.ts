@@ -435,4 +435,17 @@ describe("camera-family device.update-backed onSet handlers (camera-onsets conce
       "the authorization branch reported the admin-role guidance through the shared helper");
     });
   });
+
+  describe("doorbell trigger / mute construction ordering", () => {
+
+    test("a plain camera with the doorbell trigger and mute both enabled materializes the mute switch on first construction", async () => {
+
+      // A plain camera (isDoorbell false) has no Doorbell service until the trigger creates one. The trigger runs ahead of the mute switch in the construction tail,
+      // so the mute switch's gate sees a present Doorbell service and materializes in the first session rather than only after a restart.
+      built = await buildCamera({ userOptions: [ "Enable.Doorbell.Mute", "Enable.Doorbell.Trigger" ] });
+
+      assert.ok(built.accessory.getServiceById(Service.Switch, ProtectReservedNames.SWITCH_DOORBELL_MUTE),
+        "the plain camera's doorbell mute switch materializes on first construction");
+    });
+  });
 });

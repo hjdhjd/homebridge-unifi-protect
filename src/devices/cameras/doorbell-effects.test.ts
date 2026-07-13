@@ -31,7 +31,7 @@
  *
  * Every constructed doorbell is unwound through cleanup() plus the harness abort in an afterEach, so no observe loop outlives the test.
  */
-import type { Camera, ProtectCameraConfig, ProtectChimeConfig } from "unifi-protect";
+import type { Camera, ProtectCameraConfig, ProtectChimeConfig, ProtectNvrConfig } from "unifi-protect";
 import { Characteristic, Service, TestCameraProjection, TestChimeProjection, TestStateStore, makeCameraConfig, makeChimeConfig, makeProtectState, makeTestAccessory,
   makeTestNvr, settle } from "../../testing.helpers.ts";
 import type { TestAccessory, TestLogEntry, TestMqttClient, TestProtectNvr } from "../../testing.helpers.ts";
@@ -45,6 +45,7 @@ import { ProtectEventDispatch } from "../../nvr/event-dispatch.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
 import { ProtectReservedNames } from "../../types.ts";
 import assert from "node:assert/strict";
+import { effectiveLcdMessage } from "./doorbell.ts";
 
 // One captured doorbell-ring routing. The onSet's observable effect is which device it routed to, so this is the shape the recording subclass captures - the same posture
 // event-dispatch.test.ts uses for its own routing assertions.
@@ -97,6 +98,7 @@ function loggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], substri
 // NVR / platform doubles with the test's userOptions threaded into the REAL FeatureOptions engine and an optional dispatch factory, the read-through projection, and a
 // fresh accessory. The casts are confined to this seam - the instance is the production ProtectCamera and its composed capability.
 async function buildDoorbell(options: { chimeConfigs?: ProtectChimeConfig[]; dispatch?: (nvr: ProtectNvr) => ProtectEventDispatch;
+  doorbellMessages?: { duration: number; message: string }[]; doorbellSettings?: ProtectNvrConfig["doorbellSettings"];
   featureFlags?: Partial<ProtectCameraConfig["featureFlags"]>; lcdMessage?: { duration?: number; resetAt?: Nullable<number>; text?: string; type?: string };
   userOptions?: string[]; } = {}): Promise<BuiltDoorbell> {
 
@@ -114,8 +116,9 @@ async function buildDoorbell(options: { chimeConfigs?: ProtectChimeConfig[]; dis
 
   // mqtt is always installed: the write-drive asserts the chime publish, and the reflection / ring tests never read mqtt, so an installed no-op recorder is
   // behavior-neutral for them. The held chime projections flow in through client.chimes; non-chime tests seed none (the empty default).
-  const { controller, logEntries, mqtt, nvr } = makeTestNvr({ chimes: chimeProjections, ...(options.dispatch ? { dispatch: options.dispatch } : {}), mqtt: true, store,
-    userOptions: options.userOptions });
+  const { controller, logEntries, mqtt, nvr } = makeTestNvr({ chimes: chimeProjections, ...(options.dispatch ? { dispatch: options.dispatch } : {}),
+    ...(options.doorbellMessages !== undefined ? { doorbellMessages: options.doorbellMessages } : {}),
+    ...(options.doorbellSettings !== undefined ? { doorbellSettings: options.doorbellSettings } : {}), mqtt: true, store, userOptions: options.userOptions });
   const accessory = makeTestAccessory("Front Door", "uuid:74ACB9000001");
   const projection = new TestCameraProjection(cameraConfig.id, store);
   const doorbell = new ProtectCamera(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Camera);
@@ -146,10 +149,10 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
       built = await buildDoorbell({ featureFlags: { hasChime: true }, userOptions: ["Enable.Doorbell.PhysicalChime"] });
 
-      // The doorbell census: the camera's plain set (eleven, including the always-armed isDoorbell observer, the bare-motion lastMotion observer, the
-      // capability-reconcile featureFlags observer, and the Access-lock supportUnlock observer) plus the base pair plus the capability's four = seventeen. A drift here
+      // The doorbell census: the camera's plain set (twelve, including the always-armed isDoorbell observer, the bare-motion lastMotion observer, the
+      // capability-reconcile featureFlags observer, and the Access-lock supportUnlock observer) plus the base pair plus the capability's four = eighteen. A drift here
       // means an extra or missing observer slipped in.
-      assert.equal(built.nvr.client.state.observerCount, 17, "the doorbell wires seventeen observers (the camera eleven, the base pair, and the capability four)");
+      assert.equal(built.nvr.client.state.observerCount, 18, "the doorbell wires eighteen observers (the camera twelve, the base pair, and the capability four)");
 
       // HARD-assert all three physical-chime switches exist FIRST: the gate is hasChime && hasFeature("Doorbell.PhysicalChime") (doorbell.ts). An absent service
       // would let the value assertions pass vacuously.
@@ -724,10 +727,8 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
         assert.ok(set?.setValue, "the /message SET subscription registered");
 
-        // Valid JSON, but no "message" key, so the !("message" in payload) validation fork logs the error and returns before setMessage. The Number.isNaN(duration)
-        // sub-clause of this same guard (in doorbell.ts) is a defensive guard NOT reachable through the MQTT wire: the handler always JSON.parses rawValue, and
-        // JSON.parse never yields the literal number NaN (JSON has no NaN representation), so Number.isNaN(parsed.duration) cannot be true for any valid-JSON input.
-        // It is honestly left uncovered rather than netted with a non-representable input.
+        // Valid JSON, but no "message" key: the message is undefined, so the typeof message !== "string" guard rejects it before setMessage. The missing-key case now
+        // shares the same string-typed guard as the wrong-type cases below, so it is netted here as one of them rather than left uncovered.
         const payload = JSON.stringify({ duration: 10 });
 
         await set.setValue(payload, payload);
@@ -735,6 +736,278 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
         assert.equal(built.cameraProjection.updateCalls.length, 0, "a payload with no message key writes nothing");
         assert.ok(loggedAt(built.logEntries, "error", "Unable to process MQTT message"), "a missing message key is reported at error");
       });
+
+      test("a non-numeric string duration is rejected and writes nothing", async () => {
+
+        built = await buildDoorbell({});
+
+        const set = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === mac + "/message"));
+
+        assert.ok(set?.setValue, "the /message SET subscription registered");
+
+        // A duration of "abc" is present but not a number, so the typeof-duration guard rejects it. Pre-fix, Number.isNaN("abc") was false, so it slipped through and
+        // "abc" * 1000 became NaN, which setMessage mapped to a never-expiring message.
+        const payload = JSON.stringify({ duration: "abc", message: "Back soon" });
+
+        await set.setValue(payload, payload);
+
+        assert.equal(built.cameraProjection.updateCalls.length, 0, "a non-numeric string duration writes nothing");
+        assert.ok(loggedAt(built.logEntries, "error", "Unable to process MQTT message"), "a non-numeric duration is reported at error");
+      });
+
+      test("a non-string message is rejected and writes nothing", async () => {
+
+        built = await buildDoorbell({});
+
+        const set = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === mac + "/message"));
+
+        assert.ok(set?.setValue, "the /message SET subscription registered");
+
+        // A message of 42 is present but not a string, so the typeof-message guard rejects it. Pre-fix, the presence-only check let it slip past.
+        const payload = JSON.stringify({ duration: 5, message: 42 });
+
+        await set.setValue(payload, payload);
+
+        assert.equal(built.cameraProjection.updateCalls.length, 0, "a non-string message writes nothing");
+        assert.ok(loggedAt(built.logEntries, "error", "Unable to process MQTT message"), "a non-string message is reported at error");
+      });
+
+      test("a numeric-looking string duration is rejected per the documented numeric contract", async () => {
+
+        built = await buildDoorbell({});
+
+        const set = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === mac + "/message"));
+
+        assert.ok(set?.setValue, "the /message SET subscription registered");
+
+        // The blessed behavior-narrowing: "30" is a numeric-looking STRING. Pre-fix it passed Number.isNaN and worked by arithmetic coercion ("30" * 1000 === 30000);
+        // now the typeof-duration guard rejects it, since the documented contract has always required a numeric duration.
+        const payload = JSON.stringify({ duration: "30", message: "Back soon" });
+
+        await set.setValue(payload, payload);
+
+        assert.equal(built.cameraProjection.updateCalls.length, 0, "a numeric-looking string duration writes nothing");
+        assert.ok(loggedAt(built.logEntries, "error", "Unable to process MQTT message"), "a stringly-typed duration is reported at error");
+      });
     });
+  });
+
+  describe("the LCD message switch net (self-re-syncing expiry, clear, and stale sync)", () => {
+
+    // A minimal truthy doorbell-settings shape whose allMessages is empty, so getMessages sees a valid source without seeding any controller messages; the user message
+    // below is what materializes a switch. defaultMessageResetTimeoutMs is the default the duration-less path would use, though every case here carries an explicit one.
+    const doorbellSettings = { allMessages: [], customImages: [], customMessages: [], defaultMessageResetTimeoutMs: 60000, defaultMessageText: "" };
+    const backSoon = "CUSTOM_MESSAGE.Back soon";
+    const away = "CUSTOM_MESSAGE.Away";
+
+    // Build a doorbell with an LCD screen and one or two user messages plus the Doorbell.Messages option, so getMessages materializes a message switch per entry.
+    const buildMessageDoorbell = async (messages: { duration: number; message: string }[]): Promise<BuiltDoorbell> => buildDoorbell({ doorbellMessages: messages,
+      doorbellSettings, featureFlags: { hasLcdScreen: true }, userOptions: ["Enable.Doorbell.Messages"] });
+
+    test("clears every message switch when the active message reaches its resetAt deadline", async () => {
+
+      built = await buildMessageDoorbell([{ duration: 30, message: "Back soon" }]);
+
+      const messageSwitch = built.accessory.getServiceById(Service.Switch, backSoon);
+
+      assert.ok(messageSwitch, "the seeded user message materializes a message switch");
+
+      mock.timers.enable({ apis: [ "Date", "setTimeout" ] });
+
+      try {
+
+        const t0 = Date.now();
+
+        // Set the message through its switch (a write-through the observer never sees), then push the controller's echo carrying the resetAt: the observer wakes, turns
+        // the switch on, and arms the self-re-syncing expiry timer.
+        await messageSwitch.getCharacteristic(Characteristic.On).triggerSet(true);
+        built.nvr.client.state.pushCameraPatch(built.cameraConfig.id, { lcdMessage: { resetAt: t0 + 30000, text: "Back soon", type: "CUSTOM_MESSAGE" } });
+        await settle();
+
+        assert.equal(messageSwitch.getCharacteristic(Characteristic.On).value, true, "the echoed active message turns its switch on");
+
+        // Past the deadline, the expiry timer fires and re-reads live truth: the resetAt is now in the past, so it blanks the switch.
+        mock.timers.tick(30001);
+
+        assert.equal(messageSwitch.getCharacteristic(Characteristic.On).value, false, "the switch clears when the message's resetAt passes, with no controller patch");
+      } finally {
+
+        mock.timers.reset();
+      }
+    });
+
+    test("clears the message switches on a null wire clear", async () => {
+
+      built = await buildMessageDoorbell([{ duration: 30, message: "Back soon" }]);
+
+      const messageSwitch = built.accessory.getServiceById(Service.Switch, backSoon);
+
+      assert.ok(messageSwitch, "the seeded user message materializes a message switch");
+
+      // Activate the message via the controller echo.
+      built.nvr.client.state.pushCameraPatch(built.cameraConfig.id, { lcdMessage: { resetAt: Date.now() + 30000, text: "Back soon", type: "CUSTOM_MESSAGE" } });
+      await settle();
+
+      assert.equal(messageSwitch.getCharacteristic(Characteristic.On).value, true, "the message switch is on before the clear");
+
+      // A null wire clear replaces the record wholesale and wakes the observer, which reads the absent message as a clear and blanks the switch (the pre-fix truthy guard
+      // skipped this). The controller can send lcdMessage: null even though the projection type models only the object shape, so the null is cast at this seam.
+      built.nvr.client.state.pushCameraPatch(built.cameraConfig.id, { lcdMessage: null } as unknown as Partial<ProtectCameraConfig>);
+      await settle();
+
+      assert.equal(messageSwitch.getCharacteristic(Characteristic.On).value, false, "a null wire clear turns the message switch off");
+    });
+
+    test("latches no switch on when the observed message is already expired at sync time", async () => {
+
+      built = await buildMessageDoorbell([{ duration: 30, message: "Back soon" }]);
+
+      const messageSwitch = built.accessory.getServiceById(Service.Switch, backSoon);
+
+      assert.ok(messageSwitch, "the seeded user message materializes a message switch");
+
+      // A message whose resetAt is already in the past when the observer first sees it (a restart after the message expired while the plugin was down): the sync reads it
+      // as a clear, so no switch latches on.
+      built.nvr.client.state.pushCameraPatch(built.cameraConfig.id, { lcdMessage: { resetAt: Date.now() - 1000, text: "Back soon", type: "CUSTOM_MESSAGE" } });
+      await settle();
+
+      assert.equal(messageSwitch.getCharacteristic(Characteristic.On).value !== true, true, "an already-expired message latches no switch on at sync time");
+    });
+
+    test("a replacement message moves the expiry deadline and survives the superseded message's original deadline", async () => {
+
+      built = await buildMessageDoorbell([ { duration: 30, message: "Back soon" }, { duration: 90, message: "Away" } ]);
+
+      const first = built.accessory.getServiceById(Service.Switch, backSoon);
+      const second = built.accessory.getServiceById(Service.Switch, away);
+
+      assert.ok(first && second, "both seeded user messages materialize switches");
+
+      mock.timers.enable({ apis: [ "Date", "setTimeout" ] });
+
+      try {
+
+        const t0 = Date.now();
+
+        // Message A active with a deadline at T1 = t0 + 30s.
+        built.nvr.client.state.pushCameraPatch(built.cameraConfig.id, { lcdMessage: { resetAt: t0 + 30000, text: "Back soon", type: "CUSTOM_MESSAGE" } });
+        await settle();
+
+        // Replacement B active with a later deadline at T2 = t0 + 90s: the clear-then-set re-arm cancels A's timer and schedules B's, and the switches swap.
+        built.nvr.client.state.pushCameraPatch(built.cameraConfig.id, { lcdMessage: { resetAt: t0 + 90000, text: "Away", type: "CUSTOM_MESSAGE" } });
+        await settle();
+
+        assert.equal(first.getCharacteristic(Characteristic.On).value, false, "the superseded message's switch is off after the replacement");
+        assert.equal(second.getCharacteristic(Characteristic.On).value, true, "the replacement message's switch is on");
+
+        // Cross A's ORIGINAL deadline: B's switch must be untouched - a stale A timer left un-cleared would have blanked it here.
+        mock.timers.tick(30001);
+
+        assert.equal(second.getCharacteristic(Characteristic.On).value, true, "the replacement's switch survives past the superseded message's original deadline");
+
+        // Cross B's deadline: now the active message expires and its switch clears.
+        mock.timers.tick(60000);
+
+        assert.equal(second.getCharacteristic(Characteristic.On).value, false, "the replacement's switch clears at its own moved deadline");
+      } finally {
+
+        mock.timers.reset();
+      }
+    });
+
+    test("cleanup clears the pending expiry timer, so no post-teardown fire writes to the message switches", async () => {
+
+      built = await buildMessageDoorbell([{ duration: 30, message: "Back soon" }]);
+
+      const messageSwitch = built.accessory.getServiceById(Service.Switch, backSoon);
+
+      assert.ok(messageSwitch, "the seeded user message materializes a message switch");
+
+      mock.timers.enable({ apis: [ "Date", "setTimeout" ] });
+
+      try {
+
+        // Activate the message via the controller echo, arming the self-re-syncing expiry timer.
+        built.nvr.client.state.pushCameraPatch(built.cameraConfig.id, { lcdMessage: { resetAt: Date.now() + 30000, text: "Back soon", type: "CUSTOM_MESSAGE" } });
+        await settle();
+
+        assert.equal(messageSwitch.getCharacteristic(Characteristic.On).value, true, "the echoed active message turns its switch on before the teardown");
+
+        // Tear the camera down: the capability's cleanup clears the pending expiry timer alongside its observers and MQTT handlers, so the deadline passing below must
+        // produce no further activity. A timer the cleanup failed to clear would fire against the detached capability and blank this switch - the ON value surviving the
+        // deadline is what pins the clear.
+        built.doorbell.cleanup();
+        mock.timers.tick(30001);
+
+        assert.equal(messageSwitch.getCharacteristic(Characteristic.On).value, true, "no expiry fire touches a message switch after the capability's cleanup");
+      } finally {
+
+        mock.timers.reset();
+      }
+    });
+
+    test("the MQTT message GET reports the empty string once the message's resetAt is past", async () => {
+
+      built = await buildMessageDoorbell([{ duration: 30, message: "Back soon" }]);
+
+      const get = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "get") && (subscription.topic === "74ACB9000001/message"));
+
+      assert.ok(get?.getValue, "the doorbell registered a /message GET subscription");
+
+      mock.timers.enable({ apis: [ "Date", "setTimeout" ] });
+
+      try {
+
+        const t0 = Date.now();
+
+        built.nvr.client.state.pushCameraPatch(built.cameraConfig.id, { lcdMessage: { resetAt: t0 + 30000, text: "Back soon", type: "CUSTOM_MESSAGE" } });
+        await settle();
+
+        assert.deepEqual(JSON.parse(get.getValue()), { duration: 30, message: "Back soon" }, "the GET reports the active message's remaining duration while it is live");
+
+        // Advance past the deadline. The GET runs the slice through the same expiry predicate, so an expired message reports the empty string rather than a stale
+        // negative duration.
+        mock.timers.tick(30001);
+
+        assert.equal(get.getValue(), "", "the GET reports the empty string once the message has expired");
+      } finally {
+
+        mock.timers.reset();
+      }
+    });
+
+    // Declared-not-reproducible: the empty-object no-wake path (an lcdMessage: {} patch the reducer's structural sharing collapses to the same record, so the store never
+    // wakes the observer) cannot be exercised here - the harness's shallow merge cannot mirror the reducer's reference-preserving merge, and building a second reducer
+    // mirror is the anti-pattern this suite avoids. That path self-heals only via the 120-second bootstrap-refresh reconcile, and capturing the real {}-vs-null wire
+    // shape is HJD's rig item.
+  });
+});
+
+describe("the effectiveLcdMessage expiry predicate (pure truth table)", () => {
+
+  test("passes a message with no resetAt through unchanged", () => {
+
+    const message = { text: "Back soon", type: "CUSTOM_MESSAGE" };
+
+    assert.deepEqual(effectiveLcdMessage({ lcdMessage: message, nowMs: 1000 }), message, "a non-expiring message (no resetAt) is returned unchanged");
+  });
+
+  test("passes a message with a future resetAt through unchanged", () => {
+
+    const message = { resetAt: 5000, text: "Back soon", type: "CUSTOM_MESSAGE" };
+
+    assert.deepEqual(effectiveLcdMessage({ lcdMessage: message, nowMs: 1000 }), message, "a message whose resetAt is still ahead is returned unchanged");
+  });
+
+  test("blanks a message whose resetAt has already passed", () => {
+
+    assert.deepEqual(effectiveLcdMessage({ lcdMessage: { resetAt: 500, text: "Back soon", type: "CUSTOM_MESSAGE" }, nowMs: 1000 }), {},
+      "a past resetAt reads as a clear");
+  });
+
+  test("blanks a message whose resetAt is exactly now", () => {
+
+    assert.deepEqual(effectiveLcdMessage({ lcdMessage: { resetAt: 1000, text: "Back soon", type: "CUSTOM_MESSAGE" }, nowMs: 1000 }), {},
+      "a resetAt equal to now is expired (the boundary is inclusive)");
   });
 });

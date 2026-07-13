@@ -213,18 +213,20 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
       // Configure the status indicator light switch.
       this.configureStatusLedSwitch();
 
+      // Configure the doorbell trigger. It runs BEFORE the mute switch because the trigger is what creates the Doorbell service on a plain camera, and the mute switch's
+      // gate requires that service to already exist. A camera the controller demoted (a cached Doorbell service, trigger now disabled) takes the trigger's disabled
+      // branch here, which removes the stale service first, so the mute switch below is correctly absent immediately rather than one session later.
+      this.configureDoorbellTrigger();
+
       // Configure the doorbell mute switch.
       this.configureDoorbellMuteSwitch();
-
-      // Configure the doorbell trigger.
-      this.configureDoorbellTrigger();
     })();
 
     // Attach the doorbell capability when the controller already reports this camera as a doorbell. This runs at the END of configureDevice's synchronous body, after
-    // the IIFE statement: the IIFE's synchronous prefix has already kicked off reconcileStreaming, while its tail (the mute switch and trigger) runs on later
-    // microtasks. The capability's configure synchronously stands up the Doorbell service (through configureDoorbellService), so the service exists before that
-    // microtask tail reaches the mute-switch gate: standing up the Doorbell service synchronously ahead of the IIFE tail guarantees the mute switch sees a present
-    // service. A camera the controller does not report as a doorbell attaches nothing here.
+    // the IIFE statement: the IIFE's synchronous prefix has already kicked off reconcileStreaming, while its tail (the trigger and mute switch) runs on later
+    // microtasks. The capability's configure synchronously stands up the Doorbell service (through configureDoorbellService), so a real doorbell's service exists before
+    // that microtask tail reaches the mute-switch gate; a plain camera's Doorbell service is stood up by the trigger, which the tail now runs ahead of the mute switch.
+    // Either way the mute switch sees a present (or correctly absent) service. A camera the controller does not report as a doorbell attaches nothing here.
     this.reconcileDoorbellCapability("construct");
 
     return true;

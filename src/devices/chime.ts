@@ -97,12 +97,22 @@ export class ProtectChime extends ProtectDevice {
     for(const service of this.accessory.services.filter(x => x.subtype?.startsWith(ProtectReservedNames.SWITCH_DOORBELL_CHIME_SPEAKER + ".") &&
       !ringtones.some(tone => tone.id === x.subtype?.slice(ProtectReservedNames.SWITCH_DOORBELL_CHIME_SPEAKER.length + 1)))) {
 
+      // Clear the pruned ringtone's auto-reset timer before removing its service, so a ringtone deleted mid-playback leaves no pending timer to later fire against a
+      // detached service. HAP's Service.subtype is string | undefined, so bind and guard it before passing it as the timer key.
+      const subtype = service.subtype;
+
+      if(subtype) {
+
+        this.clearTimer(subtype);
+      }
+
       this.accessory.removeService(service);
     }
   }
 
-  // Configure one chime switch (the buzzer or a ringtone speaker) for HomeKit. The kind discriminant ("buzzer" or "speaker") names the chime's two sound sources directly
-  // and doubles as the per-switch timer key, so all ringtone speaker switches share the one "speaker" timer.
+  // Configure one chime switch (the buzzer or a ringtone speaker) for HomeKit. The kind ("buzzer" or "speaker") names the chime's sound source for playTone; the
+  // auto-reset timer is keyed by the switch's OWN subtype, not by kind, so concurrent ringtone plays never displace each other's reset - registerTimeout's same-key
+  // replacement silently drops the displaced callback, which a shared "speaker" key would trigger, stranding every-but-the-last ringtone's tile on forever.
   private configureChimeSwitch(name: string, kind: "buzzer" | "speaker", subtype: string): boolean {
 
     // Acquire the service.
@@ -118,7 +128,7 @@ export class ProtectChime extends ProtectDevice {
     // Reflect and drive the play state for this sound source (buzzer or ringtone speaker).
     service.getCharacteristic(this.hap.Characteristic.On).onGet(() => {
 
-      return this.timers.has(kind);
+      return this.timers.has(subtype);
     });
 
     service.getCharacteristic(this.hap.Characteristic.On).onSet(async (value: CharacteristicValue) => {
@@ -128,7 +138,7 @@ export class ProtectChime extends ProtectDevice {
       if(!value) {
 
         // Let HomeKit's optimistic write settle, then re-assert the switch's real play state. The 50ms is a cosmetic revert nudge, not a functional delay.
-        setTimeout(() => service.updateCharacteristic(this.hap.Characteristic.On, this.timers.has(kind)), 50);
+        setTimeout(() => service.updateCharacteristic(this.hap.Characteristic.On, this.timers.has(subtype)), 50);
 
         return;
       }
@@ -145,14 +155,14 @@ export class ProtectChime extends ProtectDevice {
       // and return - arming the auto-reset timer or logging playback past this point would leave a failed play showing as "playing" for the full duration.
       if(!(await this.playTone(name, kind, tone))) {
 
-        setTimeout(() => service.updateCharacteristic(this.hap.Characteristic.On, this.timers.has(kind)), 50);
+        setTimeout(() => service.updateCharacteristic(this.hap.Characteristic.On, this.timers.has(subtype)), 50);
 
         return;
       }
 
       // The play started, so hold the switch on for the playback window and then auto-reset it to its real state.
-      this.registerTimeout(kind,
-        () => service.updateCharacteristic(this.hap.Characteristic.On, this.timers.has(kind)), PROTECT_DOORBELL_CHIME_SPEAKER_DURATION);
+      this.registerTimeout(subtype,
+        () => service.updateCharacteristic(this.hap.Characteristic.On, this.timers.has(subtype)), PROTECT_DOORBELL_CHIME_SPEAKER_DURATION);
 
       // Inform the user.
       this.log.info("Playing %s.", name);
