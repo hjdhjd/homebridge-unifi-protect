@@ -48,6 +48,20 @@ export function createConnectRetryPolicy(limit = PROTECT_AUTH_FAILURE_LIMIT): { 
 }
 
 /**
+ * Whether a lifecycle phase change is legal. Two changes are refused: a same-phase change (the long-standing no-op), and any change OUT of "shuttingDown".
+ * "shuttingDown" is one-way because entering it aborts the terminal shutdown signal and tears down the whole observe/firehose tree - nothing may resurrect a
+ * torn-down controller's lifecycle, so a stale reboot timer, a late-resolving connect, or any other deferred wake that tries to move the phase onward is
+ * rejected here rather than at each call site. Entering "shuttingDown" from any other phase stays legal. An options object because both arguments share the
+ * NvrPhase type and a positional swap would silently invert the predicate - the same reason {@link shouldResumeFromInducedReboot} takes a named shape.
+ */
+export function canTransition(options: { from: NvrPhase; to: NvrPhase }): boolean {
+
+  const { from, to } = options;
+
+  return (from !== to) && (from !== "shuttingDown");
+}
+
+/**
  * Whether a livestream disruption is INDUCED - the controller is rebooting or shutting down because we asked it to - rather than ORGANIC. An induced disruption is
  * expected and already narrated at the controller level; an organic one is a single camera unexpectedly in trouble. It deliberately excludes "connecting", which is an
  * organic startup/reconnection window where a disruption should still surface to the user. The recovery policy's induced-disruption guard consults this directly. The

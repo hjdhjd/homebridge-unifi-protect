@@ -14,8 +14,8 @@ import type { ProtectAccessory, ProtectAccessoryContext, ProtectDeviceConfigType
 import { ProtectClient, channels as protectChannels, selectAdoptedCameraIds, selectAdoptedChimeIds, selectAdoptedFobIds, selectAdoptedLightIds,
   selectAdoptedRelayIds, selectAdoptedSensorIds, selectAdoptedViewerIds } from "unifi-protect";
 import { ProtectDeviceCategories, exhaustiveGuard } from "../types.ts";
-import { computeStableSince, createConnectRetryPolicy, createLivestreamEpisodeLatch, isInducedDisruption, isStabilityWindowElapsed, isSuccessfulRequest,
-  isWithinRebootRecency, membershipDelta, shouldResumeFromInducedReboot } from "./nvr-policy.ts";
+import { canTransition, computeStableSince, createConnectRetryPolicy, createLivestreamEpisodeLatch, isInducedDisruption, isStabilityWindowElapsed,
+  isSuccessfulRequest, isWithinRebootRecency, membershipDelta, shouldResumeFromInducedReboot } from "./nvr-policy.ts";
 import { DoorbellCapability } from "../devices/cameras/doorbell.ts";
 import { NvrHealth } from "./nvr-health.ts";
 import { ProtectCamera } from "../devices/cameras/camera.ts";
@@ -417,6 +417,14 @@ export class ProtectNvr {
     return this.#shutdownController.signal;
   }
 
+  // Whether the terminal shutdown signal has fired - the plugin is tearing down and no deferred wake may act against a disposed client. The single predicate every
+  // post-await bail consults (a late-resolving connect, a scheduled-reboot timer firing, the disabled-controller settle sleep), read through a method so each caller
+  // re-reads the live signal rather than a stale snapshot an earlier bail on the same path could have pinned.
+  #isShuttingDown(): boolean {
+
+    return this.signal.aborted;
+  }
+
   /**
    * Read-through NVR configuration. Replaces the held bootstrap snapshot with the live unifi-protect projection, so every `nvr.ufp.<field>` read across the plugin
    * reflects the current reduced state with no merge and no reassignment. A read before the first successful connect() throws (the getter dereferences
@@ -444,11 +452,12 @@ export class ProtectNvr {
   // entry to `shuttingDown`, then drives `health.suspend()` / `health.resume()` so the symptom observer matches whether we're in an induced disruption or organic
   // operation. The `logApiErrors` getter is pure-derived from `_phase` and needs no explicit update here.
   //
-  // Idempotent on same-phase transitions. `shuttingDown` is observable through `nvr.signal`'s abort event; every other phase change is observed by polling `phase`
-  // directly.
+  // A no-op on same-phase transitions, and a no-op on any attempt to leave `shuttingDown` - that phase is terminal, so a stale reboot timer, a late-resolving
+  // connect, or any other deferred wake that fires after teardown cannot resurrect the lifecycle. `canTransition` owns both rules. `shuttingDown` is observable
+  // through `nvr.signal`'s abort event; every other phase change is observed by polling `phase` directly.
   private transition(next: NvrPhase): void {
 
-    if(this._phase === next) {
+    if(!canTransition({ from: this._phase, to: next })) {
 
       return;
     }
@@ -507,12 +516,22 @@ export class ProtectNvr {
     } catch(error) {
 
       // The shutdown signal aborting the retry is an orderly teardown, not a failure to report. A genuine auth budget exhaustion (wrong credentials) surfaces here.
-      if(this.signal.aborted) {
+      if(this.#isShuttingDown()) {
 
         return false;
       }
 
       this.log.error("Unable to connect to the Protect controller: %s.", formatErrorMessage(error));
+
+      return false;
+    }
+
+    // A connect attempt that resolves after shutdown must not resurrect the controller's lifecycle. The SHUTDOWN handler's disconnect() captured and disposed the
+    // PREVIOUS client before this reassignment, so the freshly-established client is otherwise orphaned - dispose it and bail before the version gate,
+    // wireConnectionHealth, health.reset, or the transition into running.
+    if(this.#isShuttingDown()) {
+
+      await this.client[Symbol.asyncDispose]();
 
       return false;
     }
@@ -700,6 +719,12 @@ export class ProtectNvr {
       // when all the cached accessories are loaded at startup.
       await sleep(PROTECT_NVR_CONTROLLER_DISABLED_SETTLE_DELAY);
 
+      // A teardown that landed during the settle sleep must not run a removal sweep against a disposed platform - bail before touching any accessory.
+      if(this.#isShuttingDown()) {
+
+        return;
+      }
+
       // Unregister all the accessories for this controller from Homebridge that may have been restored already. Any additional ones will be automatically caught when
       // they are restored.
       for(const accessory of this.platform.accessories.filter(x => x.context.nvr === this.ufp.mac)) {
@@ -812,6 +837,13 @@ export class ProtectNvr {
   // non-healthy -> healthy transition observed in startConnectionObserver), with the no-op confirmation timer the only other exit.
   private async executeScheduledReboot(intervalHours: number, cycleStart?: number): Promise<void> {
 
+    // A teardown that landed between this timer being armed and now makes the whole reboot moot: the shutdown signal has aborted the lifecycle and the timers are
+    // being cleared. Bail before any deferral accounting or sending a command against a disposing client.
+    if(this.#isShuttingDown()) {
+
+      return;
+    }
+
     // Check if any cameras are actively recording HKSV events. We defer if so, but only up to PROTECT_NVR_REBOOT_DEFERRAL_MAX cumulatively...past that ceiling we
     // force the reboot regardless. An open-ended series of HKSV events would otherwise let the deferral chain run indefinitely, which defeats the point of having
     // a scheduled reboot in the first place.
@@ -854,6 +886,15 @@ export class ProtectNvr {
       await this.client.reboot();
     } catch(error) {
 
+      // A reboot rejection while the shutdown signal is aborted is induced by our own disposal, not a controller failure. Return without rolling the phase back,
+      // logging an error, or re-arming: the phase is already terminal and the timers are being torn down.
+      if(this.#isShuttingDown()) {
+
+        this.log.debug("Abandoning the scheduled reboot; the controller is shutting down.");
+
+        return;
+      }
+
       // The reboot command failed (a non-2xx, or a transport-level error). Roll back to `running` so error logging and health observation resume for the retry, and
       // reschedule at the deferral cadence - a failure is just another reason to try again the next time we check. Propagate the cycle start so the ceiling keeps
       // counting cumulative time across deferrals and retries.
@@ -861,6 +902,13 @@ export class ProtectNvr {
       this.log.error("Unable to reboot the Protect controller: %s.", formatErrorMessage(error));
 
       this.nvrRebootTimer = setTimeout(() => void this.executeScheduledReboot(intervalHours, nextCycleStart), 60 * 1000);
+
+      return;
+    }
+
+    // A shutdown that landed while the reboot POST was in flight makes the confirmation and next-cycle arming moot, and the "connectivity will resume" promise would
+    // be false against a controller we are disposing. Bail before the info log and before arming either timer.
+    if(this.#isShuttingDown()) {
 
       return;
     }

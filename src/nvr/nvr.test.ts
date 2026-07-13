@@ -10,10 +10,11 @@
  * The connection-input mapping is verified against the real NvrHealth with an injected clock, so the test proves both the new mapping and that the reducer/window
  * behavior it feeds is unchanged.
  */
-import { computeStableSince, createConnectRetryPolicy, createLivestreamEpisodeLatch, isInducedDisruption, isStabilityWindowElapsed, isSuccessfulRequest,
-  isWithinRebootRecency, membershipDelta, shouldResumeFromInducedReboot } from "./nvr-policy.ts";
+import { canTransition, computeStableSince, createConnectRetryPolicy, createLivestreamEpisodeLatch, isInducedDisruption, isStabilityWindowElapsed,
+  isSuccessfulRequest, isWithinRebootRecency, membershipDelta, shouldResumeFromInducedReboot } from "./nvr-policy.ts";
 import { describe, test } from "node:test";
 import { NvrHealth } from "./nvr-health.ts";
+import type { NvrPhase } from "./nvr.ts";
 import { ProtectAuthError } from "unifi-protect";
 import assert from "node:assert/strict";
 
@@ -399,5 +400,37 @@ describe("induced-reboot resume decision", () => {
     assert.equal(shouldResumeFromInducedReboot({ from: "reconnecting", phase: "running", to: "healthy" }), false);
     assert.equal(shouldResumeFromInducedReboot({ from: "reconnecting", phase: "connecting", to: "healthy" }), false);
     assert.equal(shouldResumeFromInducedReboot({ from: "reconnecting", phase: "shuttingDown", to: "healthy" }), false);
+  });
+});
+
+describe("phase transition legality", () => {
+
+  // canTransition owns the two refusals the NVR's transition chokepoint honors: a same-phase change (the long-standing no-op), and any change OUT of the terminal
+  // "shuttingDown". The same-phase rows and the shuttingDown-exit rows are false; every ordinary lifecycle change is legal, and entering "shuttingDown" from any
+  // phase is legal. The shuttingDown-exit rows are precisely what a same-phase-only guard - the rule before the terminal one-way clause - would wrongly permit.
+  test("canTransition refuses same-phase changes and any exit from shuttingDown", () => {
+
+    const phases: NvrPhase[] = [ "connecting", "rebooting", "running", "shuttingDown" ];
+
+    // A same-phase change is always a no-op, for every phase.
+    for(const phase of phases) {
+
+      assert.equal(canTransition({ from: phase, to: phase }), false);
+    }
+
+    // Leaving the terminal shutdown phase is refused for every destination.
+    assert.equal(canTransition({ from: "shuttingDown", to: "connecting" }), false);
+    assert.equal(canTransition({ from: "shuttingDown", to: "rebooting" }), false);
+    assert.equal(canTransition({ from: "shuttingDown", to: "running" }), false);
+
+    // The ordinary lifecycle changes are legal.
+    assert.equal(canTransition({ from: "running", to: "rebooting" }), true);
+    assert.equal(canTransition({ from: "rebooting", to: "running" }), true);
+    assert.equal(canTransition({ from: "connecting", to: "running" }), true);
+
+    // Entering shuttingDown from any other phase is always legal - the terminal phase is a one-way door that anyone may walk through.
+    assert.equal(canTransition({ from: "connecting", to: "shuttingDown" }), true);
+    assert.equal(canTransition({ from: "rebooting", to: "shuttingDown" }), true);
+    assert.equal(canTransition({ from: "running", to: "shuttingDown" }), true);
   });
 });
