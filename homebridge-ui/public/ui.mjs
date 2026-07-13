@@ -24,51 +24,78 @@ const firstRunOnStart = ({ config }) => {
   return true;
 };
 
+/* Render the plugin's first-run login error display. Guidance sentences render as text nodes separated by <br> elements, and the failure detail - when present -
+ * renders inside a <code class="text-danger"> via textContent, so a controller-reported string is shown as text rather than interpreted as markup. Assembling DOM
+ * nodes here (rather than an innerHTML string) keeps that trust boundary in one place, matching buildStatRow's discipline. An empty lines array renders no guidance,
+ * and an omitted or empty detail renders no code element.
+ */
+const renderLoginError = (lines, detail) => {
+
+  const nodes = [];
+
+  for(const line of lines) {
+
+    nodes.push(document.createTextNode(line), document.createElement("br"));
+  }
+
+  if(detail?.length) {
+
+    const errorCode = document.createElement("code");
+
+    errorCode.className = "text-danger";
+    errorCode.textContent = detail;
+    nodes.push(errorCode);
+  }
+
+  document.getElementById("loginError").replaceChildren(...nodes);
+};
+
 // Validate our Protect credentials.
 const firstRunOnSubmit = async ({ commit, config }) => {
 
   const address = document.getElementById("address").value;
   const username = document.getElementById("username").value;
   const password = document.getElementById("password").value;
-  const tdLoginError = document.getElementById("loginError");
 
-  tdLoginError.innerHTML = "&nbsp;";
+  document.getElementById("loginError").innerHTML = "&nbsp;";
 
   if(!address?.length || !username?.length || !password?.length) {
 
-    tdLoginError.innerHTML = "<code class=\"text-danger\">Please enter a valid UniFi Protect controller address, username and password.</code>";
+    renderLoginError([], "Please enter a valid UniFi Protect controller address, username and password.");
     homebridge.hideSpinner();
 
     return false;
   }
 
-  const ufpDevices = await homebridge.request("/getDevices", { address: address, password: password, username: username });
+  try {
 
-  // Couldn't connect to the Protect controller for some reason. Render the guidance as DOM nodes and place the controller-sourced error string via textContent so it
-  // is shown as text, never interpreted as markup.
-  if(!ufpDevices?.length) {
+    const { devices, error } = await homebridge.request("/getDevices", { address: address, password: password, username: username });
 
-    const errorCode = document.createElement("code");
+    // Couldn't connect to the Protect controller. The two guidance sentences frame the failure and the controller-sourced error detail arrives with the device-list
+    // response, rendered as text so it is never interpreted as markup.
+    if(!devices?.length) {
 
-    errorCode.className = "text-danger";
-    errorCode.textContent = (await homebridge.request("/getErrorMessage")) ?? "";
+      renderLoginError([ "Unable to login to the UniFi Protect controller.", "Please check your controller address, username, and password." ], error);
+      homebridge.hideSpinner();
 
-    tdLoginError.replaceChildren(
+      return false;
+    }
 
-      document.createTextNode("Unable to login to the UniFi Protect controller."), document.createElement("br"),
-      document.createTextNode("Please check your controller address, username, and password."), document.createElement("br"), errorCode
-    );
+    // Persist the validated credentials through the framework's single write seam. We own the shape of the write - credentials live under the primary controller, which
+    // withPrimaryCredentials encodes while preserving any additional controllers - and the session owns persistence and the preservation of sibling platform entries.
+    await commit(withPrimaryCredentials(config, { address, password, username }));
 
+    return true;
+  } catch(err) {
+
+    // The fallible sequence above can throw when the UI server fails to start or respond, or when the config write rejects. Rendering into the login display keeps the
+    // user on the form with concrete guidance and the specific failure, while the framework's toast stays the generic net for consumers without their own handling -
+    // this catch resolves first, so that toast never fires for this plugin.
+    renderLoginError(["Unable to complete the plugin configuration."], (err instanceof Error) ? err.message : String(err));
     homebridge.hideSpinner();
 
     return false;
   }
-
-  // Persist the validated credentials through the framework's single write seam. We own the shape of the write - credentials live under the primary controller, which
-  // withPrimaryCredentials encodes while preserving any additional controllers - and the session owns persistence and the preservation of sibling platform entries.
-  await commit(withPrimaryCredentials(config, { address, password, username }));
-
-  return true;
 };
 
 // The Protect API represents the controller itself as a device whose model key is "nvr" - every other model key belongs to a device the controller manages.
@@ -78,26 +105,29 @@ const isController = (device) => device.modelKey === "nvr";
 // sidebar shape, deliberately carrying no credentials into the rendered list.
 const getControllers = ({ config }) => controllers(config).map((controller) => ({ name: controller.address, serialNumber: controller.address }));
 
-// Return the list of devices associated with a given Protect controller. The framework injects the live platform config alongside the selected controller, so we can
-// recover the selected controller's credentials (which the sidebar entries deliberately omit) without reaching for the config ourselves.
+// Return the list of devices associated with a given Protect controller, paired with the connection outcome. The framework injects the live platform config alongside
+// the selected controller, so we can recover the selected controller's credentials (which the sidebar entries deliberately omit) without reaching for the config
+// ourselves. A connection failure travels back on the result rather than through a separate request.
 const getDevices = async (selectedController, { config }) => {
 
-  // If we're in the global context, we have no devices.
+  // The global context legitimately has no devices and no failure.
   if(!selectedController) {
 
-    return [];
+    return { devices: [], error: "" };
   }
 
-  // Find the entry in our plugin configuration.
+  // Find the entry in our plugin configuration. A sidebar entry can outlive a Settings-tab edit that removed its controller, so a miss is a carried failure with an
+  // actionable message rather than a silent empty result that would render nothing the user can act on.
   const controller = controllers(config).find((c) => c.address === selectedController.serialNumber);
 
   if(!controller) {
 
-    return [];
+    return { devices: [], error: "The selected controller is no longer in the plugin configuration." };
   }
 
-  // The browser cannot reach the Protect controller directly, so we bridge the request through the plugin's UI server, which holds the controller credentials.
-  const devices = await homebridge.request("/getDevices", { address: controller.address, password: controller.password, username: controller.username });
+  // The browser cannot reach the Protect controller directly, so we bridge the request through the plugin's UI server, which holds the controller credentials. The
+  // server returns the device list and the connection error together.
+  const { devices, error } = await homebridge.request("/getDevices", { address: controller.address, password: controller.password, username: controller.username });
 
   // Add the fields that the webUI framework is looking for to render.
   for(const device of devices) {
@@ -118,7 +148,7 @@ const getDevices = async (selectedController, { config }) => {
     }
   }
 
-  return devices;
+  return { devices, error };
 };
 
 // Only show feature options that are valid for the capabilities of this device.
