@@ -4,16 +4,14 @@
  */
 import type { API, HAP } from "homebridge";
 import { APIEvent, MqttClient, formatErrorMessage, formatSeconds, loopFaultReporter, retry, sanitizeName, superviseLoop } from "homebridge-plugin-utils";
-import type { Camera, HttpRequestEndPayload, LivestreamRecoveryRecoveredPayload, LivestreamRecoveryStartedPayload, ProtectLogging, ProtectNvrConfig,
-  ProtectState } from "unifi-protect";
+import type { Camera, CollectionSelectors, DeviceCollectionKey, HttpRequestEndPayload, LivestreamRecoveryRecoveredPayload, LivestreamRecoveryStartedPayload,
+  ProtectDeviceConfig, ProtectDeviceConfigMap, ProtectLogging, ProtectNvrConfig } from "unifi-protect";
+import { DEVICE_COLLECTION_KEYS, ProtectClient, deviceSelectors, channels as protectChannels } from "unifi-protect";
 import type { HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
 import type { NvrLifecyclePayload, ReachabilityFanoutPayload } from "../diagnostics.ts";
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_NVR_CONTROLLER_DISABLED_SETTLE_DELAY, PROTECT_NVR_REBOOT_CONFIRM_GRACE_MS, PROTECT_NVR_REBOOT_DEFERRAL_MAX,
   PROTECT_NVR_REBOOT_INTERVAL, PROTECT_NVR_REBOOT_MIN_INTERVAL, PROTECT_NVR_REBOOT_RECENCY_MS, PROTECT_NVR_REMOVAL_STABILITY_WINDOW } from "../settings.ts";
-import type { ProtectAccessory, ProtectAccessoryContext, ProtectDeviceConfigTypes, ProtectDeviceTypes, ProtectDevices } from "../types.ts";
-import { ProtectClient, channels as protectChannels, selectAdoptedCameraIds, selectAdoptedChimeIds, selectAdoptedFobIds, selectAdoptedLightIds,
-  selectAdoptedRelayIds, selectAdoptedSensorIds, selectAdoptedViewerIds } from "unifi-protect";
-import { ProtectDeviceCategories, exhaustiveGuard } from "../types.ts";
+import type { ProtectAccessory, ProtectAccessoryContext, ProtectDeviceTypes, ProtectDevices, ProtectProjectionMap } from "../types.ts";
 import { canTransition, computeStableSince, createConnectRetryPolicy, createLivestreamEpisodeLatch, isInducedDisruption, isRequestForController,
   isStabilityWindowElapsed, isSuccessfulRequest, isWithinRebootRecency, membershipDelta, shouldResumeFromInducedReboot } from "./nvr-policy.ts";
 import { DoorbellCapability } from "../devices/cameras/doorbell.ts";
@@ -34,6 +32,7 @@ import { ProtectSensor } from "../devices/sensor.ts";
 import { ProtectViewer } from "../devices/viewer.ts";
 import { channels } from "../diagnostics.ts";
 import { describeDevice } from "../devices/device-descriptor.ts";
+import { exhaustiveGuard } from "../types.ts";
 import { livestreamRecoveryDecision } from "../media/livestream-recovery-policy.ts";
 import { servePlaylist } from "./nvr-playlist.ts";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -55,6 +54,15 @@ import util from "node:util";
  * from phase, so phase is the lone mutable axis.
  */
 export type NvrPhase = "connecting" | "rebooting" | "running" | "shuttingDown";
+
+// One device category's wiring: how to resolve its live unifi-protect projection from an id, how to build its HomeKit device from that projection, and the memoized
+// selectors its membership reads. Correlated on K so a category's projection, class, and selectors cannot drift apart in the descriptor table below.
+interface DeviceDescriptor<K extends DeviceCollectionKey> {
+
+  construct: (accessory: ProtectAccessory, projection: ProtectProjectionMap[K]) => ProtectDeviceTypes[K];
+  projection: (client: ProtectClient, id: string) => ProtectProjectionMap[K] | undefined;
+  selectors: CollectionSelectors<ProtectDeviceConfigMap[K]>;
+}
 
 export class ProtectNvr {
 
@@ -111,17 +119,26 @@ export class ProtectNvr {
   // The unifi-protect client logger. Shares the controller-log destination but gates error output through `logApiErrors` so induced-disruption noise is suppressed. Typed
   // as the unifi-protect library's own ProtectLogging seam so it is single-sourced with the contract ProtectClient.connect() expects.
   private readonly clientLog: ProtectLogging;
-  // The device-category -> adopted-id-selector SSOT. The membership observe loops, the stability sweep, and the per-fire stillGone re-check all read the live adopted
-  // set through this one map, so the content-memoized selectors are wired in exactly one place rather than re-listed at each reader.
-  private readonly adoptedIdSelectors: Record<keyof ProtectDeviceTypes, (state: ProtectState) => readonly string[]> = {
+  // The one place the device-category vocabulary is wired to its selectors, projections, and constructors. The membership observe loops, the stability sweep, and the
+  // per-fire stillGone re-check read the content-memoized adopted-id set through `.selectors.adoptedIds`; adoption resolves the live unifi-protect projection through
+  // `.projection` and builds the HomeKit device through `.construct`. A category added upstream is wired in exactly one place here rather than re-listed at each reader.
+  private readonly deviceDescriptors: { readonly [K in DeviceCollectionKey]: DeviceDescriptor<K> } = {
 
-    camera: selectAdoptedCameraIds,
-    chime: selectAdoptedChimeIds,
-    fob: selectAdoptedFobIds,
-    light: selectAdoptedLightIds,
-    relay: selectAdoptedRelayIds,
-    sensor: selectAdoptedSensorIds,
-    viewer: selectAdoptedViewerIds
+    // The camera row builds a ProtectCamera for both plain cameras and doorbells: a device the controller reports as a doorbell attaches its DoorbellCapability through
+    // ProtectCamera's own construction-time reconcile, so there is one construction path for both arrival timings (doorbell-at-adoption and a late isDoorbell flip).
+    camera: { construct: (accessory, camera) => new ProtectCamera(this, accessory, camera), projection: (client, id) => client.camera(id),
+      selectors: deviceSelectors.camera },
+    chime: { construct: (accessory, chime) => new ProtectChime(this, accessory, chime), projection: (client, id) => client.chime(id),
+      selectors: deviceSelectors.chime },
+    fob: { construct: (accessory, fob) => new ProtectFob(this, accessory, fob), projection: (client, id) => client.fob(id), selectors: deviceSelectors.fob },
+    light: { construct: (accessory, light) => new ProtectLight(this, accessory, light), projection: (client, id) => client.light(id),
+      selectors: deviceSelectors.light },
+    relay: { construct: (accessory, relay) => new ProtectRelay(this, accessory, relay), projection: (client, id) => client.relay(id),
+      selectors: deviceSelectors.relay },
+    sensor: { construct: (accessory, sensor) => new ProtectSensor(this, accessory, sensor), projection: (client, id) => client.sensor(id),
+      selectors: deviceSelectors.sensor },
+    viewer: { construct: (accessory, viewer) => new ProtectViewer(this, accessory, viewer), projection: (client, id) => client.viewer(id),
+      selectors: deviceSelectors.viewer }
   };
 
   constructor(platform: ProtectPlatform, nvrOptions: ProtectNvrOptions) {
@@ -950,58 +967,23 @@ export class ProtectNvr {
   }
 
   // The live unifi-protect device config records across every category, flattened. The single read path for the discovery dump, the by-mac lookup, and the orphan sweep,
-  // so those readers never re-derive the controller's device inventory from a held snapshot - each is a thin map off the client's live projection collections.
-  private get deviceConfigs(): ProtectDeviceConfigTypes[] {
+  // so those readers never re-derive the controller's device inventory from a held snapshot - each reads the current state snapshot through the category catalog.
+  private get deviceConfigs(): ProtectDeviceConfig[] {
 
-    return [ ...this.client.cameras.map(c => c.config), ...this.client.chimes.map(c => c.config), ...this.client.fobs.map(f => f.config),
-      ...this.client.lights.map(c => c.config), ...this.client.relays.map(r => r.config), ...this.client.sensors.map(c => c.config),
-      ...this.client.viewers.map(c => c.config) ];
+    const snapshot = this.client.state.snapshot();
+
+    return DEVICE_COLLECTION_KEYS.flatMap((key): readonly ProtectDeviceConfig[] => deviceSelectors[key].all(snapshot));
   }
 
   // Resolve the live config record for a device id within a category, from the unifi-protect projection. The single read path the membership reconcile uses to turn a
   // freshly-adopted id into the record it feeds to addHomeKitDevice.
-  private deviceConfig(category: keyof ProtectDeviceTypes, id: string): Nullable<ProtectDeviceConfigTypes> {
+  private deviceConfig(category: DeviceCollectionKey, id: string): Nullable<ProtectDeviceConfig> {
 
-    switch(category) {
-
-      case "camera":
-
-        return this.client.camera(id)?.config ?? null;
-
-      case "chime":
-
-        return this.client.chime(id)?.config ?? null;
-
-      case "fob":
-
-        return this.client.fob(id)?.config ?? null;
-
-      case "light":
-
-        return this.client.light(id)?.config ?? null;
-
-      case "relay":
-
-        return this.client.relay(id)?.config ?? null;
-
-      case "sensor":
-
-        return this.client.sensor(id)?.config ?? null;
-
-      case "viewer":
-
-        return this.client.viewer(id)?.config ?? null;
-
-      default:
-
-        exhaustiveGuard(category);
-
-        return null;
-    }
+    return deviceSelectors[category].byId(id)(this.client.state.snapshot()) ?? null;
   }
 
   // Resolve a device's config record by MAC from the live projections. Used by the removal log to name a device the controller still reports.
-  private deviceConfigByMac(mac: string): Nullable<ProtectDeviceConfigTypes> {
+  private deviceConfigByMac(mac: string): Nullable<ProtectDeviceConfig> {
 
     return this.deviceConfigs.find(config => config.mac === mac) ?? null;
   }
@@ -1011,7 +993,7 @@ export class ProtectNvr {
   // removed. The content-memoized adopted-id selectors wake the observe loop only on a genuine membership change (add, removal, or adoption flip), never on the
   // continuous lastSeen/stats churn, so the reconcile cost scales with real membership deltas rather than with refresh frequency. Called once at login with the
   // current snapshot (initial population) and on each subsequent observe yield (ongoing deltas) - one function, both roles.
-  private reconcileMembership(category: keyof ProtectDeviceTypes, adoptedIds: readonly string[]): void {
+  private reconcileMembership(category: DeviceCollectionKey, adoptedIds: readonly string[]): void {
 
     const { toAdd, toRemove } = membershipDelta(adoptedIds, this.devices(category).map(device => device.protectId));
 
@@ -1038,7 +1020,8 @@ export class ProtectNvr {
 
         if(device) {
 
-          this.scheduleDeviceRemoval({ accessory: device.accessory, stillGone: () => !this.adoptedIdSelectors[category](this.client.state.snapshot()).includes(id) });
+          this.scheduleDeviceRemoval({ accessory: device.accessory,
+            stillGone: () => !this.deviceDescriptors[category].selectors.adoptedIds(this.client.state.snapshot()).includes(id) });
         }
       }
     }
@@ -1083,9 +1066,9 @@ export class ProtectNvr {
   // stable-client assumption holds across a reboot too and the loops never need re-spawning.
   private startDeviceObservers(): void {
 
-    for(const key of Object.keys(this.adoptedIdSelectors) as (keyof ProtectDeviceTypes)[]) {
+    for(const key of DEVICE_COLLECTION_KEYS) {
 
-      const ids = this.adoptedIdSelectors[key];
+      const ids = this.deviceDescriptors[key].selectors.adoptedIds;
 
       // Initial population from the current snapshot, then react to membership deltas.
       this.reconcileMembership(key, ids(this.client.state.snapshot()));
@@ -1167,9 +1150,9 @@ export class ProtectNvr {
       return;
     }
 
-    for(const key of Object.keys(this.adoptedIdSelectors) as (keyof ProtectDeviceTypes)[]) {
+    for(const key of DEVICE_COLLECTION_KEYS) {
 
-      this.reconcileMembership(key, this.adoptedIdSelectors[key](this.client.state.snapshot()));
+      this.reconcileMembership(key, this.deviceDescriptors[key].selectors.adoptedIds(this.client.state.snapshot()));
     }
 
     this.sweepOrphans();
@@ -1344,138 +1327,28 @@ export class ProtectNvr {
     DoorbellCapability.removeServices(accessory, this.hap, this.log);
   }
 
-  // Create instances of Protect device types in our plugin.
-  private addProtectDevice(accessory: ProtectAccessory, device: ProtectDeviceConfigTypes): Nullable<ProtectDevice> {
+  // Construct the HomeKit device for a freshly-adopted id in one category, wiring its live unifi-protect projection into the accessory. The projection-acquisition and
+  // construction policy lives here at the composition root, which knows the concrete type at the point of adoption; both come off the category's descriptor row. The
+  // projection handle is undefined only when the record has not yet reduced, in which case there is nothing to adopt yet, so we bail without configuring the accessory.
+  #adoptDevice<K extends DeviceCollectionKey>(key: K, id: string, accessory: ProtectAccessory): Nullable<ProtectDeviceTypes[K]> {
 
-    const deviceName = device.name ?? device.marketName;
+    const descriptor = this.deviceDescriptors[key];
+    const projection = descriptor.projection(this.client, id);
 
-    switch(device.modelKey) {
+    if(projection === undefined) {
 
-      case "camera": {
-
-        // We have a UniFi Protect camera or doorbell. We resolve the live unifi-protect projection for this id and inject it into the accessory;
-        // the projection-acquisition policy lives here at the composition root, which knows the concrete type at the point of adoption. The handle is null only when the
-        // record has not yet reduced, in which case there is nothing to adopt.
-        const camera = this.client.camera(device.id);
-
-        if(!camera) {
-
-          break;
-        }
-
-        // Always a ProtectCamera. A device the controller reports as a doorbell attaches its DoorbellCapability through the camera's own construction-time reconcile,
-        // so there is one construction path for both arrival timings (doorbell-at-adoption and a late isDoorbell flip).
-        this.configuredDevices.set(accessory.UUID, new ProtectCamera(this, accessory, camera));
-
-        break;
-      }
-
-      case "chime": {
-
-        // We have a UniFi Protect chime.
-        const chime = this.client.chime(device.id);
-
-        if(!chime) {
-
-          break;
-        }
-
-        this.configuredDevices.set(accessory.UUID, new ProtectChime(this, accessory, chime));
-
-        break;
-      }
-
-      case "fob": {
-
-        // We have a UniFi Protect fob.
-        const fob = this.client.fob(device.id);
-
-        if(!fob) {
-
-          break;
-        }
-
-        this.configuredDevices.set(accessory.UUID, new ProtectFob(this, accessory, fob));
-
-        break;
-      }
-
-      case "light": {
-
-        // We have a UniFi Protect light.
-        const light = this.client.light(device.id);
-
-        if(!light) {
-
-          break;
-        }
-
-        this.configuredDevices.set(accessory.UUID, new ProtectLight(this, accessory, light));
-
-        break;
-      }
-
-      case "relay": {
-
-        // We have a UniFi Protect relay.
-        const relay = this.client.relay(device.id);
-
-        if(!relay) {
-
-          break;
-        }
-
-        this.configuredDevices.set(accessory.UUID, new ProtectRelay(this, accessory, relay));
-
-        break;
-      }
-
-      case "sensor": {
-
-        // We have a UniFi Protect sensor.
-        const sensor = this.client.sensor(device.id);
-
-        if(!sensor) {
-
-          break;
-        }
-
-        this.configuredDevices.set(accessory.UUID, new ProtectSensor(this, accessory, sensor));
-
-        break;
-      }
-
-      case "viewer": {
-
-        // We have a UniFi Protect viewer.
-        const viewer = this.client.viewer(device.id);
-
-        if(!viewer) {
-
-          break;
-        }
-
-        this.configuredDevices.set(accessory.UUID, new ProtectViewer(this, accessory, viewer));
-
-        break;
-      }
-
-      default:
-
-        // Ensure we handle every device type the Protect API can send us. If a new device category is added upstream, this will flag it at compile time rather
-        // than silently ignoring it at runtime.
-        exhaustiveGuard(device);
-        this.log.error("Unknown device class detected for %s.", deviceName);
-
-        return null;
+      return null;
     }
 
-    // Return our newly created device.
-    return this.configuredDevices.get(accessory.UUID) ?? null;
+    const device = descriptor.construct(accessory, projection);
+
+    this.configuredDevices.set(accessory.UUID, device);
+
+    return device;
   }
 
   // Add a newly detected Protect device to HomeKit.
-  public addHomeKitDevice(device: ProtectDeviceConfigTypes): boolean {
+  public addHomeKitDevice(device: ProtectDeviceConfig): boolean {
 
     // If we have no controller MAC, no device MAC, or this device isn't adopted by this controller, we're done.
     if(!this.ufp.mac || !device.mac || device.isAdoptedByOther || !device.isAdopted) {
@@ -1483,8 +1356,9 @@ export class ProtectNvr {
       return false;
     }
 
-    // We only support certain devices.
-    if(!ProtectDeviceCategories.includes(device.modelKey)) {
+    // The runtime vocabulary gate: a wire category outside the supported device-collection set is filtered here, so the typed adoption lookup below stays total. A device
+    // whose modelKey is not a supported category is announced once and skipped.
+    if(!DEVICE_COLLECTION_KEYS.includes(device.modelKey)) {
 
       // If we've already informed the user about this one, we're done.
       if(this.unsupportedDevices[device.mac]) {
@@ -1549,7 +1423,7 @@ export class ProtectNvr {
     // through the per-device observe loops, not a synthetic refresh re-emit, so there is nothing to re-merge.
     if(!this.configuredDevices.has(accessory.UUID)) {
 
-      this.addProtectDevice(accessory, device);
+      this.#adoptDevice(device.modelKey, device.id, accessory);
     }
 
     return true;
@@ -1684,12 +1558,13 @@ export class ProtectNvr {
     this.api.updatePlatformAccessories(this.platform.accessories);
   }
 
-  // Return all devices of a particular modelKey.
-  private devices<T extends keyof ProtectDeviceTypes>(model?: T): ProtectDeviceTypes[T][] {
+  // Return all configured devices of a particular category. The category is required: an omitted argument would filter every device's modelKey against undefined and
+  // silently return nothing, so an optional argument here would advertise a "return everything" the filter cannot deliver.
+  private devices<T extends DeviceCollectionKey>(model: T): ProtectDeviceTypes[T][] {
 
-    // The cast is safe because every device's modelKey is set consistently with its concrete class per the ProtectDeviceTypes mapping, so the runtime filter above
-    // and the type-level narrowing below agree even though TypeScript cannot infer that relationship through the generic parameter on its own.
-    return [...this.configuredDevices.values()].filter(device => device.modelKey === model) as ProtectDeviceTypes[T][];
+    // The type guard narrows each device to the category's concrete class off its modelKey, so the filtered array is ProtectDeviceTypes[T][] without a cast; every
+    // device's modelKey is set consistently with its class per the ProtectDeviceTypes mapping, which the guard restates for the compiler.
+    return [...this.configuredDevices.values()].filter((device): device is ProtectDeviceTypes[T] => device.modelKey === model);
   }
 
   // Iterate every HomeKit device endpoint this controller manages: each configured device and, immediately after a camera-family device that carries one, its package
@@ -1742,13 +1617,13 @@ export class ProtectNvr {
   }
 
   // Utility for checking the scope of feature options on the NVR.
-  public isNvrFeature(option: string, device?: ProtectDeviceConfigTypes | ProtectNvrConfig): boolean {
+  public isNvrFeature(option: string, device?: ProtectDeviceConfig | ProtectNvrConfig): boolean {
 
     return [ "global", "controller" ].includes(this.platform.featureOptions.scope(option, device?.mac, this.ufp.mac));
   }
 
   // Utility for checking feature options on the NVR.
-  public hasFeature(option: string, device?: ProtectDeviceConfigTypes | ProtectNvrConfig): boolean {
+  public hasFeature(option: string, device?: ProtectDeviceConfig | ProtectNvrConfig): boolean {
 
     return this.platform.featureOptions.test(option, device?.mac, this.ufp.mac);
   }

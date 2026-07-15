@@ -9,7 +9,7 @@ import { PROTECT_RELAY_COMMAND_TIMEOUT } from "../settings.ts";
 import { ProtectDevice } from "./device.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
-import { selectRelay } from "unifi-protect";
+import { deviceSelectors } from "unifi-protect";
 
 export class ProtectRelay extends ProtectDevice {
 
@@ -199,7 +199,7 @@ export class ProtectRelay extends ProtectDevice {
 
     super.spawnObservers();
 
-    const relay = selectRelay(this.device.id);
+    const relay = deviceSelectors.relay.byId(this.device.id);
 
     // One observer per output, each selecting that output's own state. Because the store yields only on an Object.is change of the selected value, an observer wakes ONLY
     // when its own output's state changes: a sibling output's change (or any unrelated device patch) leaves this output's state primitive untouched and never wakes it.

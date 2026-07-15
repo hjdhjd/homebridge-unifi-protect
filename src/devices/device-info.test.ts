@@ -11,7 +11,7 @@
  * the BASE behaviors family-agnostically against the shared TestBaseDevice vehicle on the all-quiet makeSensorConfig carrier rather than re-asserting them inside each
  * family suite. The package-camera-specific name decoration (syncedName's display-suffix override) is family-owned and stays in doorbell-construction.test.ts.
  *
- * The wake mechanism (load-bearing): the base observers (device.name, device.firmwareVersion) read through deviceConfigSelector() -> selectSensor(id) -> the STORE's
+ * The wake mechanism: the base observers (device.name, device.firmwareVersion) read through deviceConfigSelector() -> deviceSelectors.sensor.byId(id) -> the STORE's
  * sensor record (not the projection), so pushSensorPatch - which updates that store record - is what wakes them, each NARROW (a name push wakes only the device.name
  * observer, a firmware push only the device.firmwareVersion observer). The rename reads this.syncedName, which resolves through the non-throwing peek() accessor as
  * peek()?.name ?? peek()?.marketName ?? this.accessoryName, observing the SAME store record, so after a name push both the selector and syncedName see the new name.

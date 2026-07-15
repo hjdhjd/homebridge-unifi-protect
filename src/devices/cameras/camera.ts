@@ -24,8 +24,8 @@ import { RtspLivestreamSubscription } from "../../media/livestream.ts";
 import type { SelectRequest } from "../../media/resolution.ts";
 import type { StreamingDelegate } from "../../media/stream-delegate.ts";
 import { audioCapabilityAppeared } from "../../media/stream-delegate.ts";
+import { deviceSelectors } from "unifi-protect";
 import { doorbellReconcileAction } from "./doorbell-reconcile-policy.ts";
-import { selectCamera } from "unifi-protect";
 import { shouldDeliverBareMotion } from "./motion-policy.ts";
 
 // The source discriminant threaded through the capability-reconcile and doorbell-capability methods: "construct" marks establishment (a fresh adoption or a Homebridge
@@ -352,7 +352,7 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
 
     // Bind the by-id camera selector once and read fields off it, so each per-dispatch selector evaluation reuses the same closure rather than re-deriving it. We seed it
     // from the projection's non-throwing id rather than the throwing config, so the selector binding never depends on a present record.
-    const cam = selectCamera(this.device.id);
+    const cam = deviceSelectors.camera.byId(this.device.id);
 
     // The RTSP channel set and the negotiated video codec both shape the HomeKit streaming surface, so a change to either re-derives it. Separate observers, not one
     // tuple: a fresh tuple would never dedup on Object.is, whereas each field dedups natively as its own slice.

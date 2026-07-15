@@ -8,7 +8,7 @@ import type { Nullable } from "homebridge-plugin-utils";
 import { ProtectDevice } from "./device.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
-import { selectFob } from "unifi-protect";
+import { deviceSelectors } from "unifi-protect";
 
 // One physical button on a UniFi Protect fob. index is the STABLE 1-based ServiceLabelIndex the button always carries in HomeKit (never a compacted visible-subset
 // position, so a hidden earlier button never renumbers a later one); label is the title-cased human name that both names the HomeKit switch and derives the per-button
@@ -229,7 +229,7 @@ export class ProtectFob extends ProtectDevice {
 
     super.spawnObservers();
 
-    const fob = selectFob(this.device.id);
+    const fob = deviceSelectors.fob.byId(this.device.id);
 
     // The battery-level reaction: when the controller's reported battery percentage changes, re-push BatteryLevel. The selector reads the primitive, so an unrelated fob
     // patch never wakes it.

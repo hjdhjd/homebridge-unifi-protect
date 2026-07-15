@@ -1210,7 +1210,7 @@ export class TestStateStore {
 
   // The sensor-slice mirror of pushCameraPatch: replace only the targeted sensor record, spread-sharing its untouched fields, while every other slice keeps its
   // reference - so exactly the observers watching sensor-derived selectors wake. Lands here as the device-info concern net's first consumer (the base device.name /
-  // device.firmwareVersion observers read the sensor record through selectSensor, so a name push wakes the name observer and a firmware push wakes the firmware observer)
+  // device.firmwareVersion observers read the sensor record via deviceSelectors.sensor.byId, so a name push wakes the name observer and a firmware push wakes firmware)
   // and is reused by the later sensor family. The plain per-slice form, because a key-generic push cannot correlate a slice's record type cast-free against the
   // ReadonlyMap slices, so each slice carries its own typed helper.
   public pushSensorPatch(id: string, patch: Partial<ProtectSensorConfig>): void {

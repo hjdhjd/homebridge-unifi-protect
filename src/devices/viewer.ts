@@ -5,7 +5,7 @@
 import type { CharacteristicValue, Service } from "homebridge";
 import type { ProtectAccessory, WithoutIdentity } from "../types.ts";
 import type { ProtectViewerConfig, Viewer } from "unifi-protect";
-import { selectLiveviews, selectViewer } from "unifi-protect";
+import { deviceSelectors, selectLiveviews } from "unifi-protect";
 import type { Nullable } from "homebridge-plugin-utils";
 import { ProtectDevice } from "./device.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
@@ -255,7 +255,7 @@ export class ProtectViewer extends ProtectDevice {
 
     super.spawnObservers();
 
-    const viewer = selectViewer(this.device.id);
+    const viewer = deviceSelectors.viewer.byId(this.device.id);
 
     // The viewer's active liveview drives which liveview switch reads on. This observe reflects only the active selection - the single switch that shows as on - by
     // re-running updateLiveviewSwitchState; the set of switches itself is reconciled by the liveview-collection observe below.

@@ -3,10 +3,10 @@
  * device-base.ts: ProtectBase - the shared owner/observe/MQTT/command spine for every Protect accessory class.
  */
 import type { API, HAP } from "homebridge";
-import type { ProtectAccessory, ProtectDeviceConfigTypes } from "../types.ts";
-import type { ProtectNvrConfig, ProtectState } from "unifi-protect";
+import type { ProtectDeviceConfig, ProtectNvrConfig, ProtectState } from "unifi-protect";
 import { loopFaultReporter, superviseLoop } from "homebridge-plugin-utils";
 import type { HomebridgePluginLogging } from "homebridge-plugin-utils";
+import type { ProtectAccessory } from "../types.ts";
 import { ProtectAuthorizationError } from "unifi-protect";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import type { ProtectPlatform } from "../platform.ts";
@@ -55,7 +55,7 @@ export abstract class ProtectBase {
   }
 
   // Configure the device information for HomeKit.
-  protected setInfo(accessory: ProtectAccessory, device: ProtectDeviceConfigTypes | ProtectNvrConfig): boolean {
+  protected setInfo(accessory: ProtectAccessory, device: ProtectDeviceConfig | ProtectNvrConfig): boolean {
 
     const infoService = accessory.getService(this.hap.Service.AccessoryInformation);
 

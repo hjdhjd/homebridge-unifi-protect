@@ -9,12 +9,12 @@ import { PACKAGE_CAMERA_NAME_SUFFIX, ProtectReservedNames, packageCameraId } fro
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_DOORBELL_CHIME_DURATION_DIGITAL } from "../../settings.ts";
 import type { ProtectAccessory, ProtectAccessoryContext, WithoutIdentity } from "../../types.ts";
 import { acquireService, composeSignals, sanitizeName, toStartCase, validService } from "homebridge-plugin-utils";
-import { selectCamera, selectChimes } from "unifi-protect";
 import { ProtectBase } from "../device-base.ts";
 import type { ProtectCamera } from "./camera.ts";
 import type { ProtectCameraPackage } from "./camera-package.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
 import { chimeVolumeFor } from "./chime-volume.ts";
+import { deviceSelectors } from "unifi-protect";
 import { mqttTopic } from "../../mqtt.ts";
 
 // A doorbell message entry.
@@ -289,7 +289,7 @@ export class DoorbellCapability extends ProtectBase {
   // motion are firehose occurrences the router handles, not observed here.
   private spawnObservers(): void {
 
-    const cam = selectCamera(this.#device.id);
+    const cam = deviceSelectors.camera.byId(this.#device.id);
     const id = this.#device.id;
 
     // Reflect the controller's current LCD message across the doorbell's message switches, re-deriving expiry each time the message slice changes.
@@ -308,7 +308,7 @@ export class DoorbellCapability extends ProtectBase {
     // the volume Lightbulb. The selector returns the computed mean volume across the doorbell's assigned chimes, so the store's value dedup wakes this only on a real
     // ring-volume change, not on every unrelated chime patch, and the push keeps the volume Lightbulb consistent with the onGet. The id is hoisted to the plain string
     // here, alongside cam, because a selector runs inside the store's dispatch, where a projection read against a removed record throws.
-    this.observeState({ key: "doorbell.chimeVolume", selector: state => chimeVolumeFor(selectChimes(state), id), title: "the chime volume" },
+    this.observeState({ key: "doorbell.chimeVolume", selector: state => chimeVolumeFor(deviceSelectors.chime.all(state), id), title: "the chime volume" },
       () => this.updateChimeVolume());
   }
 
@@ -481,7 +481,7 @@ export class DoorbellCapability extends ProtectBase {
       accessory: accessory,
       reason: "The controller no longer reports a package camera on " + this.accessoryName + "; removing its package camera accessory.",
       remove: () => this.detachPackageCamera(),
-      stillGone: () => !selectCamera(id)(this.nvr.client.state.snapshot())?.featureFlags.hasPackageCamera
+      stillGone: () => !deviceSelectors.camera.byId(id)(this.nvr.client.state.snapshot())?.featureFlags.hasPackageCamera
     });
   }
 
@@ -1005,12 +1005,12 @@ export class DoorbellCapability extends ProtectBase {
     return this.runDeviceCommand("set the doorbell message", () => this.#device.update({ lcdMessage: payload }));
   }
 
-  // This doorbell's effective chime volume, read through the live chime projections. We delegate to the shared chimeVolumeFor helper over selectChimes of the current
-  // snapshot - the identical input the volume observer reduces - so the read-through getter and the reactive push share one definition of "this doorbell's volume".
-  // selectChimes is always an array post-connect.
+  // This doorbell's effective chime volume, read through the live chime projections. We delegate to the shared chimeVolumeFor helper over deviceSelectors.chime.all of
+  // the current snapshot - the identical input the volume observer reduces - so the read-through getter and the reactive push share one definition of "this doorbell's
+  // volume". The catalog's chime.all is always an array post-connect.
   private get chimeVolume(): number {
 
-    return chimeVolumeFor(selectChimes(this.nvr.client.state.snapshot()), this.#device.id);
+    return chimeVolumeFor(deviceSelectors.chime.all(this.nvr.client.state.snapshot()), this.#device.id);
   }
 
   private async setChimeVolume(value: number): Promise<void> {

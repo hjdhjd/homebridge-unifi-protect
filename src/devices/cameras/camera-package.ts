@@ -11,8 +11,8 @@ import { ProtectCamera } from "./camera.ts";
 import type { ProtectPersistedContextState } from "../../types.ts";
 import type { ProtectState } from "unifi-protect";
 import { describeDevice } from "../device-descriptor.ts";
+import { deviceSelectors } from "unifi-protect";
 import { retry } from "homebridge-plugin-utils";
-import { selectCamera } from "unifi-protect";
 
 // Package camera class. Extends ProtectCamera and represents the secondary camera channel on Protect doorbells that ship with one. The package camera is a HomeKit
 // sub-view of its parent doorbell's shared camera projection, not a Protect device of its own - it is self-observing over that shared projection, deriving its identity
@@ -39,7 +39,7 @@ export class ProtectCameraPackage extends ProtectCamera {
 
     // Bind the by-id camera selector once, as the parent does - the package shares the parent's projection, so the parent's id is ours too. We seed it from
     // the projection's non-throwing id rather than the throwing config, so the selector binding never depends on a present record.
-    const cam = selectCamera(this.device.id);
+    const cam = deviceSelectors.camera.byId(this.device.id);
 
     // The lifecycle state of the shared physical device drives the package accessory's availability, exactly as it drives the parent's - each side observes the same
     // slice and pushes its own narrow projection.

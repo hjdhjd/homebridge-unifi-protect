@@ -3,9 +3,8 @@
  * types.ts: Interface and type definitions for UniFi Protect.
  */
 
+import type { Camera, Chime, DeviceCollectionKey, Fob, Light, Relay, Sensor, Viewer } from "unifi-protect";
 import type { CharacteristicValue, PlatformAccessory, PlatformConfig } from "homebridge";
-import type { ProtectCameraConfig, ProtectChimeConfig, ProtectFobConfig, ProtectLightConfig, ProtectRelayConfig, ProtectSensorConfig,
-  ProtectViewerConfig } from "unifi-protect";
 import type { ProtectCamera } from "./devices/cameras/camera.ts";
 import type { ProtectChime } from "./devices/chime.ts";
 import type { ProtectFob } from "./devices/fob.ts";
@@ -21,7 +20,9 @@ import type { ProtectViewer } from "./devices/viewer.ts";
 // eslint-disable-next-line @typescript-eslint/no-empty-function
 export function exhaustiveGuard(_value: never): void {}
 
-// Protect device categories that we support and the classes they correspond to.
+// The Protect device categories this plugin supports, mapped to the HomeKit device class each becomes. The vocabulary itself is the library's DeviceCollectionKey; this
+// class map and the projection map below are the two category-keyed tables HBUP still owns, so a category added upstream forces a compile error here until its class and
+// projection are named.
 export interface ProtectDeviceTypes {
 
   camera: ProtectCamera;
@@ -33,11 +34,29 @@ export interface ProtectDeviceTypes {
   viewer: ProtectViewer;
 }
 
-// The runtime category array and the unions below mirror ProtectDeviceTypes above: add or remove a supported device kind and all of them must change in lockstep.
-export const ProtectDeviceCategories = [ "camera", "chime", "fob", "light", "relay", "sensor", "viewer" ];
-export type ProtectDeviceConfigTypes = ProtectCameraConfig | ProtectChimeConfig | ProtectFobConfig | ProtectLightConfig | ProtectRelayConfig | ProtectSensorConfig |
-  ProtectViewerConfig;
-export type ProtectDevices = ProtectCamera | ProtectChime | ProtectFob | ProtectLight | ProtectRelay | ProtectSensor | ProtectViewer;
+// The unifi-protect projection class for each category. Defined once here; the projection union in device.ts derives from it (ProtectProjectionMap[DeviceCollectionKey])
+// rather than re-spelling the classes, and the NVR's device descriptors read it to type each category's projection lookup.
+export interface ProtectProjectionMap {
+
+  camera: Camera;
+  chime: Chime;
+  fob: Fob;
+  light: Light;
+  relay: Relay;
+  sensor: Sensor;
+  viewer: Viewer;
+}
+
+// Exactness both directions against the library vocabulary: a category MISSING from either map, or an EXTRA key beyond DeviceCollectionKey, fails these asserts, so the
+// class map and the projection map cannot drift from the categories the library defines.
+type DeviceTypesExact = keyof ProtectDeviceTypes extends DeviceCollectionKey ? DeviceCollectionKey extends keyof ProtectDeviceTypes ? true : never : never;
+type ProjectionMapExact = keyof ProtectProjectionMap extends DeviceCollectionKey ? DeviceCollectionKey extends keyof ProtectProjectionMap ? true : never : never;
+
+const _deviceTypesExact: DeviceTypesExact = true;
+const _projectionMapExact: ProjectionMapExact = true;
+
+// Every HomeKit device class this plugin builds, derived from the category-to-class map so it never re-lists the classes.
+export type ProtectDevices = ProtectDeviceTypes[DeviceCollectionKey];
 
 // The immutable identity keys of a Protect device. They never change for the life of an accessory and are read through dedicated, always-present accessors (the
 // controller id, the model category, and the bare/suffixed MAC), so they never need - and must never be read through - the live config projection.

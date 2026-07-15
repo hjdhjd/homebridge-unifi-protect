@@ -16,7 +16,7 @@
  * contact sensor; the whole-record sensor.config reconcile); the always-on GET MQTT subscriptions plus the model-aware leak GETs (registered per-channel,
  * present-iff-enabled, once-guarded, and unsubscribed when a channel is toggled off).
  *
- * The LOAD-BEARING multi-wake: the whole-record observer (sensor.config) selects the WHOLE sensor record (selectSensor(id)), and pushSensorPatch replaces that record on
+ * The multi-wake: the whole-record observer (sensor.config) selects the WHOLE sensor record (deviceSelectors.sensor.byId(id)), and pushSensorPatch replaces it on
  * every patch, so sensor.config wakes on EVERY push - in ADDITION to any narrow observer (sensor.motionDetectedAt / sensor.tamperingDetectedAt / sensor.alarmTriggeredAt)
  * whose field changed. So a narrow-field push wakes exactly the changed narrow observer plus sensor.config, in registration order (the narrow observer precedes config):
  * a motionDetectedAt push wakes [sensor.motionDetectedAt, sensor.config], a tamperingDetectedAt push wakes [sensor.tamperingDetectedAt, sensor.config], and an

@@ -8,7 +8,7 @@ import type { CharacteristicValue } from "homebridge";
 import { ProtectDevice } from "./device.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
-import { selectLight } from "unifi-protect";
+import { deviceSelectors } from "unifi-protect";
 
 export class ProtectLight extends ProtectDevice {
 
@@ -180,7 +180,7 @@ export class ProtectLight extends ProtectDevice {
 
     super.spawnObservers();
 
-    const light = selectLight(this.device.id);
+    const light = deviceSelectors.light.byId(this.device.id);
 
     // Light motion, like sensor and camera motion, is a device-state field (lastMotion) the controller advances rather than a firehose occurrence, so observing the
     // timestamp is the single source for this device, firing only on a real (truthy) detection rather than re-synthesizing it from a held prior value.

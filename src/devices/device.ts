@@ -4,16 +4,16 @@
  */
 import type { API, CharacteristicValue, Service, WithUUID } from "homebridge";
 import type { AcquireServiceTarget, HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
-import type { Camera, Chime, Fob, Light, ProtectCameraConfig, ProtectState, Relay, Sensor, Viewer } from "unifi-protect";
+import type { DeviceCollectionKey, ProtectCameraConfig, ProtectDeviceConfig, ProtectState } from "unifi-protect";
 import { PROTECT_MOTION_DURATION, PROTECT_OCCUPANCY_DURATION} from "../settings.ts";
-import type { ProtectAccessory, ProtectDeviceConfigTypes, ProtectPersistedContextState, WithoutIdentity } from "../types.ts";
-import { ProtectReservedNames, exhaustiveGuard } from "../types.ts";
+import type { ProtectAccessory, ProtectPersistedContextState, ProtectProjectionMap, WithoutIdentity } from "../types.ts";
 import { acquireService, composeSignals, sanitizeName, validService } from "homebridge-plugin-utils";
-import { isDeviceOnline, selectCamera, selectChime, selectFob, selectLight, selectRelay, selectSensor, selectViewer } from "unifi-protect";
+import { deviceSelectors, isDeviceOnline } from "unifi-protect";
 import type { ObserverWakePayload } from "../diagnostics.ts";
 import { ProtectBase } from "./device-base.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import type { ProtectPlatform } from "../platform.ts";
+import { ProtectReservedNames } from "../types.ts";
 import { channels } from "../diagnostics.ts";
 import { describeDevice } from "./device-descriptor.ts";
 
@@ -161,8 +161,8 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
   protected readonly controller: AbortController;
   // The live projection for this device. Holds (client, id), reads through to the store on every config access. Set once at construction; never reassigned -
   // the accessory's identity is its MAC, stable across reboots, so the handle never goes stale. Injected by the NVR root when constructing the accessory, which
-  // knows the concrete projection type at the point of adoption (Camera | Light | Sensor | Chime | Viewer | Relay | Fob); subclasses narrow at their own constructor.
-  protected readonly device: Camera | Light | Sensor | Chime | Viewer | Relay | Fob;
+  // knows the concrete projection type at the point of adoption (a member of ProtectProjectionMap, keyed by device category); subclasses narrow at their own constructor.
+  protected readonly device: ProtectProjectionMap[DeviceCollectionKey];
   // The per-device resolved feature-hint bag. Seeded as an empty cast below because every device leaf's constructor calls configureHints() synchronously right
   // after super(), before spawnObservers() or any HomeKit callback can read this.hints, so no consumer ever observes the bag before it holds every hint.
   public hints: ProtectHints;
@@ -173,7 +173,7 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
 
   // The constructor captures the accessory and live projection handle, wires the per-accessory abort controller and its composed signal, and seeds the hints and timers
   // state; device configuration is wired separately by the NVR root after construction.
-  constructor(nvr: ProtectNvr, accessory: ProtectAccessory, device: Camera | Light | Sensor | Chime | Viewer | Relay | Fob) {
+  constructor(nvr: ProtectNvr, accessory: ProtectAccessory, device: ProtectProjectionMap[DeviceCollectionKey]) {
 
     super(nvr);
 
@@ -191,7 +191,7 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
   // this.ufp.<state-field> at HomeKit-callback rates pay one getter chain in nanoseconds; if profiling later names a hot read site, scope-local-hoist the read-through
   // once into a local at the top of the scope and read fields off the local for the duration. Never cache as an accessory field - that re-introduces the held-state
   // model we deliberately do not keep, which would violate the single source of truth.
-  public get ufp(): Readonly<WithoutIdentity<ProtectDeviceConfigTypes>> {
+  public get ufp(): Readonly<WithoutIdentity<ProtectDeviceConfig>> {
 
     return this.device.config;
   }
@@ -206,7 +206,7 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
 
   // The device category discriminant, read non-throwing from the projection's own modelKey field. Like protectId it never reads the live config, so the devices() filter
   // and cameraFor can classify a device whose record has vanished without throwing.
-  public get modelKey(): ProtectDeviceConfigTypes["modelKey"] {
+  public get modelKey(): ProtectDeviceConfig["modelKey"] {
 
     return this.device.modelKey;
   }
@@ -808,50 +808,12 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
   }
 
   // Resolve the by-id config selector for this device's category, so the base can observe a shared field (the name) without each leaf re-declaring the selector. The
-  // projection already carries its modelKey and id; we map that to the matching memoized by-id selector. The device projection is never the NVR singleton, so the
-  // device categories are exhaustive and the default is unreachable.
-  private deviceConfigSelector(): (state: ProtectState) => Readonly<ProtectDeviceConfigTypes> | undefined {
+  // projection already carries its modelKey and id, and the library's catalog is keyed by that same category vocabulary, so the category indexes straight into the
+  // matching memoized by-id selector. Every device projection is a device-collection member (never the NVR singleton), so this.device.modelKey is a DeviceCollectionKey
+  // and the lookup is total.
+  private deviceConfigSelector(): (state: ProtectState) => Readonly<ProtectDeviceConfig> | undefined {
 
-    // Switch on a local copy so the exhaustive cases narrow only the discriminant, not this.device itself (which would leave this.device as never in the unreachable
-    // default, where we still read its id).
-    const modelKey = this.device.modelKey;
-
-    switch(modelKey) {
-
-      case "camera":
-
-        return selectCamera(this.device.id);
-
-      case "chime":
-
-        return selectChime(this.device.id);
-
-      case "fob":
-
-        return selectFob(this.device.id);
-
-      case "light":
-
-        return selectLight(this.device.id);
-
-      case "relay":
-
-        return selectRelay(this.device.id);
-
-      case "sensor":
-
-        return selectSensor(this.device.id);
-
-      case "viewer":
-
-        return selectViewer(this.device.id);
-
-      default:
-
-        exhaustiveGuard(modelKey);
-
-        return () => undefined;
-    }
+    return deviceSelectors[this.device.modelKey].byId(this.device.id);
   }
 
   // The controller-side display name this device syncs into HomeKit: the user-assigned name, falling back to the model's market name. This is the single derivation the

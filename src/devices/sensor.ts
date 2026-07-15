@@ -9,8 +9,8 @@ import { ProtectDevice } from "./device.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
 import type { Service } from "homebridge";
+import { deviceSelectors } from "unifi-protect";
 import { leakChannelEnabled } from "./leak-policy.ts";
-import { selectSensor } from "unifi-protect";
 
 /**
  * Map a sensor's tampering timestamp to its HomeKit StatusTampered state: tampered when the controller has recorded a tampering time, clear when it has not. The single
@@ -657,7 +657,7 @@ export class ProtectSensor extends ProtectDevice {
 
     super.spawnObservers();
 
-    const sensor = selectSensor(this.device.id);
+    const sensor = deviceSelectors.sensor.byId(this.device.id);
 
     // Sensor motion is a device-state field, not a firehose occurrence: the controller surfaces a UP Sense motion as a fresh motionDetectedAt timestamp on the sensor
     // record, with no `event`-channel counterpart. So the single source for "did this sensor see motion?" is the timestamp itself, and observing it is the honest
