@@ -14,6 +14,7 @@ import type { ProtectTimeshiftBuffer, SegmentRole } from "./timeshift.ts";
 import type { ProtectAccessory } from "../types.ts";
 import type { ProtectCameraHost } from "./camera-host.ts";
 import type { ProtectTimeshiftSupervisor } from "./timeshift-supervisor.ts";
+import { livestreamAudioSampleRate } from "unifi-protect";
 
 // HKSV end-of-stream marker. A single zero byte yielded with `isLast=true` signals the end of a recording stream to HomeKit. Module-scoped so we allocate once
 // per process rather than per yield.
@@ -443,10 +444,10 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
 
       recording: {
 
-        // The Protect livestream API delivers doorbell audio at 48000 Hz and every other camera's at 16000 Hz (16-bit mono AAC). This is the input sample rate FFmpeg's
-        // audio filters operate on, and what getAudioFilters validates each filter's frequency against - so a doorbell's true 48000 Hz keeps a user's 8-24 kHz
-        // highpass/lowpass from being silently dropped.
-        audioFilters: this.protectCamera.getAudioFilters(this.protectCamera.ufp.featureFlags.isDoorbell ? 48000 : 16000),
+        // The input sample rate FFmpeg's audio filters operate on is the camera's livestream (fMP4) audio rate that livestreamAudioSampleRate owns. getAudioFilters
+        // validates each filter's frequency against that rate's Nyquist limit, so a doorbell's higher source rate keeps a user's 8-24 kHz highpass/lowpass from being
+        // silently dropped.
+        audioFilters: this.protectCamera.getAudioFilters(livestreamAudioSampleRate(this.protectCamera.ufp)),
         audioStream: 0,
         codec: this.protectCamera.ufp.videoCodec,
         enableAudio: this.isAudioActive,

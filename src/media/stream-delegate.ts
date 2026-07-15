@@ -33,9 +33,11 @@ export function audioCapabilityAppeared(built: AudioOptionsIdentity, current: Au
   return (current.isDoorbell && !built.isDoorbell) || (current.twoWayAudio && !built.twoWayAudio);
 }
 
-// The streaming audio sample rates a camera advertises to HomeKit. Doorbells and cameras streamed directly over RTSP (buffer-backed livestreaming off, or a camera not
-// capable of it) both deliver a 48 kHz source that HomeKit does not support; since 16 and 24 kHz each divide 48 cleanly, we advertise both and let HomeKit choose. A
-// buffer-backed camera's livestream API delivers 16 kHz, so it advertises just that. A pure helper, red-green testable per population.
+// The streaming audio sample rates a camera advertises to HomeKit. This condition deliberately encodes TWO wire facts, so it does not defer to livestreamAudioSampleRate:
+// on the fMP4 livestream a doorbell delivers 48 kHz and every other camera 16 kHz (the half livestreamAudioSampleRate owns), while a camera streamed directly over RTSP
+// (buffer-backed livestreaming off, or a camera not capable of it) delivers a 48 kHz source regardless of type. Both 48 kHz sources exceed what HomeKit supports; since
+// 16 and 24 kHz each divide 48 cleanly, we advertise both and let HomeKit choose. A buffer-backed camera's livestream delivers 16 kHz, so it advertises just that. A pure
+// helper, red-green testable per population.
 export function streamingSamplerates(input: { isDoorbell: boolean; usesTimeshiftLivestream: boolean }): AudioStreamingSamplerate | AudioStreamingSamplerate[] {
 
   return (input.isDoorbell || !input.usesTimeshiftLivestream) ? [ AudioStreamingSamplerate.KHZ_16, AudioStreamingSamplerate.KHZ_24 ] : AudioStreamingSamplerate.KHZ_16;

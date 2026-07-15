@@ -12,9 +12,9 @@ import type { CameraController, CameraControllerOptions, CameraStreamingDelegate
   Service, SnapshotRequest, SnapshotRequestCallback, StartStreamRequest, StreamRequestCallback, StreamingRequest } from "homebridge";
 import type { HomebridgePluginLogging, IpFamily, Nullable, PortReservation } from "homebridge-plugin-utils";
 import { PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS, PROTECT_LIVESTREAM_API_IDR_INTERVAL, PROTECT_TIMESHIFT_BUFFER_MAXDURATION } from "../settings.ts";
+import { ProtectAbortedError, livestreamAudioSampleRate } from "unifi-protect";
 import type { ChannelProfile } from "./resolution.ts";
 import type { LivestreamSubscription } from "./livestream.ts";
-import { ProtectAbortedError } from "unifi-protect";
 import type { ProtectCameraHost } from "./camera-host.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import type { ProtectPlatform } from "../platform.ts";
@@ -199,8 +199,8 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
             codecs: [
               {
 
-                // When using the livestream API, Protect cameras sample audio at 16 kHz, except for doorbells, which sample audio at 48 kHz.
-                samplerate: this.protectCamera.ufp.featureFlags.isDoorbell ? AudioRecordingSamplerate.KHZ_48 : AudioRecordingSamplerate.KHZ_16,
+                // The advertised recording sample rate follows the camera's livestream (fMP4) audio rate, which livestreamAudioSampleRate owns.
+                samplerate: (livestreamAudioSampleRate(this.protectCamera.ufp) === 48000) ? AudioRecordingSamplerate.KHZ_48 : AudioRecordingSamplerate.KHZ_16,
                 type: AudioRecordingCodecType.AAC_LC
               }
             ]
@@ -910,10 +910,10 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
       );
 
       // If we are audio filtering, address it here.
-      // Protect doorbells deliver audio at 48000 Hz; every other Protect camera delivers it at 16000 Hz. This is the input sample rate FFmpeg's audio filters operate on,
-      // independent of the output rate HomeKit requests, and what getAudioFilters validates each filter's frequency against the Nyquist limit of. Feeding the doorbell's
-      // true 48000 Hz lifts the Nyquist ceiling to 24000 Hz, so a user's highpass/lowpass in the 8-24 kHz band is no longer silently dropped on a doorbell.
-      const afOptions = this.protectCamera.getAudioFilters(this.protectCamera.ufp.featureFlags.isDoorbell ? 48000 : 16000);
+      // The input sample rate FFmpeg's audio filters operate on is the camera's livestream (fMP4) audio rate that livestreamAudioSampleRate owns, independent of the
+      // output rate HomeKit requests. getAudioFilters checks each filter's frequency against that rate's Nyquist limit, so a doorbell's higher source rate lifts the
+      // ceiling far enough that a user's 8-24 kHz highpass/lowpass passes through on a doorbell.
+      const afOptions = this.protectCamera.getAudioFilters(livestreamAudioSampleRate(this.protectCamera.ufp));
 
       if(afOptions.length) {
 

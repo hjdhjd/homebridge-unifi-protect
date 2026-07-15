@@ -9,6 +9,7 @@ import type { LivestreamHostOptions, ProtectCameraHost } from "../../media/camer
 import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_SEGMENT_RESOLUTION, PROTECT_TIMESHIFT_CONSTRAINED_HOST_TARGET } from "../../settings.ts";
 import type { ProtectAccessory, ProtectPersistedContextState, WithoutIdentity } from "../../types.ts";
 import { buildAdvertisedProfiles, buildChannelProfile, capByPixels, formatResolution, isPrimaryChannel, rtspUrl, selectChannelProfile } from "../../media/resolution.ts";
+import { deviceSelectors, livestreamAudioSampleRate } from "unifi-protect";
 import { nightVisionActive, nightVisionBrightnessForMode, nightVisionCommandForLevel, nightVisionModeForToggleOn, nightVisionToggleCommand,
   parseNightVisionMode } from "./night-vision-policy.ts";
 import type { ChannelProfile } from "../../media/resolution.ts";
@@ -24,7 +25,6 @@ import { RtspLivestreamSubscription } from "../../media/livestream.ts";
 import type { SelectRequest } from "../../media/resolution.ts";
 import type { StreamingDelegate } from "../../media/stream-delegate.ts";
 import { audioCapabilityAppeared } from "../../media/stream-delegate.ts";
-import { deviceSelectors } from "unifi-protect";
 import { doorbellReconcileAction } from "./doorbell-reconcile-policy.ts";
 import { shouldDeliverBareMotion } from "./motion-policy.ts";
 
@@ -568,8 +568,8 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
     // mirrors the livestream API's native delivery, derived from camera facts rather than any HKSV recording configuration.
     if(this.hasFeature("Debug.Video.Timeshift.UseRtsp") && this.stream) {
 
-      // Mono AAC-LC at the camera's native sample rate: 48 kHz for doorbells, 16 kHz for every other camera.
-      const samplerate = this.ufp.featureFlags.isDoorbell ? AudioRecordingSamplerate.KHZ_48 : AudioRecordingSamplerate.KHZ_16;
+      // Mono AAC-LC at the camera's livestream (fMP4) audio rate, which livestreamAudioSampleRate owns.
+      const samplerate = (livestreamAudioSampleRate(this.ufp) === 48000) ? AudioRecordingSamplerate.KHZ_48 : AudioRecordingSamplerate.KHZ_16;
 
       return new RtspLivestreamSubscription({
 
