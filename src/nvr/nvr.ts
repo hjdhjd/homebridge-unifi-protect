@@ -259,16 +259,16 @@ export class ProtectNvr {
     }
 
     // Wire the NVR-health request-outcome inputs from the unifi-protect library's process-global HTTP diagnostics channel. The channel carries every request from every
-    // client in the process, so we filter on an exact host match - the request URL's parsed hostname equals this controller's configured address - to keep each NVR's
-    // health scoped to its own controller. Host equality rather than substring containment matters: a controller at "192.168.1.2" must never observe requests to
-    // "192.168.1.20". A 2xx is recovery evidence; everything else (an error, or a non-2xx status) is a stress symptom. Wired here - past the address guard, so a
-    // misconfigured controller never subscribes - and detached on the terminal shutdown signal (which the SHUTDOWN handler below guarantees fires). Observation is gated
-    // by the health observer's own suspend/resume, so symptoms during connecting or induced disruptions are dropped.
+    // client in the process, so we filter on an exact host match - the payload's reported host equals this controller's configured address, both descending from the same
+    // address this NVR passes to ProtectClient.connect() - to keep each NVR's health scoped to its own controller. A 2xx is recovery evidence; everything else (an error,
+    // or a non-2xx status) is a stress symptom. Wired here - past the address guard, so a misconfigured controller never subscribes - and detached on the terminal
+    // shutdown signal (which the SHUTDOWN handler below guarantees fires). Observation is gated by the health observer's suspend/resume, so symptoms during connecting
+    // or induced disruptions are dropped.
     const onRequestEnd = (message: unknown): void => {
 
       const payload = message as HttpRequestEndPayload;
 
-      if(!isRequestForController({ address: this.config.address, url: payload.url })) {
+      if(!isRequestForController({ address: this.config.address, host: payload.host })) {
 
         return;
       }

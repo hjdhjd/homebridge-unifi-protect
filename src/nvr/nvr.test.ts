@@ -437,31 +437,41 @@ describe("phase transition legality", () => {
 
 describe("controller request-host filter", () => {
 
-  // The process-global HTTP diagnostics channel carries every client's requests, so each NVR keeps only its own by an EXACT host match. The cross-contamination row is
-  // the one a substring test gets wrong: "192.168.1.2" is a substring of "192.168.1.20", so the pre-fix .includes() filter let a controller observe a neighbor's
-  // requests. The remaining rows pin the parser-derived behavior: a hostname prefix does not match, the compare is case-insensitive, a bracketed IPv6 URL matches a bare
-  // configured IPv6 literal, a port on the URL is ignored, and a malformed URL matches nothing.
+  // The process-global HTTP diagnostics channel carries every client's requests, so each NVR keeps only its own by an EXACT string match of the payload's reported host
+  // against its configured address - both descend from the one address this NVR passed to ProtectClient.connect(). The cross-contamination row is the one a substring
+  // test gets wrong: "192.168.1.2" is a substring of "192.168.1.20", so a .includes() filter let a controller observe a neighbor's requests. The remaining rows pin the
+  // exact-identity contract: a hostname prefix does not match, a mixed-case address matches only itself verbatim, a bare IPv6 literal does not match a bracketed form, a
+  // ported address attributes as-is, and any non-URL host string attributes only when the configured address is that same string.
   test("isRequestForController matches only the exact configured host", () => {
 
     // The controller's own request counts.
-    assert.equal(isRequestForController({ address: "192.168.1.2", url: "https://192.168.1.2/proxy/protect/api/bootstrap" }), true);
+    assert.equal(isRequestForController({ address: "192.168.1.2", host: "192.168.1.2" }), true);
 
-    // The cross-contamination case: a neighbor whose address merely contains ours must not match.
-    assert.equal(isRequestForController({ address: "192.168.1.2", url: "https://192.168.1.20/proxy/protect/api/bootstrap" }), false);
+    // The cross-contamination case: a neighbor whose host merely contains ours must not match.
+    assert.equal(isRequestForController({ address: "192.168.1.2", host: "192.168.1.20" }), false);
 
-    // A configured host that is a prefix of the URL's hostname does not match - equality, not containment.
-    assert.equal(isRequestForController({ address: "controller", url: "https://controller.example.com/api" }), false);
+    // A configured address that is a prefix of the reported host does not match - equality, not containment.
+    assert.equal(isRequestForController({ address: "controller", host: "controller.example.com" }), false);
 
-    // The URL parser lowercases the hostname, so a mixed-case configured host still matches.
-    assert.equal(isRequestForController({ address: "Controller.Local", url: "https://controller.local/api" }), true);
+    // A mixed-case address matches its own verbatim host, and does NOT match a lowercased variant (a different controller's string) - exact identity, no case folding.
+    assert.equal(isRequestForController({ address: "Controller.Local", host: "Controller.Local" }), true);
+    assert.equal(isRequestForController({ address: "Controller.Local", host: "controller.local" }), false);
 
-    // A bare configured IPv6 literal matches the URL parser's bracketed hostname form.
-    assert.equal(isRequestForController({ address: "fe80::1", url: "https://[fe80::1]/api" }), true);
+    // A bare IPv6 literal matches a bare literal and NOT a bracketed form - the payload carries the exact configured address, so no bracket normalization applies.
+    assert.equal(isRequestForController({ address: "fe80::1", host: "fe80::1" }), true);
+    assert.equal(isRequestForController({ address: "fe80::1", host: "[fe80::1]" }), false);
 
-    // The hostname excludes the port, so a port on the request URL is irrelevant to the match.
-    assert.equal(isRequestForController({ address: "192.168.1.2", url: "https://192.168.1.2:7443/api" }), true);
+    // Exact identity keeps the port significant: a bare-host request does NOT match a ported configured address.
+    assert.equal(isRequestForController({ address: "192.168.1.2:7443", host: "192.168.1.2" }), false);
 
-    // A malformed URL cannot be parsed, so it belongs to no controller.
-    assert.equal(isRequestForController({ address: "192.168.1.2", url: "notaurl" }), false);
+    // A non-URL host string attributes only when the configured address is that same string.
+    assert.equal(isRequestForController({ address: "notaurl", host: "notaurl" }), true);
+    assert.equal(isRequestForController({ address: "192.168.1.2", host: "notaurl" }), false);
+
+    // A ported address attributes to itself - the port is part of the exact identity.
+    assert.equal(isRequestForController({ address: "1.2.3.4:8443", host: "1.2.3.4:8443" }), true);
+
+    // Two controllers on one host at different ports stay distinct - the port is part of the exact identity.
+    assert.equal(isRequestForController({ address: "1.2.3.4:8443", host: "1.2.3.4:9443" }), false);
   });
 });

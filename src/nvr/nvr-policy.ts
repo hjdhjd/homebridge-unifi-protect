@@ -159,32 +159,18 @@ export function membershipDelta(adoptedIds: readonly string[], configuredIds: re
 
 /**
  * Whether a completed HTTP request belongs to this controller, from the unifi-protect library's process-global `http:request:end` diagnostic payload. The channel
- * carries every request from every client in the process, so each NVR filters by exact host so its health stays scoped to its own controller. The URL's parsed
- * hostname is compared to the configured address for host EQUALITY, not substring containment - a substring test would let a controller at "192.168.1.2" observe
- * every request to "192.168.1.20". The parser lowercases the hostname and drops the port, and it keeps an IPv6 literal bracketed ("[fe80::1]") while the configured
- * address is a bare literal, so brackets are stripped from both sides and the compare is case-insensitive. A malformed URL matches nothing.
+ * carries every request from every client in the process, so each NVR filters by host to keep its health scoped to its own controller. The payload's `host` is the exact
+ * address the client was built against, and this NVR passes its configured `address` to `connect()`, so an exact string comparison against that same address
+ * attributes a request precisely - both strings descend from one configuration value. Exact identity keeps the port significant: a ported address ("1.2.3.4:8443")
+ * attributes to itself, two controllers on one host at different ports stay distinct, and a mixed-case address matches itself verbatim.
  *
- * @param options - The configured controller `address` and the request `url`.
+ * @param options - The configured controller `address` and the payload's reported `host`.
  *
- * @returns `true` when the request's host is exactly this controller's.
+ * @returns `true` when the request's host is exactly this controller's configured address.
  */
-export function isRequestForController(options: { address: string; url: string }): boolean {
+export function isRequestForController(options: { address: string; host: string }): boolean {
 
-  const { address, url } = options;
-
-  let hostname: string;
-
-  try {
-
-    hostname = new URL(url).hostname;
-  } catch {
-
-    return false;
-  }
-
-  const stripBrackets = (host: string): string => host.replace(/^\[|\]$/g, "");
-
-  return stripBrackets(hostname).toLowerCase() === stripBrackets(address).toLowerCase();
+  return options.host === options.address;
 }
 
 /**
