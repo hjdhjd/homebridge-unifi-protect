@@ -1,0 +1,154 @@
+{
+  "devBadges": [
+    {
+      "alt": "License",
+      "image": "https://img.shields.io/npm/l/homebridge-unifi-protect?color=%230559C9&logo=open%20source%20initiative&logoColor=%23FFFFFF&style=for-the-badge",
+      "link": "https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/LICENSE.md"
+    },
+    {
+      "alt": "Build Status",
+      "image": "https://img.shields.io/github/actions/workflow/status/hjdhjd/homebridge-unifi-protect/ci.yml?branch=main&color=%230559C9&logo=github-actions&logoColor=%23FFFFFF&style=for-the-badge",
+      "link": "https://github.com/hjdhjd/homebridge-unifi-protect/actions?query=workflow%3A%22Continuous+Integration%22"
+    },
+    {
+      "alt": "Dependencies",
+      "image": "https://img.shields.io/librariesio/release/npm/homebridge-unifi-protect?color=%230559C9&logo=dependabot&style=for-the-badge",
+      "link": "https://libraries.io/npm/homebridge-unifi-protect"
+    },
+    {
+      "alt": "GitHub commits since latest release (by SemVer)",
+      "image": "https://img.shields.io/github/commits-since/hjdhjd/homebridge-unifi-protect/latest?color=%230559C9&logo=github&sort=semver&style=for-the-badge",
+      "link": "https://github.com/hjdhjd/homebridge-unifi-protect/commits/main"
+    }
+  ],
+  "masthead": {
+    "badges": [
+      {
+        "alt": "Downloads",
+        "image": "https://img.shields.io/npm/dt/homebridge-unifi-protect?color=%230559C9&logo=icloud&logoColor=%23FFFFFF&style=for-the-badge",
+        "link": "https://www.npmjs.com/package/homebridge-unifi-protect"
+      },
+      {
+        "alt": "Version",
+        "image": "https://img.shields.io/npm/v/homebridge-unifi-protect?color=%230559C9&label=Latest%20Version&logo=ubiquiti&logoColor=%23FFFFFF&style=for-the-badge",
+        "link": "https://www.npmjs.com/package/homebridge-unifi-protect"
+      },
+      {
+        "alt": "UniFi Protect@Homebridge Discord",
+        "image": "https://img.shields.io/discord/432663330281226270?color=0559C9&label=Discord&logo=discord&logoColor=%23FFFFFF&style=for-the-badge",
+        "link": "https://discord.gg/QXqfHEW"
+      },
+      {
+        "alt": "verified-by-homebridge",
+        "image": "https://img.shields.io/badge/homebridge-verified-blueviolet?color=%23491F59&style=for-the-badge&logoColor=%23FFFFFF&logo=homebridge",
+        "link": "https://github.com/homebridge/homebridge/wiki/Verified-Plugins"
+      }
+    ],
+    "logo": {
+      "alt": "homebridge-unifi-protect: Native HomeKit support for UniFi Protect",
+      "href": "https://github.com/hjdhjd/homebridge-unifi-protect",
+      "src": "https://raw.githubusercontent.com/hjdhjd/homebridge-unifi-protect/main/images/homebridge-unifi-protect.svg"
+    },
+    "tagline": "Complete HomeKit support for the UniFi Protect ecosystem using [Homebridge](https://homebridge.io).",
+    "title": "Homebridge UniFi Protect"
+  },
+  "nav": [
+    {
+      "entries": [
+        {
+          "anchor": "installation",
+          "blurb": "installing this plugin, including system requirements.",
+          "kind": "readme-anchor",
+          "title": "Installation"
+        },
+        {
+          "anchor": "getting-started",
+          "blurb": "how to quickly get up and running.",
+          "kind": "readme-anchor",
+          "title": "Plugin Configuration"
+        },
+        {
+          "blurb": "best practices for getting the most of your HomeKit setup and UniFi Protect.",
+          "file": "docs/BestPractices.md",
+          "kind": "doc",
+          "title": "Best Practices"
+        },
+        {
+          "blurb": "running into login problems or streaming issues? Give this a read before looking anywhere else.",
+          "file": "docs/Troubleshooting.md",
+          "kind": "doc",
+          "title": "Troubleshooting"
+        },
+        {
+          "blurb": "changes and release history of this plugin, starting with v3.0.",
+          "file": "docs/Changelog.md",
+          "kind": "doc",
+          "masthead": false,
+          "title": "Changelog"
+        }
+      ],
+      "title": "Getting Started"
+    },
+    {
+      "entries": [
+        {
+          "blurb": "granular options to allow you to set the camera quality individually, show or hide specific cameras, controllers, and more.",
+          "file": "docs/FeatureOptions.md",
+          "kind": "doc",
+          "title": "Feature Options"
+        },
+        {
+          "blurb": "how HBUP sources and selects your video (the timeshift buffer, stream selection, transcoding, and transmuxing), autoconfigures your controller, and why.",
+          "file": "docs/Autoconfiguration.md",
+          "kind": "doc",
+          "title": "Autoconfiguration"
+        },
+        {
+          "blurb": "options to further tailor how audio is handled from Protect, such as background noise reduction.",
+          "file": "docs/AudioOptions.md",
+          "kind": "doc",
+          "title": "Audio Options"
+        },
+        {
+          "blurb": "how UniFi Protect doorbell support works in this plugin, and how to use all the available features including doorbell messages.",
+          "file": "docs/Doorbell.md",
+          "kind": "doc",
+          "title": "Doorbells"
+        },
+        {
+          "blurb": "how HomeKit Secure Video support works in this plugin with UniFi Protect.",
+          "file": "docs/HomeKitSecureVideo.md",
+          "kind": "doc",
+          "title": "HomeKit Secure Video"
+        },
+        {
+          "blurb": "use the UniFi Protect liveviews feature (available in the UniFi Protect controller webUI) to create motion-detection scenes.",
+          "file": "docs/Liveviews.md",
+          "kind": "doc",
+          "title": "Liveview Scenes"
+        },
+        {
+          "blurb": "control what a UniFi Protect Viewport displays on screen, right from HomeKit.",
+          "file": "docs/Viewports.md",
+          "kind": "doc",
+          "title": "Viewports"
+        },
+        {
+          "blurb": "how to configure MQTT support.",
+          "file": "docs/MQTT.md",
+          "kind": "doc",
+          "title": "MQTT"
+        },
+        {
+          "blurb": "complete list of configuration options available in this plugin.",
+          "file": "docs/ConfigurationReference.md",
+          "kind": "doc",
+          "title": "Plugin Configuration Reference"
+        }
+      ],
+      "title": "Additional Topics"
+    }
+  ],
+  "projects": { "url": "https://raw.githubusercontent.com/hjdhjd/github-workflows/main/projects.json" },
+  "repo": { "branch": "main", "name": "homebridge-unifi-protect", "owner": "hjdhjd" }
+}

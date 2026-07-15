@@ -1,6 +1,6 @@
 {
   "name": "homebridge-unifi-protect",
-  "version": "8.0.0",
+  "version": "8.0.1",
   "displayName": "UniFi Protect",
   "description": "Homebridge UniFi Protect plugin providing complete HomeKit integration for the entire UniFi Protect ecosystem with full support for most features including HomeKit Secure Video, multiple controllers, blazing fast performance, and much more.",
   "author": {
@@ -71,31 +71,31 @@
     "prebuild": "npm run clean && npm run build-ui",
     "build": "tsc -p tsconfig.build.json",
     "build-ui": "homebridge-plugin-utils prepare-ui homebridge-ui/public/lib",
-    "build-docs": "npm run build && homebridge-plugin-utils prepare-docs dist/options.js",
+    "build-docs": "npm run build && homebridge-plugin-utils prepare-docs dist/options.js && homebridge-plugin-utils prepare-chrome docChrome.json",
     "clean": "node -e \"for(const p of ['dist','homebridge-ui/public/lib'])require('node:fs').rmSync(p,{force:true,recursive:true})\"",
     "prelint": "npm run build-ui",
     "lint": "eslint --max-warnings=${ESLINT_MAX_WARNINGS:-\"-1\"} eslint.config.mjs src homebridge-ui/*.js homebridge-ui/public/**.mjs",
     "postpublish": "npm run clean",
     "prepublishOnly": "npm run lint && npm run typecheck && npm run build",
-    "test": "node --strip-types --test --experimental-test-coverage --test-timeout=15000 \"src/**/*.test.ts\"",
+    "test": "node --test --experimental-test-coverage --test-timeout=15000 \"src/**/*.test.ts\"",
     "typecheck": "tsc --noEmit",
-    "test:watch": "node --strip-types --test --watch \"src/**/*.test.ts\""
+    "test:watch": "node --test --watch \"src/**/*.test.ts\""
   },
   "main": "dist/index.js",
   "dependencies": {
-    "@homebridge/plugin-ui-utils": "2.2.4",
+    "@homebridge/plugin-ui-utils": "2.2.5",
     "ffmpeg-for-homebridge": "2.2.2",
-    "homebridge-plugin-utils": "2.0.0",
+    "homebridge-plugin-utils": "2.1.0",
     "undici": "8.7.0",
-    "unifi-protect": "5.0.0"
+    "unifi-protect": "5.1.0"
   },
   "devDependencies": {
     "@stylistic/eslint-plugin": "5.10.0",
     "@types/node": "26.1.1",
     "eslint": "9.39.2",
-    "homebridge": "2.1.0",
+    "homebridge": "2.1.1",
     "typescript": "5.9.3",
-    "typescript-eslint": "8.63.0"
+    "typescript-eslint": "8.64.0"
   },
   "allowScripts": {
     "ffmpeg-for-homebridge": true
