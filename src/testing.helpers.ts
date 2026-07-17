@@ -27,13 +27,12 @@
  */
 import type { API, CameraController, HAP, Resolution } from "homebridge";
 import type { AudioOptionsIdentity, StreamingDelegate, StreamingDelegateFactory } from "./media/stream-delegate.ts";
-import { BOX_HEADER_SIZE, FeatureOptions, SAMPLE_FLAG_NON_SYNC, TRUN_FLAG_DATA_OFFSET, TRUN_FLAG_FIRST_SAMPLE_FLAGS, TestClock, TestRecordingProcessFactory }
-  from "homebridge-plugin-utils";
 import type { Camera, Chime, LivestreamSubscriptionState, PlaySpeakerOptions, ProtectCameraChannelConfig, ProtectCameraConfig, ProtectChimeConfig, ProtectEventMetadata,
   ProtectFobConfig, ProtectLightConfig, ProtectNvrConfig, ProtectNvrLiveviewConfig, ProtectRelayConfig, ProtectRingtoneConfig, ProtectSensorConfig, ProtectState,
   ProtectViewerConfig, Segment, Sensor, SnapshotOptions, TalkbackSession } from "unifi-protect";
 import type { Clock, HomebridgePluginLogging, Nullable, RecordingProcessFactory } from "homebridge-plugin-utils";
 import { FIXTURE_HOST, FIXTURE_RTSPS_PORT, G2_PRO_CHANNELS } from "./camera.fixtures.ts";
+import { FeatureOptions, SAMPLE_FLAG_NON_SYNC, TestClock, TestRecordingProcessFactory, makeBox, makeContainer, makeTrunBox } from "homebridge-plugin-utils";
 import type { NvrPhase, ProtectNvr } from "./nvr/nvr.ts";
 import { PLATFORM_NAME, PLUGIN_NAME } from "./settings.ts";
 import type { ProtectAccessory, ProtectDevices } from "./types.ts";
@@ -2869,38 +2868,18 @@ export class TestCameraHost implements ProtectCameraHost {
   }
 }
 
-// Write a single ISO BMFF box: a BOX_HEADER_SIZE-byte header (a 4-byte big-endian size covering the whole box, then the 4-byte ASCII type) followed by the
-// body. We import BOX_HEADER_SIZE from homebridge-plugin-utils rather than hardcoding 8 so the offset is single-sourced with the very constant the real
-// isKeyframe parse uses to walk these boxes.
-function makeBox(type: string, body: Buffer): Buffer {
-
-  const header = Buffer.alloc(BOX_HEADER_SIZE);
-
-  header.writeUInt32BE(BOX_HEADER_SIZE + body.length, 0);
-  header.write(type, 4, "ascii");
-
-  return Buffer.concat([ header, body ]);
-}
-
-// Synthesize a genuine fMP4 media fragment so the production isKeyframe TRUN-flag parse runs against REAL bytes on the REAL path - no isKeyframe injection seam, so the
-// test exercises the actual fMP4 keyframe coupling rather than a test-only divergence. The fragment is moof>traf>trun with a 16-byte trun body: the fullbox version/flags
-// word sets TRUN_FLAG_DATA_OFFSET and TRUN_FLAG_FIRST_SAMPLE_FLAGS so the parse reads a first_sample_flags field, sample_count is 1, and data_offset is 0. The ONLY
-// difference between a keyframe and a non-keyframe fragment is that first_sample_flags word (offset 12): 0 leaves the SAMPLE_FLAG_NON_SYNC bit clear, marking a sync
-// sample (a keyframe), while SAMPLE_FLAG_NON_SYNC sets it, marking a non-sync sample (a non-keyframe) the production parse rejects. The mdat carries an empty body - the
-// timeshift never decodes the payload, it only parses the moof for keyframe-ness and concatenates the bytes. The returned data buffer is the moof+mdat pair a media
-// Segment delivers. This is the single source of truth for both fragment kinds; makeKeyframeFragment and makeNonKeyframeFragment are the two thin selectors over it.
+// Synthesize a genuine fMP4 media fragment on the published fMP4 builders so the production isKeyframe TRUN-flag parse runs against REAL bytes on the REAL path - no
+// isKeyframe injection seam, so the test exercises the actual fMP4 keyframe coupling rather than a test-only divergence. The fragment is moof>traf>trun with a
+// first_sample_flags-bearing trun (the builder sets the data_offset and first_sample_flags TRUN flags, sample_count 1, data_offset 0). The ONLY difference between a
+// keyframe and a non-keyframe fragment is that first_sample_flags value: 0 leaves the SAMPLE_FLAG_NON_SYNC bit clear, marking a sync sample (a keyframe), while
+// SAMPLE_FLAG_NON_SYNC sets it, marking a non-sync sample (a non-keyframe) the production parse rejects. The mdat carries an empty body - the timeshift never decodes
+// the payload, it only parses the moof for keyframe-ness and concatenates the bytes. The returned data buffer is the moof+mdat pair a media Segment delivers. This is
+// the single source of truth for both fragment kinds; makeKeyframeFragment and makeNonKeyframeFragment are the two thin selectors over it.
 function makeMediaFragment(options: { keyframe?: boolean } = {}): { data: Buffer; mdat: Buffer; moof: Buffer } {
 
   const keyframe = options.keyframe ?? true;
-  const trunBody = Buffer.alloc(16);
-
-  trunBody.writeUInt32BE(TRUN_FLAG_DATA_OFFSET | TRUN_FLAG_FIRST_SAMPLE_FLAGS, 0);
-  trunBody.writeUInt32BE(1, 4);
-  trunBody.writeUInt32BE(0, 8);
-  trunBody.writeUInt32BE(keyframe ? 0 : SAMPLE_FLAG_NON_SYNC, 12);
-
-  const moof = makeBox("moof", makeBox("traf", makeBox("trun", trunBody)));
-  const mdat = makeBox("mdat", Buffer.alloc(0));
+  const moof = makeContainer("moof", [makeContainer("traf", [makeTrunBox({ sampleFlagsValue: keyframe ? 0 : SAMPLE_FLAG_NON_SYNC, useFirstSampleFlags: true })])]);
+  const mdat = makeBox("mdat");
 
   return { data: Buffer.concat([ moof, mdat ]), mdat, moof };
 }
