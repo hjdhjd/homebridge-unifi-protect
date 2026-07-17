@@ -840,28 +840,12 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
         inputFps: channelProfile.channel.fps,
         level: request.video.level,
         profile: request.video.profile,
+        // When interpolating, hand the encoder the fps and interpolation filters to smooth the presentation timestamps; it composes them into its own chain and bridges
+        // any GPU-to-CPU download transfer itself.
+        ...(useInterpolationFilter ? { videoFilters: [ "fps=" + request.video.fps.toString(),
+          "minterpolate=fps=" + request.video.fps.toString() + ":mi_mode=mci:mc_mode=aobmc:me=fss:me_mode=bidir:vsbmc=1:scd=none" ] } : {}),
         width: request.video.width
       }));
-
-      if(useInterpolationFilter) {
-
-        // Adjust our presentation timestamps for a smoother streaming experience.
-        const minterpolate =
-
-          ((this.protectCamera.hints.hardwareTranscoding && this.platform.codecSupport.ffmpegVersion.startsWith("8.")) ? "hwdownload, format=nv12, " : "") +
-          "fps=" + request.video.fps.toString() +
-          ", minterpolate=fps=" + request.video.fps.toString() + ":mi_mode=mci:mc_mode=aobmc:me=fss:me_mode=bidir:vsbmc=1:scd=none";
-
-        const vf = ffmpegArgs.indexOf("-filter:v");
-
-        if(vf >= 0) {
-
-          ffmpegArgs[vf + 1] = (ffmpegArgs[vf + 1] ?? "") + ", " + minterpolate;
-        } else {
-
-          ffmpegArgs.push("-filter:v", minterpolate);
-        }
-      }
     } else {
 
       // Configure our video parameters for just copying the input stream from Protect - it tends to be quite solid in most cases:
