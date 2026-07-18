@@ -4,14 +4,13 @@
  */
 import type { API, HAP } from "homebridge";
 import type { ProtectDeviceConfig, ProtectNvrConfig, ProtectState } from "unifi-protect";
-import { loopFaultReporter, superviseLoop } from "homebridge-plugin-utils";
+import { loopFaultReporter, prefixedLog, superviseLoop } from "homebridge-plugin-utils";
 import type { HomebridgePluginLogging } from "homebridge-plugin-utils";
 import type { ProtectAccessory } from "../types.ts";
 import { ProtectAuthorizationError } from "unifi-protect";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import type { ProtectPlatform } from "../platform.ts";
 import { mqttTopic } from "../mqtt.ts";
-import util from "node:util";
 
 // An observed slice of controller state, expressed in the projections a single observer needs. `key` is a stable, dotted, machine-facing tag ("camera.ispSettings")
 // that identifies the slice on the observer-wake diagnostics channel - it stays put across field renames so diagnostic filters keep working. `selector` reads the slice
@@ -42,16 +41,11 @@ export abstract class ProtectBase {
     this.nvr = nvr;
     this.platform = nvr.platform;
 
-    // Every log line is prefixed with this.logName: the plain name on the base, overridden by ProtectDevice to the full "Name [Model]" descriptor so device lines show
-    // which hardware they belong to. logName is deliberately separate from the bare `name` getter, which is the stable functional identity
-    // (it keys the livestream request id and the HomeKit accessory) and must not carry the bracketed model.
-    this.log = {
-
-      debug: (message: string, ...parameters: unknown[]): void => { nvr.platform.debug(util.format(this.logName + ": " + message, ...parameters)); },
-      error: (message: string, ...parameters: unknown[]): void => { nvr.platform.log.error(util.format(this.logName + ": " + message, ...parameters)); },
-      info: (message: string, ...parameters: unknown[]): void => { nvr.platform.log.info(util.format(this.logName + ": " + message, ...parameters)); },
-      warn: (message: string, ...parameters: unknown[]): void => { nvr.platform.log.warn(util.format(this.logName + ": " + message, ...parameters)); }
-    };
+    // Derive this device's logger from the plugin logging root, prefixing every line with this.logName: the plain name on the base, overridden by ProtectDevice to the
+    // full "Name [Model]" descriptor so device lines show which hardware they belong to. The prefix supplier is read on every call, so a device rename reaches the next
+    // line. logName is deliberately separate from the bare `name` getter, which is the stable functional identity (it keys the livestream request id and the HomeKit
+    // accessory) and must not carry the bracketed model.
+    this.log = prefixedLog(nvr.platform.pluginLog, () => this.logName);
   }
 
   // Configure the device information for HomeKit.

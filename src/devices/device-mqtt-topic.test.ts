@@ -79,6 +79,7 @@ const makeDevice = (): { capture: MqttCapture; instance: TestProtectDevice } => 
 
   const capture: MqttCapture = { publish: [], subscribeGet: [], subscribeSet: [] };
   const sink = (): void => undefined;
+  const log = { debug: sink, error: sink, info: sink, warn: sink };
   const device = { config: { mac: MAC } };
   const accessory = makeTestAccessory();
 
@@ -93,7 +94,7 @@ const makeDevice = (): { capture: MqttCapture; instance: TestProtectDevice } => 
   const nvr = {
 
     mqtt,
-    platform: { api: { hap: {} }, debug: sink, log: { debug: sink, error: sink, info: sink, warn: sink } },
+    platform: { api: { hap: {} }, debug: sink, log, pluginLog: log },
     signal: new AbortController().signal
   };
   const instance = new TestProtectDevice(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, device as unknown as Camera);
@@ -111,6 +112,7 @@ const makeController = (): { capture: MqttCapture; instance: TestProtectBase } =
 
   const capture: MqttCapture = { publish: [], subscribeGet: [], subscribeSet: [] };
   const sink = (): void => undefined;
+  const log = { debug: sink, error: sink, info: sink, warn: sink };
   const mqtt = {
 
     publish: async (topic: string): Promise<void> => { capture.publish.push(topic); },
@@ -120,7 +122,7 @@ const makeController = (): { capture: MqttCapture; instance: TestProtectBase } =
   const nvr = {
 
     mqtt,
-    platform: { api: { hap: {} }, debug: sink, log: { debug: sink, error: sink, info: sink, warn: sink } },
+    platform: { api: { hap: {} }, debug: sink, log, pluginLog: log },
     ufp: { mac: NVR_MAC }
   };
   const instance = new TestProtectBase(nvr as unknown as ProtectNvr);

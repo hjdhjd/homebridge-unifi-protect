@@ -4,7 +4,7 @@
  */
 import type { API, DynamicPlatformPlugin, Logging } from "homebridge";
 import { APIEvent, FeatureOptions, FfmpegCodecs, RtpPortAllocator, recordingProcessFactory, systemClock } from "homebridge-plugin-utils";
-import type { Clock, Nullable, RecordingProcessFactory } from "homebridge-plugin-utils";
+import type { Clock, HomebridgePluginLogging, Nullable, RecordingProcessFactory } from "homebridge-plugin-utils";
 import type { ProtectAccessory, ProtectPlatformConfig } from "./types.ts";
 import { featureOptionCategories, featureOptions } from "./options.ts";
 import { PROTECT_MQTT_TOPIC } from "./settings.ts";
@@ -25,6 +25,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
   private readonly controllers: ProtectNvr[];
   public readonly featureOptions: FeatureOptions;
   public readonly log: Logging;
+  public readonly pluginLog: HomebridgePluginLogging;
   public readonly recordingProcessFactory: RecordingProcessFactory;
   public readonly rtpPorts: RtpPortAllocator;
   public readonly streamingDelegateFactory: StreamingDelegateFactory;
@@ -38,6 +39,17 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
     this.controllers = [];
     this.featureOptions = new FeatureOptions(featureOptionCategories, featureOptions, config?.options ?? []);
     this.log = log;
+
+    // The plugin-side logging root. Debug routes through our gated debug utility; the other levels route to the Homebridge logger, which formats each line
+    // once at the sink. Per-device and per-controller loggers derive from this root through prefixedLog, so the sink wiring lives here and nowhere else;
+    // this.log stays the raw Homebridge logger for direct platform-level output.
+    this.pluginLog = {
+
+      debug: (message: string, ...parameters: unknown[]): void => this.debug(message, ...parameters),
+      error: (message: string, ...parameters: unknown[]): void => this.log.error(message, ...parameters),
+      info: (message: string, ...parameters: unknown[]): void => this.log.info(message, ...parameters),
+      warn: (message: string, ...parameters: unknown[]): void => this.log.warn(message, ...parameters)
+    };
     this.recordingProcessFactory = recordingProcessFactory;
     this.rtpPorts = new RtpPortAllocator();
     this.streamingDelegateFactory = streamingDelegateFactory;

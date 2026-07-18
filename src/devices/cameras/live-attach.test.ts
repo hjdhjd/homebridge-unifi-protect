@@ -36,11 +36,11 @@ function construct(nvr: TestProtectNvr, accessory: TestAccessory, projection: Te
   return new ProtectCamera(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Camera);
 }
 
-// The count of log lines at the given level whose first format string contains the given fragment - the harness records the raw parameters,
-// so we match the message template.
+// The count of log lines at the given level whose rendered text contains the given fragment - the harness records the line the real Homebridge logger would emit into
+// entry.formatted, so we match against that rendered line.
 function countLogs(entries: TestLogEntry[], level: TestLogEntry["level"], fragment: string): number {
 
-  return entries.filter((entry) => (entry.level === level) && (typeof entry.parameters[0] === "string") && entry.parameters[0].includes(fragment)).length;
+  return entries.filter((entry) => (entry.level === level) && entry.formatted.includes(fragment)).length;
 }
 
 describe("live-attach reclassification (suite C)", () => {

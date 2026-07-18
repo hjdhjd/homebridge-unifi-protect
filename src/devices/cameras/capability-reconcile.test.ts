@@ -880,7 +880,7 @@ describe("the camera capability reconcile - the night vision dimmer", () => {
     // buffer, so a boolean could not tell a once-logged dimmer from a twice-logged one.
     const enablingLogCount = (): number => {
 
-      return logEntries.filter((entry) => (entry.level === "info") && String(entry.parameters[0]).includes("Enabling night vision dimmer.")).length;
+      return logEntries.filter((entry) => (entry.level === "info") && entry.formatted.includes("Enabling night vision dimmer.")).length;
     };
 
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));

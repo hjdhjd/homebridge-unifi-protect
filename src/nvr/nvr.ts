@@ -3,7 +3,7 @@
  * nvr.ts: NVR device class for UniFi Protect.
  */
 import type { API, HAP } from "homebridge";
-import { APIEvent, MqttClient, formatErrorMessage, formatSeconds, loopFaultReporter, retry, sanitizeName, superviseLoop } from "homebridge-plugin-utils";
+import { APIEvent, MqttClient, formatErrorMessage, formatSeconds, loopFaultReporter, prefixedLog, retry, sanitizeName, superviseLoop } from "homebridge-plugin-utils";
 import type { Camera, CollectionSelectors, DeviceCollectionKey, HttpRequestEndPayload, LivestreamRecoveryRecoveredPayload, LivestreamRecoveryStartedPayload,
   ProtectDeviceConfig, ProtectDeviceConfigMap, ProtectLogging, ProtectNvrConfig } from "unifi-protect";
 import { DEVICE_COLLECTION_KEYS, ProtectClient, deviceSelectors, channels as protectChannels } from "unifi-protect";
@@ -36,7 +36,6 @@ import { exhaustiveGuard } from "../types.ts";
 import { livestreamRecoveryDecision } from "../media/livestream-recovery-policy.ts";
 import { servePlaylist } from "./nvr-playlist.ts";
 import { setTimeout as sleep } from "node:timers/promises";
-import util from "node:util";
 
 /**
  * The NVR's lifecycle phase. The single source of truth for "what is this NVR doing right now?", consulted by every component that needs to distinguish induced
@@ -117,7 +116,7 @@ export class ProtectNvr {
   public systemInfo: Nullable<ProtectNvrSystemInfo>;
   private unsupportedDevices: Record<string, boolean>;
   // The unifi-protect client logger. Shares the controller-log destination but gates error output through `logApiErrors` so induced-disruption noise is suppressed. Typed
-  // as the unifi-protect library's own ProtectLogging seam so it is single-sourced with the contract ProtectClient.connect() expects.
+  // as the unifi-protect library's own ProtectLogging contract, single-sourced with what ProtectClient.connect() expects.
   private readonly clientLog: ProtectLogging;
   // The one place the device-category vocabulary is wired to its selectors, projections, and constructors. The membership observe loops, the stability sweep, and the
   // per-fire stillGone re-check read the content-memoized adopted-id set through `.selectors.adoptedIds`; adoption resolves the live unifi-protect projection through
@@ -165,29 +164,21 @@ export class ProtectNvr {
     this.systemInfo = null;
     this.unsupportedDevices = {};
 
-    // Configure the unifi-protect client logging. Error output is gated by `logApiErrors` so induced disruptions stay quiet.
+    // The unifi-protect client logger: the plugin logging root, with error output gated by logApiErrors so induced-disruption noise stays quiet.
     this.clientLog = {
 
-      debug: (message: string, ...parameters: unknown[]): void => { this.platform.debug(util.format(message, ...parameters)); },
+      ...this.platform.pluginLog,
       error: (message: string, ...parameters: unknown[]): void => {
 
         if(this.logApiErrors) {
 
-          this.platform.log.error(util.format(message, ...parameters));
+          this.platform.pluginLog.error(message, ...parameters);
         }
-      },
-      info: (message: string, ...parameters: unknown[]): void => { this.platform.log.info(util.format(message, ...parameters)); },
-      warn: (message: string, ...parameters: unknown[]): void => { this.platform.log.warn(util.format(message, ...parameters)); }
+      }
     };
 
-    // Configure our controller logging.
-    this.log = {
-
-      debug: (message: string, ...parameters: unknown[]): void => { this.platform.debug(util.format(this.name + ": " + message, ...parameters)); },
-      error: (message: string, ...parameters: unknown[]): void => { this.platform.log.error(util.format(this.name + ": " + message, ...parameters)); },
-      info: (message: string, ...parameters: unknown[]): void => { this.platform.log.info(util.format(this.name + ": " + message, ...parameters)); },
-      warn: (message: string, ...parameters: unknown[]): void => { this.platform.log.warn(util.format(this.name + ": " + message, ...parameters)); }
-    };
+    // Derive our controller logger from the plugin logging root, prefixing every line with this.name so controller output is attributable at a glance.
+    this.log = prefixedLog(this.platform.pluginLog, () => this.name);
 
     // Initialize the NVR-health observer. This is the single source of truth across the plugin for the NVR's current operating condition. Every subsystem that
     // wants to make a stress-aware decision reads `this.health.state`; every subsystem that observes a symptom calls `this.health.observe(...)`. Its connection

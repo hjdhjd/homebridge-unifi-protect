@@ -49,6 +49,7 @@ import { ProtectEventDispatch } from "./nvr/event-dispatch.ts";
 import type { ProtectHints } from "./devices/device.ts";
 import type { ProtectPlatform } from "./platform.ts";
 import type { SnapshotSource } from "./media/timeshift.ts";
+import util from "node:util";
 
 // Identity class for a HAP Characteristic kind. Each characteristic kind is its own marker class; production code passes the class as a key to
 // getCharacteristic / updateCharacteristic. Carries a hapKind instance property so test failures surface the kind directly in inspect output and so the class is
@@ -3174,10 +3175,12 @@ export function makeTestCameraHost(options: { clock?: TestClock; recordingProces
   return { accessory, clock, controller, host, logEntries, nvr };
 }
 
-// One captured log line from the harness's recording sinks: the level it was emitted at and the raw parameters, so a test can assert on (or ignore) whatever the
-// construction path logged.
+// One captured log line from the harness's recording sinks. `parameters` is the raw argument list exactly as the caller passed it, so a media test can read a structured
+// object argument straight off it; `formatted` is the single line Homebridge's logger would write, derived by running util.format over those parameters the same way the
+// real sink does, so a test asserting on final substituted text reads it rather than reassembling the arguments. `level` is the severity the line was emitted at.
 export interface TestLogEntry {
 
+  formatted: string;
   level: "debug" | "error" | "info" | "warn";
   parameters: unknown[];
 }
@@ -3270,6 +3273,7 @@ export interface TestProtectPlatform {
     info: (...parameters: unknown[]) => void;
     warn: (...parameters: unknown[]) => void;
   };
+  readonly pluginLog: HomebridgePluginLogging;
   readonly recordingProcessFactory: RecordingProcessFactory;
   readonly streamingDelegateFactory: TestStreamingDelegateFactory;
 }
@@ -3622,7 +3626,11 @@ export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: T
   const logEntries: TestLogEntry[] = [];
   const recordingProcessFactory = options.recordingProcessFactory ?? new TestRecordingProcessFactory();
   const mqtt = options.mqtt ? new TestMqttClient() : null;
-  const sink = (level: TestLogEntry["level"]): ((...parameters: unknown[]) => void) => (...parameters: unknown[]): void => { logEntries.push({ level, parameters }); };
+  const sink = (level: TestLogEntry["level"]): ((...parameters: unknown[]) => void) => (...parameters: unknown[]): void => {
+
+    // Capture both channels: the raw argument list for media tests that read a structured object argument, and the util.format line the real Homebridge sink would emit.
+    logEntries.push({ formatted: util.format(...parameters as [string, ...unknown[]]), level, parameters });
+  };
   const log = { debug: sink("debug"), error: sink("error"), info: sink("info"), warn: sink("warn") };
   const client = {
 
@@ -3711,6 +3719,7 @@ export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: T
       debug: sink("debug"),
       featureOptions: new FeatureOptions(featureOptionCategories, featureOptions, options.userOptions ?? []),
       log: log,
+      pluginLog: log,
       recordingProcessFactory: recordingProcessFactory,
       streamingDelegateFactory: factory
     },

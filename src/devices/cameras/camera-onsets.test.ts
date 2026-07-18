@@ -79,11 +79,12 @@ async function buildCamera(options: { featureFlags?: Partial<ProtectCameraConfig
   return { accessory, camera, cameraConfig, controller, factory, logEntries, nvr, projection };
 }
 
-// A log assertion matches a substring of the single formatted parameter at the given level, mirroring chime.test.ts's loggedAt: the device log wrapper formats every line
-// through util.format into one string parameter prefixed with the device name, so a substring match reads as the intent (did the camera log this line at this level).
+// A log assertion matches a substring of entry.formatted at the given level, mirroring chime.test.ts's loggedAt: the device logger prefixes every line with the device
+// name and the harness renders what the real Homebridge logger would emit into entry.formatted, so a substring match reads as the intent (did the camera log this line at
+// this level).
 function loggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], substring: string): boolean {
 
-  return entries.some((entry) => (entry.level === level) && String(entry.parameters[0]).includes(substring));
+  return entries.some((entry) => (entry.level === level) && entry.formatted.includes(substring));
 }
 
 describe("camera-family device.update-backed onSet handlers (camera-onsets concern net)", () => {

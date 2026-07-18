@@ -39,12 +39,12 @@ import assert from "node:assert/strict";
 // loudly.
 const SYSTEMINFO_UUID = "uuid:74ACB9FFFFFF.NVRSystemInfo";
 
-// The device log wrapper formats every line through util.format into a single string parameter prefixed with the controller name (for example "Test Controller: Enabled
-// system information sensor: cpu temperature."), so a log assertion matches a substring of that one formatted parameter at the given level, mirroring the sensor /
-// device-motion suites' helper.
+// The controller logger prefixes every line with the controller name; the harness renders what the real Homebridge logger would emit into entry.formatted (for example
+// "Test Controller: Enabled system information sensor: cpu temperature."), so a log assertion matches a substring of that rendered line at the given level, mirroring the
+// sensor / device-motion suites' helper.
 function loggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], substring: string): boolean {
 
-  return entries.some((entry) => (entry.level === level) && String(entry.parameters[0]).includes(substring));
+  return entries.some((entry) => (entry.level === level) && entry.formatted.includes(substring));
 }
 
 // The reusable construction helper: build a REAL ProtectNvrSystemInfo against the harness doubles, taking ONLY an nvr (the owner extends ProtectBase, so its ctor is

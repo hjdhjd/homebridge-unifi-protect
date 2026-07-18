@@ -108,7 +108,7 @@ describe("package camera remove-on-false (BC2)", () => {
     assert.deepEqual(motionPublishes, [ "true", "false" ], "exactly one terminal motion reset follows the latched motion on the shared topic");
 
     // The flow's one user-facing message is the schedule-time reason.
-    assert.equal(logEntries.filter((entry) => String(entry.parameters[0]).includes("no longer reports a package camera")).length, 1,
+    assert.equal(logEntries.filter((entry) => entry.formatted.includes("no longer reports a package camera")).length, 1,
       "the removal decision is narrated exactly once");
 
     // Post-detach, the package is gone reactively too: only the doorbell's own observers remain and a state push wakes nothing attributed to the package.
@@ -169,7 +169,7 @@ describe("package camera remove-on-false (BC2)", () => {
 
     assert.equal(nvr.platform.accessories.includes(accessory), false, "the accessory left the platform array");
     assert.equal(apiCalls.filter((call) => call.kind === "unregister").length, 0, "an unbridged accessory is never unregistered - hap-nodejs would throw");
-    assert.equal(logEntries.filter((entry) => String(entry.parameters[0]).includes("manually delete the package camera accessory")).length, 1,
+    assert.equal(logEntries.filter((entry) => entry.formatted.includes("manually delete the package camera accessory")).length, 1,
       "the manual-deletion guidance is emitted exactly once");
 
     doorbell.cleanup();

@@ -28,12 +28,12 @@ import { ProtectViewer } from "./viewer.ts";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
 
-// The device log wrapper formats every line through util.format into a single string parameter prefixed with the device name (for example "Test Viewer: No liveviews
-// configured."), so a log assertion matches a substring of that one formatted parameter at the given level rather than re-deriving the format args. A plain substring
-// match (not a regex) keeps the house lint rules satisfied and reads as the intent: did the viewer log this line at this level.
+// The device logger prefixes every line with the device name; the harness renders what the real Homebridge logger would emit into entry.formatted (for example
+// "Test Viewer: No liveviews configured."), so a log assertion matches a substring of that rendered line at the given level rather than re-deriving the format args. A
+// plain substring match (not a regex) keeps the house lint rules satisfied and reads as the intent: did the viewer log this line at this level.
 function loggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], substring: string): boolean {
 
-  return entries.some((entry) => (entry.level === level) && String(entry.parameters[0]).includes(substring));
+  return entries.some((entry) => (entry.level === level) && entry.formatted.includes(substring));
 }
 
 // The reusable construction helper: build a REAL ProtectViewer against the harness doubles, seeding the viewer record plus whatever liveviews the test wants. The casts

@@ -352,7 +352,7 @@ describe("real ProtectFob construction and behavior", () => {
     assert.ok(built.accessory.getService(Service.Battery), "the battery service is still present on an unrecognized fob");
 
     // ...but the adoption is never silent: one actionable warning names the unrecognized model.
-    const warned = built.logEntries.some((entry) => (entry.level === "warn") && String(entry.parameters[0]).includes("not a recognized model"));
+    const warned = built.logEntries.some((entry) => (entry.level === "warn") && entry.formatted.includes("not a recognized model"));
 
     assert.ok(warned, "an unrecognized fob logs one actionable warning rather than adopting silently");
 

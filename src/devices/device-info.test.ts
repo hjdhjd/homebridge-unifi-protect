@@ -41,12 +41,12 @@ import type { ProtectNvr } from "../nvr/nvr.ts";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
 
-// The device log wrapper formats every line through util.format into a single string parameter prefixed with the device name (for example "Test Sensor: Detected a name
-// change on the controller; updating the HomeKit name to Renamed Sensor."), so a log assertion matches a substring of that one formatted parameter at the given level,
-// mirroring the device-motion / device-statusled suites' helper.
+// The device logger prefixes every line with the device name; the harness renders what the real Homebridge logger would emit into entry.formatted (for example
+// "Test Sensor: Detected a name change on the controller; updating the HomeKit name to Renamed Sensor."), so a log assertion matches a substring of that rendered line
+// at the given level, mirroring the device-motion / device-statusled suites' helper.
 function loggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], substring: string): boolean {
 
-  return entries.some((entry) => (entry.level === level) && String(entry.parameters[0]).includes(substring));
+  return entries.some((entry) => (entry.level === level) && entry.formatted.includes(substring));
 }
 
 // The reusable construction helper: build a REAL TestBaseDevice (a concrete ProtectDevice leaf whose ctor only super()s) against the harness doubles, seeded with the
@@ -281,6 +281,24 @@ describe("base ProtectDevice device-information capability (device-info concern 
       assert.deepEqual(wakeLog.slice(baseline), [{ accessoryId: accessory.UUID, key: "device.firmwareVersion" }],
         "exactly the device.firmwareVersion observer woke for this slice");
       assert.equal(info.getCharacteristic(Characteristic.FirmwareRevision).value, "5.1.0", "the reaction refreshed the FirmwareRevision characteristic to the new value");
+    });
+  });
+
+  describe("the device log prefix (prefixedLog derivation)", () => {
+
+    test("a base device's log line is prefixed with its logName and the family separator", () => {
+
+      assert.ok(device, "the device was built");
+
+      // Emit a line through the device's own logger and read back the harness's rendered `formatted` - the line the real Homebridge sink would write. It must begin with
+      // the device's "Name [Model]" descriptor and the family's ": " separator, the derivation prefixedLog applies at every device construction site.
+      device.log.info("A base-device prefix probe.");
+
+      const entry = logEntries.find((candidate) => (candidate.level === "info") && candidate.formatted.endsWith("A base-device prefix probe."));
+
+      assert.ok(entry, "the probe line was captured");
+      assert.ok(entry.formatted.startsWith("Test Sensor [Test Sensor Model]: "), "the line carries the device's logName prefix and the family separator");
+      assert.equal(entry.formatted, "Test Sensor [Test Sensor Model]: A base-device prefix probe.", "the rendered line is exactly the prefix plus the message");
     });
   });
 });

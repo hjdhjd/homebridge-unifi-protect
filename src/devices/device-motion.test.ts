@@ -32,11 +32,11 @@ import { ProtectReservedNames } from "../types.ts";
 import type { Sensor } from "unifi-protect";
 import assert from "node:assert/strict";
 
-// The device log wrapper formats every line through util.format into a single string parameter prefixed with the device name (for example "Test Sensor: Motion detection
-// enabled."), so a log assertion matches a substring of that one formatted parameter at the given level, mirroring the chime suite's helper.
+// The device logger prefixes every line with the device name; the harness renders what the real Homebridge logger would emit into entry.formatted (for example
+// "Test Sensor: Motion detection enabled."), so a log assertion matches a substring of that rendered line at the given level, mirroring the chime suite's helper.
 function loggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], substring: string): boolean {
 
-  return entries.some((entry) => (entry.level === level) && String(entry.parameters[0]).includes(substring));
+  return entries.some((entry) => (entry.level === level) && entry.formatted.includes(substring));
 }
 
 // Await the bare setTimeout(...,50) reverts the motion trigger arms outside this.timers, so the revert fires within the test rather than after teardown. 60ms clears the

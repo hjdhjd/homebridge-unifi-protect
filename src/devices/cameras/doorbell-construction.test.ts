@@ -293,11 +293,11 @@ describe("doorbell + package camera family construction (suite B)", () => {
 
     // The package camera carries its OWN decorated "Name [Model]" log prefix - the parent's name with the Package Camera suffix - so its log lines are attributable
     // rather than colliding with the doorbell's. It shares the underlying projection and market name, so only the suffix on the name keeps the two prefixes distinct.
-    const renameLines = logEntries.filter((entry) => (entry.level === "info") && String(entry.parameters[0]).includes("updating the HomeKit name to"));
+    const renameLines = logEntries.filter((entry) => (entry.level === "info") && entry.formatted.includes("updating the HomeKit name to"));
 
-    assert.equal(renameLines.filter((entry) => String(entry.parameters[0]).includes("New Door Package Camera.")).length, 1,
+    assert.equal(renameLines.filter((entry) => entry.formatted.includes("New Door Package Camera.")).length, 1,
       "the package logs exactly one rename line of its own");
-    assert.ok(renameLines.some((entry) => String(entry.parameters[0]).startsWith("New Door Package Camera [Test Camera Model]: ")),
+    assert.ok(renameLines.some((entry) => entry.formatted.startsWith("New Door Package Camera [Test Camera Model]: ")),
       "the package's rename line carries its own suffixed \"Name [Model]\" prefix, distinct from the doorbell's");
   });
 

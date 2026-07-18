@@ -38,12 +38,12 @@ import type { ProtectNvr } from "../nvr/nvr.ts";
 import type { Sensor } from "unifi-protect";
 import assert from "node:assert/strict";
 
-// The device log wrapper formats every line through util.format into a single string parameter prefixed with the device name (for example "Test Sensor: Motion event
-// duration set to 20 seconds."), so a log assertion matches a substring of that one formatted parameter at the given level, mirroring the device-motion /
-// device-statusled suites' helper.
+// The device logger prefixes every line with the device name; the harness renders what the real Homebridge logger would emit into entry.formatted (for example
+// "Test Sensor: Motion event duration set to 20 seconds."), so a log assertion matches a substring of that rendered line at the given level, mirroring the
+// device-motion / device-statusled suites' helper.
 function loggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], substring: string): boolean {
 
-  return entries.some((entry) => (entry.level === level) && String(entry.parameters[0]).includes(substring));
+  return entries.some((entry) => (entry.level === level) && entry.formatted.includes(substring));
 }
 
 // The reusable construction helper: build a REAL TestBaseDevice (a concrete ProtectDevice leaf whose ctor only super()s) against the harness doubles, seeded with the

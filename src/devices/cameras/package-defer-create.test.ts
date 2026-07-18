@@ -43,7 +43,7 @@ describe("package camera defer-create (BC1)", () => {
   // Count the user-facing deferral narrations logged so far.
   function deferralLineCount(): number {
 
-    return logEntries.filter((entry) => (entry.level === "info") && String(entry.parameters[0]).includes(DEFERRAL_FRAGMENT)).length;
+    return logEntries.filter((entry) => (entry.level === "info") && entry.formatted.includes(DEFERRAL_FRAGMENT)).length;
   }
 
   // The package camera's accessory, asserted live.

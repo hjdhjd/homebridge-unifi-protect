@@ -51,11 +51,11 @@ function liveviewUuid(name: string): string {
   return "uuid:" + CONTROLLER_MAC + ".Liveview." + name.toUpperCase();
 }
 
-// The device log wrapper formats every line through util.format into a single string parameter prefixed with the controller name, so a log assertion matches a substring
-// of that one formatted parameter at the given level, mirroring the nvr-systeminfo / security-system suites.
+// The controller logger prefixes every line with the controller name and the harness renders what the real Homebridge logger would emit into entry.formatted, so a log
+// assertion matches a substring of that rendered line at the given level, mirroring the nvr-systeminfo / security-system suites.
 function loggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], substring: string): boolean {
 
-  return entries.some((entry) => (entry.level === level) && String(entry.parameters[0]).includes(substring));
+  return entries.some((entry) => (entry.level === level) && entry.formatted.includes(substring));
 }
 
 // Seed a member-camera double into the NVR's configuredDevices registry so the liveviews motion fanout resolves it via getDeviceById. The fanout targets the member's

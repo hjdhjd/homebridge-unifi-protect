@@ -44,11 +44,12 @@ const CONTROLLER_MAC = "74ACB9FFFFFF";
 const CurrentState = Characteristic.SecuritySystemCurrentState;
 const TargetState = Characteristic.SecuritySystemTargetState;
 
-// The device log wrapper formats every line through util.format into a single string parameter prefixed with the controller name (for example "Test Controller:
-// Enabling the security alarm switch..."), so a log assertion matches a substring of that one formatted parameter at the given level, mirroring the sibling suites.
+// The controller logger prefixes every line with the controller name; the harness renders what the real Homebridge logger would emit into entry.formatted (for example
+// "Test Controller: Enabling the security alarm switch..."), so a log assertion matches a substring of that rendered line at the given level, mirroring the sibling
+// suites.
 function loggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], substring: string): boolean {
 
-  return entries.some((entry) => (entry.level === level) && String(entry.parameters[0]).includes(substring));
+  return entries.some((entry) => (entry.level === level) && entry.formatted.includes(substring));
 }
 
 // Seed a member device double into the NVR's configuredDevices registry AND the platform accessories array so the cross-camera motion fanout resolves it. The fanout

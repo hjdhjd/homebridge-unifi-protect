@@ -49,10 +49,11 @@ const makeReachableDevice = (accessory: TestAccessory):
     present: true };
   const hap = { Characteristic: { StatusActive: Characteristic.StatusActive } };
   const sink = (...args: unknown[]): void => { captured.push(args); };
+  const log = { debug: sink, error: sink, info: sink, warn: sink };
   const nvr = {
 
     client: { connection },
-    platform: { api: { hap }, debug: sink, log: { debug: sink, error: sink, info: sink, warn: sink } },
+    platform: { api: { hap }, debug: sink, log, pluginLog: log },
     signal: new AbortController().signal
   };
   const instance = new TestProtectDevice(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, device as unknown as Camera);

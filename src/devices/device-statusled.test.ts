@@ -39,11 +39,12 @@ import { ProtectReservedNames } from "../types.ts";
 import type { Sensor } from "unifi-protect";
 import assert from "node:assert/strict";
 
-// The device log wrapper formats every line through util.format into a single string parameter prefixed with the device name (for example "Test Sensor: Status indicator
-// light enabled."), so a log assertion matches a substring of that one formatted parameter at the given level, mirroring the device-motion / chime suites' helper.
+// The device logger prefixes every line with the device name; the harness renders what the real Homebridge logger would emit into entry.formatted (for example
+// "Test Sensor: Status indicator light enabled."), so a log assertion matches a substring of that rendered line at the given level, mirroring the device-motion / chime
+// suites' helper.
 function loggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], substring: string): boolean {
 
-  return entries.some((entry) => (entry.level === level) && String(entry.parameters[0]).includes(substring));
+  return entries.some((entry) => (entry.level === level) && entry.formatted.includes(substring));
 }
 
 // A tail-exact variant of loggedAt: it requires a formatted line at the given level to END WITH the supplied suffix. The failure-path assertion uses this so a regression
@@ -51,7 +52,7 @@ function loggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], substri
 // test, where a plain includes() of the single-period suffix would still match the doubled-period substring and let the regression through.
 function tailLoggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], suffix: string): boolean {
 
-  return entries.some((entry) => (entry.level === level) && String(entry.parameters[0]).endsWith(suffix));
+  return entries.some((entry) => (entry.level === level) && entry.formatted.endsWith(suffix));
 }
 
 // The reusable construction helper: build a REAL TestBaseDevice (a concrete ProtectDevice leaf whose ctor only super()s) against the harness doubles, seeded with the

@@ -23,6 +23,7 @@ import { ProtectDevice } from "./device.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import type { TestService } from "../testing.helpers.ts";
 import assert from "node:assert/strict";
+import util from "node:util";
 
 // The smallest concrete leaf of the abstract base, mirroring reachability.test.ts. ProtectDevice declares no abstract members, so this adds nothing but a public window
 // onto the protected command helper - runDeviceCommand, setStatusLed, and statusLedCommand are all the base's own, inherited unchanged.
@@ -45,12 +46,15 @@ interface CommandHarness {
 }
 
 // Construct a real ProtectDevice against the minimal mocks the command path reads: a projection carrying modelKey (statusLedCommand narrows on it), name (the log
-// prefix), and the write-through update thunk; a platform whose log.error captures the formatted failure line; and a real AbortSignal for composeSignals. The casts are
-// confined to this seam; the instance itself is the production class.
+// prefix), and the write-through update thunk; a platform whose plugin logging root captures the rendered failure line; and a real AbortSignal for composeSignals. The
+// casts are confined to this construction point; the instance itself is the production class.
 const makeDevice = (update: (payload: unknown) => Promise<unknown> = () => Promise.resolve({}), modelKey = "camera"): CommandHarness => {
 
   const errors: string[] = [];
   const sink = (): void => undefined;
+  // The device derives its prefixed logger from the platform's plugin logging root, so the capture lives on pluginLog. error renders the line through util.format - the
+  // line the real Homebridge sink would write - so a command test matches against the final substituted text; the other levels sink.
+  const log = { debug: sink, error: (message: string, ...parameters: unknown[]): void => { errors.push(util.format(message, ...parameters)); }, info: sink, warn: sink };
   // logName reads the live record through peek() (non-throwing), so the projection mock exposes it alongside config; the empty config makes describeDevice render the
   // same bare descriptor logName produces.
   const config = {};
@@ -59,7 +63,7 @@ const makeDevice = (update: (payload: unknown) => Promise<unknown> = () => Promi
   const nvr = {
 
     client: { connection: { isHealthy: true } },
-    platform: { api: { hap }, debug: sink, log: { debug: sink, error: (message: string): void => { errors.push(message); }, info: sink, warn: sink } },
+    platform: { api: { hap }, debug: sink, log, pluginLog: log },
     signal: new AbortController().signal
   };
   const instance = new TestProtectDevice(nvr as unknown as ProtectNvr, makeTestAccessory() as unknown as ProtectAccessory, device as unknown as Camera);

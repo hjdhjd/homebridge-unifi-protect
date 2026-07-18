@@ -86,11 +86,11 @@ interface BuiltDoorbell {
   nvr: TestProtectNvr;
 }
 
-// A log assertion matches a substring of the single formatted parameter at the given level, mirroring camera-onsets.test.ts / chime.test.ts: the device log wrapper
-// formats every line into one string parameter, so we narrow to that one and substring-match it.
+// A log assertion matches a substring of entry.formatted at the given level, mirroring camera-onsets.test.ts / chime.test.ts: the device logger prefixes every line with
+// the device name and the harness renders what the real Homebridge logger would emit into entry.formatted, so we substring-match that rendered line.
 function loggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], substring: string): boolean {
 
-  return entries.some((entry) => (entry.level === level) && (typeof entry.parameters[0] === "string") && entry.parameters[0].includes(substring));
+  return entries.some((entry) => (entry.level === level) && entry.formatted.includes(substring));
 }
 
 // Build a REAL ProtectCamera against an isDoorbell-true config (so it construction-attaches its DoorbellCapability), exactly as doorbell-construction.test.ts

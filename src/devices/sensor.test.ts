@@ -46,18 +46,19 @@ import type { Sensor } from "unifi-protect";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
 
-// The device log wrapper formats every line through util.format into a single string parameter prefixed with the device name (for example "Test Sensor: Enabled sensor:
-// temperature."), so a log assertion matches a substring of that one formatted parameter at the given level, mirroring the chime / device-motion suites' helper.
+// The device logger prefixes every line with the device name; the harness renders what the real Homebridge logger would emit into entry.formatted (for example
+// "Test Sensor: Enabled sensor: temperature."), so a log assertion matches a substring of that rendered line at the given level, mirroring the chime / device-motion
+// suites' helper.
 function loggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], substring: string): boolean {
 
-  return entries.some((entry) => (entry.level === level) && String(entry.parameters[0]).includes(substring));
+  return entries.some((entry) => (entry.level === level) && entry.formatted.includes(substring));
 }
 
 // The count companion to loggedAt: how MANY log lines at the given level contain the substring. The alarm-family transition assertions need an exact count (a transition
 // must log EXACTLY once per edge), which the presence-only loggedAt cannot express; loggedAt stays fine for absence assertions.
 function countLoggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], substring: string): number {
 
-  return entries.filter((entry) => (entry.level === level) && String(entry.parameters[0]).includes(substring)).length;
+  return entries.filter((entry) => (entry.level === level) && entry.formatted.includes(substring)).length;
 }
 
 // The reusable construction helper: build a REAL ProtectSensor against the harness doubles, with the recording dispatch injected through the NVR double's dispatch seam
