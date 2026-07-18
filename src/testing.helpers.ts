@@ -3005,6 +3005,8 @@ export interface ControllableLivestreamDouble extends LivestreamSubscription {
   end(): void;
   push(segment: Segment): void;
   readonly reassessCalls: number;
+  // Resolve a deferred whenEstablished() to true, committing a start that was held in flight - the release handle for the deferEstablishment gate.
+  releaseEstablishment(): void;
   throwError(error: unknown): void;
 }
 
@@ -3019,14 +3021,15 @@ export interface ControllableLivestreamDouble extends LivestreamSubscription {
  * The park keeps isStarted true: while the queue is open and the double is not ended/disposed the generator NEVER completes (it parks), so the timeshift's
  * consumeSegments for-await stays open, its finally does not run, the subscription stays committed, and timeshift.isStarted reports true. end()/throwError()/dispose are
  * the iterator-termination drivers that feed that finally: each enqueues its terminal item AFTER any queued segments (drain-then-close, so queued media is not
- * dropped) and wakes the iterator. whenEstablished resolves immediately (default true) so start() commits the subscription before the test pushes media.
+ * dropped) and wakes the iterator. whenEstablished resolves immediately (default true) so start() commits the subscription before the test pushes media; setting
+ * deferEstablishment instead holds whenEstablished open until releaseEstablishment() resolves it true, so a start can be pinned in flight across a racing shutdown().
  *
  * The terminal transition is one-shot and idempotent: once the generator has returned (end/dispose) or thrown (error), the double is terminated and push/end/throwError
  * and a second dispose are NO-OPS, and the parking resolver is resolved at most once (guarded so no double-resolve). asyncDispose records disposed = true and signals a
  * graceful end if the double is not already terminated.
  */
-export function makeControllableLivestreamDouble(options: { id?: string; initSegment?: { codec: string; data: Buffer } | null; state?: LivestreamSubscriptionState;
-  whenEstablished?: boolean; } = {}): ControllableLivestreamDouble {
+export function makeControllableLivestreamDouble(options: { deferEstablishment?: boolean; id?: string; initSegment?: { codec: string; data: Buffer } | null;
+  state?: LivestreamSubscriptionState; whenEstablished?: boolean; } = {}): ControllableLivestreamDouble {
 
   // The runtime-fed item queue and the lifecycle flags. terminated latches once the generator returns or throws, after which every control method no-ops.
   const queue: ({ kind: "segment"; segment: Segment } | { kind: "end" } | { kind: "error"; error: unknown })[] = [];
@@ -3042,6 +3045,11 @@ export function makeControllableLivestreamDouble(options: { id?: string; initSeg
   // The one-shot park resolver: the generator stores its resolver here before awaiting, and wake() resolves and clears it. Holding at most one resolver and clearing it
   // on resolve guarantees no double-resolve and no stale wake.
   let wakeResolver: (() => void) | null = null;
+
+  // The deferred-establishment gate for the shutdown-versus-in-flight-start race. When deferEstablishment is set, whenEstablished() parks on this resolver until the
+  // test calls releaseEstablishment(), so a start can be held in flight while shutdown() runs and then committed afterward. The release resolves to true specifically,
+  // since a release-to-decline would never commit the subscription. Without the gate, whenEstablished resolves immediately.
+  let establishmentResolver: ((established: boolean) => void) | null = null;
 
   // Wake a parked generator, if one is parked. Resolving and clearing in one step keeps the resolver one-shot.
   const wake = (): void => {
@@ -3079,9 +3087,24 @@ export function makeControllableLivestreamDouble(options: { id?: string; initSeg
 
       return reassessCalls;
     },
+    releaseEstablishment: (): void => {
+
+      const resolve = establishmentResolver;
+
+      establishmentResolver = null;
+      resolve?.(true);
+    },
     state: options.state ?? "live",
     throwError: (error: unknown): void => enqueue({ error, kind: "error" }),
-    whenEstablished: async (): Promise<boolean> => options.whenEstablished ?? true,
+    whenEstablished: async (): Promise<boolean> => {
+
+      if(options.deferEstablishment) {
+
+        return new Promise<boolean>((resolve) => { establishmentResolver = resolve; });
+      }
+
+      return options.whenEstablished ?? true;
+    },
     [Symbol.asyncIterator]: async function *(): AsyncGenerator<Segment> {
 
       // The drain-loop: process the whole queue, then park only when it is empty and we have not yet terminated. On wake, the outer while re-checks the queue.

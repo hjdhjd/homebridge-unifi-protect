@@ -585,6 +585,49 @@ describe("timeshift supervisor shutdown latch", () => {
 
     assert.equal(fresh.buffer.isStarted, true, "the fresh supervisor's buffer is running");
   });
+
+  // The widened guard's isShutdown arm, driven through the REAL shutdown-versus-in-flight-start race rather than a hook. A fresh first-enable starts the buffer, but
+  // the start is held in flight on a gated establishment; shutdown() runs while it is pending, so the latch arms and stop() no-ops on the not-yet-committed subscription;
+  // then the establishment releases and the start commits AFTER shutdown returned, resuming the pass into the guard with isShutdown TRUE and isStarted TRUE. Only the
+  // isShutdown arm stands between that race and the narration - a guard stripped to !isStarted would pass here, since the racing start did commit. The pass must narrate
+  // nothing, and the follow-up pass shutdown() re-armed must settle the buffer stopped.
+  test("a start that commits after shutdown races it narrates nothing and settles stopped", async () => {
+
+    const { controller, host, logEntries } = makeTestCameraHost();
+
+    controllers.push(controller);
+
+    host.stream = new TestStreamingDelegate();
+    host.selectSubstrateChannel = (): ChannelProfile => makeChannelProfile(host);
+
+    // Queue a double whose establishment stays open until the test releases it, so the first start parks in flight.
+    const double = makeControllableLivestreamDouble({ deferEstablishment: true });
+
+    host.livestreamSubscriptions.push(double);
+
+    const supervisor = new ProtectTimeshiftSupervisor(host);
+
+    // Enable recording. The reconcile reaches buffer.start and parks on the gated establishment, so the subscription is not yet committed.
+    const enablePromise = supervisor.setRecordingDemand({ config: makeRecordingConfig(), isRecording: true });
+
+    await settle();
+
+    assert.equal(supervisor.buffer.isStarted, false, "the start is held in flight, not yet committed");
+
+    // Shutdown races the pending start: the latch arms first, then stop() no-ops on the uncommitted subscription - the mitigation the widened guard pins.
+    supervisor.shutdown();
+
+    // Release establishment so the held start commits AFTER shutdown returned, resuming the pass into the guard with isShutdown true and isStarted true.
+    double.releaseEstablishment();
+
+    await enablePromise;
+    await settle();
+
+    assert.equal(countLogs(logEntries, "info", "HKSV:"), 0, "the shutdown-raced start emitted no acknowledgment - only the isShutdown arm suppressed it");
+    assert.equal(countLogs(logEntries, "warn", "has started now that the camera is online"), 0, "no deferral resolution narrated at warn");
+    assert.equal(countLogs(logEntries, "debug", "has started now that the camera is online"), 0, "no deferral resolution narrated at debug");
+    assert.equal(supervisor.buffer.isStarted, false, "the follow-up pass the shutdown re-armed settled the buffer stopped");
+  });
 });
 
 describe("timeshift supervisor buffer channel-profile lifecycle", () => {
