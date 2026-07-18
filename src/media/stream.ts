@@ -1140,15 +1140,29 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
       ffmpegReturnAudioCmd.push("-loglevel", "level+debug");
     }
 
-    // Wait for the first RTP packet to be forwarded before launching the return-audio FFmpeg. mediaReady resolves on the first forwarded RTP and rejects with the
-    // signal's reason if the demuxer aborts before any RTP arrives (it folds the isRunning discriminator into the reject path, so a STOP during the handshake bails
-    // cleanly). The null-narrow mirrors prepareStream: rtpDemuxer is non-null whenever two-way audio is active, which is the only path that reaches here.
+    // Wait for the first RTP packet to be forwarded before launching the return-audio FFmpeg. mediaReady resolves on the first forwarded RTP and rejects if the demuxer
+    // aborts before any RTP arrives. That rejection has two reachable causes: our own session tearing down (the session signal aborted - a clean stop with nothing to
+    // say), or the demuxer's socket faulting beneath a session that lives on (return audio is lost for the rest of the session, and the catch narrates it). The
+    // null-narrow mirrors prepareStream: rtpDemuxer is non-null whenever two-way audio is active, which is the only path that reaches here.
     if(sessionInfo.rtpDemuxer) {
 
       try {
 
         await sessionInfo.rtpDemuxer.mediaReady;
-      } catch {
+      } catch(error) {
+
+        // The demuxer settles this promise only from its teardown convergence: the rejection means either our own session is ending, or the demuxer's socket faulted
+        // beneath a session that lives on. isCleanTalkbackStop already owns that distinction for the talkback pipeline - route through it rather than re-deriving it.
+        // On teardown there is nothing to say; on a fault, the session continues without return audio, and that deserves one plain line - the demuxer has already
+        // logged the underlying socket error itself.
+        if(isCleanTalkbackStop(error, sessionInfo.abortController.signal)) {
+
+          this.log.debug("Session teardown ended the two-way audio handshake before the first return packet arrived.");
+
+          return;
+        }
+
+        this.log.info("Two-way audio is unavailable for the remainder of this session. The audio return channel could not be established.");
 
         return;
       }
