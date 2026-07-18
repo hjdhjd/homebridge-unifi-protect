@@ -403,6 +403,79 @@ describe("timeshift supervisor exit-window coalesce", () => {
   });
 });
 
+describe("timeshift supervisor narration liveness guard", () => {
+
+  // The consume loop runs detached from the start commit, so a buffer can die in the microtask window between a start settling and the pass narrating. A one-shot
+  // onStartSettled override lands the death exactly inside that window: it stops the buffer on the first settled start, then disarms so the follow-up pass the death
+  // re-arms can settle rather than re-entering the kill forever. Stopping the buffer synchronously drops isStarted and emits "stopped" (cause "ended"), which the
+  // supervisor's own listener re-arms the coalescing loop on; the one-shot flag keeps that re-armed pass from being killed too, so the loop settles instead of spinning.
+  class DeathAtSettleSupervisor extends ProtectTimeshiftSupervisor {
+
+    private killedOnce = false;
+
+    protected override onStartSettled(): void {
+
+      if(!this.killedOnce) {
+
+        this.killedOnce = true;
+        this.buffer.stop();
+      }
+    }
+  }
+
+  // A start that commits and then dies before the pass narrates must not celebrate a buffer that is already gone. We open a deferral episode (offline while
+  // recording) so a resolution is genuinely owed, bring the camera back with exactly one healthy livestream double over a STARVED fallback, and drive the death through
+  // the one-shot hook. Phase 1 asserts both narration lines stayed silent through the death and the failed re-establishment - a permissive media-segments arrangement
+  // would let the re-armed pass succeed and acknowledge inside the same outer await, so the fallback is starved to keep the retry failing. Phase 2 re-arms a healthy
+  // fallback and asserts each line fires exactly once, proving the guard suppressed the phantom without burning the acknowledgment latch or the pending deferral
+  // resolution.
+  test("suppresses the acknowledgment and deferral resolution for a buffer that dies in the settle window, and both survive for the honest retry", async () => {
+
+    const { controller, host, logEntries } = makeTestCameraHost();
+
+    controllers.push(controller);
+
+    host.stream = new TestStreamingDelegate();
+    host.selectSubstrateChannel = (): ChannelProfile => makeChannelProfile(host);
+
+    // Begin offline so the recording demand opens a deferral episode - the resolution a phantom narration would wrongly close.
+    host.isReachable = false;
+
+    const supervisor = new DeathAtSettleSupervisor(host);
+
+    // Open the deferral: recording demanded while offline. A resolution is now owed, and the acknowledgment has not fired, since the buffer never started.
+    await supervisor.setRecordingDemand({ config: makeRecordingConfig(), isRecording: true });
+    await settle();
+
+    assert.equal(countLogs(logEntries, "warn", "deferred until the camera is online"), 1, "the deferral episode opened while offline");
+
+    // Phase 1: the camera returns. The first start succeeds on the one queued double, but the death lands inside the settle window before the pass narrates. The death
+    // re-arms a follow-up pass, which falls back to the starved parking double and fails to re-establish, so nothing narrates at all.
+    host.isReachable = true;
+    host.livestreamMediaSegments = 0;
+    host.livestreamSubscriptions.push(makeControllableLivestreamDouble());
+
+    await supervisor.reconcile();
+    await settle();
+
+    assert.equal(countLogs(logEntries, "info", "HKSV:"), 0, "the phantom acknowledgment was suppressed for the buffer that died in the window");
+    assert.equal(countLogs(logEntries, "warn", "has started now that the camera is online"), 0, "the phantom deferral resolution was suppressed at warn");
+    assert.equal(countLogs(logEntries, "debug", "has started now that the camera is online"), 0, "the phantom deferral resolution was suppressed at debug");
+    assert.equal(supervisor.buffer.isStarted, false, "the starved follow-up pass could not re-establish, so the buffer is stopped");
+
+    // Phase 2: a healthy fallback re-arms. The honest retry re-establishes, and both suppressed lines fire exactly once - the acknowledgment latch and the pending
+    // deferral resolution both survived the phantom.
+    host.livestreamMediaSegments = Math.ceil(PROTECT_TIMESHIFT_BUFFER_MAXDURATION / PROTECT_SEGMENT_RESOLUTION) + 10;
+
+    await supervisor.reconcile();
+    await settle();
+
+    assert.equal(countLogs(logEntries, "info", "HKSV:"), 1, "the acknowledgment latch survived the phantom and fires once on the honest retry");
+    assert.equal(countLogs(logEntries, "warn", "has started now that the camera is online"), 1, "the deferral resolution survived and fires once on the honest retry");
+    assert.equal(supervisor.buffer.isStarted, true, "the honest retry re-established the buffer");
+  });
+});
+
 describe("timeshift supervisor enable-acknowledgment lifecycle", () => {
 
   // The "HKSV: ..." config summary fires once per enable EPISODE (not once per delegate lifetime, and not once per reconcile): exactly once on the first successful

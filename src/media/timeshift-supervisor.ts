@@ -205,6 +205,15 @@ export class ProtectTimeshiftSupervisor {
     // No-op in production.
   }
 
+  // Invoked after every successful pass settles its buffer state and before the pass narrates - the window where an organic death or a shutdown can race the
+  // narration. On a coalesced pass (the buffer already running) no await separates the state check from this call, so the window is real only when a fresh
+  // start preceded it; firing unconditionally keeps the call site simple. A no-op in production; the test suite overrides it to land exactly-timed events
+  // inside the window, the same role onReconcileLoopExit plays for the loop's exit edge.
+  protected onStartSettled(): void {
+
+    // No-op in production.
+  }
+
   // The reconciliation body. Computes desired state from current inputs and brings the actual state into alignment.
   //
   // The channel profile lives on the buffer as a matched pair with its subscription: the buffer commits it only when a start actually succeeds and clears it on
@@ -290,6 +299,10 @@ export class ProtectTimeshiftSupervisor {
     const alreadyRunning = this.buffer.isStarted && (desiredRtspEntry.channel.id === runningProfile?.channel.id) &&
       ((desiredRtspEntry.lens === undefined) || (desiredRtspEntry.lens === runningProfile.lens));
 
+    // Whether this pass performed a fresh start rather than finding the buffer already running. The streaming-arm start line narrates below the liveness guard, so this
+    // local carries the fact across the guard - a coalesced pass leaves it false and narrates nothing new.
+    let freshlyStarted = false;
+
     if(!alreadyRunning) {
 
       // Bring the actual state into alignment. Size the buffer immediately before every start - the supervisor is the single source of truth for the buffer depth, so a
@@ -301,11 +314,25 @@ export class ProtectTimeshiftSupervisor {
         return false;
       }
 
-      // A streaming-arm-only start narrates its lifecycle at debug; a start that also satisfies a recording request is announced by the HKSV acknowledgment below.
-      if(!recordingDemand) {
+      freshlyStarted = true;
+    }
 
-        this.log.debug("Timeshift buffer started for livestreaming.");
-      }
+    // The start, if one ran, has settled the buffer state. Fire the test-timing hook (a no-op in production) at the one point a test can land an event in the settle
+    // window, then guard before any narration.
+    this.onStartSettled();
+
+    // The consume loop runs detached from the start commit, and shutdown can race an in-flight start: either way, narrating now would celebrate a buffer that is
+    // already gone or condemned. A dead buffer returns through the failure path and the coalescing loop's re-arm owns the retry; a shut-down supervisor returns to
+    // the follow-up pass the latch already scheduled, which settles on stopped. The acknowledgment below never latches for an episode that never actually ran.
+    if(this.isShutdown || !this.buffer.isStarted) {
+
+      return false;
+    }
+
+    // A streaming-arm-only start narrates its lifecycle at debug; a start that also satisfies a recording request is announced by the HKSV acknowledgment below.
+    if(freshlyStarted && !recordingDemand) {
+
+      this.log.debug("Timeshift buffer started for livestreaming.");
     }
 
     // The buffer is now running on the desired channel, whether it was already up or freshly started. Both the resumption close and the acknowledgment run here so the
@@ -348,10 +375,11 @@ export class ProtectTimeshiftSupervisor {
   }
 
   // Shut buffer supervision down for good - the terminal teardown the controller-disconnect and camera-removal paths call. Arms the latch so no subsequent or
-  // in-flight reconcile pass can start the buffer again, then stops the buffer synchronously - the disconnect path's hard ordering invariant: the buffer's pool
-  // subscription is released before the unifi-protect client is disposed. Produces no narration of its own: the paths that call this have already narrated the
-  // disruption at the controller or camera level. Terminal per instance by design - a camera whose streaming delegate is ever rebuilt constructs a fresh, unlatched
-  // supervisor.
+  // in-flight reconcile pass can start the buffer again, then stops the buffer synchronously. On the common path this releases the buffer's pool subscription before the
+  // unifi-protect client is disposed, the ordering the disconnect path relies on. One exception: a start already in flight when the latch arms. stop() no-ops on the
+  // not-yet-committed subscription, so that start commits after shutdown() has returned and holds its subscription until the woken follow-up pass (below) releases it,
+  // one async hop later. Produces no narration of its own: the paths that call this have already narrated the disruption at the controller or camera level. Terminal per
+  // instance by design - a camera whose streaming delegate is ever rebuilt constructs a fresh, unlatched supervisor.
   public shutdown(): void {
 
     this.isShutdown = true;
