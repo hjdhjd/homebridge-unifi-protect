@@ -3234,10 +3234,18 @@ export interface TestMqttSubscription {
 export class TestMqttClient {
 
   public readonly published: { message: string; topic: string }[] = [];
+  // When set, publish() rejects with this error instead of recording, so a test can drive the guarded-publish failure path. Persistent for the double's per-test
+  // lifetime; every test builds a fresh client, so there is no reset machinery.
+  public publishRejection: Nullable<Error> = null;
   public readonly subscriptions: TestMqttSubscription[] = [];
   public readonly unsubscribes: { id: string; topic: string }[] = [];
 
   public async publish(topic: string, message: string): Promise<void> {
+
+    if(this.publishRejection) {
+
+      throw this.publishRejection;
+    }
 
     this.published.push({ message, topic });
   }

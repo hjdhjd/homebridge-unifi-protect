@@ -9,13 +9,13 @@ import { PACKAGE_CAMERA_NAME_SUFFIX, ProtectReservedNames, packageCameraId } fro
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_DOORBELL_CHIME_DURATION_DIGITAL } from "../../settings.ts";
 import type { ProtectAccessory, ProtectAccessoryContext, WithoutIdentity } from "../../types.ts";
 import { acquireService, composeSignals, sanitizeName, toStartCase, validService } from "homebridge-plugin-utils";
+import { guardedPublish, mqttTopic } from "../../mqtt.ts";
 import { ProtectBase } from "../device-base.ts";
 import type { ProtectCamera } from "./camera.ts";
 import type { ProtectCameraPackage } from "./camera-package.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
 import { chimeVolumeFor } from "./chime-volume.ts";
 import { deviceSelectors } from "unifi-protect";
-import { mqttTopic } from "../../mqtt.ts";
 
 // A doorbell message entry.
 interface MessageInterface {
@@ -510,7 +510,7 @@ export class DoorbellCapability extends ProtectBase {
     // composes from the persisted MAC rather than the publish wrapper, whose topic scope reads the live projection.
     if(this.nvr.events.clearEventTimersForDevice(packageId) && !this.nvr.events.hasInflightMotion(mac)) {
 
-      void this.nvr.mqtt?.publish(mqttTopic(mac, "motion"), "false");
+      guardedPublish(this.log, this.nvr.mqtt, mqttTopic(mac, "motion"), "false");
     }
 
     // Tear down the live instance, if any.

@@ -11,6 +11,7 @@
  * ProtectBase leaf are the smallest real surfaces that carry the wrappers: the abstract base declares no abstract members, so a near-empty concrete leaf is a faithful
  * instance whose publish, subscribeGet, and subscribeSet are all the base's own - the same admission command-error.test.ts and reachability.test.ts rely on.
  */
+import { TestMqttClient, makeTestAccessory, settle } from "../testing.helpers.ts";
 import { describe, test } from "node:test";
 import type { Camera } from "unifi-protect";
 import type { ProtectAccessory } from "../types.ts";
@@ -18,7 +19,7 @@ import { ProtectBase } from "./device-base.ts";
 import { ProtectDevice } from "./device.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import assert from "node:assert/strict";
-import { makeTestAccessory } from "../testing.helpers.ts";
+import util from "node:util";
 
 // The smallest concrete leaf of the abstract base, mirroring command-error.test.ts: ProtectDevice declares no abstract members, so this adds nothing but a public window
 // onto the protected MQTT wrappers this suite exercises, inherited unchanged.
@@ -102,6 +103,34 @@ const makeDevice = (): { capture: MqttCapture; instance: TestProtectDevice } => 
   return { capture, instance };
 };
 
+// Construct the same real ProtectDevice, but wired to a real TestMqttClient (so its injectable rejection lever drives the funnel's guarded-publish failure path) and a
+// capturing error log (so the guard's reported line is observable). error renders through util.format - the line the real Homebridge sink would write - the same posture
+// command-error.test.ts uses; the other levels sink.
+const makeGuardedDevice = (): { errors: string[]; instance: TestProtectDevice; mqtt: TestMqttClient } => {
+
+  const errors: string[] = [];
+  const sink = (): void => undefined;
+  const log = { debug: sink, error: (message: string, ...parameters: unknown[]): void => { errors.push(util.format(message, ...parameters)); }, info: sink, warn: sink };
+  const mqtt = new TestMqttClient();
+  // logName reads the live record through peek() (non-throwing) when the prefixed logger renders a line, so the projection mock exposes it alongside config - without it,
+  // the guard's error render would throw inside its own catch and be swallowed. The empty-but-present config makes describeDevice render the same bare descriptor.
+  const config = { mac: MAC };
+  const device = { config, peek: (): Record<string, unknown> => config };
+  const accessory = makeTestAccessory();
+
+  accessory.context["mac"] = MAC;
+
+  const nvr = {
+
+    mqtt,
+    platform: { api: { hap: {} }, debug: sink, log, pluginLog: log },
+    signal: new AbortController().signal
+  };
+  const instance = new TestProtectDevice(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, device as unknown as Camera);
+
+  return { errors, instance, mqtt };
+};
+
 // The controller MAC the base wrappers compose into every topic tail when no leaf overrides mqttId. Deliberately distinct from the device MAC so a controller-scope
 // assertion cannot pass by accidentally reading the device MAC.
 const NVR_MAC = "112233445566";
@@ -157,6 +186,38 @@ describe("ProtectDevice MQTT topic composition", () => {
     instance.emitSubscribeSet("light", "light", () => undefined);
 
     assert.deepEqual(capture.subscribeSet, [MAC + "/light"], "subscribeSet prefixes the device MAC onto the supplied topic tail");
+  });
+});
+
+describe("ProtectDevice MQTT publish guard", () => {
+
+  test("a rejected publish is reported under the guard's publish-specific label and floats no unhandled rejection", async () => {
+
+    const { errors, instance, mqtt } = makeGuardedDevice();
+
+    // Arm the rejection lever so the funnel's publish rejects, driving guardedDispatch's failure path rather than recording the message.
+    mqtt.publishRejection = new Error("the broker connection dropped");
+
+    // Capture any unhandled rejection the guarded publish might float, so the test proves the guard consumed the rejection rather than merely logging alongside a float.
+    const floats: unknown[] = [];
+    const onFloat = (reason: unknown): void => { floats.push(reason); };
+
+    process.on("unhandledRejection", onFloat);
+
+    try {
+
+      instance.emitPublish("motion", "true");
+
+      await settle();
+    } finally {
+
+      process.off("unhandledRejection", onFloat);
+    }
+
+    assert.equal(floats.length, 0, "the rejected publish did not float an unhandled rejection");
+    assert.equal(errors.length, 1, "the guard reported exactly one failure line");
+    assert.match(errors[0] ?? "", /MQTT publish \(AABBCCDDEEFF\/motion\) handler failed/,
+      "the reported line carries the publish-specific label naming the full topic");
   });
 });
 

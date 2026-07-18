@@ -14,6 +14,7 @@ import type { HomebridgePluginLogging, IpFamily, Nullable, PortReservation } fro
 import { PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS, PROTECT_LIVESTREAM_API_IDR_INTERVAL, PROTECT_TIMESHIFT_BUFFER_MAXDURATION } from "../settings.ts";
 import { ProtectAbortedError, livestreamAudioSampleRate } from "unifi-protect";
 import { ProtectReservedNames, isPackageCameraContext } from "../types.ts";
+import { guardedPublish, mqttTopic } from "../mqtt.ts";
 import type { ChannelProfile } from "./resolution.ts";
 import type { LivestreamSubscription } from "./livestream.ts";
 import type { ProtectCameraHost } from "./camera-host.ts";
@@ -25,7 +26,6 @@ import { ProtectStreamingFfmpegProcess } from "./stream-ffmpeg-process.ts";
 import { ProtectTimeshiftSupervisor } from "./timeshift-supervisor.ts";
 import type { TalkbackSession } from "unifi-protect";
 import { logLivestreamIterationError } from "./livestream.ts";
-import { mqttTopic } from "../mqtt.ts";
 import { resolveSessionSource } from "./stream-source-policy.ts";
 import { streamingSamplerates } from "./stream-delegate.ts";
 
@@ -323,7 +323,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
     answer?.(undefined, snapshot);
 
     // Publish the snapshot as a data URL to MQTT, if configured.
-    void this.nvr.mqtt?.publish(mqttTopic(this.protectCamera.mac, "snapshot"), "data:image/jpeg;base64," + snapshot.toString("base64"));
+    guardedPublish(this.log, this.nvr.mqtt, mqttTopic(this.protectCamera.mac, "snapshot"), "data:image/jpeg;base64," + snapshot.toString("base64"));
   }
 
   // Prepare to launch the video stream. HomeKit invokes this without awaiting, so the async preparation is routed through guardedDispatch: a fault never floats and the
