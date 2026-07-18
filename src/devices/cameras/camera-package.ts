@@ -215,7 +215,7 @@ export class ProtectCameraPackage extends ProtectCamera {
       // superseded and bail; the off path defers nothing of its own, so it does not capture the generation it opened.
       if(!value) {
 
-        this.clearTimer("flashlight");
+        this.timers.clear("flashlight");
         this.flashlightState = false;
         this.#flashlightGeneration++;
 
@@ -258,14 +258,14 @@ export class ProtectCameraPackage extends ProtectCamera {
         // Stop if we've been told to turn off.
         if(!this.flashlightState) {
 
-          this.clearTimer("flashlight");
+          this.timers.clear("flashlight");
         }
 
         return this.flashlightState;
       };
 
       // Clear out any interval we have.
-      this.clearTimer("flashlight");
+      this.timers.clear("flashlight");
 
       // If it's not dark, the flashlight will not engage - reset the switch to off and we're done.
       if(!this.ufp.isDark) {
@@ -298,7 +298,7 @@ export class ProtectCameraPackage extends ProtectCamera {
       // Heartbeat the flashlight at regular intervals to keep it on. The controller exposes no off endpoint for this momentary command - the light
       // self-extinguishes on its own roughly 25 seconds after the last activation - so a twenty-second cadence, matching Protect's own apps, keeps
       // re-pulsing it with a five-second margin before that natural timeout.
-      this.registerInterval("flashlight", () => void activateFlashlight(), 20 * 1000);
+      this.timers.setInterval("flashlight", () => void activateFlashlight(), 20 * 1000);
     });
 
     // Initialize the flashlight to its resting off state. We write the literal rather than reading the field: this line runs inside the construction chain, before our

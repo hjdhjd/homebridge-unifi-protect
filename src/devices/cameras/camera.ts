@@ -463,9 +463,10 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
       return false;
     }
 
-    // We wire the sensor on every configure rather than only on first creation. Re-binding an onGet replaces the single handler (they do not stack) and registerInterval
-    // self-replaces its timer, so re-running the wiring is idempotent. That is exactly what re-establishes the handlers and the poll after a Homebridge restart, which
-    // restores the cached LightSensor service but never its runtime wiring - a within-session reconcile re-run simply re-issues one cheap controller read.
+    // We wire the sensor on every configure rather than only on first creation. Re-binding an onGet replaces the single handler (they do not stack) and the registry's
+    // keyed setInterval self-replaces its timer, so re-running the wiring is a no-op on repeat. That is exactly what re-establishes the handlers and the poll after a
+    // Homebridge restart, which restores the cached LightSensor service but never its runtime wiring - a within-session reconcile re-run simply re-issues one cheap
+    // controller read.
     const getLux = async (): Promise<number> => {
 
       // Skip the query when the controller or camera is unreachable; the request would only fail.
@@ -495,7 +496,7 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
       // Stop updating if we no longer exist.
       if(this.isDeleted) {
 
-        this.clearTimer("ambientLight");
+        this.timers.clear("ambientLight");
 
         return;
       }
@@ -516,7 +517,7 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
       this.publish("ambientlight", this.ambientLight.toString());
     };
 
-    this.registerInterval("ambientLight", () => void updateAmbientLight(), 60 * 1000);
+    this.timers.setInterval("ambientLight", () => void updateAmbientLight(), 60 * 1000);
 
     // Retrieve the active state when requested.
     service.getCharacteristic(this.hap.Characteristic.StatusActive).onGet(() => this.isReachable);
@@ -644,8 +645,8 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
     service.getCharacteristic(this.hap.Characteristic.LockTargetState).onSet(async (value: CharacteristicValue) => {
 
       // Protect only supports unlocking. If the user taps lock while we're in the momentary unlock window, revert the optimistic SECURED target back to UNSECURED. We
-      // guard on the auto re-lock timer being pending so we don't stomp a SECURED state that our own timer just wrote...registerTimeout deletes the timer map entry
-      // before invoking its callback, so by the time we check, a just-fired timer is already gone and we correctly become a no-op.
+      // guard on the auto re-lock timer being pending so we don't stomp a SECURED state that our own timer just wrote...the registry deletes the keyed entry before
+      // invoking its callback, so by the time we check, a just-fired timer is already gone and we correctly become a no-op.
       if(value === this.hap.Characteristic.LockTargetState.SECURED) {
 
         setTimeout(() => {
@@ -680,7 +681,7 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
       this.log.info("Unlocked.");
 
       // Two seconds is long enough for the momentary UNSECURED state to register visibly in the Home app before we revert it back to SECURED.
-      this.registerTimeout("accessUnlock", () => {
+      this.timers.setTimeout("accessUnlock", () => {
 
         service.updateCharacteristic(this.hap.Characteristic.LockTargetState, this.hap.Characteristic.LockTargetState.SECURED);
         service.updateCharacteristic(this.hap.Characteristic.LockCurrentState, this.hap.Characteristic.LockCurrentState.SECURED);

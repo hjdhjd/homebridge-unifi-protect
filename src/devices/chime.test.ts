@@ -14,9 +14,9 @@
  *
  * Two framing details the assertions honor exactly. First, the onSet's reverts are bare setTimeout(...,50) NOT registered in this.timers, so chime.cleanup() does
  * not clear them; the tests that arm a bare revert (the failed / falsy / no-op play paths) await ~60ms so the revert fires within the test (touching only this test's
- * fresh accessory). Second, registerTimeout and the "Playing %s." log fire ONLY after playTone resolves true - a falsy set, a no-op play, and a rejected play all
- * share the same bare 50ms revert-only setTimeout from the first framing detail above, with no registerTimeout armed and no "Playing" line logged. The afterEach(()
- * => chime?.cleanup()) clears the registerTimeout play-timers per test (the light suite needs no such hook because the light arms none).
+ * fresh accessory). Second, the keyed play-timer and the "Playing %s." log fire ONLY after playTone resolves true - a falsy set, a no-op play, and a rejected play all
+ * share the same bare 50ms revert-only setTimeout from the first framing detail above, with no play-timer armed and no "Playing" line logged. The afterEach(()
+ * => chime?.cleanup()) drains the play-timers per test (the light suite needs no such hook because the light arms none).
  *
  * The isolation model mirrors the light reference: a beforeEach builds a fresh chime so the capture arrays, the characteristic state, the observer baselines, and
  * store.observerCount are clean every test, and the wake log is windowed per push via a captured baseline.
@@ -48,12 +48,13 @@ function loggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], substri
 // spawnObservers paths. Returns logEntries and mqtt (the light suite needs neither; the chime asserts both the failure log lines and the captured MQTT tone handler).
 // The accessory factory is injectable so the legacy-removal test can pre-seed a Lightbulb and a bare speaker Switch before construction.
 function buildChime(configOptions: Parameters<typeof makeChimeConfig>[0] = {}, harnessOptions: { accessory?: TestAccessory; ringtones?: ProtectRingtoneConfig[] } = {}): {
-  accessory: TestAccessory; chime: ProtectChime; logEntries: TestLogEntry[]; mqtt: TestMqttClient; projection: TestChimeProjection; store: TestStateStore;
+  accessory: TestAccessory; chime: ProtectChime; controller: AbortController; logEntries: TestLogEntry[]; mqtt: TestMqttClient; projection: TestChimeProjection;
+  store: TestStateStore;
 } {
 
   const chimeConfig = makeChimeConfig(configOptions);
   const store = new TestStateStore(makeProtectState({ chimes: [chimeConfig], ringtones: harnessOptions.ringtones ?? [] }));
-  const { logEntries, mqtt, nvr } = makeTestNvr({ mqtt: true, store });
+  const { controller, logEntries, mqtt, nvr } = makeTestNvr({ mqtt: true, store });
   const accessory = harnessOptions.accessory ?? makeTestAccessory("Test Chime", "uuid:test-chime");
   const projection = new TestChimeProjection(chimeConfig.id, store);
   const chime = new ProtectChime(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Chime);
@@ -65,7 +66,7 @@ function buildChime(configOptions: Parameters<typeof makeChimeConfig>[0] = {}, h
     throw new Error("The MQTT recording double was not installed despite mqtt: true.");
   }
 
-  return { accessory, chime, logEntries, mqtt, projection, store };
+  return { accessory, chime, controller, logEntries, mqtt, projection, store };
 }
 
 describe("real ProtectChime construction and play behavior", () => {
@@ -79,6 +80,7 @@ describe("real ProtectChime construction and play behavior", () => {
   let accessory: TestAccessory;
   let chime: ProtectChime | undefined;
   let constructionWakes = 0;
+  let controller: AbortController;
   let logEntries: TestLogEntry[];
   let mqtt: TestMqttClient;
   let projection: TestChimeProjection;
@@ -97,7 +99,7 @@ describe("real ProtectChime construction and play behavior", () => {
   beforeEach(async () => {
 
     // The default fixture: one ringtone (so a speaker switch exists) whose id is the chime's one ringSettings entry, so a speaker play joins a real ring.
-    ({ accessory, chime, logEntries, mqtt, projection, store } = buildChime(
+    ({ accessory, chime, controller, logEntries, mqtt, projection, store } = buildChime(
       { ringSettings: [{ cameraId: "doorbell-1", repeatTimes: 2, ringtoneId: "test-ringtone-1", volume: 65 }] },
       { ringtones: [makeRingtoneConfig({ id: "test-ringtone-1", name: "Test Ringtone" })] }));
 
@@ -109,7 +111,7 @@ describe("real ProtectChime construction and play behavior", () => {
     wakeLog.length = 0;
   });
 
-  // The chime arms registerTimeout play-timers on a truthy onSet; cleanup() clears them. Each test gets a fresh accessory, so a test that built its own variant cleans
+  // The chime arms keyed play-timers on a truthy onSet; cleanup() drains them. Each test gets a fresh accessory, so a test that built its own variant cleans
   // that one up locally; this hook clears the beforeEach-built default.
   afterEach(() => {
 
@@ -185,7 +187,41 @@ describe("real ProtectChime construction and play behavior", () => {
     assert.deepEqual(mqtt.published, [{ message: "buzzer", topic: projection.config.mac + "/tone" }],
       "an accepted buzzer publishes its tone name on the device-scoped topic");
     assert.ok(loggedAt(logEntries, "info", "Playing buzzer."), "the Playing info log fired for the buzzer");
-    assert.equal(await buzzerSwitch.getCharacteristic(Characteristic.On).triggerGet(), true, "the On getter reads the armed registerTimeout play-timer");
+    assert.equal(await buzzerSwitch.getCharacteristic(Characteristic.On).triggerGet(), true, "the On getter reads the armed play-timer");
+  });
+
+  test("cleanup() drains the accessory's play-timers through the composed signal", async () => {
+
+    const buzzerSwitch = accessory.getServiceById(Service.Switch, ProtectReservedNames.SWITCH_DOORBELL_CHIME_BUZZER);
+
+    assert.ok(buzzerSwitch, "the buzzer switch exists");
+    assert.ok(chime, "the chime was built");
+
+    // The On getter reads this.timers.has(subtype): an armed play-timer reads true and a drained registry reads false, so no timer mocking is needed here.
+    await buzzerSwitch.getCharacteristic(Characteristic.On).triggerSet(true);
+
+    assert.equal(await buzzerSwitch.getCharacteristic(Characteristic.On).triggerGet(), true, "the play-timer is armed after a play");
+
+    chime.cleanup();
+
+    assert.equal(await buzzerSwitch.getCharacteristic(Characteristic.On).triggerGet(), false, "cleanup() drained the registry, so the getter reports no armed timer");
+  });
+
+  test("an NVR-side abort drains the accessory's play-timers through the composed signal", async () => {
+
+    const buzzerSwitch = accessory.getServiceById(Service.Switch, ProtectReservedNames.SWITCH_DOORBELL_CHIME_BUZZER);
+
+    assert.ok(buzzerSwitch, "the buzzer switch exists");
+
+    await buzzerSwitch.getCharacteristic(Characteristic.On).triggerSet(true);
+
+    assert.equal(await buzzerSwitch.getCharacteristic(Characteristic.On).triggerGet(), true, "the play-timer is armed after a play");
+
+    // The registry's lifetime signal is composed with the NVR controller, so a controller-wide abort - the shape plugin shutdown takes - drains the accessory's timers
+    // just as its own cleanup() does.
+    controller.abort();
+
+    assert.equal(await buzzerSwitch.getCharacteristic(Characteristic.On).triggerGet(), false, "the NVR-side abort drained the registry, so no timer stays armed");
   });
 
   test("turning a ringtone speaker switch on joins the configured repeat/volume/ringtoneId into the speaker payload", async () => {
@@ -291,7 +327,7 @@ describe("real ProtectChime construction and play behavior", () => {
 
     assert.equal(projection.playBuzzerCalls.length, 0, "a falsy set issues no command - you cannot undo a play");
     assert.equal(mqtt.published.length, 0, "a falsy set publishes nothing");
-    assert.ok(!loggedAt(logEntries, "info", "Playing "), "a falsy set logs no Playing line and arms no registerTimeout");
+    assert.ok(!loggedAt(logEntries, "info", "Playing "), "a falsy set logs no Playing line and arms no play-timer");
 
     // The falsy path arms only a bare 50ms revert (not in this.timers); let it fire within the test.
     await new Promise<void>((resolve) => setTimeout(resolve, 60));

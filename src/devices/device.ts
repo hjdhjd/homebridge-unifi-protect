@@ -7,7 +7,7 @@ import type { AcquireServiceTarget, HomebridgePluginLogging, Nullable } from "ho
 import type { DeviceCollectionKey, ProtectCameraConfig, ProtectDeviceConfig, ProtectState } from "unifi-protect";
 import { PROTECT_MOTION_DURATION, PROTECT_OCCUPANCY_DURATION} from "../settings.ts";
 import type { ProtectAccessory, ProtectPersistedContextState, ProtectProjectionMap, WithoutIdentity } from "../types.ts";
-import { acquireService, composeSignals, sanitizeName, validService } from "homebridge-plugin-utils";
+import { TimerRegistry, acquireService, composeSignals, sanitizeName, validService } from "homebridge-plugin-utils";
 import { deviceSelectors, isDeviceOnline } from "unifi-protect";
 import type { ObserverWakePayload } from "../diagnostics.ts";
 import { ProtectBase } from "./device-base.ts";
@@ -169,7 +169,9 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
   // The per-accessory abort signal. Composed: aborts when EITHER the per-accessory controller is aborted OR the NVR's terminal shutdown signal fires. Use this when
   // spawning per-accessory observe loops, so plugin shutdown and per-accessory teardown both unwind the loop cleanly.
   protected readonly signal: AbortSignal;
-  protected timers: Map<string, NodeJS.Timeout>;
+  // The accessory's HomeKit-side pacing timers, keyed by purpose. Lifetime-bounded by the composed signal, so device cleanup and NVR shutdown both drain them and a
+  // registration attempted after teardown is inert, keeping a timer from ever firing into a torn-down accessory.
+  protected readonly timers: TimerRegistry;
 
   // The constructor captures the accessory and live projection handle, wires the per-accessory abort controller and its composed signal, and seeds the hints and timers
   // state; device configuration is wired separately by the NVR root after construction.
@@ -182,7 +184,7 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
     this.device = device;
     this.hints = {} as ProtectHints;
     this.signal = composeSignals(this.controller.signal, nvr.signal);
-    this.timers = new Map();
+    this.timers = new TimerRegistry({ signal: this.signal });
   }
 
   // Read-through to the live STATE projection, narrowed to drop device identity (id/mac/modelKey): identity is immutable and flows through the dedicated non-throwing
@@ -333,60 +335,11 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
     this.accessory.context.nvr = this.nvr.ufp.mac;
   }
 
-  // Cleanup our observe loops, timers, and any other activities as needed. Aborting the per-accessory controller tears down every observe loop this accessory
-  // spawned through this.signal; the timers Map is HomeKit-side pacing state and is cleared alongside.
+  // Cleanup our observe loops and timers. Aborting the per-accessory controller tears down every observe loop this accessory spawned through this.signal; that same
+  // composed signal drains the timer registry, so cleanup releases the accessory's timers without unwinding them by hand.
   public cleanup(): void {
 
     this.controller.abort();
-
-    for(const timer of this.timers.values()) {
-
-      clearTimeout(timer);
-    }
-
-    this.timers.clear();
-  }
-
-  // Register a timeout, storing it for cleanup on device removal. If a timer with the same key already exists, it is cleared before the new one is set.
-  protected registerTimeout(key: string, callback: () => void, delay: number): void {
-
-    const existing = this.timers.get(key);
-
-    if(existing) {
-
-      clearTimeout(existing);
-    }
-
-    this.timers.set(key, setTimeout(() => {
-
-      this.timers.delete(key);
-      callback();
-    }, delay));
-  }
-
-  // Register an interval, storing it for cleanup on device removal. If an interval with the same key already exists, it is cleared before the new one is set.
-  protected registerInterval(key: string, callback: () => void, interval: number): void {
-
-    const existing = this.timers.get(key);
-
-    if(existing) {
-
-      clearInterval(existing);
-    }
-
-    this.timers.set(key, setInterval(callback, interval));
-  }
-
-  // Clear a previously registered timer by key.
-  protected clearTimer(key: string): void {
-
-    const timer = this.timers.get(key);
-
-    if(timer) {
-
-      clearTimeout(timer);
-      this.timers.delete(key);
-    }
   }
 
   // The device-leaf MQTT scope: a device's MAC is its leading topic path segment, so every device publish / subscribe / unsubscribe scopes under

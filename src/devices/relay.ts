@@ -152,7 +152,7 @@ export class ProtectRelay extends ProtectDevice {
     // decision. No optimistic tile write is needed: HAP already holds the requested value on the characteristic through this non-throwing onSet, and the observe loop
     // reconciles to controller truth on the confirming broadcast.
     this.#pendingDesired.set(id, desired);
-    this.registerTimeout(this.pendingTimerKey(id), () => this.#pendingDesired.delete(id), PROTECT_RELAY_COMMAND_TIMEOUT);
+    this.timers.setTimeout(this.pendingTimerKey(id), () => this.#pendingDesired.delete(id), PROTECT_RELAY_COMMAND_TIMEOUT);
 
     // Dispatch the toggle through the shared command-error helper, reporting any failure there.
     if(!(await this.runDeviceCommand("turn " + label + " " + (desired ? "on" : "off"), () => this.device.toggleOutput(id)))) {
@@ -162,7 +162,7 @@ export class ProtectRelay extends ProtectDevice {
       // characteristic once this non-throwing onSet resolves, so we reflect just past that settle. The ~50ms cosmetic bounce is deliberately left out of this.timers, as
       // the motion trigger's is; it need not survive cleanup().
       this.#pendingDesired.delete(id);
-      this.clearTimer(this.pendingTimerKey(id));
+      this.timers.clear(this.pendingTimerKey(id));
 
       const service = this.accessory.getServiceById(this.hap.Service.Switch, this.outputSubtype(id));
 
@@ -219,7 +219,7 @@ export class ProtectRelay extends ProtectDevice {
         if(this.#pendingDesired.get(id) === actual) {
 
           this.#pendingDesired.delete(id);
-          this.clearTimer(this.pendingTimerKey(id));
+          this.timers.clear(this.pendingTimerKey(id));
         }
 
         // Push controller truth to this output's tile.

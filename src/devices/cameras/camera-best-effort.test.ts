@@ -60,8 +60,8 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
     // and so precludes the pre-construction knobs this describe needs: featureFlags.hasLuxCheck (the ONE featureFlags gate, opening configureAmbientLightSensor), the
     // controller-health flip to unreachable set BEFORE construction (so the init query short-circuits), and the MQTT double the poll publishes through. The held
     // projection is the SAME instance the camera's getLux closure calls, so a test sets luxReading / luxRejection and reads luxCalls on it directly. mock.timers is
-    // enabled for the GLOBAL setInterval BEFORE construction so the construction-time registerInterval("ambientLight", ..., 60000) is captured; the test ticks 60000 to
-    // fire the poll.
+    // enabled for the GLOBAL setInterval BEFORE construction so the construction-time this.timers.setInterval("ambientLight", ..., 60000) is captured; the test ticks
+    // 60000 to fire the poll.
     async function buildLuxCamera(options: { reachable?: boolean } = {}): Promise<BuiltLuxCamera> {
 
       const reachable = options.reachable ?? true;
@@ -502,8 +502,8 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
         // triggerSet to resolve, not a state the code wrote.
         assert.equal(await onChar.triggerGet(), false, "the off during the in-flight activation wins - the flashlight reads off");
 
-        // The superseded activation skipped registerInterval, so the heartbeat was never armed: ticking past its cadence issues no further pulse. A shape that gated only
-        // inside activateFlashlight would arm the heartbeat from the stale closure, and this tick would grow the pulse count.
+        // The superseded activation skipped arming the keyed interval, so the heartbeat was never armed: ticking past its cadence issues no further pulse. A shape that
+        // gated only inside activateFlashlight would arm the heartbeat from the stale closure, and this tick would grow the pulse count.
         const callsBefore = projection.flashlightCalls.length;
 
         mock.timers.tick(20000);

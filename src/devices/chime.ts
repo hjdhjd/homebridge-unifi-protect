@@ -98,7 +98,7 @@ export class ProtectChime extends ProtectDevice {
 
       if(subtype) {
 
-        this.clearTimer(subtype);
+        this.timers.clear(subtype);
       }
 
       this.accessory.removeService(service);
@@ -106,7 +106,7 @@ export class ProtectChime extends ProtectDevice {
   }
 
   // Configure one chime switch (the buzzer or a ringtone speaker) for HomeKit. The kind ("buzzer" or "speaker") names the chime's sound source for playTone; the
-  // auto-reset timer is keyed by the switch's OWN subtype, not by kind, so concurrent ringtone plays never displace each other's reset - registerTimeout's same-key
+  // auto-reset timer is keyed by the switch's OWN subtype, not by kind, so concurrent ringtone plays never displace each other's reset - the registry's same-key
   // replacement silently drops the displaced callback, which a shared "speaker" key would trigger, stranding every-but-the-last ringtone's tile on forever.
   private configureChimeSwitch(name: string, kind: "buzzer" | "speaker", subtype: string): boolean {
 
@@ -156,7 +156,7 @@ export class ProtectChime extends ProtectDevice {
       }
 
       // The play started, so hold the switch on for the playback window and then auto-reset it to its real state.
-      this.registerTimeout(subtype,
+      this.timers.setTimeout(subtype,
         () => service.updateCharacteristic(this.hap.Characteristic.On, this.timers.has(subtype)), PROTECT_DOORBELL_CHIME_SPEAKER_DURATION);
 
       // Inform the user.

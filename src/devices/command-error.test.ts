@@ -229,7 +229,7 @@ describe("access unlock onSet (real runDeviceCommand)", () => {
 
   // The access-unlock onSet shape the camera ships: push the unlock through the shared helper and, on failure, revert BOTH lock characteristics to SECURED. Production
   // defers the revert via setTimeout(50); we apply it synchronously so the writes are observable without a timer. The success path schedules an auto-re-lock on
-  // a live registerTimeout we do not model here, so we assert only that a successful unlock neither reverts the lock nor logs.
+  // a live keyed timer we do not model here, so we assert only that a successful unlock neither reverts the lock nor logs.
   const unlockOnSet = (harness: CommandHarness, service: TestService, unlock: () => Promise<unknown>) => async (): Promise<void> => {
 
     if(!(await harness.instance.runCommand("unlock the Access device", unlock))) {
