@@ -14,6 +14,7 @@ import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_NVR_CONTROLLER_DISABLED_SETTLE_DELA
 import type { ProtectAccessory, ProtectAccessoryContext, ProtectDeviceTypes, ProtectDevices, ProtectProjectionMap } from "../types.ts";
 import { canTransition, computeStableSince, createConnectRetryPolicy, createLivestreamEpisodeLatch, isInducedDisruption, isRequestForController,
   isStabilityWindowElapsed, isSuccessfulRequest, isWithinRebootRecency, membershipDelta, shouldResumeFromInducedReboot } from "./nvr-policy.ts";
+import { exhaustiveGuard, isPackageCameraContext } from "../types.ts";
 import { DoorbellCapability } from "../devices/cameras/doorbell.ts";
 import { NvrHealth } from "./nvr-health.ts";
 import { ProtectCamera } from "../devices/cameras/camera.ts";
@@ -32,7 +33,6 @@ import { ProtectSensor } from "../devices/sensor.ts";
 import { ProtectViewer } from "../devices/viewer.ts";
 import { channels } from "../diagnostics.ts";
 import { describeDevice } from "../devices/device-descriptor.ts";
-import { exhaustiveGuard } from "../types.ts";
 import { livestreamRecoveryDecision } from "../media/livestream-recovery-policy.ts";
 import { servePlaylist } from "./nvr-playlist.ts";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -1453,7 +1453,7 @@ export class ProtectNvr {
     // elsewhere, with one exception - package cameras. If we have a matching parent camera for the package camera, we're done here. Package cameras are dealt with
     // when we remove the parent camera. If the parent doesn't exist, this is an orphan that we need to remove.
     if(!accessory.context.mac &&
-      (!accessory.context.packageCamera || (this.platform.accessories.some(x => x.context.mac === accessory.context.packageCamera)))) {
+      (!isPackageCameraContext(accessory.context) || (this.platform.accessories.some(x => x.context.mac === accessory.context.packageCamera)))) {
 
       return;
     }

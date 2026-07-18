@@ -7,6 +7,7 @@ import type { HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils"
 import type { ProtectCameraHost } from "./camera-host.ts";
 import type { SnapshotOptions } from "unifi-protect";
 import type { SnapshotRequest } from "homebridge";
+import { isPackageCameraContext } from "../types.ts";
 
 // Maximum age of a snapshot in seconds.
 const PROTECT_SNAPSHOT_CACHE_MAXAGE = 90;
@@ -102,7 +103,7 @@ export class ProtectSnapshot {
       if(!snapAttempt) {
 
         // We treat package cameras uniquely - the Protect API is tried before RTSP because the lower frame rate of package cameras causes a lengthier RTSP response.
-        if("packageCamera" in this.protectCamera.accessory.context) {
+        if(isPackageCameraContext(this.protectCamera.accessory.context)) {
 
           snapAttempt = await this.snapFromController({ height: request?.height, packageCamera: true, signal, width: request?.width });
 

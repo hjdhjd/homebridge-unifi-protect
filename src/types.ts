@@ -74,7 +74,9 @@ export type WithoutIdentity<T> = T extends unknown ? { [K in keyof T as K extend
 // The typed view of a Protect accessory's persisted HomeKit context. All keys are optional: the context is reset to {} and repopulated per accessory type (a camera
 // carries mac + detectMotion, a liveview switch carries liveview + liveviewState + nvr, the controller's system-info accessory carries systemInfo + nvr, and so on), so
 // presence is itself meaningful and several code paths test it with the `in` operator. This interface replaces homebridge's UnknownContext (Record<string, any>) index
-// signature so every context.<key> access is a declared-property read, satisfying noPropertyAccessFromIndexSignature without a single cast.
+// signature so every context.<key> access is a declared-property read, satisfying noPropertyAccessFromIndexSignature without a single cast. The `mac` and
+// `packageCamera` keys are the two mutually exclusive identity forms - a real device carries `mac`, a package camera carries its parent's MAC in `packageCamera`,
+// never both - and isPackageCameraContext is the single predicate that branches on that distinction.
 export interface ProtectAccessoryContext {
 
   detectMotion?: boolean;
@@ -116,6 +118,14 @@ export const PACKAGE_CAMERA_ID_SUFFIX = ".PackageCamera";
 export function packageCameraId(mac: string): string {
 
   return mac + PACKAGE_CAMERA_ID_SUFFIX;
+}
+
+// Whether a persisted accessory context belongs to a package camera. The two identity forms are mutually exclusive by construction - seedContextIdentity seeds a real
+// device's bare MAC into `mac` and the package camera's parent MAC into `packageCamera`, never both - and this predicate is the single vocabulary every consumer uses
+// to branch on that distinction, so the exclusivity is asserted in exactly one place instead of being re-derived at each read site.
+export function isPackageCameraContext(context: ProtectAccessoryContext): context is ProtectAccessoryContext & { packageCamera: string } {
+
+  return !!context.packageCamera;
 }
 
 // The display suffix appended to the parent doorbell's name to form the package camera's user-visible HomeKit name. Purely presentational - the protocol id above never

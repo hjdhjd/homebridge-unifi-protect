@@ -13,13 +13,13 @@ import type { CameraController, CameraControllerOptions, CameraStreamingDelegate
 import type { HomebridgePluginLogging, IpFamily, Nullable, PortReservation } from "homebridge-plugin-utils";
 import { PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS, PROTECT_LIVESTREAM_API_IDR_INTERVAL, PROTECT_TIMESHIFT_BUFFER_MAXDURATION } from "../settings.ts";
 import { ProtectAbortedError, livestreamAudioSampleRate } from "unifi-protect";
+import { ProtectReservedNames, isPackageCameraContext } from "../types.ts";
 import type { ChannelProfile } from "./resolution.ts";
 import type { LivestreamSubscription } from "./livestream.ts";
 import type { ProtectCameraHost } from "./camera-host.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import type { ProtectPlatform } from "../platform.ts";
 import { ProtectRecordingDelegate } from "./record.ts";
-import { ProtectReservedNames } from "../types.ts";
 import { ProtectSnapshot } from "./snapshot.ts";
 import { ProtectStreamingFfmpegProcess } from "./stream-ffmpeg-process.ts";
 import { ProtectTimeshiftSupervisor } from "./timeshift-supervisor.ts";
@@ -152,7 +152,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
     });
 
     // Encourage users to enable hardware-accelerated transcoding on macOS.
-    if(!this.protectCamera.hints.hardwareTranscoding && !this.protectCamera.accessory.context.packageCamera &&
+    if(!this.protectCamera.hints.hardwareTranscoding && !isPackageCameraContext(this.protectCamera.accessory.context) &&
       this.platform.codecSupport.hostSystem.startsWith("macOS.")) {
 
       this.log.warn("macOS detected: consider enabling hardware acceleration (located under the video feature options section in the HBUP webUI) for even better " +
@@ -604,7 +604,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
       abTestFlip: abTestFlip,
       bufferStarted: this.timeshift?.buffer.isStarted ?? false,
       hasRecordingDemand: this.hksv?.isRecording ?? false,
-      isPackageCamera: "packageCamera" in this.protectCamera.accessory.context,
+      isPackageCamera: isPackageCameraContext(this.protectCamera.accessory.context),
       usesTimeshiftLivestream: this.protectCamera.usesTimeshiftLivestream,
       videoCodec: this.protectCamera.ufp.videoCodec
     });
@@ -712,7 +712,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
     // If we are streaming the package camera, and it's dark outside, activate the flashlight on the camera. We record the lit service on the session itself so the single
     // prepared-session disposal path can turn it back off on any failed start, and stopStream can turn it off on a normal stop - the session field is the one record of
     // the toggle.
-    if("packageCamera" in this.protectCamera.accessory.context) {
+    if(isPackageCameraContext(this.protectCamera.accessory.context)) {
 
       const flashlightService = this.protectCamera.accessory.getServiceById(this.hap.Service.Lightbulb, ProtectReservedNames.LIGHTBULB_PACKAGE_FLASHLIGHT);
 
@@ -824,7 +824,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
     // When on high-performance hardware like Apple Silicon, using the TSB, and we don't have low-FPS cameras like the package camera, enable the use of the
     // CPU-intensive FFmpeg minterpolate filter to enable very smooth video, especially when there's motion involved. M3+ Apple Silicon environments are able to reliably
     // use this filter in realtime and with great results. I'm hoping to be able to enable this in the future for other platforms.
-    const useInterpolationFilter = useTsb && !("packageCamera" in this.protectCamera.accessory.context) &&
+    const useInterpolationFilter = useTsb && !isPackageCameraContext(this.protectCamera.accessory.context) &&
       ((this.platform.codecSupport.hostSystem === "macOS.Apple") && (this.platform.codecSupport.cpuGeneration >= 3));
 
     // Check to see if we're transcoding. If we are, set the right FFmpeg encoder options. If not, copy the video stream.
