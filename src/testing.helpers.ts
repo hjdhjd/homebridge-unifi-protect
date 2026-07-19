@@ -79,6 +79,13 @@ class StatusTamperedCharacteristicType {
   public readonly hapKind = "StatusTampered" as const;
 }
 
+// The configured-name characteristic. The Home app labels a ServiceLabel-grouped switch - the fob's buttons - by ConfiguredName rather than the plain Name, so the fob's
+// button-label reconcile reads and writes exactly this kind, and the user-rename tests materialize it directly to stand in for a name the user assigned.
+class ConfiguredNameCharacteristicType {
+
+  public readonly hapKind = "ConfiguredName" as const;
+}
+
 // The contact-sensor-state characteristic. Added for the auth-sensor delivery tests: the auth delivery trips the contact sensor between detected (resting / not
 // authenticated) and not-detected (a recognized scan), so the double carries those two named states as statics, mirroring how real HAP exposes them as constructor
 // constants.
@@ -273,7 +280,8 @@ class ServiceLabelNamespaceCharacteristicType {
 // tests, where the firehose router's authEventHandler trips it on a recognized fingerprint/NFC scan, and StatusTampered backs the camera tamper-event handler and
 // the sensor tamper observer tests. The AccessoryInformation kinds (Manufacturer / Model / SerialNumber / FirmwareRevision / Name) and MotionDetected back the
 // real-construction harness; Brightness, NightVision, and CameraOperatingModeIndicator back the doorbell-family construction harness; ProgrammableSwitchEvent backs
-// the doorbell ring and the fob button-press deliveries, and ServiceLabelIndex / ServiceLabelNamespace back the fob's grouped-button ServiceLabel; OccupancyDetected
+// the doorbell ring and the fob button-press deliveries, and ServiceLabelIndex / ServiceLabelNamespace back the fob's grouped-button ServiceLabel while ConfiguredName
+// backs the fob's button-label reconcile, where the Home app names a grouped button switch by that characteristic and a user rename writes it; OccupancyDetected
 // backs the device-motion base-capability net, where configureOccupancySensor first reaches it. BatteryLevel / StatusLowBattery (the battery service updater) and
 // CurrentAmbientLightLevel / CurrentRelativeHumidity / CurrentTemperature / LeakDetected (the sensor's per-mode services) back the sensor-family real-construction
 // net, where ProtectSensor first reaches them. SecuritySystemCurrentState / SecuritySystemTargetState (the security-system state machine, the Current marker also
@@ -284,6 +292,7 @@ export const Characteristic = {
   BatteryLevel: BatteryLevelCharacteristicType,
   Brightness: BrightnessCharacteristicType,
   CameraOperatingModeIndicator: CameraOperatingModeIndicatorCharacteristicType,
+  ConfiguredName: ConfiguredNameCharacteristicType,
   ContactSensorState: ContactSensorStateCharacteristicType,
   CurrentAmbientLightLevel: CurrentAmbientLightLevelCharacteristicType,
   CurrentRelativeHumidity: CurrentRelativeHumidityCharacteristicType,
@@ -1798,26 +1807,29 @@ export function makeRelayConfig(options: { id?: string; ledEnabled?: boolean; ma
 
 /**
  * Build a minimal-but-real fob config record, mirroring makeRelayConfig's single-confined-cast discipline: every field the ProtectFob construction and observe paths
- * actually read is populated for real (the marketName / type family identity resolveFobButtons reads, the nested wirelessConnectionState.batteryStatus the battery
- * service and its observers read, and the identity / info fields setInfo and the base observers read), and the record is cast once to the full wire type. A bare
- * makeFobConfig() is a recognized "USL Fob" with a full, not-low battery. The ProtectFobConfig wire type carries fields the fob's paths never touch (the away/arm state,
- * the button-label profile, the pending arm action, the wireless connection settings); we populate the verified read set and confine the lone cast here.
+ * actually read is populated for real (the marketName / type family identity resolveFobButtons reads, the buttonLabels labeling the button-name resolver reads, the
+ * nested wirelessConnectionState.batteryStatus the battery service and its observers read, and the identity / info fields setInfo and the base observers read), and the
+ * record is cast once to the full wire type. A bare makeFobConfig() is a recognized "USL Fob" with a full, not-low battery whose buttons carry the security-action
+ * labeling; overriding buttonLabels to "positionHint" drives the numeric-name paths. The ProtectFobConfig wire type carries fields the fob's paths never touch (the
+ * away/arm state, the pending arm action, the wireless connection settings); we populate the verified read set and confine the lone cast here.
  *
  * @param options - batteryLow: the low-battery flag the StatusLowBattery read and its observer read (defaults to false); batteryPercentage: the battery percentage the
- *                  BatteryLevel read and its observer read (defaults to 100, nullable so the percentage-absent fallback can be exercised); id: optional identity override
- *                  (defaults to "test-fob-1"); mac: optional MAC override (defaults to a fob-distinct value); marketName: the family marketName resolveFobButtons matches
- *                  (defaults to "USL Fob"; override alongside type to force the unrecognized-model path); name: optional display name (defaults to "Test Fob");
+ *                  BatteryLevel read and its observer read (defaults to 100, nullable so the percentage-absent fallback can be exercised); buttonLabels: the button
+ *                  labeling the button-name resolver reads (defaults to "securityActions"; override to "positionHint" to drive the numeric names); id: optional identity
+ *                  override (defaults to "test-fob-1"); mac: optional MAC override (defaults to a fob-distinct value); marketName: the marketName resolveFobButtons
+ *                  matches (defaults to "USL Fob"; override alongside type to force the unrecognized-model path); name: optional display name (defaults to "Test Fob");
  *                  type: the family type prefix resolveFobButtons matches (defaults to "USL-Fob-US"; override alongside marketName to force the unrecognized-model path).
  *
  * @returns a fob config record the construction and observe paths read as real.
  */
-export function makeFobConfig(options: { batteryLow?: boolean; batteryPercentage?: Nullable<number>; id?: string; mac?: string; marketName?: string; name?: string;
-  type?: string; } = {}): ProtectFobConfig {
+export function makeFobConfig(options: { batteryLow?: boolean; batteryPercentage?: Nullable<number>; buttonLabels?: string; id?: string; mac?: string;
+  marketName?: string; name?: string; type?: string; } = {}): ProtectFobConfig {
 
   const name = options.name ?? "Test Fob";
 
   const populated = {
 
+    buttonLabels: options.buttonLabels ?? "securityActions",
     displayName: name,
     firmwareVersion: "1.0.0",
     id: options.id ?? "test-fob-1",

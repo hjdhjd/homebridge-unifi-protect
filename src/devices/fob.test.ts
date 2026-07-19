@@ -31,15 +31,16 @@ import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
 
 // The fixed button table the production ProtectFob authors, mirrored here so every lookup in the suite names the exact index / label / wire id the class created its
-// services under. index is the STABLE 1-based ServiceLabelIndex; wireId is the lowercase protocol id the router addresses on; label is the title-cased human name.
+// services under. index is the STABLE 1-based ServiceLabelIndex following the controller's own button numbering; wireId is the lowercase protocol id the router addresses
+// on; label is the security-action human name; positionLabel is the name the controller's position-hint labeling assigns.
 const FOB_BUTTONS = [
 
-  { index: 1, label: "Panic", wireId: "panic" },
-  { index: 2, label: "Disarm", wireId: "disarm" },
-  { index: 3, label: "Night", wireId: "night" },
-  { index: 4, label: "Arm", wireId: "arm" },
-  { index: 5, label: "Right", wireId: "right" },
-  { index: 6, label: "Left", wireId: "left" }
+  { index: 1, label: "Arm", positionLabel: "1", wireId: "arm" },
+  { index: 2, label: "Night", positionLabel: "2", wireId: "night" },
+  { index: 3, label: "Disarm", positionLabel: "3", wireId: "disarm" },
+  { index: 4, label: "Panic", positionLabel: "4", wireId: "panic" },
+  { index: 5, label: "Right", positionLabel: "Right", wireId: "right" },
+  { index: 6, label: "Left", positionLabel: "Left", wireId: "left" }
 ] as const;
 
 // The subtype the fob assigns each button switch, keyed by the lowercase wire id. Single-sourced here so every lookup in the suite names the exact subtype the class
@@ -90,6 +91,7 @@ describe("real ProtectFob construction and behavior", () => {
   let events: ProtectEventDispatch;
   let fob: ProtectFob;
   let fobConfig: ProtectFobConfig;
+  let logEntries: TestLogEntry[];
   let mqtt: TestMqttClient;
   let store: TestStateStore;
 
@@ -105,7 +107,7 @@ describe("real ProtectFob construction and behavior", () => {
 
   beforeEach(async () => {
 
-    ({ accessory, events, fob, fobConfig, mqtt, store } = buildFob());
+    ({ accessory, events, fob, fobConfig, logEntries, mqtt, store } = buildFob());
 
     // Settle the observe loops' lazy registration before any test asserts, then snapshot the construction-wake count and reset the window so each test measures only its
     // own pushes.
@@ -115,9 +117,10 @@ describe("real ProtectFob construction and behavior", () => {
     wakeLog.length = 0;
   });
 
-  test("four observers register, construction wakes none, and all six button switches are created and distinctly named", () => {
+  test("five observers register, construction wakes none, and all six button switches are created and distinctly named", () => {
 
-    assert.equal(store.observerCount, 4, "the two base observers plus the fob's two battery observers are registered against the store double");
+    assert.equal(store.observerCount, 5,
+      "the two base observers plus the fob's two battery observers and its button-label observer are registered against the store double");
     assert.equal(constructionWakes, 0, "no observer wake was published during construction - observers arm against the baseline and stay silent");
 
     for(const button of FOB_BUTTONS) {
@@ -129,7 +132,7 @@ describe("real ProtectFob construction and behavior", () => {
     }
   });
 
-  test("cleanup unwinds all four observers, and a value-changing push afterward wakes nothing", async () => {
+  test("cleanup unwinds all five observers, and a value-changing push afterward wakes nothing", async () => {
 
     fob.cleanup();
 
@@ -166,8 +169,8 @@ describe("real ProtectFob construction and behavior", () => {
 
   test("hiding an EARLY button leaves a LATER visible button's fixed 1-based table index unchanged, never a compacted visible-subset position", () => {
 
-    // Hide disarm (table index 2). If the index were the visible-subset position rather than the fixed table index, arm would renumber from 4 to 3 - the exact defect
-    // this discriminates. panic (index 1) and left (index 6) bracket the hidden button to prove nothing above or below it shifted either.
+    // Hide disarm (table index 3). If the index were the visible-subset position rather than the fixed table index, panic would renumber from 4 to 3 - the exact defect
+    // this catches. arm (index 1) and left (index 6) bracket the hidden button to prove nothing above or below it shifted either.
     const built = buildFob({}, { userOptions: ["Disable." + buttonOption("Disarm")] });
 
     assert.equal(built.accessory.getServiceById(Service.StatelessProgrammableSwitch, buttonSubtype("disarm")), undefined, "the hidden disarm button has no switch");
@@ -177,8 +180,8 @@ describe("real ProtectFob construction and behavior", () => {
     const left = built.accessory.getServiceById(Service.StatelessProgrammableSwitch, buttonSubtype("left"));
 
     assert.ok(arm && panic && left, "the surviving buttons exist");
-    assert.equal(arm.getCharacteristic(Characteristic.ServiceLabelIndex).value, 4, "arm keeps its FIXED table index 4, not a compacted visible position of 3");
-    assert.equal(panic.getCharacteristic(Characteristic.ServiceLabelIndex).value, 1, "panic keeps its fixed table index 1");
+    assert.equal(panic.getCharacteristic(Characteristic.ServiceLabelIndex).value, 4, "panic keeps its FIXED table index 4, not a compacted visible position of 3");
+    assert.equal(arm.getCharacteristic(Characteristic.ServiceLabelIndex).value, 1, "arm keeps its fixed table index 1");
     assert.equal(left.getCharacteristic(Characteristic.ServiceLabelIndex).value, 6, "left keeps its fixed table index 6");
 
     built.fob.cleanup();
@@ -295,7 +298,7 @@ describe("real ProtectFob construction and behavior", () => {
 
     const armSwitch = restored.addService(Service.StatelessProgrammableSwitch, "Arm", buttonSubtype("arm"));
 
-    armSwitch.updateCharacteristic(Characteristic.ServiceLabelIndex, 4);
+    armSwitch.updateCharacteristic(Characteristic.ServiceLabelIndex, 1);
 
     const disableAllBut = FOB_BUTTONS.filter((button) => button.label !== "Arm").map((button) => "Disable." + buttonOption(button.label));
     const built = buildFob({}, { accessory: restored, userOptions: disableAllBut });
@@ -324,7 +327,7 @@ describe("real ProtectFob construction and behavior", () => {
 
     const baseline = built.store.observerCount;
 
-    assert.equal(baseline, 4, "the fob registers four observers");
+    assert.equal(baseline, 5, "the fob registers five observers");
 
     // A battery change wakes the battery observers and re-pushes both characteristics.
     built.store.pushFobBattery(built.fobConfig.id, { isLow: true, percentage: 15 });
@@ -337,9 +340,11 @@ describe("real ProtectFob construction and behavior", () => {
     built.fob.cleanup();
   });
 
-  test("an unrecognized fob adopts Battery-only with one actionable warning and no button switches", () => {
+  test("an unrecognized fob adopts Battery-only with one actionable warning, no button switches, and no button-label observer", async () => {
 
     const built = buildFob({ marketName: "Some Other Remote", type: "XYZ-Remote-1" });
+
+    await settle();
 
     // No button switches are created for an off-family fob...
     for(const button of FOB_BUTTONS) {
@@ -350,6 +355,9 @@ describe("real ProtectFob construction and behavior", () => {
 
     assert.equal(built.accessory.getService(Service.ServiceLabel), undefined, "no ServiceLabel is created for an unrecognized fob");
     assert.ok(built.accessory.getService(Service.Battery), "the battery service is still present on an unrecognized fob");
+
+    // The button-label observer is gated on a non-empty button table, so an unrecognized fob registers only the two base observers plus the two battery observers.
+    assert.equal(built.store.observerCount, 4, "an unrecognized fob registers no button-label observer - it has no buttons to rename");
 
     // ...but the adoption is never silent: one actionable warning names the unrecognized model.
     const warned = built.logEntries.some((entry) => (entry.level === "warn") && entry.formatted.includes("not a recognized model"));
@@ -414,5 +422,188 @@ describe("real ProtectFob construction and behavior", () => {
     assert.deepEqual(mqtt.published.filter((entry) => entry.topic === fobConfig.mac + "/button"),
       [{ message: JSON.stringify({ button: "night", pressType: "doublePress" }), topic: fobConfig.mac + "/button" }],
       "the delivered press publishes the raw button and press type on the MAC-scoped button topic");
+  });
+
+  test("under a position-hint labeling each button's displayName stays the security-action label while its ConfiguredName is the controller number", () => {
+
+    const built = buildFob({ buttonLabels: "positionHint" });
+
+    for(const button of FOB_BUTTONS) {
+
+      const service = built.accessory.getServiceById(Service.StatelessProgrammableSwitch, buttonSubtype(button.wireId));
+
+      assert.ok(service, button.label + "'s switch exists");
+      assert.equal(service.displayName, button.label, button.label + "'s displayName stays the stable security-action label");
+      assert.equal(service.getCharacteristic(Characteristic.ConfiguredName).value, button.positionLabel,
+        button.label + "'s ConfiguredName is its controller-numbered label");
+      assert.equal(service.getCharacteristic(Characteristic.ServiceLabelIndex).value, button.index, button.label + " keeps its controller-numbered index");
+    }
+
+    built.fob.cleanup();
+  });
+
+  test("under the factory-default labeling each button's ConfiguredName is the security-action label", () => {
+
+    for(const button of FOB_BUTTONS) {
+
+      const service = accessory.getServiceById(Service.StatelessProgrammableSwitch, buttonSubtype(button.wireId));
+
+      assert.ok(service, button.label + "'s switch exists");
+      assert.equal(service.getCharacteristic(Characteristic.ConfiguredName).value, button.label, button.label + "'s ConfiguredName is the security-action label");
+    }
+  });
+
+  test("an unrecognized button labeling resolves the security-action names", () => {
+
+    const built = buildFob({ buttonLabels: "someFutureMode" });
+
+    for(const button of FOB_BUTTONS) {
+
+      const service = built.accessory.getServiceById(Service.StatelessProgrammableSwitch, buttonSubtype(button.wireId));
+
+      assert.ok(service, button.label + "'s switch exists");
+      assert.equal(service.getCharacteristic(Characteristic.ConfiguredName).value, button.label,
+        button.label + "'s ConfiguredName falls back to the security-action label under an unrecognized labeling");
+    }
+
+    built.fob.cleanup();
+  });
+
+  test("a live labeling flip wakes the observer and rewrites the plugin-managed button names while Right and Left are untouched", async () => {
+
+    // The beforeEach fob is the factory-default security-action labeling, so every ConfiguredName starts at the security-action label.
+    for(const button of FOB_BUTTONS) {
+
+      const service = accessory.getServiceById(Service.StatelessProgrammableSwitch, buttonSubtype(button.wireId));
+
+      assert.ok(service, button.label + "'s switch exists");
+      assert.equal(service.getCharacteristic(Characteristic.ConfiguredName).value, button.label, button.label + " starts named by its security-action label");
+    }
+
+    // Right and Left resolve to the same label in both modes, so a flip must leave their ConfiguredName untouched - proven by their write logs not growing.
+    const right = accessory.getServiceById(Service.StatelessProgrammableSwitch, buttonSubtype("right"))?.getCharacteristic(Characteristic.ConfiguredName);
+    const left = accessory.getServiceById(Service.StatelessProgrammableSwitch, buttonSubtype("left"))?.getCharacteristic(Characteristic.ConfiguredName);
+
+    assert.ok(right && left, "the Right and Left switches carry a ConfiguredName");
+
+    const rightWrites = right.writes.length;
+    const leftWrites = left.writes.length;
+
+    // Flip the controller's labeling to the position-hint numbering and let the observer wake.
+    store.pushFobPatch(fobConfig.id, { buttonLabels: "positionHint" });
+
+    await settle();
+
+    for(const button of FOB_BUTTONS) {
+
+      const service = accessory.getServiceById(Service.StatelessProgrammableSwitch, buttonSubtype(button.wireId));
+
+      assert.ok(service, button.label + "'s switch exists");
+      assert.equal(service.getCharacteristic(Characteristic.ConfiguredName).value, button.positionLabel,
+        button.label + "'s ConfiguredName followed the flip to its controller-numbered label");
+    }
+
+    assert.equal(right.writes.length, rightWrites, "Right's ConfiguredName was not rewritten - its two labels coincide, so the steady-state skip applied");
+    assert.equal(left.writes.length, leftWrites, "Left's ConfiguredName was not rewritten - its two labels coincide, so the steady-state skip applied");
+  });
+
+  test("a user-renamed button survives a labeling flip while a plugin-managed sibling is renamed in the same pass", async () => {
+
+    const arm = accessory.getServiceById(Service.StatelessProgrammableSwitch, buttonSubtype("arm"));
+    const night = accessory.getServiceById(Service.StatelessProgrammableSwitch, buttonSubtype("night"));
+
+    assert.ok(arm && night, "the arm and night switches exist");
+
+    // The user renames the arm button to a custom string the plugin never authors for any button, so it is a user override.
+    arm.updateCharacteristic(Characteristic.ConfiguredName, "Front Door");
+
+    store.pushFobPatch(fobConfig.id, { buttonLabels: "positionHint" });
+
+    await settle();
+
+    assert.equal(arm.getCharacteristic(Characteristic.ConfiguredName).value, "Front Door", "the user-renamed arm button is left untouched across the flip");
+    assert.equal(night.getCharacteristic(Characteristic.ConfiguredName).value, "2",
+      "the plugin-managed night button was renamed to its controller number in the same pass");
+  });
+
+  test("a button whose name equals the other mode's default is owned by the plugin and reconciled, documenting the designed indistinguishability", () => {
+
+    // A restored accessory carrying every button at its security-action label, then arm alone overwritten to "1" - the position-hint default. A user who typed "1" by
+    // hand is indistinguishable from plugin management, so the configure-time reconcile in security-action mode treats arm's "1" as plugin-owned and rewrites it.
+    const restored = makeTestAccessory("Test Fob", "uuid:test-fob-boundary");
+
+    restored.addService(Service.ServiceLabel, "Test Fob");
+
+    for(const button of FOB_BUTTONS) {
+
+      const svc = restored.addService(Service.StatelessProgrammableSwitch, button.label, buttonSubtype(button.wireId));
+
+      svc.updateCharacteristic(Characteristic.ServiceLabelIndex, button.index);
+      svc.updateCharacteristic(Characteristic.ConfiguredName, button.label);
+    }
+
+    const restoredArm = restored.getServiceById(Service.StatelessProgrammableSwitch, buttonSubtype("arm"));
+
+    assert.ok(restoredArm, "the restored arm switch exists");
+    restoredArm.updateCharacteristic(Characteristic.ConfiguredName, "1");
+
+    const built = buildFob({ buttonLabels: "securityActions" }, { accessory: restored });
+
+    const arm = built.accessory.getServiceById(Service.StatelessProgrammableSwitch, buttonSubtype("arm"));
+
+    assert.ok(arm, "the arm switch survives the reconfigure");
+    assert.equal(arm.getCharacteristic(Characteristic.ConfiguredName).value, "Arm",
+      "arm's other-mode default was treated as plugin-owned and reconciled to the active security-action label");
+
+    built.fob.cleanup();
+  });
+
+  test("an offline labeling flip is reconciled at configure time with no observer wake", () => {
+
+    // Seed a restored accessory carrying every button at its security-action label - as HomeKit restores a fob last configured under that labeling - then reconfigure the
+    // SAME accessory with the controller reporting the position-hint labeling. The reconcile below is asserted before any settle, proving the configure-time pass did
+    // it: the store's observe never replays a flip that happened while Homebridge was down.
+    const restored = makeTestAccessory("Test Fob", "uuid:test-fob-offline");
+
+    restored.addService(Service.ServiceLabel, "Test Fob");
+
+    for(const button of FOB_BUTTONS) {
+
+      const svc = restored.addService(Service.StatelessProgrammableSwitch, button.label, buttonSubtype(button.wireId));
+
+      svc.updateCharacteristic(Characteristic.ServiceLabelIndex, button.index);
+      svc.updateCharacteristic(Characteristic.ConfiguredName, button.label);
+    }
+
+    const built = buildFob({ buttonLabels: "positionHint" }, { accessory: restored });
+
+    for(const button of FOB_BUTTONS) {
+
+      const service = built.accessory.getServiceById(Service.StatelessProgrammableSwitch, buttonSubtype(button.wireId));
+
+      assert.ok(service, button.label + "'s switch survives the reconfigure");
+      assert.equal(service.getCharacteristic(Characteristic.ConfiguredName).value, button.positionLabel,
+        button.label + "'s ConfiguredName was reconciled to the controller-numbered label at configure time");
+    }
+
+    built.fob.cleanup();
+  });
+
+  test("a steady-state configure writes each button's ConfiguredName once and logs no button-labeling line", () => {
+
+    // On a fresh accessory the create callback writes each ConfiguredName to the active label, so the configure-time reconcile immediately below finds current === active
+    // and writes nothing more. A second write would mean the reconcile mistook a just-created name for a rename.
+    for(const button of FOB_BUTTONS) {
+
+      const service = accessory.getServiceById(Service.StatelessProgrammableSwitch, buttonSubtype(button.wireId));
+
+      assert.ok(service, button.label + "'s switch exists");
+      assert.equal(service.getCharacteristic(Characteristic.ConfiguredName).writes.length, 1,
+        button.label + "'s ConfiguredName was written once at create and left untouched by the configure-time reconcile");
+    }
+
+    const labelingLines = logEntries.filter((entry) => (entry.level === "info") && entry.formatted.includes("button names"));
+
+    assert.deepEqual(labelingLines, [], "a steady-state configure logs no button-labeling info line");
   });
 });

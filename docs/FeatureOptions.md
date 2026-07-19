@@ -106,10 +106,10 @@ These option(s) apply to: Protect fobs.
 
 | Option                                               | Description
 |------------------------------------------------------|-------------------------------------------------------------
-| <A NAME="Fob.Button.Panic"></A>`Fob.Button.Panic`    | Make the Panic fob button available in HomeKit. **(default: enabled)**. <BR>*Supported on Protect fobs.*
-| <A NAME="Fob.Button.Disarm"></A>`Fob.Button.Disarm`  | Make the Disarm fob button available in HomeKit. **(default: enabled)**. <BR>*Supported on Protect fobs.*
-| <A NAME="Fob.Button.Night"></A>`Fob.Button.Night`    | Make the Night fob button available in HomeKit. **(default: enabled)**. <BR>*Supported on Protect fobs.*
-| <A NAME="Fob.Button.Arm"></A>`Fob.Button.Arm`        | Make the Arm fob button available in HomeKit. **(default: enabled)**. <BR>*Supported on Protect fobs.*
+| <A NAME="Fob.Button.Arm"></A>`Fob.Button.Arm`        | Make the Arm (1) fob button available in HomeKit. **(default: enabled)**. <BR>*Supported on Protect fobs.*
+| <A NAME="Fob.Button.Night"></A>`Fob.Button.Night`    | Make the Night (2) fob button available in HomeKit. **(default: enabled)**. <BR>*Supported on Protect fobs.*
+| <A NAME="Fob.Button.Disarm"></A>`Fob.Button.Disarm`  | Make the Disarm (3) fob button available in HomeKit. **(default: enabled)**. <BR>*Supported on Protect fobs.*
+| <A NAME="Fob.Button.Panic"></A>`Fob.Button.Panic`    | Make the Panic (4) fob button available in HomeKit. **(default: enabled)**. <BR>*Supported on Protect fobs.*
 | <A NAME="Fob.Button.Right"></A>`Fob.Button.Right`    | Make the Right fob button available in HomeKit. **(default: enabled)**. <BR>*Supported on Protect fobs.*
 | <A NAME="Fob.Button.Left"></A>`Fob.Button.Left`      | Make the Left fob button available in HomeKit. **(default: enabled)**. <BR>*Supported on Protect fobs.*
 

@@ -11,27 +11,31 @@ import { ProtectReservedNames } from "../types.ts";
 import { deviceSelectors } from "unifi-protect";
 
 // One physical button on a UniFi Protect fob. index is the STABLE 1-based ServiceLabelIndex the button always carries in HomeKit (never a compacted visible-subset
-// position, so a hidden earlier button never renumbers a later one); label is the title-cased human name that both names the HomeKit switch and derives the per-button
-// feature-option identity; wireId is the lowercase protocol id the controller's buttonPressed occurrence carries in its `button` field. label and wireId are deliberately
-// distinct derivations - the protocol id is not a display string and must never drift toward one.
+// position, so a hidden earlier button never renumbers a later one), following the controller's own button numbering. label is the security-action display name AND the
+// stable per-button feature-option identity (Fob.Button.<label>); that identity never follows the controller's active button labeling. positionLabel is the display name
+// the controller's position-hint labeling assigns the button. wireId is the lowercase protocol id the controller's buttonPressed occurrence carries in its `button`
+// field. label and wireId are deliberately distinct derivations - the protocol id is not a display string and must never drift toward one.
 interface FobButton {
 
   readonly index: number;
   readonly label: string;
+  readonly positionLabel: string;
   readonly wireId: string;
 }
 
 // The fixed, region-agnostic button table for the UniFi fob family. The controller config carries no per-button array (a fob is a pure-input device whose presses arrive
-// only as firehose occurrences), so the plugin authors the button set from live-captured wire truth: six buttons, stable wire ids independent of the user's buttonLabels
-// profile. The order matches the physical layout and fixes each button's 1-based ServiceLabelIndex.
+// only as firehose occurrences), so the plugin authors the button set from live-captured wire truth: six buttons whose wire ids are stable across the controller's
+// button-labeling modes. The indices follow the controller's own button numbering - the numbers its position-hint labeling assigns - so HomeKit's button ordering matches
+// the controller's in both label modes. Because the wire ids are labeling-independent, this table, not the controller's labeling choice, is the button-identity source of
+// truth, and it fixes each button's 1-based ServiceLabelIndex.
 const USL_FOB_BUTTONS: readonly FobButton[] = [
 
-  { index: 1, label: "Panic", wireId: "panic" },
-  { index: 2, label: "Disarm", wireId: "disarm" },
-  { index: 3, label: "Night", wireId: "night" },
-  { index: 4, label: "Arm", wireId: "arm" },
-  { index: 5, label: "Right", wireId: "right" },
-  { index: 6, label: "Left", wireId: "left" }
+  { index: 1, label: "Arm", positionLabel: "1", wireId: "arm" },
+  { index: 2, label: "Night", positionLabel: "2", wireId: "night" },
+  { index: 3, label: "Disarm", positionLabel: "3", wireId: "disarm" },
+  { index: 4, label: "Panic", positionLabel: "4", wireId: "panic" },
+  { index: 5, label: "Right", positionLabel: "Right", wireId: "right" },
+  { index: 6, label: "Left", positionLabel: "Left", wireId: "left" }
 ];
 
 // The single region-agnostic chokepoint that decides which button table a fob record maps to, or null when the fob is not a recognized family. It is deliberately
@@ -89,6 +93,14 @@ export class ProtectFob extends ProtectDevice {
     return "Fob.Button." + button.label;
   }
 
+  // Resolve one button's active HomeKit display name from the fob's live button labeling. The position-hint comparison is deliberately the only labeling mode this method
+  // distinguishes: an absent or unrecognized value resolves to the security-action names, which is the forward-compatible default. The read is non-throwing, so a fob in
+  // the removal grace resolves safely.
+  private buttonName(button: FobButton): string {
+
+    return (this.fromRecord((config) => config.buttonLabels, "securityActions") === "positionHint") ? button.positionLabel : button.label;
+  }
+
   // Initialize and configure the fob accessory for HomeKit.
   private configureDevice(): boolean {
 
@@ -109,10 +121,12 @@ export class ProtectFob extends ProtectDevice {
   }
 
   // Configure a HomeKit stateless-programmable-switch for each of the fob's buttons, grouped under a ServiceLabel when two or more are visible. A fob is a pure-input
-  // device: the leaf creates the services here and the event-dispatch router delivers the presses, so there are no onGet/onSet handlers and no observers on this path.
-  // The button set is fixed model identity, so this runs once at construction. Each button is individually show/hide-able through its own feature option, and hiding one
-  // prunes exactly its switch. Idempotent across restarts and option flips: the ServiceLabel and every switch are validated against the current visibility before being
-  // acquired, and a switch surviving from a prior grouped configure has its stale ServiceLabelIndex dropped when the fob regroups down to a lone visible button.
+  // device: the leaf creates the services here and the event-dispatch router delivers the presses, so there are no onGet/onSet handlers on this path. The button set is
+  // fixed model identity, so this runs once at construction. Each button is individually show/hide-able through its own feature option, and hiding one prunes exactly its
+  // switch. Repeat-safe across restarts and option flips: the ServiceLabel and every switch are validated against the current visibility before being acquired, and a
+  // switch surviving from a prior grouped configure has its stale ServiceLabelIndex dropped when the fob regroups down to a lone visible button. Once the switches are in
+  // place, a configure-time name reconcile brings every button's ConfiguredName to the controller's active button labeling, covering accessories restored from cache and
+  // labeling changes that landed while Homebridge was down.
   private configureButtons(): void {
 
     // An unrecognized fob has no button table, so we expose it Battery-only and surface one actionable line - never a silent adoption. The model read is non-throwing: an
@@ -157,9 +171,13 @@ export class ProtectFob extends ProtectDevice {
         continue;
       }
 
-      // Acquire the service, named by the bare button label. The switch is grouped under the fob accessory and acquireService sets its ConfiguredName - which the Home
-      // app honors as the button's name - so an unqualified label reads cleanest ("Panic", not "<Fob> Panic"); the accessory already supplies the fob's context.
-      const service = this.acquireService(this.hap.Service.StatelessProgrammableSwitch, button.label, subtype);
+      // Acquire the service, named by the bare security-action label. displayName and the Name characteristic hold that label as the stable identity hap-nodejs
+      // revalidates through checkName on every construction, including cache-restore, where a single-character name would trip it; ConfiguredName carries the label the
+      // controller's active button labeling assigns, which is what the Home app shows for a grouped switch. The create callback initializes ConfiguredName so a fresh
+      // button is born correctly named and the reconcile below stays silent. An unqualified label reads cleanest ("Arm", not "<Fob> Arm"); the accessory already supplies
+      // the fob's context.
+      const service = this.acquireService(this.hap.Service.StatelessProgrammableSwitch, button.label, subtype,
+        (svc) => svc.updateCharacteristic(this.hap.Characteristic.ConfiguredName, this.buttonName(button)));
 
       // Fail gracefully.
       if(!service) {
@@ -180,6 +198,91 @@ export class ProtectFob extends ProtectDevice {
         // Lone visible: a switch restored from a prior grouped configure carries a stale ServiceLabelIndex, so we drop it. A single-button fob presents no index and
         // links to no label. The testCharacteristic guard keeps this side-effect-free when no stale index is present, so a freshly-created lone switch is untouched.
         service.removeCharacteristic(service.getCharacteristic(this.hap.Characteristic.ServiceLabelIndex));
+      }
+    }
+
+    // The configure-time name reconcile. It reconciles a restored accessory's button names and any labeling change that landed while Homebridge was down, since the
+    // store's observe never replays on subscribe. A freshly created button is already at its active name from the create callback above, so this stays silent on a clean
+    // start.
+    this.updateButtonNames();
+  }
+
+  // Reconcile every visible button's ConfiguredName to the fob's active button labeling, honoring any name the user has assigned. The ownership test is stateless: a
+  // button's current ConfiguredName belongs to the plugin exactly when it is a value the plugin itself would ever author for that button - the security-action label or
+  // the position-hint label - or is absent entirely. A plugin-owned name that differs from the active one is rewritten and counted; anything else is a user rename and is
+  // left untouched. One corollary follows by construction: a user who renames a button to exactly one of the plugin's own labels re-enters plugin management, because the
+  // two cases are indistinguishable at read time, and that is the designed behavior. The absent-name branch initializes silently and is never counted as a rename - in
+  // production every button is born with a ConfiguredName through the create callback, so it is a robustness net rather than a live path. This writes ConfiguredName
+  // directly rather than renaming the whole service: displayName and the Name characteristic are the stable identity hap-nodejs revalidates through checkName, while
+  // ConfiguredName is the display lever the Home app reads for a grouped switch.
+  private updateButtonNames(): void {
+
+    let renamed = 0;
+
+    for(const button of this.#buttons) {
+
+      // Resolve this button's switch; skip it when absent - hidden by its feature option, or a failed acquire.
+      const service = this.accessory.getServiceById(this.hap.Service.StatelessProgrammableSwitch, this.buttonSubtype(button));
+
+      if(!service) {
+
+        continue;
+      }
+
+      // Read the current ConfiguredName without materializing it - the existence gate keeps a name-less service from gaining an empty characteristic just to be read.
+      const current = service.testCharacteristic(this.hap.Characteristic.ConfiguredName) ?
+        service.getCharacteristic(this.hap.Characteristic.ConfiguredName).value : undefined;
+      const active = this.buttonName(button);
+
+      // The steady state: the name already matches the active labeling, so touch nothing.
+      if(current === active) {
+
+        continue;
+      }
+
+      // A name-less service: initialize it silently, never counted as a rename.
+      if(current === undefined) {
+
+        service.updateCharacteristic(this.hap.Characteristic.ConfiguredName, active);
+
+        continue;
+      }
+
+      // Plugin-authored: the current name is one the plugin itself would ever assign this button, so it is ours to bring to the active labeling, and we count the rename.
+      if((current === button.label) || (current === button.positionLabel)) {
+
+        service.updateCharacteristic(this.hap.Characteristic.ConfiguredName, active);
+        renamed++;
+
+        continue;
+      }
+
+      // Anything else is a name the user assigned: honor it and touch nothing.
+      this.log.debug("Preserving the user-assigned name for the %s button: %s.", button.wireId, current);
+    }
+
+    // Log one line only on a real transition, chosen by the resolved labeling so the sentence reads plainly for what the controller reports.
+    if(renamed > 0) {
+
+      switch(this.fromRecord((config) => config.buttonLabels, "securityActions")) {
+
+        case "positionHint":
+
+          this.log.info("The controller labels the fob buttons by number; updating the button names in HomeKit to match.");
+
+          break;
+
+        case "securityActions":
+
+          this.log.info("The controller labels the fob buttons by security action; updating the button names in HomeKit to match.");
+
+          break;
+
+        default:
+
+          this.log.info("The controller reports a fob button labeling we do not recognize; using the security action button names.");
+
+          break;
       }
     }
   }
@@ -222,9 +325,10 @@ export class ProtectFob extends ProtectDevice {
     return true;
   }
 
-  // Spawn the fob's narrow-selector observers. super spawns the universal observers (name sync and firmware/device-info refresh); the fob adds battery observers,
-  // one per battery field, each waking only on its own slice through the store's reference dedup and delegating to the shared battery updater. There are NO per-button
-  // observers: button presses are firehose occurrences delivered by the event-dispatch router, not device-state fields observed here.
+  // Spawn the fob's narrow-selector observers. super spawns the universal observers (name sync and firmware/device-info refresh); the fob adds battery observers, one per
+  // battery field, each waking only on its own slice through the store's reference dedup and delegating to the shared battery updater, and - for a recognized model - a
+  // button-label observer that reconciles the button names when the controller's active labeling changes. Button PRESSES have no observers: they are firehose occurrences
+  // delivered by the event-dispatch router, not device-state fields observed here.
   protected override spawnObservers(): void {
 
     super.spawnObservers();
@@ -240,5 +344,13 @@ export class ProtectFob extends ProtectDevice {
     // on its own field.
     this.observeState({ key: "fob.battery.isLow", selector: (state) => fob(state)?.wirelessConnectionState.batteryStatus.isLow, title: "the battery status" },
       () => this.updateBatteryStatus());
+
+    // The button-label reaction: when the controller's active button labeling changes, reconcile every plugin-managed button's ConfiguredName to the new labeling. Gated
+    // on a non-empty button table - an unrecognized fob has no buttons to rename, so it subscribes to nothing. The selector reads the primitive labeling string, so an
+    // unrelated fob patch never wakes it.
+    if(this.#buttons.length) {
+
+      this.observeState({ key: "fob.buttonLabels", selector: (state) => fob(state)?.buttonLabels, title: "the button labels" }, () => this.updateButtonNames());
+    }
   }
 }

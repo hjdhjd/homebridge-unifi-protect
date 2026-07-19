@@ -139,10 +139,10 @@ export const featureOptions: Record<string, FeatureOptionEntry<ProtectOptionMeta
   // Fob options.
   "Fob": [
 
-    { default: true, description: "Make the Panic fob button available in HomeKit.", meta: { modelKey: ["fob"] }, name: "Button.Panic" },
-    { default: true, description: "Make the Disarm fob button available in HomeKit.", meta: { modelKey: ["fob"] }, name: "Button.Disarm" },
-    { default: true, description: "Make the Night fob button available in HomeKit.", meta: { modelKey: ["fob"] }, name: "Button.Night" },
-    { default: true, description: "Make the Arm fob button available in HomeKit.", meta: { modelKey: ["fob"] }, name: "Button.Arm" },
+    { default: true, description: "Make the Arm (1) fob button available in HomeKit.", meta: { modelKey: ["fob"] }, name: "Button.Arm" },
+    { default: true, description: "Make the Night (2) fob button available in HomeKit.", meta: { modelKey: ["fob"] }, name: "Button.Night" },
+    { default: true, description: "Make the Disarm (3) fob button available in HomeKit.", meta: { modelKey: ["fob"] }, name: "Button.Disarm" },
+    { default: true, description: "Make the Panic (4) fob button available in HomeKit.", meta: { modelKey: ["fob"] }, name: "Button.Panic" },
     { default: true, description: "Make the Right fob button available in HomeKit.", meta: { modelKey: ["fob"] }, name: "Button.Right" },
     { default: true, description: "Make the Left fob button available in HomeKit.", meta: { modelKey: ["fob"] }, name: "Button.Left" }
   ],
