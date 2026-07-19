@@ -4,8 +4,8 @@
  */
 import type { API, HAP } from "homebridge";
 import type { ProtectDeviceConfig, ProtectNvrConfig, ProtectState } from "unifi-protect";
+import { formatErrorMessage, loopFaultReporter, prefixedLog, superviseLoop } from "homebridge-plugin-utils";
 import { guardedPublish, mqttTopic } from "../mqtt.ts";
-import { loopFaultReporter, prefixedLog, superviseLoop } from "homebridge-plugin-utils";
 import type { HomebridgePluginLogging } from "homebridge-plugin-utils";
 import type { ProtectAccessory } from "../types.ts";
 import { ProtectAuthorizationError } from "unifi-protect";
@@ -213,11 +213,12 @@ export abstract class ProtectBase {
     this.nvr.mqtt?.unsubscribe(this.mqttId, topic);
   }
 
-  // Run a device command and report whether it succeeded. Device commands are write-through: they PATCH the controller and throw the classified FatalError on failure
-  // (rather than returning null), so this is the single place that converts a thrown command error into the boolean a HomeKit onSet handler branches on, and the single
-  // place a command failure is reported. The command is supplied as a thunk by the caller, where this.device is narrowed to the concrete projection, so the update
-  // typechecks against its own config; a helper that called this.device.update() itself would face the contravariance of the base's full device-projection union. An
-  // authorization failure is the one actionable case for the user - the account lacks the full management role - so it earns specific guidance; any other failure is
+  // Run a user-initiated device command and report whether it succeeded. Device commands are write-through: they PATCH the controller and throw the classified
+  // FatalError on failure (rather than returning null), so this is the single place that converts a thrown command error into the boolean a HomeKit onSet handler
+  // branches on, and the single place a user-initiated command failure is reported - autoconfiguration writes narrate their own outcomes at their call sites, the one
+  // place the consequence and the remedy are known. The command is supplied as a thunk by the caller, where this.device is narrowed to the concrete projection, so the
+  // update typechecks against its own config; a helper that called this.device.update() itself would face the contravariance of the base's full device-projection union.
+  // An authorization failure is the one actionable case for the user - the account lacks the full management role - so it earns specific guidance; any other failure is
   // reported with its underlying cause. The action is a verb phrase ("turn the light on") interpolated into the message. This lives on ProtectBase, the lowest common
   // ancestor of every command-issuer (every ProtectDevice subclass plus the DoorbellCapability), so the one copy serves them all; the controller-scoped ProtectBase-only
   // owners (the security system, the system-info owner, and liveviews) issue no Protect write commands and inherit it unused - a deliberate, accepted consequence of
@@ -238,9 +239,9 @@ export abstract class ProtectBase {
         return false;
       }
 
-      // Report the failure with its underlying cause. The format string already supplies the terminal period, so we strip any trailing periods the error's own message
-      // carries (a classified error is a full sentence ending in a period) so the line reads as one clean sentence rather than ending in a doubled period.
-      this.log.error("Unable to %s: %s.", action, ((error instanceof Error) ? error.message : String(error)).replace(/\.+$/, ""));
+      // Report the failure with its underlying cause. The format string supplies the terminal period, and formatErrorMessage strips the trailing period a classified
+      // error's own full-sentence message carries, so the line reads as one clean sentence rather than ending in a doubled period.
+      this.log.error("Unable to %s: %s.", action, formatErrorMessage(error));
 
       return false;
     }

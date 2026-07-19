@@ -3,11 +3,11 @@
  * command-error.test.ts: Unit tests for the shared device command-error helper (ProtectDevice.runDeviceCommand) and the write-through command path it single-sources.
  *
  * Device commands are write-through: this.device.update(payload) PATCHes the controller and throws the classified FatalError on a non-2xx, rather than returning null
- * on failure. runDeviceCommand is the one seam that converts that throw contract into the boolean every HomeKit onSet handler branches on, and the one place a command
- * failure is reported - an authorization failure earns the actionable "full management role" guidance, any other is reported with its underlying cause, normalized so the
- * reported sentence ends in exactly one terminal period regardless of the error message's own punctuation. These tests pin that contract against the real production
- * method, then exercise the command paths that route through it - setStatusLed, the night-vision and access-unlock onSet reverts, and the RTSP enablement gate -
- * through the HAP test-double.
+ * on failure. runDeviceCommand is the one seam that converts that throw contract into the boolean every HomeKit onSet handler branches on, and the one place a
+ * user-initiated command failure is reported - an authorization failure earns the actionable "full management role" guidance, any other is reported with its underlying
+ * cause, rendered through the family-wide formatErrorMessage so the reported sentence carries exactly one terminal period. These tests pin that contract against the
+ * real production method, then exercise the command paths that route through it - setStatusLed and the night-vision and access-unlock onSet reverts - through the HAP
+ * test-double.
  *
  * ProtectDevice is the smallest real surface that carries the helper: the abstract base declares no abstract members, so a near-empty concrete leaf is a faithful
  * instance whose runDeviceCommand, setStatusLed, and statusLedCommand are all the base's own (the same admission reachability.test.ts relies on). The camera/light/etc.
@@ -132,7 +132,7 @@ describe("runDeviceCommand (real ProtectDevice)", () => {
     const { errors, instance } = makeDevice();
 
     // A classified error message is a full sentence ending in a period. The format string supplies its own terminal period, so without normalization the line would
-    // end in a doubled "..". The helper strips the message's trailing period(s) so the reported sentence ends in exactly one.
+    // end in a doubled "..". The helper renders the cause through formatErrorMessage, which strips the cause's trailing period so the sentence ends in exactly one.
     const result = await instance.runCommand("reboot the camera", () => Promise.reject(new Error("The camera is offline.")));
 
     assert.equal(result, false);
@@ -149,15 +149,16 @@ describe("runDeviceCommand (real ProtectDevice)", () => {
     assert.match(onlyError(errors), /Unable to reboot the camera: connection refused\.$/);
   });
 
-  test("a non-auth error whose message ends in an ellipsis is collapsed to a single terminal period", async () => {
+  test("a non-auth error whose message ends in an ellipsis keeps the ellipsis intact", async () => {
 
     const { errors, instance } = makeDevice();
 
-    // The strip targets a run of trailing periods, so an ellipsis collapses to the one period the format string supplies rather than surviving as a doubled "....".
+    // formatErrorMessage strips exactly one trailing period - the doubled sentence terminator - so an intentional ellipsis survives: two of its periods remain and the
+    // format string's own terminal period completes the three. This is the family-wide cause rendering, shared with every other error line in the plugin.
     const result = await instance.runCommand("reboot the camera", () => Promise.reject(new Error("retrying...")));
 
     assert.equal(result, false);
-    assert.match(onlyError(errors), /Unable to reboot the camera: retrying\.$/);
+    assert.match(onlyError(errors), /Unable to reboot the camera: retrying\.\.\.$/);
   });
 });
 
@@ -286,48 +287,5 @@ describe("access unlock onSet (real runDeviceCommand)", () => {
 
     assert.equal(target.value, Characteristic.LockTargetState.SECURED, "an authorization failure still reverts the lock to SECURED");
     assert.match(onlyError(harness.errors), /Unable to unlock the Access device\. Please ensure this username has the full management role in UniFi Protect\./);
-  });
-});
-
-describe("RTSP enablement gate (real runDeviceCommand)", () => {
-
-  // The refreshChannelProfiles enable-if-needed gate the camera ships: when any channel lacks RTSP, PATCH the full channel array with isRtspEnabled set through the
-  // shared helper and return early - the channels observer re-drives configuration once the controller's change reconciles - otherwise fall through to build the entries.
-  // We model the gate over an injected channels array and the harness's write-through update thunk, pinning which path runs and the exact PATCH payload.
-  const enableRtspIfNeeded = (harness: CommandHarness, channels: { id: string; isRtspEnabled: boolean; name: string }[]) => async (): Promise<boolean> => {
-
-    if(channels.some((channel) => !channel.isRtspEnabled)) {
-
-      await harness.instance.runCommand("enable RTSP on the camera's channels",
-        () => harness.device.update({ channels: channels.map((channel) => ({ ...channel, isRtspEnabled: true })) }));
-
-      return false;
-    }
-
-    return true;
-  };
-
-  test("a channel still needing RTSP PATCHes every channel enabled and returns early", async () => {
-
-    let captured: unknown;
-    const harness = makeDevice(async (payload) => { captured = payload; });
-    const channels = [ { id: "0", isRtspEnabled: false, name: "High" }, { id: "1", isRtspEnabled: true, name: "Low" } ];
-    const proceeded = await enableRtspIfNeeded(harness, channels)();
-
-    assert.equal(proceeded, false, "the enable path returns early so the channels observer re-drives configuration");
-    assert.deepEqual(captured, { channels: [ { id: "0", isRtspEnabled: true, name: "High" }, { id: "1", isRtspEnabled: true, name: "Low" } ] },
-      "the PATCH carries the full channel array with RTSP enabled on every channel");
-    assert.equal(harness.errors.length, 0, "an accepted enable logs nothing");
-  });
-
-  test("every channel already RTSP-enabled issues no PATCH and falls through", async () => {
-
-    let updateCalls = 0;
-    const harness = makeDevice(async () => { updateCalls++; });
-    const channels = [{ id: "0", isRtspEnabled: true, name: "High" }];
-    const proceeded = await enableRtspIfNeeded(harness, channels)();
-
-    assert.equal(proceeded, true, "with RTSP already on we fall through to build the stream entries");
-    assert.equal(updateCalls, 0, "no redundant PATCH is issued for an already-enabled camera");
   });
 });

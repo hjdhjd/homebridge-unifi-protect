@@ -2,14 +2,14 @@
  *
  * camera.ts: Camera device class for UniFi Protect.
  */
-import { AudioRecordingCodecType, AudioRecordingSamplerate, capabilityGate, toStartCase } from "homebridge-plugin-utils";
+import { AudioRecordingCodecType, AudioRecordingSamplerate, capabilityGate, formatErrorMessage, toStartCase } from "homebridge-plugin-utils";
 import type { Camera, LivestreamSource, ProtectCameraConfig, SnapshotOptions, TalkbackSession } from "unifi-protect";
 import type { CharacteristicValue, Service } from "homebridge";
 import type { LivestreamHostOptions, ProtectCameraHost } from "../../media/camera-host.ts";
 import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_SEGMENT_RESOLUTION, PROTECT_TIMESHIFT_CONSTRAINED_HOST_TARGET } from "../../settings.ts";
 import type { ProtectAccessory, ProtectPersistedContextState, WithoutIdentity } from "../../types.ts";
+import { ProtectAuthorizationError, deviceSelectors, livestreamAudioSampleRate } from "unifi-protect";
 import { buildAdvertisedProfiles, buildChannelProfile, capByPixels, formatResolution, isPrimaryChannel, rtspUrl, selectChannelProfile } from "../../media/resolution.ts";
-import { deviceSelectors, livestreamAudioSampleRate } from "unifi-protect";
 import { nightVisionActive, nightVisionBrightnessForMode, nightVisionCommandForLevel, nightVisionModeForToggleOn, nightVisionToggleCommand,
   parseNightVisionMode } from "./night-vision-policy.ts";
 import type { ChannelProfile } from "../../media/resolution.ts";
@@ -1172,16 +1172,40 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
       return false;
     }
 
-    // Ensure RTSP is enabled on every channel. This is a write-through config change with no read-after-write: if any channel still needs RTSP, enable them all and
-    // return, then let the channels observer (wired in spawnCameraObservers) re-run this method once the change reconciles, at which point every channel reads back
+    // Ensure RTSP is enabled on every channel. This is a write-through config change with no read-after-write: when a channel still needs RTSP, we enable them all and
+    // return, letting the channels observer (wired in spawnCameraObservers) re-run this method once the change reconciles, at which point every channel reads back
     // enabled and we build the stream entries below. When RTSP is already on - the common case for any existing camera and every restart - we skip the PATCH and fall
-    // through synchronously, exactly as before. The reducer dedups a no-op patch, so a redundant enable could never loop the observer regardless.
+    // through synchronously. The reducer dedups a no-op patch, so a redundant enable could never loop the observer regardless. When the controller declines the write -
+    // an account without the full management role, or a transient controller failure - we narrate the outcome and fall through to stream from the channels that are
+    // already RTSP-enabled, so a permissions-limited account keeps every stream its manual configuration provides. There is no failure latch: each later wake
+    // re-attempts the write, so nothing goes stale across a reconnect or a mid-session role change.
     if(this.ufp.channels.some(channel => !channel.isRtspEnabled)) {
 
-      await this.runDeviceCommand("enable RTSP on the camera's channels",
-        () => this.device.update({ channels: this.ufp.channels.map(channel => ({ ...channel, isRtspEnabled: true })) }));
+      try {
 
-      return false;
+        await this.device.update({ channels: this.ufp.channels.map(channel => ({ ...channel, isRtspEnabled: true })) });
+
+        return false;
+      } catch(error) {
+
+        // The camera can be removed while the write is in flight, and the observer-wake presence gate only covers the synchronous prefix ahead of the await. We re-check
+        // before touching the live record again...a vanished camera has nothing to narrate and nothing to derive.
+        if(!this.recordPresent) {
+
+          return false;
+        }
+
+        if(error instanceof ProtectAuthorizationError) {
+
+          this.log.warn("Unable to enable RTSP on all of the camera's channels because this account does not have the full management role in UniFi Protect. " +
+            "HomeKit streaming can only use channels that already have RTSP enabled. To make every streaming quality option available, grant the account the full " +
+            "management role or enable RTSP on each of the camera's channels in the Protect webUI.");
+        } else {
+
+          this.log.warn("Unable to enable RTSP on all of the camera's channels: %s. HomeKit streaming can only use channels that already have RTSP enabled.",
+            formatErrorMessage(error));
+        }
+      }
     }
 
     // Figure out which camera channels are RTSP-enabled, and user-enabled. We also filter out any package camera entries. We deal with those independently elsewhere.

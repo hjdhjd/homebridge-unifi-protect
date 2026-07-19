@@ -66,6 +66,7 @@ describe("real ProtectCamera construction through the streaming-delegate factory
   let factory: TestStreamingDelegateFactory;
   let harnessController: AbortController | undefined;
   let nvr: TestProtectNvr;
+  let projection: TestCameraProjection;
   let store: TestStateStore;
 
   before(async () => {
@@ -76,7 +77,7 @@ describe("real ProtectCamera construction through the streaming-delegate factory
     store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
     ({ controller: harnessController, factory, nvr } = makeTestNvr({ store }));
 
-    const projection = new TestCameraProjection(cameraConfig.id, store);
+    projection = new TestCameraProjection(cameraConfig.id, store);
 
     accessory = makeTestAccessory("Test Camera", "11111111-2222-3333-4444-555555555555");
 
@@ -107,6 +108,7 @@ describe("real ProtectCamera construction through the streaming-delegate factory
     assert.deepEqual(call.resolutions, g2Fixture.expected.map((entry) => entry.resolution),
       "the advertised resolutions handed to the factory equal the golden-master expectation for the construction corpus");
     assert.equal(camera.stream, call.delegate, "the camera holds the stub delegate the factory returned");
+    assert.equal(projection.updateCalls.length, 0, "a fully-RTSP-enabled channel set issues no enable write during construction");
   });
 
   test("the accessory's controller registration received exactly the stub delegate's sentinel controller, exactly once", () => {
@@ -181,6 +183,7 @@ describe("real ProtectCamera construction through the streaming-delegate factory
     // The this.stream idempotency gate: the re-run republishes profiles and exits - no second delegate, no second controller registration.
     assert.equal(factory.createCalls.length, 1, "the factory was not invoked again on the re-run");
     assert.equal(accessory.configureControllerCalls.length, 1, "the controller was not registered again on the re-run");
+    assert.equal(projection.updateCalls.length, 0, "the fully-RTSP-enabled push issues no enable write on the re-run either");
   });
 
   test("cleanup unregisters the controller, unwinds all fourteen observers, and a further push wakes nothing", async () => {
