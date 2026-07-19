@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## 8.1.0 (2026-07-19)
+  * Improvement: HomeKit Secure Video recordings from doorbells now record audio at the doorbell's native 48 kHz rather than 16 kHz.
+  * Improvement: the extra-smooth live view processing on Apple Silicon now integrates with hardware acceleration cleanly in every configuration...a partially-accelerated setup can no longer end up with a broken livestream.
+  * Improvement: in multi-controller environments, each controller health report is attributed by the controller address it carries, removing any chance of cross-controller mixups.
+  * Improvement: fob buttons now honor the button label style you've selected in the Protect webUI - numbers or security actions - and switching styles updates the button names in HomeKit automatically...though if you've renamed a button yourself, your name always wins. The buttons are also ordered to match the Protect webUI.
+  * Improvement: when the settings webUI fails to load in your browser, it now explains what happened on the page itself instead of showing a blank screen.
+  * Fix: an account without the full management role once again streams using whichever RTSP channels are already enabled on each camera, addressing a regression from v7...in HBUP 8.0, a camera with any RTSP channel disabled could lose live streaming and HomeKit Secure Video entirely on such accounts.
+  * Fix: HomeKit Secure Video readiness is no longer announced for a camera that dropped offline while its recording buffer was still starting.
+  * Fix: when two-way audio is lost mid-session, HBUP now says so plainly in the log instead of continuing silently without return audio.
+  * Fix: MQTT publish failures are now contained and reported instead of escaping as unhandled errors.
+  * Housekeeping.
+
 ## 8.0.1 (2026-07-14)
   * Improvement: minor robustness improvements when reserving streaming ports.
   * Fix: the webUI's device discovery now works on Node 22.
