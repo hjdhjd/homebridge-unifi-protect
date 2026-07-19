@@ -861,6 +861,7 @@ async function arrangeControllableRecording(): Promise<{ doubles: ControllableLi
 
   controllers.push(controller);
 
+  host.stream = new TestStreamingDelegate();
   host.selectSubstrateChannel = (): ChannelProfile => makeChannelProfile(host);
 
   const doubles = [ makeControllableLivestreamDouble(), makeControllableLivestreamDouble() ];

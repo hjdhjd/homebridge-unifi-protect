@@ -17,7 +17,7 @@
  * harness's segment-yielding livestream double and constructs the FFmpeg process through the platform's recording-process factory seam, so it drives the transmit path
  * FFmpeg-free with deterministic injected-clock pacing.
  */
-import { Characteristic, Service, makeTestCameraHost, settle } from "../testing.helpers.ts";
+import { Characteristic, Service, TestStreamingDelegate, makeTestCameraHost, settle } from "../testing.helpers.ts";
 import { PROTECT_SEGMENT_RESOLUTION, PROTECT_TIMESHIFT_BUFFER_MAXDURATION } from "../settings.ts";
 import { after, describe, test } from "node:test";
 import type { CameraRecordingConfiguration } from "homebridge";
@@ -135,7 +135,9 @@ describe("recording delegate synchronous configuration observables", () => {
 
     controllers.push(controller);
 
-    // Wire the success-path seams so an armed reconcile genuinely starts the buffer: a substrate channel to select and enough buffered segments for whenEstablished.
+    // Wire the success-path seams so an armed reconcile genuinely starts the buffer in its production shape: the streaming delegate the HKSV acknowledgment reads, a
+    // substrate channel to select, and enough buffered segments for whenEstablished.
+    host.stream = new TestStreamingDelegate();
     host.selectSubstrateChannel = (): ChannelProfile => makeChannelProfile(host);
     host.livestreamMediaSegments = Math.ceil(PROTECT_TIMESHIFT_BUFFER_MAXDURATION / PROTECT_SEGMENT_RESOLUTION) + 10;
 
