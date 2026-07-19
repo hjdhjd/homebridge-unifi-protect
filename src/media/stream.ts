@@ -804,7 +804,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
     const hinting = [];
 
     // Lightning bolt, using the default emoji presentation. We use this to indicate hardware acceleration.
-    hinting.push(...(isTranscoding && this.protectCamera.hints.hardwareTranscoding ? ["\u{26A1}\u{FE0F}"] : []));
+    hinting.push(...(isTranscoding && this.ffmpegOptions.hardwareEncodes("stream") ? ["\u{26A1}\u{FE0F}"] : []));
 
     // Gear, using the text presentation modifier. We use this to indicate that we're transcoding.
     hinting.push(...(isTranscoding ? ["\u{26ED}\u{FE0E}"] : []));

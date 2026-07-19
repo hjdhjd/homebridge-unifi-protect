@@ -2587,10 +2587,10 @@ export function makeTimeshiftSupervisorDouble(): TestTimeshiftSupervisor {
 }
 
 /* The stub StreamingDelegate, typed as the abstraction and entirely FFmpeg-free. The controller is a distinct sentinel object tests can identity-match
- * through the accessory's controller-event log; ffmpegOptions is the one documented cast seam on this class (only maxSourcePixels is read on the camera family's
- * paths, and only via selectSubstrateChannel - never at construction), with the ceiling injectable so the substrate-channel pixel cap is exercisable with a finite
- * value; hksv is null, the correct pre-HKSV-configuration state cleanup reads through this.stream?.hksv?.isRecording; shutdown records its calls; and
- * resetProbesizeOverride is a recordable no-op.
+ * through the accessory's controller-event log; ffmpegOptions is the one documented cast seam on this class - the camera family reads maxSourcePixels off it (via
+ * selectSubstrateChannel, never at construction) and hardwareEncodes off it (the HKSV acknowledgment marker), with the ceiling injectable and the encoder answer
+ * configurable so the substrate-channel pixel cap and the hardware marker are both exercisable; hksv is null, the correct pre-HKSV-configuration state cleanup reads
+ * through this.stream?.hksv?.isRecording; shutdown records its calls; and resetProbesizeOverride is a recordable no-op.
  */
 export class TestStreamingDelegate implements StreamingDelegate {
 
@@ -2600,6 +2600,9 @@ export class TestStreamingDelegate implements StreamingDelegate {
   public readonly builtFor: AudioOptionsIdentity;
   public controller: CameraController;
   public readonly ffmpegOptions: StreamingDelegate["ffmpegOptions"];
+  // Whether this stub reports the host running its hardware encoder, read through the ffmpegOptions.hardwareEncodes closure. Defaults false, the software-neutral state
+  // that suppresses the HKSV hardware marker, so a marker test opts in by setting it true before the acknowledgment fires.
+  public hardwareEncodes = false;
   public hksv: StreamingDelegate["hksv"];
   public readonly probesize: number;
   // How many times production tore this delegate down - cleanup and the NVR disconnect walk both call shutdown.
@@ -2614,9 +2617,14 @@ export class TestStreamingDelegate implements StreamingDelegate {
     // the camera beyond registration.
     this.controller = { hbupTestSentinel: "camera-controller" } as unknown as CameraController;
 
-    // The confined cast seam: the camera family reads only maxSourcePixels off ffmpegOptions, and an Infinity ceiling means "no hardware pixel cap" - the
-    // pass-everything-through default. A finite injected ceiling lets the recording-channel cap path select against a real constraint.
-    this.ffmpegOptions = { maxSourcePixels: (): number => maxSourcePixels } as unknown as StreamingDelegate["ffmpegOptions"];
+    // The confined cast seam: the camera family reads maxSourcePixels and hardwareEncodes off ffmpegOptions. An Infinity ceiling means "no hardware pixel cap" - the
+    // pass-everything-through default - while a finite injected ceiling lets the recording-channel cap path select against a real constraint. The hardwareEncodes closure
+    // reads the configurable field, which defaults false so the HKSV hardware marker is absent unless a test opts in.
+    this.ffmpegOptions = {
+
+      hardwareEncodes: (): boolean => this.hardwareEncodes,
+      maxSourcePixels: (): number => maxSourcePixels
+    } as unknown as StreamingDelegate["ffmpegOptions"];
     this.hksv = null;
 
     // The fixed probesize the stub advertises - consumers read it through camera.stream.probesize; an inert test value with no behavioral role in the suites.

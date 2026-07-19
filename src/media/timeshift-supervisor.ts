@@ -10,8 +10,8 @@ import { ProtectTimeshiftBuffer } from "./timeshift.ts";
 import { formatBps } from "homebridge-plugin-utils";
 import { isInducedDisruption } from "../nvr/nvr-policy.ts";
 
-// Lightning-bolt emoji (U+26A1 HIGH VOLTAGE SIGN + U+FE0F VARIATION SELECTOR-16) used to prefix the HKSV configuration log when the host supports
-// hardware-accelerated transcoding.
+// Lightning-bolt emoji (U+26A1 HIGH VOLTAGE SIGN + U+FE0F VARIATION SELECTOR-16) used to prefix the HKSV configuration log when this camera's HKSV recording encode
+// runs on the host's hardware encoder.
 const HKSV_HARDWARE_TRANSCODE_MARKER = "\u26A1\uFE0F ";
 
 // The recording demand the HKSV recording delegate pushes into the supervisor: the recording configuration HomeKit has selected (undefined when HomeKit cannot
@@ -364,7 +364,7 @@ export class ProtectTimeshiftSupervisor {
 
       this.hasAcknowledgedRecording = true;
       this.log.info("HKSV: %s%s [%s], %s.",
-        (this.protectCamera.hints.hardwareTranscoding && (this.protectCamera.platform.codecSupport.hostSystem !== "raspbian")) ? HKSV_HARDWARE_TRANSCODE_MARKER : "",
+        this.protectCamera.stream?.ffmpegOptions.hardwareEncodes("record") ? HKSV_HARDWARE_TRANSCODE_MARKER : "",
         desiredRtspEntry.name, this.protectCamera.videoCodecName, formatBps(acknowledgeConfig.videoCodec.parameters.bitRate * 1000));
     }
 

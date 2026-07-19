@@ -800,6 +800,59 @@ describe("timeshift supervisor streaming arm", () => {
   });
 });
 
+// The rendered HKSV acknowledgment line at info level, or undefined when none fired. The hardware marker is a substituted %s argument, so the marker assertions match
+// against entry.formatted - the util.format render - rather than the format string countLogs keys on, since a countLogs check on the marker passes vacuously in both
+// directions.
+function hksvAckLine(entries: TestLogEntry[]): string | undefined {
+
+  return entries.find((entry) => (entry.level === "info") && entry.formatted.includes("HKSV:"))?.formatted;
+}
+
+// The hardware marker the acknowledgment prefixes when the HKSV encode runs on the host's hardware encoder (U+26A1 HIGH VOLTAGE SIGN + U+FE0F VARIATION SELECTOR-16),
+// encoded here independently so the assertion pins the exact glyph rather than trusting the module constant.
+const HKSV_HARDWARE_MARKER = "⚡️";
+
+describe("timeshift supervisor HKSV hardware marker", () => {
+
+  // The acknowledgment prefixes the hardware marker when this camera's HKSV recording encode runs on the host's hardware encoder, which the stub reports through its
+  // ffmpegOptions.hardwareEncodes closure. The stub is configured true before the acknowledgment fires, then recording enables against the already-running buffer.
+  test("prefixes the hardware marker when the HKSV encode runs on the hardware encoder", async () => {
+
+    const { host, logEntries, supervisor } = arrangeStreamingHost();
+    const delegate = new TestStreamingDelegate();
+
+    delegate.hardwareEncodes = true;
+    host.stream = delegate;
+
+    await supervisor.reconcile();
+    await settle();
+
+    assert.equal(await supervisor.setRecordingDemand({ config: makeRecordingConfig(), isRecording: true }), true, "the recording arm reconciled to running");
+    await settle();
+
+    const line = hksvAckLine(logEntries);
+
+    assert.ok(line?.includes(HKSV_HARDWARE_MARKER), "the acknowledgment carries the hardware marker when the encode runs on the hardware encoder");
+  });
+
+  // With the encoder answer at its software-neutral default of false, the acknowledgment still fires but carries no hardware marker.
+  test("omits the hardware marker when the HKSV encode runs in software", async () => {
+
+    const { logEntries, supervisor } = arrangeStreamingHost();
+
+    await supervisor.reconcile();
+    await settle();
+
+    assert.equal(await supervisor.setRecordingDemand({ config: makeRecordingConfig(), isRecording: true }), true, "the recording arm reconciled to running");
+    await settle();
+
+    const line = hksvAckLine(logEntries);
+
+    assert.ok(line, "the acknowledgment fired");
+    assert.equal(line?.includes(HKSV_HARDWARE_MARKER), false, "the acknowledgment carries no hardware marker when the encode runs in software");
+  });
+});
+
 // Arrange an armed, running supervisor whose buffer runs on the FIRST of two queued controllable livestream doubles, so a test can end the first out-of-band and observe
 // whether the supervisor re-establishes onto the second.
 async function arrangeControllableRecording(): Promise<{ doubles: ControllableLivestreamDouble[]; host: TestCameraHost; supervisor: ProtectTimeshiftSupervisor }> {
