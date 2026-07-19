@@ -669,11 +669,14 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
     // Find the best RTSP stream based on what we're looking for.
     if(isTranscoding) {
 
-      // If we have hardware transcoding enabled, we treat it uniquely and get the highest quality stream we can. Fixed-function hardware transcoders tend to perform
-      // better with higher bitrate sources. We also want to generally bias ourselves toward higher quality streams where possible.
+      // When the live encode runs on the host's hardware encoder we bias toward the highest-quality source the pipeline can ingest, because fixed-function encoders
+      // perform better with higher-bitrate sources; a software encode is fed a source matched to the requested resolution instead, so the CPU cost tracks what HomeKit
+      // actually asked for.
+      const usesHardwareEncoder = this.ffmpegOptions.hardwareEncodes("stream");
+
       channelProfile ??= this.protectCamera.selectChannel(
-        (this.protectCamera.hints.hardwareTranscoding) ? 3840 : request.video.width,
-        (this.protectCamera.hints.hardwareTranscoding) ? 2160 : request.video.height,
+        usesHardwareEncoder ? 3840 : request.video.width,
+        usesHardwareEncoder ? 2160 : request.video.height,
         { biasHigher: true, maxPixels: this.ffmpegOptions.maxSourcePixels("stream") }
       );
 
