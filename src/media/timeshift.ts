@@ -90,6 +90,9 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
   // _lastKeyframeTime write on each keyframe and the now-versus-then staleness compare in snapshotSource - so that path is test-deterministic without a real-time
   // wait. This mirrors the recording delegate's clock field-copy exactly (record.ts), reaching the clock through the platform handle the camera already carries.
   private readonly clock: Clock;
+  // The owner's verdict on a start that is still establishing. Deliberately not named for staleness alone: this class already uses "stale" for old-timeline segments
+  // and keyframe freshness, while this predicate answers a different question - whether the owner has condemned the start that is now trying to commit.
+  private readonly isStartStale: () => boolean;
   private readonly log: HomebridgePluginLogging;
   private readonly protectCamera: ProtectCameraHost;
   private segmentCount: number;
@@ -97,7 +100,9 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
   // derives from `subscription !== undefined`.
   private subscription?: LivestreamSubscription;
 
-  constructor(protectCamera: ProtectCameraHost) {
+  // Create a timeshift buffer for a camera. The optional isStartStale predicate is the owner's verdict on a start that is still in flight, consulted once at the commit
+  // point in start(); the default never declines, so a buffer constructed without an owner behaves exactly as one whose owner never condemns a start.
+  constructor(protectCamera: ProtectCameraHost, options: { isStartStale?: () => boolean } = {}) {
 
     // Initialize the event emitter.
     super();
@@ -109,6 +114,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
     this._pendingStopCause = "ended";
     this._segments = [];
     this.clock = protectCamera.platform.clock;
+    this.isStartStale = options.isStartStale ?? ((): boolean => false);
     this.log = protectCamera.log;
     this.protectCamera = protectCamera;
     this.segmentCount = 1;
@@ -167,6 +173,17 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
       return false;
     }
 
+    // The owner can condemn this start while its establishment is in flight, and the owner's own stop() acts only on a committed subscription - so this is the one
+    // window stop() cannot cover. Committing here would hand a live pool subscription to a torn-down owner and leave its release to a later reconcile pass, while the
+    // disconnect path expects every pool subscription's release to be under way before the unifi-protect client is disposed. A condemned start disposes its local
+    // subscription and declines, exactly like the establishment-failure paths above.
+    if(this.isStartStale()) {
+
+      void subscription[Symbol.asyncDispose]();
+
+      return false;
+    }
+
     // Every check has passed. Commit the subscription as the backing state; isStarted flips from false to true atomically with this assignment, and the channel
     // profile commits in the same synchronous frame, so the (isStarted, channelProfile) pair is never observable out of sync. The failed-start paths above never
     // assign the profile, so external readers never see an entry whose start did not succeed.
@@ -187,7 +204,8 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
   //
   //   - stop() called externally: stop() cleared `this.subscription` before the iterator observed the queue close, so the id compare against undefined fails
   //     and we no-op (stop() already fired the terminated emit if applicable).
-  //   - start() validation failed: the local subscription was disposed before `this.subscription` was committed to it, so the ids don't match and we no-op.
+  //   - start() declined before committing, whether a validation failed or the owner condemned the start: the local subscription was disposed before
+  //     `this.subscription` was committed to it, so the ids don't match and we no-op.
   //   - terminal typed error (e.g., ProtectLivestreamUnavailableError): the subscription was committed and is now disposed without our teardown running, so the ids
   //     match and we reset backing state to match reality via finalizeSubscription.
   //   - session-level termination (controller manager shutdown): the subscription's iterator closes from outside, the ids match, and we self-clean.

@@ -586,12 +586,14 @@ describe("timeshift supervisor shutdown latch", () => {
     assert.equal(fresh.buffer.isStarted, true, "the fresh supervisor's buffer is running");
   });
 
-  // The widened guard's isShutdown arm, driven through the REAL shutdown-versus-in-flight-start race rather than a hook. A fresh first-enable starts the buffer, but
-  // the start is held in flight on a gated establishment; shutdown() runs while it is pending, so the latch arms and stop() no-ops on the not-yet-committed subscription;
-  // then the establishment releases and the start commits AFTER shutdown returned, resuming the pass into the guard with isShutdown TRUE and isStarted TRUE. Only the
-  // isShutdown arm stands between that race and the narration - a guard stripped to !isStarted would pass here, since the racing start did commit. The pass must narrate
-  // nothing, and the follow-up pass shutdown() re-armed must settle the buffer stopped.
-  test("a start that commits after shutdown races it narrates nothing and settles stopped", async () => {
+  // The commit-point decline, driven through the REAL shutdown-versus-in-flight-start race rather than a hook. A fresh first-enable starts the buffer, but the start is
+  // held in flight on a gated establishment; shutdown() runs while it is pending, so the latch arms and its stop() finds no committed subscription to release. When the
+  // establishment then releases, the start reaches its commit point, reads its owner's armed latch, disposes the subscription it opened and declines - so the pass
+  // resumes into the narration guard having never started.
+  //
+  // The stopped-emit count is what tells the two behaviors apart: shutdown's own stop is the sole emitter here, while a start that commits and is released by the
+  // follow-up pass emits a second time. The DEBUG stop line counts the same way - the follow-up pass has nothing left to stop, where a committed start gives it work.
+  test("a shutdown that races an in-flight start declines the commit and disposes the subscription", async () => {
 
     const { controller, host, logEntries } = makeTestCameraHost();
 
@@ -607,6 +609,11 @@ describe("timeshift supervisor shutdown latch", () => {
 
     const supervisor = new ProtectTimeshiftSupervisor(host);
 
+    // Count the buffer's teardown emits from before the shutdown, so the shutdown's own stop and any later release are both in scope.
+    let stoppedEmits = 0;
+
+    supervisor.buffer.on("stopped", (): void => { stoppedEmits++; });
+
     // Enable recording. The reconcile reaches buffer.start and parks on the gated establishment, so the subscription is not yet committed.
     const enablePromise = supervisor.setRecordingDemand({ config: makeRecordingConfig(), isRecording: true });
 
@@ -614,19 +621,71 @@ describe("timeshift supervisor shutdown latch", () => {
 
     assert.equal(supervisor.buffer.isStarted, false, "the start is held in flight, not yet committed");
 
-    // Shutdown races the pending start: the latch arms first, then stop() no-ops on the uncommitted subscription - the mitigation the widened guard pins.
+    // Shutdown races the pending start: the latch arms first, and stop() has no committed subscription to release.
     supervisor.shutdown();
 
-    // Release establishment so the held start commits AFTER shutdown returned, resuming the pass into the guard with isShutdown true and isStarted true.
+    // Release establishment so the held start settles AFTER shutdown returned and meets the latch at its commit point.
     double.releaseEstablishment();
 
     await enablePromise;
     await settle();
 
-    assert.equal(countLogs(logEntries, "info", "HKSV:"), 0, "the shutdown-raced start emitted no acknowledgment - only the isShutdown arm suppressed it");
+    assert.equal(stoppedEmits, 1, "shutdown's own stop is the sole teardown emit - a committed start would be released by the follow-up pass and emit again");
+    assert.equal(countLogs(logEntries, "debug", "Timeshift buffer stopped."), 0, "the follow-up pass had nothing to stop, since the commit never landed");
+    assert.equal(double.disposed, true, "the declined start disposed the subscription it opened");
+    assert.equal(supervisor.buffer.isStarted, false, "the buffer never started");
+    assert.equal(supervisor.buffer.channelProfile, null, "no channel profile committed");
+    assert.equal(countLogs(logEntries, "info", "HKSV:"), 0, "the shutdown-raced start emitted no acknowledgment");
     assert.equal(countLogs(logEntries, "warn", "has started now that the camera is online"), 0, "no deferral resolution narrated at warn");
     assert.equal(countLogs(logEntries, "debug", "has started now that the camera is online"), 0, "no deferral resolution narrated at debug");
-    assert.equal(supervisor.buffer.isStarted, false, "the follow-up pass the shutdown re-armed settled the buffer stopped");
+  });
+
+  // The settle window's other occupant: a shutdown landing AFTER a start has committed, before the pass narrates. The one-shot onStartSettled override lands it exactly
+  // there, disarming after it fires so the follow-up pass settles rather than re-entering the shutdown. Here the buffer genuinely committed, so shutdown's stop acts on
+  // a live subscription and disposes it, and the narration guard catches the window through the started state alone.
+  class ShutdownAtSettleSupervisor extends ProtectTimeshiftSupervisor {
+
+    private shutDownOnce = false;
+
+    protected override onStartSettled(): void {
+
+      if(!this.shutDownOnce) {
+
+        this.shutDownOnce = true;
+        this.shutdown();
+      }
+    }
+  }
+
+  test("a shutdown landing in the settle window narrates nothing and leaves the buffer stopped", async () => {
+
+    const { controller, host, logEntries } = makeTestCameraHost();
+
+    controllers.push(controller);
+
+    host.stream = new TestStreamingDelegate();
+    host.selectSubstrateChannel = (): ChannelProfile => makeChannelProfile(host);
+
+    // A normally-establishing double, so the start actually commits before the hook fires.
+    const double = makeControllableLivestreamDouble();
+
+    host.livestreamSubscriptions.push(double);
+
+    const supervisor = new ShutdownAtSettleSupervisor(host);
+
+    let stoppedEmits = 0;
+
+    supervisor.buffer.on("stopped", (): void => { stoppedEmits++; });
+
+    await supervisor.setRecordingDemand({ config: makeRecordingConfig(), isRecording: true });
+    await settle();
+
+    assert.equal(countLogs(logEntries, "info", "HKSV:"), 0, "the settle-window shutdown emitted no acknowledgment");
+    assert.equal(countLogs(logEntries, "warn", "has started now that the camera is online"), 0, "no deferral resolution narrated at warn");
+    assert.equal(countLogs(logEntries, "debug", "has started now that the camera is online"), 0, "no deferral resolution narrated at debug");
+    assert.equal(supervisor.buffer.isStarted, false, "the shutdown stopped the committed buffer before the guard read it");
+    assert.equal(double.disposed, true, "the shutdown's stop disposed the committed subscription");
+    assert.equal(stoppedEmits, 1, "the committed subscription was released exactly once");
   });
 });
 

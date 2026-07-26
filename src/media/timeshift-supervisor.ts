@@ -70,7 +70,7 @@ export class ProtectTimeshiftSupervisor {
   // Create an instance of the timeshift buffer supervisor.
   constructor(protectCamera: ProtectCameraHost) {
 
-    this.buffer = new ProtectTimeshiftBuffer(protectCamera);
+    this.buffer = new ProtectTimeshiftBuffer(protectCamera, { isStartStale: (): boolean => this.isShutdown });
     this.configureRequested = false;
     this.deferralResolutionPending = false;
     this.demand = { config: undefined, isRecording: false };
@@ -205,10 +205,11 @@ export class ProtectTimeshiftSupervisor {
     // No-op in production.
   }
 
-  // Invoked after every successful pass settles its buffer state and before the pass narrates - the window where an organic death or a shutdown can race the
-  // narration. On a coalesced pass (the buffer already running) no await separates the state check from this call, so the window is real only when a fresh
-  // start preceded it; firing unconditionally keeps the call site simple. A no-op in production; the test suite overrides it to land exactly-timed events
-  // inside the window, the same role onReconcileLoopExit plays for the loop's exit edge.
+  // Invoked after every successful pass settles its buffer state and before the pass narrates - the settle window, whose real occupants are an organic death and a
+  // shutdown landing after a start has committed. Each leaves the buffer stopped before the guard below reads it, which is why that guard reads the started state
+  // alone. On a coalesced pass (the buffer already running) no await separates the state check from this call, so the window is real only when a fresh start preceded
+  // it; firing unconditionally keeps the call site simple. A no-op in production; the test suite overrides it to land exactly-timed events inside the window, the same
+  // role onReconcileLoopExit plays for the loop's exit edge.
   protected onStartSettled(): void {
 
     // No-op in production.
@@ -321,10 +322,12 @@ export class ProtectTimeshiftSupervisor {
     // window, then guard before any narration.
     this.onStartSettled();
 
-    // The consume loop runs detached from the start commit, and shutdown can race an in-flight start: either way, narrating now would celebrate a buffer that is
-    // already gone or condemned. A dead buffer returns through the failure path and the coalescing loop's re-arm owns the retry; a shut-down supervisor returns to
-    // the follow-up pass the latch already scheduled, which settles on stopped. The acknowledgment below never latches for an episode that never actually ran.
-    if(this.isShutdown || !this.buffer.isStarted) {
+    // Narrating now would celebrate a buffer that is already gone, so the started state gates every line below. The settle window is real - the consume loop runs
+    // detached from the start commit, so a subscription can die in the microtask gap between the commit and this read, and a shutdown can land in the same gap - but
+    // the buffer never stays started through it. An organic death drops the started state on its way out, and a shutdown either stops a committed buffer synchronously
+    // or is observed at the buffer's own commit point, which declines the start rather than committing it; so this read covers every condemned path. A dead buffer
+    // returns through the failure path and the coalescing loop's re-arm owns the retry, and the acknowledgment below never latches for an episode that never ran.
+    if(!this.buffer.isStarted) {
 
       return false;
     }
@@ -375,19 +378,18 @@ export class ProtectTimeshiftSupervisor {
   }
 
   // Shut buffer supervision down for good - the terminal teardown the controller-disconnect and camera-removal paths call. Arms the latch so no subsequent or
-  // in-flight reconcile pass can start the buffer again, then stops the buffer synchronously. On the common path this releases the buffer's pool subscription before the
-  // unifi-protect client is disposed, the ordering the disconnect path relies on. One exception: a start already in flight when the latch arms. stop() no-ops on the
-  // not-yet-committed subscription, so that start commits after shutdown() has returned and holds its subscription until the woken follow-up pass (below) releases it,
-  // one async hop later. Produces no narration of its own: the paths that call this have already narrated the disruption at the controller or camera level. Terminal per
-  // instance by design - a camera whose streaming delegate is ever rebuilt constructs a fresh, unlatched supervisor.
+  // in-flight reconcile pass can start the buffer again, then stops the buffer synchronously, releasing a committed subscription's pool seat inside this call. A start
+  // still mid-establishment when the latch arms cannot commit: it reads the latch at the buffer's own commit point and disposes its subscription when its establishment
+  // settles, so no start ever hands a live subscription to a torn-down owner. Produces no narration of its own: the paths that call this have already narrated the
+  // disruption at the controller or camera level. Terminal per instance by design - a camera whose streaming delegate is ever rebuilt constructs a fresh, unlatched
+  // supervisor.
   public shutdown(): void {
 
     this.isShutdown = true;
     this.buffer.stop();
 
-    // Wake the coalescing loop. An in-flight pass may have been awaiting a start when the latch armed and could commit a running buffer after our stop; setting the
-    // request flag guarantees the loop runs one more pass, which now observes the latch and settles on stopped. When no loop is running, the flag is simply
-    // consumed by the next reconcile request.
+    // Wake the coalescing loop, the cheap backstop on a terminal path. When a pass was in flight, this guarantees one further pass runs, and that pass settles a buffer
+    // the stop above already stopped - or finds nothing to do at all. When no loop is running, the flag is simply consumed by the next reconcile request.
     this.configureRequested = true;
   }
 }

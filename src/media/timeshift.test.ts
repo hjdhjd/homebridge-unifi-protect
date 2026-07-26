@@ -175,6 +175,74 @@ describe("timeshift buffer behavior", () => {
     assert.equal(double.disposed, true, "the local subscription is disposed");
   });
 
+  // The owner's commit-point verdict. A deferred establishment holds the start in flight; the owner condemns it in that window, so the start reaches its commit point
+  // already condemned and declines instead of committing, disposing the subscription it opened. The decline is SILENT - no "stopped" emit, exactly like the
+  // establishment-failure paths, which never reach finalizeSubscription either. Against a buffer that commits regardless, this start resolves true with isStarted true.
+  test("start declines at the commit point when its owner condemns it mid-establishment", async () => {
+
+    const double = makeControllableLivestreamDouble({ deferEstablishment: true });
+    const { controller, host } = makeTestCameraHost();
+
+    controllers.push(controller);
+    host.livestreamSubscriptions = [double];
+
+    // The owner's verdict, flipped while the establishment is held so the start meets it at the commit point.
+    let stale = false;
+    let stoppedEmits = 0;
+
+    const timeshift = new ProtectTimeshiftBuffer(host, { isStartStale: (): boolean => stale });
+
+    timeshift.on("stopped", (): void => { stoppedEmits++; });
+
+    const startPromise = timeshift.start(makeChannelProfile(host));
+
+    await settle();
+
+    assert.equal(timeshift.isStarted, false, "the start is held in flight, not yet committed");
+
+    stale = true;
+    double.releaseEstablishment();
+
+    assert.equal(await startPromise, false, "the condemned start declines rather than committing");
+
+    await settle();
+
+    assert.equal(timeshift.isStarted, false, "isStarted stays false");
+    assert.equal(timeshift.channelProfile, null, "no channel profile committed");
+    assert.equal(double.disposed, true, "the local subscription is disposed");
+    assert.equal(stoppedEmits, 0, "the decline is silent, like the establishment-failure paths");
+  });
+
+  // The other side of the verdict: an injected predicate left false throughout must leave the commit path exactly as it is. This is the wiring guard for the owner's
+  // verdict rather than a behavioral value - what it catches is a predicate consulted with the wrong sense or at the wrong moment, or a constructor that quietly stops
+  // accepting one at all.
+  test("an owner verdict that never condemns leaves the commit path undisturbed", async () => {
+
+    const double = makeControllableLivestreamDouble({ deferEstablishment: true });
+    const { controller, host } = makeTestCameraHost();
+
+    controllers.push(controller);
+    host.livestreamSubscriptions = [double];
+
+    // The owner's verdict, left false for the whole of this start's life.
+    const stale = false;
+    const timeshift = new ProtectTimeshiftBuffer(host, { isStartStale: (): boolean => stale });
+    const profile = makeChannelProfile(host);
+    const startPromise = timeshift.start(profile);
+
+    await settle();
+
+    double.releaseEstablishment();
+
+    assert.equal(await startPromise, true, "the uncondemned start commits");
+
+    await settle();
+
+    assert.equal(timeshift.isStarted, true, "isStarted is true");
+    assert.equal(timeshift.channelProfile, profile, "the channel profile committed alongside the subscription");
+    assert.equal(double.disposed, false, "the committed subscription is not disposed");
+  });
+
   // Target (d): starting an already-started timeshift disposes the prior subscription and commits the new one. Two DISTINCT-id doubles are supplied via the queue; the
   // second start runs start's if(isStarted) stop() path, disposing doubleA, then commits doubleB. This is ALSO the genuine discriminator of the consumeSegments
   // id-identity guard (the finally's this.subscription?.id === subscription.id): start() commits doubleB BEFORE doubleA's iterator finally runs, so that finally reaches
