@@ -171,6 +171,52 @@ describe("real doorbell construction (suite A)", () => {
 
     assert.equal(wakeLog.length, teardownBaseline, "a push after cleanup wakes nothing");
   });
+
+  test("the capability falls with its host's lifetime alone, without the camera's explicit teardown call", async () => {
+
+    // A self-contained construction, for two reasons: the suite's shared doorbell was torn down by the test above, and this arrangement mutates a field on the camera
+    // under test.
+    const localWakes: ObserverWakePayload[] = [];
+    const onLocalWake = (message: unknown): void => { localWakes.push(message as ObserverWakePayload); };
+
+    diagnosticsChannel.subscribe("hbup:observer:wake", onLocalWake);
+
+    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasLcdScreen: true, isDoorbell: true }, name: "Front Door" });
+    const localStore = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
+    const { controller: localController, nvr: localNvr } = makeTestNvr({ store: localStore });
+    const localDoorbell = constructDoorbell(localNvr, makeTestAccessory("Front Door", "uuid:74ACB9000098"), new TestCameraProjection(cameraConfig.id, localStore));
+
+    await settle();
+
+    const capability = localDoorbell.doorbell;
+
+    assert.ok(capability, "the isDoorbell config attached the capability whose teardown cascade is under test");
+
+    try {
+
+      // The camera's own cleanup tears its capability down by an explicit call, which would unwind these observers whatever lifetime the capability composed against.
+      // Nulling the field removes that courtesy, so the only thing left to unwind the capability is the contract's own guarantee: a capability composes its controller
+      // against its host's signal, so aborting either level tears the capability down.
+      localDoorbell.doorbell = null;
+      localDoorbell.cleanup();
+
+      await settle();
+
+      const teardownBaseline = localWakes.length;
+
+      // lcdMessage is a slice one of the capability's own observers watches, so a wake here means that observer outlived the host whose lifetime it rides.
+      localStore.pushCameraPatch(cameraConfig.id, { lcdMessage: { resetAt: null, text: "GO AWAY", type: "CUSTOM_MESSAGE" } });
+
+      await settle();
+
+      assert.equal(localWakes.length, teardownBaseline, "the host's teardown cascaded into the capability, so the capability's own observer wakes nothing");
+    } finally {
+
+      capability.cleanup();
+      localController.abort();
+      diagnosticsChannel.unsubscribe("hbup:observer:wake", onLocalWake);
+    }
+  });
 });
 
 describe("doorbell + package camera family construction (suite B)", () => {

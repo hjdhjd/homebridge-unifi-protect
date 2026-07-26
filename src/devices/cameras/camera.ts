@@ -392,15 +392,6 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     this.log.info("The controller now reports this camera as a doorbell; its doorbell features are now available in HomeKit.");
   }
 
-  // Publish the per-accessory observer-wake milestone for a slice the attached doorbell capability watches. The capability has no accessory identity of its own (it
-  // extends ProtectBase, not ProtectDevice), so it delegates its wake attribution here. This is a thin public seam onto the inherited ProtectDevice.onObserverWake,
-  // which is the single publisher - the hasSubscribers-guarded publish keyed on this camera's accessory UUID - so the capability's wakes and the camera's own wakes
-  // share one publication idiom, single-sourced. Zero-cost when no diagnostics subscriber is attached.
-  public publishObserverWake(key: string): void {
-
-    this.onObserverWake(key);
-  }
-
   // Cleanup after ourselves if we're being deleted.
   public override cleanup(): void {
 

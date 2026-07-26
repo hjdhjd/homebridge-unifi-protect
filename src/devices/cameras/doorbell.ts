@@ -2,17 +2,17 @@
  *
  * doorbell.ts: Doorbell capability for UniFi Protect.
  */
-import type { AcquireServiceTarget, HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
 import type { Camera, DeepPartial, ProtectCameraConfig, ProtectCameraLcdMessageConfig } from "unifi-protect";
-import type { CharacteristicValue, HAP, Service, WithUUID } from "homebridge";
+import type { CharacteristicValue, HAP, Service } from "homebridge";
+import type { HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
 import { PACKAGE_CAMERA_NAME_SUFFIX, ProtectReservedNames, packageCameraId } from "../../types.ts";
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_DOORBELL_CHIME_DURATION_DIGITAL } from "../../settings.ts";
 import type { ProtectAccessory, ProtectAccessoryContext, WithoutIdentity } from "../../types.ts";
-import { acquireService, composeSignals, sanitizeName, toStartCase, validService } from "homebridge-plugin-utils";
 import { guardedPublish, mqttTopic } from "../../mqtt.ts";
-import { ProtectBase } from "../device-base.ts";
+import { sanitizeName, toStartCase } from "homebridge-plugin-utils";
 import type { ProtectCamera } from "./camera.ts";
 import type { ProtectCameraPackage } from "./camera-package.ts";
+import { ProtectDeviceCapability } from "../device-capability.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
 import { chimeVolumeFor } from "./chime-volume.ts";
 import { deviceSelectors } from "unifi-protect";
@@ -65,43 +65,31 @@ export function effectiveLcdMessage(options: { lcdMessage: DeepPartial<ProtectCa
   return lcdMessage;
 }
 
-/* The doorbell capability composed onto a ProtectCamera. It extends ProtectBase - the shared observe / MQTT / command spine - rather than ProtectCamera, because
- * doorbell-ness is temporally dynamic capability state, not a static identity: the camera the controller late-flips to a doorbell stays the same instance, and this
- * capability attaches to it live. The capability owns the doorbell services (LCD message switches, physical chimes, the chime-volume lightbulb, the auth sensor), the
- * read-through settings getters, the doorbell observers, the doorbell MQTT topics, and the package-camera lifecycle. The camera-coupling is localized to a
- * private block of delegating accessors below, so each doorbell body resolves its this.ufp / this.accessory / this.hasFeature reads through the camera. The capability
- * holds its own composed AbortController so a future detach unwinds exactly its observers and MQTT registrations, the owner-lifetime idiom one level up.
+/* The doorbell capability composed onto a ProtectCamera. It extends ProtectDeviceCapability - the composed-capability contract over the shared observe / MQTT / command
+ * spine - rather than ProtectCamera, because doorbell-ness is temporally dynamic capability state, not a static identity: the camera the controller late-flips to a
+ * doorbell stays the same instance, and this capability attaches to it live. The capability owns the doorbell services (LCD message switches, physical chimes, the
+ * chime-volume lightbulb, the auth sensor), the read-through settings getters, the doorbell observers, the doorbell MQTT topics, and the package-camera lifecycle. Of the
+ * contract's two detachability policies it holds both, at its two levels: the capability itself is promotion-only, while the package camera it owns follows the
+ * graced-cycle child-detach checklist, because a package camera genuinely comes and goes.
  */
-export class DoorbellCapability extends ProtectBase {
+export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
 
-  readonly #controller = new AbortController();
-  readonly camera: ProtectCamera;
   readonly #device: Camera;
   private messageSwitches = new Map<string, MessageSwitchInterface>();
-
-  // The self-re-syncing expiry timer for the active LCD message. The controller signals a message's expiry by patching lcdMessage, an empty-object patch the store
-  // cannot observe, so the capability schedules its own re-sync at the message's resetAt deadline. Owned outright here and cleared in cleanup(), where the capability's
-  // whole lifecycle ends - the state lives exactly where its owner's teardown runs, so demotion (which has no detach) needs no separate handling.
-  #lcdMessageExpiryTimer: Nullable<NodeJS.Timeout> = null;
   public packageCamera: Nullable<ProtectCameraPackage> = null;
-  readonly #signal: AbortSignal;
 
   // Construct the capability against its owning camera. The camera passes itself, its own live projection handle, and its protected per-accessory signal from inside
-  // its own class body, so no visibility widening is needed. The capability's signal composes its own controller with the camera's, so aborting either tears the
-  // capability down.
-  constructor(nvr: ProtectNvr, init: { camera: ProtectCamera; device: Camera; signal: AbortSignal }) {
+  // its own class body, so no visibility widening is needed.
+  constructor(nvr: ProtectNvr, init: { device: Camera; host: ProtectCamera; signal: AbortSignal }) {
 
-    super(nvr);
+    super(nvr, { host: init.host, signal: init.signal });
 
-    this.camera = init.camera;
     this.#device = init.device;
-    this.#signal = composeSignals(this.#controller.signal, init.signal);
   }
 
-  /* The delegating accessors that localize the camera-coupling to one block. Each doorbell body reads this.ufp / this.accessory / this.hasFeature and the rest, which
-   * ProtectBase does not provide, so routing those reads through these private accessors over the camera keeps the coupling in one place. The acquireService /
-   * validService wrappers are thin re-bindings to the homebridge-plugin-utils free functions over the camera's accessory (the same homebridge-plugin-utils SSOT the
-   * camera's own wrappers delegate to), not logic duplication.
+  /* The capability-held projection handle and the live-state view it serves. Every other device-level read a doorbell body performs - the accessory, the accessory name,
+   * the feature-option scope, the service wrappers, the MQTT scope, the wake attribution - is inherited from the contract. What stays here is the one piece a capability
+   * genuinely owns rather than borrows: each capability holds and types its own projection.
    */
 
   // The owning camera projection's live STATE, narrowed to drop device identity (id/mac/modelKey) - that immutable identity flows through the dedicated accessors, never
@@ -109,85 +97,6 @@ export class DoorbellCapability extends ProtectBase {
   private get ufp(): Readonly<WithoutIdentity<ProtectCameraConfig>> {
 
     return this.#device.config;
-  }
-
-  // The owning camera's accessory.
-  private get accessory(): ProtectAccessory {
-
-    return this.camera.accessory;
-  }
-
-  // The owning camera's accessory name.
-  private get accessoryName(): string {
-
-    return this.camera.accessoryName;
-  }
-
-  // Feature-option reads delegate to the camera, which scopes against the camera MAC and the controller MAC.
-  private hasFeature(option: string): boolean {
-
-    return this.camera.hasFeature(option);
-  }
-
-  private getFeatureNumber(option: string): Nullable<number | undefined> {
-
-    return this.camera.getFeatureNumber(option);
-  }
-
-  // Reserved-name check delegates to the camera's public helper.
-  private isReservedName(name?: string): boolean {
-
-    return this.camera.isReservedName(name);
-  }
-
-  // Acquire a service on the camera's accessory, a thin re-binding to the homebridge-plugin-utils free function (the SSOT the camera's own wrapper also delegates to).
-  private acquireService(serviceType: AcquireServiceTarget, name = this.accessoryName, subtype?: string, onServiceCreate?: (svc: Service) => void): Nullable<Service> {
-
-    return acquireService(this.accessory, serviceType, name, subtype, onServiceCreate);
-  }
-
-  // Validate a service on the camera's accessory, the same thin re-binding to the homebridge-plugin-utils free function. The validate argument accepts either a plain
-  // boolean or a presence-aware predicate, mirroring the free function: the predicate receives the service's current presence so a gate can keep an already-present
-  // service while refusing to create a new one.
-  private validService(serviceType: WithUUID<typeof Service>, validate: boolean | ((hasService: boolean) => boolean), subtype?: string): boolean {
-
-    return validService(this.accessory, serviceType, validate, subtype);
-  }
-
-  // The seam overrides, each varying exactly what ProtectBase's shared spine reads by leaf.
-
-  // The log prefix and diagnostics name: delegate to the camera's name. The camera's name getter resolves to the live controller projection name, so log prefixes track
-  // the controller's current name for the device. NOT accessoryName (the cached HomeKit Name), which would diverge.
-  public override get name(): string {
-
-    return this.camera.name;
-  }
-
-  // The owner-lifetime signal scoping the capability's observers and MQTT registrations: the composed signal (the capability's own controller plus the camera's), so a
-  // capability cleanup or a camera teardown unwinds exactly the capability's loops and releases exactly its MQTT handlers.
-  protected override get observeSignal(): AbortSignal {
-
-    return this.#signal;
-  }
-
-  // The MQTT topic scope: the camera's MAC, so the doorbell topics (chime, message) ride the same wire scope as the camera.
-  protected override get mqttId(): string {
-
-    return this.camera.mac;
-  }
-
-  // Whether the backing camera record is present, delegated to the owning camera (the capability extends ProtectBase, not ProtectDevice, so it has no record of its own).
-  // This drives the inherited observeState gate, so the doorbell observers no-op during the parent's removal grace exactly as the camera's own do.
-  protected override get recordPresent(): boolean {
-
-    return this.camera.recordPresent;
-  }
-
-  // Wake attribution: the capability has no accessory identity of its own, so it delegates to the camera's single publishObserverWake seam, keeping one publisher keyed
-  // on the camera's accessory UUID. The doorbell.* keys remain diagnostics-visible under the camera's accessory.
-  protected override onObserverWake(key: string): void {
-
-    this.camera.publishObserverWake(key);
   }
 
   /* The doorbell settings below are live read-through getters rather than stored fields, deliberately. Deriving each setting on read from its single source of truth -
@@ -229,13 +138,13 @@ export class DoorbellCapability extends ProtectBase {
   // Configure the doorbell capability for HomeKit. The configure order is: the package camera, the Doorbell service (through the camera's seam, at the package-to-service
   // point), the auth sensor, the LCD messages, the physical chimes, the chime volume, then the MQTT topics and the observers. The Doorbell service is stood up
   // through the camera's configureDoorbellService seam here, so the camera does not separately call it on attach.
-  public configure(): void {
+  public override configure(): void {
 
     // Configure our package camera, if we have one.
     this.configurePackageCamera();
 
     // Ensure the camera's Doorbell service exists and is primary.
-    this.camera.configureDoorbellService();
+    this.host.configureDoorbellService();
 
     // Configure the authentication sensor, if enabled.
     this.configureAuthSensor();
@@ -257,8 +166,9 @@ export class DoorbellCapability extends ProtectBase {
     this.spawnObservers();
   }
 
-  // Cleanup the capability: tear down the package camera first, then abort the capability's own controller, which releases its observers and exactly its MQTT
-  // handlers on the shared parent-MAC tuple.
+  // Cleanup the capability: tear down the owned package camera first, then let the contract's cleanup abort this capability's controller, which releases its observers,
+  // exactly its MQTT handlers on the shared parent-MAC tuple, and its timers together. The message expiry timer needs no explicit clear because it lives in the inherited
+  // registry, which that same abort drains.
   public override cleanup(): void {
 
     if(this.packageCamera) {
@@ -267,15 +177,7 @@ export class DoorbellCapability extends ProtectBase {
       this.packageCamera = null;
     }
 
-    // Clear the message expiry timer alongside the controller abort - the capability's whole lifecycle ends here, so this timer must not fire against a torn-down
-    // capability.
-    if(this.#lcdMessageExpiryTimer) {
-
-      clearTimeout(this.#lcdMessageExpiryTimer);
-      this.#lcdMessageExpiryTimer = null;
-    }
-
-    this.#controller.abort();
+    super.cleanup();
   }
 
   // Refresh the doorbell's physical-chime switch states. Composed by the camera's updateDevice, which calls this when a capability is attached.
@@ -914,12 +816,12 @@ export class DoorbellCapability extends ProtectBase {
   /* Synchronize the message switches with the controller's current LCD message, re-deriving expiry each time. Invoked by the lcdMessage observer, by the configure-time
    * sync, and by the expiry timer's own callback, so all three read one truth. The live slice is read non-throwing - an absent record (a doorbell in the removal grace)
    * reads as a clear, which is exactly right mid-removal - and passes through the shared expiry predicate, so an expired message blanks the switches while an active one
-   * sets them. We then arm or clear the local expiry timer from the effective payload: the controller signals expiry by patching lcdMessage, but the store cannot
-   * observe an empty-object patch (its structural sharing returns the same record), so the plugin re-synchronizes itself at the resetAt deadline it already knows.
-   * Because the timer's callback re-enters here, an expiry fires as a re-read of live truth: an already-replaced message re-asserts the replacement rather than
-   * blanking, an expired one clears, and a wire clear that landed first makes the re-sync a harmless repeat. The leg is capped at the largest delay a timer expresses
-   * exactly (Node clamps a larger delay to about a millisecond, which would spin a tight refire loop for a beyond-24.8-day message), so the re-entrant re-arm sleeps in
-   * legs until the real deadline.
+   * sets them. We then arm or clear the keyed expiry timer in the capability's own registry from the effective payload: the controller signals expiry by patching
+   * lcdMessage, but the store cannot observe an empty-object patch (its structural sharing returns the same record), so the plugin re-synchronizes itself at the resetAt
+   * deadline it already knows. Because the timer's callback re-enters here, an expiry fires as a re-read of live truth: an already-replaced message re-asserts the
+   * replacement rather than blanking, an expired one clears, and a wire clear that landed first makes the re-sync a harmless repeat. The leg is capped at the largest
+   * delay a timer expresses exactly (Node clamps a larger delay to about a millisecond, which would spin a tight refire loop for a beyond-24.8-day message), so the
+   * re-entrant re-arm sleeps in legs until the real deadline.
    */
   private syncLcdMessageState(): void {
 
@@ -928,15 +830,14 @@ export class DoorbellCapability extends ProtectBase {
 
     this.updateLcdSwitch(effective);
 
-    if(this.#lcdMessageExpiryTimer) {
-
-      clearTimeout(this.#lcdMessageExpiryTimer);
-      this.#lcdMessageExpiryTimer = null;
-    }
+    // Clear unconditionally, then arm when the effective message carries a deadline. The registry's own replace-on-register would make the clear redundant on the arming
+    // path, but the clearing path is real: an effective message with no deadline must leave nothing armed. The timer drains structurally through the capability's
+    // composed lifetime, so teardown safety does not depend on this clear.
+    this.timers.clear("lcdMessageExpiry");
 
     if(typeof effective.resetAt === "number") {
 
-      this.#lcdMessageExpiryTimer = setTimeout(() => this.syncLcdMessageState(), Math.min(effective.resetAt - nowMs, 2147483647));
+      this.timers.setTimeout("lcdMessageExpiry", () => this.syncLcdMessageState(), Math.min(effective.resetAt - nowMs, 2147483647));
     }
   }
 

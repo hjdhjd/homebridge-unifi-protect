@@ -11,6 +11,7 @@ import { acquireService, sanitizeName, validService } from "homebridge-plugin-ut
 import { deviceSelectors, isDeviceOnline } from "unifi-protect";
 import type { ObserverWakePayload } from "../diagnostics.ts";
 import { ProtectBase } from "./device-base.ts";
+import type { ProtectCapabilityHost } from "./device-capability.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import type { ProtectPlatform } from "../platform.ts";
 import { ProtectReservedNames } from "../types.ts";
@@ -92,7 +93,7 @@ export interface ProtectDeviceContext {
 }
 
 export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollectionKey] = ProtectProjectionMap[DeviceCollectionKey]> extends ProtectBase
-  implements ProtectDeviceContext {
+  implements ProtectCapabilityHost, ProtectDeviceContext {
 
   public accessory: ProtectAccessory;
   // The live projection for this device. Holds (client, id), reads through to the store on every config access. Set once at construction; never reassigned -
@@ -678,6 +679,15 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
     // firmware-change cadence.
     this.observeState({ key: "device.firmwareVersion", selector: state => this.deviceConfigSelector()(state)?.firmwareVersion, title: "device information" },
       () => this.configureInfo());
+  }
+
+  // Publish the per-accessory observer-wake milestone for a slice a composed capability watches. A capability has no accessory identity of its own (it extends the spine,
+  // not ProtectDevice), so it attributes its wakes to its hosting device here. This is a thin public window onto onObserverWake below, which is the single publisher -
+  // the hasSubscribers-guarded publish keyed on this accessory's UUID - so a capability's wakes and the device's own share one publication idiom, single-sourced.
+  // Zero-cost when no diagnostics subscriber is attached.
+  public publishObserverWake(key: string): void {
+
+    this.onObserverWake(key);
   }
 
   // Publish the per-accessory observer-wake milestone on the forward-only diagnostics channel, keyed by accessory UUID. Zero-cost when no subscriber is attached

@@ -915,7 +915,7 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
       }
     });
 
-    test("cleanup clears the pending expiry timer, so no post-teardown fire writes to the message switches", async () => {
+    test("the capability's teardown drains the pending expiry timer, so no post-teardown fire writes to the message switches", async () => {
 
       built = await buildMessageDoorbell([{ duration: 30, message: "Back soon" }]);
 
@@ -933,10 +933,14 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
         assert.equal(messageSwitch.getCharacteristic(Characteristic.On).value, true, "the echoed active message turns its switch on before the teardown");
 
-        // Tear the camera down: the capability's cleanup clears the pending expiry timer alongside its observers and MQTT handlers, so the deadline passing below must
-        // produce no further activity. A timer the cleanup failed to clear would fire against the detached capability and blank this switch - the ON value surviving the
-        // deadline is what pins the clear.
-        built.doorbell.cleanup();
+        // The teardown runs through the capability itself rather than through its hosting camera, so the assertion rests on the capability's own unwinding: aborting its
+        // controller drains the registry holding the expiry deadline alongside its observers and MQTT handlers. A deadline surviving that drain would fire against a
+        // torn-down capability and blank this switch, so the ON value outliving the deadline is what pins the drain.
+        const capability = built.doorbell.doorbell;
+
+        assert.ok(capability, "the isDoorbell config attached the capability whose teardown is under test");
+
+        capability.cleanup();
         mock.timers.tick(30001);
 
         assert.equal(messageSwitch.getCharacteristic(Characteristic.On).value, true, "no expiry fire touches a message switch after the capability's cleanup");

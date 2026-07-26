@@ -3502,7 +3502,7 @@ export class TestProtectNvr {
   // forms no module-initialization cycle, the property the live attach relies on.
   public createDoorbellCapability(camera: ProtectCamera, device: Camera, signal: AbortSignal): DoorbellCapability {
 
-    return new DoorbellCapability(this as unknown as ProtectNvr, { camera: camera, device: device, signal: signal });
+    return new DoorbellCapability(this as unknown as ProtectNvr, { device: device, host: camera, signal: signal });
   }
 
   public createPackageCamera(accessory: ProtectAccessory, device: Camera): ProtectCameraPackage {

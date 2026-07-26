@@ -1298,7 +1298,7 @@ export class ProtectNvr {
    */
   public createDoorbellCapability(camera: ProtectCamera, device: Camera, signal: AbortSignal): DoorbellCapability {
 
-    return new DoorbellCapability(this, { camera: camera, device: device, signal: signal });
+    return new DoorbellCapability(this, { device: device, host: camera, signal: signal });
   }
 
   // Construct a package camera for a doorbell capability that has provisioned one. The same graph-assembly reasoning as createDoorbellCapability: the capability keeps
