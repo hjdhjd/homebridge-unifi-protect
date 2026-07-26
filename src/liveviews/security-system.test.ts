@@ -84,7 +84,8 @@ function seedMember(nvr: TestProtectNvr, options: { detectMotion?: boolean; id: 
 // The reusable construction helper: build a REAL ProtectSecuritySystem against the harness doubles. makeProtectState seeds the Protect-* liveviews (DISTINCT ids per the
 // makeLiveviewConfig distinct-id discipline) and the nvr record carrying the opt-in hardwareRevision so configureInfo's HardwareRevision write reads a real value; the
 // casts are confined to the construction seam exactly as the family suites do. The owner RECEIVES its accessory (it does not self-create), so the test supplies one. The
-// returned controller is the AbortController behind nvr.signal, aborted in teardown (a ProtectBase owner has no per-accessory cleanup()).
+// returned controller is the AbortController behind nvr.signal, aborted in teardown: the fixture tears down through the controller it built, the scope that owns every
+// registration the test created.
 function buildSecuritySystem(
   harnessOptions: { accessory?: TestAccessory; hardwareRevision?: string; liveviews?: ProtectNvrLiveviewConfig[]; userOptions?: string[] } = {}): {
   accessory: TestAccessory; controller: AbortController; logEntries: TestLogEntry[]; mqtt: TestMqttClient; nvr: TestProtectNvr; owner: ProtectSecuritySystem;
@@ -110,8 +111,8 @@ function buildSecuritySystem(
 
 describe("real ProtectSecuritySystem construction and controller-owner behavior", () => {
 
-  // The per-test controller, tracked so afterEach aborts whichever build the test made (the ProtectBase owner has no per-accessory cleanup; aborting the controller
-  // behind nvr.signal is the teardown).
+  // The per-test controller, tracked so afterEach aborts whichever build the test made (aborting the controller behind nvr.signal is the fixture's teardown, the scope
+  // that owns every registration the test created).
   let activeController: AbortController | undefined;
 
   afterEach(() => {

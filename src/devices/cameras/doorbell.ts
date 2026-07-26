@@ -259,7 +259,7 @@ export class DoorbellCapability extends ProtectBase {
 
   // Cleanup the capability: tear down the package camera first, then abort the capability's own controller, which releases its observers and exactly its MQTT
   // handlers on the shared parent-MAC tuple.
-  public cleanup(): void {
+  public override cleanup(): void {
 
     if(this.packageCamera) {
 

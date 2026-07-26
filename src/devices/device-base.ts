@@ -1,10 +1,13 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * device-base.ts: ProtectBase - the shared owner/observe/MQTT/command spine for every Protect accessory class.
+ * device-base.ts: ProtectBase - the shared owner/lifetime/observe/MQTT/command spine for every Protect accessory class.
+ *
+ * The spine owns each owner's lifetime triple - its abort controller, the composed signal every observer, MQTT registration, and timer binds to, and the timer registry
+ * that signal drains - so a device leaf, a controller-scoped accessory, and a capability composed onto a hosting device all inherit one lifecycle mechanism.
  */
 import type { API, HAP } from "homebridge";
 import type { ProtectDeviceConfig, ProtectNvrConfig, ProtectState } from "unifi-protect";
-import { formatErrorMessage, loopFaultReporter, prefixedLog, superviseLoop } from "homebridge-plugin-utils";
+import { TimerRegistry, composeSignals, formatErrorMessage, loopFaultReporter, prefixedLog, superviseLoop } from "homebridge-plugin-utils";
 import { guardedPublish, mqttTopic } from "../mqtt.ts";
 import type { HomebridgePluginLogging } from "homebridge-plugin-utils";
 import type { ProtectAccessory } from "../types.ts";
@@ -28,13 +31,33 @@ interface ObservedSlice<T> {
 export abstract class ProtectBase {
 
   public readonly api: API;
+  // This owner's own abort controller - the handle its cleanup() aborts. Aborting it unwinds exactly this owner's observe loops and MQTT registrations and drains its
+  // timers, leaving every other owner untouched.
+  protected readonly controller: AbortController;
   protected readonly hap: HAP;
   public readonly log: HomebridgePluginLogging;
   public readonly nvr: ProtectNvr;
   public readonly platform: ProtectPlatform;
+  // This owner's lifetime signal, composed from its own controller and the lifetime it rides (see the constructor). Every observe loop, MQTT registration, and timer the
+  // owner creates binds to it, so an abort at either level unwinds all of them.
+  protected readonly signal: AbortSignal;
+  // This owner's pacing timers, keyed by purpose. The registry is bound to the lifetime signal above, so teardown drains whatever is armed and a registration attempted
+  // afterward is inert - a timer can never fire into a torn-down owner.
+  protected readonly timers: TimerRegistry;
 
-  // Initialize the shared owner fields (api, hap, nvr, platform) and build the device-prefixed log wrapper.
-  constructor(nvr: ProtectNvr) {
+  /* Initialize the shared owner fields (api, hap, nvr, platform), build the device-prefixed log wrapper, and wire the owner-lifetime triple: this owner's own abort
+   * controller, the composed signal every observer, MQTT registration, and timer it creates binds to, and the timer registry that signal drains.
+   *
+   * parentSignal names the lifetime this owner's controller composes against. A device or a controller-scoped accessory supplies none and composes against nvr.signal,
+   * the controller connection itself; a capability composed onto a hosting device supplies that host's already-composed signal, so the capability sits one level below
+   * its host and an abort at any level tears it down. An owner that never aborts its own controller - the controller-scoped accessories that live and die with the
+   * connection - rides a signal that fires exactly when the lifetime it composed against fires, so the uniform triple costs it nothing behaviorally: one abort
+   * controller, one composed signal, and one empty registry per owner is a deliberate and negligible price for giving every owner the same lifecycle machinery.
+   *
+   * That uniformity has a consequence for identity comparisons. composeSignals derives a fresh signal whenever more than one of its inputs is defined, which is always
+   * the case here, so an owner's lifetime signal is behaviorally equivalent to the lifetime it composed against without ever being the same object as it.
+   */
+  constructor(nvr: ProtectNvr, parentSignal?: AbortSignal) {
 
     this.api = nvr.platform.api;
     this.hap = this.api.hap;
@@ -46,6 +69,18 @@ export abstract class ProtectBase {
     // line. logName is deliberately separate from the bare `name` getter, which is the stable functional identity (it keys the livestream request id and the HomeKit
     // accessory) and must not carry the bracketed model.
     this.log = prefixedLog(nvr.platform.pluginLog, () => this.logName);
+
+    this.controller = new AbortController();
+    this.signal = composeSignals(this.controller.signal, parentSignal ?? nvr.signal);
+    this.timers = new TimerRegistry({ signal: this.signal });
+  }
+
+  // Tear this owner down. Aborting the owner controller unwinds every observe loop and MQTT registration bound to the composed signal and drains the timer registry, so
+  // teardown releases exactly this owner's state and nothing another owner holds. An owner that also holds owned children or latched state of its own overrides this and
+  // calls super.
+  public cleanup(): void {
+
+    this.controller.abort();
   }
 
   // Configure the device information for HomeKit.
@@ -103,15 +138,12 @@ export abstract class ProtectBase {
     return this.name;
   }
 
-  // The owner-lifetime signal that scopes this owner's state observers AND its MQTT subscriptions. The base binds to the controller's terminal shutdown signal, the
-  // correct lifetime for the teardown-less controller-scoped owners (system information, liveviews) that live for the whole controller connection. Two kinds of owner
-  // override the seam with a composed signal so their own teardown unwinds only their own observers and releases exactly their own MQTT handlers: every ProtectDevice
-  // (its per-accessory controller composed with nvr.signal), and the security system (whose accessory comes and goes with the Protect-* liveviews, so its lifetime is
-  // shorter than the controller connection). This is one of the seams the shared observeState varies by leaf, and the signal the MQTT subscribe wrappers below thread
-  // to homebridge-plugin-utils.
+  // The lifetime signal that scopes this owner's state observers and its MQTT subscriptions, and the signal the MQTT subscribe wrappers below thread to
+  // homebridge-plugin-utils. The default is the owner's own composed lifetime, so an owner whose controller is never aborted rides it for the whole controller
+  // connection. It remains a protected variation point that an owner whose lifetime is scoped differently overrides.
   protected get observeSignal(): AbortSignal {
 
-    return this.nvr.signal;
+    return this.signal;
   }
 
   // Hook fired each time a state observer wakes, so a leaf can attribute the wake to a diagnostics subject. The base is a deliberate no-op: controller-scoped owners have
@@ -124,8 +156,8 @@ export abstract class ProtectBase {
 
   // Whether this owner's backing controller record is currently present. The base returns true unconditionally: a controller-scoped owner (system information, liveviews,
   // the security system) has no per-device record that can vanish - its backing controller record is present for the whole connection. ProtectDevice overrides this to
-  // peek() !== undefined, and DoorbellCapability delegates to its camera, so the one observeState gate below neutralizes a vanished record on every owner. Another of
-  // the seams the shared observeState varies by leaf, alongside observeSignal and onObserverWake.
+  // peek() !== undefined, and DoorbellCapability delegates to its camera, so the one observeState gate below neutralizes a vanished record on every owner. Another of the
+  // protected variation points the shared observeState reads through, so an owner whose answer differs supplies its own.
   // eslint-disable-next-line @typescript-eslint/class-literal-property-style -- Polymorphic seam overridden by getters; the base cannot be a readonly field.
   protected get recordPresent(): boolean {
 
@@ -134,8 +166,8 @@ export abstract class ProtectBase {
 
   // The single narrow-selector state-observe primitive, shared by every HomeKit-projection owner - device leaves and controller-scoped owners alike. The loop wakes only
   // when its reduced slice changes by reference (the store's Object.is dedup is upstream of the yield), the handler re-reads through the owner's live projection rather
-  // than trusting the yielded value so a multi-read reaction always sees a coherent snapshot, and the seams leaves vary are the lifetime signal (observeSignal) and
-  // the wake attribution (onObserverWake). The slice descriptor's names route to separate consumers: its key tags the wake on the diagnostics channel, its title
+  // than trusting the yielded value so a multi-read reaction always sees a coherent snapshot, and what an owner supplies for itself it supplies through the protected
+  // variation points this body reads. The slice descriptor's names route to separate consumers: its key tags the wake on the diagnostics channel, its title
   // names the capability in the user-facing fault report. The detached-loop resilience envelope (swallow on abort, surface a fault once) is delegated to
   // homebridge-plugin-utils' superviseLoop and the fault report to its loopFaultReporter; both single-sourced. What remains here is just the observe-specific body
   // superviseLoop supervises.

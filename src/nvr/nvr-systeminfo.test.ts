@@ -11,8 +11,8 @@
  *
  * The shape DIFFERS from the device families and this suite respects every departure:
  *
- * - It extends ProtectBase, not ProtectDevice: ctor is (nvr) only, with no per-accessory abort, no device projection, no hints, and no base name-sync / device-info
- *   observer pair. Teardown is aborting the AbortController behind nvr.signal (the controller terminal-shutdown signal), not a per-accessory cleanup().
+ * - It extends ProtectBase, not ProtectDevice: ctor is (nvr) only, with no device projection, no hints, and no base name-sync / device-info observer pair. Teardown is
+ *   aborting the AbortController behind nvr.signal (the controller terminal-shutdown signal), the lifetime this owner's composed signal rides.
  * - It publishes NOTHING on the hbup:observer:wake diagnostics channel (onObserverWake is the ProtectBase no-op), so this suite does NOT reuse the viewer / sensor
  *   wake-count scaffold - a constructionWakes === 0 assertion would pass trivially and mislead. The single nvr.systemInfo observer is netted by its REACTION (the
  *   temperature characteristic refreshes after a store push). store.observerCount IS a real registration-count surface the owner's observer joins, used here only as the
@@ -52,7 +52,7 @@ function loggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], substri
 // returns that record. The casts are confined to the construction seam exactly as the family suites do; the instance under test is the production class running its real
 // configureAccessory / configureMqtt / observe paths. The owner SELF-CREATES its accessory, so there is no accessory pass-in; the test reads it back off
 // nvr.platform.accessories. The returned controller is the AbortController behind nvr.signal, aborted in teardown to tear down the owner's observe loop and its MQTT
-// subscriptions (a ProtectBase owner has no per-accessory cleanup()).
+// subscriptions: the fixture tears down through the controller it built, the scope that owns every registration the test created.
 function buildSystemInfo(configOptions: Parameters<typeof makeNvrConfig>[0] = {}, harnessOptions: { seedCachedAccessory?: boolean; userOptions?: string[] } = {}): {
   accessory: TestAccessory | undefined; apiCalls: ReturnType<typeof makeTestNvr>["apiCalls"]; controller: AbortController; logEntries: TestLogEntry[];
   mqtt: TestMqttClient; nvr: TestProtectNvr; owner: ProtectNvrSystemInfo; store: TestStateStore;
@@ -87,8 +87,8 @@ function buildSystemInfo(configOptions: Parameters<typeof makeNvrConfig>[0] = {}
 
 describe("real ProtectNvrSystemInfo construction and controller-owner behavior", () => {
 
-  // The per-test controller, tracked so afterEach aborts whichever build the test made (the ProtectBase owner has no per-accessory cleanup; aborting the controller
-  // behind nvr.signal is the teardown). A test that builds more than one owner aborts each explicitly; this catches the single-build common case.
+  // The per-test controller, tracked so afterEach aborts whichever build the test made (aborting the controller behind nvr.signal is the fixture's teardown, the scope
+  // that owns every registration the test created). A test that builds more than one owner aborts each explicitly; this catches the single-build common case.
   let activeController: AbortController | undefined;
 
   afterEach(() => {
@@ -227,8 +227,14 @@ describe("real ProtectNvrSystemInfo construction and controller-owner behavior",
 
     assert.equal(payload.cpu.temperature, 33, "the GET handler stringifies the live systemInfo, carrying the seeded temperature");
 
-    // The subscription is scoped to the controller signal (nvr.signal), the controller-owner lifetime.
-    assert.equal(subscription.init?.signal, built.nvr.signal, "the GET registration carries the controller lifetime signal");
+    // The subscription is scoped to this owner's composed lifetime, which for a controller owner is the controller connection: live while the controller runs, and over
+    // the moment the controller signal aborts. Asserted behaviorally rather than by object identity, because the composed signal is a derived signal that fires when
+    // nvr.signal does rather than being nvr.signal itself.
+    assert.equal(subscription.init?.signal?.aborted, false, "the GET registration's lifetime is live while the controller runs");
+
+    built.controller.abort();
+
+    assert.equal(subscription.init?.signal?.aborted, true, "the GET registration's lifetime ended with the controller abort");
   });
 
   test("aborting the controller signal deregisters the observer and ends the MQTT subscription lifetime, and a later push no longer refreshes", async () => {
@@ -249,7 +255,7 @@ describe("real ProtectNvrSystemInfo construction and controller-owner behavior",
 
     assert.ok(temperature, "the temperature service exists before teardown");
 
-    // Tear down via the controller signal (the ProtectBase owner-lifetime), the only teardown a controller owner has.
+    // Tear down via the controller signal, the lifetime this owner's composed signal rides.
     built.controller.abort();
 
     await settle();

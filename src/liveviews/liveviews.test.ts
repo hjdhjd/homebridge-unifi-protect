@@ -92,7 +92,8 @@ function seedMember(nvr: TestProtectNvr, options: { detectMotion?: boolean; id: 
 // The reusable construction helper: build a REAL ProtectLiveviews against the harness doubles and drive the initial reconcile by calling configureLiveviews() on the
 // CONSTRUCTED instance (NOT nvr.liveviews - the double has no liveviews member). makeProtectState seeds the liveviews with DISTINCT ids per the makeLiveviewConfig
 // distinct-id discipline; the casts are confined to the construction seam exactly as the family suites do. Optional cachedAccessories are pushed onto the array BEFORE
-// construction (orphan-removal / pre-seeded-switch-state fixtures). The returned controller is aborted in teardown (a ProtectBase owner has no per-accessory cleanup()).
+// construction (orphan-removal / pre-seeded-switch-state fixtures). The returned controller is aborted in teardown: the fixture tears down through the controller it
+// built, the scope that owns every registration the test created.
 function buildLiveviews(harnessOptions: { cachedAccessories?: TestAccessory[]; liveviews?: ProtectNvrLiveviewConfig[]; mac?: string;
   sharedPlatform?: { accessories: TestAccessory[]; apiCalls: ReturnType<typeof makeTestNvr>["apiCalls"] }; userOptions?: string[]; } = {}): {
   apiCalls: ReturnType<typeof makeTestNvr>["apiCalls"]; controller: AbortController; logEntries: TestLogEntry[]; mqtt: TestMqttClient; nvr: TestProtectNvr;
@@ -125,8 +126,9 @@ function buildLiveviews(harnessOptions: { cachedAccessories?: TestAccessory[]; l
 
 describe("real ProtectLiveviews construction and controller-owner wiring", () => {
 
-  // The per-test controller, tracked so afterEach aborts whichever build the test made (the ProtectBase owner has no per-accessory cleanup; aborting the controller
-  // behind nvr.signal is the teardown). A multi-controller test pushes its additional controllers onto extraControllers so afterEach unwinds every owner it built.
+  // The per-test controller, tracked so afterEach aborts whichever build the test made (aborting the controller behind nvr.signal is the fixture's teardown, the scope
+  // that owns every registration the test created). A multi-controller test pushes its additional controllers onto extraControllers so afterEach unwinds every owner it
+  // built.
   let activeController: AbortController | undefined;
   const extraControllers: AbortController[] = [];
 
@@ -351,7 +353,15 @@ describe("real ProtectLiveviews construction and controller-owner wiring", () =>
     const payload = JSON.parse(subscription.getValue()) as { name: string; state: boolean }[];
 
     assert.ok(payload.some((entry) => entry.name === "Scene"), "the GET handler stringifies the liveview switch states, carrying the Scene switch");
-    assert.equal(subscription.init?.signal, built.nvr.signal, "the GET registration carries the controller lifetime signal");
+
+    // The subscription is scoped to this owner's composed lifetime, which for a controller owner is the controller connection: live while the controller runs, and over
+    // the moment the controller signal aborts. Asserted behaviorally rather than by object identity, because the composed signal is a derived signal that fires when
+    // nvr.signal does rather than being nvr.signal itself.
+    assert.equal(subscription.init?.signal?.aborted, false, "the GET registration's lifetime is live while the controller runs");
+
+    built.controller.abort();
+
+    assert.equal(subscription.init?.signal?.aborted, true, "the GET registration's lifetime ended with the controller abort");
   });
 
   test("the liveviews MQTT SET applies the commanded scene to its member cameras, rejects a non-array payload, and logs bad JSON", async () => {

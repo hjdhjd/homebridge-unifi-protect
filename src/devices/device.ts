@@ -7,7 +7,7 @@ import type { AcquireServiceTarget, HomebridgePluginLogging, Nullable } from "ho
 import type { DeviceCollectionKey, ProtectCameraConfig, ProtectDeviceConfig, ProtectState } from "unifi-protect";
 import { PROTECT_MOTION_DURATION, PROTECT_OCCUPANCY_DURATION} from "../settings.ts";
 import type { ProtectAccessory, ProtectPersistedContextState, ProtectProjectionMap, WithoutIdentity } from "../types.ts";
-import { TimerRegistry, acquireService, composeSignals, sanitizeName, validService } from "homebridge-plugin-utils";
+import { acquireService, sanitizeName, validService } from "homebridge-plugin-utils";
 import { deviceSelectors, isDeviceOnline } from "unifi-protect";
 import type { ObserverWakePayload } from "../diagnostics.ts";
 import { ProtectBase } from "./device-base.ts";
@@ -156,9 +156,6 @@ export interface ProtectDeviceContext {
 export abstract class ProtectDevice extends ProtectBase implements ProtectDeviceContext {
 
   public accessory: ProtectAccessory;
-  // Per-accessory abort controller, composed against the NVR signal via composeSignals (the homebridge-plugin-utils primitive). Aborting it (cleanup, device removal)
-  // tears down every observe loop this accessory spawned.
-  protected readonly controller: AbortController;
   // The live projection for this device. Holds (client, id), reads through to the store on every config access. Set once at construction; never reassigned -
   // the accessory's identity is its MAC, stable across reboots, so the handle never goes stale. Injected by the NVR root when constructing the accessory, which
   // knows the concrete projection type at the point of adoption (a member of ProtectProjectionMap, keyed by device category); subclasses narrow at their own constructor.
@@ -166,25 +163,17 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
   // The per-device resolved feature-hint bag. Seeded as an empty cast below because every device leaf's constructor calls configureHints() synchronously right
   // after super(), before spawnObservers() or any HomeKit callback can read this.hints, so no consumer ever observes the bag before it holds every hint.
   public hints: ProtectHints;
-  // The per-accessory abort signal. Composed: aborts when EITHER the per-accessory controller is aborted OR the NVR's terminal shutdown signal fires. Use this when
-  // spawning per-accessory observe loops, so plugin shutdown and per-accessory teardown both unwind the loop cleanly.
-  protected readonly signal: AbortSignal;
-  // The accessory's HomeKit-side pacing timers, keyed by purpose. Lifetime-bounded by the composed signal, so device cleanup and NVR shutdown both drain them and a
-  // registration attempted after teardown is inert, keeping a timer from ever firing into a torn-down accessory.
-  protected readonly timers: TimerRegistry;
 
-  // The constructor captures the accessory and live projection handle, wires the per-accessory abort controller and its composed signal, and seeds the hints and timers
-  // state; device configuration is wired separately by the NVR root after construction.
+  // The constructor captures the accessory and live projection handle and seeds the hints state. A device's lifetime is its accessory's: it supplies no parent signal, so
+  // the spine composes its per-accessory controller against nvr.signal and the accessory's observers, MQTT registrations, and timers all ride the result. Device
+  // configuration is wired separately by the NVR root after construction.
   constructor(nvr: ProtectNvr, accessory: ProtectAccessory, device: ProtectProjectionMap[DeviceCollectionKey]) {
 
     super(nvr);
 
     this.accessory = accessory;
-    this.controller = new AbortController();
     this.device = device;
     this.hints = {} as ProtectHints;
-    this.signal = composeSignals(this.controller.signal, nvr.signal);
-    this.timers = new TimerRegistry({ signal: this.signal });
   }
 
   // Read-through to the live STATE projection, narrowed to drop device identity (id/mac/modelKey): identity is immutable and flows through the dedicated non-throwing
@@ -333,13 +322,6 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
 
     this.accessory.context.mac = this.device.config.mac;
     this.accessory.context.nvr = this.nvr.ufp.mac;
-  }
-
-  // Cleanup our observe loops and timers. Aborting the per-accessory controller tears down every observe loop this accessory spawned through this.signal; that same
-  // composed signal drains the timer registry, so cleanup releases the accessory's timers without unwinding them by hand.
-  public cleanup(): void {
-
-    this.controller.abort();
   }
 
   // The device-leaf MQTT scope: a device's MAC is its leading topic path segment, so every device publish / subscribe / unsubscribe scopes under
@@ -740,14 +722,6 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
     // firmware-change cadence.
     this.observeState({ key: "device.firmwareVersion", selector: state => this.deviceConfigSelector()(state)?.firmwareVersion, title: "device information" },
       () => this.configureInfo());
-  }
-
-  // Per-accessory lifetime: this accessory's composed signal scopes its observers and its MQTT subscriptions, so cleanup / reconfigure / shutdown each unwind only
-  // this accessory's loops - and release exactly this accessory's MQTT handlers - through the controller abort. Overrides the base default (the controller's terminal
-  // shutdown signal) that the teardown-less controller-scoped owners, system information and liveviews, ride.
-  protected override get observeSignal(): AbortSignal {
-
-    return this.signal;
   }
 
   // Publish the per-accessory observer-wake milestone on the forward-only diagnostics channel, keyed by accessory UUID. Zero-cost when no subscriber is attached

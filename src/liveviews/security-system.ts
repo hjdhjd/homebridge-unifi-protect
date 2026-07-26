@@ -2,51 +2,32 @@
  *
  * security-system.ts: Security system accessory for UniFi Protect.
  */
-import { acquireService, composeSignals, validService } from "homebridge-plugin-utils";
+import { acquireService, validService } from "homebridge-plugin-utils";
 import type { CharacteristicValue } from "homebridge";
 import type { ProtectAccessory } from "../types.ts";
 import { ProtectBase } from "../devices/device-base.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
 
+/* The security system accessory synthesized from the controller's Protect-* liveviews. It is the one controller-scoped owner whose lifetime is shorter than the
+ * controller connection: its accessory comes and goes with those liveviews, so the inherited composed lifetime is exactly what its MQTT registrations need. Deleting the
+ * last Protect-* liveview removes the accessory and calls the inherited cleanup(), which unwinds exactly this owner's securitysystem get/set handlers so they stop
+ * commanding the cameras; a later re-add builds a fresh instance whose constructor subscribes anew.
+ */
 export class ProtectSecuritySystem extends ProtectBase {
 
   public accessory: ProtectAccessory;
-  // The per-owner abort controller. Aborting it (on accessory removal) unwinds this owner's MQTT registrations without waiting for the plugin to shut down.
-  private readonly controller: AbortController;
   private isAlarmTriggered: boolean;
-  // The composed owner-lifetime signal that scopes this owner's MQTT registrations: aborts when EITHER this owner's controller is aborted OR the NVR's terminal
-  // shutdown signal fires.
-  private readonly signal: AbortSignal;
 
   // Create an instance.
   constructor(nvr: ProtectNvr, accessory: ProtectAccessory) {
 
     super(nvr);
 
-    // Build the owner-lifetime signal BEFORE configureDevice runs, so the MQTT subscriptions it registers thread the composed signal rather than the base controller
-    // signal.
     this.accessory = accessory;
-    this.controller = new AbortController();
     this.isAlarmTriggered = false;
-    this.signal = composeSignals(this.controller.signal, nvr.signal);
 
     this.configureDevice();
-  }
-
-  // The owner-lifetime signal scoping this owner's MQTT registrations. The security system is the one controller-scoped owner whose lifetime is shorter than the
-  // controller connection: its accessory comes and goes with the Protect-* liveviews, so its registrations must unwind with the accessory, not with the plugin. This
-  // overrides the base seam, which returns the controller-lifetime nvr.signal that the teardown-less controller-scoped owners ride.
-  protected override get observeSignal(): AbortSignal {
-
-    return this.signal;
-  }
-
-  // Release this owner's MQTT registrations when its accessory is removed. Deleting the last Protect-* liveview removes the security accessory, and this abort unwinds
-  // exactly this owner's securitysystem get/set handlers so they no longer command the cameras. A later re-add builds a fresh instance whose constructor subscribes anew.
-  public cleanup(): void {
-
-    this.controller.abort();
   }
 
   // Configure a security system accessory for HomeKit.
