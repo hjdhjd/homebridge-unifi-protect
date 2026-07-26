@@ -10,8 +10,7 @@
  * recording, doorbell mute) whose handlers write only accessory.context and never touch the controller. The camera.lastMotion bare-motion observer is netted here through
  * the injected recording-dispatch seam, exactly as the sensor / light suites net their own lastMotion observe. Each reaction is constructed against a plain ProtectCamera
  * through the same camera-construction harness seam (the stub streaming-delegate factory), so the instance under test is the production class and the casts are confined
- * to the construction call. One configure-time gate sits adjacent to that concern rather than inside it and is netted here because the same buildCamera arrangement
- * drives it: the smart-detect object-sensor derivation, whose per-type contact sensors materialize at configure from the two feature options the hints literal reads.
+ * to the construction call. The smart-detect object sensors belong to capability-reconcile.test.ts, alongside the other gates the reconcile chokepoint drives.
  *
  * The vacuity gate is two-part, carried from the device-* law: a gated reaction needs both its HARDWARE precondition (a makeCameraConfig featureFlags flag) and, where a
  * sub-option defaults FALSE, the exact Enable.* userOption string. Every with-feature reaction HARD-asserts the gated service or characteristic EXISTS as its FIRST
@@ -493,38 +492,4 @@ describe("camera-family observer reactions and bound read handlers (camera-react
     });
   });
 
-  describe("the configure-time smart-detect object-sensor gate (per-type contact sensors)", () => {
-
-    test("with smart detection and the object-sensors option, every advertised detection type materializes its own contact sensor", async () => {
-
-      // Both halves of the smartDetect derivation must be present - the hasSmartDetect hardware flag and Enable.Motion.SmartDetect, which defaults OFF - and
-      // Enable.Motion.SmartDetect.ObjectSensors, also default OFF, is the second gate that turns that derivation into per-type sensors. Two advertised types exercise the
-      // per-type fan-out rather than a single-sensor special case.
-      built = await buildCamera({ featureFlags: { hasSmartDetect: true, smartDetectTypes: [ "person", "vehicle" ] },
-        userOptions: [ "Enable.Motion.SmartDetect", "Enable.Motion.SmartDetect.ObjectSensors" ] });
-
-      // HARD-assert each gated sensor EXISTS as the FIRST check, subtyped by its own detection type, so an absent service throws here rather than letting the state
-      // assertion below pass vacuously.
-      const person = built.accessory.getServiceById(Service.ContactSensor, ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + ".person");
-      const vehicle = built.accessory.getServiceById(Service.ContactSensor, ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + ".vehicle");
-
-      assert.ok(person, "the person detection type materialized its own subtyped contact sensor");
-      assert.ok(vehicle, "the vehicle detection type materialized its own subtyped contact sensor");
-
-      // Each sensor is initialized to contact-detected, the at-rest state a later smart-detect delivery moves.
-      assert.equal(person.getCharacteristic(Characteristic.ContactSensorState).value, Characteristic.ContactSensorState.CONTACT_DETECTED,
-        "the person contact sensor is initialized at rest, in the contact-detected state");
-    });
-
-    test("without the object-sensors option, smart detection alone materializes no per-type contact sensors", async () => {
-
-      // The negative control isolates the object-sensors half of the gate: the same smart-capable, smart-enabled camera carrying only Enable.Motion.SmartDetect. The
-      // subtype prefix matched below carries its trailing separator, so the count never picks up the separately-gated license-plate sensors.
-      built = await buildCamera({ featureFlags: { hasSmartDetect: true, smartDetectTypes: [ "person", "vehicle" ] }, userOptions: ["Enable.Motion.SmartDetect"] });
-
-      const objectSensors = built.accessory.services.filter((service) => service.subtype?.startsWith(ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + "."));
-
-      assert.equal(objectSensors.length, 0, "with the object-sensors option omitted, no detection type materializes a contact sensor");
-    });
-  });
 });

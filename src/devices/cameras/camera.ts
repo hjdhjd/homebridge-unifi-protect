@@ -270,9 +270,6 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     // Configure the motion sensor.
     this.configureMotionSensor(this.isHksvCapable);
 
-    // Configure smart motion contact sensors.
-    this.configureMotionSmartSensor();
-
     // Configure the occupancy sensor.
     this.configureOccupancySensor();
 
@@ -692,8 +689,47 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     return true;
   }
 
-  // Configure discrete smart motion contact sensors for HomeKit.
-  private configureMotionSmartSensor(): boolean {
+  /* Reconcile the discrete smart motion contact sensors this camera advertises against the controller's live state - a reconcileCapabilities leaf, so a camera whose
+   * hasSmartDetect the controller reports only after adoption gains its sensors without a restart, and a detection type the controller adds or drops is reflected live.
+   *
+   * The derived hints are refreshed FIRST, in the same synchronous region as everything below, so the pass that raises them is the pass that acts on them: the all-off
+   * prune reads hints.smartDetectSensors, and a refresh sequenced after it would decide against the previous pass's value, leaving a late-arriving capability's sensors
+   * one reconcile behind. The refresh is additive, mirroring the twoWayAudio refresh reconcileStreamingAudioCapabilities performs, and being additive is also what makes
+   * "a hardware withdrawal keeps" fall out of the structure rather than out of a guard.
+   *
+   * The capability withdrawal is the single short-circuit below rather than a condition inside each prune. That is what makes withdrawal-keeps a property of this
+   * method's SHAPE: the controller empties the reported type set alongside the flag, so any prune reached during a withdrawal would delete every sensor - typed and plate
+   * alike - through the per-type path and silently defeat the rule. One statement, and the capability level cannot drift apart from the per-type level.
+   */
+  private reconcileSmartDetectSensors(): boolean {
+
+    // Refresh the derived smart-detect hints from their two live inputs. configureHints establishes the baseline at construction; this is the only live refresher, and
+    // event-dispatch gates every smart-detect delivery on the cached value - so without this refresh a live arrival would materialize sensors that could never trip. Both
+    // refreshes sit above the withdrawal short-circuit because ||= against a false right side is a no-op, so a withdrawal passing through here changes nothing.
+    this.hints.smartDetect ||= this.ufp.featureFlags.hasSmartDetect && this.hasFeature("Motion.SmartDetect");
+    this.hints.smartDetectSensors ||= this.hints.smartDetect && this.hasFeature("Motion.SmartDetect.ObjectSensors");
+
+    // The controller does not report smart detection: leave every existing sensor exactly as it stands and touch nothing.
+    if(!this.ufp.featureFlags.hasSmartDetect) {
+
+      return false;
+    }
+
+    /* The detection types this camera actually delivers: the INTERSECTION of what the hardware advertises (featureFlags) with what the user has switched on in Protect
+     * (smartDetectSettings). Both halves are needed. The capability alone would keep a sensor for a detection the user turned off, and that sensor could never trip -
+     * delivery keys off the event's own type, and the controller sends no event for a disabled detection - so it would sit at no-detection forever and any automation
+     * bound to it would silently never run. Audio types intersect with audio types and object types with object types; the controller keeps the audio and object lists
+     * separate and so do we. It is derived once, here, and every consumer reads it - the occupancy list, both license-plate terms, the per-type prune, and the per-type
+     * add - so "which detections does this camera deliver?" has a single answer.
+     */
+    const smartDetectTypes = new Set([ ...this.ufp.featureFlags.smartDetectAudioTypes.filter(type => this.ufp.smartDetectSettings.audioTypes.includes(type)),
+      ...this.ufp.featureFlags.smartDetectTypes.filter(type => this.ufp.smartDetectSettings.objectTypes.includes(type)) ]);
+
+    // Rebuild the smart-occupancy type list from live state. It is a plain ASSIGNMENT on every pass rather than a rising-edge fill, because the type set itself moves
+    // live (a type the controller adds or drops, or the user enables or disables), so a once-only fill would trade the flag's staleness for the list's. It sits BELOW the
+    // short-circuit, unlike the additive refreshes above: an assignment is not a no-op, so running it during a withdrawal would empty the list against a withdrawn type
+    // set and silently stop occupancy delivery - the very deletion the keep-on-withdrawal rule exists to prevent.
+    this.hints.smartOccupancy = this.deriveSmartOccupancy(smartDetectTypes);
 
     // Get any license plates the user has configured for detection, if any.
     this.detectLicensePlate = this.getFeatureValue("Motion.SmartDetect.ObjectSensors.LicensePlate")?.split("-").filter(x => x.length).map(x => x.toUpperCase()) ?? [];
@@ -701,8 +737,9 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     // Check if we have disabled specific license plate smart motion object contact sensors, and if so, remove them.
     for(const objectService of this.accessory.services.filter(x => x.subtype?.startsWith(ProtectReservedNames.CONTACT_MOTION_SMARTDETECT_LICENSE + "."))) {
 
-      // Do we have smart motion detection as well as license plate telemetry available to us and is this license plate configured? If so, move on.
-      if(this.ufp.featureFlags.hasSmartDetect && this.ufp.featureFlags.smartDetectTypes.includes("licensePlate") && objectService.subtype &&
+      // Do we have license plate detection available to us and is this license plate configured? If so, move on. The hardware capability is not a term here: the
+      // short-circuit above has already established it, so the surviving terms are the plate detection this camera delivers and the user's own configured list.
+      if(smartDetectTypes.has("licensePlate") && objectService.subtype &&
         this.detectLicensePlate.includes(objectService.subtype.slice(objectService.subtype.indexOf(".") + 1))) {
 
         continue;
@@ -713,26 +750,37 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
       this.log.info("Disabling smart motion license plate contact sensor: %s.", objectService.subtype?.slice(objectService.subtype.indexOf(".") + 1));
     }
 
-    // If we don't have smart motion detection available or we have smart motion object contact sensors disabled, let's remove them.
-    if(!this.hints.smartDetectSensors) {
+    /* Prune the object-centric contact sensors this camera should not advertise: all of them when the user has the object-sensor option off, and otherwise the ones whose
+     * detection type this camera does not deliver - either because the controller has stopped reporting the hardware type or because the user switched that detection off
+     * in Protect. One keep-condition covers all of it, mirroring the license-plate prune above, so "which per-type sensors survive" has a single answer. Removing a
+     * type's sensor here is the subtractive half of the per-type set reconciling live; the capability level above never reaches this loop, which is what keeps a hardware
+     * withdrawal from deleting anything.
+     */
+    for(const objectService of this.accessory.services.filter(x => x.subtype?.startsWith(ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + "."))) {
 
-      // Check for object-centric contact sensors that are no longer enabled and remove them.
-      for(const objectService of this.accessory.services.filter(x => x.subtype?.startsWith(ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + "."))) {
+      const smartDetectType = objectService.subtype?.slice(objectService.subtype.indexOf(".") + 1) ?? "";
 
-        // We don't have this contact sensor enabled, remove it.
-        this.accessory.removeService(objectService);
-        this.log.info("Disabling smart motion contact sensor: %s.", objectService.subtype?.slice(objectService.subtype.indexOf(".") + 1));
+      if(this.hints.smartDetectSensors && smartDetectTypes.has(smartDetectType)) {
+
+        continue;
       }
+
+      // We don't have this contact sensor enabled, remove it.
+      this.accessory.removeService(objectService);
+      this.log.info("Disabling smart motion contact sensor: %s.", smartDetectType);
     }
 
-    // If we don't have smart motion detection, we're done.
-    if(!this.ufp.featureFlags.hasSmartDetect) {
-
-      return false;
-    }
+    // The number of sensors this pass CREATED, which each summary line below reads against its own pre-loop snapshot so a narration fires only on a real change. Once
+    // this method runs on every reconcile pass, an ungated summary would re-print its enumeration on every unrelated capability change and turn a one-time startup
+    // statement into recurring noise. Each removal above already narrates itself as it happens, so the prunes need no equivalent gate.
+    let sensorsCreated = 0;
 
     // A utility for us to add contact sensors.
     const addSmartDetectContactSensor = (name: string, serviceId: string, errorMessage: string): boolean => {
+
+      // Read prior existence BEFORE acquiring, the same establishment-detection idiom the Access lock and the night vision dimmer use: a get-or-create returns the
+      // service either way and cannot tell us which it did.
+      const existing = this.accessory.getServiceById(this.hap.Service.ContactSensor, serviceId);
 
       // Acquire the service.
       const service = this.acquireService(this.hap.Service.ContactSensor, name, serviceId);
@@ -745,8 +793,14 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
         return false;
       }
 
-      // Initialize the sensor.
-      service.updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.hap.Characteristic.ContactSensorState.CONTACT_DETECTED);
+      // Initialize a freshly created sensor to its resting state, and only a freshly created one: an existing sensor's state belongs to the delivery path, so re-stamping
+      // it here would reset a tripped detection the moment an unrelated capability change drove a reconcile, silently cancelling a live smart-motion event.
+      if(!existing) {
+
+        service.updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.hap.Characteristic.ContactSensorState.CONTACT_DETECTED);
+
+        sensorsCreated++;
+      }
 
       return true;
     };
@@ -756,7 +810,9 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     // Add individual contact sensors for each object detection type, if needed.
     if(this.hints.smartDetectSensors) {
 
-      for(const smartDetectType of [ ...this.ufp.featureFlags.smartDetectAudioTypes, ...this.ufp.featureFlags.smartDetectTypes ].toSorted()) {
+      const createdBeforeObjectSensors = sensorsCreated;
+
+      for(const smartDetectType of [...smartDetectTypes].toSorted()) {
 
         if(addSmartDetectContactSensor(this.accessoryName + " " + toStartCase(smartDetectType),
           ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + "." + smartDetectType, "Unable to add smart motion contact sensor for " + smartDetectType + " detection.")) {
@@ -765,13 +821,18 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
         }
       }
 
-      this.log.info("Smart motion contact sensor%s enabled: %s.", enabledContactSensors.length > 1 ? "s" : "", enabledContactSensors.join(", "));
+      if(sensorsCreated > createdBeforeObjectSensors) {
+
+        this.log.info("Smart motion contact sensor%s enabled: %s.", enabledContactSensors.length > 1 ? "s" : "", enabledContactSensors.join(", "));
+      }
     }
 
     enabledContactSensors = [];
 
-    // Now process license plate contact sensors for individual detections.
-    if(this.ufp.featureFlags.smartDetectTypes.includes("licensePlate")) {
+    // Now process license plate contact sensors for individual detections, when this camera delivers plate detection at all.
+    if(smartDetectTypes.has("licensePlate")) {
+
+      const createdBeforePlateSensors = sensorsCreated;
 
       // Get the list of plates.
       for(const licenseOption of this.detectLicensePlate.filter(plate => plate.length)) {
@@ -784,13 +845,39 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
         }
       }
 
-      if(enabledContactSensors.length) {
+      if(sensorsCreated > createdBeforePlateSensors) {
 
         this.log.info("Smart motion license plate contact sensor%s enabled: %s.", enabledContactSensors.length > 1 ? "s" : "", enabledContactSensors.join(", "));
       }
     }
 
     return true;
+  }
+
+  /* The smart-detect object types the user has selected to drive the occupancy sensor: every detection type this camera DELIVERS that also carries its own
+   * Motion.OccupancySensor.<type> option. It takes the delivered set rather than re-deriving one, so a detection the user has switched off in Protect is absent here for
+   * the same reason it grows no contact sensor - one answer to "which detections does this camera deliver?", read by every consumer. The list is returned fresh rather
+   * than pushed into the hint, so the caller assigns it and no pass can accumulate.
+   *
+   * It exists because the derived hint bag caches this list and the base configureOccupancySensor fills it only when it CREATES the service - at construction, before the
+   * reconcile chokepoint runs - so a camera whose smart-detect capability arrives after adoption would otherwise carry an empty list for the rest of the session while
+   * hints.smartDetect read true, and the delivery gate would then match no detection type at all. The base method keeps its own fill for its own contract (a live
+   * re-creation of the occupancy service, on any device family); this is the camera's live refresher, and it deliberately expresses the same rule rather than a new one.
+   *
+   * @param smartDetectTypes - the detection types this camera currently delivers, the intersection the reconcile pass derives once.
+   *
+   * @returns the delivered detection types the user has selected for occupancy, empty when smart detection is not this camera's source of truth.
+   */
+  private deriveSmartOccupancy(smartDetectTypes: ReadonlySet<string>): string[] {
+
+    // Being past the withdrawal short-circuit establishes only that the HARDWARE reports smart detection. This hint is that flag AND the user's Motion.SmartDetect
+    // option, so a camera whose owner has the option off reaches here with it false and must carry no occupancy types at all - the base method's own contract.
+    if(!this.hints.smartDetect) {
+
+      return [];
+    }
+
+    return [...smartDetectTypes].filter(smartDetectType => this.hasFeature("Motion.OccupancySensor." + smartDetectType));
   }
 
   // Reconcile the StatusTampered characteristic on the camera's motion sensor against the controller-reported tamper capability and the user setting. A
@@ -1083,13 +1170,13 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
   // Reconcile the capability-gated services this camera advertises against the controller's currently-reported capabilities. The single chokepoint that runs once at
   // adoption AND live whenever a capability-bearing slice changes, so a capability the controller reports only after adoption is reflected without a restart. Today it
-  // reconciles the UniFi Access lock, the night vision dimmer, the ambient light sensor, the tamper-detection characteristic, and the streaming delegate's frozen audio
-  // surface (two-way audio and the doorbell sample rates, rebuilt in place when a late speaker or doorbell-ness appears); the remaining camera-family capability gates
-  // fold in here as they gain their own observers. It is deliberately observeState-free - the capability observers that drive it are registered once, in
-  // spawnCameraObservers. The source separates establishment (construct: a fresh adoption or a Homebridge restart) from a live reconcile (observe), which the Access
-  // lock's resting-state stamp and the night vision dimmer's establishment-only push consume; the ambient light sensor, the tamper-detection characteristic, and the
-  // streaming-audio reconcile ignore it. The isDeleted guard mirrors the streaming delegate's create-half: a being-removed camera must not reconcile against a vanishing
-  // record.
+  // reconciles the UniFi Access lock, the night vision dimmer, the smart-detect contact sensors, the ambient light sensor, the tamper-detection characteristic, and the
+  // streaming delegate's frozen audio surface (two-way audio and the doorbell sample rates, rebuilt in place when a late speaker or doorbell-ness appears); the remaining
+  // camera-family capability gates fold in here as they gain their own observers. It is deliberately observeState-free - the capability observers that drive it are
+  // registered once, in spawnCameraObservers. The source separates establishment (construct: a fresh adoption or a Homebridge restart) from a live reconcile (observe),
+  // which the Access lock's resting-state stamp and the night vision dimmer's establishment-only push consume; the smart-detect sensors, the ambient light sensor, the
+  // tamper-detection characteristic, and the streaming-audio reconcile ignore it, each deciding from live state alone. The isDeleted guard mirrors the streaming
+  // delegate's create-half: a being-removed camera must not reconcile against a vanishing record.
   protected async reconcileCapabilities(source: ReconcileSource): Promise<void> {
 
     if(this.isDeleted) {
@@ -1104,6 +1191,8 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     this.configureTamperDetection();
 
     this.reconcileStreamingAudioCapabilities();
+
+    this.reconcileSmartDetectSensors();
 
     await this.ambientLight.reconcile();
   }

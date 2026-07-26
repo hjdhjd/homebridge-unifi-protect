@@ -1501,14 +1501,16 @@ export interface TestCameraFeatureFlags {
  * @param options - accessDeviceMetadata: seeds the paired Access reader's supportUnlock capability flag for the camera's UniFi Access lock construction tests;
  *                  channels: the typed channel array (reuse the camera.fixtures.ts corpus); featureFlags: per-flag overrides merged over the all-false
  *                  defaults (a doorbell test sets isDoorbell, a package test adds hasPackageCamera); chimeDuration / enableNfc / isDark / lcdMessage: the
- *                  doorbell-adjacent fields its configure paths read; id / mac / name: optional identity overrides; videoCodec: the codec string (default "h264"),
- *                  overridable to "av1" so the playlist filter's codec exclusion can be exercised.
+ *                  doorbell-adjacent fields its configure paths read; id / mac / name: optional identity overrides; smartDetectSettings: the controller-side
+ *                  smart-detection settings, whose enabled-type lists default to mirroring the advertised capability (see below); videoCodec: the codec string
+ *                  (default "h264"), overridable to "av1" so the playlist filter's codec exclusion can be exercised.
  *
  * @returns a camera config record the construction path reads as real.
  */
 export function makeCameraConfig(options: { accessDeviceMetadata?: { featureFlags: { supportUnlock: boolean } }; channels: ProtectCameraChannelConfig[];
   chimeDuration?: number; enableNfc?: boolean; featureFlags?: Partial<TestCameraFeatureFlags>; id?: string; isDark?: boolean; lcdMessage?: { duration?: number;
-    resetAt?: Nullable<number>; text?: string; type?: string; }; mac?: string; name?: string; videoCodec?: string; }): ProtectCameraConfig {
+    resetAt?: Nullable<number>; text?: string; type?: string; }; mac?: string; name?: string; smartDetectSettings?: { audioTypes?: string[];
+    enableTamperDetection?: boolean; objectTypes?: string[]; }; videoCodec?: string; }): ProtectCameraConfig {
 
   const name = options.name ?? "Test Camera";
 
@@ -1549,7 +1551,16 @@ export function makeCameraConfig(options: { accessDeviceMetadata?: { featureFlag
     marketName: "Test Camera Model",
     name: name,
     recordingSettings: { mode: "always" },
-    smartDetectSettings: { enableTamperDetection: false },
+
+    // The controller-side smart-detection settings. The two enabled-type lists default to MIRRORING the advertised capability, which is the ordinary field shape - a
+    // camera whose supported detections the user has left switched on in Protect - so an arrangement that advertises a detection type gets a camera whose user has that
+    // type enabled, and only a test about the user's own selection has to say otherwise. A test that narrows either list models the user switching a detection off.
+    smartDetectSettings: {
+
+      audioTypes: options.smartDetectSettings?.audioTypes ?? (options.featureFlags?.smartDetectAudioTypes ?? []),
+      enableTamperDetection: options.smartDetectSettings?.enableTamperDetection ?? false,
+      objectTypes: options.smartDetectSettings?.objectTypes ?? (options.featureFlags?.smartDetectTypes ?? [])
+    },
     state: "CONNECTED",
     videoCodec: options.videoCodec ?? "h264",
     ...(options.accessDeviceMetadata !== undefined ? { accessDeviceMetadata: options.accessDeviceMetadata } : {}),
