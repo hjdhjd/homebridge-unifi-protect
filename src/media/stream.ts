@@ -11,7 +11,8 @@ import { AudioRecordingCodecType, AudioRecordingSamplerate, AudioStreamingCodecT
 import type { CameraController, CameraControllerOptions, CameraStreamingDelegate, HAP, PrepareStreamCallback, PrepareStreamRequest, PrepareStreamResponse, Resolution,
   Service, SnapshotRequest, SnapshotRequestCallback, StartStreamRequest, StreamRequestCallback, StreamingRequest } from "homebridge";
 import type { HomebridgePluginLogging, IpFamily, Nullable, PortReservation } from "homebridge-plugin-utils";
-import { PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS, PROTECT_LIVESTREAM_API_IDR_INTERVAL, PROTECT_TIMESHIFT_BUFFER_MAXDURATION } from "../settings.ts";
+import { PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS, PROTECT_LIVESTREAM_API_IDR_INTERVAL, PROTECT_PROBESIZE_OVERRIDE_RESET_MS,
+  PROTECT_TIMESHIFT_BUFFER_MAXDURATION } from "../settings.ts";
 import { ProtectAbortedError, livestreamAudioSampleRate } from "unifi-protect";
 import { ProtectReservedNames, isPackageCameraContext } from "../types.ts";
 import { guardedPublish, mqttTopic } from "../mqtt.ts";
@@ -1271,10 +1272,10 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
     }
   }
 
-  // Dispose a prepared (pending) session. This is the single teardown body for a session that was prepared but never became a registered ongoing session: every failed
-  // start in startStream and stopStream's own pending branch route through it. Aborting the umbrella AbortController is the convergence point - it fans out through the
-  // shared signal to the demuxer and any FFmpeg, backpressure writer, and livestream subscription hung off it - while the port reservations and the pending-map entry
-  // are released explicitly (the abort alone does not free them), and a package-camera flashlight this session lit is turned back off. It is safe to call more than once:
+  // Dispose a prepared (pending) session. This is the single teardown body for a session that was prepared but never became a registered ongoing session: every path
+  // that ends a never-registered session routes through it. Aborting the umbrella AbortController is the convergence point - it fans out through the shared signal to
+  // the demuxer and any FFmpeg, backpressure writer, and livestream subscription hung off it - while the port reservations and the pending-map entry are released
+  // explicitly (the abort alone does not free them), and a package-camera flashlight this session lit is turned back off. It is safe to call more than once:
   // AbortController.abort and PortReservation disposal are both safe to repeat, so routing several paths (including one that may already have partially torn down in a
   // race) through this one body never double-releases.
   private disposePreparedSession(sessionId: string, sessionInfo: SessionInfo): void {
@@ -1345,13 +1346,36 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
     }
   }
 
-  // Shutdown all our video streams.
+  /* Shut down all our video streams and end this camera's probesize self-tuning with them.
+   *
+   * Every path that calls shutdown is ending this instance's service life, so the teardown here is total: every session the delegate still holds ends, streaming or
+   * still establishing, and the self-tuning story ends with them. A pending auto-reset timer would otherwise keep a retired delegate reachable for the remainder of its
+   * window, and resetProbesizeOverride owns the clear-and-reset, so the tuning state and its timer always end together.
+   */
   public shutdown(): void {
 
     for(const session of this.ongoingSessions.keys()) {
 
       this.stopStream(session);
     }
+
+    // A session still mid-establishment holds a spawned FFmpeg, an RTP demuxer, port reservations, and an establishing subscription on its umbrella controller, and the
+    // loop above walks only the registered ongoing sessions. Routing each pending session through the shared disposal aborts its resources as one cascade under the
+    // same "shutdown" reason stopStream uses, so neither a session resource nor a later "failed" classification can outlive the delegate. Deleting the current entry
+    // during the iteration is safe, as is calling the helper more than once. Each disposal is caught on its own, mirroring stopStream's log-and-swallow posture, so one
+    // failure strands neither the sessions behind it nor the reset below.
+    for(const [ sessionId, sessionInfo ] of this.pendingSessions) {
+
+      try {
+
+        this.disposePreparedSession(sessionId, sessionInfo);
+      } catch(error) {
+
+        this.log.error("Unable to cleanly end the FFmpeg video processes: %s.", formatErrorMessage(error));
+      }
+    }
+
+    this.resetProbesizeOverride();
   }
 
   // Adjust our probe hints.
@@ -1385,22 +1409,28 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
     // persistently flaky stream before we stop paying the cost of resetting the override on every attempt.
     if(this.probesizeOverrideCount < 10) {
 
-      // Automatically clear the temporary override after ten minutes, long enough for a transient stream irregularity to have passed so the next stream attempt
-      // starts from the camera's normal baseline probesize instead of carrying the penalty indefinitely.
+      // Automatically clear the temporary override once the reset delay elapses, so the next stream attempt starts from the camera's normal baseline probesize instead
+      // of carrying the penalty indefinitely. The delay itself, and the reasoning behind its length, live with the named constant.
       this.probesizeOverrideTimeout = setTimeout(() => {
 
         this.probesizeOverride = 0;
         this.probesizeOverrideTimeout = undefined;
-      }, 1000 * 60 * 10);
+      }, PROTECT_PROBESIZE_OVERRIDE_RESET_MS);
     }
   }
 
-  // Reset the probesize self-tuning back to this camera's baseline. The override and its retry count accumulate as FFmpeg repeatedly fails to estimate the stream rate,
-  // and at the permanent ceiling (count >= 10) no auto-reset timer is armed, so the elevated probesize - and the startup latency it costs - otherwise persists for the
-  // whole life of the delegate. A controller reboot restarts this camera's stream from scratch, the natural boundary to clear the latch and let it re-tune from its
-  // baseline; the NVR calls this on the reboot edge. The trade-off is one possibly-wasted baseline spawn on a chronically-flaky camera, in exchange for not
-  // penalizing every camera forever - probesize is read only when ffmpegArgs is built at spawn, so this never disturbs an in-flight process, and a fresh failure
-  // cheaply re-arms it.
+  /* Reset the probesize self-tuning back to this camera's baseline.
+   *
+   * This is the single owner of the clear-and-reset: the override, its retry count, and any pending auto-reset timer end together here, so every role that needs the
+   * tuning wound back routes through this one body rather than reaching for the timer itself. The override and its retry count accumulate as FFmpeg repeatedly fails to
+   * estimate the stream rate, and at the permanent ceiling (count >= 10) no auto-reset timer is armed, so the elevated probesize - and the startup latency it costs -
+   * otherwise persists for the whole life of the delegate.
+   *
+   * A controller reboot restarts this camera's stream from scratch, the natural boundary to clear the latch and let it re-tune from its baseline; the NVR calls this on
+   * the reboot edge, where the trade-off is one possibly-wasted baseline spawn on a chronically-flaky camera in exchange for not penalizing every camera forever -
+   * probesize is read only when ffmpegArgs is built at spawn, so this never disturbs an in-flight process, and a fresh failure cheaply re-arms it. The delegate's own
+   * shutdown is the terminal role instead: nothing re-arms afterward, and the point of the reset is to leave no timer pending on an instance whose service life is over.
+   */
   public resetProbesizeOverride(): void {
 
     if(this.probesizeOverrideTimeout) {

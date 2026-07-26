@@ -25,7 +25,7 @@
  * tsconfig carries no test or helper exclude, and the published package ships dist/ wholesale). Whether the compiled test rig should be pruned from the
  * published package is a publish-hygiene decision deliberately left out of scope here.
  */
-import type { API, CameraController, HAP, Resolution } from "homebridge";
+import type { API, CameraController, CameraControllerOptions, HAP, Resolution } from "homebridge";
 import type { AudioOptionsIdentity, StreamingDelegate, StreamingDelegateFactory } from "./media/stream-delegate.ts";
 import type { Camera, Chime, LivestreamSubscriptionState, PlaySpeakerOptions, ProtectCameraChannelConfig, ProtectCameraConfig, ProtectChimeConfig, ProtectEventMetadata,
   ProtectFobConfig, ProtectLightConfig, ProtectNvrConfig, ProtectNvrLiveviewConfig, ProtectRelayConfig, ProtectRingtoneConfig, ProtectSensorConfig, ProtectState,
@@ -860,6 +860,21 @@ export const Service = {
   Switch: SwitchServiceType,
   TemperatureSensor: TemperatureSensorServiceType
 } as const;
+
+// The HAP CameraController the streaming delegate constructs at the tail of its own constructor. A constructible marker is what lets that delegate be unit-constructed
+// at all, and recording the options argument lets a construction test read the wiring the delegate composed - its own delegate handle, the streaming options, the
+// recording arm when one is present - off the object HAP would have received. The surface is deliberately the constructor alone: prepareStream reaches for the static
+// generateSynchronisationSource, which lands here with the first test that drives a stream request, per this file's grow-on-need principle. Named TestCameraController
+// rather than CameraController because the file type-imports homebridge's CameraController above; the hap namespace key below is the production name.
+export class TestCameraController {
+
+  public readonly options: CameraControllerOptions;
+
+  public constructor(options: CameraControllerOptions) {
+
+    this.options = options;
+  }
+}
 
 /* One accessory. Carries an AccessoryInformation service from construction (every HomeKit accessory has one); subsequent addService calls append additional
  * services. getService / getServiceById mirror HAP's distinction between "the bare service of this type" and "the service of this type with a specific subtype".
@@ -3305,7 +3320,7 @@ export interface TestProtectPlatform {
   readonly accessories: TestAccessory[];
   readonly api: {
 
-    hap: { Characteristic: typeof Characteristic; Service: typeof Service; uuid: { generate: (seed: string) => string } };
+    hap: { CameraController: typeof TestCameraController; Characteristic: typeof Characteristic; Service: typeof Service; uuid: { generate: (seed: string) => string } };
     platformAccessory: typeof TestAccessory;
     publishExternalAccessories: (pluginName: string, accessories: TestAccessory[]) => void;
     registerPlatformAccessories: (pluginName: string, platformName: string, accessories: TestAccessory[]) => void;
@@ -3722,7 +3737,8 @@ export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: T
   // publication leaves a real accessory unbridged while bridge registration marks it bridged.
   const api = {
 
-    hap: { Characteristic: Characteristic, Service: Service, uuid: { generate: (seed: string): string => "uuid:" + seed } },
+    hap: { CameraController: TestCameraController, Characteristic: Characteristic, Service: Service,
+      uuid: { generate: (seed: string): string => "uuid:" + seed } },
     platformAccessory: TestAccessory,
     publishExternalAccessories: (_pluginName: string, published: TestAccessory[]): void => {
 

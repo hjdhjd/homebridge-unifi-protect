@@ -13,17 +13,19 @@
  * because the host's hints.crop is false). Two-sided proves isReachable is actually READ and that a stubbed seam value flows THROUGH the delegate's logic - the
  * capability the interface unlocked - not a coincidental null.
  *
- * The streaming delegate is deferred: it builds a real FfmpegOptions and a real HAP CameraController the test HAP double does not provide, and its
- * construction is already exercised through the factory seam in camera-construction.test.ts.
+ * The streaming delegate constructs here too, and it is the one member of the group that composes rather than field-copies: it builds a real FfmpegOptions (inert
+ * under the harness's default hints, which turn every acceleration and crop knob off) and hands a fully-composed options object to the hap namespace's camera-controller
+ * marker. That makes its construction test the suite's second real-behavior anchor - the capability arms it decides, and the probesize self-tuning its shutdown ends.
  */
+import { PROTECT_PROBESIZE_OVERRIDE_RESET_MS, PROTECT_SEGMENT_RESOLUTION } from "../settings.ts";
+import { TestCameraController, makeTestCameraHost } from "../testing.helpers.ts";
 import { after, describe, test } from "node:test";
-import { PROTECT_SEGMENT_RESOLUTION } from "../settings.ts";
 import { ProtectRecordingDelegate } from "./record.ts";
 import { ProtectSnapshot } from "./snapshot.ts";
+import { ProtectStreamingDelegate } from "./stream.ts";
 import { ProtectTimeshiftBuffer } from "./timeshift.ts";
 import { ProtectTimeshiftSupervisor } from "./timeshift-supervisor.ts";
 import assert from "node:assert/strict";
-import { makeTestCameraHost } from "../testing.helpers.ts";
 
 // Every host this suite builds shares the one makeTestNvr AbortController. Aborting it in teardown releases the harness signal so a leaked observer (none here, the
 // trio ctors spawn none) could never outlive the suite. The trio ctors are pure field-copies, so construction floats no async machinery and needs no settle().
@@ -95,5 +97,64 @@ describe("media-delegate construction against the ProtectCameraHost stub", () =>
     assert.equal(timeshift.isStarted, false);
     assert.equal(timeshift.isTransmitting, false);
     assert.equal(timeshift.configuredDuration, PROTECT_SEGMENT_RESOLUTION);
+  });
+
+  // The streaming delegate: the one ctor here that composes rather than field-copies. It builds the real FfmpegOptions, decides its capability arms from the host's
+  // reads, and hands HAP a composed CameraControllerOptions. The arms are asserted separately because they answer different questions: the stub host is not a
+  // third-party camera, so the buffer-backed supervisor constructs, while it is not HKSV-capable, so no recording delegate does. The recorded options carrying the
+  // delegate itself is the proof the composed object reached the controller intact rather than a coincidental non-null.
+  test("ProtectStreamingDelegate constructs against the stub host with the real FfmpegOptions", () => {
+
+    const { controller, host, logEntries } = makeTestCameraHost();
+
+    controllers.push(controller);
+
+    const stream = new ProtectStreamingDelegate(host, [[ 1920, 1080, 30 ]]);
+    const cameraController = stream.controller;
+
+    assert.ok(cameraController instanceof TestCameraController, "the delegate constructed the hap camera controller");
+    assert.equal(cameraController.options.delegate, stream, "the composed controller options carry the delegate itself");
+    assert.notEqual(stream.timeshift, null, "the buffer-backed supervisor constructed for a camera that is not third-party");
+    assert.equal(stream.hksv, null, "no recording delegate constructed for a host that is not HKSV-capable");
+
+    // The macOS hardware-acceleration nudge is the only warn-level line construction can emit, and it requires a hostSystem beginning with "macOS." - the harness
+    // reports a bare "macOS", so it stays silent. A warn here would mean the real FfmpegOptions reached something the stub profile does not model.
+    assert.equal(logEntries.filter((entry) => entry.level === "warn").length, 0, "construction warned about nothing");
+  });
+
+  // Shutdown ends this camera's probesize self-tuning along with its streams. The distinguishing assertion is the IMMEDIATE post-shutdown read: a shutdown that leaves
+  // the self-tune armed still reads the elevated override right after the call, and only drifts back to baseline when the auto-reset timer eventually fires - which is
+  // exactly the timer that would keep a retired delegate reachable. The advance-and-recheck afterward is post-reset stability hygiene, not what tells a shutdown that
+  // ends the tuning from one that leaves it armed.
+  // Mock timers also keep a pending real timer from ever pinning the test process.
+  test("shutdown resets the probesize self-tuning and leaves no auto-reset pending", (t) => {
+
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+
+    const { controller, host, logEntries } = makeTestCameraHost();
+
+    controllers.push(controller);
+
+    // The harness host defaults to a zero probesize, which the self-tune would double to zero and the getter could not tell from the baseline. A nonzero baseline makes
+    // the override, the doubling, and the reset all separately observable through the public getter.
+    host.hints.probesize = 16384;
+
+    const stream = new ProtectStreamingDelegate(host, [[ 1920, 1080, 30 ]]);
+
+    stream.adjustProbeSize();
+
+    assert.equal(stream.probesize, 32768, "the self-tune doubled the camera's baseline probesize");
+    assert.equal(logEntries.filter((entry) => entry.level === "error").length, 1, "the self-tune reported the stream trouble it is adjusting for");
+
+    const logCountAfterAdjust = logEntries.length;
+
+    stream.shutdown();
+
+    assert.equal(stream.probesize, 16384, "shutdown wound the override back to the camera's baseline immediately");
+
+    t.mock.timers.tick(PROTECT_PROBESIZE_OVERRIDE_RESET_MS + 1);
+
+    assert.equal(stream.probesize, 16384, "the baseline holds past the auto-reset delay");
+    assert.equal(logEntries.length, logCountAfterAdjust, "nothing was logged after the shutdown");
   });
 });

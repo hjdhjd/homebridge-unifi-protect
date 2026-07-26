@@ -39,6 +39,10 @@ export const PROTECT_FFMPEG_AUDIO_FILTER_HIGHPASS = 150;
 // FFmpeg lowpass audio filter defaults - this setting attenuates (eliminates) frequencies above the value.
 export const PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS = 9000;
 
+// Delay, in milliseconds, before a temporary probesize override clears itself back to the camera's baseline - long enough for a transient stream irregularity to have
+// passed, so the next stream attempt is not still paying the elevated probesize's startup latency for a problem that is over.
+export const PROTECT_PROBESIZE_OVERRIDE_RESET_MS = 1000 * 60 * 10;
+
 // Protect's native I-frame interval can vary, but the livestream API seems to default to 5 seconds at most, though it depends on camera type and stream quality selected.
 export const PROTECT_LIVESTREAM_API_IDR_INTERVAL = 5;
 
