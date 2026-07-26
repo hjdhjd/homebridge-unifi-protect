@@ -3,17 +3,14 @@
  * viewer.ts: Viewer device class for UniFi Protect.
  */
 import type { CharacteristicValue, Service } from "homebridge";
-import type { ProtectAccessory, WithoutIdentity } from "../types.ts";
-import type { ProtectViewerConfig, Viewer } from "unifi-protect";
 import { deviceSelectors, selectLiveviews } from "unifi-protect";
 import type { Nullable } from "homebridge-plugin-utils";
+import type { ProtectAccessory } from "../types.ts";
 import { ProtectDevice } from "./device.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
+import type { Viewer } from "unifi-protect";
 
-export class ProtectViewer extends ProtectDevice {
-
-  // Narrow the inherited projection handle to the viewer projection so the read-through config getter resolves to ProtectViewerConfig.
-  declare protected readonly device: Viewer;
+export class ProtectViewer extends ProtectDevice<Viewer> {
 
   // Create an instance.
   constructor(nvr: ProtectNvr, accessory: ProtectAccessory, device: Viewer) {
@@ -23,13 +20,6 @@ export class ProtectViewer extends ProtectDevice {
     this.configureHints();
     this.configureDevice();
     this.spawnObservers();
-  }
-
-  // Read-through to the viewer projection's live STATE, narrowed to drop device identity (id/mac/modelKey). Identity flows through the dedicated non-throwing accessors
-  // (protectId/modelKey/.id/.mac), never this throwing config getter; this override mirrors the base getter's body and narrows only the surfaced return type.
-  public override get ufp(): Readonly<WithoutIdentity<ProtectViewerConfig>> {
-
-    return this.device.config;
   }
 
   // The viewer's currently-active liveview id, read non-throwing through the record. An absent record (a viewer lingering in the removal grace) reports no active

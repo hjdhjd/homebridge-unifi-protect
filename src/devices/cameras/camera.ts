@@ -3,11 +3,11 @@
  * camera.ts: Camera device class for UniFi Protect.
  */
 import { AudioRecordingCodecType, AudioRecordingSamplerate, capabilityGate, formatErrorMessage, toStartCase } from "homebridge-plugin-utils";
-import type { Camera, LivestreamSource, ProtectCameraConfig, SnapshotOptions, TalkbackSession } from "unifi-protect";
+import type { Camera, LivestreamSource, SnapshotOptions, TalkbackSession } from "unifi-protect";
 import type { CharacteristicValue, Service } from "homebridge";
 import type { LivestreamHostOptions, ProtectCameraHost } from "../../media/camera-host.ts";
 import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_SEGMENT_RESOLUTION, PROTECT_TIMESHIFT_CONSTRAINED_HOST_TARGET } from "../../settings.ts";
-import type { ProtectAccessory, ProtectPersistedContextState, WithoutIdentity } from "../../types.ts";
+import type { ProtectAccessory, ProtectPersistedContextState } from "../../types.ts";
 import { ProtectAuthorizationError, deviceSelectors, livestreamAudioSampleRate } from "unifi-protect";
 import { buildAdvertisedProfiles, buildChannelProfile, capByPixels, formatResolution, isPrimaryChannel, rtspUrl, selectChannelProfile } from "../../media/resolution.ts";
 import { nightVisionActive, nightVisionBrightnessForMode, nightVisionCommandForLevel, nightVisionModeForToggleOn, nightVisionToggleCommand,
@@ -19,6 +19,7 @@ import type { NightVisionCommand } from "./night-vision-policy.ts";
 import type { Nullable } from "homebridge-plugin-utils";
 import type { ProtectCameraPackage } from "./camera-package.ts";
 import { ProtectDevice } from "../device.ts";
+import type { ProtectHints } from "../device.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
 import { ProtectReservedNames } from "../../types.ts";
 import { RtspLivestreamSubscription } from "../../media/livestream.ts";
@@ -33,7 +34,84 @@ import { shouldDeliverBareMotion } from "./motion-policy.ts";
 // "Enabling" log - branch on it; the members with no resting state ignore it.
 type ReconcileSource = "construct" | "observe";
 
-export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
+// The camera family's hint bag: the shared device hints every family carries, extended with the streaming, transcoding, snapshot, and media hints only a camera has.
+// Three fields are declared optional because their honest lifecycle is unset-until-their-own-configure-pass-runs rather than absent-means-broken: cropOptions is written
+// only by configureCrop and only when cropping is enabled, so its ABSENCE is the crop-off state the media layer's truthiness gate reads (a required field would force the
+// configure-time literal to invent a concrete object, and an object has no falsy value, which would read as permanently-on crop for every camera); rtspDefault and
+// substrateDefault are written only by configureStreamingDelegate, and every read of all three is truthiness-gated.
+export interface ProtectCameraHints extends ProtectHints {
+
+  // Whether snapshot and stream cropping is enabled for this camera.
+  crop: boolean;
+
+  // The crop window, expressed as percentages of the source frame (x/y offset, width/height).
+  cropOptions?: {
+
+    height: number;
+    width: number;
+    x: number;
+    y: number;
+  };
+
+  // Whether hardware-accelerated decoding is used for this camera's incoming stream.
+  hardwareDecoding: boolean;
+
+  // Whether hardware-accelerated encoding is used when transcoding this camera's stream.
+  hardwareTranscoding: boolean;
+
+  // Whether snapshots are pulled from the camera's high-resolution stream rather than its default profile.
+  highResSnapshots: boolean;
+
+  // Whether the status LED lights while an HKSV recording is in progress.
+  hksvRecordingIndicator: boolean;
+
+  // Whether the status LED feature is enabled for this camera, gated on the camera actually reporting a status LED.
+  ledStatus: boolean;
+
+  // Whether doorbell ring events are logged.
+  logDoorbell: boolean;
+
+  // Whether HomeKit Secure Video recording activity is logged.
+  logHksv: boolean;
+
+  // Whether night vision (infrared) control is exposed to HomeKit for this camera.
+  nightVision: boolean;
+
+  // The FFmpeg probe size, in bytes, used when opening this camera's stream.
+  probesize: number;
+
+  // The single RTSP stream profile (LOW, MEDIUM, or HIGH) pinned for direct RTSP livestreaming; unset when Protect is left to negotiate the best available profile.
+  rtspDefault?: string;
+
+  // Whether smart-detect object types are also exposed to HomeKit as individual contact sensors.
+  smartDetectSensors: boolean;
+
+  // The single RTSP stream profile (LOW, MEDIUM, or HIGH) pinned to feed the timeshift buffer; unset when Protect is left to negotiate the best available profile.
+  substrateDefault?: string;
+
+  // Whether the camera's video stream is transcoded rather than passed through.
+  transcode: boolean;
+
+  // The target bitrate, in kilobits per second, used when transcoding; -1 leaves the bitrate unconstrained.
+  transcodeBitrate: number;
+
+  // Whether high-latency transcoding settings apply to this camera's stream.
+  transcodeHighLatency: boolean;
+
+  // The target bitrate, in kilobits per second, used when transcoding under high-latency conditions; -1 leaves the bitrate unconstrained.
+  transcodeHighLatencyBitrate: number;
+
+  // Whether live viewing reads through the standing timeshift buffer rather than a direct RTSP connection to the camera.
+  tsbStreaming: boolean;
+
+  // Whether two-way audio is available for this camera.
+  twoWayAudio: boolean;
+
+  // Whether two-way audio is sent directly to the camera over UDP rather than through the Protect controller's talkback channel.
+  twoWayAudioDirect: boolean;
+}
+
+export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCameraHost {
 
   private ambientLight: number;
   private isDeleted: boolean;
@@ -52,8 +130,9 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
   // does not apply.
   #ringMqttRegistered = false;
   public stream?: StreamingDelegate;
-  // Narrow the inherited projection handle to the camera projection so the read-through config getter and every this.ufp.<field> read resolve to ProtectCameraConfig.
-  declare protected readonly device: Camera;
+  // Narrow the inherited hint bag to the camera family's shape. The bag is not projection-derived, so it cannot ride the class's projection parameter the way the device
+  // handle and the config view do; a type-only re-declaration is the honest mechanism, and it costs one line because nothing is emitted for it.
+  declare public hints: ProtectCameraHints;
 
   // Create an instance.
   constructor(nvr: ProtectNvr, accessory: ProtectAccessory, device: Camera) {
@@ -72,13 +151,6 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
     this.spawnObservers();
   }
 
-  // Read-through to the camera projection's live STATE, narrowed to drop device identity (id/mac/modelKey). Identity flows through the dedicated non-throwing accessors
-  // (protectId/modelKey/.id/.mac), never this throwing config getter; this override mirrors the base getter's body and narrows only the surfaced return type.
-  public override get ufp(): Readonly<WithoutIdentity<ProtectCameraConfig>> {
-
-    return this.device.config;
-  }
-
   // The package camera, delegated to the doorbell capability that owns its lifecycle. Null when no doorbell capability is attached, or when an attached doorbell has no
   // package camera. This is the single seam the external readers (event-dispatch's package-motion branch and the NVR's deviceEndpoints iterator) consume, so the
   // package's ownership can live entirely on the capability without touching either caller.
@@ -95,34 +167,47 @@ export class ProtectCamera extends ProtectDevice implements ProtectCameraHost {
     return this.nvr.config.overrideAddress ?? this.ufp.connectionHost ?? this.nvr.ufp.host;
   }
 
-  // Configure device-specific settings for this device.
+  /* Configure device-specific settings for this device. The base derives the shared hints and assigns them, then this pass spreads that bag into the camera's own
+   * literal, so the camera family's complete shape exists in one expression. Smart detection is the one hint whose type lives on the base while its real value is derived
+   * here, and it is hoisted into a local first because two keys need the same freshly-computed value: an object literal's value expressions all evaluate against the
+   * PRE-assignment bag, so a sibling key reading this.hints.smartDetect would see the base's inert seed rather than the camera's answer.
+   *
+   * The literal deliberately omits cropOptions, rtspDefault, and substrateDefault. Those three are written by their own later passes (configureCrop and
+   * configureStreamingDelegate), and leaving them unset here is what preserves their unset-until-then state.
+   */
   protected override configureHints(): boolean {
 
     // Configure our parent's hints.
     super.configureHints();
 
-    this.hints.tsbStreaming = this.hasFeature("Video.Timeshift.Livestream");
-    this.hints.crop = this.hasFeature("Video.Crop");
-    this.hints.hardwareDecoding = true;
-    this.hints.hardwareTranscoding = this.hasFeature("Video.Transcode.Hardware");
-    this.hints.highResSnapshots = this.hasFeature("Video.HighResSnapshots");
-    this.hints.hksvRecordingIndicator = this.hasFeature("Video.HKSV.StatusLedIndicator");
-    this.hints.ledStatus = this.ufp.featureFlags.hasLedStatus && this.hasFeature("Device.StatusLed");
-    this.hints.logDoorbell = this.hasFeature("Log.Doorbell");
-    this.hints.logHksv = this.hasFeature("Log.HKSV");
-    this.hints.nightVision = this.ufp.featureFlags.hasInfrared && this.hasFeature("Device.NightVision");
+    const smartDetect = this.ufp.featureFlags.hasSmartDetect && this.hasFeature("Motion.SmartDetect");
 
-    // A regular camera stream is dense and continuous, so a modest probe is enough for FFmpeg to lock onto its format reliably without adding noticeable startup
-    // latency; the package camera's sparser stream needs a deeper probe of its own (see its own probesize override).
-    this.hints.probesize = 16384;
-    this.hints.smartDetect = this.ufp.featureFlags.hasSmartDetect && this.hasFeature("Motion.SmartDetect");
-    this.hints.smartDetectSensors = this.hints.smartDetect && this.hasFeature("Motion.SmartDetect.ObjectSensors");
-    this.hints.transcode = this.hasFeature("Video.Transcode");
-    this.hints.transcodeBitrate = this.getFeatureNumber("Video.Transcode.Bitrate") ?? -1;
-    this.hints.transcodeHighLatency = this.hasFeature("Video.Transcode.HighLatency");
-    this.hints.transcodeHighLatencyBitrate = this.getFeatureNumber("Video.Transcode.HighLatency.Bitrate") ?? -1;
-    this.hints.twoWayAudio = this.ufp.featureFlags.hasSpeaker && this.hasFeature("Audio") && this.hasFeature("Audio.TwoWay");
-    this.hints.twoWayAudioDirect = this.ufp.featureFlags.hasSpeaker && this.hasFeature("Audio") && this.hasFeature("Audio.TwoWay.Direct");
+    this.hints = {
+
+      ...this.hints,
+      crop: this.hasFeature("Video.Crop"),
+      hardwareDecoding: true,
+      hardwareTranscoding: this.hasFeature("Video.Transcode.Hardware"),
+      highResSnapshots: this.hasFeature("Video.HighResSnapshots"),
+      hksvRecordingIndicator: this.hasFeature("Video.HKSV.StatusLedIndicator"),
+      ledStatus: this.ufp.featureFlags.hasLedStatus && this.hasFeature("Device.StatusLed"),
+      logDoorbell: this.hasFeature("Log.Doorbell"),
+      logHksv: this.hasFeature("Log.HKSV"),
+      nightVision: this.ufp.featureFlags.hasInfrared && this.hasFeature("Device.NightVision"),
+
+      // A regular camera stream is dense and continuous, so a modest probe is enough for FFmpeg to lock onto its format reliably without adding noticeable startup
+      // latency; the package camera's sparser stream needs a deeper probe of its own (see its own probesize override).
+      probesize: 16384,
+      smartDetect: smartDetect,
+      smartDetectSensors: smartDetect && this.hasFeature("Motion.SmartDetect.ObjectSensors"),
+      transcode: this.hasFeature("Video.Transcode"),
+      transcodeBitrate: this.getFeatureNumber("Video.Transcode.Bitrate") ?? -1,
+      transcodeHighLatency: this.hasFeature("Video.Transcode.HighLatency"),
+      transcodeHighLatencyBitrate: this.getFeatureNumber("Video.Transcode.HighLatency.Bitrate") ?? -1,
+      tsbStreaming: this.hasFeature("Video.Timeshift.Livestream"),
+      twoWayAudio: this.ufp.featureFlags.hasSpeaker && this.hasFeature("Audio") && this.hasFeature("Audio.TwoWay"),
+      twoWayAudioDirect: this.ufp.featureFlags.hasSpeaker && this.hasFeature("Audio") && this.hasFeature("Audio.TwoWay.Direct")
+    };
 
     // Sanity check our target transcoding bitrates, if defined.
     if(!this.hints.transcodeBitrate || (this.hints.transcodeBitrate <= 0)) {

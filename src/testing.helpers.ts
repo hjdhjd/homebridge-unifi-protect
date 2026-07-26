@@ -42,11 +42,11 @@ import type { ChannelProfile } from "./media/resolution.ts";
 import { DoorbellCapability } from "./devices/cameras/doorbell.ts";
 import type { LivestreamSubscription } from "./media/livestream.ts";
 import type { ProtectCamera } from "./devices/cameras/camera.ts";
+import type { ProtectCameraHints } from "./devices/cameras/camera.ts";
 import type { ProtectCameraHost } from "./media/camera-host.ts";
 import { ProtectCameraPackage } from "./devices/cameras/camera-package.ts";
 import { ProtectDevice } from "./devices/device.ts";
 import { ProtectEventDispatch } from "./nvr/event-dispatch.ts";
-import type { ProtectHints } from "./devices/device.ts";
 import type { ProtectPlatform } from "./platform.ts";
 import type { SnapshotSource } from "./media/timeshift.ts";
 import util from "node:util";
@@ -2510,18 +2510,10 @@ export class TestFobProjection {
  * the status-indicator window (configureStatusLedSwitchFor, whose deep tests live in device-statusled.test.ts), and the device-information and observer-spawn windows
  * (configureInfoFor; spawnObserversFor, whose deep tests live in device-info.test.ts) all follow the same pattern.
  *
- * The device handle is narrowed to a Sensor projection (the all-quiet makeSensorConfig carrier rides on TestSensorProjection), and ufp is overridden to read through it,
+ * The device handle is narrowed to a Sensor projection (the all-quiet makeSensorConfig carrier rides on TestSensorProjection) through the class's projection parameter,
  * mirroring how each family leaf narrows its own projection at construction.
  */
-export class TestBaseDevice extends ProtectDevice {
-
-  declare protected readonly device: Sensor;
-
-  // Read-through to the sensor projection, narrowing the base's union getter to the concrete Sensor config the carrier supplies.
-  public override get ufp(): Readonly<ProtectSensorConfig> {
-
-    return this.device.config;
-  }
+export class TestBaseDevice extends ProtectDevice<Sensor> {
 
   // Public window onto the base configureHints, so a concern test populates this.hints (the motion configurators read this.hints) before driving a capability.
   public configureHintsFor(): boolean {
@@ -2732,9 +2724,9 @@ export class TestCameraHost implements ProtectCameraHost {
   // The settable feature predicate; defaults to "no feature enabled", the quiet default the delegate construction paths read against.
   public hasFeature: (option: string) => boolean = () => false;
 
-  // A complete neutral ProtectHints literal - every boolean false, every number 0, every string empty, the nested cropOptions zeroed - so a delegate reads a fully
+  // A complete neutral ProtectCameraHints literal - every boolean false, every number 0, every string empty, the nested cropOptions zeroed - so a delegate reads a fully
   // populated hint bag with no behavior turned on (crop false is load-bearing for the two-sided snapshot test, which must NOT enter the crop pass).
-  public hints: ProtectHints = {
+  public hints: ProtectCameraHints = {
 
     crop: false,
     cropOptions: { height: 0, width: 0, x: 0, y: 0 },

@@ -219,13 +219,14 @@ export class ProtectEventDispatch {
 
     // Address the camera only when its controller record is still present and it is a camera. A device lingering in the removal grace (recordPresent false) routes no
     // delivery - the firehose would otherwise address a record on its way out - and a non-camera match (or an unconfigured id) stays a clean no-op, both read through the
-    // non-throwing identity accessors.
+    // non-throwing identity accessors. Each device class fixes modelKey to its own category literal, so the tag comparison narrows the device union to the camera family
+    // structurally and the return needs no assertion to say what the compiler already knows.
     if(!device || !device.recordPresent || (device.modelKey !== "camera")) {
 
       return null;
     }
 
-    return device as ProtectCamera;
+    return device;
   }
 
   // Publish a firehose-dispatch milestone on the forward-only diagnostics channel when a routed activity event reaches a delivery method. Zero-cost when no subscriber

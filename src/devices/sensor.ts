@@ -67,13 +67,11 @@ const SENSOR_ALARM_CONTACTS: readonly AlarmContactDescriptor[] = [
     mqtt: "glassbreak", name: " Glass Break", subtype: ProtectReservedNames.CONTACT_SENSOR_GLASS_BREAK }
 ];
 
-export class ProtectSensor extends ProtectDevice {
+export class ProtectSensor extends ProtectDevice<Sensor> {
 
   private enabledSensors: string[];
   private lastAlarm?: boolean;
   private lastLeak: Record<string, boolean | undefined>;
-  // Narrow the inherited projection handle to the sensor projection so the read-through config getter resolves to ProtectSensorConfig.
-  declare protected readonly device: Sensor;
 
   // Create an instance.
   constructor(nvr: ProtectNvr, accessory: ProtectAccessory, device: Sensor) {
@@ -86,14 +84,6 @@ export class ProtectSensor extends ProtectDevice {
     this.configureHints();
     this.configureDevice();
     this.spawnObservers();
-  }
-
-  // Read-through to the sensor projection's live STATE, narrowed to drop device identity (id/mac/modelKey). Identity flows through the dedicated non-throwing accessors
-  // (protectId/modelKey/.id/.mac), never this throwing config getter; this override mirrors the base getter's body and narrows only the surfaced return type. The leak
-  // helper's untyped dynamic-key read (keyed on a variable field name) still resolves through the preserved index signature.
-  public override get ufp(): Readonly<WithoutIdentity<ProtectSensorConfig>> {
-
-    return this.device.config;
   }
 
   // Initialize and configure the sensor accessory for HomeKit.
@@ -603,7 +593,8 @@ export class ProtectSensor extends ProtectDevice {
   }
 
   // Get the current leak sensor information. The record read is non-throwing - an absent record reports no leak - while the lastLeak bookkeeping and log stay outside the
-  // read lambda.
+  // read lambda. The untyped dynamic-key read below (keyed on a variable field name rather than a literal) resolves through the index signature that the
+  // identity-dropping config view preserves.
   private leakDetected(type = "leakDetectedAt"): boolean {
 
     // Return true if we are not null, meaning a leak has been detected.

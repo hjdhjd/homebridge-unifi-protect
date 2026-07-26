@@ -20,44 +20,12 @@ import { describeDevice } from "./device-descriptor.ts";
 const RESERVED_NAMES = new Set(Object.values(ProtectReservedNames).map(x => x.toUpperCase()));
 
 // Device-specific options and settings. Every field is resolved once from feature options and device capabilities at configure time, so consumers read a plain
-// value rather than re-resolving a feature option on every access.
+// value rather than re-resolving a feature option on every access. This is the shape every device family carries; the camera family extends it with the streaming and
+// media hints only a camera has (ProtectCameraHints, in camera.ts).
 export interface ProtectHints {
-
-  // Whether snapshot and stream cropping is enabled for this camera.
-  crop: boolean;
-
-  // The crop window, expressed as percentages of the source frame (x/y offset, width/height).
-  cropOptions: {
-
-    height: number;
-    width: number;
-    x: number;
-    y: number;
-  };
 
   // Whether this device is exposed to HomeKit at all.
   enabled: boolean;
-
-  // Whether hardware-accelerated decoding is used for this camera's incoming stream.
-  hardwareDecoding: boolean;
-
-  // Whether hardware-accelerated encoding is used when transcoding this camera's stream.
-  hardwareTranscoding: boolean;
-
-  // Whether snapshots are pulled from the camera's high-resolution stream rather than its default profile.
-  highResSnapshots: boolean;
-
-  // Whether the status LED lights while an HKSV recording is in progress.
-  hksvRecordingIndicator: boolean;
-
-  // Whether the status LED feature is enabled for this camera, gated on the camera actually reporting a status LED.
-  ledStatus: boolean;
-
-  // Whether doorbell ring events are logged.
-  logDoorbell: boolean;
-
-  // Whether HomeKit Secure Video recording activity is logged.
-  logHksv: boolean;
 
   // Whether motion events are logged.
   logMotion: boolean;
@@ -65,56 +33,26 @@ export interface ProtectHints {
   // The minimum number of seconds a motion event stays active before it can be cleared.
   motionDuration: number;
 
-  // Whether night vision (infrared) control is exposed to HomeKit for this camera.
-  nightVision: boolean;
-
   // The minimum number of seconds an occupancy event stays active before it can be cleared.
   occupancyDuration: number;
 
-  // The FFmpeg probe size, in bytes, used when opening this camera's stream.
-  probesize: number;
-
-  // The single RTSP stream profile (LOW, MEDIUM, or HIGH) pinned for direct RTSP livestreaming; empty when Protect is left to negotiate the best available profile.
-  rtspDefault: string;
-
-  // Whether smart object detection is enabled for this camera.
+  /* Whether smart object detection is enabled for this camera. This field and smartOccupancy below belong to the base shape rather than the camera extension because the
+   * SHARED machinery both reads AND writes them: configureOccupancySensor reads smartDetect and unconditionally rewrites smartOccupancy for every family, and the event
+   * dispatcher's motion delivery reads both through a base-typed receiver. Narrowing those consumers to a camera-extended shape was considered and rejected - the shared
+   * write site would then need a cast on every family's call path, re-minting the very cast class this shape retires. The camera family is the only writer that ever
+   * sets them meaningfully, and the base derivation seeds them inert.
+   */
   smartDetect: boolean;
 
-  // Whether smart-detect object types are also exposed to HomeKit as individual contact sensors.
-  smartDetectSensors: boolean;
-
-  // The smart-detect object types selected to drive the occupancy sensor; populated only for cameras with smart detection enabled.
+  // The smart-detect object types selected to drive the occupancy sensor; populated only for cameras with smart detection enabled. On the base shape for the same
+  // shared-machinery reason smartDetect above is.
   smartOccupancy: string[];
 
   // Whether this accessory is published to HomeKit as a standalone accessory rather than bridged through the platform.
   standalone: boolean;
 
-  // The single RTSP stream profile (LOW, MEDIUM, or HIGH) pinned to feed the timeshift buffer; empty when Protect is left to negotiate the best available profile.
-  substrateDefault: string;
-
   // Whether the Protect device name is synced to HomeKit.
   syncName: boolean;
-
-  // Whether the camera's video stream is transcoded rather than passed through.
-  transcode: boolean;
-
-  // The target bitrate, in kilobits per second, used when transcoding; -1 leaves the bitrate unconstrained.
-  transcodeBitrate: number;
-
-  // Whether high-latency transcoding settings apply to this camera's stream.
-  transcodeHighLatency: boolean;
-
-  // The target bitrate, in kilobits per second, used when transcoding under high-latency conditions; -1 leaves the bitrate unconstrained.
-  transcodeHighLatencyBitrate: number;
-
-  // Whether live viewing reads through the standing timeshift buffer rather than a direct RTSP connection to the camera.
-  tsbStreaming: boolean;
-
-  // Whether two-way audio is available for this camera.
-  twoWayAudio: boolean;
-
-  // Whether two-way audio is sent directly to the camera over UDP rather than through the Protect controller's talkback channel.
-  twoWayAudioDirect: boolean;
 }
 
 // The shared device-and-plugin-context surface the media delegates read off the camera they serve - the slice of ProtectDevice/ProtectBase that is genuinely
@@ -153,38 +91,48 @@ export interface ProtectDeviceContext {
   setStatusLed(value: boolean): Promise<boolean>;
 }
 
-export abstract class ProtectDevice extends ProtectBase implements ProtectDeviceContext {
+export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollectionKey] = ProtectProjectionMap[DeviceCollectionKey]> extends ProtectBase
+  implements ProtectDeviceContext {
 
   public accessory: ProtectAccessory;
   // The live projection for this device. Holds (client, id), reads through to the store on every config access. Set once at construction; never reassigned -
-  // the accessory's identity is its MAC, stable across reboots, so the handle never goes stale. Injected by the NVR root when constructing the accessory, which
-  // knows the concrete projection type at the point of adoption (a member of ProtectProjectionMap, keyed by device category); subclasses narrow at their own constructor.
-  protected readonly device: ProtectProjectionMap[DeviceCollectionKey];
-  // The per-device resolved feature-hint bag. Seeded as an empty cast below because every device leaf's constructor calls configureHints() synchronously right
-  // after super(), before spawnObservers() or any HomeKit callback can read this.hints, so no consumer ever observes the bag before it holds every hint.
-  public hints: ProtectHints;
+  // the accessory's identity is its MAC, stable across reboots, so the handle never goes stale. The concrete projection type rides this class's generic parameter,
+  // supplied by each family's class header, and the NVR root injects the projection itself at adoption, where it knows the concrete type. The parameter defaults to the
+  // full category union, so a bare ProtectDevice reference (the NVR's deviceEndpoints iterator, a test stand-in) reads the whole projection union.
+  protected readonly device: D;
+  // The per-device resolved feature-hint bag, declared with definite assignment rather than seeded: every device leaf's constructor calls configureHints() synchronously
+  // right after super(), before spawnObservers() or any HomeKit callback can read this.hints, so no consumer ever observes the bag before it holds every hint. That
+  // template contract is what makes the definite-assignment declaration sound, and it is the reason the derivation can build the bag as one literal below rather than
+  // filling a pre-seeded object field by field.
+  public hints!: ProtectHints;
 
-  // The constructor captures the accessory and live projection handle and seeds the hints state. A device's lifetime is its accessory's: it supplies no parent signal, so
-  // the spine composes its per-accessory controller against nvr.signal and the accessory's observers, MQTT registrations, and timers all ride the result. Device
-  // configuration is wired separately by the NVR root after construction.
-  constructor(nvr: ProtectNvr, accessory: ProtectAccessory, device: ProtectProjectionMap[DeviceCollectionKey]) {
+  // The constructor captures the accessory and the live projection handle. A device's lifetime is its accessory's: it supplies no parent signal, so the spine composes
+  // its per-accessory controller against nvr.signal and the accessory's observers, MQTT registrations, and timers all ride the result. The hints bag is derived by the
+  // leaf's own configureHints() call, and device configuration is wired separately by the NVR root after construction.
+  constructor(nvr: ProtectNvr, accessory: ProtectAccessory, device: D) {
 
     super(nvr);
 
     this.accessory = accessory;
     this.device = device;
-    this.hints = {} as ProtectHints;
   }
 
-  // Read-through to the live STATE projection, narrowed to drop device identity (id/mac/modelKey): identity is immutable and flows through the dedicated non-throwing
-  // accessors (protectId/modelKey/.id/.mac), never this throwing getter, so narrowing makes a this.ufp.<identity> dot-access a compile error rather than a latent throw
-  // once the record is gone. The live projection delivers the current config on every access - no held snapshot, no merge, no reassignment. Subclasses reading
-  // this.ufp.<state-field> at HomeKit-callback rates pay one getter chain in nanoseconds; if profiling later names a hot read site, scope-local-hoist the read-through
-  // once into a local at the top of the scope and read fields off the local for the duration. Never cache as an accessory field - that re-introduces the held-state
-  // model we deliberately do not keep, which would violate the single source of truth.
-  public get ufp(): Readonly<WithoutIdentity<ProtectDeviceConfig>> {
+  /* Read-through to the live STATE projection, narrowed to drop device identity (id/mac/modelKey): identity is immutable and flows through the dedicated non-throwing
+   * accessors (protectId/modelKey/.id/.mac), never this throwing getter, so narrowing makes a this.ufp.<identity> dot-access a compile error rather than a latent throw
+   * once the record is gone. The live projection delivers the current config on every access - no held snapshot, no merge, no reassignment. Subclasses reading
+   * this.ufp.<state-field> at HomeKit-callback rates pay one getter chain in nanoseconds; if profiling later names a hot read site, scope-local-hoist the read-through
+   * once into a local at the top of the scope and read fields off the local for the duration. Never cache as an accessory field - that re-introduces the held-state
+   * model we deliberately do not keep, which would violate the single source of truth.
+   *
+   * The two-step cast is a compiler-reduction bridge, not a type claim. TypeScript cannot reduce a mapped type applied to an unresolved generic parameter constrained to
+   * a union, and it rejects even the direct cast's overlap check between the parameter's apparent config union and the deferred mapped type, so the step through unknown
+   * is what lets the body express a reduction the compiler cannot perform. Nothing is asserted by hand: the declared type is machine-derived from D, and it resolves to
+   * exactly the identity-dropped view of each family's own config - proven at every concrete leaf and at the bare default by the type-identity pins in
+   * device-ufp-typing.test.ts, which go red if a future edit ever lets this cast mask a real shift.
+   */
+  public get ufp(): Readonly<WithoutIdentity<D["config"]>> {
 
-    return this.device.config;
+    return this.device.config as unknown as Readonly<WithoutIdentity<D["config"]>>;
   }
 
   // The controller device id, read non-throwing from the projection's own stable id field. This is the immutable IDENTITY of the device on the controller - distinct
@@ -195,9 +143,10 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
     return this.device.id;
   }
 
-  // The device category discriminant, read non-throwing from the projection's own modelKey field. Like protectId it never reads the live config, so the devices() filter
-  // and cameraFor can classify a device whose record has vanished without throwing.
-  public get modelKey(): ProtectDeviceConfig["modelKey"] {
+  // The device category tag, read non-throwing from the projection's own modelKey field. Like protectId it never reads the live config, so the devices() filter and
+  // cameraFor can classify a device whose record has vanished without throwing. Deriving the return type from the generic parameter narrows a leaf's modelKey to its own
+  // category literal for free, while a bare ProtectDevice reference still reads the full category union.
+  public get modelKey(): D["modelKey"] {
 
     return this.device.modelKey;
   }
@@ -213,11 +162,12 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
   // Read a STATE field through the live record non-throwing, returning the supplied default ONLY when the record is absent (a device lingering in the removal grace). A
   // present-but-offline record reads through normally, so HomeKit shows last-known state while offline and a graceful default only once the record itself has vanished.
   // peek() once, default-when-absent: the single chokepoint per fact that makes every pull-path STATE read (HAP onGet, MQTT getValue) unrepresentable-throwing. The
-  // per-leaf ufp override narrows this["ufp"] to the concrete config, so the read lambda sees the leaf's exact config type with no per-leaf generics, call-site type
-  // arguments, or cast - peek()'s return assigns directly to the narrowed parameter.
+  // generic parameter narrows this["ufp"] to the leaf's concrete config, so the read lambda sees that exact type with no per-leaf generics and no call-site type
+  // arguments. The cast on the peek is the same compiler-reduction bridge the ufp getter above documents - the deferred mapped type is what the compiler cannot relate to
+  // the parameter's apparent config union - and it asserts nothing the getter's own declared type does not already establish.
   protected fromRecord<T>(read: (config: this["ufp"]) => T, absent: T): T {
 
-    const config = this.device.peek();
+    const config = this.device.peek() as this["ufp"] | undefined;
 
     return config === undefined ? absent : read(config);
   }
@@ -237,16 +187,22 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
     return validService(this.accessory, serviceType, validate, subtype);
   }
 
-  // Configure device-specific settings.
+  // Configure device-specific settings. The complete base bag is built as one literal and assigned, which is what lets the field be declared with definite assignment
+  // rather than seeded with a lying empty object: the bag exists in full from its first moment. smartDetect and smartOccupancy seed inert here for every family; the
+  // camera family's override derives their real values.
   protected configureHints(): boolean {
 
-    this.hints.enabled = this.hasFeature("Device");
-    this.hints.logMotion = this.hasFeature("Log.Motion");
-    this.hints.motionDuration = this.getFeatureNumber("Motion.Duration") ?? PROTECT_MOTION_DURATION;
-    this.hints.occupancyDuration = this.getFeatureNumber("Motion.OccupancySensor.Duration") ?? PROTECT_OCCUPANCY_DURATION;
-    this.hints.smartOccupancy = [];
-    this.hints.standalone = this.hasFeature("Device.Standalone");
-    this.hints.syncName = this.hasFeature("Device.SyncName");
+    this.hints = {
+
+      enabled: this.hasFeature("Device"),
+      logMotion: this.hasFeature("Log.Motion"),
+      motionDuration: this.getFeatureNumber("Motion.Duration") ?? PROTECT_MOTION_DURATION,
+      occupancyDuration: this.getFeatureNumber("Motion.OccupancySensor.Duration") ?? PROTECT_OCCUPANCY_DURATION,
+      smartDetect: false,
+      smartOccupancy: [],
+      standalone: this.hasFeature("Device.Standalone"),
+      syncName: this.hasFeature("Device.SyncName")
+    };
 
     // Sanity check motion detection duration. Make sure it's never less than 2 seconds so we can actually alert the user.
     if(this.hints.motionDuration < 2) {
@@ -877,7 +833,9 @@ export abstract class ProtectDevice extends ProtectBase implements ProtectDevice
   // device kind issue a typed update against its own config - the base's device union, spanning every supported device kind, could not.
   protected statusLedCommand(value: boolean): () => Promise<unknown> {
 
-    const device = this.device;
+    // The local is typed as the full category union rather than the generic parameter, because comparing the category tag narrows a union but cannot narrow a generic
+    // parameter; widening once here is what lets the branch below read as the plain tag comparison it is.
+    const device: ProtectProjectionMap[DeviceCollectionKey] = this.device;
 
     // Cameras, sensors, and relays share the ledSettings.isEnabled command; lights override this method. Chime and viewer projections expose no status indicator and
     // never reach here, so the fall-through is an inert no-op that keeps the signature total.

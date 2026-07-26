@@ -14,6 +14,7 @@ import type { ProtectCameraConfig, SnapshotOptions, TalkbackSession } from "unif
 import type { ChannelProfile } from "./resolution.ts";
 import type { LivestreamSubscription } from "./livestream.ts";
 import type { Nullable } from "homebridge-plugin-utils";
+import type { ProtectCameraHints } from "../devices/cameras/camera.ts";
 import type { ProtectDeviceContext } from "../devices/device.ts";
 import type { StreamingDelegate } from "./stream-delegate.ts";
 import type { WithoutIdentity } from "../types.ts";
@@ -43,6 +44,10 @@ export interface ProtectCameraHost extends ProtectDeviceContext {
 
   // Builds the FFmpeg audio-filter chain against the camera's true input sample rate (live and HKSV-recording audio paths).
   getAudioFilters(sampleRate?: number): string[];
+
+  // The camera family's hint bag, narrowed from the shared device shape the inherited device context declares: the media delegates read the streaming, transcoding, and
+  // crop hints that live only on the camera extension.
+  readonly hints: ProtectCameraHints;
 
   // Whether this camera can back HomeKit Secure Video - gates recording-delegate construction and the recording/motion controller options.
   readonly isHksvCapable: boolean;

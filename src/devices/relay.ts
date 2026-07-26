@@ -2,19 +2,16 @@
  *
  * relay.ts: Relay device class for UniFi Protect.
  */
-import type { ProtectAccessory, WithoutIdentity } from "../types.ts";
-import type { ProtectRelayConfig, Relay } from "unifi-protect";
 import type { CharacteristicValue } from "homebridge";
 import { PROTECT_RELAY_COMMAND_TIMEOUT } from "../settings.ts";
+import type { ProtectAccessory } from "../types.ts";
 import { ProtectDevice } from "./device.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
+import type { Relay } from "unifi-protect";
 import { deviceSelectors } from "unifi-protect";
 
-export class ProtectRelay extends ProtectDevice {
-
-  // Narrow the inherited projection handle to the relay projection so the read-through config getter resolves to ProtectRelayConfig.
-  declare protected readonly device: Relay;
+export class ProtectRelay extends ProtectDevice<Relay> {
 
   // The output id we most recently commanded, mapped to the state we are driving it toward. It exists to make the set-to-toggle decision latency-aware: a rapid second
   // tap compares against where the output is headed, not the pre-toggle controller value that lags until the broadcast lands. Cleared when the controller confirms the
@@ -30,13 +27,6 @@ export class ProtectRelay extends ProtectDevice {
     this.configureHints();
     this.configureDevice();
     this.spawnObservers();
-  }
-
-  // Read-through to the relay projection's live STATE, narrowed to drop device identity (id/mac/modelKey). Identity flows through the dedicated non-throwing accessors
-  // (protectId/modelKey/.id/.mac), never this throwing config getter; this override mirrors the base getter's body and narrows only the surfaced return type.
-  public override get ufp(): Readonly<WithoutIdentity<ProtectRelayConfig>> {
-
-    return this.device.config;
   }
 
   // The current on/off state of one relay output, read non-throwing through the record. An absent record (a relay lingering in the removal grace) reports off rather than

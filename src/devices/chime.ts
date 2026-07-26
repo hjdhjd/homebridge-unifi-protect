@@ -2,20 +2,17 @@
  *
  * chime.ts: Chime device class for UniFi Protect.
  */
-import type { Chime, PlaySpeakerOptions, ProtectChimeConfig } from "unifi-protect";
-import type { ProtectAccessory, WithoutIdentity } from "../types.ts";
+import type { Chime, PlaySpeakerOptions } from "unifi-protect";
 import type { CharacteristicValue } from "homebridge";
 import { PROTECT_DOORBELL_CHIME_SPEAKER_DURATION } from "../settings.ts";
+import type { ProtectAccessory } from "../types.ts";
 import { ProtectDevice } from "./device.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
 import { selectRingtones } from "unifi-protect";
 import { toStartCase } from "homebridge-plugin-utils";
 
-export class ProtectChime extends ProtectDevice {
-
-  // Narrow the inherited projection handle to the chime projection so the read-through config getter resolves to ProtectChimeConfig.
-  declare protected readonly device: Chime;
+export class ProtectChime extends ProtectDevice<Chime> {
 
   // Create an instance.
   constructor(nvr: ProtectNvr, accessory: ProtectAccessory, device: Chime) {
@@ -27,13 +24,6 @@ export class ProtectChime extends ProtectDevice {
 
     // Spawn the base name-sync and device-information observers plus the chime's own ringtone-collection observer (see the spawnObservers override below).
     this.spawnObservers();
-  }
-
-  // Read-through to the chime projection's live STATE, narrowed to drop device identity (id/mac/modelKey). Identity flows through the dedicated non-throwing accessors
-  // (protectId/modelKey/.id/.mac), never this throwing config getter; this override mirrors the base getter's body and narrows only the surfaced return type.
-  public override get ufp(): Readonly<WithoutIdentity<ProtectChimeConfig>> {
-
-    return this.device.config;
   }
 
   // Initialize and configure the chime accessory for HomeKit.

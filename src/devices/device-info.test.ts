@@ -221,7 +221,7 @@ describe("base ProtectDevice device-information capability (device-info concern 
 
       // The push moves only the name slice on the STORE record the device.name selector reads, so exactly that observer wakes; syncNameFromController re-reads syncedName
       // (this.ufp.name through the same store record) and, because syncName is enabled and the name differs, writes the new name and logs the change.
-      built.store.pushSensorPatch(built.device.ufp.id, { name: "Renamed Sensor" });
+      built.store.pushSensorPatch(built.device.protectId, { name: "Renamed Sensor" });
 
       await settle();
 

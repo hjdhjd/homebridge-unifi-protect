@@ -3,8 +3,8 @@
  * fob.ts: Fob device class for UniFi Protect.
  */
 import type { Fob, ProtectFobConfig } from "unifi-protect";
-import type { ProtectAccessory, WithoutIdentity } from "../types.ts";
 import type { Nullable } from "homebridge-plugin-utils";
+import type { ProtectAccessory } from "../types.ts";
 import { ProtectDevice } from "./device.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
@@ -48,10 +48,7 @@ function resolveFobButtons(config: ProtectFobConfig): Nullable<readonly FobButto
   return ((config.marketName === "USL Fob") || (config.type?.startsWith("USL-Fob-") ?? false)) ? USL_FOB_BUTTONS : null;
 }
 
-export class ProtectFob extends ProtectDevice {
-
-  // Narrow the inherited projection handle to the fob projection so the read-through config getter resolves to ProtectFobConfig.
-  declare protected readonly device: Fob;
+export class ProtectFob extends ProtectDevice<Fob> {
 
   // The fob's button table, resolved ONCE from the immutable model identity (marketName/type) at construction. This is a documented, principled exemption to the
   // read-live discipline: the button set is static MODEL identity, not cached live STATE - a fob never changes which physical buttons it has - so resolving it once from
@@ -68,13 +65,6 @@ export class ProtectFob extends ProtectDevice {
     this.configureHints();
     this.configureDevice();
     this.spawnObservers();
-  }
-
-  // Read-through to the fob projection's live STATE, narrowed to drop device identity (id/mac/modelKey). Identity flows through the dedicated non-throwing accessors
-  // (protectId/modelKey/.id/.mac), never this throwing config getter; this override mirrors the base getter's body and narrows only the surfaced return type.
-  public override get ufp(): Readonly<WithoutIdentity<ProtectFobConfig>> {
-
-    return this.device.config;
   }
 
   // The stable HomeKit service subtype for one button's stateless-programmable-switch service, keyed by the LOWERCASE wire id. Single-sourced so the create site here and

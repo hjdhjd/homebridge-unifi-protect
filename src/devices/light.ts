@@ -2,18 +2,15 @@
  *
  * light.ts: Light device class for UniFi Protect.
  */
-import type { Light, ProtectLightConfig } from "unifi-protect";
-import type { ProtectAccessory, WithoutIdentity } from "../types.ts";
 import type { CharacteristicValue } from "homebridge";
+import type { Light } from "unifi-protect";
+import type { ProtectAccessory } from "../types.ts";
 import { ProtectDevice } from "./device.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
 import { deviceSelectors } from "unifi-protect";
 
-export class ProtectLight extends ProtectDevice {
-
-  // Narrow the inherited projection handle to the light projection so the read-through config getter resolves to ProtectLightConfig.
-  declare protected readonly device: Light;
+export class ProtectLight extends ProtectDevice<Light> {
 
   // Create an instance.
   constructor(nvr: ProtectNvr, accessory: ProtectAccessory, device: Light) {
@@ -23,13 +20,6 @@ export class ProtectLight extends ProtectDevice {
     this.configureHints();
     this.configureDevice();
     this.spawnObservers();
-  }
-
-  // Read-through to the light projection's live STATE, narrowed to drop device identity (id/mac/modelKey). Identity flows through the dedicated non-throwing accessors
-  // (protectId/modelKey/.id/.mac), never this throwing config getter; this override mirrors the base getter's body and narrows only the surfaced return type.
-  public override get ufp(): Readonly<WithoutIdentity<ProtectLightConfig>> {
-
-    return this.device.config;
   }
 
   // The light's power state, read non-throwing through the record. An absent record (a light lingering in the removal grace) reports off rather than throwing.

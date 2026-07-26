@@ -1495,8 +1495,10 @@ describe("A2 base-capability foundation: the shared dispatch, the sensor carrier
     const projection = new TestSensorProjection("sensor-vehicle", store) as unknown as Sensor;
     const device = new TestBaseDevice(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection);
 
-    // The ufp read-through narrows to the Sensor carrier.
-    assert.equal(device.ufp.id, "sensor-vehicle", "ufp reads through to the seeded sensor record");
+    // The ufp read-through narrows to the Sensor carrier: a sensor-specific state field resolves off the seeded record, while the immutable controller id is read through
+    // the dedicated non-throwing accessor rather than the identity-dropping state view.
+    assert.equal(device.ufp.mountType, "none", "ufp reads through to the seeded sensor record, resolving a field only a sensor carries");
+    assert.equal(device.protectId, "sensor-vehicle", "the controller id reads through the dedicated identity accessor");
 
     // A smoke check that the public test windows reach the base configurators: hints first, then the motion sensor returns true (the deep motion nets are
     // device-motion.test.ts's job).
