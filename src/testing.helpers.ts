@@ -38,6 +38,7 @@ import { PLATFORM_NAME, PLUGIN_NAME } from "./settings.ts";
 import type { ProtectAccessory, ProtectDevices } from "./types.ts";
 import type { ProtectNvrOptions, ProtectOptions } from "./options.ts";
 import { featureOptionCategories, featureOptions } from "./options.ts";
+import { AmbientLightCapability } from "./devices/cameras/ambient-light.ts";
 import type { ChannelProfile } from "./media/resolution.ts";
 import { DoorbellCapability } from "./devices/cameras/doorbell.ts";
 import type { LivestreamSubscription } from "./media/livestream.ts";
@@ -536,11 +537,11 @@ export class TestService {
     return this;
   }
 
-  // Declare an optional characteristic on this service, mirroring HAP's Service.addOptionalCharacteristic. The camera's configureAmbientLightSensor acquire initializer
-  // takes this path directly (it permits StatusActive on the LightSensor before binding its onGet), a seam no other construction path reaches - the real acquireService's
-  // own addOptionalCharacteristic calls for ConfiguredName / Name stay gated off the markers by the degenerate name-set predicates (see the class doc). HAP lazily
-  // materializes a permitted characteristic on first access, so the double materializes it now through getCharacteristic, keeping the later getCharacteristic / onGet
-  // bind against the SAME instance and never throwing on the direct call.
+  // Declare an optional characteristic on this service, mirroring HAP's Service.addOptionalCharacteristic. The camera's ambient light capability takes this path directly
+  // from its acquire initializer (it permits StatusActive on the LightSensor before binding its onGet), a seam no other construction path reaches - the real
+  // acquireService's own addOptionalCharacteristic calls for ConfiguredName / Name stay gated off the markers by the degenerate name-set predicates (see the class doc).
+  // HAP lazily materializes a permitted characteristic on first access, so the double materializes it now through getCharacteristic, keeping the later
+  // getCharacteristic / onGet bind against the SAME instance and never throwing on the direct call.
   public addOptionalCharacteristic(charType: CharacteristicType): void {
 
     this.getCharacteristic(charType);
@@ -1936,9 +1937,9 @@ export class TestCameraProjection {
   // The settable rejection: when set, the next update rejects with it, so a test drives the real runDeviceCommand failure branch (a plain Error or a
   // ProtectAuthorizationError).
   public updateRejection: Nullable<Error> = null;
-  // The ambient-light reading lux() resolves with - a benign positive default, only reached when featureFlags.hasLuxCheck opens configureAmbientLightSensor. A test sets
-  // it (zero for the floor sentinel, a positive value for the passthrough) before construction or before a poll. luxRejection drives the throw -> -1 sentinel, and
-  // luxCalls is the proof the unreachable arm never issues the doomed query (the configure path short-circuits to -1 without calling lux at all when offline).
+  // The ambient-light reading lux() resolves with - a benign positive default, only reached when featureFlags.hasLuxCheck opens the ambient light capability's reconcile.
+  // A test sets it (zero for the floor sentinel, a positive value for the passthrough) before construction or before a poll. luxRejection drives the throw -> -1
+  // sentinel, and luxCalls is the proof the unreachable arm never issues the doomed query (the reconcile short-circuits to -1 without calling lux at all when offline).
   public luxReading = 100;
   public luxRejection: Nullable<Error> = null;
   public readonly luxCalls: { opts?: { signal?: AbortSignal } }[] = [];
@@ -3508,6 +3509,11 @@ export class TestProtectNvr {
   public createPackageCamera(accessory: ProtectAccessory, device: Camera): ProtectCameraPackage {
 
     return new ProtectCameraPackage(this as unknown as ProtectNvr, accessory, device);
+  }
+
+  public createAmbientLightCapability(camera: ProtectCamera, device: Camera, signal: AbortSignal): AmbientLightCapability {
+
+    return new AmbientLightCapability(this as unknown as ProtectNvr, { device: device, host: camera, signal: signal });
   }
 
   // The sweep-stale removal seam, mirroring production: route the camera's request to the REAL DoorbellCapability.removeServices SSOT, with the platform's HAP namespace

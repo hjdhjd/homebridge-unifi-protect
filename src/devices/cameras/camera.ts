@@ -4,7 +4,6 @@
  */
 import { AudioRecordingCodecType, AudioRecordingSamplerate, capabilityGate, formatErrorMessage, toStartCase } from "homebridge-plugin-utils";
 import type { Camera, LivestreamSource, SnapshotOptions, TalkbackSession } from "unifi-protect";
-import type { CharacteristicValue, Service } from "homebridge";
 import type { LivestreamHostOptions, ProtectCameraHost } from "../../media/camera-host.ts";
 import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_SEGMENT_RESOLUTION, PROTECT_TIMESHIFT_CONSTRAINED_HOST_TARGET } from "../../settings.ts";
 import type { ProtectAccessory, ProtectPersistedContextState } from "../../types.ts";
@@ -12,7 +11,9 @@ import { ProtectAuthorizationError, deviceSelectors, livestreamAudioSampleRate }
 import { buildAdvertisedProfiles, buildChannelProfile, capByPixels, formatResolution, isPrimaryChannel, rtspUrl, selectChannelProfile } from "../../media/resolution.ts";
 import { nightVisionActive, nightVisionBrightnessForMode, nightVisionCommandForLevel, nightVisionModeForToggleOn, nightVisionToggleCommand,
   parseNightVisionMode } from "./night-vision-policy.ts";
+import type { AmbientLightCapability } from "./ambient-light.ts";
 import type { ChannelProfile } from "../../media/resolution.ts";
+import type { CharacteristicValue } from "homebridge";
 import type { DoorbellCapability } from "./doorbell.ts";
 import type { LivestreamSubscription } from "../../media/livestream.ts";
 import type { NightVisionCommand } from "./night-vision-policy.ts";
@@ -113,7 +114,6 @@ export interface ProtectCameraHints extends ProtectHints {
 
 export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCameraHost {
 
-  private ambientLight: number;
   private isDeleted: boolean;
   public isRinging: boolean;
   // The latched tamper state, set by the firehose router's tamper delivery (a one-way latch, like isRinging is set by the doorbell delivery) and read back by the
@@ -129,6 +129,10 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
   // configureDoorbellRingMqtt after the gate passes - never inside a super constructor - so it carries no ctor-chain-computed state and the subclass field-wipe class
   // does not apply.
   #ringMqttRegistered = false;
+  // The composed ambient light capability, built the first time this camera reconciles and held for the rest of its life. Nullable and initialized through a field
+  // initializer (so it exists before the constructor body's configureDevice can reach the accessor below), which is also what makes the availability delegation total: a
+  // camera whose capability was never built - and one already torn down - optional-chains to a no-op.
+  #ambientLight: Nullable<AmbientLightCapability> = null;
   public stream?: StreamingDelegate;
   // Narrow the inherited hint bag to the camera family's shape. The bag is not projection-derived, so it cannot ride the class's projection parameter the way the device
   // handle and the config view do; a type-only re-declaration is the honest mechanism, and it costs one line because nothing is emitted for it.
@@ -139,7 +143,6 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
     super(nvr, accessory, device);
 
-    this.ambientLight = 0;
     this.isDeleted = false;
     this.isRinging = false;
     this.isTampered = false;
@@ -400,6 +403,10 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     this.doorbell?.cleanup();
     this.doorbell = null;
 
+    // Release the ambient light handle. The capability needs no cleanup call of its own - its lifetime signal is composed against this camera's, so the super below
+    // drains its poll - and nulling the handle here is what keeps the availability delegation total once the camera is gone.
+    this.#ambientLight = null;
+
     // Tear down the streaming delegate and unregister its controller through the shared extraction.
     this.teardownStreamingDelegate();
 
@@ -514,110 +521,18 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     });
   }
 
-  // Configure the ambient light sensor for HomeKit.
-  private async configureAmbientLightSensor(): Promise<boolean> {
+  /* The composed ambient light capability, built on first use. Construction is graph-assembly, so the camera asks the NVR composition root for the object rather than
+   * newing a sibling class itself, and it reaches the root through an inherited field, so this forms no module import edge and the device layer stays structurally
+   * cycle-proof.
+   *
+   * The whole body is one ??= assignment, which is what makes double construction unrepresentable rather than merely unlikely: the accessor is safe to call from
+   * anywhere, including after a future edit moves a caller past an await, so two overlapping reconcile passes converge on one capability by the operator's own semantics.
+   * A positional rule - "call it before the first await" - was considered and rejected: it holds only while nobody inserts a gate above the call, and it depends on a
+   * reader noticing a comment.
+   */
+  private get ambientLight(): AmbientLightCapability {
 
-    // Gate the ambient light sensor on the camera's lux capability (conservative) and the user's Device.AmbientLightSensor toggle (absolute) via capabilityGate; the gate
-    // sits above the poll registration below, so a hidden sensor registers no interval.
-    if(!this.validService(this.hap.Service.LightSensor,
-      capabilityGate({ capability: this.ufp.featureFlags.hasLuxCheck, toggle: this.hasFeature("Device.AmbientLightSensor") }))) {
-
-      return false;
-    }
-
-    // Acquire the service.
-    const service = this.acquireService(this.hap.Service.LightSensor, undefined, undefined, (lightSensorService: Service) => {
-
-      lightSensorService.addOptionalCharacteristic(this.hap.Characteristic.StatusActive);
-    });
-
-    // Fail gracefully.
-    if(!service) {
-
-      this.log.error("Unable to add ambient light sensor.");
-
-      return false;
-    }
-
-    // We wire the sensor on every configure rather than only on first creation. Re-binding an onGet replaces the single handler (they do not stack) and the registry's
-    // keyed setInterval self-replaces its timer, so re-running the wiring is a no-op on repeat. That is exactly what re-establishes the handlers and the poll after a
-    // Homebridge restart, which restores the cached LightSensor service but never its runtime wiring - a within-session reconcile re-run simply re-issues one cheap
-    // controller read.
-    const getLux = async (): Promise<number> => {
-
-      // Skip the query when the controller or camera is unreachable; the request would only fail.
-      if(!this.isReachable) {
-
-        return -1;
-      }
-
-      try {
-
-        // The library validates the reading and throws on a malformed body, so any failure - unreachable mid-flight, a non-2xx, or a non-numeric reading - means "no
-        // reading" and we skip the update; a genuine zero reading is floored to HomeKit's 0.0001 minimum.
-        let lux = await this.device.lux();
-
-        lux ||= 0.0001;
-
-        return lux;
-      } catch {
-
-        return -1;
-      }
-    };
-
-    // Update the ambient light sensor at regular intervals.
-    const updateAmbientLight = async (): Promise<void> => {
-
-      // Stop updating if we no longer exist.
-      if(this.isDeleted) {
-
-        this.timers.clear("ambientLight");
-
-        return;
-      }
-
-      // Grab the current ambient light level.
-      const lux = await getLux();
-
-      // Nothing to update, we're done.
-      if((this.ambientLight === lux) || (lux === -1)) {
-
-        return;
-      }
-
-      // Update the sensor.
-      service.updateCharacteristic(this.hap.Characteristic.CurrentAmbientLightLevel, this.ambientLight = lux);
-
-      // Publish the state.
-      this.publish("ambientlight", this.ambientLight.toString());
-    };
-
-    this.timers.setInterval("ambientLight", () => void updateAmbientLight(), 60 * 1000);
-
-    // Retrieve the active state when requested.
-    service.getCharacteristic(this.hap.Characteristic.StatusActive).onGet(() => this.isReachable);
-
-    // Initialize the sensor's reading. We adopt only a genuine reading: a failed read (-1 - the camera unreachable, or the lux capability transiently withdrawn during a
-    // controller reconnect) leaves the last-known value in place rather than stamping the HomeKit display to the floor, mirroring the 60-second poll's skip-on-(-1) guard
-    // above. On the first configure there is no prior reading - the constructor seeds 0, which HomeKit cannot represent - so we floor to the minimum only in that case.
-    const reading = await getLux();
-
-    if(reading !== -1) {
-
-      this.ambientLight = reading;
-    } else if(this.ambientLight === 0) {
-
-      this.ambientLight = 0.0001;
-    }
-
-    // Retrieve the current light level when requested.
-    service.getCharacteristic(this.hap.Characteristic.CurrentAmbientLightLevel).onGet(() => this.ambientLight);
-
-    service.updateCharacteristic(this.hap.Characteristic.CurrentAmbientLightLevel, this.ambientLight);
-    service.updateCharacteristic(this.hap.Characteristic.StatusActive, this.isReachable);
-
-    return true;
+    return this.#ambientLight ??= this.nvr.createAmbientLightCapability(this, this.device, this.signal);
   }
 
   // Capture a JPEG snapshot of this camera from the controller. This is the narrow public seam onto the camera projection's snapshot command - the camera owns "take a
@@ -1190,7 +1105,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
     this.reconcileStreamingAudioCapabilities();
 
-    await this.configureAmbientLightSensor();
+    await this.ambientLight.reconcile();
   }
 
   // Reconcile the streaming delegate's constructor-frozen audio surface against the controller's live capabilities. The CameraController's two-way audio support and its
@@ -1797,7 +1712,10 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
       motionSensor.updateCharacteristic(this.hap.Characteristic.StatusTampered, this.isTampered);
     }
 
-    this.accessory.getService(this.hap.Service.LightSensor)?.updateCharacteristic(this.hap.Characteristic.StatusActive, this.isReachable);
+    // The light sensor's reachability push belongs to the capability that owns the service, so we delegate rather than reach into the accessory, exactly as updateDevice
+    // composes the doorbell capability's own refresh. The optional chain no-ops for a camera whose capability was never built or has been released - the package camera,
+    // which never reaches the reconcile chokepoint, and any camera after teardown.
+    this.#ambientLight?.updateAvailability();
 
     // Wake the supervisor on every availability change, both directions. The offline edge stops an in-flight buffer through the honest terminated path, and the online
     // edge re-establishes a buffer an offline-at-startup reconcile could not - so this is deliberately NOT reachability-gated. The optional chain no-ops for a camera

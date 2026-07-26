@@ -15,6 +15,7 @@ import type { ProtectAccessory, ProtectAccessoryContext, ProtectDeviceTypes, Pro
 import { canTransition, computeStableSince, createConnectRetryPolicy, createLivestreamEpisodeLatch, isInducedDisruption, isRequestForController,
   isStabilityWindowElapsed, isSuccessfulRequest, isWithinRebootRecency, membershipDelta, shouldResumeFromInducedReboot } from "./nvr-policy.ts";
 import { exhaustiveGuard, isPackageCameraContext } from "../types.ts";
+import { AmbientLightCapability } from "../devices/cameras/ambient-light.ts";
 import { DoorbellCapability } from "../devices/cameras/doorbell.ts";
 import { NvrHealth } from "./nvr-health.ts";
 import { ProtectCamera } from "../devices/cameras/camera.ts";
@@ -1307,6 +1308,14 @@ export class ProtectNvr {
   public createPackageCamera(accessory: ProtectAccessory, device: Camera): ProtectCameraPackage {
 
     return new ProtectCameraPackage(this, accessory, device);
+  }
+
+  // Construct an ambient light capability for a camera. The same graph-assembly reasoning as createDoorbellCapability: the camera keeps the entire lifecycle decision
+  // (its reconcile chokepoint asks for the capability the first time it reconciles, and the capability itself decides whether the sensor exists), and only the one new
+  // lands here, holding no policy.
+  public createAmbientLightCapability(camera: ProtectCamera, device: Camera, signal: AbortSignal): AmbientLightCapability {
+
+    return new AmbientLightCapability(this, { device: device, host: camera, signal: signal });
   }
 
   // Remove the doorbell-only services a demoted-while-down doorbell left on a now-plain camera accessory - the sweep-stale removal the camera's reconcile runs when the
