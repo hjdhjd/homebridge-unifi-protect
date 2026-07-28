@@ -2,12 +2,12 @@
  *
  * timeshift-supervisor.ts: UniFi Protect timeshift buffer supervisor - the lifecycle authority for a camera's standing timeshift buffer.
  */
+import { formatBps, formatErrorMessage } from "homebridge-plugin-utils";
 import type { CameraRecordingConfiguration } from "homebridge";
 import type { HomebridgePluginLogging } from "homebridge-plugin-utils";
 import { PROTECT_TIMESHIFT_BUFFER_MAXDURATION } from "../settings.ts";
 import type { ProtectCameraHost } from "./camera-host.ts";
 import { ProtectTimeshiftBuffer } from "./timeshift.ts";
-import { formatBps } from "homebridge-plugin-utils";
 import { isInducedDisruption } from "../nvr/nvr-policy.ts";
 
 // Lightning-bolt emoji (U+26A1 HIGH VOLTAGE SIGN + U+FE0F VARIATION SELECTOR-16) used to prefix the HKSV configuration log when this camera's HKSV recording encode
@@ -49,8 +49,8 @@ export class ProtectTimeshiftSupervisor {
   private demand: RecordingDemand;
   private hasAcknowledgedRecording: boolean;
   // The once-per-episode latch for the "no valid stream profile" selection failure. Under the streaming arm the reconcile is kicked frequently (activation,
-  // availability, and snapshot wakes), so an unresolvable selection would otherwise re-log on every kick. The latch suppresses repeats; it clears on a successful
-  // selection and on any pushed demand change, so a genuine change re-arms the report.
+  // availability, and the live-view stream-source kick), so an unresolvable selection would otherwise re-log on every kick. The latch suppresses repeats; it clears
+  // on a successful selection and on any pushed demand change, so a genuine change re-arms the report.
   private hasReportedSelectionFailure: boolean;
   // The terminal shutdown latch. Once armed, no reconcile pass can start the buffer again; a torn-down camera constructs a fresh, unlatched supervisor if it is
   // ever rebuilt.
@@ -180,14 +180,14 @@ export class ProtectTimeshiftSupervisor {
       } catch(error) {
 
         // A reconcile pass threw - the buffer's start, or any other step inside the pass. This chokepoint is reached through many fire-and-forget void kicks (camera
-        // availability, the buffer's own restart, snapshot wakes), so an escaping rejection would float as an unhandled rejection and, worse, poison the shared
-        // configurePromise every joined caller reads. We convert the throw to a false verdict - never a stale-truthy success - and log one line. We deliberately do NOT
-        // re-arm the request flag ourselves: a self-set flag would, once the exit-window coalesce re-entry runs, spin a tight retry loop against a persistent fault. The
-        // next organic kick re-runs the reconcile against fresh inputs, and a concurrent kick that arrived during this pass already set the flag and re-runs the loop
-        // here. The pass's own bookkeeping (the deferred-offline fields) runs before any throw point inside the pass, so it is preserved. One logged line per failing
-        // pass.
+        // availability, the buffer's own restart, the live-view stream-source kick), so an escaping rejection would float as an unhandled rejection and, worse, poison
+        // the shared configurePromise every joined caller reads. We convert the throw to a false verdict - never a stale-truthy success - and log one line. We
+        // deliberately do NOT re-arm the request flag ourselves: a self-set flag would, once the exit-window coalesce re-entry runs, spin a tight retry loop against a
+        // persistent fault. The next organic kick re-runs the reconcile against fresh inputs, and a concurrent kick that arrived during this pass already set the flag
+        // and re-runs the loop here. The pass's own bookkeeping (the deferred-offline fields) runs before any throw point inside the pass, so it is preserved. One
+        // logged line per failing pass.
         result = false;
-        this.log.error("The timeshift buffer could not be updated and will be retried automatically.", { error });
+        this.log.error("The timeshift buffer could not be updated and will be retried automatically: %s.", formatErrorMessage(error));
       }
     }
 

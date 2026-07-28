@@ -4,8 +4,8 @@
  */
 import type { API, HAP } from "homebridge";
 import { APIEvent, MqttClient, formatErrorMessage, formatSeconds, loopFaultReporter, prefixedLog, retry, sanitizeName, superviseLoop } from "homebridge-plugin-utils";
-import type { Camera, CollectionSelectors, DeviceCollectionKey, HttpRequestEndPayload, LivestreamRecoveryRecoveredPayload, LivestreamRecoveryStartedPayload,
-  ProtectDeviceConfig, ProtectDeviceConfigMap, ProtectLogging, ProtectNvrConfig } from "unifi-protect";
+import type { Camera, CollectionSelectors, DeviceCollectionKey, HttpRequestEndPayload, LivestreamRecoveryExhaustedPayload, LivestreamRecoveryRecoveredPayload,
+  LivestreamRecoveryStartedPayload, ProtectDeviceConfig, ProtectDeviceConfigMap, ProtectLogging, ProtectNvrConfig } from "unifi-protect";
 import { DEVICE_COLLECTION_KEYS, ProtectClient, deviceSelectors, channels as protectChannels } from "unifi-protect";
 import type { HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
 import type { NvrLifecyclePayload, ReachabilityFanoutPayload } from "../diagnostics.ts";
@@ -165,17 +165,36 @@ export class ProtectNvr {
     this.systemInfo = null;
     this.unsupportedDevices = {};
 
-    // The unifi-protect client logger: the plugin logging root, with error output gated by logApiErrors so induced-disruption noise stays quiet.
+    /* The unifi-protect client logger. The library logs complete sentences with structured context attached as trailing parameters, and rendering that context inline
+     * would put raw object dumps in front of the user - so each non-debug level emits the sentence alone at its level and echoes the full line, context included, to
+     * debug, where the forensic detail belongs. Error output is additionally gated by logApiErrors so induced-disruption noise stays quiet; the debug echo stays
+     * ungated, so debug logging captures the full record even while the user-facing line is suppressed. Debug passes through untouched.
+     */
+    const routeClientContext = (write: (message: string) => void): ((message: string, ...parameters: unknown[]) => void) => {
+
+      return (message: string, ...parameters: unknown[]): void => {
+
+        write(message);
+
+        if(parameters.length) {
+
+          this.platform.pluginLog.debug(message, ...parameters);
+        }
+      };
+    };
+
     this.clientLog = {
 
-      ...this.platform.pluginLog,
-      error: (message: string, ...parameters: unknown[]): void => {
+      debug: (message: string, ...parameters: unknown[]): void => this.platform.pluginLog.debug(message, ...parameters),
+      error: routeClientContext((message: string): void => {
 
         if(this.logApiErrors) {
 
-          this.platform.pluginLog.error(message, ...parameters);
+          this.platform.pluginLog.error(message);
         }
-      }
+      }),
+      info: routeClientContext((message: string): void => this.platform.pluginLog.info(message)),
+      warn: routeClientContext((message: string): void => this.platform.pluginLog.warn(message))
     };
 
     // Derive our controller logger from the plugin logging root, prefixing every line with this.name so controller output is attributable at a glance.
@@ -319,11 +338,13 @@ export class ProtectNvr {
    * channels. The library owns the recovery protocol and publishes each episode's lifecycle on these channels; the plugin translates them into its own health model and
    * its own per-camera logs, scoped to this controller's cameras.
    *
-   * We subscribe the two episode-boundary channels - `recovery:started` (a stream was disrupted; the episode begins) and `recovery:recovered` (it resumed). These are
+   * We subscribe the three episode-terminal channels. `recovery:started` (a stream was disrupted; the episode begins) and `recovery:recovered` (it resumed) are
    * the stall/recovery health feed: one stress symptom per disruption episode, one recovery symptom per recovery, so a recovered episode
-   * nets zero and a failed one (started, never recovered) stays +1 - correct stress accounting with no double count. The other livestream channels are deliberately not
-   * consumed here: `stall:detected` is a subset of `recovery:started` (every detected stall begins an episode) and consuming both would double-count;
-   * `recovery:exhausted` is the consumer-side self-heal's concern; `session:closed`/`codec:changed` are neither health nor log signals.
+   * nets zero and a failed one (started, never recovered) stays +1 - correct stress accounting with no double count. `recovery:exhausted` (the policy gave up) is
+   * consumed for ledger hygiene alone - it drains the episode's latch entry so the ledger holds only episodes in flight; the give-up's narration belongs to the
+   * buffer's consume loop and its retry to the availability edge and the demand kicks, so the handler feeds no symptom and logs nothing. The other livestream channels
+   * are deliberately not consumed here: `stall:detected` is a subset of `recovery:started` (every detected stall begins an episode) and consuming both would
+   * double-count; `session:closed`/`codec:changed` are neither health nor log signals.
    *
    * The channels are process-global - shared by every `ProtectNvr` in this process - so each handler filters to this controller's cameras via `getDeviceById(cameraId)`
    * and drops the rest (another controller's camera, or one we do not configure). A package-camera stream carries its PARENT camera's device id, so the lookup resolves
@@ -396,15 +417,26 @@ export class ProtectNvr {
       }
     };
 
+    // The recovery policy gave up on the episode - the third episode terminal. The buffer's consume loop already narrates the give-up to the user, and the retry
+    // belongs to the availability edge and the demand kicks, so this handler's only duty is draining the episode's latch entry; otherwise an exhausted episode would
+    // linger in the ledger until the camera's removal. Entries are recorded only for our own cameras behind the started-edge ownership guard, so a foreign
+    // controller's key is simply absent here and the consume is a no-op - the drain needs no guard of its own to stay scoped.
+    const onRecoveryExhausted = (message: unknown): void => {
+
+      this.livestreamEpisodes.consume((message as LivestreamRecoveryExhaustedPayload).key);
+    };
+
     protectChannels.livestreamRecoveryStarted.subscribe(onRecoveryStarted);
     protectChannels.livestreamRecoveryRecovered.subscribe(onRecoveryRecovered);
+    protectChannels.livestreamRecoveryExhausted.subscribe(onRecoveryExhausted);
 
-    // Detach both on the terminal shutdown signal, mirroring the API-health feed. The unifi-protect library's channels are global and outlive any single client, so an
-    // explicit unsubscribe on shutdown is what keeps these subscriptions leak-free.
+    // Detach every subscription on the terminal shutdown signal, mirroring the API-health feed. The unifi-protect library's channels are global and outlive any single
+    // client, so an explicit unsubscribe on shutdown is what keeps these subscriptions leak-free.
     this.signal.addEventListener("abort", () => {
 
       protectChannels.livestreamRecoveryStarted.unsubscribe(onRecoveryStarted);
       protectChannels.livestreamRecoveryRecovered.unsubscribe(onRecoveryRecovered);
+      protectChannels.livestreamRecoveryExhausted.unsubscribe(onRecoveryExhausted);
     }, { once: true });
   }
 

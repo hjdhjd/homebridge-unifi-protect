@@ -14,7 +14,7 @@
  *   - logLivestreamIterationError: the shared classification and logging for errors thrown from a livestream subscription iterator, used by every consumer.
  */
 import type { FMp4AudioTarget, FfmpegOptions, HomebridgePluginLogging } from "homebridge-plugin-utils";
-import { FfmpegLivestreamProcess, splitMoofMdat } from "homebridge-plugin-utils";
+import { FfmpegLivestreamProcess, formatErrorMessage, splitMoofMdat } from "homebridge-plugin-utils";
 import type { LivestreamSubscriptionState, Segment } from "unifi-protect";
 import { ProtectCodecChangeError, ProtectLivestreamUnavailableError } from "unifi-protect";
 
@@ -216,5 +216,5 @@ export function logLivestreamIterationError(options: { consumer: string; error: 
     return;
   }
 
-  log.error(consumer + " iteration terminated unexpectedly.", { error });
+  log.error(consumer + " iteration terminated unexpectedly: %s.", formatErrorMessage(error));
 }

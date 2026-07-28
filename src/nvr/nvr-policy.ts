@@ -101,8 +101,9 @@ export function shouldResumeFromInducedReboot(options: { from: ConnectionState; 
  * unifi-protect library events; the recovery edge cannot read the controller phase reliably (the controller has already returned), so it must consult what the
  * interruption edge recorded. What it records is `quiet` - whether the episode should be logged quietly (the reboot-tail-or-induced case) rather than at warn (a
  * genuine single-camera drop). Keyed by the library's livestream pool `key` (one slot per concurrent session, not per camera). The owner records at interruption and
- * consumes at recovery; `forgetCamera` reclaims any entries a removed camera left behind (a started-without-recovery episode would otherwise never be consumed). The Map
- * is owned here, never exposed - mirroring createConnectRetryPolicy's encapsulated state.
+ * consumes at both episode terminals - the recovery, which reads the classification, and the policy's give-up, which drains the slot without reading it - so the
+ * ledger holds only episodes in flight; `forgetCamera` reclaims any entries a camera removed mid-episode left behind. The Map is owned here, never exposed -
+ * mirroring createConnectRetryPolicy's encapsulated state.
  */
 export function createLivestreamEpisodeLatch(): {
   consume: (key: string) => boolean;

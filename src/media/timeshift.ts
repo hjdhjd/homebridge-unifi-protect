@@ -5,6 +5,7 @@
 import type { Clock, HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
 import { PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS, PROTECT_LIVESTREAM_API_IDR_INTERVAL, PROTECT_LIVESTREAM_IDLE_TOLERANCE_MS, PROTECT_SEGMENT_RESOLUTION }
   from "../settings.ts";
+import { formatErrorMessage, isKeyframe } from "homebridge-plugin-utils";
 import type { ChannelProfile } from "./resolution.ts";
 import { EventEmitter } from "node:events";
 import { LIVE_SELF_HEAL_THRESHOLD } from "./livestream-recovery-policy.ts";
@@ -12,7 +13,6 @@ import type { LivestreamSubscription } from "./livestream.ts";
 import type { ProtectCameraHost } from "./camera-host.ts";
 import { ProtectLivestreamUnavailableError } from "unifi-protect";
 import type { Segment } from "unifi-protect";
-import { isKeyframe } from "homebridge-plugin-utils";
 import { logLivestreamIterationError } from "./livestream.ts";
 
 // Why the standing buffer stopped, carried by the `stopped` event. "ended" is a recoverable end - a deliberate stop, a codec-change restart, or an unexpected iterator
@@ -267,8 +267,8 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
 
     this.log.warn("Rebooting the camera to recover its livestream after %s failed reconnection attempts.", error.attempts.toString());
 
-    this.protectCamera.reboot().catch((rebootError: unknown) => this.log.error("The camera could not be rebooted during livestream self-healing.",
-      { error: rebootError }));
+    this.protectCamera.reboot().catch((rebootError: unknown) => this.log.error("The camera could not be rebooted during livestream self-healing: %s.",
+      formatErrorMessage(rebootError)));
   }
 
   // Reset transmit-session state after the backing subscription has ended. Called from both stop() (explicit teardown) and the consumeSegments finally
