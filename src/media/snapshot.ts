@@ -4,6 +4,7 @@
  */
 import { FfmpegExec, runWithAbort } from "homebridge-plugin-utils";
 import type { HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
+import { PROTECT_MAX_SOURCE_HEIGHT, PROTECT_MAX_SOURCE_WIDTH } from "../settings.ts";
 import type { ProtectCameraHost } from "./camera-host.ts";
 import type { SnapshotOptions } from "unifi-protect";
 import type { SnapshotRequest } from "homebridge";
@@ -217,7 +218,7 @@ export class ProtectSnapshot {
     }
 
     // Grab the highest quality stream we have available.
-    const channelProfile = this.protectCamera.selectChannel(3840, 2160, { biasHigher: true });
+    const channelProfile = this.protectCamera.selectChannel(PROTECT_MAX_SOURCE_WIDTH, PROTECT_MAX_SOURCE_HEIGHT, { biasHigher: true });
 
     if(!channelProfile) {
 

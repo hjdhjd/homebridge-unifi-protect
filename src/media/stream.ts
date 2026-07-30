@@ -6,8 +6,8 @@
  */
 import type { AudioOptionsIdentity, StreamingDelegate, StreamingDelegateFactory } from "./stream-delegate.ts";
 import { AudioRecordingCodecType, AudioRecordingSamplerate, AudioStreamingCodecType, AudioStreamingSamplerate, BackpressureWriter, FfmpegOptions,
-  FfmpegStreamingProcess, H264Level, H264Profile, HKSV_FRAGMENT_LENGTH, HOMEKIT_IDR_INTERVAL, HbpuAbortError, MediaContainerType, RtpDemuxer, SRTPCryptoSuites,
-  StreamRequestTypes, VideoCodecType, formatBps, formatErrorMessage, guardedDispatch, isHbpuAbortReason } from "homebridge-plugin-utils";
+  FfmpegStreamingProcess, H264Level, H264Profile, HKSV_FRAGMENT_LENGTH, HbpuAbortError, MediaContainerType, RtpDemuxer, SRTPCryptoSuites, StreamRequestTypes,
+  VideoCodecType, formatBps, formatErrorMessage, guardedDispatch, isHbpuAbortReason } from "homebridge-plugin-utils";
 import type { CameraController, CameraControllerOptions, CameraStreamingDelegate, HAP, PrepareStreamCallback, PrepareStreamRequest, PrepareStreamResponse, Resolution,
   Service, SnapshotRequest, SnapshotRequestCallback, StartStreamRequest, StreamRequestCallback, StreamingRequest } from "homebridge";
 import type { HomebridgePluginLogging, IpFamily, Nullable, PortReservation } from "homebridge-plugin-utils";
@@ -16,6 +16,7 @@ import { PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS, PROTECT_LIVESTREAM_API_IDR_INTE
 import { ProtectAbortedError, livestreamAudioSampleRate } from "unifi-protect";
 import { ProtectReservedNames, isPackageCameraContext } from "../types.ts";
 import { guardedPublish, mqttTopic } from "../mqtt.ts";
+import { resolveChannelRequest, resolveTranscodeDecision, resolveVideoEncoding } from "./stream-encode-policy.ts";
 import type { ChannelProfile } from "./resolution.ts";
 import type { LivestreamSubscription } from "./livestream.ts";
 import type { ProtectCameraHost } from "./camera-host.ts";
@@ -574,24 +575,16 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
       return;
     }
 
-    // We transcode based in the following circumstances:
-    //
-    //   1. The user has explicitly configured transcoding.
-    //   2. The user has configured cropping for the video stream.
-    //   3. We are on a high latency streaming session (e.g. cellular). If we're high latency, we'll transcode by default unless the user has asked us not to. Why? It
-    //      generally results in a speedier experience, at the expense of some stream quality (HomeKit tends to request far lower bitrates than Protect is capable of
-    //      producing).
-    //   4. The codec in use on the Protect camera isn't H.264.
-    //
-    // How do we determine if we're a high latency connection? We look at the RTP packet time of the audio packet time for a hint. HomeKit uses values of 20, 30, 40,
-    // and 60ms. We make an assumption, validated by lots of real-world testing, that when we see 60ms used by HomeKit, it's a high latency connection and act
-    // accordingly.
-    const isHighLatency = request.audio.packet_time >= 60;
-    const isTranscoding = this.protectCamera.hints.transcode || this.protectCamera.hints.crop || (isHighLatency && this.protectCamera.hints.transcodeHighLatency) ||
-      (this.protectCamera.ufp.videoCodec !== "h264");
+    // Decide whether this session re-encodes the video, and read the connection's latency from the negotiated audio packet time. Both are a pure policy over the user's
+    // configured hints and the camera's codec - stream-encode-policy.ts carries the full rationale for each circumstance that forces a transcode.
+    const { isHighLatency, isTranscoding } = resolveTranscodeDecision({
 
-    // Set the initial bitrate we should use for this request based on what HomeKit is requesting.
-    let targetBitrate = request.video.max_bit_rate;
+      crop: this.protectCamera.hints.crop,
+      packetTime: request.audio.packet_time,
+      transcode: this.protectCamera.hints.transcode,
+      transcodeHighLatency: this.protectCamera.hints.transcodeHighLatency,
+      videoCodec: this.protectCamera.ufp.videoCodec
+    });
 
     // Resolve which transport this live view draws from: the standing timeshift buffer's pooled socket, or a direct RTSP session. The decision is a pure policy over the
     // camera's current facts (the buffer-backed-livestreaming toggle, the recording demand, the buffer's liveness, the package preference, the AV1 constraint, and the
@@ -667,38 +660,22 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
       }
     }
 
-    // Find the best RTSP stream based on what we're looking for.
-    if(isTranscoding) {
+    // Whether this host encodes live video on hardware is frozen when the FFmpeg options are constructed, so one read serves both the source-dimension bias below and
+    // the hardware-acceleration hint in the streaming-request log further down.
+    const usesHardwareEncoder = this.ffmpegOptions.hardwareEncodes("stream");
 
-      // When the live encode runs on the host's hardware encoder we bias toward the highest-quality source the pipeline can ingest, because fixed-function encoders
-      // perform better with higher-bitrate sources; a software encode is fed a source matched to the requested resolution instead, so the CPU cost tracks what HomeKit
-      // actually asked for.
-      const usesHardwareEncoder = this.ffmpegOptions.hardwareEncodes("stream");
+    // Find the best RTSP stream based on what we're looking for. The dimensions and the bias are a pure policy; the selection call and the host's source-pixel cap - a
+    // hardware capability rather than a decision - stay here.
+    const channelRequest = resolveChannelRequest({
 
-      channelProfile ??= this.protectCamera.selectChannel(
-        usesHardwareEncoder ? 3840 : request.video.width,
-        usesHardwareEncoder ? 2160 : request.video.height,
-        { biasHigher: true, maxPixels: this.ffmpegOptions.maxSourcePixels("stream") }
-      );
+      isTranscoding,
+      requestHeight: request.video.height,
+      requestWidth: request.video.width,
+      usesHardwareEncoder
+    });
 
-      // If we have specified the bitrates we want to use when transcoding, let's honor those here.
-      if(isHighLatency && (this.protectCamera.hints.transcodeHighLatencyBitrate > 0)) {
-
-        targetBitrate = this.protectCamera.hints.transcodeHighLatencyBitrate;
-      } else if(!isHighLatency && (this.protectCamera.hints.transcodeBitrate > 0)) {
-
-        targetBitrate = this.protectCamera.hints.transcodeBitrate;
-      }
-
-      // If we're targeting a bitrate that's beyond the capabilities of our input channel, match the bitrate of the input channel.
-      if(channelProfile && (targetBitrate > (channelProfile.channel.bitrate / 1000))) {
-
-        targetBitrate = channelProfile.channel.bitrate / 1000;
-      }
-    } else {
-
-      channelProfile ??= this.protectCamera.selectChannel(request.video.width, request.video.height);
-    }
+    channelProfile ??= this.protectCamera.selectChannel(channelRequest.width, channelRequest.height,
+      channelRequest.biasHigher ? { biasHigher: true, maxPixels: this.ffmpegOptions.maxSourcePixels("stream") } : undefined);
 
     if(!channelProfile) {
 
@@ -712,6 +689,28 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
 
       return;
     }
+
+    // Decide how the video reaches HomeKit - copied from the camera or re-encoded - and the bitrate we target either way. The channel's bitrate ceiling arrives from the
+    // controller in bits per second and the policy works in kbps throughout, so we convert it here at the boundary.
+    const encoding = resolveVideoEncoding({
+
+      channelBitrate: channelProfile.channel.bitrate / 1000,
+      channelFps: channelProfile.channel.fps,
+      cpuGeneration: this.platform.codecSupport.cpuGeneration,
+      hostSystem: this.platform.codecSupport.hostSystem,
+      isHighLatency,
+      isPackageCamera: isPackageCameraContext(this.protectCamera.accessory.context),
+      isTranscoding,
+      requestBitrate: request.video.max_bit_rate,
+      requestFps: request.video.fps,
+      requestHeight: request.video.height,
+      requestLevel: request.video.level,
+      requestProfile: request.video.profile,
+      requestWidth: request.video.width,
+      transcodeBitrate: this.protectCamera.hints.transcodeBitrate,
+      transcodeHighLatencyBitrate: this.protectCamera.hints.transcodeHighLatencyBitrate,
+      useTsb
+    });
 
     // If we are streaming the package camera, and it's dark outside, activate the flashlight on the camera. We record the lit service on the session itself so the single
     // prepared-session disposal path can turn it back off on any failed start, and stopStream can turn it off on a normal stop - the session field is the one record of
@@ -808,7 +807,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
     const hinting = [];
 
     // Lightning bolt, using the default emoji presentation. We use this to indicate hardware acceleration.
-    hinting.push(...(isTranscoding && this.ffmpegOptions.hardwareEncodes("stream") ? ["\u{26A1}\u{FE0F}"] : []));
+    hinting.push(...(isTranscoding && usesHardwareEncoder ? ["\u{26A1}\u{FE0F}"] : []));
 
     // Gear, using the text presentation modifier. We use this to indicate that we're transcoding.
     hinting.push(...(isTranscoding ? ["\u{26ED}\u{FE0E}"] : []));
@@ -822,34 +821,14 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
     hinting.push(...(hinting.length ? [""] : []));
 
     this.log.info("%sStreaming request: %sx%s@%sfps, %s. Using %s [%s], %s [%s].", hinting.join(" "), request.video.width, request.video.height, request.video.fps,
-      formatBps(targetBitrate * 1000), channelProfile.name, this.protectCamera.videoCodecName,
+      formatBps(encoding.targetBitrate * 1000), channelProfile.name, this.protectCamera.videoCodecName,
       formatBps(channelProfile.channel.bitrate), useTsb ? "TSB/" + (this.protectCamera.hasFeature("Debug.Video.Timeshift.UseRtsp") ? "RTSP" : "API") : "RTSP");
 
-    // When on high-performance hardware like Apple Silicon, using the TSB, and we don't have low-FPS cameras like the package camera, enable the use of the
-    // CPU-intensive FFmpeg minterpolate filter to enable very smooth video, especially when there's motion involved. M3+ Apple Silicon environments are able to reliably
-    // use this filter in realtime and with great results. I'm hoping to be able to enable this in the future for other platforms.
-    const useInterpolationFilter = useTsb && !isPackageCameraContext(this.protectCamera.accessory.context) &&
-      ((this.platform.codecSupport.hostSystem === "macOS.Apple") && (this.platform.codecSupport.cpuGeneration >= 3));
-
-    // Check to see if we're transcoding. If we are, set the right FFmpeg encoder options. If not, copy the video stream.
-    if(isTranscoding) {
+    // Render the encoding the policy resolved. The decision is already made - all that happens here is turning it into FFmpeg arguments.
+    if(encoding.mode === "transcode") {
 
       // Configure our video parameters for transcoding.
-      ffmpegArgs.push(...this.ffmpegOptions.streamEncoder({
-
-        bitrate: targetBitrate,
-        fps: useInterpolationFilter ? channelProfile.channel.fps : request.video.fps,
-        height: request.video.height,
-        idrInterval: HOMEKIT_IDR_INTERVAL,
-        inputFps: channelProfile.channel.fps,
-        level: request.video.level,
-        profile: request.video.profile,
-        // When interpolating, hand the encoder the fps and interpolation filters to smooth the presentation timestamps; it composes them into its own chain and bridges
-        // any GPU-to-CPU download transfer itself.
-        ...(useInterpolationFilter ? { videoFilters: [ "fps=" + request.video.fps.toString(),
-          "minterpolate=fps=" + request.video.fps.toString() + ":mi_mode=mci:mc_mode=aobmc:me=fss:me_mode=bidir:vsbmc=1:scd=none" ] } : {}),
-        width: request.video.width
-      }));
+      ffmpegArgs.push(...this.ffmpegOptions.streamEncoder(encoding.encoderOptions));
     } else {
 
       // Configure our video parameters for just copying the input stream from Protect - it tends to be quite solid in most cases:
@@ -861,7 +840,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
       );
 
       // The livestream API needs to be transmuxed before we use it directly.
-      if(useTsb) {
+      if(encoding.transmux) {
 
         // -bsf:v h264_mp4toannexb    Convert the livestream container format from MP4 to MPEG-TS.
         ffmpegArgs.push("-bsf:v", "h264_mp4toannexb");

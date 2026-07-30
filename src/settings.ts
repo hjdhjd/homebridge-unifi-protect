@@ -89,6 +89,11 @@ export const PROTECT_TIMESHIFT_BUFFER_MAXDURATION = PROTECT_LIVESTREAM_API_IDR_I
 // below this on such a host. Deliberately not named with "RESOLUTION" - in this file that word denotes the buffer's time-granularity, not a pixel dimension.
 export const PROTECT_TIMESHIFT_CONSTRAINED_HOST_TARGET = { height: 1080, width: 1920 };
 
+// The richest source we ever ask a camera for when we are hunting a maximum-quality channel rather than one matched to a requested size. Shared by the transcode
+// dimension bias (a hardware encoder performs better fed a high-bitrate source) and the high-resolution snapshot path, so both hunt against the same ceiling.
+export const PROTECT_MAX_SOURCE_HEIGHT = 2160;
+export const PROTECT_MAX_SOURCE_WIDTH = 3840;
+
 // Default port to use to publish an M3U playlist for use in other apps that can consume one to make camera livestreams available, such as Channels DVR.
 export const PROTECT_M3U_PLAYLIST_PORT = 10110;
 
