@@ -39,6 +39,14 @@ export const PROTECT_FFMPEG_AUDIO_FILTER_HIGHPASS = 150;
 // FFmpeg lowpass audio filter defaults - this setting attenuates (eliminates) frequencies above the value.
 export const PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS = 9000;
 
+// Ceiling, in bytes, on the probesize a camera's self-tuning will ever elevate to. This sits far above any probesize FFmpeg has needed in practice, so it bounds the
+// repeated doubling without meaningfully limiting our ability to recover from a difficult stream.
+export const PROTECT_PROBESIZE_OVERRIDE_MAX = 5000000;
+
+// Number of probesize adjustments, over the life of a camera's streaming delegate, after which the elevated probesize stays in place for good. Enough attempts to tell
+// a one-off hiccup apart from a persistently flaky stream, before we stop paying the cost of resetting the override on every attempt.
+export const PROTECT_PROBESIZE_OVERRIDE_PERMANENT_THRESHOLD = 10;
+
 // Delay, in milliseconds, before a temporary probesize override clears itself back to the camera's baseline - long enough for a transient stream irregularity to have
 // passed, so the next stream attempt is not still paying the elevated probesize's startup latency for a problem that is over.
 export const PROTECT_PROBESIZE_OVERRIDE_RESET_MS = 1000 * 60 * 10;

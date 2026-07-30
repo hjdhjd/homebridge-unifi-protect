@@ -11,8 +11,8 @@ import { AudioRecordingCodecType, AudioRecordingSamplerate, AudioStreamingCodecT
 import type { CameraController, CameraControllerOptions, CameraStreamingDelegate, HAP, PrepareStreamCallback, PrepareStreamRequest, PrepareStreamResponse, Resolution,
   Service, SnapshotRequest, SnapshotRequestCallback, StartStreamRequest, StreamRequestCallback, StreamingRequest } from "homebridge";
 import type { HomebridgePluginLogging, IpFamily, Nullable, PortReservation } from "homebridge-plugin-utils";
-import { PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS, PROTECT_LIVESTREAM_API_IDR_INTERVAL, PROTECT_PROBESIZE_OVERRIDE_RESET_MS,
-  PROTECT_TIMESHIFT_BUFFER_MAXDURATION } from "../settings.ts";
+import { PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS, PROTECT_LIVESTREAM_API_IDR_INTERVAL, PROTECT_PROBESIZE_OVERRIDE_MAX,
+  PROTECT_PROBESIZE_OVERRIDE_PERMANENT_THRESHOLD, PROTECT_PROBESIZE_OVERRIDE_RESET_MS, PROTECT_TIMESHIFT_BUFFER_MAXDURATION } from "../settings.ts";
 import { ProtectAbortedError, livestreamAudioSampleRate } from "unifi-protect";
 import { ProtectReservedNames, isPackageCameraContext } from "../types.ts";
 import { guardedPublish, mqttTopic } from "../mqtt.ts";
@@ -96,6 +96,91 @@ function isCleanTalkbackStop(error: unknown, signal: AbortSignal): boolean {
   return signal.aborted || (error instanceof ProtectAbortedError);
 }
 
+/* One camera's probesize self-tuning: how many bytes FFmpeg is told to analyze before it may act on a stream, raised whenever FFmpeg gives up trying to make sense of
+ * the input. The camera's configured probesize is the baseline, injected as a supplier rather than a value so this owns the whole effective-probesize story - a caller
+ * cannot hand it a stale current value - and so a hint the user changes mid-life is picked up on the next read.
+ *
+ * The tuning moves through four states:
+ *
+ *   - Baseline: no elevation, no adjustments yet, no timer. Streams start at the camera's configured probesize.
+ *   - Elevated: an adjustment raised the probesize and armed the auto-reset timer, so the elevation expires on its own.
+ *   - Baseline with history: the timer fired and the elevation is gone, but the tally of adjustments remains.
+ *   - Permanent: enough adjustments have accumulated that no timer is armed and the elevation stays until something winds the tuning back.
+ *
+ * The tally counts adjustments over the whole life of the delegate and deliberately survives an auto-reset, so a camera that needs an adjustment every few minutes
+ * crosses PROTECT_PROBESIZE_OVERRIDE_PERMANENT_THRESHOLD just as surely as one that needs them back to back. Only reset() clears it - the roles that call it are a
+ * genuine fresh start for the camera's streams. Each adjustment doubles the CURRENT effective probesize rather than the baseline, so repeated trouble compounds toward
+ * PROTECT_PROBESIZE_OVERRIDE_MAX instead of arriving at the same elevation every time.
+ */
+class ProbesizeSelfTune {
+
+  private readonly baseline: () => number;
+  private elevated: number;
+  private lifetimeAdjustments: number;
+  private resetTimer?: NodeJS.Timeout;
+
+  constructor(baseline: () => number) {
+
+    this.baseline = baseline;
+    this.elevated = 0;
+    this.lifetimeAdjustments = 0;
+  }
+
+  /* Raise the probesize a step in response to FFmpeg failing to estimate the stream, and report whether the elevation is temporary.
+   *
+   * Increasing the probesize by a factor of two each time balances the latency implications for the user against ensuring we have a functional streaming experience.
+   * Below the permanent threshold the elevation expires on its own, so the next stream attempt starts from the camera's normal baseline instead of carrying the penalty
+   * indefinitely; the reset delay and the reasoning behind its length live with the named constant. At or above the threshold no timer is armed and the elevation
+   * stands. The returned flag is the caller's cue for how to describe the adjustment to the user.
+   */
+  public adjust(): boolean {
+
+    this.clearResetTimer();
+
+    // Maintain statistics on how often we need to adjust our probesize. If this happens too frequently, we will default to a working value.
+    this.lifetimeAdjustments++;
+    this.elevated = Math.min(this.effective * 2, PROTECT_PROBESIZE_OVERRIDE_MAX);
+
+    const isTemporary = this.lifetimeAdjustments < PROTECT_PROBESIZE_OVERRIDE_PERMANENT_THRESHOLD;
+
+    if(isTemporary) {
+
+      this.resetTimer = setTimeout(() => {
+
+        this.elevated = 0;
+        this.resetTimer = undefined;
+      }, PROTECT_PROBESIZE_OVERRIDE_RESET_MS);
+    }
+
+    return isTemporary;
+  }
+
+  // Wind the tuning all the way back: the elevation, the lifetime tally, and any pending auto-reset end together, so the camera's next stream starts from its baseline
+  // with a clean history.
+  public reset(): void {
+
+    this.clearResetTimer();
+    this.elevated = 0;
+    this.lifetimeAdjustments = 0;
+  }
+
+  // The probesize a stream should actually use right now: the elevation when one is in place, the camera's configured baseline otherwise.
+  public get effective(): number {
+
+    return this.elevated || this.baseline();
+  }
+
+  // Drop any pending auto-reset. Both an adjustment (which re-arms its own) and a reset need this, so the clear lives in one place.
+  private clearResetTimer(): void {
+
+    if(this.resetTimer) {
+
+      clearTimeout(this.resetTimer);
+      this.resetTimer = undefined;
+    }
+  }
+}
+
 // Camera streaming delegate implementation for Protect.
 export class ProtectStreamingDelegate implements CameraStreamingDelegate, StreamingDelegate {
 
@@ -113,9 +198,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
   private pendingSessions: Map<string, SessionInfo>;
   public readonly platform: ProtectPlatform;
   public readonly protectCamera: ProtectCameraHost;
-  private probesizeOverride: number;
-  private probesizeOverrideCount: number;
-  private probesizeOverrideTimeout?: NodeJS.Timeout;
+  private readonly probesizeTuning: ProbesizeSelfTune;
   private snapshot: ProtectSnapshot;
   public timeshift: Nullable<ProtectTimeshiftSupervisor>;
   public verboseFfmpeg: boolean;
@@ -136,8 +219,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
     this.protectCamera = protectCamera;
     this.pendingSessions = new Map();
     this.platform = protectCamera.platform;
-    this.probesizeOverride = 0;
-    this.probesizeOverrideCount = 0;
+    this.probesizeTuning = new ProbesizeSelfTune(() => protectCamera.hints.probesize);
     this.timeshift = null;
     this.verboseFfmpeg = false;
 
@@ -1360,50 +1442,19 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
   // Adjust our probe hints.
   public adjustProbeSize(): void {
 
-    if(this.probesizeOverrideTimeout) {
-
-      clearTimeout(this.probesizeOverrideTimeout);
-      this.probesizeOverrideTimeout = undefined;
-    }
-
-    // Maintain statistics on how often we need to adjust our probesize. If this happens too frequently, we will default to a working value.
-    this.probesizeOverrideCount++;
-
-    // Increase the probesize by a factor of two each time we need to do something about it. The idea is to balance the latency implications
-    // for the user, but also ensuring we have a functional streaming experience.
-    this.probesizeOverride = this.probesize * 2;
-
-    // Safety check to make sure this never gets too crazy. A ceiling of 5000000 bytes sits far above any probesize FFmpeg has needed in practice, so it bounds the
-    // repeated doubling above without meaningfully limiting our ability to recover from a difficult stream.
-    if(this.probesizeOverride > 5000000) {
-
-      this.probesizeOverride = 5000000;
-    }
+    const isTemporary = this.probesizeTuning.adjust();
 
     this.log.error("The FFmpeg process ended unexpectedly due to issues with the media stream provided by the UniFi Protect livestream API. " +
     "Adjusting the settings we use for FFmpeg %s to use safer values at the expense of some additional streaming startup latency.",
-    this.probesizeOverrideCount < 10 ? "temporarily" : "permanently");
-
-    // If this happens often enough, keep the override in place permanently. Ten retries is the threshold: enough attempts to tell a one-off hiccup apart from a
-    // persistently flaky stream before we stop paying the cost of resetting the override on every attempt.
-    if(this.probesizeOverrideCount < 10) {
-
-      // Automatically clear the temporary override once the reset delay elapses, so the next stream attempt starts from the camera's normal baseline probesize instead
-      // of carrying the penalty indefinitely. The delay itself, and the reasoning behind its length, live with the named constant.
-      this.probesizeOverrideTimeout = setTimeout(() => {
-
-        this.probesizeOverride = 0;
-        this.probesizeOverrideTimeout = undefined;
-      }, PROTECT_PROBESIZE_OVERRIDE_RESET_MS);
-    }
+    isTemporary ? "temporarily" : "permanently");
   }
 
   /* Reset the probesize self-tuning back to this camera's baseline.
    *
    * This is the single owner of the clear-and-reset: the override, its retry count, and any pending auto-reset timer end together here, so every role that needs the
    * tuning wound back routes through this one body rather than reaching for the timer itself. The override and its retry count accumulate as FFmpeg repeatedly fails to
-   * estimate the stream rate, and at the permanent ceiling (count >= 10) no auto-reset timer is armed, so the elevated probesize - and the startup latency it costs -
-   * otherwise persists for the whole life of the delegate.
+   * estimate the stream rate, and at the permanent ceiling (PROTECT_PROBESIZE_OVERRIDE_PERMANENT_THRESHOLD adjustments) no auto-reset timer is armed, so the elevated
+   * probesize - and the startup latency it costs - otherwise persists for the whole life of the delegate.
    *
    * A controller reboot restarts this camera's stream from scratch, the natural boundary to clear the latch and let it re-tune from its baseline; the NVR calls this on
    * the reboot edge, where the trade-off is one possibly-wasted baseline spawn on a chronically-flaky camera in exchange for not penalizing every camera forever -
@@ -1412,20 +1463,13 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
    */
   public resetProbesizeOverride(): void {
 
-    if(this.probesizeOverrideTimeout) {
-
-      clearTimeout(this.probesizeOverrideTimeout);
-      this.probesizeOverrideTimeout = undefined;
-    }
-
-    this.probesizeOverride = 0;
-    this.probesizeOverrideCount = 0;
+    this.probesizeTuning.reset();
   }
 
   // Utility to return the currently set probesize for a camera.
   public get probesize(): number {
 
-    return this.probesizeOverride || this.protectCamera.hints.probesize;
+    return this.probesizeTuning.effective;
   }
 }
 

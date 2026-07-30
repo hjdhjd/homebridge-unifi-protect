@@ -17,7 +17,8 @@
  * under the harness's default hints, which turn every acceleration and crop knob off) and hands a fully-composed options object to the hap namespace's camera-controller
  * marker. That makes its construction test the suite's second real-behavior anchor - the capability arms it decides, and the probesize self-tuning its shutdown ends.
  */
-import { PROTECT_PROBESIZE_OVERRIDE_RESET_MS, PROTECT_SEGMENT_RESOLUTION } from "../settings.ts";
+import { PROTECT_PROBESIZE_OVERRIDE_MAX, PROTECT_PROBESIZE_OVERRIDE_PERMANENT_THRESHOLD, PROTECT_PROBESIZE_OVERRIDE_RESET_MS,
+  PROTECT_SEGMENT_RESOLUTION } from "../settings.ts";
 import { TestCameraController, makeTestCameraHost } from "../testing.helpers.ts";
 import { after, describe, test } from "node:test";
 import { ProtectRecordingDelegate } from "./record.ts";
@@ -156,5 +157,80 @@ describe("media-delegate construction against the ProtectCameraHost stub", () =>
 
     assert.equal(stream.probesize, 16384, "the baseline holds past the auto-reset delay");
     assert.equal(logEntries.length, logCountAfterAdjust, "nothing was logged after the shutdown");
+  });
+
+  // The self-tuning's adjustment tally counts every adjustment over the delegate's life and deliberately outlives the auto-reset, so a camera that needs an adjustment
+  // every few minutes reaches the permanent elevation just as surely as one that needs them back to back. Each pass through the loop returns the camera to its baseline
+  // while the tally underneath keeps climbing - the state a tally that reset with the elevation could never reach. The threshold is pinned TWO-SIDED, because an
+  // adjustment word asserted on one side alone is equally happy with a threshold off by one: the adjustment just below reports a temporary elevation, and the one that
+  // reaches the threshold reports a permanent one. The closing advance is what proves the permanent adjustment armed no auto-reset at all.
+  test("the probesize adjustment tally outlives the auto-reset and crosses the permanent threshold", (t) => {
+
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+
+    const { controller, host, logEntries } = makeTestCameraHost();
+
+    controllers.push(controller);
+
+    host.hints.probesize = 16384;
+
+    const stream = new ProtectStreamingDelegate(host, [[ 1920, 1080, 30 ]]);
+    const lastAdjustmentLine = (): string => logEntries.filter((entry) => entry.level === "error").at(-1)?.formatted ?? "";
+
+    for(let adjustment = 1; adjustment < PROTECT_PROBESIZE_OVERRIDE_PERMANENT_THRESHOLD; adjustment++) {
+
+      stream.adjustProbeSize();
+
+      assert.equal(stream.probesize, 32768, "adjustment " + adjustment.toString() + " doubled the camera's baseline");
+      assert.ok(lastAdjustmentLine().includes("temporarily"), "adjustment " + adjustment.toString() + " reported a temporary elevation");
+
+      t.mock.timers.tick(PROTECT_PROBESIZE_OVERRIDE_RESET_MS + 1);
+
+      assert.equal(stream.probesize, 16384, "the auto-reset after adjustment " + adjustment.toString() + " returned the camera to its baseline");
+    }
+
+    stream.adjustProbeSize();
+
+    assert.ok(lastAdjustmentLine().includes("permanently"), "the adjustment that reached the threshold reported a permanent elevation");
+    assert.ok(!lastAdjustmentLine().includes("temporarily"), "the permanent adjustment did not also report itself as temporary");
+
+    t.mock.timers.tick(PROTECT_PROBESIZE_OVERRIDE_RESET_MS + 1);
+
+    assert.equal(stream.probesize, 32768, "no auto-reset was armed at the threshold, so the elevation stands");
+  });
+
+  // Each adjustment doubles the probesize ALREADY IN EFFECT rather than the camera's baseline, so back-to-back trouble compounds instead of arriving at the same
+  // elevation every time - and the compounding comes to rest on the ceiling rather than running away. The ceiling is pinned two-sided: the last adjustment below it
+  // lands on its exact doubled value, and the next lands on the ceiling instead of the value it would otherwise have reached.
+  test("each probesize adjustment doubles the elevation already in effect, up to the ceiling", (t) => {
+
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+
+    const { controller, host } = makeTestCameraHost();
+
+    controllers.push(controller);
+
+    host.hints.probesize = 16384;
+
+    const stream = new ProtectStreamingDelegate(host, [[ 1920, 1080, 30 ]]);
+
+    // Three adjustments with no auto-reset between them: the baseline doubles three times over. A tuning that doubled the BASELINE each time would sit at 32768 here.
+    stream.adjustProbeSize();
+    stream.adjustProbeSize();
+    stream.adjustProbeSize();
+
+    assert.equal(stream.probesize, 131072, "the elevation compounded off itself rather than off the camera's baseline");
+
+    // Carry on to the eighth adjustment, the last one whose doubling still fits under the ceiling.
+    for(let adjustment = 4; adjustment <= 8; adjustment++) {
+
+      stream.adjustProbeSize();
+    }
+
+    assert.equal(stream.probesize, 4194304, "the eighth adjustment doubled cleanly, still below the ceiling");
+
+    stream.adjustProbeSize();
+
+    assert.equal(stream.probesize, PROTECT_PROBESIZE_OVERRIDE_MAX, "the adjustment that would have overshot the ceiling came to rest on it");
   });
 });
