@@ -159,6 +159,34 @@ describe("media-delegate construction against the ProtectCameraHost stub", () =>
     assert.equal(logEntries.length, logCountAfterAdjust, "nothing was logged after the shutdown");
   });
 
+  /* The streaming delegate's shutdown is safe to call more than once, and structurally so rather than through a latch: both session maps drain on the first call, and
+   * the reset assigns fixed values, so there is no state a second call could find in an unexpected shape.
+   *
+   * HONESTY NOTE: this pin characterizes repeat-safety that already held; it is a tripwire against a future edit that introduces state a second call would trip over,
+   * and it tells apart no change made alongside it. The delegate's shutdown body is untouched by the work that added this test.
+   */
+  test("a repeat delegate shutdown tears nothing down and reports nothing", () => {
+
+    const { controller, host, logEntries } = makeTestCameraHost();
+
+    controllers.push(controller);
+
+    host.hints.probesize = 16384;
+
+    const stream = new ProtectStreamingDelegate(host, [[ 1920, 1080, 30 ]]);
+
+    stream.shutdown();
+
+    const logCountAfterFirstShutdown = logEntries.length;
+
+    stream.shutdown();
+
+    assert.equal(stream.probesize, 16384, "the second shutdown left the probesize at the camera's baseline");
+    assert.equal(logEntries.length, logCountAfterFirstShutdown, "the second shutdown logged nothing");
+    assert.equal(logEntries.filter((entry) => entry.formatted.includes("Stopped video streaming session.")).length, 0,
+      "neither call reported a session teardown, because there was no session to tear down");
+  });
+
   // The self-tuning's adjustment tally counts every adjustment over the delegate's life and deliberately outlives the auto-reset, so a camera that needs an adjustment
   // every few minutes reaches the permanent elevation just as surely as one that needs them back to back. Each pass through the loop returns the camera to its baseline
   // while the tally underneath keeps climbing - the state a tally that reset with the elevation could never reach. The threshold is pinned TWO-SIDED, because an

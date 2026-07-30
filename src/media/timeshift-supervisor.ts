@@ -382,8 +382,14 @@ export class ProtectTimeshiftSupervisor {
   // still mid-establishment when the latch arms cannot commit: it reads the latch at the buffer's own commit point and disposes its subscription when its establishment
   // settles, so no start ever hands a live subscription to a torn-down owner. Produces no narration of its own: the paths that call this have already narrated the
   // disruption at the controller or camera level. Terminal per instance by design - a camera whose streaming delegate is ever rebuilt constructs a fresh, unlatched
-  // supervisor.
+  // supervisor. A repeat call returns at the latch - a no-op by design, not by accident of ordering - so the paths that pair a delegate and supervisor teardown can
+  // both run without either one tearing down twice.
   public shutdown(): void {
+
+    if(this.isShutdown) {
+
+      return;
+    }
 
     this.isShutdown = true;
     this.buffer.stop();

@@ -243,6 +243,36 @@ describe("timeshift buffer behavior", () => {
     assert.equal(double.disposed, false, "the committed subscription is not disposed");
   });
 
+  // The teardown report is honest: "stopped" reports every genuine teardown and only those. A stop on a buffer that never started tore nothing down, so it reports
+  // nothing - while still answering true, so callers may stop unconditionally without checking first. The committed side is what proves the gate narrowed the report
+  // rather than silencing the event: the same buffer, once started, reports its teardown exactly once.
+  test("stop reports a teardown only when there was one to report", async () => {
+
+    const double = makeControllableLivestreamDouble();
+    const { controller, host } = makeTestCameraHost();
+
+    controllers.push(controller);
+    host.livestreamSubscriptions = [double];
+
+    const timeshift = new ProtectTimeshiftBuffer(host);
+
+    let stoppedEmits = 0;
+
+    timeshift.on("stopped", (): void => { stoppedEmits++; });
+
+    // Side one: a buffer that never started. The stop resets state already at rest, reports nothing, and still answers true.
+    assert.equal(timeshift.stop(), true, "a stop on a never-started buffer still answers true");
+    assert.equal(stoppedEmits, 0, "a teardown that never happened is not reported");
+
+    // Side two: the same buffer after a committed start. Now there IS a teardown, and it is reported exactly once.
+    assert.equal(await timeshift.start(makeChannelProfile(host)), true, "the start committed");
+
+    await settle();
+
+    assert.equal(timeshift.stop(), true, "the committed buffer stops");
+    assert.equal(stoppedEmits, 1, "the genuine teardown was reported exactly once");
+  });
+
   // Target (d): starting an already-started timeshift disposes the prior subscription and commits the new one. Two DISTINCT-id doubles are supplied via the queue; the
   // second start runs start's if(isStarted) stop() path, disposing doubleA, then commits doubleB. This is ALSO the genuine discriminator of the consumeSegments
   // id-identity guard (the finally's this.subscription?.id === subscription.id): start() commits doubleB BEFORE doubleA's iterator finally runs, so that finally reaches

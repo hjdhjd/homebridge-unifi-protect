@@ -568,6 +568,24 @@ describe("timeshift supervisor shutdown latch", () => {
     assert.equal(logEntries.length, logCountBeforeShutdown, "the post-shutdown reconcile produced no narration");
   });
 
+  // A second shutdown is a designed no-op, and the entry latch is what makes it one rather than an accident of ordering. The observable that tells the two apart is the
+  // CALL, not an emission: the buffer reports nothing when asked to stop something it already stopped, so an emission count stays green whether or not the guard is
+  // there. Spying the stop call is what fails when the guard is removed.
+  test("a second shutdown returns at the latch rather than tearing the buffer down again", async (t) => {
+
+    const { supervisor } = await arrangeEnabledDelegate();
+
+    assert.equal(supervisor.buffer.isStarted, true, "the arrange left the buffer running");
+
+    const stopSpy = t.mock.method(supervisor.buffer, "stop");
+
+    supervisor.shutdown();
+    supervisor.shutdown();
+
+    assert.equal(stopSpy.mock.callCount(), 1, "only the first shutdown reached the buffer's teardown");
+    assert.equal(supervisor.buffer.isStarted, false, "the buffer is stopped either way");
+  });
+
   // The latch is per-instance by construction: tearing one supervisor down says nothing about a fresh one, which the streaming-delegate rebuild path constructs. A
   // fresh supervisor on the same host starts its buffer normally.
   test("a fresh supervisor instance on the same host is unlatched", async () => {
@@ -591,8 +609,9 @@ describe("timeshift supervisor shutdown latch", () => {
   // establishment then releases, the start reaches its commit point, reads its owner's armed latch, disposes the subscription it opened and declines - so the pass
   // resumes into the narration guard having never started.
   //
-  // The stopped-emit count is what tells the two behaviors apart: shutdown's own stop is the sole emitter here, while a start that commits and is released by the
-  // follow-up pass emits a second time. The DEBUG stop line counts the same way - the follow-up pass has nothing left to stop, where a committed start gives it work.
+  // The stopped-emit count is what tells the two behaviors apart. Nothing here ever tore a running buffer down, so nothing reports one: shutdown's stop found no
+  // committed subscription and the declined start released only what it had opened. A start that DID commit would be torn down by the follow-up pass and report it,
+  // so the silence is the pin. The DEBUG stop line counts the same way - the follow-up pass has nothing left to stop, where a committed start gives it work.
   test("a shutdown that races an in-flight start declines the commit and disposes the subscription", async () => {
 
     const { controller, host, logEntries } = makeTestCameraHost();
@@ -630,7 +649,7 @@ describe("timeshift supervisor shutdown latch", () => {
     await enablePromise;
     await settle();
 
-    assert.equal(stoppedEmits, 1, "shutdown's own stop is the sole teardown emit - a committed start would be released by the follow-up pass and emit again");
+    assert.equal(stoppedEmits, 0, "no teardown was reported because none happened - a committed start would be released by the follow-up pass and report that");
     assert.equal(countLogs(logEntries, "debug", "Timeshift buffer stopped."), 0, "the follow-up pass had nothing to stop, since the commit never landed");
     assert.equal(double.disposed, true, "the declined start disposed the subscription it opened");
     assert.equal(supervisor.buffer.isStarted, false, "the buffer never started");

@@ -15,12 +15,14 @@
  */
 import type { CameraRecordingConfiguration, RecordingPacket } from "homebridge";
 import { HDSProtocolSpecificErrorReason, HKSV_TIMEOUT, TestRecordingProcess, TestRecordingProcessFactory } from "homebridge-plugin-utils";
+import type { LivestreamSubscriptionState, Segment } from "unifi-protect";
 import { PROTECT_SEGMENT_RESOLUTION, PROTECT_TIMESHIFT_BUFFER_MAXDURATION } from "../settings.ts";
 import type { RecordingProcessFactory, TestClock, TestRecordingProcessInit } from "homebridge-plugin-utils";
 import type { TestCameraHost, TestLogEntry, TestProtectNvr } from "../testing.helpers.ts";
-import { TestStreamingDelegate, makeTestCameraHost, settle } from "../testing.helpers.ts";
+import { TestStreamingDelegate, makeLivestreamSubscriptionDouble, makeTestCameraHost, settle } from "../testing.helpers.ts";
 import { after, describe, test } from "node:test";
 import type { ChannelProfile } from "./resolution.ts";
+import type { LivestreamSubscription } from "./livestream.ts";
 import { ProtectRecordingDelegate } from "./record.ts";
 import { ProtectTimeshiftSupervisor } from "./timeshift-supervisor.ts";
 import assert from "node:assert/strict";
@@ -125,6 +127,44 @@ async function drainPaced(gen: AsyncGenerator<RecordingPacket>, clock: TestClock
   }
 
   return packets;
+}
+
+/* A livestream subscription that establishes and delivers media normally, and can then be told its initialization segment is gone.
+ *
+ * That is the state a livestream which dies between the buffer's reconcile and the recording delegate's transmit attempt leaves behind: the buffer still holds its
+ * committed channel profile and a full window of media, so every gate ahead of the transmit attempt clears, while the subscription underneath can no longer produce the
+ * initialization segment a fresh transmit needs. It is the one arrangement that reaches transmitStart's own decline rather than one of the earlier gates. Every other
+ * member delegates to the harness's own subscription double, so the initialization segment is the single thing that differs.
+ */
+function makeInitLosingSubscription(mediaSegments: number): { loseInitSegment: () => void; subscription: LivestreamSubscription } {
+
+  const backing = makeLivestreamSubscriptionDouble({ mediaSegments });
+
+  let initLost = false;
+
+  return {
+
+    loseInitSegment: (): void => { initLost = true; },
+    subscription: {
+
+      get id(): string {
+
+        return backing.id;
+      },
+      get initSegment(): { codec: string; data: Buffer } | null {
+
+        return initLost ? null : backing.initSegment;
+      },
+      reassess: (): void => backing.reassess(),
+      get state(): LivestreamSubscriptionState {
+
+        return backing.state;
+      },
+      whenEstablished: (): Promise<boolean> => backing.whenEstablished(),
+      [Symbol.asyncIterator]: (): AsyncIterator<Segment> => backing[Symbol.asyncIterator](),
+      [Symbol.asyncDispose]: async (): Promise<void> => { await backing[Symbol.asyncDispose](); }
+    }
+  };
 }
 
 // The arranged transmitting delegate plus the handles a test asserts against. The clock is the controllable TestClock the delegate's pacing awaits; logEntries captures
@@ -256,6 +296,60 @@ describe("recording delegate transmit-path behavior", () => {
     assert.equal(packets[0]?.isLast, true);
     assert.equal(packets[0]?.data.length, 1);
     assert.equal(recordingProcessFactory.createCalls.length, 0);
+  });
+
+  /* The transmit path's last gate, and the buffer revival that rides it.
+   *
+   * The buffer holds a committed profile and a full window of media, so every earlier gate clears, but the subscription underneath can no longer produce an
+   * initialization segment and the transmit attempt declines. Reaching this gate at all REQUIRES a committed buffer: the gate ahead of it returns on a null channel
+   * profile, the body between them is synchronous, and the buffer commits and clears its subscription and profile as one pair. So the stop this branch runs is a
+   * genuine teardown, its "stopped" report reaches the supervisor's listener, and that is what asks supervision to re-establish the buffer for the next attempt.
+   *
+   * The pin is therefore two-sided against the emission contract. Exactly one reconcile means the teardown was reported once and revival was requested once; zero would
+   * mean an over-broad emission gate had silenced a report of a teardown that genuinely happened, taking the revival with it, and two would mean the revival was being
+   * requested twice over. The error-log assertion runs first and proves THIS gate was the one reached rather than one of the ones ahead of it, which is what keeps the
+   * reconcile count from being a coincidence.
+   */
+  test("a transmit attempt that finds no usable buffer tears the buffer down and revives supervision exactly once", async (t) => {
+
+    const recordingProcessFactory = new TestRecordingProcessFactory();
+    const { controller, host, logEntries } = makeTestCameraHost({ recordingProcessFactory });
+
+    controllers.push(controller);
+
+    host.stream = new TestStreamingDelegate();
+    host.selectSubstrateChannel = (): ChannelProfile => makeChannelProfile(host);
+
+    // Over-fill the buffer so the time gate clears with room to spare, exactly as the transmitting arrange does.
+    const { loseInitSegment, subscription } = makeInitLosingSubscription(Math.ceil(PROTECT_TIMESHIFT_BUFFER_MAXDURATION / PROTECT_SEGMENT_RESOLUTION) + 10);
+
+    host.livestreamSubscriptions.push(subscription);
+
+    const supervisor = new ProtectTimeshiftSupervisor(host);
+    const delegate = new ProtectRecordingDelegate(host, supervisor);
+
+    delegate.updateRecordingConfiguration(makeRecordingConfig());
+    delegate.updateRecordingActive(true);
+    await settle();
+
+    assert.equal(supervisor.buffer.isStarted, true, "the arrange left the buffer running with its profile committed");
+    assert.equal(host.livestreamCalls.length, 1, "exactly one livestream backs the buffer, so the arranged subscription is the committed one");
+
+    // The livestream underneath dies: the buffer keeps its profile and its media, while a fresh transmit can no longer be initialized.
+    loseInitSegment();
+
+    const reconcileSpy = t.mock.method(supervisor, "reconcile");
+    const packets: RecordingPacket[] = [];
+
+    for await (const packet of delegate.handleRecordingStreamRequest(1, new AbortController().signal)) {
+
+      packets.push(packet);
+    }
+
+    assert.equal(countLogs(logEntries, "error", "the livestream connection is not ready"), 1,
+      "the attempt declined at the transmit gate, not at one of the gates ahead of it");
+    assert.equal(reconcileSpy.mock.callCount(), 1, "the genuine teardown was reported once and asked supervision to re-establish the buffer once");
+    assert.equal(packets.length, 1, "the event declined with the single end-of-stream marker");
   });
 
   // Test C - per-event RecordingSession reset. Two successive events on one armed delegate, each create handing back a fresh configured process (3 media for event 1, 1

@@ -58,6 +58,9 @@ export interface StreamingDelegate {
   hksv: Nullable<ProtectRecordingDelegate>;
   readonly probesize: number;
   resetProbesizeOverride(): void;
+
+  // End every streaming session this delegate holds and wind its probesize self-tuning back. Safe to call more than once - a repeat call finds no sessions and nothing
+  // to reset - so a caller that pairs this with another teardown never needs to track whether it has already run.
   shutdown(): void;
 
   // The camera's standing-buffer supervision seam: the timeshift supervisor that owns the standing buffer's lifecycle for an HKSV-capable camera, or null when the

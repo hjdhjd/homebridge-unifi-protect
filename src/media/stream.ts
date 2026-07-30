@@ -1412,6 +1412,9 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
    * Every path that calls shutdown is ending this instance's service life, so the teardown here is total: every session the delegate still holds ends, streaming or
    * still establishing, and the self-tuning story ends with them. A pending auto-reset timer would otherwise keep a retired delegate reachable for the remainder of its
    * window, and resetProbesizeOverride owns the clear-and-reset, so the tuning state and its timer always end together.
+   *
+   * Safe to call more than once - a repeat call finds no sessions and nothing to reset. That holds structurally rather than through a latch: both session maps drain on
+   * the first call, and the reset assigns fixed values, so a latch field here would add state without adding a guarantee.
    */
   public shutdown(): void {
 

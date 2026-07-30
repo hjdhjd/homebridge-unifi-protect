@@ -280,6 +280,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
   // downstream stall timeouts (FFmpeg's internal timeout is 6-8 seconds). When not transmitting, no consumer cares and the emit would be noise.
   private finalizeSubscription(): void {
 
+    const wasStarted = this.isStarted;
     const wasTransmitting = this._isTransmitting;
     const cause = this._pendingStopCause;
 
@@ -294,9 +295,15 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
       this.emit("terminated");
     }
 
-    // The supervisor listens for this on every teardown, transmitting or not, so it can decide whether to re-establish immediately ("ended") or leave the revival to
-    // the availability edge ("giveUp"). Reset the pending cause afterward so the next teardown defaults to the recoverable case unless the iterator raises it again.
-    this.emit("stopped", cause);
+    // `stopped` reports every genuine teardown, transmitting or not, and only those: a stop that found nothing running tore nothing down and reports nothing. Listeners
+    // read it to decide whether to re-establish immediately ("ended") or leave the revival to the availability edge ("giveUp"), so an emission from a teardown that
+    // never happened would ask them to answer for an event with no cause. Reset the pending cause afterward - unconditionally, so a declined teardown cannot strand a
+    // raised cause - and the next teardown defaults to the recoverable case unless the iterator raises it again.
+    if(wasStarted) {
+
+      this.emit("stopped", cause);
+    }
+
     this._pendingStopCause = "ended";
   }
 
@@ -373,7 +380,8 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
 
   // Stop timeshifting the livestream. Dispose the subscription (the subscription's internal disposal handles its own listeners, decrements the reference count
   // on the shared session, and tears down the underlying connection if we were the last subscriber) then route through finalizeSubscription to reset state and
-  // fire the terminated emit if a transmit session was active.
+  // fire the terminated emit if a transmit session was active. Safe to call more than once, and safe to call on a buffer that never started: a stop that finds no
+  // subscription resets state that is already at rest and emits nothing, so callers never need to check first.
   public stop(): boolean {
 
     if(this.subscription) {
