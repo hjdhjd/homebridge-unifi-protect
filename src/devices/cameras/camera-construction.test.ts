@@ -309,3 +309,63 @@ describe("camera HKSV self-heal observer", () => {
     controller.abort();
   });
 });
+
+describe("the streaming-delegate construction gate", () => {
+
+  // Each side of the gate builds its own camera against fresh harness doubles, so the controller phase is settled BEFORE construction runs rather than mutated
+  // underneath a shared one.
+  const gateControllers: AbortController[] = [];
+
+  after(() => {
+
+    for(const controller of gateControllers) {
+
+      controller.abort();
+    }
+  });
+
+  // Construct a real ProtectCamera end to end, optionally against a controller that has already entered shutdown. Everything the camera runs here - configureHints,
+  // configureDevice, the floating configure IIFE, reconcileStreaming - is the production path; only the NVR, accessory, projection, and factory are doubles.
+  async function constructCamera(phase?: TestProtectNvr["phase"]): Promise<{ camera: ProtectCamera; factory: TestStreamingDelegateFactory }> {
+
+    const gateConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS });
+    const gateStore = new TestStateStore(makeProtectState({ cameras: [gateConfig] }));
+    const { controller, factory, nvr } = makeTestNvr({ store: gateStore });
+
+    gateControllers.push(controller);
+
+    if(phase) {
+
+      nvr.phase = phase;
+    }
+
+    const gateAccessory = makeTestAccessory("Gate Camera", "88888888-9999-aaaa-bbbb-cccccccccccc");
+    const camera = new ProtectCamera(nvr as unknown as ProtectNvr, gateAccessory as unknown as ProtectAccessory,
+      new TestCameraProjection(gateConfig.id, gateStore) as unknown as Camera);
+
+    await settle();
+
+    return { camera, factory };
+  }
+
+  /* The control side, and it is what gives the gate side its meaning: without it, a rig that never reached construction at all - or an unrelated early return anywhere
+   * ahead of the gate - would satisfy the same empty-factory end state. This proves the arrangement genuinely reaches the construction the gate exists to decline.
+   */
+  test("a camera on a running controller stands up its streaming delegate", async () => {
+
+    const { camera, factory } = await constructCamera();
+
+    assert.equal(factory.createCalls.length, 1, "construction reached the factory exactly once");
+    assert.equal(camera.stream, factory.createCalls[0]?.delegate, "the camera holds the delegate the factory returned");
+  });
+
+  // The gate side. The shutdown teardown walk visits each camera exactly once, so a delegate built after it has passed would hold a registered controller and a pooled
+  // livestream seat that nothing would ever release. Construction declines outright instead.
+  test("a camera whose controller has begun shutting down stands up no streaming delegate", async () => {
+
+    const { camera, factory } = await constructCamera("shuttingDown");
+
+    assert.equal(factory.createCalls.length, 0, "construction never reached the factory");
+    assert.equal(camera.stream, undefined, "the camera holds no delegate");
+  });
+});

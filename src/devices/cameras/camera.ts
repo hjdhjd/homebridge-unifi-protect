@@ -170,6 +170,14 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     return this.nvr.config.overrideAddress ?? this.ufp.connectionHost ?? this.nvr.ufp.host;
   }
 
+  // Whether a streaming delegate may be stood up for this camera at all. A delegate is never built for a camera that is being removed, nor once the controller has begun
+  // shutting down: the shutdown teardown walk visits each camera exactly once, so a delegate built after it has passed would hold a registered CameraController and a
+  // pooled livestream seat that no path would ever tear down. Protected so the package camera consults the same rule at its own construction site.
+  protected get canConfigureStream(): boolean {
+
+    return !this.isDeleted && (this.nvr.phase !== "shuttingDown");
+  }
+
   /* Configure device-specific settings for this device. The base derives the shared hints and assigns them, then this pass spreads that bag into the camera's own
    * literal, so the camera family's complete shape exists in one expression. Smart detection is the one hint whose type lives on the base while its real value is derived
    * here, and it is hoisted into a local first because two keys need the same freshly-computed value: an object literal's value expressions all evaluate against the
@@ -1335,8 +1343,8 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
   // The create-once half: stand up the HomeKit streaming delegate and register its CameraController, exactly once per instance. This half is SYNCHRONOUS by design -
   // there is no await between the this.stream gate and configureController, so two concurrent callers can never both pass the gate while this.stream is undefined
   // (nothing yields between the gate and the assignment). That race-freedom invariant is load-bearing for the channels / videoCodec observers, which can both fire in
-  // one drain. The isDeleted guard covers the rebuild path, which can fire reconcileStreaming on an accessory mid-removal: a being-removed camera must not
-  // re-register a controller.
+  // one drain. The construction gate covers the rebuild path, which can fire reconcileStreaming on an accessory mid-removal or after controller shutdown has begun:
+  // neither a being-removed camera nor a shutting-down controller may register a controller that no teardown walk would ever reach.
   private configureStreamingDelegate(): boolean {
 
     // If we've already configured the HomeKit video streaming delegate, we're done here.
@@ -1345,8 +1353,8 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
       return true;
     }
 
-    // The accessory is being removed - do not stand up a controller on it.
-    if(this.isDeleted) {
+    // The accessory is being removed, or the controller is shutting down - do not stand up a controller on it.
+    if(!this.canConfigureStream) {
 
       return false;
     }
@@ -1446,8 +1454,9 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
    * late doorbell-ness or a late speaker. The teardown's removeController runs synchronously; clearing this.stream re-opens the create-once gate; reconcileStreaming's
    * create-half (configureStreamingDelegate) lands on the next microtask after refreshChannelProfiles resolves, so remove-before-configure ordering holds, and exactly
    * one removeController plus one configureController fire here. This is today's shipped reclassification semantics - the HKSV factory reset (removeController) and
-   * the supported-config hash change - preserved at exactly this transition. The create-half's isDeleted guard prevents a re-register if the accessory is removed
-   * mid-window. (It inherits today's benign fire-and-forget updateRecordingActive(false) teardown race - parity, not introduced here.)
+   * the supported-config hash change - preserved at exactly this transition. The tail can resolve on a later microtask - refreshChannelProfiles may await a write-through
+   * update - so the create-half's construction gate is what prevents a re-register when the accessory is removed, or controller shutdown begins, inside that window.
+   * (It inherits today's benign fire-and-forget updateRecordingActive(false) teardown race - parity, not introduced here.)
    */
   private rebuildStreamingDelegate(): void {
 

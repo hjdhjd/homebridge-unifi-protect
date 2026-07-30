@@ -144,6 +144,13 @@ export class ProtectCameraPackage extends ProtectCamera {
       return true;
     }
 
+    // The accessory is being removed, or the controller is shutting down - the same construction gate the parent applies, so a package stream is never stood up where
+    // nothing would tear it down again.
+    if(!this.canConfigureStream) {
+
+      return false;
+    }
+
     // The controller has not provisioned the package channel yet. The accessory itself (motion, flashlight) is fully functional in the meantime; it simply
     // advertises no video stream until the channel arrives and the observer re-attempts.
     const profile = this.selectChannel();
