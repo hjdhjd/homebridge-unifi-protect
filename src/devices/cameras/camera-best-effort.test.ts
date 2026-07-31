@@ -18,17 +18,19 @@
  * after the tick.
  * The flashlight retry backoff is node:timers/promises and is un-reachable by mock.timers, so the one failure test pays its real ~2-second retry budget by design.
  */
-import { Characteristic, Service, TestCameraProjection, TestStateStore, makeCameraConfig, makeProtectState, makeTestAccessory, makeTestNvr, settle }
-  from "../../testing.helpers.ts";
+import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../../testing.helpers.ts";
 import { G2_PRO_CHANNELS, G6_PRO_ENTRY_CHANNELS } from "../../camera.fixtures.ts";
-import type { TestAccessory, TestCharacteristic, TestProtectNvr } from "../../testing.helpers.ts";
+import type { TestAccessory, TestCharacteristic } from "../../testing.helpers.ts";
+import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
 import { afterEach, describe, mock, test } from "node:test";
 import type { Camera } from "unifi-protect";
 import type { ProtectAccessory } from "../../types.ts";
 import { ProtectCamera } from "./camera.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
 import { ProtectReservedNames } from "../../types.ts";
+import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
+import { makeTestNvr } from "../../nvr/testing.helpers.ts";
 
 // The construction handle a lux test holds: the camera's accessory (the LightSensor lives here), the NVR double (its mqtt double carries the poll's publish, its
 // client.connection.isHealthy is the reachability knob), the held projection (luxReading / luxRejection / luxCalls), and the store. Held so the afterEach can unwind the

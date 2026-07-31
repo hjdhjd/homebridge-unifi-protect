@@ -19,17 +19,19 @@
 import { CAMERA_FIXTURES, G2_PRO_CHANNELS, G6_PRO_ENTRY_CHANNELS } from "../../camera.fixtures.ts";
 import type { Camera, ProtectCameraConfig } from "unifi-protect";
 import type { CameraFixture, EntryProjection } from "../../camera.fixtures.ts";
-import { Characteristic, Service, TestCameraProjection, TestStateStore, makeCameraConfig, makeProtectState, makeTestAccessory, makeTestNvr, settle }
-  from "../../testing.helpers.ts";
-import type { TestAccessory, TestProtectNvr, TestStreamingDelegate, TestStreamingDelegateFactory, TestTimeshiftSupervisor } from "../../testing.helpers.ts";
+import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../../testing.helpers.ts";
+import type { TestAccessory, TestStreamingDelegate, TestStreamingDelegateFactory, TestTimeshiftSupervisor } from "../../testing.helpers.ts";
+import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
 import { after, before, describe, test } from "node:test";
 import type { ObserverWakePayload } from "../../diagnostics.ts";
 import type { ProtectAccessory } from "../../types.ts";
 import { ProtectCamera } from "./camera.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
 import type { Resolution } from "homebridge";
+import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
+import { makeTestNvr } from "../../nvr/testing.helpers.ts";
 
 // Resolve a named fixture from the golden-master corpus, failing loudly if the corpus ever renames it.
 function fixtureByModel(model: string): CameraFixture {

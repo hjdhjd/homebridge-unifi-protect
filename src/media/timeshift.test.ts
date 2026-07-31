@@ -17,9 +17,9 @@
  * public getters - never a private field (_segments, _pendingDiscontinuity, _isTransmitting, _lastKeyframeTime, subscription). Because both the per-push forward and
  * transmitStart's own concat emit the "segment" event, forwarding tests assert on the forwarded PAYLOAD (which fragment's data), never the event count.
  */
-import type { ControllableLivestreamDouble, TestCameraHost, TestLogEntry, TestProtectNvr } from "../testing.helpers.ts";
+import type { ControllableLivestreamDouble, TestCameraHost } from "./testing.helpers.ts";
 import { after, describe, test } from "node:test";
-import { makeControllableLivestreamDouble, makeKeyframeFragment, makeNonKeyframeFragment, makeTestCameraHost, settle } from "../testing.helpers.ts";
+import { makeControllableLivestreamDouble, makeKeyframeFragment, makeNonKeyframeFragment, makeTestCameraHost } from "./testing.helpers.ts";
 import type { ChannelProfile } from "./resolution.ts";
 import { PROTECT_LIVESTREAM_API_IDR_INTERVAL } from "../settings.ts";
 import { ProtectLivestreamUnavailableError } from "unifi-protect";
@@ -27,7 +27,10 @@ import { ProtectTimeshiftBuffer } from "./timeshift.ts";
 import type { Segment } from "unifi-protect";
 import type { SegmentRole } from "./timeshift.ts";
 import type { TestClock } from "homebridge-plugin-utils";
+import type { TestLogEntry } from "../testing.helpers.ts";
+import type { TestProtectNvr } from "../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
+import { settle } from "../testing.helpers.ts";
 
 // The keyframe-staleness threshold the timeshift compares against: PROTECT_LIVESTREAM_API_IDR_INTERVAL (5s) doubled, in milliseconds. A keyframe older than this makes
 // snapshotSource read "stale"; younger reads "fresh". The suite drives the boundary deterministically by advancing the TestClock across exactly this much.

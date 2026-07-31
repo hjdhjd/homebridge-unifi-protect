@@ -16,8 +16,9 @@
  */
 import { CAMERA_FIXTURES, G2_PRO_CHANNELS, MIXED_RTSP_DISABLED_CHANNELS } from "../../camera.fixtures.ts";
 import type { Camera, ProtectCameraConfig } from "unifi-protect";
-import { TestCameraProjection, TestStateStore, makeCameraConfig, makeProtectState, makeTestAccessory, makeTestNvr, settle } from "../../testing.helpers.ts";
+import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
 import type { TestLogEntry, TestStreamingDelegateFactory } from "../../testing.helpers.ts";
+import { TestStateStore, makeProtectState, makeTestAccessory, settle } from "../../testing.helpers.ts";
 import { afterEach, describe, test } from "node:test";
 import type { CameraFixture } from "../../camera.fixtures.ts";
 import type { ProtectAccessory } from "../../types.ts";
@@ -25,6 +26,7 @@ import { ProtectAuthorizationError } from "unifi-protect";
 import { ProtectCamera } from "./camera.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
 import assert from "node:assert/strict";
+import { makeTestNvr } from "../../nvr/testing.helpers.ts";
 
 // The authorization warn the degraded arm logs, asserted verbatim so the user-facing guidance is pinned, not paraphrased.
 const AUTH_WARN = "Unable to enable RTSP on all of the camera's channels because this account does not have the full management role in UniFi Protect. " +

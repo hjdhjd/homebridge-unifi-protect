@@ -16,10 +16,12 @@
  * cascade in the stale-fire scenario is likewise simulated through the double's tail plus the doorbell's cleanup, the same operations the production cascade
  * performs.
  */
-import type { TestAccessory, TestApiCall, TestLogEntry, TestMqttClient, TestProtectNvr } from "../../testing.helpers.ts";
-import { TestCameraProjection, TestStateStore, makeCameraConfig, makeProtectState, makeTestAccessory, makeTestAccessoryFamily, makeTestNvr,
-  settle } from "../../testing.helpers.ts";
+import type { TestAccessory, TestApiCall, TestLogEntry } from "../../testing.helpers.ts";
+import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
+import type { TestMqttClient, TestProtectNvr } from "../../nvr/testing.helpers.ts";
+import { TestStateStore, makeProtectState, makeTestAccessory, settle } from "../../testing.helpers.ts";
 import { describe, test } from "node:test";
+import { makeTestAccessoryFamily, makeTestNvr } from "../../nvr/testing.helpers.ts";
 import type { Camera } from "unifi-protect";
 import type { DoorbellCapability } from "./doorbell.ts";
 import { G6_PRO_ENTRY_CHANNELS } from "../../camera.fixtures.ts";

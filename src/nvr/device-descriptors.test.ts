@@ -5,9 +5,9 @@
  * runtime by building a real device for every category off the harness doubles and asserting it is the expected class reporting its own category.
  */
 import type { Camera, Chime, DeviceCollectionKey, Fob, Light, Relay, Sensor, Viewer } from "unifi-protect";
-import { TestCameraProjection, TestChimeProjection, TestFobProjection, TestLightProjection, TestRelayProjection, TestSensorProjection, TestStateStore,
-  TestViewerProjection, makeCameraConfig, makeChimeConfig, makeFobConfig, makeLightConfig, makeProtectState, makeRelayConfig, makeSensorConfig, makeTestAccessory,
-  makeTestNvr, makeViewerConfig, settle } from "../testing.helpers.ts";
+import { TestCameraProjection, TestChimeProjection, TestFobProjection, TestLightProjection, TestRelayProjection, TestSensorProjection, TestViewerProjection,
+  makeCameraConfig, makeChimeConfig, makeFobConfig, makeLightConfig, makeRelayConfig, makeSensorConfig, makeViewerConfig } from "../devices/testing.helpers.ts";
+import { TestStateStore, makeProtectState, makeTestAccessory, settle } from "../testing.helpers.ts";
 import { describe, test } from "node:test";
 import { DEVICE_COLLECTION_KEYS } from "unifi-protect";
 import { G2_PRO_CHANNELS } from "../camera.fixtures.ts";
@@ -22,6 +22,7 @@ import { ProtectRelay } from "../devices/relay.ts";
 import { ProtectSensor } from "../devices/sensor.ts";
 import { ProtectViewer } from "../devices/viewer.ts";
 import assert from "node:assert/strict";
+import { makeTestNvr } from "./testing.helpers.ts";
 
 // One category's construction against the harness doubles: seed a store with the category's config, build the real ProtectDevice off its Test projection, and hand back
 // the constructed device plus the harness abort controller so the caller can unwind the observe loops the construction spawned. The construction-seam casts mirror every

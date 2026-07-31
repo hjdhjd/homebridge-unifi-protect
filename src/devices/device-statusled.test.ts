@@ -28,9 +28,9 @@
  * status-LED switch is neither observeState- nor MQTT-driven (it is a HAP confirm-plus-state path), so there is no observer-wake subscription, no MQTT assertion, and no
  * bare-revert await - the onSet arms no timer.
  */
-import { Characteristic, Service, TestBaseDevice, TestSensorProjection, TestStateStore, makeProtectState, makeSensorConfig, makeTestAccessory, makeTestNvr }
-  from "../testing.helpers.ts";
+import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
 import type { TestAccessory, TestLogEntry } from "../testing.helpers.ts";
+import { TestBaseDevice, TestSensorProjection, makeSensorConfig } from "./testing.helpers.ts";
 import { afterEach, describe, test } from "node:test";
 import type { ProtectAccessory } from "../types.ts";
 import { ProtectAuthorizationError } from "unifi-protect";
@@ -38,6 +38,7 @@ import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
 import type { Sensor } from "unifi-protect";
 import assert from "node:assert/strict";
+import { makeTestNvr } from "../nvr/testing.helpers.ts";
 
 // The device logger prefixes every line with the device name; the harness renders what the real Homebridge logger would emit into entry.formatted (for example
 // "Test Sensor: Status indicator light enabled."), so a log assertion matches a substring of that rendered line at the given level, mirroring the device-motion / chime

@@ -21,7 +21,8 @@
 import type { ProtectAccessory, WithoutIdentity } from "../types.ts";
 import type { ProtectCameraConfig, ProtectChimeConfig, ProtectDeviceConfig, ProtectFobConfig, ProtectLightConfig, ProtectRelayConfig, ProtectSensorConfig,
   ProtectViewerConfig, Sensor } from "unifi-protect";
-import { TestBaseDevice, TestSensorProjection, TestStateStore, makeProtectState, makeSensorConfig, makeTestAccessory, makeTestNvr } from "../testing.helpers.ts";
+import { TestBaseDevice, TestSensorProjection, makeSensorConfig } from "./testing.helpers.ts";
+import { TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
 import { after, describe, test } from "node:test";
 import type { ProtectCamera } from "./cameras/camera.ts";
 import type { ProtectChime } from "./chime.ts";
@@ -33,6 +34,7 @@ import type { ProtectRelay } from "./relay.ts";
 import type { ProtectSensor } from "./sensor.ts";
 import type { ProtectViewer } from "./viewer.ts";
 import assert from "node:assert/strict";
+import { makeTestNvr } from "../nvr/testing.helpers.ts";
 
 // Strict type identity. Two types are identical exactly when these two conditional-type signatures are mutually assignable - the relation TypeScript itself uses when it
 // compares deferred conditional types, and the only relation strong enough to catch a shift that mere assignability would let through. Each inner signature deliberately

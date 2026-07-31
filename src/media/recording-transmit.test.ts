@@ -18,13 +18,16 @@ import { HDSProtocolSpecificErrorReason, HKSV_TIMEOUT, TestRecordingProcess, Tes
 import type { LivestreamSubscriptionState, Segment } from "unifi-protect";
 import { PROTECT_SEGMENT_RESOLUTION, PROTECT_TIMESHIFT_BUFFER_MAXDURATION } from "../settings.ts";
 import type { RecordingProcessFactory, TestClock, TestRecordingProcessInit } from "homebridge-plugin-utils";
-import type { TestCameraHost, TestLogEntry, TestProtectNvr } from "../testing.helpers.ts";
-import { TestStreamingDelegate, makeLivestreamSubscriptionDouble, makeTestCameraHost, settle } from "../testing.helpers.ts";
+import { TestStreamingDelegate, settle } from "../testing.helpers.ts";
 import { after, describe, test } from "node:test";
+import { makeLivestreamSubscriptionDouble, makeTestCameraHost } from "./testing.helpers.ts";
 import type { ChannelProfile } from "./resolution.ts";
 import type { LivestreamSubscription } from "./livestream.ts";
 import { ProtectRecordingDelegate } from "./record.ts";
 import { ProtectTimeshiftSupervisor } from "./timeshift-supervisor.ts";
+import type { TestCameraHost } from "./testing.helpers.ts";
+import type { TestLogEntry } from "../testing.helpers.ts";
+import type { TestProtectNvr } from "../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 
 // The exact pacing interval the delegate computes between yields: HKSV_TIMEOUT minus the 500ms HomeKit-timeout safety margin. Because the injected clock is

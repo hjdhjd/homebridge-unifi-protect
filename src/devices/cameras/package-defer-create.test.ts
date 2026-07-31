@@ -10,17 +10,19 @@
  * dimensions never wakes the observer at all - the computed-primitive selector's value dedup is the change detection.
  */
 import { G6_PRO_ENTRY_CHANNELS, PACKAGE_FIXTURES } from "../../camera.fixtures.ts";
-import { Service, TestCameraProjection, TestStateStore, makeCameraConfig, makeProtectState, makeTestAccessory, makeTestNvr, settle } from "../../testing.helpers.ts";
-import type { TestAccessory, TestLogEntry, TestProtectNvr } from "../../testing.helpers.ts";
+import { Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../../testing.helpers.ts";
+import type { TestAccessory, TestLogEntry, TestStreamingDelegateFactory } from "../../testing.helpers.ts";
+import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
 import { after, before, describe, test } from "node:test";
 import type { Camera } from "unifi-protect";
 import type { ObserverWakePayload } from "../../diagnostics.ts";
 import type { ProtectAccessory } from "../../types.ts";
 import { ProtectCamera } from "./camera.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
-import type { TestStreamingDelegateFactory } from "../../testing.helpers.ts";
+import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
+import { makeTestNvr } from "../../nvr/testing.helpers.ts";
 
 // The deferral sentence's distinguishing fragment, used to count the user-facing narration exactly once.
 const DEFERRAL_FRAGMENT = "provisioning the package camera channel";

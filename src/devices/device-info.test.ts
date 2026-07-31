@@ -30,16 +30,17 @@
  * The isolation model is per-test-fresh: a beforeEach rebuilds a fresh device so the characteristic state, the observer baselines, and store.observerCount are clean
  * every test, and the wake log is windowed per push via a captured baseline. An afterEach unwinds the device's per-accessory abort.
  */
-import { Characteristic, Service, TestBaseDevice, TestSensorProjection, TestStateStore, makeProtectState, makeSensorConfig, makeTestAccessory, makeTestNvr, settle }
-  from "../testing.helpers.ts";
+import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../testing.helpers.ts";
 import type { ProtectSensorConfig, Sensor } from "unifi-protect";
 import type { TestAccessory, TestLogEntry } from "../testing.helpers.ts";
+import { TestBaseDevice, TestSensorProjection, makeSensorConfig } from "./testing.helpers.ts";
 import { after, afterEach, before, beforeEach, describe, test } from "node:test";
 import type { ObserverWakePayload } from "../diagnostics.ts";
 import type { ProtectAccessory } from "../types.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
+import { makeTestNvr } from "../nvr/testing.helpers.ts";
 
 // The device logger prefixes every line with the device name; the harness renders what the real Homebridge logger would emit into entry.formatted (for example
 // "Test Sensor: Detected a name change on the controller; updating the HomeKit name to Renamed Sensor."), so a log assertion matches a substring of that rendered line

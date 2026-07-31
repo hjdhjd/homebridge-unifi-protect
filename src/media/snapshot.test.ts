@@ -9,12 +9,14 @@
  * serves, and then caches, a frozen image), that an EMPTY buffer declines SILENTLY (no staleness to claim), and that in both cases the chain moves past the buffer to the
  * next source. The freshness DECISION itself - whether the buffer reads fresh, stale, or empty - is covered directly over ProtectTimeshiftBuffer in timeshift.test.ts.
  */
-import type { TestCameraHost, TestLogEntry } from "../testing.helpers.ts";
-import { TestStreamingDelegate, makeTestCameraHost, makeTimeshiftSupervisorDouble, settle } from "../testing.helpers.ts";
+import { TestStreamingDelegate, makeTimeshiftSupervisorDouble, settle } from "../testing.helpers.ts";
 import { after, describe, test } from "node:test";
 import { ProtectSnapshot } from "./snapshot.ts";
 import type { StreamingDelegate } from "./stream-delegate.ts";
+import type { TestCameraHost } from "./testing.helpers.ts";
+import type { TestLogEntry } from "../testing.helpers.ts";
 import assert from "node:assert/strict";
+import { makeTestCameraHost } from "./testing.helpers.ts";
 
 // Every host this suite builds shares its makeTestNvr AbortController. Aborting them in teardown releases the harness signals.
 const controllers: AbortController[] = [];

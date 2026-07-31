@@ -16,17 +16,19 @@
  * The isolation model mirrors the light reference: a beforeEach builds a fresh viewer so the capture arrays, the characteristic state, the observer baselines, and
  * store.observerCount are clean every test, and the wake log is windowed per push via a captured baseline. The afterEach(() => viewer?.cleanup()) unwinds the observers.
  */
-import { Characteristic, Service, TestStateStore, TestViewerProjection, makeLiveviewConfig, makeProtectState, makeTestAccessory, makeTestNvr, makeViewerConfig, settle }
-  from "../testing.helpers.ts";
+import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../testing.helpers.ts";
 import type { ProtectNvrLiveviewConfig, Viewer } from "unifi-protect";
-import type { TestAccessory, TestLogEntry, TestMqttClient } from "../testing.helpers.ts";
+import type { TestAccessory, TestLogEntry } from "../testing.helpers.ts";
+import { TestViewerProjection, makeLiveviewConfig, makeViewerConfig } from "./testing.helpers.ts";
 import { after, afterEach, before, beforeEach, describe, test } from "node:test";
 import type { ObserverWakePayload } from "../diagnostics.ts";
 import type { ProtectAccessory } from "../types.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectViewer } from "./viewer.ts";
+import type { TestMqttClient } from "../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
+import { makeTestNvr } from "../nvr/testing.helpers.ts";
 
 // The device logger prefixes every line with the device name; the harness renders what the real Homebridge logger would emit into entry.formatted (for example
 // "Test Viewer: No liveviews configured."), so a log assertion matches a substring of that rendered line at the given level rather than re-deriving the format args. A

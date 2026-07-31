@@ -21,10 +21,10 @@
  * The isolation model mirrors the light reference: a beforeEach builds a fresh chime so the capture arrays, the characteristic state, the observer baselines, and
  * store.observerCount are clean every test, and the wake log is windowed per push via a captured baseline.
  */
-import { Characteristic, Service, TestChimeProjection, TestStateStore, makeChimeConfig, makeProtectState, makeRingtoneConfig, makeTestAccessory, makeTestNvr, settle }
-  from "../testing.helpers.ts";
+import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../testing.helpers.ts";
 import type { Chime, ProtectRingtoneConfig } from "unifi-protect";
-import type { TestAccessory, TestLogEntry, TestMqttClient } from "../testing.helpers.ts";
+import type { TestAccessory, TestLogEntry } from "../testing.helpers.ts";
+import { TestChimeProjection, makeChimeConfig, makeRingtoneConfig } from "./testing.helpers.ts";
 import { after, afterEach, before, beforeEach, describe, mock, test } from "node:test";
 import type { ObserverWakePayload } from "../diagnostics.ts";
 import type { ProtectAccessory } from "../types.ts";
@@ -32,8 +32,10 @@ import { ProtectAuthorizationError } from "unifi-protect";
 import { ProtectChime } from "./chime.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
+import type { TestMqttClient } from "../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
+import { makeTestNvr } from "../nvr/testing.helpers.ts";
 
 // The device logger prefixes every line with the device name; the harness renders what the real Homebridge logger would emit into entry.formatted (for example
 // "Test Chime: Playing buzzer."), so a log assertion matches a substring of that rendered line at the given level rather than re-deriving the format args. A plain

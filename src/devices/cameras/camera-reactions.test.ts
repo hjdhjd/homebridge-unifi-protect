@@ -29,9 +29,10 @@
  * cleanup() in an afterEach so its per-accessory abort never outlives the test.
  */
 import type { Camera, ProtectCameraConfig } from "unifi-protect";
-import { Characteristic, Service, TestCameraProjection, TestRecordingDispatch, TestStateStore, makeCameraConfig, makeProtectState, makeTestAccessory, makeTestNvr,
-  settle } from "../../testing.helpers.ts";
-import type { TestAccessory, TestProtectNvr, TestStreamingDelegateFactory } from "../../testing.helpers.ts";
+import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../../testing.helpers.ts";
+import type { TestAccessory, TestStreamingDelegateFactory } from "../../testing.helpers.ts";
+import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
+import { TestRecordingDispatch, makeTestNvr } from "../../nvr/testing.helpers.ts";
 import { afterEach, describe, test } from "node:test";
 import { G2_PRO_CHANNELS } from "../../camera.fixtures.ts";
 import type { ObserverWakePayload } from "../../diagnostics.ts";
@@ -40,6 +41,7 @@ import { ProtectCamera } from "./camera.ts";
 import type { ProtectEventDispatch } from "../../nvr/event-dispatch.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
 import { ProtectReservedNames } from "../../types.ts";
+import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 
 // Confine the lone partial-config cast here, mirroring makeCameraConfig's single-confined-cast discipline: pushCameraPatch's patch is typed as a Partial of the full wire

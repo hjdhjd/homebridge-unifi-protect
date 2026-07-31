@@ -6,7 +6,8 @@
  * band to be evaluated correctly. This suite pins that behavior at the getAudioFilters boundary: fed the doorbell's true 48 kHz, a 9 kHz lowpass survives; fed 16 kHz,
  * it is dropped.
  */
-import { TestCameraProjection, TestStateStore, makeCameraConfig, makeProtectState, makeTestAccessory, makeTestNvr, settle } from "../../testing.helpers.ts";
+import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
+import { TestStateStore, makeProtectState, makeTestAccessory, settle } from "../../testing.helpers.ts";
 import { describe, test } from "node:test";
 import type { Camera } from "unifi-protect";
 import { G2_PRO_CHANNELS } from "../../camera.fixtures.ts";
@@ -15,6 +16,7 @@ import { ProtectCamera } from "./camera.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
 import assert from "node:assert/strict";
 import { livestreamAudioSampleRate } from "unifi-protect";
+import { makeTestNvr } from "../../nvr/testing.helpers.ts";
 
 describe("doorbell audio-filter Nyquist validation", () => {
 

@@ -20,15 +20,18 @@
  * path is exercised only to the registration boundary (the subscription is recorded), not through a live MQTT broker.
  */
 import { G2_PRO_CHANNELS, G6_PRO_ENTRY_CHANNELS } from "../../camera.fixtures.ts";
-import { Service, TestCameraProjection, TestStateStore, makeCameraConfig, makeProtectState, makeTestAccessory, makeTestNvr, settle } from "../../testing.helpers.ts";
-import type { TestAccessory, TestLogEntry, TestProtectNvr } from "../../testing.helpers.ts";
+import { Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../../testing.helpers.ts";
+import type { TestAccessory, TestLogEntry } from "../../testing.helpers.ts";
+import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
 import { describe, test } from "node:test";
 import type { Camera } from "unifi-protect";
 import type { ProtectAccessory } from "../../types.ts";
 import { ProtectCamera } from "./camera.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
 import { ProtectReservedNames } from "../../types.ts";
+import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
+import { makeTestNvr } from "../../nvr/testing.helpers.ts";
 
 // Construct a real ProtectCamera, with the casts confined to this one seam - the instance under test is the production class and its composed capability.
 function construct(nvr: TestProtectNvr, accessory: TestAccessory, projection: TestCameraProjection): ProtectCamera {

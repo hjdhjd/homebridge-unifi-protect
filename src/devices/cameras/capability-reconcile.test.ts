@@ -22,9 +22,9 @@
  * early-return removal (lock only), and the !existing || (source === "construct") establishment condition.
  */
 import type { Camera, ProtectCameraConfig } from "unifi-protect";
-import { Characteristic, Service, TestCameraProjection, TestStateStore, makeCameraConfig, makeProtectState, makeTestAccessory, makeTestNvr, settle }
-  from "../../testing.helpers.ts";
-import type { TestAccessory, TestProtectNvr, TestService } from "../../testing.helpers.ts";
+import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../../testing.helpers.ts";
+import type { TestAccessory, TestService } from "../../testing.helpers.ts";
+import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
 import { describe, mock, test } from "node:test";
 import { G2_PRO_CHANNELS } from "../../camera.fixtures.ts";
 import type { ObserverWakePayload } from "../../diagnostics.ts";
@@ -32,8 +32,10 @@ import type { ProtectAccessory } from "../../types.ts";
 import { ProtectCamera } from "./camera.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
 import { ProtectReservedNames } from "../../types.ts";
+import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
+import { makeTestNvr } from "../../nvr/testing.helpers.ts";
 
 // Construct a real ProtectCamera, with the casts confined to this one seam - the instance under test is the production class and its real configure path.
 function construct(nvr: TestProtectNvr, accessory: TestAccessory, projection: TestCameraProjection): ProtectCamera {

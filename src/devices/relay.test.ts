@@ -14,9 +14,8 @@
  * only makeRelayConfig, TestRelayProjection, the slice keys, the observer count (two base, one per output, plus ledSettings), and the relay-specific reactions are
  * relay-particular.
  */
-import { Characteristic, Service, TestRelayProjection, TestStateStore, makeProtectState, makeRelayConfig, makeTestAccessory, makeTestNvr, settle }
-  from "../testing.helpers.ts";
-import type { TestAccessory, TestMqttClient } from "../testing.helpers.ts";
+import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../testing.helpers.ts";
+import { TestRelayProjection, makeRelayConfig } from "./testing.helpers.ts";
 import { after, before, beforeEach, describe, mock, test } from "node:test";
 import type { ObserverWakePayload } from "../diagnostics.ts";
 import { PROTECT_RELAY_COMMAND_TIMEOUT } from "../settings.ts";
@@ -26,8 +25,11 @@ import { ProtectRelay } from "./relay.ts";
 import type { ProtectRelayConfig } from "unifi-protect";
 import { ProtectReservedNames } from "../types.ts";
 import type { Relay } from "unifi-protect";
+import type { TestAccessory } from "../testing.helpers.ts";
+import type { TestMqttClient } from "../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
+import { makeTestNvr } from "../nvr/testing.helpers.ts";
 
 // The subtype the relay assigns each output switch, keyed by the 0-based wire id. Single-sourced here so every lookup in the suite names the exact subtype the class
 // created the service under.

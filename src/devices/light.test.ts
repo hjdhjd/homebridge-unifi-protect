@@ -18,9 +18,9 @@
  * assertion is robust regardless of isolation. This buildLight-plus-beforeEach skeleton is the copyable reference; only makeLightConfig, TestLightProjection, the
  * slice keys, the light's per-slice observer count, and the leaf-specific reactions are light-particular.
  */
-import { Characteristic, Service, TestLightProjection, TestRecordingDispatch, TestStateStore, makeLightConfig, makeProtectState, makeTestAccessory, makeTestNvr, settle }
-  from "../testing.helpers.ts";
-import type { TestAccessory, TestMqttClient } from "../testing.helpers.ts";
+import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../testing.helpers.ts";
+import { TestLightProjection, makeLightConfig } from "./testing.helpers.ts";
+import { TestRecordingDispatch, makeTestNvr } from "../nvr/testing.helpers.ts";
 import { after, before, beforeEach, describe, mock, test } from "node:test";
 import type { Light } from "unifi-protect";
 import type { ObserverWakePayload } from "../diagnostics.ts";
@@ -30,6 +30,8 @@ import { ProtectLight } from "./light.ts";
 import type { ProtectLightConfig } from "unifi-protect";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
+import type { TestAccessory } from "../testing.helpers.ts";
+import type { TestMqttClient } from "../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
 

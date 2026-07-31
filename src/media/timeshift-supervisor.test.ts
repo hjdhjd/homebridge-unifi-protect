@@ -12,15 +12,18 @@
  * the controllable livestream double drives the channel-profile lifecycle's failure and out-of-band-death arms, and the recorded log sink carries the narration
  * assertions. The assertions are behavior-first throughout: captured log lines, public buffer state, seam call counts, and promise identity - never a private field.
  */
-import type { ControllableLivestreamDouble, TestCameraHost, TestLogEntry, TestProtectNvr } from "../testing.helpers.ts";
+import type { ControllableLivestreamDouble, TestCameraHost } from "./testing.helpers.ts";
 import { PROTECT_SEGMENT_RESOLUTION, PROTECT_TIMESHIFT_BUFFER_MAXDURATION } from "../settings.ts";
-import { TestStreamingDelegate, makeControllableLivestreamDouble, makeTestCameraHost, settle } from "../testing.helpers.ts";
+import { TestStreamingDelegate, settle } from "../testing.helpers.ts";
 import { after, describe, test } from "node:test";
+import { makeControllableLivestreamDouble, makeTestCameraHost } from "./testing.helpers.ts";
 import type { CameraRecordingConfiguration } from "homebridge";
 import type { ChannelProfile } from "./resolution.ts";
 import { ProtectLivestreamUnavailableError } from "unifi-protect";
 import { ProtectRecordingDelegate } from "./record.ts";
 import { ProtectTimeshiftSupervisor } from "./timeshift-supervisor.ts";
+import type { TestLogEntry } from "../testing.helpers.ts";
+import type { TestProtectNvr } from "../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 
 // Every host this suite builds shares the one makeTestNvr AbortController. Aborting them in teardown releases the harness signals so any leaked observer (none here -

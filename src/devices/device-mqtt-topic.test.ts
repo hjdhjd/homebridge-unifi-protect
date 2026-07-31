@@ -11,13 +11,14 @@
  * ProtectBase leaf are the smallest real surfaces that carry the wrappers: the abstract base declares no abstract members, so a near-empty concrete leaf is a faithful
  * instance whose publish, subscribeGet, and subscribeSet are all the base's own - the same admission command-error.test.ts and reachability.test.ts rely on.
  */
-import { TestMqttClient, makeTestAccessory, settle } from "../testing.helpers.ts";
 import { describe, test } from "node:test";
+import { makeTestAccessory, settle } from "../testing.helpers.ts";
 import type { Camera } from "unifi-protect";
 import type { ProtectAccessory } from "../types.ts";
 import { ProtectBase } from "./device-base.ts";
 import { ProtectDevice } from "./device.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
+import { TestMqttClient } from "../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import util from "node:util";
 

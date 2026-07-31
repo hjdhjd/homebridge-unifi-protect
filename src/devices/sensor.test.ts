@@ -32,9 +32,10 @@
  * The isolation model mirrors the light reference: a beforeEach builds a fresh sensor so the recording calls, the characteristic state, the observer baselines, and
  * store.observerCount are clean every test, the wake log is windowed per push via a captured baseline, and an afterEach unwinds the sensor's per-accessory abort.
  */
-import { Characteristic, Service, TestRecordingDispatch, TestSensorProjection, TestStateStore, makeProtectState, makeSensorConfig, makeTestAccessory, makeTestNvr,
-  settle } from "../testing.helpers.ts";
-import type { TestAccessory, TestLogEntry, TestMqttClient } from "../testing.helpers.ts";
+import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../testing.helpers.ts";
+import type { TestAccessory, TestLogEntry } from "../testing.helpers.ts";
+import { TestRecordingDispatch, makeTestNvr } from "../nvr/testing.helpers.ts";
+import { TestSensorProjection, makeSensorConfig } from "./testing.helpers.ts";
 import { after, afterEach, before, beforeEach, describe, test } from "node:test";
 import type { ObserverWakePayload } from "../diagnostics.ts";
 import type { ProtectAccessory } from "../types.ts";
@@ -43,6 +44,7 @@ import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
 import { ProtectSensor } from "./sensor.ts";
 import type { Sensor } from "unifi-protect";
+import type { TestMqttClient } from "../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
 

@@ -19,14 +19,15 @@
  */
 import { PROTECT_PROBESIZE_OVERRIDE_MAX, PROTECT_PROBESIZE_OVERRIDE_PERMANENT_THRESHOLD, PROTECT_PROBESIZE_OVERRIDE_RESET_MS,
   PROTECT_SEGMENT_RESOLUTION } from "../settings.ts";
-import { TestCameraController, makeTestCameraHost } from "../testing.helpers.ts";
 import { after, describe, test } from "node:test";
 import { ProtectRecordingDelegate } from "./record.ts";
 import { ProtectSnapshot } from "./snapshot.ts";
 import { ProtectStreamingDelegate } from "./stream.ts";
 import { ProtectTimeshiftBuffer } from "./timeshift.ts";
 import { ProtectTimeshiftSupervisor } from "./timeshift-supervisor.ts";
+import { TestCameraController } from "../testing.helpers.ts";
 import assert from "node:assert/strict";
+import { makeTestCameraHost } from "./testing.helpers.ts";
 
 // Every host this suite builds shares the one makeTestNvr AbortController. Aborting it in teardown releases the harness signal so a leaked observer (none here, the
 // trio ctors spawn none) could never outlive the suite. The trio ctors are pure field-copies, so construction floats no async machinery and needs no settle().

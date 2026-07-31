@@ -24,16 +24,18 @@
  * writes only when detectMotion !== targetState), so the member's context.detectMotion is seeded FALSY before driving toward enabled, and the test asserts the switch
  * FLIPPED false->true and the "...Motion detection enabled." log FIRED - not merely that detectMotion ended true.
  */
-import { Characteristic, Service, TestStateStore, makeLiveviewConfig, makeNvrConfig, makeProtectState, makeTestAccessory, makeTestNvr, settle }
-  from "../testing.helpers.ts";
+import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../testing.helpers.ts";
 import type { ProtectAccessory, ProtectDevices } from "../types.ts";
-import type { TestAccessory, TestLogEntry, TestMqttClient, TestProtectNvr, TestService } from "../testing.helpers.ts";
+import type { TestAccessory, TestLogEntry, TestService } from "../testing.helpers.ts";
+import type { TestMqttClient, TestProtectNvr } from "../nvr/testing.helpers.ts";
 import { afterEach, describe, test } from "node:test";
+import { makeNvrConfig, makeTestNvr } from "../nvr/testing.helpers.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import type { ProtectNvrLiveviewConfig } from "unifi-protect";
 import { ProtectReservedNames } from "../types.ts";
 import { ProtectSecuritySystem } from "./security-system.ts";
 import assert from "node:assert/strict";
+import { makeLiveviewConfig } from "../devices/testing.helpers.ts";
 
 // The controller MAC the makeNvrConfig record carries, and the MQTT topic scope (the mqttId is the controller MAC for a ProtectBase owner). A literal so a drift in the
 // fixture MAC breaks loudly rather than silently following along.

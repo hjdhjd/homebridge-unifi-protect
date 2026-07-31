@@ -30,13 +30,15 @@
  * the hints are read and the logs are asserted immediately after the synchronous configureHintsFor call.
  */
 import type { TestAccessory, TestLogEntry } from "../testing.helpers.ts";
-import { TestBaseDevice, TestSensorProjection, TestStateStore, makeProtectState, makeSensorConfig, makeTestAccessory, makeTestNvr } from "../testing.helpers.ts";
+import { TestBaseDevice, TestSensorProjection, makeSensorConfig } from "./testing.helpers.ts";
+import { TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
 import { afterEach, describe, test } from "node:test";
 import type { ProtectAccessory } from "../types.ts";
 import type { ProtectHints } from "./device.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import type { Sensor } from "unifi-protect";
 import assert from "node:assert/strict";
+import { makeTestNvr } from "../nvr/testing.helpers.ts";
 
 // The device logger prefixes every line with the device name; the harness renders what the real Homebridge logger would emit into entry.formatted (for example
 // "Test Sensor: Motion event duration set to 20 seconds."), so a log assertion matches a substring of that rendered line at the given level, mirroring the

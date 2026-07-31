@@ -14,7 +14,7 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { chimeVolumeFor } from "./chime-volume.ts";
-import { makeChimeConfig } from "../../testing.helpers.ts";
+import { makeChimeConfig } from "../testing.helpers.ts";
 
 describe("chimeVolumeFor (the real pure leaf, import-driven)", () => {
 

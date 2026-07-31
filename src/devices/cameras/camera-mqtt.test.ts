@@ -22,14 +22,17 @@
  */
 import type { Camera, ProtectCameraConfig } from "unifi-protect";
 import { G2_PRO_CHANNELS, MIXED_RTSP_DISABLED_CHANNELS } from "../../camera.fixtures.ts";
-import type { TestAccessory, TestLogEntry, TestMqttClient, TestProtectNvr } from "../../testing.helpers.ts";
-import { TestCameraProjection, TestStateStore, makeCameraConfig, makeProtectState, makeTestAccessory, makeTestNvr, settle } from "../../testing.helpers.ts";
+import type { TestAccessory, TestLogEntry } from "../../testing.helpers.ts";
+import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
+import type { TestMqttClient, TestProtectNvr } from "../../nvr/testing.helpers.ts";
+import { TestStateStore, makeProtectState, makeTestAccessory, settle } from "../../testing.helpers.ts";
 import { afterEach, describe, mock, test } from "node:test";
 import type { ProtectAccessory } from "../../types.ts";
 import { ProtectCamera } from "./camera.ts";
 import { ProtectEventDispatch } from "../../nvr/event-dispatch.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
 import assert from "node:assert/strict";
+import { makeTestNvr } from "../../nvr/testing.helpers.ts";
 
 // One captured doorbell-ring routing. The /doorbell SET body's observable effect is which device it routed to, so this is the shape the recording subclass captures - the
 // same posture doorbell-effects.test.ts uses for its own routing assertions.

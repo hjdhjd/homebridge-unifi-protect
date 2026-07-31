@@ -22,14 +22,16 @@
  * The isolation model is per-test-fresh: each test calls buildMotionDevice with its own userOptions, and an afterEach unwinds the device's per-accessory abort. These
  * base services are HAP- and MQTT-driven, not observeState-driven, so there is no observer-wake subscription here (unlike the family suites).
  */
-import { Characteristic, Service, TestBaseDevice, TestRecordingDispatch, TestSensorProjection, TestStateStore, makeProtectState, makeSensorConfig, makeTestAccessory,
-  makeTestNvr } from "../testing.helpers.ts";
-import type { TestAccessory, TestLogEntry, TestMqttClient } from "../testing.helpers.ts";
+import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
+import type { TestAccessory, TestLogEntry } from "../testing.helpers.ts";
+import { TestBaseDevice, TestSensorProjection, makeSensorConfig } from "./testing.helpers.ts";
+import { TestRecordingDispatch, makeTestNvr } from "../nvr/testing.helpers.ts";
 import { afterEach, describe, test } from "node:test";
 import type { ProtectAccessory } from "../types.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
 import type { Sensor } from "unifi-protect";
+import type { TestMqttClient } from "../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 
 // The device logger prefixes every line with the device name; the harness renders what the real Homebridge logger would emit into entry.formatted (for example

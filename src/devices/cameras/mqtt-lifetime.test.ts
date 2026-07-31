@@ -10,15 +10,17 @@
  * aborted handler from the topic's handler set - are homebridge-plugin-utils' per-subscription-signal contract, pinned by homebridge-plugin-utils' own tests; re-testing
  * them here against a recording double would be vacuous.
  */
-import { TestCameraProjection, TestStateStore, makeCameraConfig, makeProtectState, makeTestAccessory, makeTestNvr, settle } from "../../testing.helpers.ts";
+import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
+import { TestStateStore, makeProtectState, makeTestAccessory, settle } from "../../testing.helpers.ts";
 import { describe, test } from "node:test";
 import type { Camera } from "unifi-protect";
 import { G6_PRO_ENTRY_CHANNELS } from "../../camera.fixtures.ts";
 import type { ProtectAccessory } from "../../types.ts";
 import { ProtectCamera } from "./camera.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
-import type { TestMqttSubscription } from "../../testing.helpers.ts";
+import type { TestMqttSubscription } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
+import { makeTestNvr } from "../../nvr/testing.helpers.ts";
 
 describe("MQTT subscription lifetime (owner-signal scoping)", () => {
 

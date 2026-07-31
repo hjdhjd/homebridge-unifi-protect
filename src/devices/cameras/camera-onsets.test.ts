@@ -25,9 +25,9 @@
  * the existence assert.
  */
 import type { Camera, ProtectCameraConfig } from "unifi-protect";
-import { Characteristic, Service, TestCameraProjection, TestStateStore, makeCameraConfig, makeProtectState, makeTestAccessory, makeTestNvr, settle }
-  from "../../testing.helpers.ts";
-import type { TestAccessory, TestLogEntry, TestProtectNvr, TestStreamingDelegateFactory } from "../../testing.helpers.ts";
+import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../../testing.helpers.ts";
+import type { TestAccessory, TestLogEntry, TestStreamingDelegateFactory } from "../../testing.helpers.ts";
+import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
 import { afterEach, describe, mock, test } from "node:test";
 import { G2_PRO_CHANNELS } from "../../camera.fixtures.ts";
 import type { ProtectAccessory } from "../../types.ts";
@@ -35,7 +35,9 @@ import { ProtectAuthorizationError } from "unifi-protect";
 import { ProtectCamera } from "./camera.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
 import { ProtectReservedNames } from "../../types.ts";
+import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
+import { makeTestNvr } from "../../nvr/testing.helpers.ts";
 
 // Confine the lone partial-config cast here, mirroring camera-reactions.test.ts: pushCameraPatch's patch is typed as a Partial of the full wire record, whose nested
 // setting objects (ispSettings, ledSettings, recordingSettings) carry many fields the onSets never read. A test moves exactly the field under test, so the loose shape is

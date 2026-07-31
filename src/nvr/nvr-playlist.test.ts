@@ -12,7 +12,7 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { buildPlaylist } from "./nvr-playlist.ts";
-import { makeCameraConfig } from "../testing.helpers.ts";
+import { makeCameraConfig } from "../devices/testing.helpers.ts";
 import { makeChannel } from "../camera.fixtures.ts";
 
 // The fixed host and RTSP port every case composes against, so the expected rtsp:// lines are deterministic.

@@ -25,16 +25,18 @@
  * (getSwitchState === target), making the later toggle a genuine false->true change - setSwitchState in liveviews.ts continue()s a member already at its target, so it
  * would no-op.
  */
-import { Characteristic, Service, TestStateStore, makeLiveviewConfig, makeNvrConfig, makeProtectState, makeTestAccessory, makeTestNvr, settle }
-  from "../testing.helpers.ts";
-import type { TestAccessory, TestLogEntry, TestMqttClient, TestProtectNvr, TestService } from "../testing.helpers.ts";
+import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../testing.helpers.ts";
+import type { TestAccessory, TestLogEntry, TestService } from "../testing.helpers.ts";
+import type { TestMqttClient, TestProtectNvr } from "../nvr/testing.helpers.ts";
 import { afterEach, describe, test } from "node:test";
+import { makeNvrConfig, makeTestNvr } from "../nvr/testing.helpers.ts";
 import type { ProtectDevices } from "../types.ts";
 import { ProtectLiveviews } from "./liveviews.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import type { ProtectNvrLiveviewConfig } from "unifi-protect";
 import { ProtectReservedNames } from "../types.ts";
 import assert from "node:assert/strict";
+import { makeLiveviewConfig } from "../devices/testing.helpers.ts";
 
 // The controller MAC the makeNvrConfig record carries; the MQTT topic scope and the self-created accessory UUIDs derive from it (the platform double's uuid generator is
 // (seed) => "uuid:" + seed). A literal so a drift in the fixture MAC breaks loudly.

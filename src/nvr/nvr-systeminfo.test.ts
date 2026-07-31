@@ -27,9 +27,11 @@
  * .value, which is written ONLY by the observer-driven updateCharacteristic: a non-firing observer leaves .value at the initial-pass write. So the observer test asserts
  * CurrentTemperature.value === NEW after pushNvrPatch moves a FRESH systemInfo by reference, never triggerGet.
  */
-import { Characteristic, Service, TestStateStore, makeNvrConfig, makeProtectState, makeTestNvr, settle } from "../testing.helpers.ts";
-import type { TestAccessory, TestLogEntry, TestMqttClient, TestProtectNvr } from "../testing.helpers.ts";
+import { Characteristic, Service, TestStateStore, makeProtectState, settle } from "../testing.helpers.ts";
+import type { TestAccessory, TestLogEntry } from "../testing.helpers.ts";
+import type { TestMqttClient, TestProtectNvr } from "./testing.helpers.ts";
 import { afterEach, describe, test } from "node:test";
+import { makeNvrConfig, makeTestNvr } from "./testing.helpers.ts";
 import type { ProtectNvr } from "./nvr.ts";
 import { ProtectNvrSystemInfo } from "./nvr-systeminfo.ts";
 import assert from "node:assert/strict";

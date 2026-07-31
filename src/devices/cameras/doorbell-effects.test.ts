@@ -32,9 +32,10 @@
  * Every constructed doorbell is unwound through cleanup() plus the harness abort in an afterEach, so no observe loop outlives the test.
  */
 import type { Camera, ProtectCameraConfig, ProtectChimeConfig, ProtectNvrConfig } from "unifi-protect";
-import { Characteristic, Service, TestCameraProjection, TestChimeProjection, TestStateStore, makeCameraConfig, makeChimeConfig, makeProtectState, makeTestAccessory,
-  makeTestNvr, settle } from "../../testing.helpers.ts";
-import type { TestAccessory, TestLogEntry, TestMqttClient, TestProtectNvr } from "../../testing.helpers.ts";
+import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../../testing.helpers.ts";
+import type { TestAccessory, TestLogEntry } from "../../testing.helpers.ts";
+import { TestCameraProjection, TestChimeProjection, makeCameraConfig, makeChimeConfig } from "../testing.helpers.ts";
+import type { TestMqttClient, TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import { afterEach, describe, mock, test } from "node:test";
 import { G2_PRO_CHANNELS } from "../../camera.fixtures.ts";
 import type { Nullable } from "homebridge-plugin-utils";
@@ -46,6 +47,7 @@ import type { ProtectNvr } from "../../nvr/nvr.ts";
 import { ProtectReservedNames } from "../../types.ts";
 import assert from "node:assert/strict";
 import { effectiveLcdMessage } from "./doorbell.ts";
+import { makeTestNvr } from "../../nvr/testing.helpers.ts";
 
 // One captured doorbell-ring routing. The onSet's observable effect is which device it routed to, so this is the shape the recording subclass captures - the same posture
 // event-dispatch.test.ts uses for its own routing assertions.

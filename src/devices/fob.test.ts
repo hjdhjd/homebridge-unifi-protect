@@ -16,10 +16,10 @@
  * strings the production table is (the six button wire ids and the three gesture strings), so they cannot catch a wire mismatch between the plugin and a real controller
  * - only HJD's live validation can. The INFO log on an unrecognized gesture is the field tell.
  */
-import { Characteristic, Service, TestFobProjection, TestStateStore, makeFobConfig, makeProtectState, makeTestAccessory, makeTestNvr, settle }
-  from "../testing.helpers.ts";
+import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../testing.helpers.ts";
 import type { Fob, ProtectFobConfig } from "unifi-protect";
-import type { TestAccessory, TestLogEntry, TestMqttClient } from "../testing.helpers.ts";
+import type { TestAccessory, TestLogEntry } from "../testing.helpers.ts";
+import { TestFobProjection, makeFobConfig } from "./testing.helpers.ts";
 import { after, before, beforeEach, describe, test } from "node:test";
 import type { ObserverWakePayload } from "../diagnostics.ts";
 import type { ProtectAccessory } from "../types.ts";
@@ -27,8 +27,10 @@ import type { ProtectEventDispatch } from "../nvr/event-dispatch.ts";
 import { ProtectFob } from "./fob.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
+import type { TestMqttClient } from "../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
+import { makeTestNvr } from "../nvr/testing.helpers.ts";
 
 // The fixed button table the production ProtectFob authors, mirrored here so every lookup in the suite names the exact index / label / wire id the class created its
 // services under. index is the STABLE 1-based ServiceLabelIndex following the controller's own button numbering; wireId is the lowercase protocol id the router addresses
