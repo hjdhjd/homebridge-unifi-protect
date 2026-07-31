@@ -168,19 +168,20 @@ describe("real ProtectCamera construction through the streaming-delegate factory
     assert.equal(wakes.length, 1, "exactly one observer woke for the single-slice push");
     assert.deepEqual(wakes[0], { accessoryId: accessory.UUID, key: "camera.channels" }, "the wake is the channels observer, attributed to this accessory");
 
-    // The reaction re-ran reconcileStreaming, which republished the advertised profiles from the NEW channel set. Pick a discriminating row - one advertised for
-    // the G6 Pro Entry but absent from the G2 Pro list - and select it through the production selectChannel, proving the published profiles really moved.
-    const discriminating: EntryProjection | undefined =
+    // The reaction re-ran reconcileStreaming, which republished the advertised profiles from the NEW channel set. Pick a row that tells the two models apart - one
+    // advertised for the G6 Pro Entry but absent from the G2 Pro list - and select it through the production selectChannel, proving the published profiles really
+    // moved.
+    const modelOnlyEntry: EntryProjection | undefined =
       g6Fixture.expected.find((entry) => !g2Fixture.expected.some((other) => isSameResolution(other.resolution, entry.resolution)));
 
-    assert.ok(discriminating, "the two fixture models differ in at least one advertised resolution");
+    assert.ok(modelOnlyEntry, "the two fixture models differ in at least one advertised resolution");
 
-    const selected = camera.selectChannel(discriminating.resolution[0], discriminating.resolution[1]);
+    const selected = camera.selectChannel(modelOnlyEntry.resolution[0], modelOnlyEntry.resolution[1]);
 
-    assert.ok(selected, "selectChannel resolves the discriminating resolution against the re-derived profiles");
-    assert.deepEqual(selected.resolution, discriminating.resolution, "the selected profile carries the new model's resolution");
-    assert.equal(selected.url, discriminating.url, "the selected profile's URL matches the golden-master row");
-    assert.equal(selected.channel.id, discriminating.channelId, "the selected profile maps to the golden-master channel");
+    assert.ok(selected, "selectChannel resolves that resolution against the re-derived profiles");
+    assert.deepEqual(selected.resolution, modelOnlyEntry.resolution, "the selected profile carries the new model's resolution");
+    assert.equal(selected.url, modelOnlyEntry.url, "the selected profile's URL matches the golden-master row");
+    assert.equal(selected.channel.id, modelOnlyEntry.channelId, "the selected profile maps to the golden-master channel");
 
     // The this.stream idempotency gate: the re-run republishes profiles and exits - no second delegate, no second controller registration.
     assert.equal(factory.createCalls.length, 1, "the factory was not invoked again on the re-run");
@@ -264,7 +265,7 @@ describe("camera HKSV self-heal observer", () => {
     timeshift.reconcileCalls = 0;
 
     // The offline edge: the availability observer wakes the reconcile on every lifecycle edge, so the reconcile fires here. Asserted per-edge - exactly one call
-    // immediately after the DISCONNECTED push, BEFORE the CONNECTED push - so the assertion discriminates the offline edge rather than an end-of-test aggregate.
+    // immediately after the DISCONNECTED push, BEFORE the CONNECTED push - so the assertion pins the offline edge rather than an end-of-test aggregate.
     store.pushCameraPatch(cameraConfig.id, { state: "DISCONNECTED" });
 
     await settle();

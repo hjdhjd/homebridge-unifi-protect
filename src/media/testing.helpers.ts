@@ -60,7 +60,7 @@ export class TestCameraHost implements ProtectCameraHost {
   public hasFeature: (option: string) => boolean = () => false;
 
   // A complete neutral ProtectCameraHints literal - every boolean false, every number 0, every string empty, the nested cropOptions zeroed - so a delegate reads a fully
-  // populated hint bag with no behavior turned on (crop false is load-bearing for the two-sided snapshot test, which must NOT enter the crop pass).
+  // populated hint bag with no behavior turned on (crop false is required for the two-sided snapshot test, which must NOT enter the crop pass).
   public hints: ProtectCameraHints = {
 
     crop: false,
@@ -277,14 +277,14 @@ const INIT_SEGMENT_DATA = Buffer.from("test-init-segment");
  *   - mediaSegments > 0: the ESTABLISHED segment-yielding profile - initSegment populated, state "live", whenEstablished resolves true, and an iterator yielding one init
  *     segment then mediaSegments keyframe-bearing media segments so the timeshift fills its buffer with real fMP4 the production isKeyframe parse accepts.
  *
- * LOAD-BEARING: after yielding its media segments the established iterator MUST PARK, never completing. A finite generator returns done, which ends the timeshift's
- * consumeSegments for-await, runs its finally -> finalizeSubscription -> clearBuffer, and wipes the just-filled buffer (the this.subscription?.id === subscription.id
- * guard is true by then, because start() commits this.subscription mid-drain) - so timeshift.time falls back to zero and the transmit gate would always decline. We park
- * by owning an internal AbortController: [Symbol.asyncDispose] aborts it, and the generator, after its media loop, awaits a promise that resolves on that abort (resolves
- * immediately if already aborted, else via a one-shot "abort" listener). The for-await therefore never completes while filling, the buffer survives, and a real
- * timeshift.stop()/dispose still releases it cleanly. whenEstablished resolves true immediately while the consumer fills its buffer by draining the parking iterator to
- * its park point; a single settle() in the test drains all the microtask-resolved yields before the park, because the generator crosses no macrotask/timer boundary (were
- * one ever added, a single settle() would silently under-drain).
+ * Required, not incidental: after yielding its media segments the established iterator MUST PARK, never completing. A finite generator returns done, which ends the
+ * timeshift's consumeSegments for-await, runs its finally -> finalizeSubscription -> clearBuffer, and wipes the just-filled buffer (the this.subscription?.id ===
+ * subscription.id guard is true by then, because start() commits this.subscription mid-drain) - so timeshift.time falls back to zero and the transmit gate would always
+ * decline. We park by owning an internal AbortController: [Symbol.asyncDispose] aborts it, and the generator, after its media loop, awaits a promise that resolves on
+ * that abort (resolves immediately if already aborted, else via a one-shot "abort" listener). The for-await therefore never completes while filling, the buffer survives,
+ * and a real timeshift.stop()/dispose still releases it cleanly. whenEstablished resolves true immediately while the consumer fills its buffer by draining the parking
+ * iterator to its park point; a single settle() in the test drains all the microtask-resolved yields before the park, because the generator crosses no macrotask/timer
+ * boundary (were one ever added, a single settle() would silently under-drain).
  */
 export function makeLivestreamSubscriptionDouble(options: { mediaSegments?: number } = {}): LivestreamSubscription {
 
@@ -342,9 +342,9 @@ export function makeLivestreamSubscriptionDouble(options: { mediaSegments?: numb
   };
 }
 
-// A process-local monotonic counter minting a distinct default id per controllable double. Distinct ids are LOAD-BEARING: the timeshift's consumeSegments finally guards
+// A process-local monotonic counter minting a distinct default id per controllable double. Distinct ids are required: the timeshift's consumeSegments finally guards
 // teardown on this.subscription?.id === subscription.id, so a restart test (start A, then start B) and the id-identity guard test need two doubles whose ids genuinely
-// differ - or the guard cannot discriminate and the test is vacuous.
+// differ - or the guard cannot tell them apart and the test is vacuous.
 let controllableLivestreamCounter = 0;
 
 /**
@@ -377,7 +377,7 @@ export interface ControllableLivestreamDouble extends LivestreamSubscription {
  * The iterator is the lost-wakeup-safe drain-loop the parking double established, generalized to a runtime-fed queue: it holds a queue of items
  * ({ kind: "segment" } | { kind: "end" } | { kind: "error" }), and on each turn it DRAINS THE WHOLE QUEUE - shifting and acting on every queued item (yield a segment,
  * return on end, throw on error) - and ONLY parks on a fresh one-shot resolver when the queue is empty and the double is not yet terminated; on wake it RE-CHECKS the
- * queue and continues the drain. Draining the whole queue per wake is load-bearing: a naive park/yield-one/re-park strands a second segment pushed under one wake
+ * queue and continues the drain. Draining the whole queue per wake is required: a naive park/yield-one/re-park strands a second segment pushed under one wake
  * (empirically reproduced), so a two-push-then-drain self-test would observe only the first.
  *
  * The park keeps isStarted true: while the queue is open and the double is not ended/disposed the generator NEVER completes (it parks), so the timeshift's

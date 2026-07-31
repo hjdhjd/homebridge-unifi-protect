@@ -422,7 +422,7 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
     assert.ok(loggedAt(built.logEntries, "info", "Motion detection disabled."), "the per-member motion-disabled line fired on disarm");
   });
 
-  test("setSecurityState skips a member whose controller record has vanished (the recordPresent gate) - DISCRIMINATING", async () => {
+  test("setSecurityState skips a member whose controller record has vanished (the recordPresent gate) - FAILS WITHOUT THE GATE", async () => {
 
     // A Protect-Home liveview carrying TWO member camera ids: one present, one graced (its record vanished while it lingers in the removal grace).
     const built = buildSecuritySystem({ liveviews: [makeLiveviewConfig({ cameras: [ "camera-present", "camera-graced" ], id: "lv-home", name: "Protect-Home" })] });

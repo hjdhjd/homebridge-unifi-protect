@@ -105,7 +105,7 @@ function plateSensor(accessory: TestAccessory, plate: string): TestService | und
 
 describe("the camera capability reconcile - the ambient light sensor pilot", () => {
 
-  test("a late hasLuxCheck creates the ambient light sensor live, without a restart (self-heal, discriminating on the observer)", async () => {
+  test("a late hasLuxCheck creates the ambient light sensor live, without a restart (self-heal, fails without the observer)", async () => {
 
     // A camera the controller adopts WITHOUT the lux capability: the gate's early-return leaves no LightSensor at adoption.
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasLuxCheck: false } });
@@ -136,7 +136,7 @@ describe("the camera capability reconcile - the ambient light sensor pilot", () 
     }
   });
 
-  test("a Homebridge restart re-wires the cached-but-unwired ambient light sensor (restart re-wire, discriminating on the re-wired controller read)", async () => {
+  test("a Homebridge restart re-wires the cached-but-unwired ambient light sensor (restart re-wire, fails without the re-wired controller read)", async () => {
 
     // A camera the controller reports WITH the lux capability. We simulate a Homebridge restart, which restores the cached accessory's LightSensor service - present with
     // its characteristics - but never its runtime onGet handlers or its poll timer, neither of which HAP serializes. This is the present-but-unwired state the first
@@ -206,7 +206,7 @@ describe("the camera capability reconcile - the ambient light sensor pilot", () 
     }
   });
 
-  test("the feature option off creates no ambient light sensor even with hasLuxCheck (the toggle half, fresh, discriminating on the toggle clause)", async () => {
+  test("the feature option off creates no ambient light sensor even with hasLuxCheck (the toggle half, fresh, fails without the toggle clause)", async () => {
 
     // The lux capability is present, but the user toggle is off. Both halves must hold to CREATE, so no sensor appears.
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasLuxCheck: true } });
@@ -383,7 +383,7 @@ describe("the camera capability reconcile - the ambient light sensor pilot", () 
 
 describe("the camera capability reconcile - the UniFi Access lock", () => {
 
-  test("a late supportUnlock creates the Access lock live and reads SECURED, without a restart (self-heal, discriminating on the observer)", async () => {
+  test("a late supportUnlock creates the Access lock live and reads SECURED, without a restart (self-heal, fails without the observer)", async () => {
 
     // A camera adopted WITHOUT a paired Access reader: no accessDeviceMetadata, so the gate creates no lock at adoption.
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS });
@@ -421,7 +421,7 @@ describe("the camera capability reconcile - the UniFi Access lock", () => {
     }
   });
 
-  test("a withdrawn supportUnlock never prunes the Access lock (subtractive-conservative, discriminating on the hasService clause)", async () => {
+  test("a withdrawn supportUnlock never prunes the Access lock (subtractive-conservative, fails without the hasService clause)", async () => {
 
     // A camera adopted WITH the unlock capability, then a controller that stops reporting it. The capability half is additive-eager / subtractive-conservative: it
     // creates on true and never prunes on false (a transient incomplete bootstrap must not strip a working lock).
@@ -452,7 +452,7 @@ describe("the camera capability reconcile - the UniFi Access lock", () => {
     }
   });
 
-  test("the feature option off creates no lock even with supportUnlock (the toggle half, fresh, discriminating on the toggle clause)", async () => {
+  test("the feature option off creates no lock even with supportUnlock (the toggle half, fresh, fails without the toggle clause)", async () => {
 
     // The capability is present, but the user toggle is off. Both halves must hold to CREATE, so no lock appears.
     const cameraConfig = makeCameraConfig({ accessDeviceMetadata: { featureFlags: { supportUnlock: true } }, channels: G2_PRO_CHANNELS });
@@ -505,7 +505,7 @@ describe("the camera capability reconcile - the UniFi Access lock", () => {
       }
     });
 
-  test("a freshly created Access lock reads SECURED (the establishment stamp, discriminating against the null default)", async () => {
+  test("a freshly created Access lock reads SECURED (the establishment stamp, pinned against the null default)", async () => {
 
     const cameraConfig = makeCameraConfig({ accessDeviceMetadata: { featureFlags: { supportUnlock: true } }, channels: G2_PRO_CHANNELS });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
@@ -533,7 +533,7 @@ describe("the camera capability reconcile - the UniFi Access lock", () => {
     }
   });
 
-  test("a live observe reconcile over an existing lock never re-stamps the display (Fix C2, discriminating on the establishment condition)", async () => {
+  test("a live observe reconcile over an existing lock never re-stamps the display (Fix C2, fails without the establishment condition)", async () => {
 
     const cameraConfig = makeCameraConfig({ accessDeviceMetadata: { featureFlags: { supportUnlock: true } }, channels: G2_PRO_CHANNELS });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
@@ -719,7 +719,7 @@ describe("the camera capability reconcile - the UniFi Access lock", () => {
 
 describe("the camera capability reconcile - the night vision dimmer", () => {
 
-  test("a late hasInfrared and hasIcrSensitivity create the night vision dimmer live and read the device value, without a restart (self-heal, discriminating on the " +
+  test("a late hasInfrared and hasIcrSensitivity create the night vision dimmer live and read the device value, without a restart (self-heal, fails without the " +
     "routing)", async () => {
 
     // A camera adopted WITHOUT the adjustable infrared hardware (the makeCameraConfig defaults leave hasInfrared / hasIcrSensitivity false), with the dimmer toggle on:
@@ -793,7 +793,7 @@ describe("the camera capability reconcile - the night vision dimmer", () => {
     }
   });
 
-  test("the feature option off creates no night vision dimmer with the infrared hardware (the toggle half, fresh, discriminating on the toggle clause)", async () => {
+  test("the feature option off creates no night vision dimmer with the infrared hardware (the toggle half, fresh, fails without the toggle clause)", async () => {
 
     // The adjustable infrared hardware is present, but the Device.NightVision.Dimmer toggle defaults off (unlike lux / the lock) and no Enable option is supplied. Both
     // halves must hold to CREATE, so no dimmer appears.
@@ -846,7 +846,7 @@ describe("the camera capability reconcile - the night vision dimmer", () => {
     }
   });
 
-  test("a live observe reconcile over an existing dimmer never re-pushes the displayed value (Fix C2, discriminating on the establishment condition)", async () => {
+  test("a live observe reconcile over an existing dimmer never re-pushes the displayed value (Fix C2, fails without the establishment condition)", async () => {
 
     // Seed a DIVERGENT irLedMode "auto" BEFORE construction so the dimmer is established to On true / Brightness 10 at adoption, a value distinct from the optimistic
     // setting driven below.
@@ -977,7 +977,7 @@ describe("the camera capability reconcile - the night vision dimmer", () => {
 describe("the camera capability reconcile - tamper detection", () => {
 
   test("a late hasTamperDetection materializes StatusTampered live and the onGet reads the preserved latch, without a restart (self-heal + the latch-clear guard, " +
-    "discriminating on the routing and the guarded clear)", async () => {
+    "fails without the routing and the guarded clear)", async () => {
 
     // A camera the controller adopts WITHOUT the tamper capability, the user setting eventually on. The tamper gate keys StatusTampered on TWO inputs - the
     // hasTamperDetection hardware capability and the enableTamperDetection setting - so the setting alone leaves the characteristic absent until the capability reports.
@@ -1168,7 +1168,7 @@ describe("the camera capability reconcile - tamper detection", () => {
 
 describe("the camera capability reconcile - two-way audio", () => {
 
-  test("a late hasSpeaker surfaces two-way audio via one in-place controller rebuild, without a restart (self-heal, discriminating on the reconcile call)", async () => {
+  test("a late hasSpeaker surfaces two-way audio via one in-place controller rebuild, without a restart (self-heal, fails without the reconcile call)", async () => {
 
     // A camera the controller adopts WITHOUT a speaker: the streaming delegate's frozen audio options are built with two-way audio off, so the talk button is baked off.
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasSpeaker: false } });
@@ -1208,7 +1208,7 @@ describe("the camera capability reconcile - two-way audio", () => {
     }
   });
 
-  test("a speaker drop never churns the controller and the additive-only hint stays true (subtractive-conservative, discriminating on the ||= refresh)", async () => {
+  test("a speaker drop never churns the controller and the additive-only hint stays true (subtractive-conservative, fails without the ||= refresh)", async () => {
 
     // A camera adopted WITH a speaker: the controller is built for two-way audio and the hint reads true.
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasSpeaker: true } });
@@ -1243,7 +1243,7 @@ describe("the camera capability reconcile - two-way audio", () => {
     }
   });
 
-  test("a wholesale all-false featureFlags drain then the real values drives zero controller churn (the empirical reconnect contract, discriminating on a symmetric " +
+  test("a wholesale all-false featureFlags drain then the real values drives zero controller churn (the empirical reconnect contract, fails on a symmetric " +
     "predicate)", async () => {
 
     // A doorbell-with-speaker: the controller is built for both frozen audio capabilities. Every offline-to-online re-adopt delivers a wholesale all-false featureFlags
@@ -1282,7 +1282,7 @@ describe("the camera capability reconcile - two-way audio", () => {
     }
   });
 
-  test("a late hasSpeaker with Audio.TwoWay disabled never churns the controller (negative control, discriminating on the Audio.TwoWay clause)", async () => {
+  test("a late hasSpeaker with Audio.TwoWay disabled never churns the controller (negative control, fails without the Audio.TwoWay clause)", async () => {
 
     // The speaker hardware will report, but the user disabled two-way audio. The hint derivation gates on the Audio.TwoWay feature option, so two-way audio stays off and
     // the controller is never rebuilt - the control that proves the hasFeature clauses are not undiscriminated.
@@ -1315,7 +1315,7 @@ describe("the camera capability reconcile - two-way audio", () => {
     }
   });
 
-  test("a late hasSpeaker refreshes the direct-talkback hint when the direct option is enabled (the direct-talkback refresh, discriminating on the refresh line)",
+  test("a late hasSpeaker refreshes the direct-talkback hint when the direct option is enabled (the direct-talkback refresh, fails without the refresh line)",
     async () => {
 
       // The direct-talkback path reads hints.twoWayAudioDirect live (it is never frozen into the controller), so the reconcile refreshes it alongside two-way audio for

@@ -109,7 +109,7 @@ describe("base ProtectDevice feature-option hints derivation (device-hints conce
     });
   });
 
-  describe("the boolean toggles (each discriminating - moved off its default)", () => {
+  describe("the boolean toggles (each moved off its default, so a hard-coded derivation fails)", () => {
 
     test("Disable.Device drives enabled false while the other hints stay at their defaults", () => {
 

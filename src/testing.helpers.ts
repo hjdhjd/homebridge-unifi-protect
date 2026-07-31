@@ -98,11 +98,11 @@ class LockTargetStateCharacteristicType {
 
 /* The security-system state characteristics. The security-system owner reads the named arm states off these two characteristics on every state transition: the current
  * state carries five distinct values (the currentSecuritySystemState string map is keyed by them) and the target state carries four (the setProps validValues array
- * carries them, and the onSet maps a target to a current), so the double mirrors HAP's exact constants as statics on each marker. Distinct values are load-bearing -
- * a collision would collapse the Record<number, string> map and silently mis-key the MQTT state string. SecuritySystemCurrentState is also the seed characteristic the
- * SecuritySystem service marker constructs with (acquireService recovers the Characteristic constructor from the new service's first characteristic). The static members
- * are alphabetical per the house style; note the Current marker uses DISARMED=3 while the Target marker uses DISARM=3 - the same integer under two HAP-distinct names,
- * both of which the production code reaches by name.
+ * carries them, and the onSet maps a target to a current), so the double mirrors HAP's exact constants as statics on each marker. Distinct values are required, not
+ * incidental - a collision would collapse the Record<number, string> map and silently mis-key the MQTT state string. SecuritySystemCurrentState is also the seed
+ * characteristic the SecuritySystem service marker constructs with (acquireService recovers the Characteristic constructor from the new service's first characteristic).
+ * The static members are alphabetical per the house style; note the Current marker uses DISARMED=3 while the Target marker uses DISARM=3 - the same integer under two
+ * HAP-distinct names, both of which the production code reaches by name.
  */
 class SecuritySystemCurrentStateCharacteristicType {
 
@@ -257,7 +257,7 @@ class ServiceLabelNamespaceCharacteristicType {
   public readonly hapKind = "ServiceLabelNamespace" as const;
 }
 
-// The HAP Characteristic namespace as the test-double exposes it. StatusActive is the load-bearing one...the isReachable rewire writes it across every device
+// The HAP Characteristic namespace as the test-double exposes it. StatusActive is the one that matters most...the isReachable rewire writes it across every device
 // class, so the reachability tests pivot on this characteristic. On covers the toggle pair used by switches in the double's self-test. LockCurrentState /
 // LockTargetState back the camera's UniFi Access lock onSet and the capability-reconcile lock self-heal tests. ContactSensorState backs the auth-sensor delivery
 // tests, where the firehose router's authEventHandler trips it on a recognized fingerprint/NFC scan, and StatusTampered backs the camera tamper-event handler and
@@ -908,7 +908,7 @@ export class TestAccessory {
 
   /* Add a new service to the accessory, in either of the two forms HAP's real addService accepts: a service INSTANCE (what acquireService passes after
    * constructing a namespace marker), or the legacy (type, name?, subtype?) form, which keeps its exact original semantics - a plain TestService with no seeded
-   * characteristic - so existing tests that assert on freshly-added services being characteristic-empty stay valid. The instanceof discrimination is sound
+   * characteristic - so existing tests that assert on freshly-added services being characteristic-empty stay valid. The instanceof test is sound
    * because a marker CLASS (a constructor object) is never an instance of TestService - only constructed services are. Returns the service so production code can
    * immediately bind characteristics on it.
    */

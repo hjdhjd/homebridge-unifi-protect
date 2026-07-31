@@ -85,7 +85,7 @@ describe("the observeState recordPresent gate during the removal grace", () => {
         "the recordPresent gate suppressed the async-void capability observer once the record vanished - reconcileCapabilities was not invoked");
       assert.equal(store.observerCount, observerCount,
         "every observe loop stayed subscribed across the vanished record (continue, not break) so a re-adoption resumes them - the survival " +
-        "invariant (the reconcileCount assertion above is the gate's discriminator)");
+        "invariant (the reconcileCount assertion above is what tells the two apart)");
     } finally {
 
       camera.cleanup();

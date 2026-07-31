@@ -286,7 +286,7 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
       }
     });
 
-    test("a failed refresh read preserves the last-known reading at re-init (discriminating on the unconditional floor)", async () => {
+    test("a failed refresh read preserves the last-known reading at re-init (fails on the unconditional floor)", async () => {
 
       // Construct with the lux capability and a genuine positive first reading (100): the init read stores 100 and the sensor displays it. Then make a subsequent read
       // fail (the luxRejection seam, exactly as the poll-skip test drives it) and trigger a configureAmbientLightSensor RE-RUN through a featureFlags push that keeps

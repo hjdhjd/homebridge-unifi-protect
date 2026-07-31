@@ -55,7 +55,7 @@ describe("A2 light family: config builder, push helpers, and projection double",
     assert.equal(defaults.lightDeviceSettings.isIndicatorEnabled, false, "isIndicatorEnabled defaults to false");
     assert.equal(defaults.lastMotion, null, "lastMotion defaults to null");
     assert.equal(defaults.state, "CONNECTED", "state defaults to CONNECTED");
-    assert.equal(defaults.modelKey, "light", "the modelKey discriminant is light");
+    assert.equal(defaults.modelKey, "light", "the modelKey is light");
 
     // Every override lands, and the two nested options compose under lightDeviceSettings rather than the top level.
     const overridden = makeLightConfig({ id: "light-99", isIndicatorEnabled: true, isLightOn: true, lastMotion: 1700000000000, ledLevel: 4, mac: "AABBCCDDEE01",
@@ -234,7 +234,7 @@ describe("A2 chime + viewer family: config builders, projection doubles, push he
     assert.equal(defaults.displayName, "Test Chime", "displayName defaults to the name so the projection's name fallback resolves");
     assert.deepEqual(defaults.cameraIds, [], "cameraIds still defaults empty");
     assert.deepEqual(defaults.ringSettings, [], "ringSettings still defaults empty");
-    assert.equal(defaults.modelKey, "chime", "the modelKey discriminant is chime");
+    assert.equal(defaults.modelKey, "chime", "the modelKey is chime");
 
     // The name override flows into both name and displayName, mirroring makeLightConfig.
     const named = makeChimeConfig({ name: "Hallway Chime", ringSettings: [{ cameraId: "doorbell-1", repeatTimes: 3, ringtoneId: "tone-x", volume: 40 }] });
@@ -253,7 +253,7 @@ describe("A2 chime + viewer family: config builders, projection doubles, push he
     assert.equal(defaults.liveview, null, "liveview defaults to null - no active liveview");
     assert.equal(defaults.marketName, "Test Viewer Model", "marketName defaults so setInfo writes a Model");
     assert.equal(defaults.firmwareVersion, "5.0.0", "firmwareVersion defaults so the firmware-revision write fires");
-    assert.equal(defaults.modelKey, "viewer", "the modelKey discriminant is viewer");
+    assert.equal(defaults.modelKey, "viewer", "the modelKey is viewer");
     assert.equal(defaults.state, "CONNECTED", "state defaults to CONNECTED");
 
     const overridden = makeViewerConfig({ id: "viewer-9", liveview: "liveview-7", mac: "AABBCCDDEE09", name: "Den Viewer" });
@@ -272,7 +272,7 @@ describe("A2 chime + viewer family: config builders, projection doubles, push he
     // LOAD-BEARING: the chime filters ringtones by nvrMac === nvr.ufp.mac (the makeNvrConfig mac), so the default must match or every seeded ringtone is dropped.
     assert.equal(defaults.nvrMac, "74ACB9FFFFFF", "nvrMac defaults to the makeNvrConfig controller mac");
     assert.equal(defaults.id, "test-ringtone-1", "the id defaults");
-    assert.equal(defaults.modelKey, "ringtone", "the modelKey discriminant is ringtone");
+    assert.equal(defaults.modelKey, "ringtone", "the modelKey is ringtone");
 
     const overridden = makeRingtoneConfig({ id: "ring-9", name: "Ring Nine", nvrMac: "FFFFFFFFFFFF" });
 
@@ -287,7 +287,7 @@ describe("A2 chime + viewer family: config builders, projection doubles, push he
 
     assert.equal(defaults.id, "test-liveview-1", "the id defaults");
     assert.equal(defaults.name, "Test Liveview", "the name defaults");
-    assert.equal(defaults.modelKey, "liveview", "the modelKey discriminant is liveview");
+    assert.equal(defaults.modelKey, "liveview", "the modelKey is liveview");
 
     const overridden = makeLiveviewConfig({ id: "liveview-9", name: "Whole House" });
 
@@ -304,7 +304,7 @@ describe("A2 chime + viewer family: config builders, projection doubles, push he
     assert.equal(projection.config, store.snapshot().chimes.get("chime-d"), "config reads through to the seeded record");
     assert.equal(projection.isOnline, true, "isOnline is true for a CONNECTED record");
     assert.equal(projection.name, "Test Chime", "name resolves to the user-assigned name");
-    assert.equal(projection.modelKey, "chime", "the modelKey discriminant is chime");
+    assert.equal(projection.modelKey, "chime", "the modelKey is chime");
 
     const absent = new TestChimeProjection("chime-never", store);
 
@@ -363,7 +363,7 @@ describe("A2 chime + viewer family: config builders, projection doubles, push he
     assert.equal(projection.config, store.snapshot().viewers.get("viewer-d"), "config reads through to the seeded record");
     assert.equal(projection.isOnline, true, "isOnline is true for a CONNECTED record");
     assert.equal(projection.name, "Test Viewer", "name resolves to the user-assigned name");
-    assert.equal(projection.modelKey, "viewer", "the modelKey discriminant is viewer");
+    assert.equal(projection.modelKey, "viewer", "the modelKey is viewer");
 
     const absent = new TestViewerProjection("viewer-never", store);
 
@@ -544,7 +544,7 @@ describe("A2 base-capability foundation: the shared dispatch, the sensor carrier
     const defaults = makeSensorConfig();
 
     // The all-quiet defaults the base-capability carrier relies on: every *Settings.isEnabled false, the LED off, a healthy present battery, a "none" mount, no stats.
-    assert.equal(defaults.modelKey, "sensor", "the modelKey discriminant is sensor (resolves in deviceConfigSelector)");
+    assert.equal(defaults.modelKey, "sensor", "the modelKey is sensor (resolves in deviceConfigSelector)");
     assert.equal(defaults.isMotionDetected, true, "isMotionDetected defaults true so the Motion.* hasProperty applicability gate is satisfiable");
     assert.equal(defaults.ledSettings.isEnabled, false, "ledSettings.isEnabled defaults false (the all-quiet LED, for device-statusled later)");
     assert.equal(defaults.alarmSettings.isEnabled, false, "alarmSettings is quiet by default");
@@ -611,8 +611,8 @@ describe("A2 base-capability foundation: the shared dispatch, the sensor carrier
 
   test("makeSensorConfig defaults the water-leak capability to no channels and lands an opted-in channelNames the leak-policy leaf reads", () => {
 
-    // The leak-policy leaf reads featureFlags.waterLeak.channelNames as the capability discriminator. The default is [] (no leak capability), so the all-quiet carrier
-    // exposes no leak service; an opted-in channelNames lands on the record so the single-channel / multi-channel leak paths can be exercised.
+    // The leak-policy leaf reads featureFlags.waterLeak.channelNames to decide whether the capability is present. The default is [] (no leak capability), so the
+    // all-quiet carrier exposes no leak service; an opted-in channelNames lands on the record so the single-channel / multi-channel leak paths can be exercised.
     const defaults = makeSensorConfig();
 
     assert.deepEqual(defaults.featureFlags.waterLeak?.channelNames, [], "the default makeSensorConfig advertises no water-leak channels");
@@ -637,7 +637,7 @@ describe("A2 base-capability foundation: the shared dispatch, the sensor carrier
     assert.equal(projection.config, store.snapshot().sensors.get("sensor-d"), "config reads through to the seeded record");
     assert.equal(projection.isOnline, true, "isOnline is true for a CONNECTED record");
     assert.equal(projection.name, "Test Sensor", "name resolves to the user-assigned name");
-    assert.equal(projection.modelKey, "sensor", "the modelKey discriminant is sensor");
+    assert.equal(projection.modelKey, "sensor", "the modelKey is sensor");
 
     const absent = new TestSensorProjection("sensor-never", store);
 

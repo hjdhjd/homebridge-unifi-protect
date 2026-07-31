@@ -245,13 +245,13 @@ export function makeViewerConfig(options: { id?: string; liveview?: Nullable<str
  * @param options - alarmEnabled: the alarm settings toggle (defaults false); alarmTriggeredAt: the alarm-trip timestamp (defaults null); ambientLight: the ambient light
  *                  reading folded into stats.light.value (omitted, no light stat); batteryLow / batteryPercentage: the battery status (default false / 100);
  *                  externalLeakDetectedAt: the external-leak timestamp the leak path index-reads (defaults null); glassBreak: whether the controller advertises the
- *                  glass-break capability channel in featureFlags.glassBreak - the alarm-family glass-break gate's capability discriminator (defaults false, channel
+ *                  glass-break capability channel in featureFlags.glassBreak - the flag the alarm-family glass-break gate reads (defaults false, channel
  *                  absent); glassBreakEnabled: the glass-break settings toggle folded into glassBreakSettings.isEnabled (defaults false); hardwareRevision: the hardware
  *                  revision the device-info HardwareRevision write reads (OPT-IN, omitted by default so setInfo's length-guard short-circuits); humidity: the humidity
  *                  reading folded into stats.humidity.value (omitted, no humidity stat); humidityEnabled: the humidity settings toggle (defaults false); id: identity
  *                  override (defaults "test-sensor-1"); isConnected: the connection flag (defaults true); isMotionDetected: the Motion.* applicability property (defaults
  *                  true); isOpened: the contact state (defaults null); leakChannelNames: the water-leak channels the controller advertises in
- *                  featureFlags.waterLeak.channelNames - the leak-policy leaf's capability discriminator (defaults [], no leak capability); leakDetectedAt: the
+ *                  featureFlags.waterLeak.channelNames - the flag the leak-policy leaf reads (defaults [], no leak capability); leakDetectedAt: the
  *                  internal-leak timestamp (defaults null); leakExternalEnabled / leakInternalEnabled: the leak settings toggles (default false); ledEnabled: the
  *                  status-indicator LED toggle (defaults false); lightEnabled: the light settings toggle (defaults false); mac: identity override (defaults a
  *                  sensor-distinct value); motionDetectedAt: the motion timestamp the sensor motion observer gates on (defaults 0); motionEnabled: the motion settings
@@ -476,7 +476,7 @@ export function makeLiveviewConfig(options: { cameras?: string[]; id?: string; n
 }
 
 /* The Camera projection double, mirroring unifi-protect's DeviceProjection contract for the members the construction path reads: a stable id, the "camera"
- * modelKey discriminant, a READ-THROUGH config getter into the store double's CURRENT state (never a held snapshot - a push must change what this.ufp returns, or
+ * modelKey, a READ-THROUGH config getter into the store double's CURRENT state (never a held snapshot - a push must change what this.ufp returns, or
  * an end-to-end push test proves nothing), and the derived name / isOnline getters using the projection's own definitions (name ?? displayName, and
  * state === "CONNECTED" per the library's isDeviceOnline). It now exposes the write-through update the camera's bound onSets dispatch (the night-vision dimmer's
  * ispSettings write, the recording switch's recordingSettings write, the camera-routed status-LED's ledSettings write), RECORDING the payload and resolving by
@@ -607,7 +607,7 @@ export class TestCameraProjection {
   }
 }
 
-/* The Light projection double, the exact analog of TestCameraProjection for the light family: a stable id, the "light" modelKey discriminant, a READ-THROUGH config
+/* The Light projection double, the exact analog of TestCameraProjection for the light family: a stable id, the "light" modelKey, a READ-THROUGH config
  * getter into the store double's CURRENT state (never a held snapshot - a push must change what this.ufp returns, or an end-to-end observe test proves nothing), and
  * the derived name / isOnline getters using the projection's own definitions (name ?? displayName, and state === "CONNECTED" per the library's isDeviceOnline). It now
  * exposes the write-through update the light's bound onSets dispatch (the lightOnSettings.isLedForceOn power write the On onSet issues, and the lightDeviceSettings
@@ -679,7 +679,7 @@ export class TestLightProjection {
   }
 }
 
-/* The Chime projection double, the chime-family analog of TestLightProjection: a stable id, the "chime" modelKey discriminant, a READ-THROUGH config getter into the
+/* The Chime projection double, the chime-family analog of TestLightProjection: a stable id, the "chime" modelKey, a READ-THROUGH config getter into the
  * store double's CURRENT state (never a held snapshot - a push must change what this.ufp returns, or an end-to-end observe test proves nothing), and the derived name /
  * isOnline getters using the projection's own definitions. Unlike the read-only Light / Camera projections, the chime exposes a COMMAND surface: the real ProtectChime's
  * playTone dispatches to playBuzzer / playSpeaker, so this double records every play call and resolves by default, with a settable playRejection so a test can drive the
@@ -781,7 +781,7 @@ export class TestChimeProjection {
   }
 }
 
-/* The Viewer projection double, the viewer-family analog of TestLightProjection: a stable id, the "viewer" modelKey discriminant, a READ-THROUGH config getter into the
+/* The Viewer projection double, the viewer-family analog of TestLightProjection: a stable id, the "viewer" modelKey, a READ-THROUGH config getter into the
  * store double's CURRENT state (never a held snapshot - a push must change what this.ufp returns, or an end-to-end observe test proves nothing), and the derived name /
  * isOnline getters. Unlike the read-only Light / Camera projections, the viewer drives its controller through the write-through update command, so this double exposes an
  * update that RECORDS its payload and resolves by default, with a settable updateRejection so a test can drive the real runDeviceCommand failure path. It records only -
@@ -850,7 +850,7 @@ export class TestViewerProjection {
   }
 }
 
-/* The Sensor projection double, the sensor-family analog of TestViewerProjection: a stable id, the "sensor" modelKey discriminant, a READ-THROUGH config getter into the
+/* The Sensor projection double, the sensor-family analog of TestViewerProjection: a stable id, the "sensor" modelKey, a READ-THROUGH config getter into the
  * store double's CURRENT state (never a held snapshot - a push must change what this.ufp returns, or an end-to-end observe test proves nothing), and the derived name /
  * isOnline getters using the projection's own definitions. Like the viewer it exposes a write-through update that RECORDS its payload and resolves by default, with a
  * settable updateRejection so a test drives the real runDeviceCommand failure path (the sensor's status-LED command writes ledSettings through it). It RECORDS only - it
@@ -920,7 +920,7 @@ export class TestSensorProjection {
   }
 }
 
-/* The Relay projection double, the relay-family analog of TestSensorProjection: a stable id, the "relay" modelKey discriminant, a READ-THROUGH config getter into the
+/* The Relay projection double, the relay-family analog of TestSensorProjection: a stable id, the "relay" modelKey, a READ-THROUGH config getter into the
  * store double's CURRENT state (never a held snapshot - a push must change what this.ufp returns, or an end-to-end observe test proves nothing), and the derived name /
  * isOnline getters using the projection's own definitions. Unlike the read-only Light / Sensor projections it exposes TWO command surfaces the real ProtectRelay drives:
  * the write-through update the status-LED switch issues (recording its ledSettings payload), and the faithful toggleOutput primitive the set-to-toggle guard dispatches
@@ -1011,7 +1011,7 @@ export class TestRelayProjection {
 
 /* The Fob projection double, the fob-family analog of TestRelayProjection but MINUS the command levers: a fob is a pure-input device (its button presses arrive as
  * firehose occurrences, its away/arm state is read-only), so the real ProtectFob issues no write-through commands and this double exposes none. What remains is the
- * read-only surface the construction and observe paths read: a stable id, the "fob" modelKey discriminant, a READ-THROUGH config getter into the store double's CURRENT
+ * read-only surface the construction and observe paths read: a stable id, the "fob" modelKey, a READ-THROUGH config getter into the store double's CURRENT
  * state (never a held snapshot - a push must change what this.config returns, or an end-to-end observe test proves nothing), the non-throwing peek() companion, and the
  * derived name / isOnline getters using the projection's own definitions.
  */
