@@ -1283,6 +1283,60 @@ describe("A2 chime + viewer family: config builders, projection doubles, push he
     assert.ok(Object.is(afterLiveviews.ringtones, afterRingtones.ringtones), "the ringtones slice keeps its reference across a liveviews push");
   });
 
+  test("a whole-collection push preserves every POPULATED sibling slice, its records, and the nvr record - including a null one", () => {
+
+    /* The sibling slices are populated here, which is what separates this from the structural-sharing pin above: that store seeds only the two replaceable
+     * collections, so its untouched slices are empty maps and it cannot show the round-trip carrying real records through. Both whole-collection helpers reduce
+     * through a bootstrap rebuilt from the current snapshot, one line per modeled slice, so a builder that dropped a slice or fabricated an nvr would surface here as
+     * a lost record or a moved reference rather than as a silent hole.
+     */
+    const nvr = makeNvrConfig();
+    const store = new TestStateStore(makeProtectState({ cameras: [makeCameraConfig({ channels: [], id: "camera-keep" })],
+      liveviews: [makeLiveviewConfig({ id: "lv-keep" })], nvr, ringtones: [makeRingtoneConfig({ id: "ring-old" })],
+      sensors: [makeSensorConfig({ id: "sensor-keep" })] }));
+    const before = store.snapshot();
+
+    store.pushRingtones([makeRingtoneConfig({ id: "ring-new" })]);
+
+    const after = store.snapshot();
+
+    assert.deepEqual([...after.ringtones.keys()], ["ring-new"], "the ringtones slice rebuilt from the supplied array");
+    assert.ok(Object.is(after.cameras, before.cameras), "the populated cameras map keeps its own reference across a ringtones push");
+    assert.ok(Object.is(after.sensors, before.sensors), "the populated sensors map keeps its own reference across a ringtones push");
+    assert.ok(Object.is(after.liveviews, before.liveviews), "the populated liveviews map keeps its own reference across a ringtones push");
+    assert.ok(Object.is(after.cameras.get("camera-keep"), before.cameras.get("camera-keep")), "a populated sibling's camera record keeps its reference");
+    assert.ok(Object.is(after.sensors.get("sensor-keep"), before.sensors.get("sensor-keep")), "a populated sibling's sensor record keeps its reference");
+    assert.ok(Object.is(after.liveviews.get("lv-keep"), before.liveviews.get("lv-keep")), "the other replaceable collection's record keeps its reference");
+    assert.ok(Object.is(after.nvr, before.nvr), "the nvr record keeps its reference - the builder carries it across rather than rebuilding it");
+
+    // The liveviews half of the same builder, so the round-trip is pinned for both replaceable collections rather than only the one the first push left alone.
+    store.pushLiveviews([makeLiveviewConfig({ id: "lv-new" })]);
+
+    const afterLiveviews = store.snapshot();
+
+    assert.deepEqual([...afterLiveviews.liveviews.keys()], ["lv-new"], "the liveviews slice rebuilt from the supplied array");
+    assert.ok(Object.is(afterLiveviews.ringtones, after.ringtones), "the freshly pushed ringtones slice keeps its reference across a liveviews push");
+    assert.ok(Object.is(afterLiveviews.cameras.get("camera-keep"), before.cameras.get("camera-keep")), "a populated sibling's record survives a second push");
+    assert.ok(Object.is(afterLiveviews.nvr, before.nvr), "the nvr record still keeps its reference after the second whole-collection push");
+
+    /* The null-nvr cell. makeProtectState defaults the nvr slice to null, and the synthesized bootstrap smuggles that null verbatim through its confined cast:
+     * applyBootstrap carries it through unchanged, and the adoption normalization ahead of it reads the controller MAC off the same null and goes inert rather than
+     * throwing. A builder that invented an nvr record to satisfy the bootstrap type would flip this slice out from under every fixture that depends on it.
+     */
+    const nullNvrStore = new TestStateStore(makeProtectState({ ringtones: [makeRingtoneConfig({ id: "ring-old" })] }));
+
+    assert.equal(nullNvrStore.snapshot().nvr, null, "the vacuity guard: the store genuinely starts with no nvr record");
+
+    nullNvrStore.pushRingtones([makeRingtoneConfig({ id: "ring-new" })]);
+
+    assert.equal(nullNvrStore.snapshot().nvr, null, "a ringtones push against a null-nvr store leaves the nvr slice null");
+    assert.deepEqual([...nullNvrStore.snapshot().ringtones.keys()], ["ring-new"], "the ringtones push still landed against the null-nvr store");
+
+    nullNvrStore.pushLiveviews([makeLiveviewConfig({ id: "lv-new" })]);
+
+    assert.equal(nullNvrStore.snapshot().nvr, null, "a liveviews push against a null-nvr store leaves the nvr slice null");
+  });
+
   test("the client.ringtones and client.liveviews getters read through the current store, reflecting a later push", () => {
 
     const store = new TestStateStore(makeProtectState({ liveviews: [makeLiveviewConfig({ id: "lv-1", name: "Front" })],

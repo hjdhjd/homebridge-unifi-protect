@@ -8,15 +8,16 @@
  * removeService / configureController on Accessory, getCharacteristic / updateCharacteristic / removeCharacteristic on Service, and onGet / onSet / value on
  * Characteristic.
  *
- * Alongside the HAP double, this file owns the reusable device-construction harness: a faithful double of the StateStore observe contract (TestStateStore),
+ * Alongside the HAP double, this file owns the reusable device-construction harness: a facade over unifi-protect's real state store (TestStateStore),
  * typed builders for the camera and chime config records and the NVR / platform doubles, a read-through Camera projection double, and a stub
  * StreamingDelegateFactory that satisfies the platform's dependency-inversion seam so a REAL ProtectCamera - or a full doorbell-plus-package-camera family - can be
  * constructed end to end with no FFmpeg and no live HAP. The NVR double additionally mirrors the platform-accessory registration surface (a mutable accessories
  * array, the api registration recorders, a deterministic uuid generator) and the device-removal machinery (a mutable removalStable gate, recorded
  * scheduleDeviceRemoval timers a test fires manually, the presence-guarded removal tail), carries the REAL ProtectEventDispatch as its events member, and offers an
- * opt-in recording MQTT double so subscription-lifetime and publish assertions are possible. The doubles mirror contracts owned elsewhere - the observe semantics
- * are unifi-protect's (src/state/store.ts), the service/characteristic surface is HAP's as consumed by homebridge-plugin-utils' real service helpers, the removal
- * machinery is ProtectNvr's - and fidelity to those cited contracts, not invention, is the line this file holds.
+ * opt-in recording MQTT double so subscription-lifetime and publish assertions are possible. The doubles mirror contracts owned elsewhere - the service /
+ * characteristic surface is HAP's as consumed by homebridge-plugin-utils' real service helpers, the removal machinery is ProtectNvr's - and fidelity to those cited
+ * contracts, not invention, is the line this file holds. State is the one concern that needs no mirroring at all: TestStateStore runs unifi-protect's own store
+ * (src/state/store.ts) rather than a restatement of it.
  *
  * The surface is intentionally tight. The Service / Characteristic namespaces expand as the production code they exercise reaches for new kinds; adding a new
  * kind is a small constructible marker class plus an entry in the namespace object.
@@ -27,9 +28,10 @@
  */
 import type { API, CameraController, CameraControllerOptions, HAP, Resolution } from "homebridge";
 import type { AudioOptionsIdentity, StreamingDelegate, StreamingDelegateFactory } from "./media/stream-delegate.ts";
-import type { Camera, Chime, LivestreamSubscriptionState, PlaySpeakerOptions, ProtectCameraChannelConfig, ProtectCameraConfig, ProtectChimeConfig, ProtectEventMetadata,
-  ProtectFobConfig, ProtectLightConfig, ProtectNvrConfig, ProtectNvrLiveviewConfig, ProtectRelayConfig, ProtectRingtoneConfig, ProtectSensorConfig, ProtectState,
-  ProtectViewerConfig, Segment, Sensor, SnapshotOptions, TalkbackSession } from "unifi-protect";
+import type { Camera, Chime, DeepPartial, LivestreamSubscriptionState, PlaySpeakerOptions, ProtectCameraChannelConfig, ProtectCameraConfig, ProtectChimeConfig,
+  ProtectEventMetadata, ProtectFobConfig, ProtectLightConfig, ProtectNvrBootstrap, ProtectNvrConfig, ProtectNvrLiveviewConfig, ProtectRelayConfig, ProtectRingtoneConfig,
+  ProtectSensorConfig, ProtectState, ProtectStateRecord, ProtectViewerConfig, Segment, Sensor, SnapshotOptions, StateModelKey, StateStore,
+  TalkbackSession } from "unifi-protect";
 import type { Clock, HomebridgePluginLogging, Nullable, RecordingProcessFactory } from "homebridge-plugin-utils";
 import { FIXTURE_HOST, FIXTURE_RTSPS_PORT, G2_PRO_CHANNELS } from "./camera.fixtures.ts";
 import { FeatureOptions, SAMPLE_FLAG_NON_SYNC, TestClock, TestRecordingProcessFactory, makeBox, makeContainer, makeTrunBox } from "homebridge-plugin-utils";
@@ -50,6 +52,7 @@ import { ProtectDevice } from "./devices/device.ts";
 import { ProtectEventDispatch } from "./nvr/event-dispatch.ts";
 import type { ProtectPlatform } from "./platform.ts";
 import type { SnapshotSource } from "./media/timeshift.ts";
+import { createStateStore } from "unifi-protect";
 import util from "node:util";
 
 // Identity class for a HAP Characteristic kind. Each characteristic kind is its own marker class; production code passes the class as a key to
@@ -1006,434 +1009,245 @@ export function makeTestAccessory(displayName = "Test Accessory", uuid = "000000
   return new TestAccessory(displayName, uuid);
 }
 
-/* One consumer's live view of a selector over the store double - a faithful mirror of unifi-protect's StateObserver (src/state/store.ts), where the load-bearing
- * observe mechanics live. The pinned semantics, each mirrored deliberately: the baseline is seeded from the state at iteration start (observers never fire at
- * subscription - they yield only on a later change); dedup happens at ENQUEUE time against the last ENQUEUED value, so a parked consumer facing pushes A then B
- * then A receives B then A; the queue is unbounded and in-order (no conflation, no latest-value-only); close is drain-then-close (already-queued values still
- * yield before the iterator returns - exactly what the production trailing-yield guard exists for); and the parked iterator wakes through Promise.withResolvers,
- * never a timer, so wakes resolve through the microtask queue and the tests' settle-tick discipline stays deterministic.
- */
-class TestStateObserver<T> {
-
-  private closed = false;
-  private lastEnqueued: T;
-  private queue: T[] = [];
-  private readonly selector: (state: ProtectState) => T;
-  private wake: (() => void) | null = null;
-
-  constructor(selector: (state: ProtectState) => T, initialState: ProtectState) {
-
-    this.selector = selector;
-
-    // Seed the baseline from the state at iteration time, so the observer yields on the first subsequent change rather than re-emitting the current value (which
-    // the consumer already has via snapshot()). This is the "yields when X changes" contract.
-    this.lastEnqueued = selector(initialState);
-  }
-
-  // Called by the store on every committed push. Re-run the selector against the new state; enqueue (and wake any parked iterator) only when the derived value is
-  // a different reference than the one last enqueued.
-  public evaluate(state: ProtectState): void {
-
-    const next = this.selector(state);
-
-    if(Object.is(next, this.lastEnqueued)) {
-
-      return;
-    }
-
-    this.lastEnqueued = next;
-    this.queue.push(next);
-    this.signal();
-  }
-
-  // Terminate the iteration. The iterator drains whatever is already queued, then returns.
-  public close(): void {
-
-    this.closed = true;
-    this.signal();
-  }
-
-  // The async iteration itself. Drains the queue in batches (swapping in a fresh array so values arriving mid-yield are picked up on the next pass), then parks on
-  // a Promise.withResolvers() until the next evaluate / close wakes it. No timers, no EventEmitter, no listener bookkeeping - mirroring the real iterate exactly.
-  public async *iterate(): AsyncGenerator<T> {
-
-    for(;;) {
-
-      if(this.queue.length > 0) {
-
-        const batch = this.queue;
-
-        this.queue = [];
-
-        for(const value of batch) {
-
-          yield value;
-        }
-
-        continue;
-      }
-
-      if(this.closed) {
-
-        return;
-      }
-
-      const { promise, resolve } = Promise.withResolvers<undefined>();
-
-      // The wake is a zero-argument signal; we close over the resolver so the queue-side signal never needs to know the gate carries an (ignored) value.
-      this.wake = (): void => resolve(undefined);
-
-      // Parking on the next signal is the whole point of this loop - the await is intentional and sequential, not an accidental serialization of independent work.
-      // eslint-disable-next-line no-await-in-loop
-      await promise;
-    }
-  }
-
-  // Wake a parked iterator exactly once. A no-op when the iterator is mid-drain (no resolver registered), because it will re-check the queue on its next pass anyway.
-  private signal(): void {
-
-    const wake = this.wake;
-
-    this.wake = null;
-    wake?.();
-  }
-}
-
-/* A faithful test double of the StateStore observe contract. The real StateStore is a type-only export, constructed solely by ProtectClient.connect(), so a
- * test cannot stand one up - this double implements the documented contract instead, mirroring both halves of the real implementation: the observe() wrapper
- * (lazy registration when iteration begins, the already-aborted check inside the generator body, abort wired to a drain-then-close, deregistration in the
- * generator's finally on ANY exit - abort, break, or return) and the StateObserver mechanics (see TestStateObserver above).
+/* A thin facade over unifi-protect's real state store. This double owns no observe, queue, dedup, or reduction mechanics of its own: it constructs the genuine
+ * StateStore through createStateStore - the package's one documented value-export, published for exactly this harness use - and delegates its reads to it, so the engine
+ * a test drives is the library's own and cannot drift from a contract restated here. Dispatch is package-internal except through that factory, so reaching it from a
+ * harness is the sanctioned path rather than a way around the export law.
  *
- * Test-side knobs beyond the production surface: push commits a new state and notifies every registered observer (each observer's own reference dedup decides
- * whether it actually wakes, exactly as the real dispatch's notify does); pushCameraPatch is the structural-sharing push helper that replaces ONLY the targeted
- * camera record - the patched record spread-shares every untouched field and every other state slice keeps its reference, mirroring the real reducer's structural
- * sharing so exactly the observers watching the patched fields wake; and observerCount derives from the registration set itself (never a close-side decrement),
- * so a leaked or hung iterator keeps the count nonzero and teardown assertions stay meaningful.
+ * The ergonomic write helpers stay, re-expressed as event synthesizers: each resolves its record, then dispatches the TypedEvent the controller would have sent, so a
+ * test still writes in per-slice terms while the reducer decides what actually changed. Two semantics therefore come from the real engine rather than from this file.
+ * A write that changes nothing by value leaves the state reference untouched, so it notifies no observer at all. A patch carrying a nested object deep-merges into that
+ * subtree rather than replacing it, so keys the patch omits keep their stored values.
+ *
+ * observerCount wraps the generator protocol rather than reading a registration set: the wrapper repeats the real store's pre-registration abort check, then counts one
+ * live iteration per instance. The async-generator protocol runs a generator's finally exactly once on every exit path - abort, break, or return() - so a bare counter is
+ * exact and needs no identity set behind it.
  */
 export class TestStateStore {
 
-  private readonly observers = new Set<TestStateObserver<unknown>>();
-  private state: ProtectState;
+  private observers = 0;
+  private readonly store: StateStore;
 
   public constructor(initialState: ProtectState) {
 
-    this.state = initialState;
+    this.store = createStateStore({ initialState, refresh: disabledRefresh, refreshIntervalMs: false });
   }
 
-  // The number of currently registered observers, derived from the registration set. Nonzero after a minimal camera construction settles (the base observers plus the
-  // camera's own); zero after cleanup.
+  // The number of live observe iterations. Nonzero after a minimal camera construction settles (the base observers plus the camera's own); zero after cleanup.
   public get observerCount(): number {
 
-    return this.observers.size;
+    return this.observers;
   }
 
   // The current state - the same synchronous read surface production code calls as client.state.snapshot().
   public snapshot(): ProtectState {
 
-    return this.state;
+    return this.store.snapshot();
   }
 
-  // Commit a new state and notify every registered observer. Each observer re-runs its selector and enqueues only on a reference change, so a push that left a
-  // slice untouched never wakes that slice's consumer.
-  public push(next: ProtectState): void {
-
-    this.state = next;
-
-    for(const observer of this.observers) {
-
-      observer.evaluate(next);
-    }
-  }
-
-  // The structural-sharing push helper: replace only the targeted camera record, spread-sharing its untouched fields, while every other slice of the state keeps
-  // its reference. This mirrors the real reducer's structural sharing, which is what makes the narrow observers' Object.is dedup meaningful - a test push that
-  // rebuilt every slice would wake every observer and prove nothing.
+  // Patch a camera record, exactly as the controller's realtime update packet would.
   public pushCameraPatch(id: string, patch: Partial<ProtectCameraConfig>): void {
 
-    const previous = this.state;
-    const record = previous.cameras.get(id);
-
-    if(!record) {
-
-      throw new Error("The camera record to patch is not present in the store double: " + id + ".");
-    }
-
-    const cameras = new Map(previous.cameras);
-
-    cameras.set(id, { ...record, ...patch });
-    this.push({ ...previous, cameras });
+    this.requirePresent({ id, label: "camera", record: this.snapshot().cameras.get(id) });
+    this.patchRecord("camera", id, patch);
   }
 
-  // Push a partial featureFlags patch, composing it over the targeted camera record's LIVE featureFlags so nothing else on the flags object moves. pushCameraPatch's
-  // shallow merge would otherwise REPLACE the whole featureFlags object, dropping every flag the test did not name; this is the shared composing helper the doorbell
-  // promotion / package-capability flip tests use, mirroring the narrower per-test pushPackageFlag pattern in package-remove-on-false.test.ts.
+  // Push a partial featureFlags patch. A one-level patch is all this needs: the reducer merges key-wise into the stored featureFlags, so every flag the test did not name
+  // keeps its value. This is the shared composing helper the doorbell promotion and package-capability flip tests use.
   public pushCameraFeatureFlags(id: string, flags: Partial<ProtectCameraConfig["featureFlags"]>): void {
 
-    const record = this.state.cameras.get(id);
-
-    if(!record) {
-
-      throw new Error("The camera record to patch is not present in the store double: " + id + ".");
-    }
-
-    this.pushCameraPatch(id, { featureFlags: { ...record.featureFlags, ...flags } });
+    this.requirePresent({ id, label: "camera", record: this.snapshot().cameras.get(id) });
+    this.patchRecord("camera", id, { featureFlags: flags });
   }
 
-  // Push the paired Access reader's supportUnlock capability live, composing it over the targeted camera record's accessDeviceMetadata so nothing else on the metadata
-  // object moves - the accessDeviceMetadata mirror of pushCameraFeatureFlags. accessDeviceMetadata is OPTIONAL (a camera with no paired reader has none), so an
-  // undefined-to-present flip synthesizes the minimal metadata shape makeCameraConfig builds (only the gating featureFlags), while a present-metadata flip spreads the
-  // live object and overrides only supportUnlock. The lone cast is confined here, as makeCameraConfig confines its own, since the minimal metadata is not the full wire
-  // shape.
+  // Push the paired Access reader's supportUnlock capability live. accessDeviceMetadata is OPTIONAL - a camera with no paired reader carries none - and the reducer
+  // replaces an absent subtree wholesale while merging a present one key-wise, so this single patch shape serves both the first appearance and a later flip.
   public pushCameraSupportUnlock(id: string, supportUnlock: boolean): void {
 
-    const record = this.state.cameras.get(id);
-
-    if(!record) {
-
-      throw new Error("The camera record to patch is not present in the store double: " + id + ".");
-    }
-
-    const metadata = record.accessDeviceMetadata;
-    const accessDeviceMetadata = { ...metadata, featureFlags: { ...metadata?.featureFlags, supportUnlock } } as unknown as ProtectCameraConfig["accessDeviceMetadata"];
-
-    this.pushCameraPatch(id, { accessDeviceMetadata });
+    this.requirePresent({ id, label: "camera", record: this.snapshot().cameras.get(id) });
+    this.patchRecord("camera", id, { accessDeviceMetadata: { featureFlags: { supportUnlock } } });
   }
 
-  // The light-slice mirror of pushCameraPatch: replace only the targeted light record, spread-sharing its untouched fields, while every other slice of the state keeps
-  // its reference - so exactly the observers watching light-derived selectors (the light's narrow reactions) wake. The plain per-slice form, because a key-generic
-  // push cannot correlate a slice's record type cast-free against the ReadonlyMap slices, so each slice carries its own typed helper.
+  // Patch a light record - the slice the light's brightness and status-indicator reactions read.
   public pushLightPatch(id: string, patch: Partial<ProtectLightConfig>): void {
 
-    const previous = this.state;
-    const record = previous.lights.get(id);
-
-    if(!record) {
-
-      throw new Error("The light record to patch is not present in the store double: " + id + ".");
-    }
-
-    const lights = new Map(previous.lights);
-
-    lights.set(id, { ...record, ...patch });
-    this.push({ ...previous, lights });
+    this.requirePresent({ id, label: "light", record: this.snapshot().lights.get(id) });
+    this.patchRecord("light", id, patch);
   }
 
-  // Push a partial lightDeviceSettings patch, composing it over the targeted light record's LIVE lightDeviceSettings so nothing else on the nested object moves. The
-  // light's ledLevel and isIndicatorEnabled selectors both read into lightDeviceSettings, so pushLightPatch's shallow merge would otherwise REPLACE the whole nested
-  // object and spuriously wake the sibling selector (or corrupt its state); composing here lets a test move exactly one nested field, mirroring pushCameraFeatureFlags.
+  // Push a partial lightDeviceSettings patch. The light's ledLevel and isIndicatorEnabled selectors both read into that one nested object, so a test moves exactly one of
+  // them and the reducer's key-wise merge leaves the sibling - and therefore the sibling's observer - alone.
   public pushLightDeviceSettings(id: string, settings: Partial<ProtectLightConfig["lightDeviceSettings"]>): void {
 
-    const record = this.state.lights.get(id);
-
-    if(!record) {
-
-      throw new Error("The light record to patch is not present in the store double: " + id + ".");
-    }
-
-    this.pushLightPatch(id, { lightDeviceSettings: { ...record.lightDeviceSettings, ...settings } });
+    this.requirePresent({ id, label: "light", record: this.snapshot().lights.get(id) });
+    this.patchRecord("light", id, { lightDeviceSettings: settings });
   }
 
-  // The sensor-slice mirror of pushCameraPatch: replace only the targeted sensor record, spread-sharing its untouched fields, while every other slice keeps its
-  // reference - so exactly the observers watching sensor-derived selectors wake. Lands here as the device-info concern net's first consumer (the base device.name /
-  // device.firmwareVersion observers read the sensor record via deviceSelectors.sensor.byId, so a name push wakes the name observer and a firmware push wakes firmware)
-  // and is reused by the later sensor family. The plain per-slice form, because a key-generic push cannot correlate a slice's record type cast-free against the
-  // ReadonlyMap slices, so each slice carries its own typed helper.
+  // Patch a sensor record - the carrier the base device-info observers and the whole sensor family ride.
   public pushSensorPatch(id: string, patch: Partial<ProtectSensorConfig>): void {
 
-    const previous = this.state;
-    const record = previous.sensors.get(id);
-
-    if(!record) {
-
-      throw new Error("The sensor record to patch is not present in the store double: " + id + ".");
-    }
-
-    const sensors = new Map(previous.sensors);
-
-    sensors.set(id, { ...record, ...patch });
-    this.push({ ...previous, sensors });
+    this.requirePresent({ id, label: "sensor", record: this.snapshot().sensors.get(id) });
+    this.patchRecord("sensor", id, patch);
   }
 
-  // The relay-slice mirror of pushCameraPatch: replace only the targeted relay record, spread-sharing its untouched fields, while every other slice keeps its reference -
-  // so exactly the observers watching relay-derived selectors wake. The shallow merge is what makes the relay observers' reference dedup meaningful: a patch carrying a
-  // fresh outputs array wakes the outputs observer, while a ledSettings-only patch leaves the outputs array reference untouched (so the outputs observer stays parked),
-  // mirroring the real reducer's copy-on-write that only replaces the sub-object it actually changed. The plain per-slice form, for the same reason the other
-  // slice helpers are (a key-generic push cannot correlate a slice's record type cast-free against the ReadonlyMap slices).
+  // Patch a relay record. A patch carrying a fresh outputs array wakes the outputs observer, while a ledSettings-only patch leaves the outputs array untouched so that
+  // observer stays parked - the reducer's copy-on-write replacing only the subtree it actually changed.
   public pushRelayPatch(id: string, patch: Partial<ProtectRelayConfig>): void {
 
-    const previous = this.state;
-    const record = previous.relays.get(id);
-
-    if(!record) {
-
-      throw new Error("The relay record to patch is not present in the store double: " + id + ".");
-    }
-
-    const relays = new Map(previous.relays);
-
-    relays.set(id, { ...record, ...patch });
-    this.push({ ...previous, relays });
+    this.requirePresent({ id, label: "relay", record: this.snapshot().relays.get(id) });
+    this.patchRecord("relay", id, patch);
   }
 
-  // Push a fresh outputs array for a relay, composing each simplified { id, name?, state } into a full output record shape (mirroring makeRelayConfig) and replacing the
-  // whole outputs reference through pushRelayPatch - so exactly the relay's outputs observer wakes. This is the broadcast a real per-output state change delivers: the
-  // reducer replaces the outputs array on a genuine output change, and this helper reproduces that reference swap so a test can move output state without hand-building
-  // the full wire output record. The lone cast is confined here, exactly as makeRelayConfig confines its own, since the simplified output is not the full wire shape.
+  // Push a fresh outputs array for a relay, composing each simplified { id, name?, state } into the full output record shape makeRelayConfig builds. This is the
+  // broadcast a real per-output state change delivers, so a test can move output state without hand-building the wire record. The lone cast is confined here, exactly as
+  // makeRelayConfig confines its own, since the simplified output is not the full wire shape.
   public pushRelayOutputs(id: string, outputs: { id: number; name?: Nullable<string>; state: "off" | "on" }[]): void {
 
     this.pushRelayPatch(id, { outputs: outputs.map((output) => ({ id: output.id, name: output.name ?? null, state: output.state })) as ProtectRelayConfig["outputs"] });
   }
 
-  // The fob-slice mirror of pushCameraPatch: replace only the targeted fob record, spread-sharing its untouched fields, while every other slice keeps its reference - so
-  // exactly the observers watching fob-derived selectors wake. The battery observers select into wirelessConnectionState.batteryStatus, so a patch carrying a fresh
-  // wirelessConnectionState wakes them (each deduped on its own primitive) while a name/firmware patch leaves that reference untouched. The plain per-slice form, for the
-  // same reason the other slice helpers are (a key-generic push cannot correlate a slice's record type cast-free against the ReadonlyMap slices).
+  // Patch a fob record - the slice the battery and identity observers read.
   public pushFobPatch(id: string, patch: Partial<ProtectFobConfig>): void {
 
-    const previous = this.state;
-    const record = previous.fobs.get(id);
-
-    if(!record) {
-
-      throw new Error("The fob record to patch is not present in the store double: " + id + ".");
-    }
-
-    const fobs = new Map(previous.fobs);
-
-    fobs.set(id, { ...record, ...patch });
-    this.push({ ...previous, fobs });
+    this.requirePresent({ id, label: "fob", record: this.snapshot().fobs.get(id) });
+    this.patchRecord("fob", id, patch);
   }
 
-  // Push a fresh battery status for a fob, composing the new batteryStatus over the targeted record's LIVE wirelessConnectionState so nothing else on that nested object
-  // moves, and replacing the whole wirelessConnectionState reference through pushFobPatch - so exactly the fob's battery observers wake (each deduped on its own
-  // primitive). This is the fob analog of pushRelayOutputs: it reproduces the reducer's reference swap so a test can move battery state without hand-building the full
-  // LoRa link-state record. The spread over the full-typed live wirelessConnectionState keeps the shape complete with no cast at the call site.
+  // Push a fresh battery status for a fob. The reducer merges into the stored wirelessConnectionState, so the LoRa link state around the battery survives and exactly the
+  // fob's battery observers wake, each deduped on its own primitive.
   public pushFobBattery(id: string, batteryStatus: { isLow: boolean; percentage: Nullable<number> }): void {
 
-    const record = this.state.fobs.get(id);
-
-    if(!record) {
-
-      throw new Error("The fob record to patch is not present in the store double: " + id + ".");
-    }
-
-    this.pushFobPatch(id, { wirelessConnectionState: { ...record.wirelessConnectionState, batteryStatus } });
+    this.requirePresent({ id, label: "fob", record: this.snapshot().fobs.get(id) });
+    this.patchRecord("fob", id, { wirelessConnectionState: { batteryStatus } });
   }
 
-  // The chime-slice mirror of pushCameraPatch: replace only the targeted chime record, spread-sharing its untouched fields, while every other slice keeps its
-  // reference - so exactly the observers watching chime-derived selectors (the doorbell's chime-volume reduction) wake.
+  // Patch a chime record - the slice the doorbell's chime-volume reduction reads.
   public pushChimePatch(id: string, patch: Partial<ProtectChimeConfig>): void {
 
-    const previous = this.state;
-    const record = previous.chimes.get(id);
-
-    if(!record) {
-
-      throw new Error("The chime record to patch is not present in the store double: " + id + ".");
-    }
-
-    const chimes = new Map(previous.chimes);
-
-    chimes.set(id, { ...record, ...patch });
-    this.push({ ...previous, chimes });
+    this.requirePresent({ id, label: "chime", record: this.snapshot().chimes.get(id) });
+    this.patchRecord("chime", id, patch);
   }
 
-  // The viewer-slice mirror of pushChimePatch: replace only the targeted viewer record, spread-sharing its untouched fields, while every other slice keeps its
-  // reference - so exactly the observers watching viewer-derived selectors (the viewer's active-liveview reflection) wake. This is how the suite drives the
-  // observer-driven active-liveview reflection, since the projection double's update records rather than folding.
+  // Patch a viewer record - how the suite drives the observer-driven active-liveview reflection, since the projection double records rather than folds.
   public pushViewerPatch(id: string, patch: Partial<ProtectViewerConfig>): void {
 
-    const previous = this.state;
-    const record = previous.viewers.get(id);
-
-    if(!record) {
-
-      throw new Error("The viewer record to patch is not present in the store double: " + id + ".");
-    }
-
-    const viewers = new Map(previous.viewers);
-
-    viewers.set(id, { ...record, ...patch });
-    this.push({ ...previous, viewers });
+    this.requirePresent({ id, label: "viewer", record: this.snapshot().viewers.get(id) });
+    this.patchRecord("viewer", id, patch);
   }
 
-  // The nvr-slice mirror of the per-slice push helpers, adapted for the one slice that is a SINGLE nullable record rather than a Map: replace the nvr record with the
-  // patch spread over its untouched fields, while every other slice keeps its reference - so exactly the observers watching nvr-derived selectors (the nvr-systeminfo
-  // owner's narrow nvr.systemInfo reaction) wake. When a test moves systemInfo it passes a FRESH systemInfo object, so selectNvr(state)?.systemInfo changes by reference
-  // AND - because client.nvr.config reads through this same slice - nvr.ufp.systemInfo becomes that same new object, so the observer wakes and its re-read returns the
-  // new value. The plain per-slice form, not a key-generic, for the same reason the Map push helpers are. Guards the slice non-null because the
-  // patch composes over the live record.
+  // Patch the NVR record - the one slice that is a single nullable record rather than a map, so it carries no id. When a test moves systemInfo it passes a FRESH
+  // systemInfo object, so the nvr-systeminfo owner's narrow reaction wakes and its re-read returns the new value.
   public pushNvrPatch(patch: Partial<ProtectNvrConfig>): void {
 
-    const previous = this.state;
-
-    if(!previous.nvr) {
-
-      throw new Error("The nvr record to patch is not present in the store double.");
-    }
-
-    this.push({ ...previous, nvr: { ...previous.nvr, ...patch } });
+    this.requirePresent({ label: "nvr", record: this.snapshot().nvr ?? undefined });
+    this.patchRecord("nvr", "", patch);
   }
 
-  // The controller-wide ringtone-collection push: rebuild only the ringtones slice from the supplied array, sharing every other slice's reference - so exactly the
-  // nvr.ringtones collection observer (the chime's ringtone-switch reconcile) wakes. A plain per-slice function, not a key-generic, because a key-generic cannot
-  // correlate a slice's record type cast-free against the ReadonlyMap slices.
+  // Replace the controller's ringtone library. Ringtones are reduced BOOTSTRAP-ONLY - the controller broadcasts no ringtone realtime packet - so a bootstrap is the only
+  // event that can write this slice at all.
   public pushRingtones(ringtones: ProtectRingtoneConfig[]): void {
 
-    const next = new Map(ringtones.map((ringtone): [string, ProtectRingtoneConfig] => [ ringtone.id, ringtone ]));
-
-    this.push({ ...this.state, ringtones: next });
+    this.store.dispatch({ data: this.bootstrapReplacing({ ringtones }), kind: "bootstrapLoaded" });
   }
 
-  // The controller-wide liveview-collection push: rebuild only the liveviews slice from the supplied array, sharing every other slice's reference - so exactly the
-  // nvr.liveviews collection observer (the viewer's switch-set reconcile) wakes. A plain per-slice function, for the same reason pushRingtones is.
+  // Replace the controller's saved liveviews. This rides the same bootstrap as the ringtone library, for a different reason: replacing a whole collection is ONE atomic
+  // transition, and a bootstrap reconciles every slice in a single dispatch, so one push wakes the collection's observer exactly once. Per-id events would reduce the
+  // same end state through one dispatch per added and removed record, waking that observer once per record.
   public pushLiveviews(liveviews: ProtectNvrLiveviewConfig[]): void {
 
-    const next = new Map(liveviews.map((liveview): [string, ProtectNvrLiveviewConfig] => [ liveview.id, liveview ]));
-
-    this.push({ ...this.state, liveviews: next });
+    this.store.dispatch({ data: this.bootstrapReplacing({ liveviews }), kind: "bootstrapLoaded" });
   }
 
-  // Remove a camera record outright, mirroring the reducer's device-removed reduction: the cameras map is rebuilt without the record while every other slice keeps
-  // its reference. The fixture for absence-tolerance tests - a projection's config getter throws once its record is gone, and predicates that must survive that
-  // (the package detach's stillGone) are exercised against exactly this state.
+  // Remove a camera record outright. Presence-free by design, mirroring the reducer's own tolerance for a removal naming an id it does not hold. The fixture for
+  // absence-tolerance tests - a projection's config getter throws once its record is gone, and predicates that must survive that are exercised against exactly this.
   public removeCameraRecord(id: string): void {
 
-    const cameras = new Map(this.state.cameras);
-
-    cameras.delete(id);
-    this.push({ ...this.state, cameras });
+    this.store.dispatch({ id, kind: "deviceRemoved", modelKey: "camera" });
   }
 
-  /* Observe a selector over the state, mirroring the real StateStore.observe contract exactly: a native async generator, so registration is LAZY (it happens when
-   * iteration begins, and an un-iterated observe registers nothing); an already-aborted signal yields nothing; the baseline is seeded at iteration start; abort
-   * closes the observer (drain-then-close); and the finally deregisters on every exit path - abort, break, or return().
+  /* Observe a selector over the state. The real store owns the semantics - lazy registration when iteration begins, a baseline seeded at that moment, an unbounded
+   * in-order queue, drain-then-close on abort, and deregistration on every exit path - and this wrapper adds only the count. It repeats the store's own already-aborted
+   * check first so the count never moves for an iteration the store declines to register, which keeps observerCount equal to real registration rather than merely
+   * netting to zero.
    */
   public async *observe<T>(selector: (state: ProtectState) => T, opts: { signal?: AbortSignal } = {}): AsyncGenerator<T> {
 
-    const signal = opts.signal;
-
-    // Nothing to observe if the caller handed us an already-aborted signal.
-    if(signal?.aborted) {
+    if(opts.signal?.aborted) {
 
       return;
     }
 
-    const observer = new TestStateObserver<T>(selector, this.state);
-    const onAbort = (): void => observer.close();
-
-    this.observers.add(observer);
-    signal?.addEventListener("abort", onAbort, { once: true });
+    this.observers++;
 
     try {
 
-      yield* observer.iterate();
+      yield* this.store.observe(selector, opts);
     } finally {
 
-      this.observers.delete(observer);
-      signal?.removeEventListener("abort", onAbort);
+      this.observers--;
     }
   }
+
+  /* Build the bootstrap that carries one replaced collection and changes nothing else - the write path for both whole-collection helpers. Every modeled collection is
+   * rebuilt from the current snapshot, one line per slice with no selectivity, and nvr and authUserId are carried across verbatim, so applyBootstrap's reconciliation is
+   * the identity on every slice the caller did not replace: reconcileMap re-keys each collection against its own records, finds no addition, removal, or value change,
+   * and returns the very map it was handed, records and all. The nvr line preserves an unchanged record by reference and carries a null through unchanged, and the
+   * adoption normalization ahead of it reads the controller MAC off that same nvr, going inert when it is null.
+   *
+   * The single cast is what lets that work. ProtectNvrBootstrap describes the controller's full bootstrap document: it requires a non-nullable nvr, which the store
+   * legitimately holds as null before a controller identity exists, plus thirteen further fields - accessKey, lastUpdateId, the group and unmodeled-device collections -
+   * that ProtectState does not model and applyBootstrap never reads. Fabricating them would be invention, and fabricating the nvr in particular would silently overwrite
+   * the null slice these fixtures depend on, so the literal carries exactly the fields the reducer consumes and the cast confines the gap, in the same wire-shape idiom
+   * the config builders use.
+   */
+  private bootstrapReplacing(replacements: { liveviews?: ProtectNvrLiveviewConfig[]; ringtones?: ProtectRingtoneConfig[] }): ProtectNvrBootstrap {
+
+    const state = this.snapshot();
+
+    return {
+
+      authUserId: state.authUserId,
+      cameras: [...state.cameras.values()],
+      chimes: [...state.chimes.values()],
+      fobs: [...state.fobs.values()],
+      lights: [...state.lights.values()],
+      liveviews: replacements.liveviews ?? [...state.liveviews.values()],
+      nvr: state.nvr,
+      relays: [...state.relays.values()],
+      ringtones: replacements.ringtones ?? [...state.ringtones.values()],
+      sensors: [...state.sensors.values()],
+      users: [...state.users.values()],
+      viewers: [...state.viewers.values()]
+    } as unknown as ProtectNvrBootstrap;
+  }
+
+  /* Dispatch one device patch. Each per-slice helper above holds a precise Partial of its own record type, but a TypedEvent pairs a model key with a patch typed against
+   * the whole record union and the two carry no typed correlation, so the widening lands here once rather than at every helper.
+   */
+  private patchRecord(modelKey: StateModelKey, id: string, patch: object): void {
+
+    this.store.dispatch({ id, kind: "devicePatched", modelKey, patch: patch as DeepPartial<ProtectStateRecord> });
+  }
+
+  // The one presence guard behind every write helper. The reducer no-ops a patch naming an id it does not hold, which would let a mistargeted push silently do nothing;
+  // throwing here keeps a test's own mistake loud. The nvr singleton carries no id, so its message names no record.
+  private requirePresent<T>(options: { id?: string; label: string; record: T | undefined }): T {
+
+    if(options.record === undefined) {
+
+      throw new Error("The " + options.label + " record to patch is not present in the store double" + ((options.id === undefined) ? "." : ": " + options.id + "."));
+    }
+
+    return options.record;
+  }
+}
+
+// The refresh callback the real store's options require. Constructing the double with refreshIntervalMs false disables the bootstrap-refresh failsafe outright, so the
+// loop never starts, nothing here ever runs, and there is no timer or resource for a test to dispose. It throws rather than fabricating a bootstrap so that were the
+// failsafe ever enabled by accident, the harness would fail loudly instead of quietly reducing an invented document.
+async function disabledRefresh(): Promise<ProtectNvrBootstrap> {
+
+  throw new Error("The store double disables the bootstrap refresh failsafe, so its refresh callback is never called.");
 }
 
 /**

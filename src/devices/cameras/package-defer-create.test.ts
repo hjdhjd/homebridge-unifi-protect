@@ -161,9 +161,11 @@ describe("package camera defer-create (BC1)", () => {
 
     assert.ok(record, "the camera record is present");
 
-    // A fresh channels array of fresh channel objects with identical values: the parent's reference-keyed channels observer wakes (and idempotently re-derives),
-    // but the package's computed primitive serializes to the same string, so the value dedup keeps the package-channel observer parked.
-    store.pushCameraPatch(cameraId, { channels: record.channels.map((channel) => ({ ...channel })) });
+    // A channel-list rebuild that moves a field OUTSIDE the package channel's dimensions: bitrate changes on every channel, so the parent's reference-keyed channels
+    // observer wakes (re-deriving to the same result), but the package's computed primitive reads only width / height / fps and serializes to the same string, so the
+    // value dedup keeps the package-channel observer parked. The moved field has to be a real change - the store reduces a rebuild that is merely a fresh set of
+    // value-identical objects to no change at all, which would leave nothing awake to dedup against.
+    store.pushCameraPatch(cameraId, { channels: record.channels.map((channel) => ({ ...channel, bitrate: channel.bitrate + 1 })) });
 
     await settle();
 
