@@ -205,7 +205,7 @@ describe("A2 light family: config builder, push helpers, and projection double",
 
     // The default path: omitting dispatch builds the real ProtectEventDispatch. We assert on the constructor by identity, NOT instanceof - a subclass satisfies
     // instanceof too, so it would not prove the DEFAULT (un-subclassed) path actually ran.
-    const { nvr: defaultNvr } = makeTestNvr({ store });
+    const { controller: defaultController, nvr: defaultNvr } = makeTestNvr({ store });
 
     assert.equal(defaultNvr.events.constructor, ProtectEventDispatch, "the default events member is exactly a ProtectEventDispatch, not a subclass");
 
@@ -215,9 +215,13 @@ describe("A2 light family: config builder, push helpers, and projection double",
       public readonly calls: string[] = [];
     }
 
-    const { nvr: injectedNvr } = makeTestNvr({ dispatch: (innerNvr: ProtectNvr): ProtectEventDispatch => new TrivialRecordingDispatch(innerNvr), store });
+    const { controller: injectedController, nvr: injectedNvr } =
+      makeTestNvr({ dispatch: (innerNvr: ProtectNvr): ProtectEventDispatch => new TrivialRecordingDispatch(innerNvr), store });
 
     assert.equal(injectedNvr.events.constructor, TrivialRecordingDispatch, "the injected factory's instance replaces the default events member");
+
+    defaultController.abort();
+    injectedController.abort();
   });
 });
 
@@ -479,7 +483,7 @@ describe("A2 chime + viewer family: config builders, projection doubles, push he
 
     const store = new TestStateStore(makeProtectState({ liveviews: [makeLiveviewConfig({ id: "lv-1", name: "Front" })],
       ringtones: [makeRingtoneConfig({ id: "ring-1", name: "Ring One" })] }));
-    const { nvr } = makeTestNvr({ store });
+    const { controller, nvr } = makeTestNvr({ store });
 
     assert.deepEqual(nvr.client.ringtones.map((ringtone) => ringtone.id), ["ring-1"], "client.ringtones reads the seeded ringtone");
     assert.deepEqual(nvr.client.liveviews.map((liveview) => liveview.id), ["lv-1"], "client.liveviews reads the seeded liveview");
@@ -490,13 +494,15 @@ describe("A2 chime + viewer family: config builders, projection doubles, push he
 
     assert.deepEqual(nvr.client.ringtones.map((ringtone) => ringtone.id), [ "ring-2", "ring-3" ], "client.ringtones reflects the later ringtones push");
     assert.deepEqual(nvr.client.liveviews.map((liveview) => liveview.id), ["lv-9"], "client.liveviews reflects the later liveviews push");
+
+    controller.abort();
   });
 
   test("client.chimes returns the HELD projection instances - not a per-access rebuild - so a write and its rejection lever see one object", () => {
 
     const store = new TestStateStore(makeProtectState({ chimes: [makeChimeConfig({ id: "chime-h" })] }));
     const held = new TestChimeProjection("chime-h", store);
-    const { nvr } = makeTestNvr({ chimes: [held], store });
+    const { controller, nvr } = makeTestNvr({ chimes: [held], store });
 
     // The CRITICAL stable-reference contract: every access returns the SAME instance the test holds. A store-rebuild getter (like liveviews / ringtones) would hand back
     // a fresh projection each pass, so the doorbell's setChimeVolume would write through one object while the test's updateRejection sat on another, and the failure
@@ -512,11 +518,13 @@ describe("A2 chime + viewer family: config builders, projection doubles, push he
 
     assert.equal((nvr.client.chimes as unknown as TestChimeProjection[])[0]?.updateRejection?.message, "held rejection",
       "the rejection set on the held handle is seen through client.chimes");
+
+    controller.abort();
   });
 
   test("the TestMqttClient captures the get and set handler closures so a test can invoke them", async () => {
 
-    const { mqtt } = makeTestNvr({ mqtt: true, store: new TestStateStore(makeProtectState()) });
+    const { controller, mqtt } = makeTestNvr({ mqtt: true, store: new TestStateStore(makeProtectState()) });
 
     assert.ok(mqtt, "the recording double is installed");
 
@@ -534,6 +542,8 @@ describe("A2 chime + viewer family: config builders, projection doubles, push he
 
     assert.deepEqual(setCalls, ["a-value"], "the set handler is captured and invocable");
     assert.equal(getSub?.topic, "74ACB9000101/tone", "the topic is still recorded for the topic-composition assertions");
+
+    controller.abort();
   });
 });
 
@@ -660,7 +670,7 @@ describe("A2 base-capability foundation: the shared dispatch, the sensor carrier
 
     const sensor = makeSensorConfig({ id: "sensor-fire" });
     const store = new TestStateStore(makeProtectState({ sensors: [sensor] }));
-    const { nvr } = makeTestNvr({ dispatch: (innerNvr: ProtectNvr): TestRecordingDispatch => new TestRecordingDispatch(innerNvr), store });
+    const { controller, nvr } = makeTestNvr({ dispatch: (innerNvr: ProtectNvr): TestRecordingDispatch => new TestRecordingDispatch(innerNvr), store });
     const recording = nvr.events as TestRecordingDispatch;
     const accessory = makeTestAccessory("Test Sensor", "uuid:sensor-fire");
     const projection = new TestSensorProjection("sensor-fire", store) as unknown as Sensor;
@@ -676,13 +686,15 @@ describe("A2 base-capability foundation: the shared dispatch, the sensor carrier
     device.cleanup();
 
     assert.deepEqual(recording.calls, [{ id: "sensor-fire", kind: "motion" }], "the recorded call survives teardown (the recorder holds no timer)");
+
+    controller.abort();
   });
 
   test("TestBaseDevice constructs against the harness and reaches the base motion configurator", () => {
 
     const sensor = makeSensorConfig({ id: "sensor-vehicle" });
     const store = new TestStateStore(makeProtectState({ sensors: [sensor] }));
-    const { nvr } = makeTestNvr({ store, userOptions: ["Enable.Motion.Switch"] });
+    const { controller, nvr } = makeTestNvr({ store, userOptions: ["Enable.Motion.Switch"] });
     const accessory = makeTestAccessory("Test Sensor", "uuid:sensor-vehicle");
     const projection = new TestSensorProjection("sensor-vehicle", store) as unknown as Sensor;
     const device = new TestBaseDevice(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection);
@@ -698,13 +710,14 @@ describe("A2 base-capability foundation: the shared dispatch, the sensor carrier
     assert.equal(device.configureMotionSensorFor(true), true, "configureMotionSensorFor reaches the base configureMotionSensor and validates the motion service");
 
     device.cleanup();
+    controller.abort();
   });
 
   test("TestBaseDevice's configureStatusLedSwitchFor window reaches the base status-LED configurator with the feature", () => {
 
     const sensor = makeSensorConfig({ id: "sensor-led" });
     const store = new TestStateStore(makeProtectState({ sensors: [sensor] }));
-    const { nvr } = makeTestNvr({ store, userOptions: ["Enable.Device.StatusLed.Switch"] });
+    const { controller, nvr } = makeTestNvr({ store, userOptions: ["Enable.Device.StatusLed.Switch"] });
     const accessory = makeTestAccessory("Test Sensor", "uuid:sensor-led");
     const projection = new TestSensorProjection("sensor-led", store) as unknown as Sensor;
     const device = new TestBaseDevice(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection);
@@ -715,13 +728,14 @@ describe("A2 base-capability foundation: the shared dispatch, the sensor carrier
     assert.equal(device.configureStatusLedSwitchFor(true), true, "configureStatusLedSwitchFor reaches the base configureStatusLedSwitch and validates the switch");
 
     device.cleanup();
+    controller.abort();
   });
 
   test("TestBaseDevice's configureInfoFor window reaches the base device-info configurator and writes the AccessoryInformation Model", () => {
 
     const sensor = makeSensorConfig({ id: "sensor-info" });
     const store = new TestStateStore(makeProtectState({ sensors: [sensor] }));
-    const { nvr } = makeTestNvr({ store });
+    const { controller, nvr } = makeTestNvr({ store });
     const accessory = makeTestAccessory("Test Sensor", "uuid:sensor-info");
     const projection = new TestSensorProjection("sensor-info", store) as unknown as Sensor;
     const device = new TestBaseDevice(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection);
@@ -736,13 +750,14 @@ describe("A2 base-capability foundation: the shared dispatch, the sensor carrier
       "configureInfo's setInfo wrote the AccessoryInformation Model from the carrier marketName");
 
     device.cleanup();
+    controller.abort();
   });
 
   test("TestBaseDevice's spawnObserversFor window registers exactly the two base observers once the lazy registration settles", async () => {
 
     const sensor = makeSensorConfig({ id: "sensor-observe" });
     const store = new TestStateStore(makeProtectState({ sensors: [sensor] }));
-    const { nvr } = makeTestNvr({ store });
+    const { controller, nvr } = makeTestNvr({ store });
     const accessory = makeTestAccessory("Test Sensor", "uuid:sensor-observe");
     const projection = new TestSensorProjection("sensor-observe", store) as unknown as Sensor;
     const device = new TestBaseDevice(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection);
@@ -757,6 +772,7 @@ describe("A2 base-capability foundation: the shared dispatch, the sensor carrier
     assert.equal(store.observerCount, 2, "spawnObserversFor registers exactly the two base observers (device.name, device.firmwareVersion)");
 
     device.cleanup();
+    controller.abort();
   });
 
   test("pushSensorPatch replaces only the targeted sensor record, structural-sharing every untouched slice, and throws on a missing id", () => {

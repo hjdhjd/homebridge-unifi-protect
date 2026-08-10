@@ -21,7 +21,7 @@
 import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../testing.helpers.ts";
 import { TestLightProjection, makeLightConfig } from "./testing.helpers.ts";
 import { TestRecordingDispatch, makeTestNvr } from "../nvr/testing.helpers.ts";
-import { after, before, beforeEach, describe, mock, test } from "node:test";
+import { after, afterEach, before, beforeEach, describe, mock, test } from "node:test";
 import type { Light } from "unifi-protect";
 import type { ObserverWakePayload } from "../diagnostics.ts";
 import type { ProtectAccessory } from "../types.ts";
@@ -35,6 +35,10 @@ import type { TestMqttClient } from "../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
 
+// Every harness controller this suite opens, drained in afterEach so the controller lifetime signal bounds each test's constructions rather than the file's. The builder
+// is the single push site, so an extra build inside a test body is captured exactly as the fixture's is.
+const controllers: AbortController[] = [];
+
 // The reusable construction helper: build a REAL ProtectLight against the harness doubles, with the recording dispatch injected through the NVR double's dispatch seam.
 // The casts are confined to the construction seam exactly as camera-construction.test.ts does; the instance under test is the production class, running its real
 // configureHints / configureDevice / spawnObservers paths. The injected recording dispatch is read off nvr.events after construction rather than captured from the
@@ -46,8 +50,11 @@ function buildLight(configOptions: Parameters<typeof makeLightConfig>[0] = {}, h
 
   const lightConfig = makeLightConfig(configOptions);
   const store = new TestStateStore(makeProtectState({ lights: [lightConfig] }));
-  const { mqtt, nvr } = makeTestNvr({ dispatch: (innerNvr: ProtectNvr): ProtectEventDispatch => new TestRecordingDispatch(innerNvr), mqtt: true, store,
+  const { controller, mqtt, nvr } = makeTestNvr({ dispatch: (innerNvr: ProtectNvr): ProtectEventDispatch => new TestRecordingDispatch(innerNvr), mqtt: true, store,
     userOptions: harnessOptions.userOptions });
+
+  controllers.push(controller);
+
   const recording = nvr.events as TestRecordingDispatch;
   const accessory = harnessOptions.accessory ?? makeTestAccessory("Test Light", "uuid:test-light");
 
@@ -91,6 +98,16 @@ describe("real ProtectLight construction and observer behavior", () => {
   after(() => {
 
     diagnosticsChannel.unsubscribe("hbup:observer:wake", onWake);
+  });
+
+  afterEach(() => {
+
+    for(const controller of controllers) {
+
+      controller.abort();
+    }
+
+    controllers.length = 0;
   });
 
   beforeEach(async () => {

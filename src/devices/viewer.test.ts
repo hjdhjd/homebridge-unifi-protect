@@ -38,6 +38,10 @@ function loggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], substri
   return entries.some((entry) => (entry.level === level) && entry.formatted.includes(substring));
 }
 
+// Every harness controller this suite opens, drained in afterEach so the controller lifetime signal bounds each test's constructions rather than the file's. The builder
+// is the single push site, so an extra build inside a test body is captured exactly as the fixture's is.
+const controllers: AbortController[] = [];
+
 // The reusable construction helper: build a REAL ProtectViewer against the harness doubles, seeding the viewer record plus whatever liveviews the test wants. The casts
 // are confined to the construction seam exactly as the light suite does; the instance under test is the production class running its real configureDevice /
 // spawnObservers paths. Returns logEntries and mqtt (the viewer asserts both the failure/configured log lines and the captured MQTT liveview handlers).
@@ -47,7 +51,10 @@ function buildViewer(configOptions: Parameters<typeof makeViewerConfig>[0] = {},
 
   const viewerConfig = makeViewerConfig(configOptions);
   const store = new TestStateStore(makeProtectState({ liveviews: harnessOptions.liveviews ?? [], viewers: [viewerConfig] }));
-  const { logEntries, mqtt, nvr } = makeTestNvr({ mqtt: true, store });
+  const { controller, logEntries, mqtt, nvr } = makeTestNvr({ mqtt: true, store });
+
+  controllers.push(controller);
+
   const accessory = makeTestAccessory("Test Viewer", "uuid:test-viewer");
   const projection = new TestViewerProjection(viewerConfig.id, store);
   const viewer = new ProtectViewer(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Viewer);
@@ -106,6 +113,13 @@ describe("real ProtectViewer construction and set-liveview behavior", () => {
   afterEach(() => {
 
     viewer?.cleanup();
+
+    for(const controller of controllers) {
+
+      controller.abort();
+    }
+
+    controllers.length = 0;
   });
 
   test("four observers register, construction wakes none, and a liveview switch per seeded liveview exists", () => {

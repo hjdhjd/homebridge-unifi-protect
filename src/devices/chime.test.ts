@@ -45,6 +45,10 @@ function loggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], substri
   return entries.some((entry) => (entry.level === level) && entry.formatted.includes(substring));
 }
 
+// Every harness controller this suite opens, drained in afterEach so the controller lifetime signal bounds each test's constructions rather than the file's. The builder
+// is the single push site, so an extra build inside a test body is captured exactly as the fixture's is, and the abort-driven drain test's own abort stays undisturbed.
+const controllers: AbortController[] = [];
+
 // The reusable construction helper: build a REAL ProtectChime against the harness doubles, seeding the chime record plus whatever ringtones the test wants. The casts
 // are confined to the construction seam exactly as the light suite does; the instance under test is the production class running its real configureDevice /
 // spawnObservers paths. Returns logEntries and mqtt (the light suite needs neither; the chime asserts both the failure log lines and the captured MQTT tone handler).
@@ -57,6 +61,9 @@ function buildChime(configOptions: Parameters<typeof makeChimeConfig>[0] = {}, h
   const chimeConfig = makeChimeConfig(configOptions);
   const store = new TestStateStore(makeProtectState({ chimes: [chimeConfig], ringtones: harnessOptions.ringtones ?? [] }));
   const { controller, logEntries, mqtt, nvr } = makeTestNvr({ mqtt: true, store });
+
+  controllers.push(controller);
+
   const accessory = harnessOptions.accessory ?? makeTestAccessory("Test Chime", "uuid:test-chime");
   const projection = new TestChimeProjection(chimeConfig.id, store);
   const chime = new ProtectChime(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Chime);
@@ -118,6 +125,13 @@ describe("real ProtectChime construction and play behavior", () => {
   afterEach(() => {
 
     chime?.cleanup();
+
+    for(const controller of controllers) {
+
+      controller.abort();
+    }
+
+    controllers.length = 0;
   });
 
   test("three observers register, construction wakes none, and the buzzer plus one speaker switch exist", () => {

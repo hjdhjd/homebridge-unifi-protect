@@ -56,6 +56,10 @@ function tailLoggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], suf
   return entries.some((entry) => (entry.level === level) && entry.formatted.endsWith(suffix));
 }
 
+// Every harness controller this suite opens, drained in afterEach so the controller lifetime signal bounds each test's constructions rather than the file's. The builder
+// is the single push site, so a construction inside a test body is captured exactly as the fixture's is.
+const controllers: AbortController[] = [];
+
 // The reusable construction helper: build a REAL TestBaseDevice (a concrete ProtectDevice leaf whose ctor only super()s) against the harness doubles, seeded with the
 // all-quiet sensor carrier whose ledSettings.isEnabled the configOptions.ledEnabled toggles. We HOLD the TestSensorProjection instance (cast to Sensor only at the
 // construction seam, exactly as the light / chime suites confine their casts) so the test asserts the recorded update payloads. We drive the wiring a family leaf would:
@@ -67,7 +71,10 @@ function buildStatusLedDevice(configOptions: { ledEnabled?: boolean } = {}, harn
 
   const sensorConfig = makeSensorConfig(configOptions);
   const store = new TestStateStore(makeProtectState({ sensors: [sensorConfig] }));
-  const { logEntries, nvr } = makeTestNvr({ mqtt: true, store, userOptions: harnessOptions.userOptions });
+  const { controller, logEntries, nvr } = makeTestNvr({ mqtt: true, store, userOptions: harnessOptions.userOptions });
+
+  controllers.push(controller);
+
   const accessory = makeTestAccessory("Test Sensor", "uuid:test-sensor");
   const projection = new TestSensorProjection(sensorConfig.id, store);
   const device = new TestBaseDevice(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Sensor);
@@ -89,6 +96,13 @@ describe("base ProtectDevice status-indicator switch capability (device-statusle
 
     device?.cleanup();
     device = undefined;
+
+    for(const controller of controllers) {
+
+      controller.abort();
+    }
+
+    controllers.length = 0;
   });
 
   describe("construction and reflection", () => {

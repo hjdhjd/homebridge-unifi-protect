@@ -20,7 +20,7 @@ import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAcce
 import type { Fob, ProtectFobConfig } from "unifi-protect";
 import type { TestAccessory, TestLogEntry } from "../testing.helpers.ts";
 import { TestFobProjection, makeFobConfig } from "./testing.helpers.ts";
-import { after, before, beforeEach, describe, test } from "node:test";
+import { after, afterEach, before, beforeEach, describe, test } from "node:test";
 import type { ObserverWakePayload } from "../diagnostics.ts";
 import type { ProtectAccessory } from "../types.ts";
 import type { ProtectEventDispatch } from "../nvr/event-dispatch.ts";
@@ -53,6 +53,10 @@ const buttonSubtype = (wireId: string): string => ProtectReservedNames.SWITCH_FO
 // gates the switch on, which is what closes the option-identity drift between fob.ts and options.ts.
 const buttonOption = (label: string): string => "Fob.Button." + label;
 
+// Every harness controller this suite opens, drained in afterEach so the controller lifetime signal bounds each test's constructions rather than the file's. The builder
+// is the single push site, so an extra build inside a test body is captured exactly as the fixture's is.
+const controllers: AbortController[] = [];
+
 // The reusable construction helper: build a REAL ProtectFob against the harness doubles. The casts are confined to the construction seam exactly as the relay and light
 // suites do; the instance under test runs its real configureHints / configureDevice / spawnObservers paths. Each call builds a fresh store, so an extra build inside a
 // test is fully isolated from the beforeEach fob. An optional accessory lets a test seed a restored-across-restart accessory (the grouped->lone reconfigure).
@@ -63,7 +67,10 @@ function buildFob(configOptions: Parameters<typeof makeFobConfig>[0] = {}, harne
 
   const fobConfig = makeFobConfig(configOptions);
   const store = new TestStateStore(makeProtectState({ fobs: [fobConfig] }));
-  const { logEntries, mqtt, nvr } = makeTestNvr({ mqtt: true, store, userOptions: harnessOptions.userOptions });
+  const { controller, logEntries, mqtt, nvr } = makeTestNvr({ mqtt: true, store, userOptions: harnessOptions.userOptions });
+
+  controllers.push(controller);
+
   const accessory = harnessOptions.accessory ?? makeTestAccessory("Test Fob", "uuid:test-fob");
 
   // The projection is named (not cast inline) so its read-through config feeds the SAME store the pushFobPatch battery test moves; the lone construction-seam cast is
@@ -105,6 +112,16 @@ describe("real ProtectFob construction and behavior", () => {
   after(() => {
 
     diagnosticsChannel.unsubscribe("hbup:observer:wake", onWake);
+  });
+
+  afterEach(() => {
+
+    for(const controller of controllers) {
+
+      controller.abort();
+    }
+
+    controllers.length = 0;
   });
 
   beforeEach(async () => {

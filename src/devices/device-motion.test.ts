@@ -53,6 +53,10 @@ async function awaitBareRevert(): Promise<void> {
 const SENSOR_ID = "test-sensor-1";
 const SENSOR_MAC = "74ACB9000401";
 
+// Every harness controller this suite opens, drained in afterEach so the controller lifetime signal bounds each test's constructions rather than the file's. The builder
+// is the single push site for the fixture builds, and the one test that assembles its own controller pushes at its construction.
+const controllers: AbortController[] = [];
+
 // The reusable construction helper: build a REAL TestBaseDevice (a concrete ProtectDevice leaf whose ctor only super()s) against the harness doubles, seeded with the
 // all-quiet sensor carrier and the recording dispatch injected through the NVR double's dispatch seam. The casts are confined to the construction seam exactly as the
 // light / chime suites do; the instance under test is the production base, running its real configureHints / configureMotionSensor / configureOccupancySensor paths. We
@@ -64,8 +68,11 @@ function buildMotionDevice(harnessOptions: { userOptions?: string[] } = {}): {
 
   const sensorConfig = makeSensorConfig();
   const store = new TestStateStore(makeProtectState({ sensors: [sensorConfig] }));
-  const { logEntries, mqtt, nvr } = makeTestNvr({ dispatch: (innerNvr: ProtectNvr): TestRecordingDispatch => new TestRecordingDispatch(innerNvr), mqtt: true, store,
-    userOptions: harnessOptions.userOptions });
+  const { controller, logEntries, mqtt, nvr } = makeTestNvr({ dispatch: (innerNvr: ProtectNvr): TestRecordingDispatch => new TestRecordingDispatch(innerNvr), mqtt: true,
+    store, userOptions: harnessOptions.userOptions });
+
+  controllers.push(controller);
+
   const recording = nvr.events as TestRecordingDispatch;
   const accessory = makeTestAccessory("Test Sensor", "uuid:test-sensor");
 
@@ -102,6 +109,13 @@ describe("base ProtectDevice motion capability (device-motion concern net)", () 
 
     device?.cleanup();
     device = undefined;
+
+    for(const controller of controllers) {
+
+      controller.abort();
+    }
+
+    controllers.length = 0;
   });
 
   describe("the motion sensor switch (Motion.Switch)", () => {
@@ -308,7 +322,10 @@ describe("base ProtectDevice motion capability (device-motion concern net)", () 
       seededFlags["smartDetectTypes"] = ["person"];
 
       const store = new TestStateStore(makeProtectState({ sensors: [sensorConfig] }));
-      const { nvr } = makeTestNvr({ mqtt: true, store, userOptions: [ "Enable.Motion.OccupancySensor", "Enable.Motion.OccupancySensor.person" ] });
+      const { controller, nvr } = makeTestNvr({ mqtt: true, store, userOptions: [ "Enable.Motion.OccupancySensor", "Enable.Motion.OccupancySensor.person" ] });
+
+      controllers.push(controller);
+
       const accessory = makeTestAccessory("Test Sensor", "uuid:test-sensor");
 
       accessory.context["mac"] = sensorConfig.mac;

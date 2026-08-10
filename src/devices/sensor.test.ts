@@ -63,6 +63,10 @@ function countLoggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], su
   return entries.filter((entry) => (entry.level === level) && entry.formatted.includes(substring)).length;
 }
 
+// Every harness controller this suite opens, drained in afterEach so the controller lifetime signal bounds each test's constructions rather than the file's. The builder
+// is the single push site, so the many per-test variant builds are captured exactly as the fixture's is.
+const controllers: AbortController[] = [];
+
 // The reusable construction helper: build a REAL ProtectSensor against the harness doubles, with the recording dispatch injected through the NVR double's dispatch seam
 // so the motionDetectedAt observer's firehose routing is asserted against the REAL ProtectEventDispatch contract (the recording subclass arms no reset timer). The
 // casts are confined to the construction seam exactly as the light / chime suites do; the instance under test is the production class, running its real configureHints /
@@ -76,8 +80,11 @@ function buildSensor(configOptions: Parameters<typeof makeSensorConfig>[0] = {},
 
   const sensorConfig = makeSensorConfig(configOptions);
   const store = new TestStateStore(makeProtectState({ sensors: [sensorConfig] }));
-  const { logEntries, mqtt, nvr } = makeTestNvr({ dispatch: (innerNvr: ProtectNvr): ProtectEventDispatch => new TestRecordingDispatch(innerNvr), mqtt: true, store,
-    userOptions: harnessOptions.userOptions });
+  const { controller, logEntries, mqtt, nvr } = makeTestNvr({ dispatch: (innerNvr: ProtectNvr): ProtectEventDispatch => new TestRecordingDispatch(innerNvr), mqtt: true,
+    store, userOptions: harnessOptions.userOptions });
+
+  controllers.push(controller);
+
   const recording = nvr.events as TestRecordingDispatch;
   const accessory = harnessOptions.accessory ?? makeTestAccessory("Test Sensor", "uuid:test-sensor");
   const projection = new TestSensorProjection(sensorConfig.id, store);
@@ -138,6 +145,13 @@ describe("real ProtectSensor construction and family behavior", () => {
   afterEach(() => {
 
     sensor?.cleanup();
+
+    for(const controller of controllers) {
+
+      controller.abort();
+    }
+
+    controllers.length = 0;
   });
 
   test("six observers register, construction wakes none, and the always-present Battery service carries its battery state", () => {

@@ -26,7 +26,7 @@ import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAcce
 import { G2_PRO_CHANNELS, G6_PRO_ENTRY_CHANNELS } from "../../camera.fixtures.ts";
 import type { TestAccessory, TestService } from "../../testing.helpers.ts";
 import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
-import { describe, mock, test } from "node:test";
+import { after, describe, mock, test } from "node:test";
 import type { ObserverWakePayload } from "../../diagnostics.ts";
 import type { ProtectAccessory } from "../../types.ts";
 import { ProtectCamera } from "./camera.ts";
@@ -36,6 +36,29 @@ import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
 import { makeTestNvr } from "../../nvr/testing.helpers.ts";
+
+// Every harness controller this file opens, aborted once at the end so no observe loop outlives the suite. The constructions are per-test and numerous, so the capture
+// rides the construction itself rather than each test's own teardown.
+const controllers: AbortController[] = [];
+
+after(() => {
+
+  for(const controller of controllers) {
+
+    controller.abort();
+  }
+});
+
+// Build the harness NVR / platform pair the way every test here does, capturing its lifetime controller for the drain above. The signature passes through makeTestNvr's
+// own, so a call site reads exactly as a direct build and destructures whatever it needs.
+function buildTestNvr(options: Parameters<typeof makeTestNvr>[0]): ReturnType<typeof makeTestNvr> {
+
+  const built = makeTestNvr(options);
+
+  controllers.push(built.controller);
+
+  return built;
+}
 
 // Construct a real ProtectCamera, with the casts confined to this one seam - the instance under test is the production class and its real configure path.
 function construct(nvr: TestProtectNvr, accessory: TestAccessory, projection: TestCameraProjection): ProtectCamera {
@@ -110,7 +133,7 @@ describe("the camera capability reconcile - the ambient light sensor pilot", () 
     // A camera the controller adopts WITHOUT the lux capability: the gate's early-return leaves no LightSensor at adoption.
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasLuxCheck: false } });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { nvr } = makeTestNvr({ store });
+    const { nvr } = buildTestNvr({ store });
     const accessory = makeTestAccessory("Test Camera", "uuid:capability-reconcile-1");
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
 
@@ -143,7 +166,7 @@ describe("the camera capability reconcile - the ambient light sensor pilot", () 
     // configure after a restart runs against, and the case the removed "if(existing) return true" guard mistook for an already-wired sensor.
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasLuxCheck: true } });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { nvr } = makeTestNvr({ store });
+    const { nvr } = buildTestNvr({ store });
     const accessory = makeTestAccessory("Test Camera", "uuid:capability-reconcile-6");
 
     // Pre-seed the restored service: present, carrying CurrentAmbientLightLevel and StatusActive, but with no onGet handler bound and no interval registered.
@@ -182,7 +205,7 @@ describe("the camera capability reconcile - the ambient light sensor pilot", () 
     // working sensor.
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasLuxCheck: true } });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { nvr } = makeTestNvr({ store });
+    const { nvr } = buildTestNvr({ store });
     const accessory = makeTestAccessory("Test Camera", "uuid:capability-reconcile-3");
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
 
@@ -211,7 +234,7 @@ describe("the camera capability reconcile - the ambient light sensor pilot", () 
     // The lux capability is present, but the user toggle is off. Both halves must hold to CREATE, so no sensor appears.
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasLuxCheck: true } });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { nvr } = makeTestNvr({ store, userOptions: ["Disable.Device.AmbientLightSensor"] });
+    const { nvr } = buildTestNvr({ store, userOptions: ["Disable.Device.AmbientLightSensor"] });
     const accessory = makeTestAccessory("Test Camera", "uuid:capability-reconcile-7");
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
 
@@ -236,7 +259,7 @@ describe("the camera capability reconcile - the ambient light sensor pilot", () 
     // that a capability-first skip would leave in place.
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { nvr } = makeTestNvr({ store, userOptions: ["Disable.Device.AmbientLightSensor"] });
+    const { nvr } = buildTestNvr({ store, userOptions: ["Disable.Device.AmbientLightSensor"] });
     const accessory = makeTestAccessory("Test Camera", "uuid:capability-reconcile-8");
 
     accessory.addService(Service.LightSensor, "Test Camera");
@@ -266,7 +289,7 @@ describe("the camera capability reconcile - the ambient light sensor pilot", () 
     // observer dedups and only the whole-slice capability observer wakes.
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasLuxCheck: false } });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { nvr } = makeTestNvr({ store });
+    const { nvr } = buildTestNvr({ store });
     const accessory = makeTestAccessory("Test Camera", "uuid:capability-reconcile-4");
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
 
@@ -298,7 +321,7 @@ describe("the camera capability reconcile - the ambient light sensor pilot", () 
     // The no-leaked-loop control: after cleanup tears the camera down, the capability observer is gone and a featureFlags push wakes nothing.
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasLuxCheck: true } });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { nvr } = makeTestNvr({ store });
+    const { nvr } = buildTestNvr({ store });
     const accessory = makeTestAccessory("Test Camera", "uuid:capability-reconcile-5");
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
 
@@ -336,7 +359,7 @@ describe("the camera capability reconcile - the ambient light sensor pilot", () 
     // runs the callback synchronously up to its first await), tear the camera down in the SAME synchronous region, and only then settle so the continuation resumes.
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasLuxCheck: true } });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { nvr } = makeTestNvr({ mqtt: true, store });
+    const { nvr } = buildTestNvr({ mqtt: true, store });
     const accessory = makeTestAccessory("Test Camera", "uuid:capability-reconcile-9");
     const projection = new TestCameraProjection(cameraConfig.id, store);
 
@@ -388,7 +411,7 @@ describe("the camera capability reconcile - the UniFi Access lock", () => {
     // A camera adopted WITHOUT a paired Access reader: no accessDeviceMetadata, so the gate creates no lock at adoption.
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { nvr } = makeTestNvr({ store });
+    const { nvr } = buildTestNvr({ store });
     const accessory = makeTestAccessory("Test Camera", "uuid:access-lock-1");
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
 
@@ -427,7 +450,7 @@ describe("the camera capability reconcile - the UniFi Access lock", () => {
     // creates on true and never prunes on false (a transient incomplete bootstrap must not strip a working lock).
     const cameraConfig = makeCameraConfig({ accessDeviceMetadata: { featureFlags: { supportUnlock: true } }, channels: G2_PRO_CHANNELS });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { nvr } = makeTestNvr({ store });
+    const { nvr } = buildTestNvr({ store });
     const accessory = makeTestAccessory("Test Camera", "uuid:access-lock-2");
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
 
@@ -457,7 +480,7 @@ describe("the camera capability reconcile - the UniFi Access lock", () => {
     // The capability is present, but the user toggle is off. Both halves must hold to CREATE, so no lock appears.
     const cameraConfig = makeCameraConfig({ accessDeviceMetadata: { featureFlags: { supportUnlock: true } }, channels: G2_PRO_CHANNELS });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { nvr } = makeTestNvr({ store, userOptions: ["Disable.UniFi.Access.Lock"] });
+    const { nvr } = buildTestNvr({ store, userOptions: ["Disable.UniFi.Access.Lock"] });
     const accessory = makeTestAccessory("Test Camera", "uuid:access-lock-3");
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
 
@@ -482,7 +505,7 @@ describe("the camera capability reconcile - the UniFi Access lock", () => {
       // that a capability-first skip would leave in place.
       const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS });
       const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-      const { nvr } = makeTestNvr({ store, userOptions: ["Disable.UniFi.Access.Lock"] });
+      const { nvr } = buildTestNvr({ store, userOptions: ["Disable.UniFi.Access.Lock"] });
       const accessory = makeTestAccessory("Test Camera", "uuid:access-lock-4");
 
       accessory.addService(Service.LockMechanism, "Test Camera", ProtectReservedNames.LOCK_ACCESS);
@@ -509,7 +532,7 @@ describe("the camera capability reconcile - the UniFi Access lock", () => {
 
     const cameraConfig = makeCameraConfig({ accessDeviceMetadata: { featureFlags: { supportUnlock: true } }, channels: G2_PRO_CHANNELS });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { nvr } = makeTestNvr({ store });
+    const { nvr } = buildTestNvr({ store });
     const accessory = makeTestAccessory("Test Camera", "uuid:access-lock-5");
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
 
@@ -537,7 +560,7 @@ describe("the camera capability reconcile - the UniFi Access lock", () => {
 
     const cameraConfig = makeCameraConfig({ accessDeviceMetadata: { featureFlags: { supportUnlock: true } }, channels: G2_PRO_CHANNELS });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { nvr } = makeTestNvr({ store });
+    const { nvr } = buildTestNvr({ store });
     const accessory = makeTestAccessory("Test Camera", "uuid:access-lock-6");
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
 
@@ -576,7 +599,7 @@ describe("the camera capability reconcile - the UniFi Access lock", () => {
 
     const cameraConfig = makeCameraConfig({ accessDeviceMetadata: { featureFlags: { supportUnlock: true } }, channels: G2_PRO_CHANNELS });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { nvr } = makeTestNvr({ store });
+    const { nvr } = buildTestNvr({ store });
     const accessory = makeTestAccessory("Test Camera", "uuid:access-lock-7");
 
     // Pre-seed the restored service: present, both characteristics at UNSECURED, with no onSet bound and no relock timer - the state a Homebridge restart restores (HAP
@@ -621,7 +644,7 @@ describe("the camera capability reconcile - the UniFi Access lock", () => {
 
     const cameraConfig = makeCameraConfig({ accessDeviceMetadata: { featureFlags: { supportUnlock: true } }, channels: G2_PRO_CHANNELS });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { nvr } = makeTestNvr({ store });
+    const { nvr } = buildTestNvr({ store });
     const accessory = makeTestAccessory("Test Camera", "uuid:access-lock-8");
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
 
@@ -655,7 +678,7 @@ describe("the camera capability reconcile - the UniFi Access lock", () => {
     // value-selecting supportUnlock observer wakes.
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { nvr } = makeTestNvr({ store });
+    const { nvr } = buildTestNvr({ store });
     const accessory = makeTestAccessory("Test Camera", "uuid:access-lock-9");
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
 
@@ -685,7 +708,7 @@ describe("the camera capability reconcile - the UniFi Access lock", () => {
 
     const cameraConfig = makeCameraConfig({ accessDeviceMetadata: { featureFlags: { supportUnlock: true } }, channels: G2_PRO_CHANNELS });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { nvr } = makeTestNvr({ store });
+    const { nvr } = buildTestNvr({ store });
     const accessory = makeTestAccessory("Test Camera", "uuid:access-lock-10");
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
 
@@ -730,7 +753,7 @@ describe("the camera capability reconcile - the night vision dimmer", () => {
 
     store.pushCameraPatch(cameraConfig.id, cameraPatch({ ispSettings: { irLedMode: "auto" } }));
 
-    const { nvr } = makeTestNvr({ store, userOptions: ["Enable.Device.NightVision.Dimmer"] });
+    const { nvr } = buildTestNvr({ store, userOptions: ["Enable.Device.NightVision.Dimmer"] });
     const accessory = makeTestAccessory("Test Camera", "uuid:night-vision-dimmer-1");
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
 
@@ -767,7 +790,7 @@ describe("the camera capability reconcile - the night vision dimmer", () => {
     // delivers featureFlags all-false). The capabilityGate capability half is additive-eager / subtractive-conservative: it creates on true and never prunes on false.
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasIcrSensitivity: true, hasInfrared: true } });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { nvr } = makeTestNvr({ store, userOptions: ["Enable.Device.NightVision.Dimmer"] });
+    const { nvr } = buildTestNvr({ store, userOptions: ["Enable.Device.NightVision.Dimmer"] });
     const accessory = makeTestAccessory("Test Camera", "uuid:night-vision-dimmer-2");
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
 
@@ -799,7 +822,7 @@ describe("the camera capability reconcile - the night vision dimmer", () => {
     // halves must hold to CREATE, so no dimmer appears.
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasIcrSensitivity: true, hasInfrared: true } });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { nvr } = makeTestNvr({ store });
+    const { nvr } = buildTestNvr({ store });
     const accessory = makeTestAccessory("Test Camera", "uuid:night-vision-dimmer-3");
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
 
@@ -822,7 +845,7 @@ describe("the camera capability reconcile - the night vision dimmer", () => {
     // the strict-boolean mutation cannot discriminate here - capability true with toggle false prunes either way) but the toggle off.
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasIcrSensitivity: true, hasInfrared: true } });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { nvr } = makeTestNvr({ store });
+    const { nvr } = buildTestNvr({ store });
     const accessory = makeTestAccessory("Test Camera", "uuid:night-vision-dimmer-4");
 
     accessory.addService(Service.Lightbulb, "Test Camera Night Vision", ProtectReservedNames.LIGHTBULB_NIGHTVISION);
@@ -855,7 +878,7 @@ describe("the camera capability reconcile - the night vision dimmer", () => {
 
     store.pushCameraPatch(cameraConfig.id, cameraPatch({ ispSettings: { irLedMode: "auto" } }));
 
-    const { nvr } = makeTestNvr({ store, userOptions: ["Enable.Device.NightVision.Dimmer"] });
+    const { nvr } = buildTestNvr({ store, userOptions: ["Enable.Device.NightVision.Dimmer"] });
     const accessory = makeTestAccessory("Test Camera", "uuid:night-vision-dimmer-5");
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
 
@@ -899,7 +922,7 @@ describe("the camera capability reconcile - the night vision dimmer", () => {
 
     store.pushCameraPatch(cameraConfig.id, cameraPatch({ ispSettings: { irLedMode: "auto" } }));
 
-    const { nvr } = makeTestNvr({ store, userOptions: ["Enable.Device.NightVision.Dimmer"] });
+    const { nvr } = buildTestNvr({ store, userOptions: ["Enable.Device.NightVision.Dimmer"] });
     const accessory = makeTestAccessory("Test Camera", "uuid:night-vision-dimmer-6");
 
     // Pre-seed the restored service: present, On / Brightness at STALE off-state values distinct from the device "auto" reading, with no onSet bound - the state a
@@ -940,7 +963,7 @@ describe("the camera capability reconcile - the night vision dimmer", () => {
 
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasIcrSensitivity: true, hasInfrared: true } });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { logEntries, nvr } = makeTestNvr({ store, userOptions: ["Enable.Device.NightVision.Dimmer"] });
+    const { logEntries, nvr } = buildTestNvr({ store, userOptions: ["Enable.Device.NightVision.Dimmer"] });
     const accessory = makeTestAccessory("Test Camera", "uuid:night-vision-dimmer-7");
 
     // Count the captured "Enabling night vision dimmer." INFO entries. A COUNT (filter / length), not a boolean .some() helper: the construct-time entry persists in the
@@ -983,7 +1006,7 @@ describe("the camera capability reconcile - tamper detection", () => {
     // hasTamperDetection hardware capability and the enableTamperDetection setting - so the setting alone leaves the characteristic absent until the capability reports.
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { nvr } = makeTestNvr({ store });
+    const { nvr } = buildTestNvr({ store });
     const accessory = makeTestAccessory("Test Camera", "uuid:tamper-1");
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
 
@@ -1040,7 +1063,7 @@ describe("the camera capability reconcile - tamper detection", () => {
     // characteristic on a transient false while the setting stays on.
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasTamperDetection: true } });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { nvr } = makeTestNvr({ store });
+    const { nvr } = buildTestNvr({ store });
     const accessory = makeTestAccessory("Test Camera", "uuid:tamper-2");
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
 
@@ -1088,7 +1111,7 @@ describe("the camera capability reconcile - tamper detection", () => {
     // divergence is the capability half).
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasTamperDetection: true } });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { nvr } = makeTestNvr({ store });
+    const { nvr } = buildTestNvr({ store });
     const accessory = makeTestAccessory("Test Camera", "uuid:tamper-3");
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
 
@@ -1136,7 +1159,7 @@ describe("the camera capability reconcile - tamper detection", () => {
 
     store.pushCameraPatch(cameraConfig.id, cameraPatch({ smartDetectSettings: { enableTamperDetection: true } }));
 
-    const { nvr } = makeTestNvr({ store });
+    const { nvr } = buildTestNvr({ store });
     const accessory = makeTestAccessory("Test Camera", "uuid:tamper-4");
 
     // Pre-seed the restored motion sensor carrying StatusTampered at a STALE true distinct from the rest latch (false), with no onGet bound - the state a Homebridge
@@ -1173,7 +1196,7 @@ describe("the camera capability reconcile - two-way audio", () => {
     // A camera the controller adopts WITHOUT a speaker: the streaming delegate's frozen audio options are built with two-way audio off, so the talk button is baked off.
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasSpeaker: false } });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { nvr } = makeTestNvr({ store });
+    const { nvr } = buildTestNvr({ store });
     const accessory = makeTestAccessory("Test Camera", "uuid:two-way-audio-1");
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
 
@@ -1213,7 +1236,7 @@ describe("the camera capability reconcile - two-way audio", () => {
     // A camera adopted WITH a speaker: the controller is built for two-way audio and the hint reads true.
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasSpeaker: true } });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { nvr } = makeTestNvr({ store });
+    const { nvr } = buildTestNvr({ store });
     const accessory = makeTestAccessory("Test Camera", "uuid:two-way-audio-2");
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
 
@@ -1250,7 +1273,7 @@ describe("the camera capability reconcile - two-way audio", () => {
     // drain before the real values land, so the reconcile must not rebuild on the transient false.
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasSpeaker: true, isDoorbell: true } });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { nvr } = makeTestNvr({ store });
+    const { nvr } = buildTestNvr({ store });
     const accessory = makeTestAccessory("Test Camera", "uuid:two-way-audio-3");
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
 
@@ -1288,7 +1311,7 @@ describe("the camera capability reconcile - two-way audio", () => {
     // the controller is never rebuilt - the control that proves the hasFeature clauses are not undiscriminated.
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasSpeaker: false } });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { nvr } = makeTestNvr({ store, userOptions: ["Disable.Audio.TwoWay"] });
+    const { nvr } = buildTestNvr({ store, userOptions: ["Disable.Audio.TwoWay"] });
     const accessory = makeTestAccessory("Test Camera", "uuid:two-way-audio-4");
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
 
@@ -1322,7 +1345,7 @@ describe("the camera capability reconcile - two-way audio", () => {
       // a late speaker. Enable the default-off Audio.TwoWay.Direct option and report the speaker late.
       const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasSpeaker: false } });
       const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-      const { nvr } = makeTestNvr({ store, userOptions: ["Enable.Audio.TwoWay.Direct"] });
+      const { nvr } = buildTestNvr({ store, userOptions: ["Enable.Audio.TwoWay.Direct"] });
       const accessory = makeTestAccessory("Test Camera", "uuid:two-way-audio-5");
       const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
 
@@ -1349,7 +1372,7 @@ describe("the camera capability reconcile - two-way audio", () => {
     // A camera adopted WITH a speaker, already built for two-way audio. An unrelated capability change wakes the featureFlags observer but must not rebuild it.
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasSpeaker: true } });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { nvr } = makeTestNvr({ store });
+    const { nvr } = buildTestNvr({ store });
     const accessory = makeTestAccessory("Test Camera", "uuid:two-way-audio-6");
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
 
@@ -1387,7 +1410,7 @@ describe("the camera capability reconcile - two-way audio", () => {
 
     const cameraConfig = makeCameraConfig({ channels: G6_PRO_ENTRY_CHANNELS, featureFlags: { hasPackageCamera: true, hasSpeaker: false, isDoorbell: true } });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { controller, nvr } = makeTestNvr({ store });
+    const { controller, nvr } = buildTestNvr({ store });
     const accessory = makeTestAccessory("Test Doorbell", "uuid:two-way-audio-package");
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
 
@@ -1433,7 +1456,7 @@ describe("the camera capability reconcile - the smart-detect contact sensors", (
     // per-type fan-out rather than a single-sensor special case.
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasSmartDetect: true, smartDetectTypes: [ "person", "vehicle" ] } });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { nvr } = makeTestNvr({ store, userOptions: [ "Enable.Motion.SmartDetect", "Enable.Motion.SmartDetect.ObjectSensors" ] });
+    const { nvr } = buildTestNvr({ store, userOptions: [ "Enable.Motion.SmartDetect", "Enable.Motion.SmartDetect.ObjectSensors" ] });
     const accessory = makeTestAccessory("Test Camera", "uuid:smart-detect-1");
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
 
@@ -1464,7 +1487,7 @@ describe("the camera capability reconcile - the smart-detect contact sensors", (
     // subtype prefix matched below carries its trailing separator, so the count never picks up the separately-gated license-plate sensors.
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasSmartDetect: true, smartDetectTypes: [ "person", "vehicle" ] } });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { nvr } = makeTestNvr({ store, userOptions: ["Enable.Motion.SmartDetect"] });
+    const { nvr } = buildTestNvr({ store, userOptions: ["Enable.Motion.SmartDetect"] });
     const accessory = makeTestAccessory("Test Camera", "uuid:smart-detect-2");
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
 
@@ -1487,7 +1510,7 @@ describe("the camera capability reconcile - the smart-detect contact sensors", (
     // shut; the controller then finishes provisioning and reports the capability alongside the types it advertises.
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasSmartDetect: false, smartDetectTypes: [ "person", "vehicle" ] } });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { logEntries, nvr } = makeTestNvr({ store, userOptions: [ "Enable.Motion.SmartDetect", "Enable.Motion.SmartDetect.ObjectSensors" ] });
+    const { logEntries, nvr } = buildTestNvr({ store, userOptions: [ "Enable.Motion.SmartDetect", "Enable.Motion.SmartDetect.ObjectSensors" ] });
     const accessory = makeTestAccessory("Test Camera", "uuid:smart-detect-3");
 
     // Count the captured summary lines. A COUNT, not a boolean: the establishment entry persists in the buffer, so a boolean could not tell a once-narrated set from a
@@ -1538,7 +1561,7 @@ describe("the camera capability reconcile - the smart-detect contact sensors", (
     // refreshing the hint would leave visible-but-dead sensors. We drive the REAL dispatch's delivery and assert the sensor actually moves.
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasSmartDetect: false, smartDetectTypes: ["person"] } });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { nvr } = makeTestNvr({ store, userOptions: [ "Enable.Motion.SmartDetect", "Enable.Motion.SmartDetect.ObjectSensors" ] });
+    const { nvr } = buildTestNvr({ store, userOptions: [ "Enable.Motion.SmartDetect", "Enable.Motion.SmartDetect.ObjectSensors" ] });
     const accessory = makeTestAccessory("Test Camera", "uuid:smart-detect-4");
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
 
@@ -1580,7 +1603,7 @@ describe("the camera capability reconcile - the smart-detect contact sensors", (
     // camera whose capability arrives later, raising the flag without rebuilding the list would leave an empty list and an occupancy sensor that can never trip again.
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasSmartDetect: false, smartDetectTypes: ["person"] } });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { nvr } = makeTestNvr({ store, userOptions: [ "Enable.Motion.OccupancySensor", "Enable.Motion.OccupancySensor.Person", "Enable.Motion.SmartDetect",
+    const { nvr } = buildTestNvr({ store, userOptions: [ "Enable.Motion.OccupancySensor", "Enable.Motion.OccupancySensor.Person", "Enable.Motion.SmartDetect",
       "Enable.Motion.SmartDetect.ObjectSensors" ] });
     const accessory = makeTestAccessory("Test Camera", "uuid:smart-detect-11");
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
@@ -1624,7 +1647,7 @@ describe("the camera capability reconcile - the smart-detect contact sensors", (
     // controller later swaps the reported type to vehicle, which the user has also selected.
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasSmartDetect: true, smartDetectTypes: ["person"] } });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { nvr } = makeTestNvr({ store, userOptions: [ "Enable.Motion.OccupancySensor", "Enable.Motion.OccupancySensor.Vehicle", "Enable.Motion.SmartDetect" ] });
+    const { nvr } = buildTestNvr({ store, userOptions: [ "Enable.Motion.OccupancySensor", "Enable.Motion.OccupancySensor.Vehicle", "Enable.Motion.SmartDetect" ] });
     const accessory = makeTestAccessory("Test Camera", "uuid:smart-detect-12");
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
 
@@ -1667,7 +1690,7 @@ describe("the camera capability reconcile - the smart-detect contact sensors", (
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasSmartDetect: true, smartDetectTypes: [ "person", "vehicle" ] },
       smartDetectSettings: { objectTypes: ["person"] } });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { nvr } = makeTestNvr({ store, userOptions: [ "Enable.Motion.OccupancySensor", "Enable.Motion.OccupancySensor.Vehicle", "Enable.Motion.SmartDetect" ] });
+    const { nvr } = buildTestNvr({ store, userOptions: [ "Enable.Motion.OccupancySensor", "Enable.Motion.OccupancySensor.Vehicle", "Enable.Motion.SmartDetect" ] });
     const accessory = makeTestAccessory("Test Camera", "uuid:smart-detect-13");
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
 
@@ -1692,7 +1715,7 @@ describe("the camera capability reconcile - the smart-detect contact sensors", (
     // push below moves BOTH halves together, the way a controller that gains (or loses) a detection type reports it.
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasSmartDetect: true, smartDetectTypes: ["person"] } });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { nvr } = makeTestNvr({ store, userOptions: [ "Enable.Motion.SmartDetect", "Enable.Motion.SmartDetect.ObjectSensors" ] });
+    const { nvr } = buildTestNvr({ store, userOptions: [ "Enable.Motion.SmartDetect", "Enable.Motion.SmartDetect.ObjectSensors" ] });
     const accessory = makeTestAccessory("Test Camera", "uuid:smart-detect-5");
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
 
@@ -1735,7 +1758,7 @@ describe("the camera capability reconcile - the smart-detect contact sensors", (
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS,
       featureFlags: { hasSmartDetect: true, smartDetectTypes: [ "licensePlate", "person" ] } });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { nvr } = makeTestNvr({ store, userOptions: [ "Enable.Motion.SmartDetect", "Enable.Motion.SmartDetect.ObjectSensors",
+    const { nvr } = buildTestNvr({ store, userOptions: [ "Enable.Motion.SmartDetect", "Enable.Motion.SmartDetect.ObjectSensors",
       "Enable.Motion.SmartDetect.ObjectSensors.LicensePlate.ABC123" ] });
     const accessory = makeTestAccessory("Test Camera", "uuid:smart-detect-6");
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
@@ -1768,7 +1791,7 @@ describe("the camera capability reconcile - the smart-detect contact sensors", (
     // dropped from the list is pre-seeded here, exactly as a restart restores it, while the plate the user kept is configured.
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasSmartDetect: true, smartDetectTypes: ["licensePlate"] } });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { nvr } = makeTestNvr({ store, userOptions: [ "Enable.Motion.SmartDetect", "Enable.Motion.SmartDetect.ObjectSensors",
+    const { nvr } = buildTestNvr({ store, userOptions: [ "Enable.Motion.SmartDetect", "Enable.Motion.SmartDetect.ObjectSensors",
       "Enable.Motion.SmartDetect.ObjectSensors.LicensePlate.ABC123" ] });
     const accessory = makeTestAccessory("Test Camera", "uuid:smart-detect-7");
 
@@ -1798,7 +1821,7 @@ describe("the camera capability reconcile - the smart-detect contact sensors", (
     // Once the sensors reconcile on every capability change, an unconditional resting stamp would cancel a live smart-motion event the moment any unrelated flag moved.
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasSmartDetect: true, smartDetectTypes: ["person"] } });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { nvr } = makeTestNvr({ store, userOptions: [ "Enable.Motion.SmartDetect", "Enable.Motion.SmartDetect.ObjectSensors" ] });
+    const { nvr } = buildTestNvr({ store, userOptions: [ "Enable.Motion.SmartDetect", "Enable.Motion.SmartDetect.ObjectSensors" ] });
     const accessory = makeTestAccessory("Test Camera", "uuid:smart-detect-8");
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
 
@@ -1842,7 +1865,7 @@ describe("the camera capability reconcile - the user's Protect-side detection se
     // which moves smartDetectSettings.objectTypes while featureFlags.smartDetectTypes - what the camera CAN detect - stays exactly as it was.
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasSmartDetect: true, smartDetectTypes: [ "person", "vehicle" ] } });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { nvr } = makeTestNvr({ store, userOptions: [ "Enable.Motion.SmartDetect", "Enable.Motion.SmartDetect.ObjectSensors" ] });
+    const { nvr } = buildTestNvr({ store, userOptions: [ "Enable.Motion.SmartDetect", "Enable.Motion.SmartDetect.ObjectSensors" ] });
     const accessory = makeTestAccessory("Test Camera", "uuid:smart-detect-9");
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
 
@@ -1876,7 +1899,7 @@ describe("the camera capability reconcile - the user's Protect-side detection se
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasSmartDetect: true, smartDetectTypes: [ "person", "vehicle" ] },
       smartDetectSettings: { objectTypes: ["person"] } });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { nvr } = makeTestNvr({ store, userOptions: [ "Enable.Motion.SmartDetect", "Enable.Motion.SmartDetect.ObjectSensors" ] });
+    const { nvr } = buildTestNvr({ store, userOptions: [ "Enable.Motion.SmartDetect", "Enable.Motion.SmartDetect.ObjectSensors" ] });
     const accessory = makeTestAccessory("Test Camera", "uuid:smart-detect-10");
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
 

@@ -43,7 +43,7 @@ describe("the StatusTampered phantom guard - camera availability and tamper-even
     // reconcile's tamper gate prunes and no StatusTampered exists at adoption.
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { nvr } = makeTestNvr({ store });
+    const { controller, nvr } = makeTestNvr({ store });
     const accessory = makeTestAccessory("Test Camera", "uuid:tamper-phantom-1");
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
 
@@ -76,6 +76,7 @@ describe("the StatusTampered phantom guard - camera availability and tamper-even
     } finally {
 
       camera.cleanup();
+      controller.abort();
     }
   });
 
@@ -83,7 +84,7 @@ describe("the StatusTampered phantom guard - camera availability and tamper-even
 
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { nvr } = makeTestNvr({ store });
+    const { controller, nvr } = makeTestNvr({ store });
     const accessory = makeTestAccessory("Test Camera", "uuid:tamper-phantom-2");
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
 
@@ -112,6 +113,7 @@ describe("the StatusTampered phantom guard - camera availability and tamper-even
     } finally {
 
       camera.cleanup();
+      controller.abort();
     }
   });
 });

@@ -16,7 +16,7 @@
  */
 import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../testing.helpers.ts";
 import { TestRelayProjection, makeRelayConfig } from "./testing.helpers.ts";
-import { after, before, beforeEach, describe, mock, test } from "node:test";
+import { after, afterEach, before, beforeEach, describe, mock, test } from "node:test";
 import type { ObserverWakePayload } from "../diagnostics.ts";
 import { PROTECT_RELAY_COMMAND_TIMEOUT } from "../settings.ts";
 import type { ProtectAccessory } from "../types.ts";
@@ -35,6 +35,10 @@ import { makeTestNvr } from "../nvr/testing.helpers.ts";
 // created the service under.
 const outputSubtype = (id: number): string => ProtectReservedNames.SWITCH_RELAY_OUTPUT + "." + id.toString();
 
+// Every harness controller this suite opens, drained in afterEach so the controller lifetime signal bounds each test's constructions rather than the file's. The builder
+// is the single push site, so an extra build inside a test body is captured exactly as the fixture's is.
+const controllers: AbortController[] = [];
+
 // The reusable construction helper: build a REAL ProtectRelay against the harness doubles. The casts are confined to the construction seam exactly as the light and
 // camera suites do; the instance under test runs its real configureHints / configureDevice / spawnObservers paths. Each call builds a fresh store, so an extra build
 // inside a test (the feature-enabled variants) is fully isolated from the beforeEach relay.
@@ -44,7 +48,10 @@ function buildRelay(configOptions: Parameters<typeof makeRelayConfig>[0] = {}, h
 
   const relayConfig = makeRelayConfig(configOptions);
   const store = new TestStateStore(makeProtectState({ relays: [relayConfig] }));
-  const { mqtt, nvr } = makeTestNvr({ mqtt: true, store, userOptions: harnessOptions.userOptions });
+  const { controller, mqtt, nvr } = makeTestNvr({ mqtt: true, store, userOptions: harnessOptions.userOptions });
+
+  controllers.push(controller);
+
   const accessory = makeTestAccessory("Test Relay", "uuid:test-relay");
 
   // The projection is named (not cast inline) so the toggle / status-LED tests read its toggleCalls / updateCalls - and set its rejection levers - on the SAME instance
@@ -85,6 +92,16 @@ describe("real ProtectRelay construction and behavior", () => {
   after(() => {
 
     diagnosticsChannel.unsubscribe("hbup:observer:wake", onWake);
+  });
+
+  afterEach(() => {
+
+    for(const controller of controllers) {
+
+      controller.abort();
+    }
+
+    controllers.length = 0;
   });
 
   beforeEach(async () => {

@@ -4,12 +4,13 @@
  *
  * This file owns the controller half of the harness: TestProtectNvr, the NVR double every device test is constructed against, together with the platform double, the
  * recording MQTT client, the NVR config builder, and the family builder that assembles a whole accessory set. The NVR double mirrors the surfaces production reaches
- * for through its owner - the platform-accessory registration recorders, the device-removal machinery with its mutable stability gate and manually fired timers, the
- * managed-device registry - and carries the REAL ProtectEventDispatch as its events member, so a routed event travels the production path rather than a stub of it.
- * makeTestNvr is the composition root of the harness: it wires a store, a platform, a dispatch, and the streaming-delegate factory into a controller a real device
- * class can be constructed against end to end, with no FFmpeg and no live HAP.
+ * for through its owner - the platform-accessory registration recorders, the removal tail, the managed-device registry - and embeds the controller's companions as the
+ * REAL production objects rather than stubs of them: the ProtectEventDispatch behind its events member, the DiagnosticsHealthBridge behind health, the
+ * RemovalStabilityGate behind removals, and the RebootScheduler behind reboot. So a routed event, a removal decision, and a reboot attempt alike travel the production
+ * path. makeTestNvr is the composition root of the harness: it wires a store, a platform, a dispatch, and the streaming-delegate
+ * factory into a controller a real device class can be constructed against end to end, with no FFmpeg and no live HAP.
  *
- * Fidelity to the cited contracts, not invention, is the line these doubles hold: the removal machinery is ProtectNvr's own and the MQTT surface is
+ * Fidelity to the cited contracts, not invention, is the line these doubles hold: the removal decision IS ProtectNvr's own gate class and the MQTT surface is
  * homebridge-plugin-utils'. The cross-cutting core - the HAP double, the state store, and the streaming-delegate stub - lives in the root harness this file imports
  * from.
  */
@@ -17,12 +18,13 @@ import type { Camera, Chime, ProtectEventMetadata, ProtectNvrConfig, ProtectNvrL
 import { Characteristic, Service, TestAccessory, TestCameraController, TestStreamingDelegateFactory } from "../testing.helpers.ts";
 import type { Clock, HomebridgePluginLogging, Nullable, RecordingProcessFactory } from "homebridge-plugin-utils";
 import { FeatureOptions, TestClock, TestRecordingProcessFactory } from "homebridge-plugin-utils";
-import { PLATFORM_NAME, PLUGIN_NAME } from "../settings.ts";
+import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_NVR_REMOVAL_STABILITY_WINDOW } from "../settings.ts";
 import type { ProtectAccessory, ProtectDevices } from "../types.ts";
 import type { ProtectNvrOptions, ProtectOptions } from "../options.ts";
 import type { TestApiCall, TestLogEntry, TestStateStore } from "../testing.helpers.ts";
 import { featureOptionCategories, featureOptions } from "../options.ts";
 import { AmbientLightCapability } from "../devices/cameras/ambient-light.ts";
+import { DiagnosticsHealthBridge } from "./nvr-health-bridge.ts";
 import { DoorbellCapability } from "../devices/cameras/doorbell.ts";
 import { FIXTURE_RTSPS_PORT } from "../camera.fixtures.ts";
 import type { HAP } from "homebridge";
@@ -32,8 +34,11 @@ import { ProtectCameraPackage } from "../devices/cameras/camera-package.ts";
 import type { ProtectDevice } from "../devices/device.ts";
 import { ProtectEventDispatch } from "./event-dispatch.ts";
 import type { ProtectNvr } from "./nvr.ts";
+import { RebootScheduler } from "./nvr-reboot.ts";
+import { RemovalStabilityGate } from "./nvr-removal.ts";
 import { StreamingCapability } from "../devices/cameras/streaming.ts";
 import type { TestChimeProjection } from "../devices/testing.helpers.ts";
+import { countActiveRecordingViews } from "./nvr-policy.ts";
 import util from "node:util";
 
 // One recorded MQTT subscription registration: the composed topic tail, the human-readable type label, the registration kind, the per-subscription init options
@@ -129,23 +134,15 @@ export interface TestProtectPlatform {
   readonly streamingDelegateFactory: TestStreamingDelegateFactory;
 }
 
-// The options scheduleDeviceRemoval accepts on the NVR double, mirroring the production chokepoint's widened options shape.
-export interface TestScheduleDeviceRemovalOptions {
-
-  accessory: TestAccessory;
-  reason?: string;
-  remove?: () => void;
-  stillGone: () => boolean;
-}
-
-// The removal-gate surface production reaches through nvr.removals, as the NVR double presents it. The double answers it from its own flat removal machinery below,
-// which is what every consuming assertion reads, so the surface a device class speaks and the machinery a test inspects stay one thing.
-export interface TestRemovalGateBridge {
-
-  cancelFor: (uuid: string) => void;
-  readonly removalStable: boolean;
-  schedule: (options: TestScheduleDeviceRemovalOptions) => void;
-}
+/* Present a harness accessory to an API typed on the production accessory - the removal gate's action surface and its schedule options both are. The double's graph
+ * holds TestAccessory instances and the two types are assignable in neither direction, so the crossing is a structural cast, and it lives here in one owned spot
+ * exactly as the file's other confined casts do rather than being re-spelled at each call site.
+ *
+ * @param accessory - The harness accessory to present.
+ *
+ * @returns the same instance, typed as the production accessory.
+ */
+export const asProtectAccessory = (accessory: TestAccessory): ProtectAccessory => accessory as unknown as ProtectAccessory;
 
 /* The shared recording event-dispatch double: a REAL ProtectEventDispatch whose motion delivery is overridden to record into an array rather than touch HomeKit or arm a
  * reset timer. The override's arity and parameter types mirror production's motionEventHandler (event-dispatch.ts) exactly, so it type-checks as a true override; the two
@@ -166,18 +163,31 @@ export class TestRecordingDispatch extends ProtectEventDispatch {
   }
 }
 
+/* The camera-view slice the double's active-recording walk reads: the transmit flag, and on a parent its package view. The ProtectDevices union declares neither member
+ * - only the camera class does - so the walk presents each seeded device through this shape at the collection edge, the same confined-cast discipline every other
+ * harness boundary uses. Both members are optional and nullable, matching what the seeded slices actually are: a test seeds only the hops its arm needs.
+ */
+interface TestRecordingView {
+
+  packageCamera?: Nullable<TestRecordingView>;
+  streaming?: Nullable<{ isRecordingTransmitting: boolean }>;
+}
+
 /* The NVR double, mirroring each member the camera-family construction and lifecycle paths read. The construction surface comprises the unifi-protect client shape
  * (connection health for isReachable, the controllerName fallback ProtectBase.name uses for controller-scoped owners, the nvr config record behind the ufp
  * read-through, and the store double as client.state), the controller options, the platform double, a REAL un-aborted AbortSignal (composeSignals input and the
  * harness-level teardown lever), and an mqtt that defaults to null (every MQTT wrapper optional-chains into a no-op) or, opt-in, the recording double. The events
  * member is the REAL ProtectEventDispatch, constructed against this double, so event-timer behavior in tests is the production implementation rather than a mirror.
  *
- * The removal machinery mirrors ProtectNvr's stability-gated, graced device removal faithfully but without real timers: removalStable is a mutable gate (defaulting
- * to true so lifecycle tests schedule without ceremony), scheduleDeviceRemoval applies the production gate / idempotency / interval resolution (the interval comes
- * from the REAL FeatureOptions through getFeatureNumber, so the registered DelayDeviceRemoval default governs unless a test overrides it) and either removes
- * immediately or records a manually-fireable timer entry whose fire body is the production fire body (delete, re-check stability and stillGone, remove); the
- * removal tail is the production presence-guarded splice with the bridged-gated unregister recording. Every call is recorded so tests assert decisions, not just
- * outcomes.
+ * The removals member is the REAL RemovalStabilityGate, wired as ProtectNvr wires its own: the same DelayDeviceRemoval grace supplier read through the REAL
+ * FeatureOptions engine, the double's recording log, and the controller lifetime signal its timers bind to. So a test drives the production stability arithmetic and
+ * the production TimerRegistry graces, and a test that needs a grace to fire runs the clock under node:test's mocked timers rather than reaching for an inspection
+ * surface. Facts go in through pushControllerStability / restabilizeController; what comes out is observable on the accessory graph, the registration recorders, and
+ * the log. Two ergonomics are deliberate. A fresh double starts stable - the construction seed pushes a controller up longer than the stability window - so a
+ * lifecycle test schedules without ceremony. And the sweep action is a bare counter: the seed arms a real zero-delay sweep whose callback lands at whichever later
+ * await point the loop reaches it on, so it must touch nothing for that timing to be harmless.
+ *
+ * The removal tail is the production presence-guarded splice with the bridged-gated unregister recording, and it is what the gate's removeDevice action runs.
  */
 export class TestProtectNvr {
 
@@ -197,6 +207,11 @@ export class TestProtectNvr {
   // leave this untouched.
   public createStreamingCapabilityCalls = 0;
   public readonly events: ProtectEventDispatch;
+  public readonly health: DiagnosticsHealthBridge;
+  // How many times the health bridge has asked this root to re-evaluate removal stability. The recorder behind the bridge's refreshRemovalStability action, which does
+  // this and nothing else: a double's stability facts arrive through the explicit pushControllerStability path, so a health transition here counts itself and leaves
+  // the gate's clock to the tests that drive it deliberately.
+  public healthStabilityRefreshes = 0;
   public readonly log: {
 
     debug: (...parameters: unknown[]) => void;
@@ -211,9 +226,19 @@ export class TestProtectNvr {
   // shutdown) error logs, so a transmit test that asserts the early-end telemetry log fires needs this to be "running".
   public phase: NvrPhase = "running";
   public readonly platform: TestProtectPlatform;
-  public removalStable = true;
-  public readonly removals: TestRemovalGateBridge;
+  // The REAL RebootScheduler, wired as ProtectNvr wires its own. It arms nothing until a test calls schedule(), which is what keeps it inert for every other suite.
+  public readonly reboot: RebootScheduler;
+  // How many reboot commands the scheduler has issued through the double's action.
+  public rebootCalls = 0;
+  // Set by a test to make the NEXT commanded reboot fail. Single-shot: the action consumes and clears it as it throws, so a failure-then-success chain needs no manual
+  // reset between the two.
+  public rebootError: Nullable<Error> = null;
+  public readonly removals: RemovalStabilityGate;
   public readonly signal: AbortSignal;
+  // How many stability sweeps the gate has asked this root to run. The recorder behind the gate's runSweep action, which does this and nothing else: the seed arms a real
+  // zero-delay sweep at construction, so the callback fires at an unpredictable later await point in whatever test happens to be running, and touching nothing is what
+  // makes that harmless.
+  public sweepRequests = 0;
 
   // The managed-device registry, mirroring ProtectNvr.configuredDevices: a Map keyed by accessory UUID whose values are the constructed device objects. The
   // controller-owner motion fanouts resolve a member camera through it - the security-system fanout reads configuredDevices.get(accessory.UUID)?.protectId, the liveviews
@@ -221,12 +246,6 @@ export class TestProtectNvr {
   // doubles are cast elsewhere. Both fanouts read only a narrow slice of the device (protectId for the security path, accessory / accessoryName for the liveviews path),
   // so the seeded double carries just that slice.
   public readonly configuredDevices = new Map<string, ProtectDevices>();
-
-  // The recorded machinery: every cancelled removal UUID, the pending manually-fireable removal timers keyed by accessory UUID, and every schedule decision with its
-  // resolved interval.
-  public readonly cancelledRemovals: string[] = [];
-  public readonly removalTimers = new Map<string, { fire: () => void }>();
-  public readonly scheduledRemovals: { interval: number; options: TestScheduleDeviceRemovalOptions }[] = [];
 
   // The once-per-option feature log gate, mirroring ProtectNvr.logFeature's featureLog record.
   readonly #featureLog: Record<string, boolean> = {};
@@ -241,18 +260,79 @@ export class TestProtectNvr {
     this.platform = init.platform;
     this.signal = init.signal;
 
-    // The removal-gate surface, delegating onto the flat machinery below rather than standing up a second copy of it: the double keeps ONE removal implementation, and
-    // production's nvr.removals.* calls and a test's direct nvr.scheduleDeviceRemoval(...) call land in the same place. removalStable is a getter rather than a copied
-    // boolean so the bridge reports the double's gate as of each read - a test flips that field mid-test and the next read through the bridge must see it. It reads
-    // through a captured arrow because a shorthand getter's own `this` binds to the bridge object, which would make it call itself.
-    const readRemovalStable = (): boolean => this.removalStable;
+    /* The REAL health bridge, wired the way ProtectNvr wires its own (nvr.ts): the double's controller address scoping the request feed, its recording log carrying
+     * the narration, its configured-device registry answering the camera-ownership question, and the controller lifetime signal the channel subscriptions detach on.
+     * The diagnostics feeds are attached immediately, because the double models a well-configured controller - production wires them past its credential guard, which
+     * a double with an address and credentials would clear. They are inert in a device-test process: nothing publishes on the library's channels outside the bridge's
+     * own suite, and the teardown-abort discipline every constructing file carries is what detaches them when the controller's signal fires.
+     *
+     * The bridge stays suspended here. Nothing calls notePhase, and the settable `phase` field above deliberately drives nothing - the two are independent by design,
+     * so a test that moves `phase` to exercise induced-disruption suppression does not silently open health observation. Suspended means `state` reads healthy and
+     * every observed symptom is dropped, which is what keeps this member from perturbing any existing test.
+     */
+    this.health = new DiagnosticsHealthBridge({
 
-    this.removals = {
+      actions: { refreshRemovalStability: (): void => { this.healthStabilityRefreshes++; } },
+      address: init.config.address,
+      log: this.log,
+      ownsCamera: (cameraId: string): boolean => this.getDeviceById(cameraId) !== null,
+      signal: init.signal
+    });
 
-      cancelFor: (uuid: string): void => this.cancelDeviceRemovalFor(uuid),
-      get removalStable(): boolean { return readRemovalStable(); },
-      schedule: (options: TestScheduleDeviceRemovalOptions): void => this.scheduleDeviceRemoval(options)
-    };
+    this.health.wireDiagnostics();
+
+    /* The REAL removal-stability gate, wired the way ProtectNvr wires its own (nvr.ts): the grace resolved per request through the REAL FeatureOptions engine, the
+     * double's recording log, and the controller lifetime signal its TimerRegistry binds to. One divergence is deliberate: production's removeDevice action is the
+     * root's richer removeHomeKitDevice cascade, while the double's is its own thin removal tail. The gate cares only that its decision runs an action - executing a
+     * removal is the root's territory in the double exactly as it is in production - and the tail is the executor every consuming test already reads. The action
+     * surface is typed on the production accessory while the double's graph holds TestAccessory instances, so the crossing takes the file's structural cast.
+     */
+    this.removals = new RemovalStabilityGate({
+
+      actions: {
+
+        removeDevice: (accessory: ProtectAccessory): void => this.removeAccessoryFromHomeKit(accessory as unknown as TestAccessory),
+        runSweep: (): void => { this.sweepRequests++; }
+      },
+      graceSeconds: (): number => this.getFeatureNumber("Nvr.DelayDeviceRemoval") ?? 0,
+      log: this.log,
+      signal: init.signal
+    });
+
+    /* The REAL reboot scheduler, wired the way ProtectNvr wires its own (nvr.ts): the recording count and the connection health as suppliers it pulls at its own fire
+     * time, the double's recording log, and the controller lifetime signal its TimerRegistry binds to. The two phase actions move the double's bare settable `phase` -
+     * the same field the recording delegate already reads - so the confirmation's still-rebooting guard and any induced-suppression read see the phase the choreography
+     * set, and the reboot action records its calls and consumes a test's injected failure.
+     *
+     * The scheduler arms NOTHING at construction: entering the schedule is an explicit call, so this member fires nothing in any suite that does not ask it to. That is
+     * what keeps the embedding inert for every existing test, unlike the removal gate above whose construction seed arms a real sweep.
+     */
+    this.reboot = new RebootScheduler({
+
+      actions: {
+
+        beginReboot: (): void => { this.phase = "rebooting"; },
+        reboot: async (): Promise<void> => {
+
+          this.rebootCalls++;
+
+          const error = this.rebootError;
+
+          if(error) {
+
+            this.rebootError = null;
+
+            throw error;
+          }
+        },
+        resumeRunning: (): void => { this.phase = "running"; }
+      },
+      activeRecordings: (): number => this.#activeHksvRecordings(),
+      isConnectionHealthy: (): boolean => this.client.connection.isHealthy,
+      log: this.log,
+      phase: (): NvrPhase => this.phase,
+      signal: init.signal
+    });
 
     // The real event dispatcher, wired against this double - its constructor reads only the platform's HAP namespace, the log, and the NVR handle itself. The optional
     // dispatch factory is the reusable injection seam: when omitted, the default factory is byte-identical to today's new ProtectEventDispatch(this), so every existing
@@ -260,25 +340,45 @@ export class TestProtectNvr {
     // observers' firehose routing without leaking a dangling timer handle. The factory runs at exactly the point this.events was assigned before, the last write in
     // the constructor, so nothing reads events before this line either way.
     this.events = (init.dispatch ?? ((nvr: ProtectNvr): ProtectEventDispatch => new ProtectEventDispatch(nvr)))(this as unknown as ProtectNvr);
+
+    /* Seed the trusted long-up posture: a controller up past the stability window is stable the instant it is pushed, so a fresh double schedules a removal without
+     * ceremony. The arithmetic holds under real time and under a mocked clock reset to epoch zero alike, because the uptime clamps to the window either way.
+     *
+     * This also arms the gate's one-shot sweep at a zero delay, which is a REAL timer whose action is the recording counter above. It fires the counter at some later
+     * macrotask and touches nothing else. Its true lifetime bound: the controller signal's abort drains it whenever no mocked clock is active at abort time, while
+     * under an active mock the real handle is beyond the mocked clearTimeout's reach - harmless purely because the action is inert and node:test gives each test file
+     * its own process.
+     */
+    this.pushControllerStability(true);
+  }
+
+  /* The double's mirror of the root's active-recording supplier. Production narrows by instanceof over its endpoints iterator; this walks the same population
+   * structurally, because the double's graph holds seeded device slices rather than real camera instances. Only the WALK is mirrored - what counts is the very same
+   * shared nvr-policy rule production consumes, so the double and the controller can never drift apart on the question the deferral actually asks.
+   */
+  #activeHksvRecordings(): number {
+
+    const views: TestRecordingView[] = [];
+
+    for(const device of this.configuredDevices.values()) {
+
+      const view = device as unknown as TestRecordingView;
+
+      views.push(view);
+
+      if(view.packageCamera) {
+
+        views.push(view.packageCamera);
+      }
+    }
+
+    return countActiveRecordingViews(views);
   }
 
   // Read-through to the controller record, mirroring the production getter.
   public get ufp(): Readonly<ProtectNvrConfig> {
 
     return this.client.nvr.config;
-  }
-
-  // Cancel every pending delayed removal, mirroring the production all-bets-are-off rule when the controller leaves good-state.
-  public cancelAllDeviceRemovals(): void {
-
-    this.removalTimers.clear();
-  }
-
-  // Cancel a single pending delayed removal by accessory UUID, recording the cancellation. Idempotent, like production.
-  public cancelDeviceRemovalFor(uuid: string): void {
-
-    this.removalTimers.delete(uuid);
-    this.cancelledRemovals.push(uuid);
   }
 
   // The production controller-scoped feature-number read: the REAL FeatureOptions engine resolves the option against the controller MAC, returning the registered
@@ -300,6 +400,37 @@ export class TestProtectNvr {
   public hasFeature(option: string, device?: { mac?: string }): boolean {
 
     return this.platform.featureOptions.test(option, device?.mac, this.ufp.mac);
+  }
+
+  /* Push a controller-stability fact into the gate, the way ProtectNvr's own health path does. A good push carries an uptime a full stability window deep, so the very
+   * first one - the construction seed - reads stable immediately.
+   *
+   * After that first stabilization the gate counts from now on every later good push, because its first-stabilization latch is a fact about the whole process life
+   * rather than about the current connection. So a test that destabilizes and then restabilizes must let the full window elapse before removalStable reads true again,
+   * which is exactly what restabilizeController does.
+   *
+   * @param good - Whether the controller is in good state.
+   */
+  public pushControllerStability(good: boolean): void {
+
+    this.removals.refresh(good ? { good: true, upSince: Date.now() - PROTECT_NVR_REMOVAL_STABILITY_WINDOW } : { good: false });
+  }
+
+  /* Take the controller through a disruption and back to stable under a mocked clock: the not-good push drops the clock and drains every timer the gate holds, the good
+   * push restamps from the current instant, and the window-sized advance makes removalStable read true again. Every timer armed after this call is armed under the mock
+   * and is therefore tick-drivable.
+   *
+   * The clock advance arrives as a parameter rather than through a node:test import, so this file stays free of any test-framework dependency while still owning the
+   * gate-policy knowledge - the count-from-now latch and the window-sized advance it implies. A caller passes its own dial, for example
+   * nvr.restabilizeController((ms) => mock.timers.tick(ms)).
+   *
+   * @param advanceClock - Advances the caller's mocked clock by the given milliseconds. Requires a mock with both Date and setTimeout enabled.
+   */
+  public restabilizeController(advanceClock: (ms: number) => void): void {
+
+    this.pushControllerStability(false);
+    this.pushControllerStability(true);
+    advanceClock(PROTECT_NVR_REMOVAL_STABILITY_WINDOW);
   }
 
   // Mirror ProtectNvr.logFeature: log a controller- or globally-scoped feature message once per option.
@@ -369,50 +500,6 @@ export class TestProtectNvr {
 
     this.platform.accessories.splice(index, 1);
     this.platform.api.updatePlatformAccessories(this.platform.accessories);
-  }
-
-  // The production removal chokepoint, mirrored without real timers: gate on stability, dedup per accessory UUID, resolve the grace interval through the real
-  // feature-option engine, then either remove immediately (interval disabled) or record a manually-fireable timer entry whose fire body is the production fire body.
-  public scheduleDeviceRemoval(options: TestScheduleDeviceRemovalOptions): void {
-
-    const { accessory, reason, stillGone } = options;
-    const remove = options.remove ?? ((): void => this.removeAccessoryFromHomeKit(accessory));
-
-    if(!this.removalStable) {
-
-      return;
-    }
-
-    if(this.removalTimers.has(accessory.UUID)) {
-
-      return;
-    }
-
-    const interval = this.getFeatureNumber("Nvr.DelayDeviceRemoval") ?? 0;
-
-    this.scheduledRemovals.push({ interval, options });
-
-    if(reason) {
-
-      this.log.info(reason);
-    }
-
-    if(interval <= 0) {
-
-      remove();
-
-      return;
-    }
-
-    this.removalTimers.set(accessory.UUID, { fire: (): void => {
-
-      this.removalTimers.delete(accessory.UUID);
-
-      if(this.removalStable && stillGone()) {
-
-        remove();
-      }
-    } });
   }
 }
 

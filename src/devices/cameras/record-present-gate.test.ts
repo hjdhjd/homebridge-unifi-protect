@@ -48,7 +48,7 @@ describe("the observeState recordPresent gate during the removal grace", () => {
     // A camera adopted WITHOUT the lux capability, so the ambient light sensor is absent at adoption - its later appearance is the observable proof the observer ran.
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasLuxCheck: false } });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { nvr } = makeTestNvr({ store });
+    const { controller, nvr } = makeTestNvr({ store });
     const accessory = makeTestAccessory("Test Camera", "uuid:record-present-gate-1");
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
 
@@ -89,6 +89,7 @@ describe("the observeState recordPresent gate during the removal grace", () => {
     } finally {
 
       camera.cleanup();
+      controller.abort();
     }
   });
 
@@ -99,7 +100,7 @@ describe("the observeState recordPresent gate during the removal grace", () => {
 
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { nvr } = makeTestNvr({ store });
+    const { controller, nvr } = makeTestNvr({ store });
     const accessory = makeTestAccessory("Test Camera", "uuid:record-present-gate-getters");
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
 
@@ -121,6 +122,7 @@ describe("the observeState recordPresent gate during the removal grace", () => {
     } finally {
 
       camera.cleanup();
+      controller.abort();
     }
   });
 });

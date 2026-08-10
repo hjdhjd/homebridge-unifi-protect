@@ -247,4 +247,30 @@ describe("the streaming capability's recording-transmitting gate", () => {
 
     assert.equal(doorbell.streaming?.isRecordingTransmitting, true, "a transmitting recording arm reads as transmitting");
   });
+
+  /* The same member read on the package INSTANCE class. The deferral counts every camera view the controller manages, so a package has to answer this as reliably as
+   * its parent does - and the package's capability is wired by its own path, which is what this arm holds against drift. What the count DOES with the answer is pinned
+   * in the harness suite; this pins the answer itself on the package.
+   */
+  test("isRecordingTransmitting answers through the package camera's own capability", async () => {
+
+    const { doorbell, factory } = await makeFamily();
+
+    assert.ok(doorbell.packageCamera, "the package camera was composed");
+
+    const packageDelegate = delegateFor(factory, doorbell.packageCamera);
+
+    assert.equal(packageDelegate.hksv, null, "the package's recording arm is unconfigured, the resting production state");
+    assert.equal(doorbell.packageCamera.streaming?.isRecordingTransmitting, false, "an unconfigured recording arm reads as not transmitting");
+
+    const hksv: TestRecordingDelegate = makeRecordingDelegateDouble({ isTransmitting: false });
+
+    packageDelegate.hksv = hksv as unknown as StreamingDelegate["hksv"];
+
+    assert.equal(doorbell.packageCamera.streaming?.isRecordingTransmitting, false, "a configured but idle recording arm reads as not transmitting");
+
+    hksv.isTransmitting = true;
+
+    assert.equal(doorbell.packageCamera.streaming?.isRecordingTransmitting, true, "a transmitting recording arm reads as transmitting");
+  });
 });

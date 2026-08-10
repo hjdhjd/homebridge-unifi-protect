@@ -50,6 +50,10 @@ function loggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], substri
   return entries.some((entry) => (entry.level === level) && entry.formatted.includes(substring));
 }
 
+// Every harness controller this suite opens, drained in afterEach so the controller lifetime signal bounds each test's constructions rather than the file's. The builder
+// is the single push site, so a construction inside a test body is captured exactly as the fixture's is.
+const controllers: AbortController[] = [];
+
 // The reusable construction helper: build a REAL TestBaseDevice (a concrete ProtectDevice leaf whose ctor only super()s) against the harness doubles, seeded with the
 // all-quiet sensor carrier. The casts are confined to the construction seam exactly as the light / chime / device-statusled suites do; the instance under test is the
 // production base, running its real configureHints / configureInfo / spawnObservers paths. We drive the wiring a family leaf would: configureHints first (configureInfo
@@ -61,7 +65,10 @@ function buildInfoDevice(configOptions: Parameters<typeof makeSensorConfig>[0] =
 
   const sensorConfig = makeSensorConfig(configOptions);
   const store = new TestStateStore(makeProtectState({ sensors: [sensorConfig] }));
-  const { logEntries, nvr } = makeTestNvr({ mqtt: true, store, userOptions: harnessOptions.userOptions });
+  const { controller, logEntries, nvr } = makeTestNvr({ mqtt: true, store, userOptions: harnessOptions.userOptions });
+
+  controllers.push(controller);
+
   const accessory = makeTestAccessory("Test Sensor", "uuid:test-sensor");
   const projection = new TestSensorProjection(sensorConfig.id, store) as unknown as Sensor;
   const device = new TestBaseDevice(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection);
@@ -103,6 +110,13 @@ describe("base ProtectDevice device-information capability (device-info concern 
 
     device?.cleanup();
     device = undefined;
+
+    for(const controller of controllers) {
+
+      controller.abort();
+    }
+
+    controllers.length = 0;
   });
 
   // The default build for tests that do not need a specific feature toggle: the all-quiet carrier with no userOptions (so Device.SyncName stays at its FALSE default).
