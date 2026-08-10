@@ -1263,6 +1263,32 @@ export function makeProtectState(options: { cameras?: ProtectCameraConfig[]; chi
   };
 }
 
+// The steerable recording face of a streaming-delegate double: the narrow HomeKit Secure Video slice the camera family reads off this.stream.hksv - whether a recording
+// is open, whether it is actively transmitting, and the recording-off command the delegate teardown issues. Every recording-active command is recorded, so a test can
+// assert both that a teardown disabled recording and that a connection-release deliberately did not.
+export interface TestRecordingDelegate {
+
+  isRecording: boolean;
+  isTransmitting: boolean;
+  updateRecordingActive: (isActive: boolean) => void;
+  updateRecordingActiveCalls: boolean[];
+}
+
+// Build a recording-delegate double in a chosen recording state, defaulting to idle. A test installs it on a TestStreamingDelegate's hksv arrangement point through the
+// harness's confined double-to-production cast, exactly as the factory installs the timeshift supervisor double.
+export function makeRecordingDelegateDouble(state: { isRecording?: boolean; isTransmitting?: boolean } = {}): TestRecordingDelegate {
+
+  const hksv: TestRecordingDelegate = {
+
+    isRecording: state.isRecording ?? false,
+    isTransmitting: state.isTransmitting ?? false,
+    updateRecordingActive: (isActive: boolean): void => { hksv.updateRecordingActiveCalls.push(isActive); },
+    updateRecordingActiveCalls: []
+  };
+
+  return hksv;
+}
+
 // The steerable buffer face of the timeshift-supervisor double: the members the session-source and snapshot paths read off the running buffer.
 export interface TestTimeshiftBuffer {
 
@@ -1332,6 +1358,8 @@ export class TestStreamingDelegate implements StreamingDelegate {
   public hardwareEncodes = false;
   public hksv: StreamingDelegate["hksv"];
   public readonly probesize: number;
+  // How many times production wound this delegate's probesize self-tuning back - the controller-reboot recovery walk calls it.
+  public resetProbesizeOverrideCalls = 0;
   // How many times production tore this delegate down - cleanup and the NVR disconnect walk both call shutdown.
   public shutdownCalls = 0;
   public timeshift: StreamingDelegate["timeshift"];
@@ -1367,7 +1395,8 @@ export class TestStreamingDelegate implements StreamingDelegate {
 
   public resetProbesizeOverride(): void {
 
-    // Nothing to reset - the stub holds no probesize override state.
+    // Nothing to reset - the stub holds no probesize override state, so the call is recorded and nothing else happens.
+    this.resetProbesizeOverrideCalls++;
   }
 
   public shutdown(): void {

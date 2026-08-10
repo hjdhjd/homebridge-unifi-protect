@@ -3,7 +3,7 @@
  * camera-construction.test.ts: The first real-ProtectCamera construction test - the proof of the platform-held streaming-delegate factory seam.
  *
  * This suite constructs a REAL minimal ProtectCamera end to end - the base constructors, configureHints, configureDevice, the floating configure IIFE
- * (reconcileStreaming through the stub factory and accessory.configureController), and every state-observe loop the camera registers - against the reusable construction
+ * (the streaming reconcile through the stub factory and accessory.configureController), and every state-observe loop the camera registers - against the reusable
  * harness in testing.helpers.ts: the faithful store double, the read-through Camera projection double, the typed NVR / platform doubles, and the stub
  * StreamingDelegateFactory the dependency inversion exists to admit. It then drives a structural-sharing state push through a real observer reaction and
  * unwinds everything via cleanup(), asserting the wire-but-don't-fire observe contract at each phase through the observer-wake diagnostics channel.
@@ -168,7 +168,7 @@ describe("real ProtectCamera construction through the streaming-delegate factory
     assert.equal(wakes.length, 1, "exactly one observer woke for the single-slice push");
     assert.deepEqual(wakes[0], { accessoryId: accessory.UUID, key: "camera.channels" }, "the wake is the channels observer, attributed to this accessory");
 
-    // The reaction re-ran reconcileStreaming, which republished the advertised profiles from the NEW channel set. Pick a row that tells the two models apart - one
+    // The reaction re-ran the streaming reconcile, which republished the advertised profiles from the NEW channel set. Pick a row that tells the two models apart - one
     // advertised for the G6 Pro Entry but absent from the G2 Pro list - and select it through the production selectChannel, proving the published profiles really
     // moved.
     const modelOnlyEntry: EntryProjection | undefined =
@@ -249,7 +249,7 @@ describe("camera HKSV self-heal observer", () => {
 
     // The availability observer calls updateAvailability on every lifecycle edge, which wakes the supervisor's reconcile through the standing-buffer kick; we read the
     // factory-installed timeshift double's reconcile tally so the assertions observe the reconcile firing per edge rather than a private field. The hksv double retains
-    // isRecording and updateRecordingActive: both are load-bearing at teardown, where teardownStreamingDelegate calls updateRecordingActive(false) gated on
+    // isRecording and updateRecordingActive: the capability's delegate teardown calls updateRecordingActive(false) gated on
     // isRecording: true. The confined casts bridge the doubles to the StreamingDelegate types their fields are declared as.
     const delegate = factory.createCalls[0]?.delegate;
 
@@ -258,7 +258,7 @@ describe("camera HKSV self-heal observer", () => {
     delegate.hksv = { isRecording: true, updateRecordingActive: (): void => { /* No-op: only reached at teardown, not by the observer. */ } } as unknown as
       TestStreamingDelegate["hksv"];
 
-    // Discount the construction-time activation kick: the factory-installed double already recorded one reconcile from configureStreamingDelegate, so reset the tally to
+    // Discount the construction-time activation kick: the factory-installed double already recorded one reconcile from the capability's establishment, so reset the tally
     // zero before driving the lifecycle edges.
     const timeshift = delegate.timeshift as unknown as TestTimeshiftSupervisor;
 
@@ -285,7 +285,7 @@ describe("camera HKSV self-heal observer", () => {
     await settle();
   });
 
-  // The construction-time activation kick: configureStreamingDelegate wakes the supervisor right after it stands up the controller, so the standing buffer establishes
+  // The construction-time activation kick: the capability's establishment wakes the supervisor right after it stands up the controller, so the standing buffer
   // for the streaming arm independent of any recording demand. We read the factory-installed double's reconcile tally immediately after construction, before any state
   // edge could add one.
   test("construction kicks the supervisor once so the standing buffer establishes for the streaming arm", async () => {
@@ -303,7 +303,7 @@ describe("camera HKSV self-heal observer", () => {
     const timeshift = factory.createCalls[0]?.delegate.timeshift as unknown as TestTimeshiftSupervisor;
 
     assert.ok(timeshift, "the factory installed a timeshift double on the created delegate");
-    assert.equal(timeshift.reconcileCalls, 1, "configureStreamingDelegate kicked the supervisor exactly once at construction");
+    assert.equal(timeshift.reconcileCalls, 1, "the capability's establishment kicked the supervisor exactly once at construction");
 
     camera.cleanup();
 
@@ -328,7 +328,7 @@ describe("the streaming-delegate construction gate", () => {
   });
 
   // Construct a real ProtectCamera end to end, optionally against a controller that has already entered shutdown. Everything the camera runs here - configureHints,
-  // configureDevice, the floating configure IIFE, reconcileStreaming - is the production path; only the NVR, accessory, projection, and factory are doubles.
+  // configureDevice, the floating configure IIFE, the streaming reconcile - is the production path; only the NVR, accessory, projection, and factory are doubles.
   async function constructCamera(phase?: TestProtectNvr["phase"]): Promise<{ camera: ProtectCamera; factory: TestStreamingDelegateFactory }> {
 
     const gateConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS });

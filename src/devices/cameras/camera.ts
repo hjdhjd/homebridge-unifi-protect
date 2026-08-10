@@ -4,16 +4,16 @@
  */
 import { AudioRecordingCodecType, AudioRecordingSamplerate, capabilityGate, formatErrorMessage, toStartCase } from "homebridge-plugin-utils";
 import type { Camera, LivestreamSource, SnapshotOptions, TalkbackSession } from "unifi-protect";
+import type { CharacteristicValue, Resolution } from "homebridge";
 import type { LivestreamHostOptions, ProtectCameraHost } from "../../media/camera-host.ts";
-import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_SEGMENT_RESOLUTION, PROTECT_TIMESHIFT_CONSTRAINED_HOST_TARGET } from "../../settings.ts";
+import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_SEGMENT_RESOLUTION } from "../../settings.ts";
 import type { ProtectAccessory, ProtectPersistedContextState } from "../../types.ts";
 import { ProtectAuthorizationError, deviceSelectors, livestreamAudioSampleRate } from "unifi-protect";
-import { buildAdvertisedProfiles, buildChannelProfile, capByPixels, formatResolution, isPrimaryChannel, rtspUrl, selectChannelProfile } from "../../media/resolution.ts";
+import { buildAdvertisedProfiles, buildChannelProfile, formatResolution, isPrimaryChannel, rtspUrl } from "../../media/resolution.ts";
 import { nightVisionActive, nightVisionBrightnessForMode, nightVisionCommandForLevel, nightVisionModeForToggleOn, nightVisionToggleCommand,
   parseNightVisionMode } from "./night-vision-policy.ts";
 import type { AmbientLightCapability } from "./ambient-light.ts";
 import type { ChannelProfile } from "../../media/resolution.ts";
-import type { CharacteristicValue } from "homebridge";
 import type { DoorbellCapability } from "./doorbell.ts";
 import type { LivestreamSubscription } from "../../media/livestream.ts";
 import type { NightVisionCommand } from "./night-vision-policy.ts";
@@ -24,9 +24,8 @@ import type { ProtectHints } from "../device.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
 import { ProtectReservedNames } from "../../types.ts";
 import { RtspLivestreamSubscription } from "../../media/livestream.ts";
-import type { SelectRequest } from "../../media/resolution.ts";
+import type { StreamingCapability } from "./streaming.ts";
 import type { StreamingDelegate } from "../../media/stream-delegate.ts";
-import { audioCapabilityAppeared } from "../../media/stream-delegate.ts";
 import { doorbellReconcileAction } from "./doorbell-reconcile-policy.ts";
 import { shouldDeliverBareMotion } from "./motion-policy.ts";
 
@@ -35,11 +34,24 @@ import { shouldDeliverBareMotion } from "./motion-policy.ts";
 // "Enabling" log - branch on it; the members with no resting state ignore it.
 type ReconcileSource = "construct" | "observe";
 
+/* The streaming surface a camera derives for HomeKit: the advertised channel-profile list its selectors choose from, and the HomeKit resolution list its
+ * CameraController is built with. The two travel together as one derivation RESULT rather than as separate held state, so the narration that reads the profiles and the
+ * create call that consumes the resolutions can never disagree about which derivation they are working from.
+ *
+ * It is declared here, in the camera family, rather than in the media layer: both the member that produces it and the members that consume it are camera host surface,
+ * and the media layer's contracts take only a plain resolution list.
+ */
+export interface AdvertisedStreams {
+
+  profiles: ChannelProfile[];
+  resolutions: Resolution[];
+}
+
 // The camera family's hint bag: the shared device hints every family carries, extended with the streaming, transcoding, snapshot, and media hints only a camera has.
 // Three fields are declared optional because their honest lifecycle is unset-until-their-own-configure-pass-runs rather than absent-means-broken: cropOptions is written
 // only by configureCrop and only when cropping is enabled, so its ABSENCE is the crop-off state the media layer's truthiness gate reads (a required field would force the
 // configure-time literal to invent a concrete object, and an object has no falsy value, which would read as permanently-on crop for every camera); rtspDefault and
-// substrateDefault are written only by configureStreamingDelegate, and every read of all three is truthiness-gated.
+// substrateDefault are written only by onStreamingEstablish, and every read of all three is truthiness-gated.
 export interface ProtectCameraHints extends ProtectHints {
 
   // Whether snapshot and stream cropping is enabled for this camera.
@@ -123,7 +135,6 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
   // The composed doorbell capability, attached when (and only when) the controller reports this camera as a doorbell. Initialized to null so the field-init runs BEFORE
   // the ctor-body configureDevice that attaches it - declared and set by ProtectCamera itself, so the subclass field-wipe class does not apply.
   public doorbell: Nullable<DoorbellCapability> = null;
-  private channelProfiles: ChannelProfile[];
   // Whether the doorbell ring-trigger MQTT subscription has been registered, so the one registration site (configureMqtt at construction) and the late-promotion attach
   // arm never double-register (homebridge-plugin-utils subscribe is not idempotent). Initialized to false through a field initializer, set by ProtectCamera's own
   // configureDoorbellRingMqtt after the gate passes - never inside a super constructor - so it carries no ctor-chain-computed state and the subclass field-wipe class
@@ -133,7 +144,10 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
   // initializer (so it exists before the constructor body's configureDevice can reach the accessor below), which is also what makes the availability delegation total: a
   // camera whose capability was never built - and one already torn down - optional-chains to a no-op.
   #ambientLight: Nullable<AmbientLightCapability> = null;
-  public stream?: StreamingDelegate;
+  // The composed streaming capability, acquired on this camera's construct pass and held for the rest of its life. Nullable and initialized through a field initializer
+  // so it exists before the constructor body's configureDevice can reach the accessor below, which is also what makes the NVR-walk reads total: a camera whose capability
+  // was never acquired - and one already torn down - optional-chains to a no-op.
+  #streaming: Nullable<StreamingCapability> = null;
   // Narrow the inherited hint bag to the camera family's shape. The bag is not projection-derived, so it cannot ride the class's projection parameter the way the device
   // handle and the config view do; a type-only re-declaration is the honest mechanism, and it costs one line because nothing is emitted for it.
   declare public hints: ProtectCameraHints;
@@ -147,7 +161,6 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     this.isRinging = false;
     this.isTampered = false;
     this.detectLicensePlate = [];
-    this.channelProfiles = [];
 
     this.configureHints();
     this.configureDevice();
@@ -172,10 +185,40 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
   // Whether a streaming delegate may be stood up for this camera at all. A delegate is never built for a camera that is being removed, nor once the controller has begun
   // shutting down: the shutdown teardown walk visits each camera exactly once, so a delegate built after it has passed would hold a registered CameraController and a
-  // pooled livestream seat that no path would ever tear down. Protected so the package camera consults the same rule at its own construction site.
-  protected get canConfigureStream(): boolean {
+  // pooled livestream seat that no path would ever tear down. Public for the same reason configureDoorbellService is: the composed streaming capability consults this
+  // rule across the composition boundary, where a protected member is unreadable, and it is the one consumer - both camera views reach it through their capability.
+  public get canConfigureStream(): boolean {
 
     return !this.isDeleted && (this.nvr.phase !== "shuttingDown");
+  }
+
+  // The streaming delegate this camera advertises, forwarded from the composed streaming capability that owns it. The media layer reads it through the host contract,
+  // where its absence is the honest "no delegate has been built" state, so a camera whose capability has not yet derived anything reads undefined.
+  public get stream(): StreamingDelegate | undefined {
+
+    return this.#streaming?.stream ?? undefined;
+  }
+
+  /* The composed streaming capability, acquired on first use. Construction is graph-assembly, so the camera asks the NVR composition root for the object rather than
+   * newing a sibling class itself, and it reaches the root through an inherited field, so this forms no module import edge and the device layer stays structurally
+   * cycle-proof.
+   *
+   * The whole body is one ??= assignment, which is what makes double construction unrepresentable rather than merely unlikely: the accessor is safe to call from
+   * anywhere, including after a future edit moves a caller past an await, so two overlapping reconcile passes converge on one capability by the operator's own semantics.
+   *
+   * PROTECTED rather than private: the package camera subclass acquires its own capability through it, and a private member is unreachable from a subclass body.
+   */
+  protected acquireStreaming(): StreamingCapability {
+
+    return this.#streaming ??= this.nvr.createStreamingCapability(this, this.signal);
+  }
+
+  // The composed streaming capability, or null when this camera has not acquired one. Deliberately NON-CREATING, unlike the accessor above: the controller-side walks
+  // read this to reach a camera's streaming arm, and a walk that constructed a capability as a side effect of looking would build machinery for cameras it was only
+  // meant to inspect.
+  public get streaming(): Nullable<StreamingCapability> {
+
+    return this.#streaming;
   }
 
   /* Configure device-specific settings for this device. The base derives the shared hints and assigns them, then this pass spreads that bag into the camera's own
@@ -184,7 +227,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
    * PRE-assignment bag, so a sibling key reading this.hints.smartDetect would see the base's inert seed rather than the camera's answer.
    *
    * The literal deliberately omits cropOptions, rtspDefault, and substrateDefault. Those three are written by their own later passes (configureCrop and
-   * configureStreamingDelegate), and leaving them unset here is what preserves their unset-until-then state.
+   * onStreamingEstablish), and leaving them unset here is what preserves their unset-until-then state.
    */
   protected override configureHints(): boolean {
 
@@ -293,7 +336,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
       // Reconcile the capability-gated services and the video streaming surface in parallel since they are independent operations. The construct source establishes the
       // capability resting states (it is the adoption-or-restart path), distinct from the live observe reconciles the capability observers drive later.
-      await Promise.all([ this.reconcileCapabilities("construct"), this.reconcileStreaming() ]);
+      await Promise.all([ this.reconcileCapabilities("construct"), this.acquireStreaming().reconcile() ]);
 
       // Configure our camera details.
       this.configureCameraDetails();
@@ -314,7 +357,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     })();
 
     // Attach the doorbell capability when the controller already reports this camera as a doorbell. This runs at the END of configureDevice's synchronous body, after
-    // the IIFE statement: the IIFE's synchronous prefix has already kicked off reconcileStreaming, while its tail (the trigger and mute switch) runs on later
+    // the IIFE statement: the IIFE's synchronous prefix has already kicked off the streaming reconcile, while its tail (the trigger and mute switch) runs on later
     // microtasks. The capability's configure synchronously stands up the Doorbell service (through configureDoorbellService), so a real doorbell's service exists before
     // that microtask tail reaches the mute-switch gate; a plain camera's Doorbell service is stood up by the trigger, which the tail now runs ahead of the mute switch.
     // Either way the mute switch sees a present (or correctly absent) service. A camera the controller does not report as a doorbell attaches nothing here.
@@ -325,7 +368,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
   /* Reconcile this camera's doorbell capability against the controller's live state - the single chokepoint the construction-time arm and the always-armed isDoorbell
    * observer both route through, driven by the pure doorbellReconcileAction over (hasCapability, isDoorbell). A promotion composes the capability onto the running
-   * instance in place; the one HAP object that cannot change in place (the CameraController) is rebuilt by reconcileStreamingAudioCapabilities, not here, since a late
+   * instance in place; the one HAP object that cannot change in place (the CameraController) is rebuilt by the streaming capability's audio reconcile, not here, since a
    * doorbell-ness is one of the frozen audio capabilities that reconcile watches for. The source discriminant separates the two attach contexts: at
    * construction the normal flow (the pending IIFE building the stream with the now-true flag, the IIFE tail running mute/trigger, configureMqtt registering ring) covers
    * the camera-side wiring, so the construct arm does only the capability compose; a live promotion ("observe") must additionally re-run that camera-side wiring because
@@ -369,8 +412,8 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
    * had the flag been true at adoption. The construct arm does only the capability compose: the normal construction flow covers everything else. The observe arm, a
    * promotion of a running plain camera, additionally: re-runs the mute switch and trigger (the construction IIFE tail already ran them while the flag was false, and the
    * Doorbell service now exists); registers the ring-trigger MQTT (a late promotion the construction configureMqtt could not have registered); and narrates the promotion
-   * once. The late-doorbell controller rebuild lives in reconcileStreamingAudioCapabilities, driven by the featureFlags observer, so this method only composes the
-   * capability: an isDoorbell change also wakes that observer, and reconcileStreamingAudioCapabilities rebuilds the streaming delegate when a frozen audio capability
+   * once. The late-doorbell controller rebuild lives in the streaming capability's audio reconcile, driven by the featureFlags observer, so this method only composes the
+   * capability: an isDoorbell change also wakes that observer, and that reconcile rebuilds the streaming delegate when a frozen audio capability
    * has appeared (a late doorbell-ness or a late speaker), single-sourcing that rebuild across both late inputs.
    */
   private attachDoorbellCapability(source: ReconcileSource): void {
@@ -412,8 +455,8 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     // drains its poll - and nulling the handle here is what keeps the availability delegation total once the camera is gone.
     this.#ambientLight = null;
 
-    // Tear down the streaming delegate and unregister its controller through the shared extraction.
-    this.teardownStreamingDelegate();
+    // Tear down the streaming capability, which releases its delegate and unregisters the controller it registered.
+    this.#streaming?.cleanup();
 
     super.cleanup();
 
@@ -444,13 +487,16 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
     // The RTSP channel set and the negotiated video codec both shape the HomeKit streaming surface, so a change to either re-derives it. Separate observers, not one
     // tuple: a fresh tuple would never dedup on Object.is, whereas each field dedups natively as its own slice.
-    this.observeState({ key: "camera.channels", selector: state => cam(state)?.channels, title: "video streaming" }, () => void this.reconcileStreaming());
-    this.observeState({ key: "camera.videoCodec", selector: state => cam(state)?.videoCodec, title: "video streaming" }, () => void this.reconcileStreaming());
+    this.observeState({ key: "camera.channels", selector: state => cam(state)?.channels, title: "video streaming" },
+      () => void this.acquireStreaming().reconcile());
+    this.observeState({ key: "camera.videoCodec", selector: state => cam(state)?.videoCodec, title: "video streaming" },
+      () => void this.acquireStreaming().reconcile());
 
     // The published channel profiles bake their RTSP URLs against the connection host at derivation time (rtspHost feeds buildChannelProfile), so a camera IP change must
     // re-derive them. The reconcile chokepoint's derivation half is safe to re-run and its create-once delegate half is already guarded, so routing the host change here
     // re-bakes the profile URLs without disturbing the standing streaming delegate.
-    this.observeState({ key: "camera.connectionHost", selector: state => cam(state)?.connectionHost, title: "video streaming" }, () => void this.reconcileStreaming());
+    this.observeState({ key: "camera.connectionHost", selector: state => cam(state)?.connectionHost, title: "video streaming" },
+      () => void this.acquireStreaming().reconcile());
 
     // The lifecycle state enum drives independent reactions, so each gets its own observer on the same slice. We watch state because isOnline - and therefore the
     // device-online half of isReachable - derives from it; the controller-health half is pushed by the NVR connection loop, not observed here.
@@ -702,7 +748,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
    *
    * The derived hints are refreshed FIRST, in the same synchronous region as everything below, so the pass that raises them is the pass that acts on them: the all-off
    * prune reads hints.smartDetectSensors, and a refresh sequenced after it would decide against the previous pass's value, leaving a late-arriving capability's sensors
-   * one reconcile behind. The refresh is additive, mirroring the twoWayAudio refresh reconcileStreamingAudioCapabilities performs, and being additive is also what makes
+   * one reconcile behind. The refresh is additive, mirroring the twoWayAudio refresh the streaming capability performs, and being additive is also what makes
    * "a hardware withdrawal keeps" fall out of the structure rather than out of a guard.
    *
    * The capability withdrawal is the single short-circuit below rather than a condition inside each prune. That is what makes withdrawal-keeps a property of this
@@ -1198,66 +1244,32 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
     this.configureTamperDetection();
 
-    this.reconcileStreamingAudioCapabilities();
+    this.acquireStreaming().reconcileAudioCapabilities();
 
     this.reconcileSmartDetectSensors();
 
     await this.ambientLight.reconcile();
   }
 
-  // Reconcile the streaming delegate's constructor-frozen audio surface against the controller's live capabilities. The CameraController's two-way audio support and its
-  // recording/streaming sample rates are baked from live-volatile inputs - the speaker-derived two-way audio hint and isDoorbell - so a camera the controller reports
-  // as having a speaker (or as a doorbell) only after adoption carries a controller built for the wrong audio surface, with the talk button baked off until a restart.
-  // This reconcile refreshes those hints and rebuilds the controller in place when a frozen audio capability has appeared, single-sourcing the late-doorbell controller
-  // rebuild. It takes no source: the additive predicate is correct on both construct (no-op, the controller is freshly built) and observe.
-  private reconcileStreamingAudioCapabilities(): void {
+  /* Derive the streaming surface HomeKit advertises for this camera. This is the camera family's derivation HOST HOOK - public because the composed streaming capability
+   * drives it across the composition boundary, and NON-ASYNC by declaration so a host whose derivation needs no controller round trip can override it with a plain value.
+   * The value-or-promise union is what makes that override legal: an async method cannot declare a non-promise return type, so the asynchronous work lives in the private
+   * helper below and this member hands back whatever the helper returns. A caller resolves the union by testing for a promise, which is what keeps a synchronous host's
+   * whole derive-and-establish chain inside its caller's own call frame.
+   */
+  public deriveAdvertisedStreams(): Nullable<AdvertisedStreams> | Promise<Nullable<AdvertisedStreams>> {
 
-    // Additively refresh the speaker-derived hints, mirroring the additive rebuild below: a capability appearing raises the hint (so a deferred first stream build and
-    // the runtime talkback path read it), while a transient incomplete-bootstrap drain that reports the speaker absent leaves an established hint untouched - the same
-    // subtractive-conservative discipline, so a reconnect blip never disturbs two-way audio. configureHints establishes the baseline at construction; this is the only
-    // live refresher. Running before the no-stream guard is what closes the deferred-build window.
-    this.hints.twoWayAudio ||= this.ufp.featureFlags.hasSpeaker && this.hasFeature("Audio") && this.hasFeature("Audio.TwoWay");
-    this.hints.twoWayAudioDirect ||= this.ufp.featureFlags.hasSpeaker && this.hasFeature("Audio") && this.hasFeature("Audio.TwoWay.Direct");
-
-    // No delegate yet: the create-once path builds it from the just-refreshed hints, so there is nothing to rebuild. This also covers construction.
-    if(!this.stream) {
-
-      return;
-    }
-
-    // Rebuild the controller in place only when a frozen audio capability has appeared since it was built - the additive-eager, subtractive-conservative rising edge. A
-    // capability reading false (the all-false featureFlags drain a camera delivers on every reconnect, a settled demotion) never rebuilds, so a routine reconnect
-    // never flickers the controller (an HKSV reset and a stream interruption).
-    if(!audioCapabilityAppeared(this.stream.builtFor, { isDoorbell: this.ufp.featureFlags.isDoorbell, twoWayAudio: this.hints.twoWayAudio })) {
-
-      return;
-    }
-
-    this.rebuildStreamingDelegate();
+    return this.#deriveStreams();
   }
 
-  // Reconcile the camera's HomeKit streaming surface: compose the always-run channel-profile derivation with the create-once delegate build. This is the single entry
-  // point the channels / videoCodec observers and the construction IIFE call, so a channel or codec change re-derives the advertised list and, the first time the list
-  // is non-empty, stands up the streaming delegate. A false from refreshChannelProfiles (no channels, an RTSP-enable write-through that must reconcile first, no valid
-  // entries) short-circuits before any delegate build; otherwise we hand off to the synchronous create-once half.
-  protected async reconcileStreaming(): Promise<boolean> {
-
-    if(!(await this.refreshChannelProfiles())) {
-
-      return false;
-    }
-
-    return this.configureStreamingDelegate();
-  }
-
-  // The derivation half: compute and publish the advertised channel-profile list HomeKit consumes. Always run (every channel / codec change re-derives), returns true
-  // only after a non-empty list is published, false on every early-out exactly as the pre-decomposition flow did.
-  private async refreshChannelProfiles(): Promise<boolean> {
+  // The parent camera's derivation: ensure RTSP is enabled across the camera's channels, then synthesize the advertised profile list HomeKit consumes. Always re-run
+  // (every channel / codec / connection-host change re-derives), and null on every path that yields no advertisable list.
+  async #deriveStreams(): Promise<Nullable<AdvertisedStreams>> {
 
     // No channels exist on this camera or we don't have access to the bootstrap configuration.
     if(!this.ufp.channels.length) {
 
-      return false;
+      return null;
     }
 
     // Ensure RTSP is enabled on every channel. This is a write-through config change with no read-after-write: when a channel still needs RTSP, we enable them all and
@@ -1273,14 +1285,14 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
         await this.device.update({ channels: this.ufp.channels.map(channel => ({ ...channel, isRtspEnabled: true })) });
 
-        return false;
+        return null;
       } catch(error) {
 
         // The camera can be removed while the write is in flight, and the observer-wake presence gate only covers the synchronous prefix ahead of the await. We re-check
         // before touching the live record again...a vanished camera has nothing to narrate and nothing to derive.
         if(!this.recordPresent) {
 
-          return false;
+          return null;
         }
 
         if(error instanceof ProtectAuthorizationError) {
@@ -1306,7 +1318,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
         "Enable at least one RTSP profile in the UniFi Protect webUI or assign the full management role to the local Protect user " +
         "you configured for use with this plugin.");
 
-      return false;
+      return null;
     }
 
     // Build the native RTSP entries from the user-enabled primary channels, skipping any channel Protect reports with nonsensical dimensions. The resolution module
@@ -1326,43 +1338,28 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
     // Synthesize the full advertised resolution list HomeKit consumes from the native entries. The list build is preference-free: the streaming-quality preference is a
     // request-time concern selectChannel applies, not a list-construction input. The all-channels-fail-sanity empty result re-asserts the device
-    // short-circuit: an advertised list of zero entries must NOT construct a streaming delegate or call configureController - we return false before reaching either.
-    const advertised = buildAdvertisedProfiles(nativeEntries);
+    // short-circuit: an advertised list of zero entries must NOT construct a streaming delegate or call configureController - we return null before reaching either.
+    const profiles = buildAdvertisedProfiles(nativeEntries);
 
-    if(!advertised.length) {
+    if(!profiles.length) {
 
-      return false;
+      return null;
     }
 
-    // Publish our updated list of supported resolutions and their URLs.
-    this.channelProfiles = advertised;
-
-    return true;
+    // Hand back the derived surface: the supported profiles with their URLs, and the resolution list the CameraController is built from.
+    return { profiles: profiles, resolutions: profiles.map(profile => profile.resolution) };
   }
 
-  // The create-once half: stand up the HomeKit streaming delegate and register its CameraController, exactly once per instance. This half is SYNCHRONOUS by design -
-  // there is no await between the this.stream gate and configureController, so two concurrent callers can never both pass the gate while this.stream is undefined
-  // (nothing yields between the gate and the assignment). That race-freedom invariant is load-bearing for the channels / videoCodec observers, which can both fire in
-  // one drain. The construction gate covers the rebuild path, which can fire reconcileStreaming on an accessory mid-removal or after controller shutdown has begun:
-  // neither a being-removed camera nor a shutting-down controller may register a controller that no teardown walk would ever reach.
-  private configureStreamingDelegate(): boolean {
-
-    // If we've already configured the HomeKit video streaming delegate, we're done here.
-    if(this.stream) {
-
-      return true;
-    }
-
-    // The accessory is being removed, or the controller is shutting down - do not stand up a controller on it.
-    if(!this.canConfigureStream) {
-
-      return false;
-    }
+  /* The camera family's establishment HOST HOOK: everything a camera pins and narrates at the moment its streaming delegate is about to be built. Public because the
+   * composed streaming capability calls it across the composition boundary, immediately before it constructs the delegate - so the profile pins this writes into the
+   * hint bag are in place for the constructor that reads them. Synchronous by contract: it runs inside the create-once stretch, which yields nowhere.
+   */
+  public onStreamingEstablish(derived: AdvertisedStreams): void {
 
     // Inform users about our RTSP entry mapping, if we're debugging.
     if(this.hasFeature("Debug.Video.Startup")) {
 
-      for(const entry of this.channelProfiles) {
+      for(const entry of derived.profiles) {
 
         this.log.info("Mapping resolution: %s.", formatResolution(entry.resolution) + " => " + entry.name + " [" + this.videoCodecName + "]");
       }
@@ -1414,55 +1411,6 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
       this.log.info("Disabling the use of higher quality snapshots.");
     }
-
-    // Configure the video stream with our resolutions.
-    this.stream = this.platform.streamingDelegateFactory.create(this, this.channelProfiles.map(x => x.resolution));
-
-    // Fire up the controller and inform HomeKit about it.
-    this.accessory.configureController(this.stream.controller);
-
-    // Kick the supervisor so the standing timeshift buffer establishes for this camera's streaming arm, independent of any HomeKit Secure Video recording demand.
-    void this.stream.timeshift?.reconcile();
-
-    return true;
-  }
-
-  // Tear down this camera's streaming delegate and unregister its CameraController. Both cleanup (on deletion) and the audio-capability rebuild tear the delegate down
-  // through one path: HKSV recording off, the live and timeshift consumers shut down (releasing their pool subscriptions), and the controller removed from HomeKit.
-  private teardownStreamingDelegate(): void {
-
-    // If we've got HomeKit Secure Video enabled and recording, disable it.
-    if(this.stream?.hksv?.isRecording) {
-
-      this.stream.hksv.updateRecordingActive(false);
-    }
-
-    // Tear down this camera's livestream consumers so their pool subscriptions are released. The camera does not own livestream sessions - the stream (live) and
-    // timeshift (HKSV) consumers own the subscriptions, and disposing them decrements the pool refcount to zero. Mirrors nvr.disconnect()'s per-camera teardown.
-    this.stream?.shutdown();
-    this.stream?.timeshift?.shutdown();
-
-    // Unregister our controller.
-    if(this.stream) {
-
-      this.accessory.removeController(this.stream.controller);
-    }
-  }
-
-  /* Rebuild the streaming delegate and its CameraController in place - the one HAP object the audio reconcile cannot mutate (its audio options, the twoWayAudio/Speaker
-   * service, and the supported-configuration TLVs are constructor-frozen). reconcileStreamingAudioCapabilities calls this when a frozen audio capability has appeared - a
-   * late doorbell-ness or a late speaker. The teardown's removeController runs synchronously; clearing this.stream re-opens the create-once gate; reconcileStreaming's
-   * create-half (configureStreamingDelegate) lands on the next microtask after refreshChannelProfiles resolves, so remove-before-configure ordering holds, and exactly
-   * one removeController plus one configureController fire here. This is today's shipped reclassification semantics - the HKSV factory reset (removeController) and
-   * the supported-config hash change - preserved at exactly this transition. The tail can resolve on a later microtask - refreshChannelProfiles may await a write-through
-   * update - so the create-half's construction gate is what prevents a re-register when the accessory is removed, or controller shutdown begins, inside that window.
-   * (It inherits today's benign fire-and-forget updateRecordingActive(false) teardown race - parity, not introduced here.)
-   */
-  private rebuildStreamingDelegate(): void {
-
-    this.teardownStreamingDelegate();
-    this.stream = undefined;
-    void this.reconcileStreaming();
   }
 
   // Configure HomeKit Secure Video support.
@@ -1893,48 +1841,18 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     }
   }
 
-  // Find a direct-RTSP livestream configuration for a given target resolution. This is the device wrapper over the pure selectChannelProfile: it injects our published
-  // entries and our this-state (the direct-RTSP default, which pins to a named channel, and the optional hardware pixel cap), then delegates the selection mathematics.
-  // The pixel cap is applied as a mode-agnostic pre-filter BEFORE selection - intentionally a pre-filter, not part of the request, so it filters the name branch too (a
-  // constrained request with an explicit profile preference still drops profiles above the cap); a future reader should not move it into the request.
+  // Find a direct-RTSP livestream configuration for a given target resolution, forwarded to the composed streaming capability that holds the advertised list and the
+  // selection policy. A camera that has not acquired its capability advertises nothing, which is exactly the answer an empty list produces.
   public selectChannel(width: number, height: number, opts?: { biasHigher?: boolean; maxPixels?: number }): Nullable<ChannelProfile> {
 
-    const entries = capByPixels(this.channelProfiles, opts?.maxPixels);
-    const request: SelectRequest = this.hints.rtspDefault ? { mode: "name", name: this.hints.rtspDefault } :
-      { bias: opts?.biasHigher ? "higher" : "lower", height: height, mode: "nearest", width: width };
-
-    return selectChannelProfile(entries, request);
+    return this.#streaming?.selectChannel(width, height, opts) ?? null;
   }
 
-  // Resolve the channel that populates the standing timeshift buffer feeding HomeKit Secure Video, buffer-backed live views, and snapshots. The policy is
-  // source-independent and HomeKit-Secure-Video-state-independent by construction, in order: (1) a user pin wins outright - an exact name match, null on a miss, the
-  // loud user-pin failure; (2) a pixel-constrained encoder host (a Raspberry Pi) takes the highest-quality channel at or below its constrained target, biased downward,
-  // preference-free so the buffer does not inherit the direct-RTSP quality preference; (3) otherwise the highest-quality channel the host's encoder can consume, taken
-  // structurally as the first entry after the record-context pixel cap, with no name lookup. The record-context cap is Infinity on every host today (HKSV
-  // software-encodes wherever a pixel cap would apply), so capByPixels passes everything and step 3 is simply the highest channel; it engages only when a future
-  // predicate change hardware-encodes on a pixel-limited host.
+  // Resolve the channel that populates the standing timeshift buffer feeding HomeKit Secure Video, buffer-backed live views, and snapshots, forwarded to the composed
+  // streaming capability that owns the resolution policy. A camera that has not acquired its capability resolves nothing, exactly as an empty list would.
   public selectSubstrateChannel(): Nullable<ChannelProfile> {
 
-    // The published entries filtered by the host encoder's source ceiling. The cap is a mode-agnostic pre-filter applied BEFORE selection, so it filters the name-pin
-    // branch too - a pin to a channel the cap drops honestly selects nothing rather than substituting. It is Infinity on every host today (HKSV software-encodes wherever
-    // a pixel cap would apply), so this passes everything through; it engages only when a future predicate change hardware-encodes on a pixel-limited host.
-    const entries = capByPixels(this.channelProfiles, this.stream?.ffmpegOptions.maxSourcePixels("record"));
-
-    // (1) A user pin wins outright: exact name match, null on a miss.
-    if(this.hints.substrateDefault) {
-
-      return selectChannelProfile(entries, { mode: "name", name: this.hints.substrateDefault });
-    }
-
-    // (2) A pixel-constrained encoder host: the highest-quality channel at or below the constrained target, biased downward and preference-free.
-    if(this.platform.codecSupport.hostSystem === "raspbian") {
-
-      return selectChannelProfile(entries, { bias: "lower", height: PROTECT_TIMESHIFT_CONSTRAINED_HOST_TARGET.height, mode: "nearest",
-        width: PROTECT_TIMESHIFT_CONSTRAINED_HOST_TARGET.width });
-    }
-
-    // (3) Otherwise, the highest-quality channel the host's encoder can consume - the first surviving entry, taken structurally with no name lookup.
-    return entries[0] ?? null;
+    return this.#streaming?.selectSubstrateChannel() ?? null;
   }
 
   // Utility property to return the camera's current video codec, formatted for display. Read non-throwing through the record: a camera in the removal grace whose record

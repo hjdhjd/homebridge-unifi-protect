@@ -4,6 +4,7 @@
  */
 import { PACKAGE_CAMERA_NAME_SUFFIX, ProtectReservedNames, packageCameraId } from "../../types.ts";
 import { buildAdvertisedResolutions, buildChannelProfile, formatResolution, isPackageChannel } from "../../media/resolution.ts";
+import type { AdvertisedStreams } from "./camera.ts";
 import type { ChannelProfile } from "../../media/resolution.ts";
 import type { CharacteristicValue } from "homebridge";
 import type { Nullable } from "homebridge-plugin-utils";
@@ -33,8 +34,8 @@ export class ProtectCameraPackage extends ProtectCamera {
   // Spawn the package camera's bespoke observer set, deliberately REPLACING the camera set rather than extending it - no super call. The camera reactions must never
   // spawn here: the reclassification observer would arm a flap-triggered doorbell-capability attach against the package accessory (an isDoorbell flap on the shared
   // parent record would attach the doorbell capability onto the package - duplicate doorbell services and context corruption), and the channels/videoCodec observers
-  // would run the parent-flavored reconcileStreaming against the package accessory. The base pair (name sync and device information) still spawns through the family
-  // template, which is what lets the package track parent renames and firmware updates without any doorbell fan-out.
+  // would wake the package's own streaming reconcile on parent-channel churn that has nothing to do with the package channel. The base pair (name sync and device
+  // information) still spawns through the family template, which is what lets the package track parent renames and firmware updates without any doorbell fan-out.
   protected override spawnCameraObservers(): void {
 
     // Bind the by-id camera selector once, as the parent does - the package shares the parent's projection, so the parent's id is ours too. We seed it from
@@ -48,8 +49,8 @@ export class ProtectCameraPackage extends ProtectCamera {
     // The package channel can be provisioned after adoption (a doorbell that was not fully provisioned when first adopted). We reduce the channel to a computed
     // primitive - its formatted dimension tuple, or undefined while absent - so the store's value dedup wakes this only when the package channel appears or genuinely
     // changes shape, never on unrelated channel-list churn. The string serialization is a consumer-side stand-in for a store value-equality option. On a wake the
-    // handler re-attempts the idempotent stream configure: the arrival wake builds the stream from the real channel, and a post-build dimension change returns at the
-    // idempotency gate, leaving the advertised list frozen until a restart - exact parent parity.
+    // handler re-attempts the streaming reconcile: the arrival wake builds the stream from the real channel, and a post-build dimension change returns at the
+    // capability's create-once gate, leaving the advertised list frozen until a restart - exact parent parity.
     const packageChannelShape = (state: ProtectState): string | undefined => {
 
       const channel = cam(state)?.channels.find(isPackageChannel);
@@ -57,7 +58,7 @@ export class ProtectCameraPackage extends ProtectCamera {
       return channel ? formatResolution([ channel.width, channel.height, channel.fps ]) : undefined;
     };
 
-    this.observeState({ key: "camera.packageChannel", selector: packageChannelShape, title: "video streaming" }, () => { this.configurePackageStream(); });
+    this.observeState({ key: "camera.packageChannel", selector: packageChannelShape, title: "video streaming" }, () => void this.acquireStreaming().reconcile());
   }
 
   // The package camera's display name is the parent's synced name plus the display suffix, single-sourced from the shared live parent projection through the base
@@ -108,8 +109,12 @@ export class ProtectCameraPackage extends ProtectCamera {
     this.configureFlashlight();
 
     // Configure the video stream when the controller has provisioned the package channel, deferring until then otherwise. configureDevice is the one caller that
-    // narrates the deferral to the user - the package-channel observer's later re-attempts stay silent until one succeeds.
-    if(!this.configurePackageStream()) {
+    // narrates the deferral to the user - the package-channel observer's later re-attempts stay silent until one succeeds. Reading the outcome off this.stream right
+    // after the reconcile is sound because the package's derivation is synchronous: the capability's whole derive-establish-register chain has already run inside this
+    // call frame, so the delegate either exists by now or the deferral is genuine.
+    void this.acquireStreaming().reconcile();
+
+    if(!this.stream) {
 
       this.log.info("The package camera accessory is ready, but its video stream will become available once the controller finishes provisioning the package " +
         "camera channel.");
@@ -128,28 +133,18 @@ export class ProtectCameraPackage extends ProtectCamera {
     this.accessory.context.packageCamera = this.device.config.mac;
   }
 
-  /* Configure the package camera's HomeKit video stream from the real package channel, deferring when the controller has not yet provisioned it. Idempotent through
-   * the this.stream gate, exactly the parent's create-once discipline (configureStreamingDelegate): the package-channel observer re-runs this on channel arrival, and a
-   * post-build dimension change wakes it too, where the gate returns and the advertised list stays frozen until a restart - the parent's identical staleness
-   * envelope. Deferral also means the accessory's HomeKit camera controller is registered only once the channel exists; if a session ends before it ever arrives,
-   * hap-nodejs marks the controller's persisted state purge-on-next-load, so the package's saved HKSV configuration can be purged across two such restarts - an
-   * accepted, narrow caveat of defer-create (the alternative, re-registering a controller mid-life, factory-resets HKSV unconditionally). Returns whether the
-   * stream is configured.
+  /* The package camera's derivation, overriding the parent's: its one fixed channel, or null while the controller has not yet provisioned that channel. SYNCHRONOUS -
+   * the package reads its channel straight off the shared parent projection with no controller round trip, so it returns the value arm of the parent's declared union
+   * rather than a promise. That is what keeps the package's whole derive-establish-register chain inside its caller's own call frame, and a behavioral pin guards the
+   * tick placement: making this derivation asynchronous would silently defer the controller registration and the deferral narration that reads its outcome.
+   *
+   * A null return is the defer-until-provisioned answer, and the capability's create-once gate is what makes the re-attempts safe: the package-channel observer re-runs
+   * the reconcile on channel arrival, and a post-build dimension change wakes it too, where the gate returns and the advertised list stays frozen until a restart - the
+   * parent's identical staleness envelope. Deferral also means the accessory's HomeKit camera controller is registered only once the channel exists; if a session ends
+   * before it ever arrives, hap-nodejs marks the controller's persisted state purge-on-next-load, so the package's saved HKSV configuration can be purged across two such
+   * restarts - an accepted, narrow caveat of defer-create (the alternative, re-registering a controller mid-life, factory-resets HKSV unconditionally).
    */
-  private configurePackageStream(): boolean {
-
-    // The stream is already configured - nothing to do.
-    if(this.stream) {
-
-      return true;
-    }
-
-    // The accessory is being removed, or the controller is shutting down - the same construction gate the parent applies, so a package stream is never stood up where
-    // nothing would tear it down again.
-    if(!this.canConfigureStream) {
-
-      return false;
-    }
+  public override deriveAdvertisedStreams(): Nullable<AdvertisedStreams> {
 
     // The controller has not provisioned the package channel yet. The accessory itself (motion, flashlight) is fully functional in the meantime; it simply
     // advertises no video stream until the channel arrives and the observer re-attempts.
@@ -157,33 +152,35 @@ export class ProtectCameraPackage extends ProtectCamera {
 
     if(!profile) {
 
-      return false;
+      return null;
     }
 
     // Synthesize the HomeKit resolution list from the package channel's fixed native top. The package camera is a single fixed channel - the resolution module seeds the
     // list with the native top itself and appends the aspect-appropriate mandated resolutions at the package frame rate, so we pass the seed once and do NOT prepend it.
-    const validResolutions = buildAdvertisedResolutions({ fpsSet: [15], nativeTop: profile.resolution });
+    return { profiles: [profile], resolutions: buildAdvertisedResolutions({ fpsSet: [15], nativeTop: profile.resolution }) };
+  }
+
+  // The package camera's establishment narration, overriding the parent's: its debug mapping lines have a shape of their own, because the package advertises a
+  // synthesized list against one fixed native top rather than a set of named channels. It carries none of the parent's profile pins - the package has a single channel,
+  // so there is nothing for a profile preference to select between.
+  public override onStreamingEstablish(derived: AdvertisedStreams): void {
+
+    // The package derivation supplies exactly one profile, and the guarded read is what the index-access typing requires of any caller.
+    const nativeTop = derived.profiles[0]?.resolution;
+
+    if(!nativeTop) {
+
+      return;
+    }
 
     // Inform users about our RTSP entry mapping, if we're debugging.
     if(this.hasFeature("Debug.Video.Startup")) {
 
-      for(const entry of validResolutions) {
+      for(const entry of derived.resolutions) {
 
-        this.log.info("Mapping resolution: %s.", formatResolution(entry) + " => " + formatResolution(profile.resolution));
+        this.log.info("Mapping resolution: %s.", formatResolution(entry) + " => " + formatResolution(nativeTop));
       }
     }
-
-    // Configure the video stream with our required resolutions. No, package cameras don't really support any of these resolutions, but they're required
-    // by HomeKit in order to stream video.
-    this.stream = this.platform.streamingDelegateFactory.create(this, validResolutions);
-
-    // Fire up the controller and inform HomeKit about it.
-    this.accessory.configureController(this.stream.controller);
-
-    // Kick the supervisor so the standing timeshift buffer establishes for the package camera's streaming arm, mirroring the primary camera's stream configure.
-    void this.stream.timeshift?.reconcile();
-
-    return true;
   }
 
   // Configure a light accessory to turn on or off the flashlight.

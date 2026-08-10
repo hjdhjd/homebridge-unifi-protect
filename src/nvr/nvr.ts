@@ -32,6 +32,7 @@ import type { ProtectPlatform } from "../platform.ts";
 import { ProtectRelay } from "../devices/relay.ts";
 import { ProtectSensor } from "../devices/sensor.ts";
 import { ProtectViewer } from "../devices/viewer.ts";
+import { StreamingCapability } from "../devices/cameras/streaming.ts";
 import { channels } from "../diagnostics.ts";
 import { describeDevice } from "../devices/device-descriptor.ts";
 import { livestreamRecoveryDecision } from "../media/livestream-recovery-policy.ts";
@@ -656,7 +657,7 @@ export class ProtectNvr {
         continue;
       }
 
-      device.stream?.resetProbesizeOverride();
+      device.streaming?.recoverFromControllerReboot();
     }
   }
 
@@ -710,8 +711,7 @@ export class ProtectNvr {
         continue;
       }
 
-      device.stream?.shutdown();
-      device.stream?.timeshift?.shutdown();
+      device.streaming?.releaseForShutdown();
     }
 
     // Detach the connection-health subscriptions so they do not outlive the client whose connection monitor they observe.
@@ -900,7 +900,7 @@ export class ProtectNvr {
     // Check if any cameras are actively recording HKSV events. We defer if so, but only up to PROTECT_NVR_REBOOT_DEFERRAL_MAX cumulatively...past that ceiling we
     // force the reboot regardless. An open-ended series of HKSV events would otherwise let the deferral chain run indefinitely, which defeats the point of having
     // a scheduled reboot in the first place.
-    const activeRecordings = this.devices("camera").filter(camera => camera.stream?.hksv?.isTransmitting);
+    const activeRecordings = this.devices("camera").filter(camera => camera.streaming?.isRecordingTransmitting);
     const elapsedCycleMs = (cycleStart !== undefined) ? (Date.now() - cycleStart) : 0;
     const deferralCeilingMs = PROTECT_NVR_REBOOT_DEFERRAL_MAX * 1000;
 
@@ -1348,6 +1348,14 @@ export class ProtectNvr {
   public createAmbientLightCapability(camera: ProtectCamera, device: Camera, signal: AbortSignal): AmbientLightCapability {
 
     return new AmbientLightCapability(this, { device: device, host: camera, signal: signal });
+  }
+
+  // Construct a streaming capability for a camera. The same graph-assembly reasoning as createDoorbellCapability: the camera keeps the entire lifecycle decision (it
+  // acquires the capability on its construct pass and drives every reconcile from its own observers), and only the one new lands here, holding no policy. It takes no
+  // projection handle because the capability reads the camera's own live projection through its host.
+  public createStreamingCapability(camera: ProtectCamera, signal: AbortSignal): StreamingCapability {
+
+    return new StreamingCapability(this, { host: camera, signal: signal });
   }
 
   // Remove the doorbell-only services a demoted-while-down doorbell left on a now-plain camera accessory - the sweep-stale removal the camera's reconcile runs when the

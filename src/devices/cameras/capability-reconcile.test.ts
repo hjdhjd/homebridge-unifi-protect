@@ -23,10 +23,10 @@
  */
 import type { Camera, ProtectCameraConfig } from "unifi-protect";
 import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../../testing.helpers.ts";
+import { G2_PRO_CHANNELS, G6_PRO_ENTRY_CHANNELS } from "../../camera.fixtures.ts";
 import type { TestAccessory, TestService } from "../../testing.helpers.ts";
 import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
 import { describe, mock, test } from "node:test";
-import { G2_PRO_CHANNELS } from "../../camera.fixtures.ts";
 import type { ObserverWakePayload } from "../../diagnostics.ts";
 import type { ProtectAccessory } from "../../types.ts";
 import { ProtectCamera } from "./camera.ts";
@@ -1192,8 +1192,8 @@ describe("the camera capability reconcile - two-way audio", () => {
 
       await settle();
 
-      // The featureFlags observer drove reconcileCapabilities, whose reconcileStreamingAudioCapabilities refreshed the hint and rebuilt the controller: exactly one
-      // removeController then one configureController. Removing the reconcileStreamingAudioCapabilities from reconcileCapabilities leaves this RED - no rebuild fires
+      // The featureFlags observer drove reconcileCapabilities, whose streaming-audio reconcile refreshed the hint and rebuilt the controller: exactly one
+      // removeController then one configureController. Removing that reconcile from reconcileCapabilities leaves this RED - no rebuild fires
       // and builtFor.twoWayAudio stays false.
       const churn = accessory.controllerEvents.slice(churnBaseline);
 
@@ -1373,6 +1373,53 @@ describe("the camera capability reconcile - two-way audio", () => {
     } finally {
 
       camera.cleanup();
+    }
+  });
+
+  /* The package camera's negative control. The audio reconcile is reachable only through reconcileCapabilities, which only the parent camera's observers drive - the
+   * package replaces the camera observer set wholesale and never spawns one. So a speaker appearing on the shared parent record must rebuild the PARENT's controller and
+   * leave the package's completely alone, even though both cameras read the same record and the package's hint bag carries the same twoWayAudio value.
+   *
+   * The package channel is present in the fixture deliberately: a package with no delegate could not churn its controller no matter what the reconcile did, so a
+   * stream-less package would make this pin pass vacuously. Both delegates exist here, so the package's stillness is a real result.
+   */
+  test("a late hasSpeaker rebuilds only the parent's controller - the package camera's audio path stays unreachable", async () => {
+
+    const cameraConfig = makeCameraConfig({ channels: G6_PRO_ENTRY_CHANNELS, featureFlags: { hasPackageCamera: true, hasSpeaker: false, isDoorbell: true } });
+    const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
+    const { controller, nvr } = makeTestNvr({ store });
+    const accessory = makeTestAccessory("Test Doorbell", "uuid:two-way-audio-package");
+    const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
+
+    await settle();
+
+    try {
+
+      const packageAccessory = camera.packageCamera?.accessory as unknown as TestAccessory | undefined;
+
+      assert.ok(packageAccessory, "the package camera was composed");
+
+      // Both vacuity guards: two real delegates exist, and the parent's was genuinely built without two-way audio, so the push below is a real transition for it.
+      assert.ok(camera.stream, "the parent holds a delegate");
+      assert.ok(camera.packageCamera?.stream, "the package holds a delegate, so it COULD churn if the audio path reached it");
+      assert.equal(camera.stream.builtFor.twoWayAudio, false, "the parent's controller was built with two-way audio off");
+
+      const packageDelegate = camera.packageCamera.stream;
+      const parentBaseline = accessory.controllerEvents.length;
+      const packageBaseline = packageAccessory.controllerEvents.length;
+
+      store.pushCameraFeatureFlags(cameraConfig.id, { hasSpeaker: true });
+
+      await settle();
+
+      assert.equal(accessory.controllerEvents.length - parentBaseline, 2, "the parent rebuilt its controller: one remove then one configure");
+      assert.equal(packageAccessory.controllerEvents.length - packageBaseline, 0, "the package camera's controller was never touched");
+      assert.equal(camera.packageCamera?.stream, packageDelegate, "the package still holds the very delegate it built - nothing rebuilt it");
+    } finally {
+
+      camera.cleanup();
+
+      controller.abort();
     }
   });
 });

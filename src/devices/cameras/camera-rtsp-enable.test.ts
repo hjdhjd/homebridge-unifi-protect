@@ -1,6 +1,6 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * camera-rtsp-enable.test.ts: The RTSP autoconfiguration net - the write-through enable in refreshChannelProfiles (camera.ts) and its two arms, driven against the
+ * camera-rtsp-enable.test.ts: The RTSP autoconfiguration net - the write-through enable in the camera's derivation (camera.ts) and its two arms, driven against the
  * REAL constructed ProtectCamera.
  *
  * The gate under test: when any channel reads isRtspEnabled false, the camera PATCHes the full channel array with RTSP enabled everywhere and defers the streaming
@@ -90,7 +90,7 @@ async function buildCamera(options: { channels: ProtectCameraConfig["channels"];
   return { camera, cameraConfig, controller, factory, logEntries, projection, store };
 }
 
-describe("RTSP autoconfiguration write-through (refreshChannelProfiles)", () => {
+describe("RTSP autoconfiguration write-through (deriveAdvertisedStreams)", () => {
 
   // The per-test handle, torn down in afterEach so each test's per-accessory abort unwinds and no observe loop outlives the test.
   let built: BuiltCamera | undefined;

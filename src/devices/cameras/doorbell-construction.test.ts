@@ -390,7 +390,7 @@ describe("doorbell + package camera family construction (suite B)", () => {
     assert.ok(doorbell.doorbell, "the doorbell capability survives the flap, never detached");
 
     // No controller churn: the self-collapse leaves isDoorbell at the value the controller was already built for, so the capability reconcile's audio rebuild sees no
-    // frozen audio capability appeared and skips rebuildStreamingDelegate - no removeController/configureController fired at the flap.
+    // frozen audio capability appeared and skips the in-place controller rebuild - no removeController/configureController fired at the flap.
     assert.equal(accessory.controllerEvents.length, churnBaseline, "the flap drove zero controller churn - no rebuild");
   });
 
@@ -496,7 +496,7 @@ describe("doorbell bare-motion package forward (suite C)", () => {
     assert.ok(doorbell?.packageCamera?.stream, "the package camera holds its stub stream with the channel provisioned");
 
     // Mark the package camera recording for HKSV: the production forward reads packageCamera.stream.hksv.isRecording. The afterEach cleanup also reads hksv through
-    // teardownStreamingDelegate (isRecording -> updateRecordingActive, then timeshift.stop), so the stub carries those no-ops - the same shape the camera-construction
+    // the capability's delegate teardown (isRecording -> updateRecordingActive, then timeshift.stop), so the stub carries those no-ops - the same shape the camera-
     // self-heal test seeds, cast once through the confined seam.
     (doorbell.packageCamera.stream as TestStreamingDelegate).hksv = { isRecording: true,
       timeshift: { isStarted: false, stop: (): void => { /* No-op: the double owns no buffer to release on teardown. */ } },

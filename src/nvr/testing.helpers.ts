@@ -32,6 +32,7 @@ import { ProtectCameraPackage } from "../devices/cameras/camera-package.ts";
 import type { ProtectDevice } from "../devices/device.ts";
 import { ProtectEventDispatch } from "./event-dispatch.ts";
 import type { ProtectNvr } from "./nvr.ts";
+import { StreamingCapability } from "../devices/cameras/streaming.ts";
 import type { TestChimeProjection } from "../devices/testing.helpers.ts";
 import util from "node:util";
 
@@ -183,6 +184,9 @@ export class TestProtectNvr {
   };
 
   public readonly config: ProtectNvrOptions;
+  // How many streaming capabilities this root has been asked to construct. The instrument behind the non-creating-getter pin: a read of a camera's streaming handle must
+  // leave this untouched.
+  public createStreamingCapabilityCalls = 0;
   public readonly events: ProtectEventDispatch;
   public readonly log: {
 
@@ -305,6 +309,15 @@ export class TestProtectNvr {
   public createAmbientLightCapability(camera: ProtectCamera, device: Camera, signal: AbortSignal): AmbientLightCapability {
 
     return new AmbientLightCapability(this as unknown as ProtectNvr, { device: device, host: camera, signal: signal });
+  }
+
+  // The streaming capability's construction, mirroring production - and the one create method that carries a call counter. The counter is what lets a test prove a
+  // camera builds exactly one capability no matter how many times it asks for one, and that a controller-side read of the handle asks the root for nothing.
+  public createStreamingCapability(camera: ProtectCamera, signal: AbortSignal): StreamingCapability {
+
+    this.createStreamingCapabilityCalls++;
+
+    return new StreamingCapability(this as unknown as ProtectNvr, { host: camera, signal: signal });
   }
 
   // The sweep-stale removal seam, mirroring production: route the camera's request to the REAL DoorbellCapability.removeServices SSOT, with the platform's HAP namespace

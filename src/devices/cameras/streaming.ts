@@ -1,0 +1,265 @@
+/* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
+ *
+ * streaming.ts: Streaming capability for UniFi Protect cameras.
+ */
+import type { AdvertisedStreams, ProtectCamera } from "./camera.ts";
+import type { ChannelProfile, SelectRequest } from "../../media/resolution.ts";
+import { capByPixels, selectChannelProfile } from "../../media/resolution.ts";
+import type { Nullable } from "homebridge-plugin-utils";
+import { PROTECT_TIMESHIFT_CONSTRAINED_HOST_TARGET } from "../../settings.ts";
+import { ProtectDeviceCapability } from "../device-capability.ts";
+import type { ProtectNvr } from "../../nvr/nvr.ts";
+import type { StreamingDelegate } from "../../media/stream-delegate.ts";
+import { audioCapabilityAppeared } from "../../media/stream-delegate.ts";
+
+/* The streaming capability composed onto a ProtectCamera: the camera family's whole streaming LIFECYCLE POLICY in one place - when a delegate may be built, when it is
+ * rebuilt, when it is torn down, and which channel each consumer selects. The media machinery underneath (ProtectStreamingDelegate and everything it owns) is untouched
+ * by this class; what lives here is the policy that decides its lifetime, reached through the platform-held factory that keeps FFmpeg out of this dependency graph.
+ *
+ * ONE CLASS FOR BOTH CAMERA VIEWS. A parent camera and its package view are two hosts with one streaming policy between them, and the only thing that genuinely differs
+ * is the DERIVATION - the parent negotiates RTSP across a channel set and awaits a controller write-through, while the package reads its single fixed channel straight
+ * off the shared projection. That difference lives on the host, behind deriveAdvertisedStreams, so this class holds exactly one create-when-ready rule that serves both.
+ *
+ * NO PROJECTION HANDLE, deliberately, and a divergence from the two other camera-family capabilities: they hold a `device` handle because their host contract does not
+ * expose the projection, while this capability's concrete host does. A second handle would be a second path to one truth, so every projection read here goes through
+ * this.host.ufp, which is a live read that throws when the camera's controller record is gone - the exposure every consumer of this policy has always carried.
+ *
+ * IT IMPLEMENTS reconcile() AND NOT configure(): every line of its body is convergence. reconcile() is called at the host's construction, and again on each streaming
+ * observer wake and each package-channel arrival; it derives, publishes, and - the first time a derivation yields something advertisable - stands the delegate up. Every
+ * later call re-derives and returns at the create-once gate, which is what keeps the advertised list fresh for the selectors while leaving the standing delegate alone.
+ *
+ * THE SYNCHRONOUS PATH. An async body runs synchronously up to its first EXECUTED await, so a host whose derivation returns a plain value never yields at all: derive,
+ * narrate, create, and register all complete inside the caller's own call frame. That is what keeps the package camera's controller registration on the same tick as the
+ * call that asked for it, which its deferral narration reads the outcome of. The instanceof test below is what preserves that property, and a behavioral pin guards it.
+ *
+ * TEARDOWN. cleanup() tears the machinery down explicitly before the contract's own cleanup aborts this capability's controller...the delegate is not signal-bound state,
+ * so nothing else would release its HomeKit controller registration or its pooled livestream subscriptions.
+ */
+export class StreamingCapability extends ProtectDeviceCapability<ProtectCamera> {
+
+  // The advertised channel-profile list the selectors below choose from, republished by every derivation. Seeded empty, which is what makes a selector called before the
+  // first derivation return nothing rather than throw. On a package instance it holds the single package profile and nothing reads it, which is honest: the package's own
+  // selector overrides answer from its fixed channel directly.
+  #profiles: ChannelProfile[] = [];
+  // The streaming delegate this capability owns, or null until a derivation yields something advertisable. PRIVATE with a read-only accessor below: every write lives in
+  // this class, so the create-once rule and the teardown ordering cannot be circumvented from outside.
+  #stream: Nullable<StreamingDelegate> = null;
+
+  // Construct the capability against its owning camera. The camera passes itself and its own per-accessory lifetime signal from inside its own class body, so no
+  // visibility widening is needed. No projection handle is taken - see the class narrative above.
+  constructor(nvr: ProtectNvr, init: { host: ProtectCamera; signal: AbortSignal }) {
+
+    super(nvr, { host: init.host, signal: init.signal });
+  }
+
+  // The streaming delegate, or null while none has been built. The read-only window onto the private field, consumed by the host's own forward and by the machinery's
+  // external readers.
+  public get stream(): Nullable<StreamingDelegate> {
+
+    return this.#stream;
+  }
+
+  // Whether this camera is currently transmitting a HomeKit Secure Video recording. Null-safe at both hops, so a camera with no delegate - or one with HKSV unconfigured
+  // - answers false rather than throwing.
+  public get isRecordingTransmitting(): boolean {
+
+    return this.#stream?.hksv?.isTransmitting ?? false;
+  }
+
+  // Converge this camera's streaming surface: derive, publish the advertised list, and stand the delegate up the first time the derivation yields one.
+  public override async reconcile(): Promise<void> {
+
+    /* Resolve the host's derivation without forcing it onto a microtask. A host whose derivation is genuinely synchronous hands back a plain value, and testing for a
+     * promise is what lets this body consume it without yielding - so the package camera's derive-narrate-create-register chain completes inside its caller's call frame
+     * and its controller registration stays on the same tick. Collapsing this into an unconditional await would compile and read more simply while silently deferring
+     * that registration past the caller's own frame, which is the behavior change this shape exists to prevent.
+     */
+    const result = this.host.deriveAdvertisedStreams();
+    const derived = (result instanceof Promise) ? await result : result;
+
+    if(!derived) {
+
+      return;
+    }
+
+    // Publish the advertised list before the create-once half runs. The selectors read this list, so a re-derive that lands once the delegate already exists still
+    // refreshes what they see even though the create half declines at its gate.
+    this.#profiles = derived.profiles;
+
+    this.#establish(derived);
+  }
+
+  /* Stand up the streaming delegate and register its CameraController, exactly once per capability. SYNCHRONOUS by design - nothing yields between the create-once gate
+   * and configureController, so two concurrent callers can never both pass the gate while the field is still null. That race freedom is what lets the channels and
+   * videoCodec observers fire in the same drain safely; an await introduced anywhere in this stretch lets one camera build two delegates. The host's construction gate
+   * covers the rebuild path, which can reach here on an accessory mid-removal or after controller shutdown has begun: neither a being-removed camera nor a shutting-down
+   * controller may register a controller that no teardown walk would ever reach.
+   */
+  #establish(derived: AdvertisedStreams): void {
+
+    // We've already built the delegate for this camera - we're done here.
+    if(this.#stream) {
+
+      return;
+    }
+
+    // The accessory is being removed, or the controller is shutting down - do not stand up a controller on it.
+    if(!this.host.canConfigureStream) {
+
+      return;
+    }
+
+    // Let the host pin its profile preferences and narrate the establishment before the delegate's constructor reads the hint bag those pins write into.
+    this.host.onStreamingEstablish(derived);
+
+    // Configure the video stream with our resolutions.
+    this.#stream = this.platform.streamingDelegateFactory.create(this.host, derived.resolutions);
+
+    // Fire up the controller and inform HomeKit about it.
+    this.accessory.configureController(this.#stream.controller);
+
+    // Kick the supervisor so the standing timeshift buffer establishes for this camera's streaming arm, independent of any HomeKit Secure Video recording demand.
+    void this.#stream.timeshift?.reconcile();
+  }
+
+  // Reconcile the delegate's constructor-frozen audio surface against the controller's live capabilities. The CameraController's two-way audio support and its
+  // recording/streaming sample rates are baked from live-volatile inputs - the speaker-derived two-way audio hint and isDoorbell - so a camera the controller reports
+  // as having a speaker (or as a doorbell) only after adoption carries a controller built for the wrong audio surface, with the talk button baked off until a restart.
+  // This refreshes those hints and rebuilds the controller in place when a frozen audio capability has appeared, single-sourcing the late-doorbell controller rebuild.
+  public reconcileAudioCapabilities(): void {
+
+    // Additively refresh the speaker-derived hints, mirroring the additive rebuild below: a capability appearing raises the hint (so a deferred first stream build and
+    // the runtime talkback path read it), while a transient incomplete-bootstrap drain that reports the speaker absent leaves an established hint untouched - the same
+    // subtractive-conservative discipline, so a reconnect blip never disturbs two-way audio. The host's configureHints establishes the baseline at construction; this is
+    // the only live refresher. Running before the no-delegate guard is what closes the deferred-build window.
+    this.host.hints.twoWayAudio ||= this.host.ufp.featureFlags.hasSpeaker && this.hasFeature("Audio") && this.hasFeature("Audio.TwoWay");
+    this.host.hints.twoWayAudioDirect ||= this.host.ufp.featureFlags.hasSpeaker && this.hasFeature("Audio") && this.hasFeature("Audio.TwoWay.Direct");
+
+    // No delegate yet: the create-once path builds it from the just-refreshed hints, so there is nothing to rebuild. This also covers construction.
+    if(!this.#stream) {
+
+      return;
+    }
+
+    // Rebuild the controller in place only when a frozen audio capability has appeared since it was built - the additive-eager, subtractive-conservative rising edge. A
+    // capability reading false (the all-false featureFlags drain a camera delivers on every reconnect, a settled demotion) never rebuilds, so a routine reconnect
+    // never flickers the controller (an HKSV reset and a stream interruption).
+    if(!audioCapabilityAppeared(this.#stream.builtFor, { isDoorbell: this.host.ufp.featureFlags.isDoorbell, twoWayAudio: this.host.hints.twoWayAudio })) {
+
+      return;
+    }
+
+    this.#rebuild();
+  }
+
+  /* Rebuild the delegate and its CameraController in place - the one HAP object the audio reconcile cannot mutate (its audio options, the twoWayAudio/Speaker service,
+   * and the supported-configuration TLVs are constructor-frozen). The teardown's removeController runs synchronously; clearing the field re-opens the create-once gate;
+   * reconcile's create half lands as soon as the host's derivation resolves, so remove-before-configure ordering holds and exactly one removeController plus one
+   * configureController fire here. This is the shipped reclassification semantics - the HKSV factory reset (removeController) and the supported-config hash change -
+   * preserved at exactly this transition. The tail can resolve on a later microtask, since the parent's derivation may await a write-through update, so the create half's
+   * construction gate is what prevents a re-register when the accessory is removed, or controller shutdown begins, inside that window. The re-create rides the host's own
+   * derivation, so each camera view rebuilds from the surface it actually advertises. (It inherits the benign fire-and-forget updateRecordingActive(false) teardown race
+   * the teardown below documents.)
+   */
+  #rebuild(): void {
+
+    this.#teardown();
+    this.#stream = null;
+
+    void this.reconcile();
+  }
+
+  // Tear this camera's delegate down and unregister its CameraController. Both cleanup (on deletion) and the audio-capability rebuild tear the delegate down through one
+  // path: HKSV recording off, the live and timeshift consumers shut down (releasing their pool subscriptions), and the controller removed from HomeKit.
+  #teardown(): void {
+
+    // If we've got HomeKit Secure Video enabled and recording, disable it.
+    if(this.#stream?.hksv?.isRecording) {
+
+      this.#stream.hksv.updateRecordingActive(false);
+    }
+
+    // Tear down this camera's livestream consumers so their pool subscriptions are released. The camera does not own livestream sessions - the stream (live) and
+    // timeshift (HKSV) consumers own the subscriptions, and disposing them decrements the pool refcount to zero. Mirrors the controller disconnect walk's per-camera
+    // teardown.
+    this.#stream?.shutdown();
+    this.#stream?.timeshift?.shutdown();
+
+    // Unregister our controller.
+    if(this.#stream) {
+
+      this.accessory.removeController(this.#stream.controller);
+    }
+  }
+
+  // Tear the machinery down before the contract's cleanup aborts this capability's controller. The delegate is not signal-bound state, so the abort alone would leave its
+  // HomeKit controller registered and its pooled subscriptions held; the explicit teardown is what releases both.
+  public override cleanup(): void {
+
+    this.#teardown();
+
+    super.cleanup();
+  }
+
+  // Reset the delegate's accumulated probesize self-tuning after a controller reboot. Every reboot re-adopts and restarts the camera's stream from scratch, so the
+  // per-camera latch it carries is stale; a camera with no delegate has nothing to reset.
+  public recoverFromControllerReboot(): void {
+
+    this.#stream?.resetProbesizeOverride();
+  }
+
+  /* Release the connection-dependent machinery this capability holds, for the controller-disconnect walk. Deliberately NOT the full teardown: this is a strict subset of
+   * it - no HomeKit Secure Video recording-off, no controller removal - because the walk runs against a connection that is going away, not against a camera that is. What
+   * has to happen before the client is disposed is exactly the release of the pooled livestream subscriptions the live and timeshift consumers hold, so that is all this
+   * does; the HomeKit surface stays registered for the reconnect that follows.
+   */
+  public releaseForShutdown(): void {
+
+    this.#stream?.shutdown();
+    this.#stream?.timeshift?.shutdown();
+  }
+
+  // Find a direct-RTSP livestream configuration for a given target resolution. This is the device wrapper over the pure selectChannelProfile: it injects our published
+  // entries and our host's state (the direct-RTSP default, which pins to a named channel, and the optional hardware pixel cap), then delegates the selection mathematics.
+  // The pixel cap is applied as a mode-agnostic pre-filter BEFORE selection - intentionally a pre-filter, not part of the request, so it filters the name branch too (a
+  // constrained request with an explicit profile preference still drops profiles above the cap); a future reader should not move it into the request.
+  public selectChannel(width: number, height: number, opts?: { biasHigher?: boolean; maxPixels?: number }): Nullable<ChannelProfile> {
+
+    const entries = capByPixels(this.#profiles, opts?.maxPixels);
+    const request: SelectRequest = this.host.hints.rtspDefault ? { mode: "name", name: this.host.hints.rtspDefault } :
+      { bias: opts?.biasHigher ? "higher" : "lower", height: height, mode: "nearest", width: width };
+
+    return selectChannelProfile(entries, request);
+  }
+
+  // Resolve the channel that populates the standing timeshift buffer feeding HomeKit Secure Video, buffer-backed live views, and snapshots. The policy is
+  // source-independent and HomeKit-Secure-Video-state-independent by construction, in order: (1) a user pin wins outright - an exact name match, null on a miss, the
+  // loud user-pin failure; (2) a pixel-constrained encoder host (a Raspberry Pi) takes the highest-quality channel at or below its constrained target, biased downward,
+  // preference-free so the buffer does not inherit the direct-RTSP quality preference; (3) otherwise the highest-quality channel the host's encoder can consume, taken
+  // structurally as the first entry after the record-context pixel cap, with no name lookup. The record-context cap is Infinity on every host today (HKSV
+  // software-encodes wherever a pixel cap would apply), so capByPixels passes everything and step 3 is simply the highest channel; it engages only when a future
+  // predicate change hardware-encodes on a pixel-limited host.
+  public selectSubstrateChannel(): Nullable<ChannelProfile> {
+
+    // The published entries filtered by the host encoder's source ceiling. The cap is a mode-agnostic pre-filter applied BEFORE selection, so it filters the name-pin
+    // branch too - a pin to a channel the cap drops honestly selects nothing rather than substituting. It is Infinity on every host today (HKSV software-encodes wherever
+    // a pixel cap would apply), so this passes everything through; it engages only when a future predicate change hardware-encodes on a pixel-limited host.
+    const entries = capByPixels(this.#profiles, this.#stream?.ffmpegOptions.maxSourcePixels("record"));
+
+    // (1) A user pin wins outright: exact name match, null on a miss.
+    if(this.host.hints.substrateDefault) {
+
+      return selectChannelProfile(entries, { mode: "name", name: this.host.hints.substrateDefault });
+    }
+
+    // (2) A pixel-constrained encoder host: the highest-quality channel at or below the constrained target, biased downward and preference-free.
+    if(this.platform.codecSupport.hostSystem === "raspbian") {
+
+      return selectChannelProfile(entries, { bias: "lower", height: PROTECT_TIMESHIFT_CONSTRAINED_HOST_TARGET.height, mode: "nearest",
+        width: PROTECT_TIMESHIFT_CONSTRAINED_HOST_TARGET.width });
+    }
+
+    // (3) Otherwise, the highest-quality channel the host's encoder can consume - the first surviving entry, taken structurally with no name lookup.
+    return entries[0] ?? null;
+  }
+}

@@ -3,7 +3,7 @@
  * camera-reactions.test.ts: The camera-leaf observe-and-fire net - the uncovered device-state reactions and the bound read / pure-context handlers, against the
  * REAL constructed ProtectCamera.
  *
- * The camera leaf registers its state observers (camera.ts). Some are already netted by camera-construction.test.ts (camera.channels -> reconcileStreaming,
+ * The camera leaf registers its state observers (camera.ts). Some are already netted by camera-construction.test.ts (camera.channels -> the streaming reconcile,
  * camera.state -> updateAvailability, and the camera.state.hksv both-edge timeshift reconcile). This suite nets the device-state reactions behavior-FIRST - each is a
  * structural-sharing store push (pushCameraPatch / pushCameraFeatureFlags) followed by a settle and an assertion on the effect the reaction produced (the characteristic
  * it WROTE, or the recording dispatch it routed to), never on the private updater that wrote it - plus the bound GET read-throughs and the two pure-context onSets (HKSV
@@ -25,7 +25,7 @@
  * recording-switch onSet all route through runDeviceCommand -> device.update and belong to the projection command surface - this suite drives none of them.
  *
  * Each construction holds no observer-wake subscription except where a reaction's identity is the wake KEY itself (the videoCodec reaction, whose only observable output
- * is "the right observer woke and reconcileStreaming re-derived"); the rest assert the characteristic effect directly. Every constructed camera is unwound through
+ * is "the right observer woke and the streaming reconcile re-derived"); the rest assert the characteristic effect directly. Every constructed camera is unwound through
  * cleanup() in an afterEach so its per-accessory abort never outlives the test.
  */
 import type { Camera, ProtectCameraConfig } from "unifi-protect";
@@ -111,7 +111,7 @@ describe("camera-family observer reactions and bound read handlers (camera-react
     built = undefined;
   });
 
-  describe("the videoCodec reaction (shares reconcileStreaming with channels)", () => {
+  describe("the videoCodec reaction (shares the streaming reconcile with channels)", () => {
 
     test("a videoCodec push wakes exactly the camera.videoCodec observer and re-derives streaming without re-creating the delegate", async () => {
 
@@ -122,7 +122,7 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
       assert.equal(store.observerCount, 14, "the plain camera wires exactly fourteen observers (the base pair plus the camera's twelve)");
 
-      // The videoCodec reaction is identical to the (already-netted) channels reaction: both call reconcileStreaming. Its only observable output is the WAKE KEY plus a
+      // The videoCodec reaction is identical to the (already-netted) channels reaction: both drive the streaming reconcile. Its only observable output is the WAKE KEY
       // re-derive side effect (the factory is not invoked again), so a one-shot wake subscription windows the single push and the create-call count proves the re-run
       // republished profiles and exited through the this.stream idempotency gate rather than building a second delegate.
       const wakes: ObserverWakePayload[] = [];
@@ -145,7 +145,7 @@ describe("camera-family observer reactions and bound read handlers (camera-react
         assert.deepEqual(wakes[0], { accessoryId: built.accessory.UUID, key: "camera.videoCodec" },
           "the wake is the camera.videoCodec observer, attributed to this accessory");
         assert.equal(built.factory.createCalls.length, createCallsBeforePush,
-          "the videoCodec re-run re-derived streaming through reconcileStreaming and exited the idempotency gate - no second delegate was created");
+          "the videoCodec re-run re-derived streaming through the capability and exited its create-once gate - no second delegate was created");
       } finally {
 
         diagnosticsChannel.unsubscribe("hbup:observer:wake", onWake);
