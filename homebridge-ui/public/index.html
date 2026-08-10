@@ -142,6 +142,7 @@
     <p data-boot-bucket="browser" style="display: none;">Your browser doesn't support features this interface requires. Please use a current version of Safari or Chrome.</p>
     <p data-boot-bucket="delivery" style="display: none;">The interface files couldn't be retrieved from the Homebridge server. Reload the page to try again. If this keeps happening, log out of the Homebridge interface and log back in.</p>
     <p data-boot-bucket="generic" style="display: none;">An unexpected error occurred while starting the interface.</p>
+    <p data-boot-bucket="reload" style="display: none;">The settings interface was updated while this page was open, so this page is pinned to a version that is no longer installed. Reload the page to load the current version.</p>
   </div>
   <details open>
     <summary>Technical details</summary>
@@ -174,6 +175,9 @@
     let settled = false;
     let watchdog;
 
+    // The bundle stamp the first successful boot in this window pinned its importmap to. Undefined until a boot reports one; see checkStamp below.
+    let pinnedStamp;
+
     // Set an element's display by id, tolerating an absent node so a stamped region missing a panel element never throws from the monitor.
     const setDisplay = (id, value) => {
 
@@ -182,6 +186,44 @@
       if(element) {
 
         element.style.display = value;
+      }
+    };
+
+    // Reveal exactly one of the pre-rendered bucket messages, hiding the rest first so a second reveal in the same window cannot leave two messages stacked. The
+    // bucket keys are internal constants, never user input, so the selector is safe.
+    const showBucket = (bucket) => {
+
+      for(const message of document.querySelectorAll("#bootErrorMessage [data-boot-bucket]")) {
+
+        message.style.display = "none";
+      }
+
+      const chosen = document.querySelector("#bootErrorMessage [data-boot-bucket='" + bucket + "']");
+
+      if(chosen) {
+
+        chosen.style.display = "block";
+      }
+    };
+
+    // Write the technical-details lines, each assigned as plain text so untrusted content is never parsed as markup.
+    const writeDetails = (lines) => {
+
+      const details = document.getElementById("bootErrorDetails");
+
+      if(!details) {
+
+        return;
+      }
+
+      details.textContent = "";
+
+      for(const line of lines) {
+
+        const row = document.createElement("div");
+
+        row.textContent = line;
+        details.appendChild(row);
       }
     };
 
@@ -208,31 +250,9 @@
 
       stop();
 
-      // Reveal the one pre-rendered message the failing stage's bucket names; the bucket keys are internal constants, never user input, so the selector is safe.
-      const chosen = document.querySelector("#bootErrorMessage [data-boot-bucket='" + (buckets[stage] ?? "generic") + "']");
-
-      if(chosen) {
-
-        chosen.style.display = "block";
-      }
-
-      const details = document.getElementById("bootErrorDetails");
-
-      if(details) {
-
-        // The error text is untrusted, so each detail line is assigned as plain text through textContent and is never parsed as markup.
-        const lines = [ "Stage: " + stage, "Error: " + ((error instanceof Error) ? error.message : String(error)), "Browser: " + navigator.userAgent ];
-
-        details.textContent = "";
-
-        for(const line of lines) {
-
-          const row = document.createElement("div");
-
-          row.textContent = line;
-          details.appendChild(row);
-        }
-      }
+      // Reveal the one pre-rendered message the failing stage's bucket names.
+      showBucket(buckets[stage] ?? "generic");
+      writeDetails([ "Stage: " + stage, "Error: " + ((error instanceof Error) ? error.message : String(error)), "Browser: " + navigator.userAgent ]);
 
       setDisplay("bootSlowNotice", "none");
       setDisplay("pageBootError", "block");
@@ -252,10 +272,50 @@
       setDisplay("pageBootError", "none");
     };
 
+    /* Compare this boot's bundle stamp against the one an earlier boot in this window pinned its importmap to, and answer whether the boot may proceed.
+     *
+     * The settings frame outlives a single boot: a panel re-open runs the loader again in the same window, while the importmap the FIRST run injected is the one
+     * still in force - a browser applies the first map and every bare specifier resolves through it for the document's life. That is harmless until the bundle is
+     * regenerated underneath the page, at which point the pinned subdir no longer exists on disk: the re-run would fetch the new manifest, inject a map nothing
+     * consults, and import an entry whose every bare-specifier request 404s, leaving the user on the previous bundle's already-loaded code with no sign anything
+     * was wrong. Stopping here is the only honest outcome, because no amount of retrying inside this document can reach the current bundle.
+     *
+     * The first call pins and proceeds; a later call matching the pin proceeds too, which is the ordinary re-open. A later call that differs is terminal, and it
+     * deliberately overrides settled: the earlier boot's ready() is exactly what settles a window that then goes stale, so honoring it would suppress the one
+     * message the user needs.
+     */
+    const checkStamp = (stamp) => {
+
+      if(pinnedStamp === undefined) {
+
+        pinnedStamp = stamp;
+
+        return true;
+      }
+
+      if(pinnedStamp === stamp) {
+
+        return true;
+      }
+
+      settled = true;
+
+      stop();
+
+      showBucket("reload");
+      writeDetails([ "Loaded: " + pinnedStamp, "Available: " + stamp ]);
+
+      setDisplay("bootSlowNotice", "none");
+      setDisplay("pageBootError", "block");
+      globalThis.homebridge?.hideSpinner?.();
+
+      return false;
+    };
+
     const onError = (event) => fail("uncaught error", event.error ?? event.message);
     const onRejection = (event) => fail("unhandled rejection", event.reason);
 
-    window.webUiBoot = Object.freeze({ fail, ready });
+    window.webUiBoot = Object.freeze({ checkStamp, fail, ready });
 
     window.addEventListener("error", onError);
     window.addEventListener("unhandledrejection", onRejection);
@@ -296,25 +356,31 @@
 
     const manifest = await response.json();
 
-    const importMap = {
+    // Hand the monitor this boot's bundle stamp before injecting anything. In a window that already booted, the importmap in force is the first run's, so a stamp
+    // that no longer matches means the bundle was regenerated underneath this document and nothing injected now could reach it; the monitor shows the
+    // needs-reload state and this boot stops rather than half-loading against a subdir that is gone.
+    if(window.webUiBoot.checkStamp(manifest.subdir)) {
 
-      imports: {
+      const importMap = {
 
-        "./protect-config.mjs": bust("./protect-config.mjs"),
-        "./ui.mjs": bust("./ui.mjs"),
-        "homebridge-plugin-utils/": new URL("./lib/" + manifest.subdir + "/", import.meta.url).href
-      }
-    };
+        imports: {
 
-    const mapScript = document.createElement("script");
+          "./protect-config.mjs": bust("./protect-config.mjs"),
+          "./ui.mjs": bust("./ui.mjs"),
+          "homebridge-plugin-utils/": new URL("./lib/" + manifest.subdir + "/", import.meta.url).href
+        }
+      };
 
-    mapScript.type = "importmap";
-    mapScript.textContent = JSON.stringify(importMap);
-    document.head.appendChild(mapScript);
+      const mapScript = document.createElement("script");
 
-    stage = "import";
+      mapScript.type = "importmap";
+      mapScript.textContent = JSON.stringify(importMap);
+      document.head.appendChild(mapScript);
 
-    await import("./ui.mjs");
+      stage = "import";
+
+      await import("./ui.mjs");
+    }
   } catch(error) {
 
     // The monitor owns the on-page display, so after classifying we report and swallow: rethrowing would only add a duplicate uncaught error to the console the

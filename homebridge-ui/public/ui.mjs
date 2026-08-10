@@ -101,9 +101,14 @@ const firstRunOnSubmit = async ({ commit, config }) => {
 // The Protect API represents the controller itself as a device whose model key is "nvr" - every other model key belongs to a device the controller manages.
 const isController = (device) => device.modelKey === "nvr";
 
-// Return the list of controllers from our plugin configuration. The framework injects our primary platform-config entry; we map each configured controller to the
-// sidebar shape, deliberately carrying no credentials into the rendered list.
-const getControllers = ({ config }) => controllers(config).map((controller) => ({ name: controller.address, serialNumber: controller.address }));
+// Return the list of controllers from our plugin configuration, paired with a clean connection outcome - the list is configuration-derived, so no fetch is involved
+// and no failure can occur. The framework injects our primary platform-config entry; we map each configured controller to the sidebar shape, deliberately carrying
+// no credentials into the rendered list.
+const getControllers = ({ config }) => ({
+
+  controllers: controllers(config).map((controller) => ({ name: controller.address, serialNumber: controller.address })),
+  error: ""
+});
 
 // Return the list of devices associated with a given Protect controller, paired with the connection outcome. The framework injects the live platform config alongside
 // the selected controller, so we can recover the selected controller's credentials (which the sidebar entries deliberately omit) without reaching for the config
