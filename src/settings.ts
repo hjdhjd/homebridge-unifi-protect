@@ -145,6 +145,11 @@ export const PROTECT_NVR_REBOOT_CONFIRM_GRACE_MS = 60000;
 // reboot fires regardless of in-flight recordings - we cannot let an open-ended series of HKSV events postpone a controller reboot indefinitely.
 export const PROTECT_NVR_REBOOT_DEFERRAL_MAX = 15 * 60;
 
+// Cadence, in milliseconds, at which a deferred or failed scheduled reboot re-checks whether it can proceed. It paces the chain the ceiling above bounds: each check
+// either finds the recordings finished and reboots, or defers again until that ceiling elapses. The initial-delay floor happens to share this value but is a different
+// concept - the settling room a freshly-connected plugin gives a long-up controller - so it stays inline with the arithmetic that applies it.
+export const PROTECT_NVR_REBOOT_CHECK_INTERVAL = 60000;
+
 // Window, in milliseconds, after the plugin observes a controller reboot within which a per-camera livestream interruption is treated as that reboot's tail -
 // quieted to debug, since a reboot blips every camera and is already narrated once at the controller level - rather than a genuine single-camera drop that
 // warns. Measured from our OWN observation of the reboot (the library's jitter-thresholded `controllerRebooted` event), not the controller's self-reported boot

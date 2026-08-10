@@ -1,8 +1,8 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * nvr.test.ts: Unit tests for the controller root's pure decision logic - the startup-resilient connect retry policy, the HomeKit-membership set diff, the
- * request-outcome classifier, the removal-stability arithmetic, the livestream-disruption gating (induced/recency/episode-latch), and the induced-reboot resume
- * decision - plus the NvrHealth connection-input mapping those drive.
+ * request-outcome classifier, the removal-stability arithmetic, the livestream-disruption gating (induced/recency/episode-latch), the induced-reboot resume decision,
+ * and the scheduled-reboot arithmetic with the recording-count rule behind its deferral - plus the NvrHealth connection-input mapping those drive.
  *
  * ProtectNvr itself is a composition root: its constructor stands up the event handler and the controller logging, and it transitively imports the entire device and
  * media graph, so it is neither unit-constructable nor cheaply loadable. The response is to keep the *decisions* it makes in a pure leaf module (nvr-policy.ts) and pin
@@ -10,8 +10,9 @@
  * The connection-input mapping is verified against the real NvrHealth with an injected clock, so the test proves both the new mapping and that the reducer/window
  * behavior it feeds is unchanged.
  */
-import { canTransition, computeStableSince, createConnectRetryPolicy, createLivestreamEpisodeLatch, isInducedDisruption, isRequestForController,
-  isStabilityWindowElapsed, isSuccessfulRequest, isWithinRebootRecency, membershipDelta, shouldResumeFromInducedReboot } from "./nvr-policy.ts";
+import { canTransition, classifyRebootAttempt, computeInitialRebootDelay, computeStableSince, countActiveRecordingViews, createConnectRetryPolicy,
+  createLivestreamEpisodeLatch, isInducedDisruption, isRequestForController, isStabilityWindowElapsed, isSuccessfulRequest, isWithinRebootRecency, membershipDelta,
+  shouldResumeFromInducedReboot } from "./nvr-policy.ts";
 import { describe, test } from "node:test";
 import { NvrHealth } from "./nvr-health.ts";
 import type { NvrPhase } from "./nvr.ts";
@@ -473,5 +474,65 @@ describe("controller request-host filter", () => {
 
     // Two controllers on one host at different ports stay distinct - the port is part of the exact identity.
     assert.equal(isRequestForController({ address: "1.2.3.4:8443", host: "1.2.3.4:9443" }), false);
+  });
+});
+
+describe("scheduled-reboot arithmetic", () => {
+
+  // The three-way decision a reboot attempt acts on. The ceiling comparison is strict-less-than, so the boundary is pinned on both sides: one millisecond short still
+  // defers, exactly at the ceiling forces. The zero-recordings rows carry an elapsed time well past the ceiling, so a mutant that consulted the ceiling before the
+  // recording count would answer "force" there and fail rather than passing by coincidence.
+  test("classifyRebootAttempt defers only while recordings are active and the ceiling has headroom left", () => {
+
+    const ceilingMs = 900000;
+
+    // Nothing is recording, so the attempt proceeds however long the cycle has been running.
+    assert.equal(classifyRebootAttempt({ activeRecordings: 0, ceilingMs, elapsedCycleMs: 0 }), "proceed");
+    assert.equal(classifyRebootAttempt({ activeRecordings: 0, ceilingMs, elapsedCycleMs: ceilingMs + 60000 }), "proceed");
+
+    // Recordings in flight with ceiling headroom left: hold the reboot back.
+    assert.equal(classifyRebootAttempt({ activeRecordings: 1, ceilingMs, elapsedCycleMs: 0 }), "defer");
+    assert.equal(classifyRebootAttempt({ activeRecordings: 3, ceilingMs, elapsedCycleMs: ceilingMs - 1 }), "defer");
+
+    // At the ceiling and past it, an active recording does not earn a deferral.
+    assert.equal(classifyRebootAttempt({ activeRecordings: 1, ceilingMs, elapsedCycleMs: ceilingMs }), "force");
+    assert.equal(classifyRebootAttempt({ activeRecordings: 1, ceilingMs, elapsedCycleMs: ceilingMs + 60000 }), "force");
+  });
+
+  // The first fire's delay, anchored to the controller's own uptime so restarting the plugin does not reset the cadence. The zero-upSince row is the one a plain
+  // subtraction gets wrong: it would treat the epoch as a boot time and compute a delay tens of thousands of hours in the past, flooring every fresh install at a
+  // minute rather than the configured interval.
+  test("computeInitialRebootDelay anchors the first fire to the controller's uptime", () => {
+
+    const intervalMs = 6 * 60 * 60 * 1000;
+    const nowMs = 1700000000000;
+
+    // A controller that has only just booted waits the whole interval.
+    assert.equal(computeInitialRebootDelay({ intervalMs, nowMs, upSince: nowMs }), intervalMs);
+
+    // No boot time reported reads as no backdate at all, so the wait is the full interval.
+    assert.equal(computeInitialRebootDelay({ intervalMs, nowMs, upSince: 0 }), intervalMs);
+
+    // Uptime consumes the interval, and what remains of it is the wait.
+    assert.equal(computeInitialRebootDelay({ intervalMs, nowMs, upSince: nowMs - (2 * 60 * 60 * 1000) }), 4 * 60 * 60 * 1000);
+
+    // A controller up longer than the interval does not reboot the instant we connect - the floor leaves it a minute to settle first.
+    assert.equal(computeInitialRebootDelay({ intervalMs, nowMs, upSince: nowMs - (2 * intervalMs) }), 60000);
+  });
+});
+
+describe("the active-recording count", () => {
+
+  // The counting rule the scheduled-reboot deferral rests on, shared by every caller that has its own population to walk. The mixed row carries both shapes of absence
+  // the real callers present - a camera that never acquired a streaming arm, and a view whose object carries no streaming member at all - so a rule that dropped
+  // either optional hop would throw here rather than answer false.
+  test("countActiveRecordingViews counts the transmitting views and nothing else", () => {
+
+    assert.equal(countActiveRecordingViews([]), 0);
+
+    assert.equal(countActiveRecordingViews([ { streaming: { isRecordingTransmitting: true } }, { streaming: { isRecordingTransmitting: false } }, { streaming: null },
+      {} ]), 1);
+
+    assert.equal(countActiveRecordingViews([ { streaming: { isRecordingTransmitting: true } }, { streaming: { isRecordingTransmitting: true } } ]), 2);
   });
 });

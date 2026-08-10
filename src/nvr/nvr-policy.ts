@@ -4,12 +4,13 @@
  *
  * This module is the home for all of the controller root's pure decision logic, separated from the ProtectNvr composition root that acts on it. It holds the
  * startup-resilient connect retry policy, the HomeKit-membership set diff at the heart of device sync, the request-outcome classifier that feeds NvrHealth,
- * induced-disruption and reboot-recency gating, the induced-reboot resume decision, the per-episode livestream-recovery quiet latch, and the removal-stability
- * arithmetic. Each is a pure function of its inputs. They live here, in a dependency-light leaf, rather than inside the ProtectNvr composition root, for the same reason
- * the unifi-protect library keeps its reducer pure and apart from its client and the plugin keeps the NvrHealth reducer apart from its event-sink wrapper: a decision
- * separated from the effect it drives is independently testable, and the test is the proof the separation is real. ProtectNvr transitively imports the entire device and
- * media graph (cameras, streaming, snapshots); a 5-line set diff should never have to stand that up to be exercised. This module imports only the auth-error type it
- * branches on and the shared failure-limit constant, so it loads and tests in isolation.
+ * induced-disruption and reboot-recency gating, the induced-reboot resume decision, the per-episode livestream-recovery quiet latch, the scheduled-reboot deferral
+ * decision with its initial-delay arithmetic and its recording-count rule, and the removal-stability arithmetic. Each is a pure function of its inputs. They live here,
+ * in a dependency-light leaf, rather than inside the ProtectNvr composition root, for the same reason the unifi-protect library keeps its reducer pure and apart from its
+ * client and the plugin keeps the NvrHealth reducer apart from its event-sink wrapper: a decision separated from the effect it drives is independently testable, and the
+ * test is the proof the separation is real. ProtectNvr transitively imports the entire device and media graph (cameras, streaming, snapshots); a 5-line set diff should
+ * never have to stand that up to be exercised. This module imports only the auth-error type it branches on and the shared failure-limit constant, so it loads and tests
+ * in isolation.
  */
 import type { ConnectionState } from "unifi-protect";
 import type { Nullable } from "homebridge-plugin-utils";
@@ -204,4 +205,75 @@ export function isStabilityWindowElapsed(options: { nowMs: number; stableSinceMs
   const { nowMs, stableSinceMs, windowMs } = options;
 
   return (stableSinceMs !== null) && ((nowMs - stableSinceMs) >= windowMs);
+}
+
+/**
+ * What a scheduled-reboot attempt should do when its timer fires. `proceed` is the ordinary case - nothing is recording, so the reboot goes ahead. `defer` holds the
+ * reboot back because camera views are actively transmitting HKSV recordings and the cumulative deferral ceiling has not yet elapsed. `force` reboots anyway: views are
+ * still transmitting, but the ceiling has been reached and an open-ended series of recordings must not postpone the reboot indefinitely.
+ */
+export type RebootAttemptDecision = "defer" | "force" | "proceed";
+
+/**
+ * What a scheduled-reboot attempt should do, given how many camera views are transmitting HKSV recordings right now and how long this reboot cycle has already spent
+ * deferring. The ceiling comparison is strict-less-than, so an elapsed time exactly at the ceiling forces rather than defers - the ceiling is a bound the deferral chain
+ * may reach but not exceed.
+ *
+ * @param options - activeRecordings: how many camera views are transmitting as of this attempt; ceilingMs: the cumulative deferral ceiling; elapsedCycleMs: how long
+ *                  this cycle has been deferring, which is zero on the originally-scheduled attempt.
+ *
+ * @returns The decision this attempt should act on.
+ */
+export function classifyRebootAttempt(options: { activeRecordings: number; ceilingMs: number; elapsedCycleMs: number }): RebootAttemptDecision {
+
+  const { activeRecordings, ceilingMs, elapsedCycleMs } = options;
+
+  if(activeRecordings === 0) {
+
+    return "proceed";
+  }
+
+  return (elapsedCycleMs < ceilingMs) ? "defer" : "force";
+}
+
+/**
+ * How long to wait before the first scheduled reboot of this process. The schedule is anchored to the controller's own uptime so restarting the plugin does not reset
+ * the reboot cadence, and a controller already up longer than the interval waits a short floor rather than rebooting the instant we connect - which lets everything
+ * settle after startup first. An upSince of zero reads as no boot time reported, so the wait is the full interval rather than a backdate from the epoch.
+ *
+ * @param options - intervalMs: the configured reboot interval; nowMs: the current instant; upSince: the controller's self-reported boot time.
+ *
+ * @returns The delay, in milliseconds, until the first reboot attempt.
+ */
+export function computeInitialRebootDelay(options: { intervalMs: number; nowMs: number; upSince: number }): number {
+
+  const { intervalMs, nowMs, upSince } = options;
+  const uptimeMs = upSince ? (nowMs - upSince) : 0;
+
+  return Math.max(intervalMs - uptimeMs, 60 * 1000);
+}
+
+/**
+ * How many of the given camera views are actively transmitting a HomeKit Secure Video recording - the one definition of the rule the scheduled-reboot deferral rests
+ * on. The caller owns which views it walks and this owns what counts, so the controller and the harness can each present their own population to one shared rule.
+ * Structurally typed over the single member it reads, which keeps it clear of the device classes entirely; both hops are optional because a view may carry no streaming
+ * member at all and a camera that has not yet acquired one answers null.
+ *
+ * @param views - The camera views to count.
+ *
+ * @returns How many of them are transmitting.
+ */
+export function countActiveRecordingViews(views: Iterable<{ streaming?: Nullable<{ isRecordingTransmitting: boolean }> }>): number {
+
+  let count = 0;
+
+  for(const view of views) {
+
+    if(view.streaming?.isRecordingTransmitting) {
+
+      count++;
+    }
+  }
+
+  return count;
 }

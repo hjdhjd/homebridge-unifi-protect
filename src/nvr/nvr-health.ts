@@ -5,12 +5,13 @@
  * This module models the *health* of a UniFi Protect NVR as a first-class, NVR-scoped concept that the rest of the plugin can read instead of having to stitch
  * the picture together from per-component counters and per-camera errors. The design follows three principles:
  *
- *   1. Health is *derived*, not *set*. Inputs are typed symptoms (`HealthSymptom`) flowing in from the components that observe them - the unifi-protect API
- *      layer for request results and throttle transitions, the livestream subscription seam for stall events. The state is computed by a pure reducer over a sliding
+ *   1. Health is *derived*, not *set*. Inputs are typed symptoms (`HealthSymptom`) flowing in from the controller's health bridge, which translates the library's
+ *      diagnostics wire - request outcomes, throttle transitions, livestream recovery episodes - into them. The state is computed by a pure reducer over a sliding
  *      window of those symptoms with hysteresis. There is no `setState` method. Callers can only `observe` symptoms.
  *
- *   2. Single source of truth, single home. There is exactly one NvrHealth per ProtectNvr. Every subsystem that wants to know "is the NVR OK?" reads
- *      `nvr.health.state`. Every subsystem that observes a symptom calls `nvr.health.observe(...)`. No parallel "is X stressed" flags scattered across classes.
+ *   2. Single source of truth, single home. There is exactly one NvrHealth per ProtectNvr, owned by that controller's health bridge. Every subsystem that wants to
+ *      know "is the NVR OK?" reads `nvr.health.state`, and the bridge is the one caller observing symptoms into it. No parallel "is X stressed" flags scattered
+ *      across classes.
  *
  *   3. Mechanism vs policy separation. This module owns the *mechanism*: the symptom buffer, the eviction window, the threshold transitions. The recovery
  *      policy that consumes the resulting state lives elsewhere (e.g., in livestream-recovery-policy.ts). State here is a value other code can map to actions; this
@@ -258,16 +259,16 @@ export interface NvrHealthEvents {
  *
  * Lifecycle integration notes for future maintainers:
  *
- *   - `suspend()` / `resume()` are normally driven from `ProtectNvr.transition()` rather than called directly. The NVR's phase is the single source of truth for
- *      "induced vs organic disruption"; this class follows along. Calling `suspend()` directly is fine for tests but in production code should go through phase
- *      transitions so all derived effects (logApiErrors, future signals) stay aligned.
- *   - `reset()` clears the symptom buffer and forces the state back to `healthy` without emitting `stateChange`. Called after a successful reconnect, whether
- *      following a disconnect (`ProtectNvr.connect()`) or an induced reboot (`ProtectNvr.resumeFromInducedReboot()`); pre-disruption symptoms are no longer
- *      relevant. We deliberately do not emit on reset because that would surface a "responsive again" message at every reset boundary, which is
- *      misleading...the reset is internal bookkeeping, not a recovery event.
+ *   - `suspend()` / `resume()` are driven from the health bridge's `notePhase`, which the controller calls on every lifecycle transition, rather than called
+ *      directly. The NVR's phase is the single source of truth for "induced vs organic disruption"; this class follows along. Calling `suspend()` directly is fine
+ *      for tests but in production code should go through phase transitions so all derived effects (logApiErrors, future signals) stay aligned.
+ *   - `reset()` clears the symptom buffer and forces the state back to `healthy` without emitting `stateChange`. Reached through the bridge's own `reset()` after a
+ *      successful reconnect, whether following a disconnect or an induced reboot; pre-disruption symptoms are no longer relevant. We deliberately do not emit on
+ *      reset because that would surface a "responsive again" message at every reset boundary, which is misleading...the reset is internal bookkeeping, not a
+ *      recovery event.
  *   - There is no "force healthy" method. Use `reset()` if you need to clear state. A force-healthy that emits a recovery event would be a footgun.
- *   - Initial state is `healthy`; the plugin assumes normalcy until proven otherwise. The NVR suspends observation in `connecting` phase so initial-connect
- *      errors do not bias the baseline.
+ *   - Initial state is `healthy`; the plugin assumes normalcy until proven otherwise. The bridge constructs this observer suspended, so initial-connect errors do
+ *      not bias the baseline.
  */
 export class NvrHealth extends EventEmitter<NvrHealthEvents> {
 

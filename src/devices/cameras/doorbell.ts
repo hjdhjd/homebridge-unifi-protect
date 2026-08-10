@@ -359,7 +359,7 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
     // instance guard would otherwise short-circuit before any cancellation could happen), then bring the package camera into being if it is not already.
     if(this.ufp.featureFlags.hasPackageCamera) {
 
-      this.nvr.cancelDeviceRemovalFor(uuid);
+      this.nvr.removals.cancelFor(uuid);
       this.configurePackageCamera();
 
       return;
@@ -378,7 +378,7 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
     // projection's plain id field at schedule time and re-read the record through the selector, treating an absent parent as gone.
     const id = this.#device.id;
 
-    this.nvr.scheduleDeviceRemoval({
+    this.nvr.removals.schedule({
 
       accessory: accessory,
       reason: "The controller no longer reports a package camera on " + this.accessoryName + "; removing its package camera accessory.",

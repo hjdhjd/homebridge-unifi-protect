@@ -138,6 +138,15 @@ export interface TestScheduleDeviceRemovalOptions {
   stillGone: () => boolean;
 }
 
+// The removal-gate surface production reaches through nvr.removals, as the NVR double presents it. The double answers it from its own flat removal machinery below,
+// which is what every consuming assertion reads, so the surface a device class speaks and the machinery a test inspects stay one thing.
+export interface TestRemovalGateBridge {
+
+  cancelFor: (uuid: string) => void;
+  readonly removalStable: boolean;
+  schedule: (options: TestScheduleDeviceRemovalOptions) => void;
+}
+
 /* The shared recording event-dispatch double: a REAL ProtectEventDispatch whose motion delivery is overridden to record into an array rather than touch HomeKit or arm a
  * reset timer. The override's arity and parameter types mirror production's motionEventHandler (event-dispatch.ts) exactly, so it type-checks as a true override; the two
  * parameters the recording path deliberately does not read carry the underscore prefix the house no-unused-vars rule reserves for intentionally-unused arguments, and
@@ -203,6 +212,7 @@ export class TestProtectNvr {
   public phase: NvrPhase = "running";
   public readonly platform: TestProtectPlatform;
   public removalStable = true;
+  public readonly removals: TestRemovalGateBridge;
   public readonly signal: AbortSignal;
 
   // The managed-device registry, mirroring ProtectNvr.configuredDevices: a Map keyed by accessory UUID whose values are the constructed device objects. The
@@ -230,6 +240,19 @@ export class TestProtectNvr {
     this.mqtt = init.mqtt;
     this.platform = init.platform;
     this.signal = init.signal;
+
+    // The removal-gate surface, delegating onto the flat machinery below rather than standing up a second copy of it: the double keeps ONE removal implementation, and
+    // production's nvr.removals.* calls and a test's direct nvr.scheduleDeviceRemoval(...) call land in the same place. removalStable is a getter rather than a copied
+    // boolean so the bridge reports the double's gate as of each read - a test flips that field mid-test and the next read through the bridge must see it. It reads
+    // through a captured arrow because a shorthand getter's own `this` binds to the bridge object, which would make it call itself.
+    const readRemovalStable = (): boolean => this.removalStable;
+
+    this.removals = {
+
+      cancelFor: (uuid: string): void => this.cancelDeviceRemovalFor(uuid),
+      get removalStable(): boolean { return readRemovalStable(); },
+      schedule: (options: TestScheduleDeviceRemovalOptions): void => this.scheduleDeviceRemoval(options)
+    };
 
     // The real event dispatcher, wired against this double - its constructor reads only the platform's HAP namespace, the log, and the NVR handle itself. The optional
     // dispatch factory is the reusable injection seam: when omitted, the default factory is byte-identical to today's new ProtectEventDispatch(this), so every existing
