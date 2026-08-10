@@ -1,26 +1,31 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * camera-rtsp-enable.test.ts: The RTSP autoconfiguration net - the write-through enable in the camera's derivation (camera.ts) and its two arms, driven against the
- * REAL constructed ProtectCamera.
+ * camera-rtsp-enable.test.ts: The RTSP autoconfiguration net - the narrowed write-through enable in the camera's derivation (camera.ts) and its arms, driven against
+ * the REAL constructed ProtectCamera.
  *
- * The gate under test: when any channel reads isRtspEnabled false, the camera PATCHes the full channel array with RTSP enabled everywhere and defers the streaming
- * surface to the channels observer's re-run once the change reconciles (the success arm). When the controller declines the write - an account without the full
- * management role, or any other failure - the camera narrates a warn and streams from the channels that are already enabled (the degraded arm), with the zero-enabled
- * case falling through to the established "No RTSP profiles found" terminal. There is no failure latch: a later channels wake re-attempts the write.
+ * The contract under test: RTSP is enabled on a camera's behalf ONLY where the configuration genuinely streams over RTSP - live views drawn directly over RTSP, a
+ * direct-RTSP quality pin, or the RTSP-debug buffer feed. Everything else reaches the camera through the livestream API, which serves any channel whether or not RTSP
+ * is enabled on it, so a default-config camera issues no write at all and advertises every sane primary channel. When a configuration does need RTSP and the controller
+ * declines the write - an account without the full management role, or any other failure - the camera narrates a warn and carries on, with its direct-RTSP selection
+ * confined to the channels that are actually enabled. There is no failure latch: a later channels wake re-attempts the write.
+ *
+ * The two terminals are pinned independently: a camera reporting no primary channels at all, and a camera that can neither reach the livestream API nor dial a usable
+ * RTSP stream - the only population that declines to advertise.
  *
  * The exact advertised-list mathematics for the mixed regime are the resolution suite's golden-master concern (resolution.test.ts pins buildAdvertisedProfiles over
- * MIXED_RTSP_DISABLED_CHANNELS); this net asserts the device wiring - which arm ran, the exact PATCH payload, the narration, whether the delegate stood up, and that
- * the published profiles never reach into a disabled channel - through the factory double and the production selectChannel surface.
+ * MIXED_RTSP_DISABLED_CHANNELS); this net asserts the device wiring - which arm ran, the exact PATCH payload, the narration, whether the delegate stood up, and which
+ * channel each production selector resolves to - through the factory double and the production selection surface.
  *
  * Every constructed camera is unwound through cleanup() plus the harness abort in an afterEach, so no observe loop outlives the test.
  */
-import { CAMERA_FIXTURES, G2_PRO_CHANNELS, MIXED_RTSP_DISABLED_CHANNELS } from "../../camera.fixtures.ts";
+import { AI_PRO_CHANNELS, CAMERA_FIXTURES, G2_PRO_CHANNELS, G6_PRO_ENTRY_CHANNELS, MIXED_RTSP_DISABLED_CHANNELS, makeChannel } from "../../camera.fixtures.ts";
 import type { Camera, ProtectCameraConfig } from "unifi-protect";
 import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
 import type { TestLogEntry, TestStreamingDelegateFactory } from "../../testing.helpers.ts";
 import { TestStateStore, makeProtectState, makeTestAccessory, settle } from "../../testing.helpers.ts";
 import { afterEach, describe, test } from "node:test";
 import type { CameraFixture } from "../../camera.fixtures.ts";
+import { PACKAGE_CHANNEL_NAME } from "../../media/resolution.ts";
 import type { ProtectAccessory } from "../../types.ts";
 import { ProtectAuthorizationError } from "unifi-protect";
 import { ProtectCamera } from "./camera.ts";
@@ -30,8 +35,11 @@ import { makeTestNvr } from "../../nvr/testing.helpers.ts";
 
 // The authorization warn the degraded arm logs, asserted verbatim so the user-facing guidance is pinned, not paraphrased.
 const AUTH_WARN = "Unable to enable RTSP on all of the camera's channels because this account does not have the full management role in UniFi Protect. " +
-  "HomeKit streaming can only use channels that already have RTSP enabled. To make every streaming quality option available, grant the account the full " +
+  "Direct RTSP streaming can only use channels that already have RTSP enabled. To make every streaming quality option available, grant the account the full " +
   "management role or enable RTSP on each of the camera's channels in the Protect webUI.";
+
+// The feature option that switches live views to direct RTSP, which is what puts a camera in the population that genuinely needs the enable write.
+const TOGGLE_OFF = ["Disable.Video.Timeshift.Livestream"];
 
 // A log assertion matches a substring of entry.formatted at the given level, mirroring the established loggedAt idiom: the device logger prefixes every line with the
 // device descriptor, so substring matching is the faithful comparison.
@@ -56,6 +64,12 @@ function fixtureByModel(model: string): CameraFixture {
   return fixture;
 }
 
+// Every channel of a set, RTSP-disabled - the regime a default-config controller now leaves untouched.
+function allDisabled(channels: ProtectCameraConfig["channels"]): ProtectCameraConfig["channels"] {
+
+  return channels.map((channel) => ({ ...channel, isRtspEnabled: false }));
+}
+
 // The construction handle a test holds: the projection carries the updateCalls / updateRejection levers, the factory records delegate creation, the store drives
 // observer wakes, and the controller is the per-test unwind.
 interface BuiltCamera {
@@ -69,14 +83,18 @@ interface BuiltCamera {
   store: TestStateStore;
 }
 
-// Build a REAL plain ProtectCamera against the doubles, exactly as the sibling camera suites assemble it, with the one addition this net needs: an optional
-// updateRejection installed on the projection BEFORE construction, so the construction-time enable write drives the failure arm. The casts are confined to this
-// constructor call - the instance is the production ProtectCamera and everything it runs is the production path.
-async function buildCamera(options: { channels: ProtectCameraConfig["channels"]; updateRejection?: Error }): Promise<BuiltCamera> {
+/* Build a REAL plain ProtectCamera against the doubles, exactly as the sibling camera suites assemble it, with the additions this net needs: an optional updateRejection
+ * installed on the projection BEFORE construction so the construction-time enable write drives the failure arm, the feature-option strings that decide whether the
+ * configuration needs RTSP at all, and the livestream-API capability pair that selects the population. The casts are confined to this constructor call - the instance is
+ * the production ProtectCamera and everything it runs is the production path.
+ */
+async function buildCamera(options: { channels: ProtectCameraConfig["channels"]; isPairedWithAiPort?: boolean; isThirdPartyCamera?: boolean; updateRejection?: Error;
+  userOptions?: string[]; }): Promise<BuiltCamera> {
 
-  const cameraConfig = makeCameraConfig({ channels: options.channels });
+  const cameraConfig = makeCameraConfig({ channels: options.channels, isPairedWithAiPort: options.isPairedWithAiPort,
+    isThirdPartyCamera: options.isThirdPartyCamera });
   const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-  const { controller, factory, logEntries, nvr } = makeTestNvr({ store });
+  const { controller, factory, logEntries, nvr } = makeTestNvr({ store, userOptions: options.userOptions });
   const projection = new TestCameraProjection(cameraConfig.id, store);
 
   projection.updateRejection = options.updateRejection ?? null;
@@ -102,86 +120,157 @@ describe("RTSP autoconfiguration write-through (deriveAdvertisedStreams)", () =>
     built = undefined;
   });
 
-  test("the success arm PATCHes every channel field-intact, defers the delegate, and completes through the channels observer", async () => {
+  test("a default-config camera issues no write, advertises every sane channel, and confines direct-RTSP selection to the enabled ones", async () => {
 
-    const { cameraConfig, factory, logEntries, projection, store } = built = await buildCamera({ channels: MIXED_RTSP_DISABLED_CHANNELS });
+    const { camera, factory, logEntries, projection } = built = await buildCamera({ channels: MIXED_RTSP_DISABLED_CHANNELS });
+
+    // Nothing about this configuration streams over RTSP, so the camera never touches the controller's channel config and never defers its own surface behind a write.
+    assert.equal(projection.updateCalls.length, 0, "a default-config camera issues no enable write at all");
+    assert.equal(countLoggedAt(logEntries, "warn", "Unable to enable RTSP"), 0, "a camera that never writes narrates no failure");
+    assert.equal(factory.createCalls.length, 1, "the delegate stands up immediately, with no write to wait on");
+
+    // Every sane primary channel is advertised, RTSP-disabled Medium included - the mixed regime is channel-identical to the G6 Instant corpus fixture, so its
+    // golden-master expectation applies verbatim.
+    assert.deepEqual(factory.createCalls[0]?.resolutions, fixtureByModel("G6 Instant").expected.map((entry) => entry.resolution),
+      "the advertised resolutions equal the golden-master expectation for the full channel set");
+
+    // The direct-RTSP selector still answers from the enabled subset alone: the Medium channel's own native resolution resolves to Low, the nearest enabled entry
+    // below the request. Asserting the resolved identity (not merely "not Medium") is what fails a wrong-but-enabled selection too.
+    assert.equal(camera.selectChannel(1280, 720)?.channel.id, 2, "the direct-RTSP selection lands on the Low channel exactly");
+    assert.equal(camera.hasRtspStream, true, "the camera has RTSP-enabled streams to dial");
+  });
+
+  test("the substrate selector reads the full published list while direct RTSP reads only the enabled subset", async () => {
+
+    // Only Low is RTSP-enabled; High and Medium are not.
+    const { camera } = built = await buildCamera({ channels: AI_PRO_CHANNELS.map((channel) => ((channel.id === 2) ? channel : { ...channel, isRtspEnabled: false })) });
+
+    assert.equal(camera.hasRtspStream, true, "one enabled channel is enough to report an RTSP stream");
+    assert.equal(camera.selectChannel(3840, 2160)?.channel.id, 2, "the direct-RTSP selection falls to Low, the only enabled channel");
+    assert.equal(camera.selectSubstrateChannel()?.channel.id, 0, "the buffer substrate takes High, the highest channel in the full published list");
+  });
+
+  test("the substrate pin reaches an RTSP-disabled channel while the direct-RTSP pin misses it", async () => {
+
+    // The substrate pin selects over the full published list, so it reaches the RTSP-disabled Medium channel that feeds the buffer perfectly well over the API.
+    const substratePinned = await buildCamera({ channels: MIXED_RTSP_DISABLED_CHANNELS, userOptions: ["Enable.Video.Timeshift.Only.Medium"] });
+
+    built = substratePinned;
+
+    assert.equal(substratePinned.projection.updateCalls.length, 0, "a substrate pin is served over the livestream API and triggers no enable write");
+    assert.equal(substratePinned.camera.selectSubstrateChannel()?.channel.id, 1, "the substrate pin resolves to the RTSP-disabled Medium channel");
+
+    substratePinned.camera.cleanup();
+    substratePinned.controller.abort();
+
+    /* The direct-RTSP pin is the opposite case, and its arrangement matters: the pin term alone makes the write necessary here (the toggle is on and the debug flag
+     * off), so the write must be declined for the derivation to proceed from the mixed state at all - an unhandled write would defer the surface forever.
+     */
+    const { camera, projection } = built = await buildCamera({ channels: MIXED_RTSP_DISABLED_CHANNELS,
+      updateRejection: new ProtectAuthorizationError("forbidden"), userOptions: ["Enable.Video.Rtsp.Only.Medium"] });
+
+    assert.equal(projection.updateCalls.length, 1, "the direct-RTSP quality pin alone makes the enable write necessary");
+    assert.ok(camera.selectSubstrateChannel(), "the published list genuinely exists, so the pin miss below is a real miss rather than an empty list");
+    assert.equal(camera.selectChannel(1280, 720), null, "the direct-RTSP pin misses a channel that is not RTSP-enabled");
+  });
+
+  test("a direct-RTSP configuration PATCHes every channel field-intact, defers the delegate, and completes through the channels observer", async () => {
+
+    const { cameraConfig, factory, logEntries, projection, store } = built =
+      await buildCamera({ channels: MIXED_RTSP_DISABLED_CHANNELS, userOptions: TOGGLE_OFF });
 
     // Exactly one write, carrying the FULL channel array: every field of every channel preserved by the spread, isRtspEnabled true throughout. The full-field deepEqual
     // pins the spread itself - a payload that dropped width/height/fps would corrupt the controller's channel config and must fail here.
     const enabledChannels = MIXED_RTSP_DISABLED_CHANNELS.map((channel) => ({ ...channel, isRtspEnabled: true }));
 
-    assert.equal(projection.updateCalls.length, 1, "a channel needing RTSP triggers exactly one enable write");
+    assert.equal(projection.updateCalls.length, 1, "a direct-RTSP camera needing RTSP triggers exactly one enable write");
     assert.deepEqual(projection.updateCalls[0]?.payload, { channels: enabledChannels }, "the PATCH carries the complete channel array, field-intact, RTSP-enabled");
 
     // The accepted write narrates nothing and defers the streaming surface to the reconcile.
     assert.equal(factory.createCalls.length, 0, "no delegate stands up until the channels observer re-runs against the reconciled state");
     assert.equal(countLoggedAt(logEntries, "warn", "Unable to enable RTSP"), 0, "an accepted enable logs no warning");
 
-    // The controller's reconciled state arrives: every channel now reads enabled. The observer re-run builds the full advertised list - the enabled mixed regime is
-    // channel-identical to the G6 Instant corpus fixture, so the golden-master expectation applies verbatim - and issues no further write.
+    // The controller's reconciled state arrives: every channel now reads enabled. The observer re-run stands the delegate up and issues no further write.
     store.pushCameraPatch(cameraConfig.id, { channels: enabledChannels });
 
     await settle();
 
     assert.equal(factory.createCalls.length, 1, "the observer re-run stood the delegate up exactly once");
-    assert.deepEqual(factory.createCalls[0]?.resolutions, fixtureByModel("G6 Instant").expected.map((entry) => entry.resolution),
-      "the advertised resolutions equal the golden-master expectation for the fully-enabled channel set");
     assert.equal(projection.updateCalls.length, 1, "the fully-enabled re-run issues no redundant write");
   });
 
   test("an authorization failure warns with the dual remedy and streams from the already-enabled channels", async () => {
 
     const { camera, factory, logEntries, projection } = built =
-      await buildCamera({ channels: MIXED_RTSP_DISABLED_CHANNELS, updateRejection: new ProtectAuthorizationError("forbidden") });
+      await buildCamera({ channels: MIXED_RTSP_DISABLED_CHANNELS, updateRejection: new ProtectAuthorizationError("forbidden"), userOptions: TOGGLE_OFF });
 
     // The write was attempted, declined, and narrated at warn - verbatim, so the guidance text is pinned.
     assert.equal(projection.updateCalls.length, 1, "the enable write was attempted despite the limited account");
     assert.ok(loggedAt(logEntries, "warn", AUTH_WARN), "the authorization warn carries the full dual-remedy guidance");
     assert.equal(countLoggedAt(logEntries, "error", "Unable to enable RTSP"), 0, "the degraded arm is a warn, never an error");
 
-    // The camera streams anyway: the delegate stands up from the enabled subset, and the published profiles never reach into the disabled Medium channel. The exact
-    // advertised mathematics for this regime are the resolution suite's golden-master; here we pin the wiring through the production selection surface.
+    // The camera streams anyway: the delegate stands up, and the direct-RTSP selection resolves within the enabled subset.
     assert.equal(factory.createCalls.length, 1, "the delegate stands up from the already-enabled channels");
-
-    const high = camera.selectChannel(3840, 2160);
-    const low = camera.selectChannel(640, 360);
-    const remapped = camera.selectChannel(1280, 720);
-
-    assert.equal(high?.channel.id, 0, "the High channel's native resolution selects the High channel");
-    assert.equal(low?.channel.id, 2, "the Low channel's native resolution selects the Low channel");
-    assert.ok(remapped, "the disabled Medium channel's native resolution still resolves against the published profiles");
-    assert.notEqual(remapped.channel.id, 1, "no published profile reaches into the RTSP-disabled channel");
+    assert.equal(camera.selectChannel(3840, 2160)?.channel.id, 0, "the High channel's native resolution selects the High channel");
+    assert.equal(camera.selectChannel(640, 360)?.channel.id, 2, "the Low channel's native resolution selects the Low channel");
+    assert.equal(camera.selectChannel(1280, 720)?.channel.id, 2, "the disabled Medium channel's native resolution resolves to Low, the nearest enabled entry");
   });
 
   test("a non-authorization failure warns with its underlying cause and proceeds identically", async () => {
 
     const { factory, logEntries, projection } = built =
-      await buildCamera({ channels: MIXED_RTSP_DISABLED_CHANNELS, updateRejection: new Error("The controller rejected the request.") });
+      await buildCamera({ channels: MIXED_RTSP_DISABLED_CHANNELS, updateRejection: new Error("The controller rejected the request."), userOptions: TOGGLE_OFF });
 
     assert.equal(projection.updateCalls.length, 1, "the enable write was attempted");
     assert.ok(loggedAt(logEntries, "warn",
-      "Unable to enable RTSP on all of the camera's channels: The controller rejected the request. HomeKit streaming can only use channels that already have RTSP " +
+      "Unable to enable RTSP on all of the camera's channels: The controller rejected the request. Direct RTSP streaming can only use channels that already have RTSP " +
       "enabled."), "the generic-failure warn renders the cause as one clean sentence");
     assert.equal(factory.createCalls.length, 1, "the degraded arm stands the delegate up from the already-enabled channels");
   });
 
-  test("a failing write with zero enabled channels warns, reports no RTSP profiles, and stands up no delegate", async () => {
+  test("a camera that can reach neither the livestream API nor an RTSP stream declines to advertise", async () => {
 
-    const allDisabled = G2_PRO_CHANNELS.map((channel) => ({ ...channel, isRtspEnabled: false }));
+    const { factory, logEntries, projection } = built = await buildCamera({ channels: allDisabled(G2_PRO_CHANNELS), isThirdPartyCamera: true,
+      updateRejection: new ProtectAuthorizationError("forbidden") });
 
-    const { factory, logEntries, projection } = built =
-      await buildCamera({ channels: allDisabled, updateRejection: new ProtectAuthorizationError("forbidden") });
-
-    assert.equal(projection.updateCalls.length, 1, "the enable write was attempted");
+    assert.equal(projection.updateCalls.length, 1, "a camera that cannot use the API streams over RTSP, so the enable write was attempted");
     assert.ok(loggedAt(logEntries, "warn", AUTH_WARN), "the failed write narrates the authorization warn");
-    assert.ok(loggedAt(logEntries, "info", "No RTSP profiles found for this camera."), "the zero-enabled terminal reports the established no-profiles guidance");
-    assert.equal(factory.createCalls.length, 0, "no delegate stands up without a single RTSP-enabled channel");
+    assert.ok(loggedAt(logEntries, "info", "This camera cannot use the UniFi Protect livestream API and none of its channels have a usable RTSP stream enabled."),
+      "the terminal names both halves of what is missing, with the remedies for each");
+    assert.equal(factory.createCalls.length, 0, "nothing can serve this camera, so it stands up no delegate");
+  });
+
+  test("an API-capable camera with every channel RTSP-disabled stands its delegate up under default config - the headline inversion", async () => {
+
+    const { camera, factory, logEntries, projection } = built = await buildCamera({ channels: allDisabled(G2_PRO_CHANNELS) });
+
+    assert.equal(projection.updateCalls.length, 0, "nothing needs RTSP, so no write is attempted");
+    assert.equal(factory.createCalls.length, 1, "the camera advertises and stands its delegate up with zero RTSP-enabled channels");
+    assert.equal(camera.hasRtspStream, false, "the camera honestly reports that it has no RTSP stream to dial");
+    assert.equal(camera.selectChannel(1920, 1080), null, "the direct-RTSP selector answers nothing, since nothing is enabled");
+    assert.ok(camera.selectSubstrateChannel(), "the buffer substrate resolves anyway - the livestream API serves the channel regardless");
+    assert.equal(countLoggedAt(logEntries, "info", "cannot use the UniFi Protect livestream API"), 0, "no terminal fires for a camera the API can serve");
+  });
+
+  test("a toggle-off camera with every channel RTSP-disabled still advertises, its live views degrading to the buffer", async () => {
+
+    const { camera, factory, logEntries, projection } = built = await buildCamera({ channels: allDisabled(G2_PRO_CHANNELS),
+      updateRejection: new ProtectAuthorizationError("forbidden"), userOptions: TOGGLE_OFF });
+
+    assert.equal(projection.updateCalls.length, 1, "the direct-RTSP configuration attempted the enable write");
+    assert.ok(loggedAt(logEntries, "warn", AUTH_WARN), "the declined write narrates the authorization warn");
+
+    // A direct-RTSP preference the camera cannot honor is not a reason to hide it: HomeKit Secure Video, snapshots, and buffer-served live views all stay reachable.
+    assert.equal(factory.createCalls.length, 1, "the toggle-off camera advertises anyway");
+    assert.equal(camera.hasRtspStream, false, "there is still nothing to dial directly");
+    assert.ok(camera.selectSubstrateChannel(), "the buffer substrate resolves, so the buffer, HKSV, and snapshots all have a channel");
+    assert.equal(countLoggedAt(logEntries, "info", "cannot use the UniFi Protect livestream API"), 0, "no terminal fires - the API can serve this camera");
   });
 
   test("a later channels wake re-attempts the declined write - there is no failure latch", async () => {
 
     const { cameraConfig, logEntries, projection, store } = built =
-      await buildCamera({ channels: MIXED_RTSP_DISABLED_CHANNELS, updateRejection: new ProtectAuthorizationError("forbidden") });
+      await buildCamera({ channels: MIXED_RTSP_DISABLED_CHANNELS, updateRejection: new ProtectAuthorizationError("forbidden"), userOptions: TOGGLE_OFF });
 
     assert.equal(projection.updateCalls.length, 1, "the construction-time write was attempted once");
 
@@ -194,5 +283,71 @@ describe("RTSP autoconfiguration write-through (deriveAdvertisedStreams)", () =>
 
     assert.equal(projection.updateCalls.length, 2, "the channels wake re-attempted the enable write");
     assert.equal(countLoggedAt(logEntries, "warn", AUTH_WARN), 2, "each declined attempt narrates its own warn");
+  });
+
+  test("a camera reporting only a package channel reports no usable video channels and stands up nothing", async () => {
+
+    const { factory, logEntries, projection } = built =
+      await buildCamera({ channels: [makeChannel({ fps: 15, height: 1200, id: 0, name: PACKAGE_CHANNEL_NAME, width: 1600 })] });
+
+    assert.ok(loggedAt(logEntries, "info", "No usable video channels were found for this camera."), "the zero-primary-channel terminal says what it found");
+    assert.equal(projection.updateCalls.length, 0, "the terminal is reached without any write attempt");
+    assert.equal(factory.createCalls.length, 0, "a camera with no primary channel stands up no delegate");
+  });
+});
+
+/* The package camera's own split: advertisement and the buffer substrate turn on the package channel's EXISTENCE, while its direct-RTSP view turns on the channel's
+ * RTSP flag. The pin runs both directions across a live flag flip, so a hardcoded answer on either member cannot pass.
+ */
+describe("package camera: existence advertises, the RTSP flag gates only the direct view", () => {
+
+  const controllers: AbortController[] = [];
+
+  afterEach(() => {
+
+    for(const controller of controllers) {
+
+      controller.abort();
+    }
+
+    controllers.length = 0;
+  });
+
+  test("an RTSP-disabled package channel advertises and buffers, and its direct view opens the moment the flag flips on", async () => {
+
+    // The full G6 Pro Entry channel set with the package channel's RTSP switched off - the regime a default-config controller now leaves exactly as it found it.
+    const channels = G6_PRO_ENTRY_CHANNELS.map((channel) => ((channel.name === PACKAGE_CHANNEL_NAME) ? { ...channel, isRtspEnabled: false } : channel));
+    const cameraConfig = makeCameraConfig({ channels, featureFlags: { hasPackageCamera: true, isDoorbell: true }, name: "Front Door" });
+    const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
+    const { controller, nvr } = makeTestNvr({ store });
+
+    controllers.push(controller);
+
+    const doorbell = new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Front Door", "uuid:74ACB9000003") as unknown as ProtectAccessory,
+      new TestCameraProjection(cameraConfig.id, store) as unknown as Camera);
+
+    await settle();
+
+    const packageCamera = doorbell.packageCamera;
+
+    assert.ok(packageCamera, "the package camera was composed");
+
+    // Advertisement and the buffer substrate both live: the livestream API serves the package channel whether or not RTSP is enabled on it.
+    assert.ok(packageCamera.deriveAdvertisedStreams(), "the package advertises from the channel's existence alone");
+    assert.ok(packageCamera.selectSubstrateChannel(), "the buffer substrate resolves the package channel");
+    assert.equal(packageCamera.selectChannel(), null, "the direct-RTSP view answers nothing while the channel's RTSP is off");
+    assert.equal(packageCamera.hasRtspStream, false, "the package honestly reports no RTSP stream to dial");
+
+    // The admin enables RTSP on the package channel. Both RTSP-facing members must move together.
+    store.pushCameraPatch(cameraConfig.id, { channels: G6_PRO_ENTRY_CHANNELS });
+
+    await settle();
+
+    assert.ok(packageCamera.selectChannel(), "the direct-RTSP view opens once the channel's RTSP is enabled");
+    assert.equal(packageCamera.hasRtspStream, true, "the package reports the RTSP stream it now has");
+
+    doorbell.cleanup();
+
+    await settle();
   });
 });

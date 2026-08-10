@@ -147,8 +147,8 @@ export class ProtectCameraPackage extends ProtectCamera {
   public override deriveAdvertisedStreams(): Nullable<AdvertisedStreams> {
 
     // The controller has not provisioned the package channel yet. The accessory itself (motion, flashlight) is fully functional in the meantime; it simply
-    // advertises no video stream until the channel arrives and the observer re-attempts.
-    const profile = this.selectChannel();
+    // advertises no video stream until the channel arrives and the observer re-attempts. Advertisement turns on the channel's EXISTENCE, not on its RTSP state.
+    const profile = this.packageProfile();
 
     if(!profile) {
 
@@ -335,8 +335,13 @@ export class ProtectCameraPackage extends ProtectCamera {
     return this.accessory.context.packageCamera ?? "";
   }
 
-  // Make our RTSP stream findable.
-  public override selectChannel(): Nullable<ChannelProfile> {
+  /* The package channel's profile, if the controller has provisioned the channel. This is the pure EXISTENCE lookup - it says nothing about RTSP - and it is what the
+   * advertisement and the buffer substrate both read, because the livestream API that feeds them serves the channel whether or not RTSP is enabled on it.
+   *
+   * A prototype method rather than an ES-private one, mirroring configureFlashlight above, because the derivation that calls it runs from configureDevice inside the
+   * BASE constructor: an ES-private member is branded onto the instance only after super() returns, so a `#` spelling here throws on every package construction.
+   */
+  private packageProfile(): Nullable<ChannelProfile> {
 
     const channel = this.ufp.channels.find(isPackageChannel);
 
@@ -351,9 +356,27 @@ export class ProtectCameraPackage extends ProtectCamera {
     return buildChannelProfile(channel, { lens: 2, rtspPort: this.nvr.ufp.ports.rtsps, urlHost: this.rtspHost });
   }
 
-  // Resolve the channel that populates the timeshift buffer. The package camera is a single fixed channel, so it delegates to selectChannel.
+  // Make our RTSP stream findable. This is the RTSP-consuming view of the package channel: a direct session dials the channel over RTSP, so a channel the controller
+  // has not enabled has no stream to offer and we answer nothing rather than handing back a URL that cannot connect.
+  public override selectChannel(): Nullable<ChannelProfile> {
+
+    const profile = this.packageProfile();
+
+    return profile?.channel.isRtspEnabled ? profile : null;
+  }
+
+  // Resolve the channel that populates the timeshift buffer. The package camera is a single fixed channel, and the buffer draws it through the livestream API, so this
+  // answers from the existence lookup rather than the RTSP-consuming view above.
   public override selectSubstrateChannel(): Nullable<ChannelProfile> {
 
-    return this.selectChannel();
+    return this.packageProfile();
+  }
+
+  // Whether the package channel currently has RTSP enabled. The parent's forward through the streaming capability is wrong here: the package's published list is its own
+  // single profile, and this fact must read live off the shared projection. Read non-throwing, so a package whose record has vanished in the removal grace answers false
+  // rather than throwing.
+  public override get hasRtspStream(): boolean {
+
+    return this.fromRecord((config) => config.channels.find(isPackageChannel)?.isRtspEnabled ?? false, false);
   }
 }

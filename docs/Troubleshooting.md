@@ -60,7 +60,7 @@ Getting `homebridge-unifi-protect` connected to UniFi Protect is the foundationa
 ### <A NAME="network"></A>Network Issues
 If you run homebridge in Docker, or a VM or VM-like environment, you might run into a network issue without realizing it due to situations with multiple network interface cards (NICs). By default, Homebridge listens for HomeKit requests on all the network interfaces it finds when it starts up. Homebridge, not `homebridge-unifi-protect`, decides which interface to use when streaming video.
 
-**If your symptoms are something along the lines of "snapshots work, but video streaming doesn't", it's almost certainly a network interface issue.** (There's one other cause of that exact symptom - an AV1 camera on the direct-RTSP path - covered in the video streaming section below.)
+**If your symptoms are something along the lines of "snapshots work, but video streaming doesn't", it's almost certainly a network interface issue.**
 
 [You will need to select the correct advertised network interface in Homebridge](https://github.com/homebridge/homebridge/wiki/mDNS-Options#how-to-select-advertised-network-interfaces).
 
@@ -99,7 +99,7 @@ Almost all of the streaming issues that aren't one of the simpler ones described
  * The quality of the stream is pushing more data at a faster rate than either FFmpeg can consume or the HomeKit device can consume (or both!).
  * When transcoding, the hardware that HBUP is running on is unable to keep up with the requirements of the stream that's being pushed through it.
 
-There's also one specific gotcha worth calling out: **an AV1-encoded camera can't stream over direct RTSP**...the bundled version of FFmpeg can't carry AV1 that way. If you've disabled `Video.Timeshift.Livestream` on an AV1 camera, live views will fail (the log will say so in plain language) while snapshots keep working - the same symptom as a network-interface issue, but a completely different cause. The fix is simple: re-enable `Video.Timeshift.Livestream` (it's on by default), and the camera streams from the buffer as intended.
+There's also one specific behavior worth knowing about: **an AV1-encoded camera can't stream over direct RTSP**...the bundled version of FFmpeg can't carry AV1 that way. There's nothing to fix here. An AV1 camera's live views are served from the timeshift buffer regardless of how you've set `Video.Timeshift.Livestream`, so the setting simply doesn't apply to that camera. The streaming request line in the log names the transport each view used, so `TSB/API` there is HBUP telling you it took the buffer path.
 
 ##### Use A Lower Stream Quality
 While the defaults work for most users, most of the time, sometimes the specifics of your own environment will make things off *just enough* that streaming doesn't work. The first, and easiest, step in addressing it is simple: **have HBUP feed from a lower stream quality**.

@@ -56,9 +56,9 @@ export interface TestCameraFeatureFlags {
  * @returns a camera config record the construction path reads as real.
  */
 export function makeCameraConfig(options: { accessDeviceMetadata?: { featureFlags: { supportUnlock: boolean } }; channels: ProtectCameraChannelConfig[];
-  chimeDuration?: number; enableNfc?: boolean; featureFlags?: Partial<TestCameraFeatureFlags>; id?: string; isDark?: boolean; lcdMessage?: { duration?: number;
-    resetAt?: Nullable<number>; text?: string; type?: string; }; mac?: string; name?: string; smartDetectSettings?: { audioTypes?: string[];
-    enableTamperDetection?: boolean; objectTypes?: string[]; }; videoCodec?: string; }): ProtectCameraConfig {
+  chimeDuration?: number; enableNfc?: boolean; featureFlags?: Partial<TestCameraFeatureFlags>; id?: string; isDark?: boolean; isPairedWithAiPort?: boolean;
+  isThirdPartyCamera?: boolean; lcdMessage?: { duration?: number; resetAt?: Nullable<number>; text?: string; type?: string }; mac?: string; name?: string;
+  smartDetectSettings?: { audioTypes?: string[]; enableTamperDetection?: boolean; objectTypes?: string[] }; videoCodec?: string; }): ProtectCameraConfig {
 
   const name = options.name ?? "Test Camera";
 
@@ -91,8 +91,11 @@ export function makeCameraConfig(options: { accessDeviceMetadata?: { featureFlag
     id: options.id ?? "test-camera-1",
     isAdoptedByAccessApp: false,
     isDark: options.isDark ?? false,
-    isPairedWithAiPort: false,
-    isThirdPartyCamera: false,
+
+    // The livestream-API capability pair, overridable so a test can model the one population that cannot reach the API: a third-party camera with no AiPort. Both
+    // default to the first-party camera every other suite assumes.
+    isPairedWithAiPort: options.isPairedWithAiPort ?? false,
+    isThirdPartyCamera: options.isThirdPartyCamera ?? false,
     ispSettings: { icrCustomValue: 0, irLedMode: "off" },
     ledSettings: { isEnabled: false },
     mac: options.mac ?? "74ACB9000001",

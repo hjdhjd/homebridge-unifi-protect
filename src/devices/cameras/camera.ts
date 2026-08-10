@@ -26,6 +26,7 @@ import { ProtectReservedNames } from "../../types.ts";
 import { RtspLivestreamSubscription } from "../../media/livestream.ts";
 import type { StreamingCapability } from "./streaming.ts";
 import type { StreamingDelegate } from "../../media/stream-delegate.ts";
+import { canUseLivestreamApi } from "../../media/stream-source-policy.ts";
 import { doorbellReconcileAction } from "./doorbell-reconcile-policy.ts";
 import { shouldDeliverBareMotion } from "./motion-policy.ts";
 
@@ -33,6 +34,10 @@ import { shouldDeliverBareMotion } from "./motion-policy.ts";
 // restart), "observe" a live reconcile. The establishment-only side effects - the Access lock's SECURED resting stamp, the night vision dimmer's value push and its
 // "Enabling" log - branch on it; the members with no resting state ignore it.
 type ReconcileSource = "construct" | "observe";
+
+// The Protect stream-quality tiers a per-camera feature option can name, single-sourced for both readers: the write-through's direct-RTSP pin term and the
+// establishment hook's profile-pin loop.
+const STREAM_QUALITY_TIERS = [ "LOW", "MEDIUM", "HIGH" ] as const;
 
 /* The streaming surface a camera derives for HomeKit: the advertised channel-profile list its selectors choose from, and the HomeKit resolution list its
  * CameraController is built with. The two travel together as one derivation RESULT rather than as separate held state, so the narration that reads the profiles and the
@@ -148,6 +153,11 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
   // so it exists before the constructor body's configureDevice can reach the accessor below, which is also what makes the NVR-walk reads total: a camera whose capability
   // was never acquired - and one already torn down - optional-chains to a no-op.
   #streaming: Nullable<StreamingCapability> = null;
+  // The once-per-episode latch for the RTSP-debug buffer feed's missing-stream narration. livestream() runs on every buffer establish, so a recovery cycle must not
+  // re-narrate a standing misconfiguration; the latch clears the moment the debug branch runs against an RTSP-enabled profile, so an admin who disables RTSP again
+  // after fixing it is narrated afresh rather than silently swallowed. Its grain is per-camera on purpose: the supervisor's buffer starts and the per-view pooled
+  // sessions both route through livestream(), and they narrate one camera-level misconfiguration between them.
+  #reportedRtspDebugFallback = false;
   // Narrow the inherited hint bag to the camera family's shape. The bag is not projection-derived, so it cannot ride the class's projection parameter the way the device
   // handle and the config view do; a type-only re-declaration is the honest mechanism, and it costs one line because nothing is emitted for it.
   declare public hints: ProtectCameraHints;
@@ -611,19 +621,34 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     // mirrors the livestream API's native delivery, derived from camera facts rather than any HKSV recording configuration.
     if(this.hasFeature("Debug.Video.Timeshift.UseRtsp") && this.stream) {
 
-      // Mono AAC-LC at the camera's livestream (fMP4) audio rate, which livestreamAudioSampleRate owns.
-      const samplerate = (livestreamAudioSampleRate(this.ufp) === 48000) ? AudioRecordingSamplerate.KHZ_48 : AudioRecordingSamplerate.KHZ_16;
+      // The debug feed dials the handed channel over RTSP, so a channel the controller has not enabled has nothing for FFmpeg to connect to. We say so once and fall
+      // through to the native pooled path rather than failing the buffer outright, and we clear the latch on the success path so a re-broken configuration re-narrates.
+      if(!channelProfile.channel.isRtspEnabled) {
 
-      return new RtspLivestreamSubscription({
+        if(!this.#reportedRtspDebugFallback) {
 
-        audio: { channels: 1, codec: AudioRecordingCodecType.AAC_LC, samplerate: samplerate },
-        enableAudio: this.ufp.featureFlags.hasMic && this.hasFeature("Audio"),
-        ffmpegOptions: this.stream.ffmpegOptions,
-        segmentLength: segmentLength,
-        signal: opts.signal,
-        url: channelProfile.url,
-        videoCodec: this.ufp.videoCodec
-      });
+          this.#reportedRtspDebugFallback = true;
+          this.log.warn("The timeshift buffer is configured to feed from the camera's RTSP stream, but no RTSP-enabled channel is available. " +
+            "Feeding the buffer from the UniFi Protect livestream API instead.");
+        }
+      } else {
+
+        this.#reportedRtspDebugFallback = false;
+
+        // Mono AAC-LC at the camera's livestream (fMP4) audio rate, which livestreamAudioSampleRate owns.
+        const samplerate = (livestreamAudioSampleRate(this.ufp) === 48000) ? AudioRecordingSamplerate.KHZ_48 : AudioRecordingSamplerate.KHZ_16;
+
+        return new RtspLivestreamSubscription({
+
+          audio: { channels: 1, codec: AudioRecordingCodecType.AAC_LC, samplerate: samplerate },
+          enableAudio: this.ufp.featureFlags.hasMic && this.hasFeature("Audio"),
+          ffmpegOptions: this.stream.ffmpegOptions,
+          segmentLength: segmentLength,
+          signal: opts.signal,
+          url: channelProfile.url,
+          videoCodec: this.ufp.videoCodec
+        });
+      }
     }
 
     // The native pooled livestream. requestId preserves the friendly label the controller logs (name + channel, or name + "0." + lens for a secondary lens).
@@ -1262,8 +1287,8 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     return this.#deriveStreams();
   }
 
-  // The parent camera's derivation: ensure RTSP is enabled across the camera's channels, then synthesize the advertised profile list HomeKit consumes. Always re-run
-  // (every channel / codec / connection-host change re-derives), and null on every path that yields no advertisable list.
+  // The parent camera's derivation: enable RTSP across the camera's channels where the configuration needs it, then synthesize the advertised profile list HomeKit
+  // consumes. Always re-run (every channel / codec / connection-host change re-derives), and null on every path that yields no advertisable list.
   async #deriveStreams(): Promise<Nullable<AdvertisedStreams>> {
 
     // No channels exist on this camera or we don't have access to the bootstrap configuration.
@@ -1272,6 +1297,18 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
       return null;
     }
 
+    /* Whether this camera's configuration genuinely streams over RTSP. We enable RTSP on a camera's behalf only where something actually consumes it: live views drawn
+     * directly over RTSP for a codec FFmpeg can carry that way, a direct-RTSP quality pin whose named channel must stay reachable, or the RTSP-debug buffer feed. The
+     * external publishers (the M3U playlist and the MQTT topic) report what exists rather than causing enablement. Everything else reaches the camera through the
+     * livestream API, which serves any channel whether or not RTSP is enabled on it.
+     *
+     * The quality pin is part of the need set even for a buffer-mode camera: the buffer-down resilience fallback dials the pinned channel BY NAME, so a pin naming a
+     * channel the controller never enabled would be a hard live-view failure the moment the buffer blinks.
+     */
+    const needsRtspTransport = !this.usesTimeshiftLivestream && (this.ufp.videoCodec !== "av1");
+    const needsRtsp = needsRtspTransport || this.hasFeature("Debug.Video.Timeshift.UseRtsp") ||
+      STREAM_QUALITY_TIERS.some(profile => this.hasFeature("Video.Rtsp.Only." + profile));
+
     // Ensure RTSP is enabled on every channel. This is a write-through config change with no read-after-write: when a channel still needs RTSP, we enable them all and
     // return, letting the channels observer (wired in spawnCameraObservers) re-run this method once the change reconciles, at which point every channel reads back
     // enabled and we build the stream entries below. When RTSP is already on - the common case for any existing camera and every restart - we skip the PATCH and fall
@@ -1279,7 +1316,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     // an account without the full management role, or a transient controller failure - we narrate the outcome and fall through to stream from the channels that are
     // already RTSP-enabled, so a permissions-limited account keeps every stream its manual configuration provides. There is no failure latch: each later wake
     // re-attempts the write, so nothing goes stale across a reconnect or a mid-session role change.
-    if(this.ufp.channels.some(channel => !channel.isRtspEnabled)) {
+    if(needsRtsp && this.ufp.channels.some(channel => !channel.isRtspEnabled)) {
 
       try {
 
@@ -1298,31 +1335,31 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
         if(error instanceof ProtectAuthorizationError) {
 
           this.log.warn("Unable to enable RTSP on all of the camera's channels because this account does not have the full management role in UniFi Protect. " +
-            "HomeKit streaming can only use channels that already have RTSP enabled. To make every streaming quality option available, grant the account the full " +
+            "Direct RTSP streaming can only use channels that already have RTSP enabled. To make every streaming quality option available, grant the account the full " +
             "management role or enable RTSP on each of the camera's channels in the Protect webUI.");
         } else {
 
-          this.log.warn("Unable to enable RTSP on all of the camera's channels: %s. HomeKit streaming can only use channels that already have RTSP enabled.",
+          this.log.warn("Unable to enable RTSP on all of the camera's channels: %s. Direct RTSP streaming can only use channels that already have RTSP enabled.",
             formatErrorMessage(error));
         }
       }
     }
 
-    // Figure out which camera channels are RTSP-enabled, and user-enabled. We also filter out any package camera entries. We deal with those independently elsewhere.
+    // Figure out which channels are primary camera channels. We filter out any package camera entries - we deal with those independently elsewhere. RTSP enablement is
+    // deliberately NOT a filter term here: the livestream API serves any channel, so the flag is a per-consumer concern the RTSP-consuming selectors apply to their own
+    // view of the published list.
     const cameraChannels = this.ufp.channels.filter(isPrimaryChannel);
 
-    // No RTSP streams are available that meet our criteria - we're done.
+    // The camera reports no primary channels at all - a controller-report oddity rather than anything the user can act on, so we say what we found and stop.
     if(!cameraChannels.length) {
 
-      this.log.info("No RTSP profiles found for this camera. " +
-        "Enable at least one RTSP profile in the UniFi Protect webUI or assign the full management role to the local Protect user " +
-        "you configured for use with this plugin.");
+      this.log.info("No usable video channels were found for this camera.");
 
       return null;
     }
 
-    // Build the native RTSP entries from the user-enabled primary channels, skipping any channel Protect reports with nonsensical dimensions. The resolution module
-    // owns the entry construction (the friendly name, the native resolution tuple, and the SRTP URL composed against our host chain).
+    // Build the native RTSP entries from the primary channels, skipping any channel Protect reports with nonsensical dimensions. The resolution module owns the entry
+    // construction (the friendly name, the native resolution tuple, and the SRTP URL composed against our host chain).
     const nativeEntries: ChannelProfile[] = [];
 
     for(const channel of cameraChannels) {
@@ -1334,6 +1371,21 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
       }
 
       nativeEntries.push(buildChannelProfile(channel, { rtspPort: this.nvr.ufp.ports.rtsps, urlHost: this.rtspHost }));
+    }
+
+    /* Nothing can serve this camera: it cannot reach the livestream API, and it has no usable RTSP stream to dial either, so it must not advertise itself to HomeKit at
+     * all. Every camera the API CAN reach advertises whenever a sane primary channel exists - its live views degrade to the buffer path when RTSP cannot serve them -
+     * which is why this terminal is the API-incapable population's alone.
+     *
+     * We evaluate it after the sanity pass so the answer agrees with the list we actually publish: "usable" means a channel that both has RTSP enabled and survived the
+     * dimension check, so a camera whose only RTSP-enabled channel is a dimension oddity is never misdiagnosed as an RTSP-configuration problem.
+     */
+    if(!canUseLivestreamApi(this.ufp) && !nativeEntries.some(entry => entry.channel.isRtspEnabled)) {
+
+      this.log.info("This camera cannot use the UniFi Protect livestream API and none of its channels have a usable RTSP stream enabled. " +
+        "Enable at least one RTSP stream in the UniFi Protect webUI or grant the plugin's account the full management role.");
+
+      return null;
     }
 
     // Synthesize the full advertised resolution list HomeKit consumes from the native entries. The list build is preference-free: the streaming-quality preference is a
@@ -1366,7 +1418,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     }
 
     // Check for explicit RTSP profile preferences. A pin carries only a genuine user choice; the substrate channel policy computes its own default when neither is set.
-    for(const rtspProfile of [ "LOW", "MEDIUM", "HIGH" ]) {
+    for(const rtspProfile of STREAM_QUALITY_TIERS) {
 
       // Check to see if the user has pinned a specific direct-RTSP livestream profile for this camera.
       if(this.hasFeature("Video.Rtsp.Only." + rtspProfile)) {
@@ -1393,10 +1445,11 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
       this.log.info("The timeshift buffer is configured to use only: %s.", toStartCase(this.hints.substrateDefault.toLowerCase()));
     }
 
-    // Inform the user when they've opted out of buffer-backed livestreaming, so live views come straight from the camera over RTSP.
+    // Inform the user when they've opted out of buffer-backed livestreaming. It is a transport preference rather than a guarantee: a camera with no RTSP-enabled stream
+    // to dial serves its live views from the buffer instead, so the narration states the condition rather than promising the outcome.
     if(!this.hints.tsbStreaming) {
 
-      this.log.info("Livestreaming directly from the camera over RTSP.");
+      this.log.info("Live views will stream directly from the camera over RTSP whenever an RTSP-enabled stream is available.");
     }
 
     // If the user has redirected the timeshift buffer to feed from the camera's RTSP stream, warn that this is for debugging only.
@@ -1855,6 +1908,13 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     return this.#streaming?.selectSubstrateChannel() ?? null;
   }
 
+  // Whether this camera has an RTSP-enabled stream to draw a direct session from, forwarded to the composed streaming capability that holds the advertised list. A
+  // camera that has not acquired its capability has published nothing yet, so it has nothing to dial - which is exactly what false says.
+  public get hasRtspStream(): boolean {
+
+    return this.#streaming?.hasRtspStream ?? false;
+  }
+
   // Utility property to return the camera's current video codec, formatted for display. Read non-throwing through the record: a camera in the removal grace whose record
   // has vanished reports an empty label rather than throwing, so every consumer - including the reconcile pass's HKSV acknowledgment, reached after an await where the
   // record could vanish - is safe on the vanished-record path.
@@ -1869,16 +1929,17 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     return (!this.ufp.isThirdPartyCamera && !this.ufp.isAdoptedByAccessApp) || (this.ufp.isThirdPartyCamera && this.ufp.isPairedWithAiPort);
   }
 
-  // Whether buffer-backed livestreaming is enabled and this camera is capable of it - the streaming demand arm of the standing timeshift buffer. This is the streaming
-  // arm's OWN capability predicate (livestream-API accessibility), deliberately not the borrowed isHksvCapable, whose real meaning is motion-event capability for
+  // Whether buffer-backed livestreaming is enabled and this camera is capable of it - the streaming demand arm of the standing timeshift buffer. This composes the
+  // user's toggle with the shared livestream-API capability predicate, deliberately not the borrowed isHksvCapable, whose real meaning is motion-event capability for
   // HomeKit Secure Video. Because it does not exclude Access-adopted Ubiquiti cameras, those cameras join the streaming arm and the toggle does real work for them. The
-  // one remaining provisional corner: a non-AiPort third-party camera stays excluded pending its own livestream-accessibility verification, and this predicate is the
-  // single definition to widen when that is settled. The capability read goes through the record non-throwing (fromRecord), so a camera whose record has vanished in the
-  // removal grace reports false rather than throwing on every consumer that reads it - the reconcile pass, the session-source decision, and the samplerate advertisement.
-  // Evaluated live; the one restart-scoped consumer that samples it at construction (the streaming delegate's samplerate advertisement) is documented at that call site.
+  // one remaining provisional corner: a non-AiPort third-party camera stays excluded pending its own livestream-accessibility verification, and canUseLivestreamApi is
+  // the single definition to widen when that is settled. The capability read goes through the record non-throwing (fromRecord), so a camera whose record has vanished in
+  // the removal grace reports false rather than throwing on every consumer that reads it - the reconcile pass, the session-source decision, and the samplerate
+  // advertisement. Evaluated live; the one restart-scoped consumer that samples it at construction (the streaming delegate's samplerate advertisement) is documented at
+  // that call site.
   public get usesTimeshiftLivestream(): boolean {
 
-    return this.hints.tsbStreaming && this.fromRecord((config) => !config.isThirdPartyCamera || config.isPairedWithAiPort, false);
+    return this.hints.tsbStreaming && this.fromRecord(canUseLivestreamApi, false);
   }
 
   // The active recording mode, read non-throwing through the record. An absent record (a camera in the removal grace) reports an empty mode - which matches none

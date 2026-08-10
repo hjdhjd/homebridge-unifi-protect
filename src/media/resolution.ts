@@ -117,11 +117,12 @@ export function isPackageChannel(channel: ProtectCameraChannelConfig): boolean {
   return channel.name === PACKAGE_CHANNEL_NAME;
 }
 
-// Whether a channel is an RTSP-enabled primary camera channel (the complement of the package channel within the RTSP-enabled set). The camera class filters its
-// channel list with this to build the primary advertised list, leaving the package channel to the package class.
+// Whether a channel is a primary camera channel - the complement of the package channel. The camera class filters its channel list with this to build the primary
+// advertised list, leaving the package channel to the package class. RTSP enablement is deliberately not part of this test: the livestream API serves any channel, so
+// the flag is a per-consumer concern the selectors and the RTSP-consuming paths apply to their own view of the published list.
 export function isPrimaryChannel(channel: ProtectCameraChannelConfig): boolean {
 
-  return channel.isRtspEnabled && !isPackageChannel(channel);
+  return !isPackageChannel(channel);
 }
 
 // Construct one ChannelProfile from a channel. This is the single entry constructor every ChannelProfile across the camera and package classes is built through: the
@@ -225,7 +226,7 @@ export function selectChannelProfile(entries: readonly ChannelProfile[], request
 }
 
 // Build the per-camera advertised resolution list HomeKit consumes, from the camera's native RTSP entries. This is the entangled crux of the resolution surface, lifted
-// verbatim from the device's channel-profile derivation (refreshChannelProfiles): sort high to low; capture the native top (the empty list returns []); pick the
+// verbatim from the camera's own derivation behind deriveAdvertisedStreams: sort high to low; capture the native top (the empty list returns []); pick the
 // aspect-appropriate base table; expand each row to 30 and 15 fps; then, for each candidate that belongs (under the drifting current top), find the closest RTSP match
 // and append it with the matched channel's native frame rate, re-sorting after each insert. Finally, normalize non-conforming frame rates to {15,24,30} so HomeKit will
 // attempt the camera.

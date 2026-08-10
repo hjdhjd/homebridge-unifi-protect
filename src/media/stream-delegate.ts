@@ -35,12 +35,14 @@ export function audioCapabilityAppeared(built: AudioOptionsIdentity, current: Au
 
 // The streaming audio sample rates a camera advertises to HomeKit. This condition deliberately encodes TWO wire facts, so it does not defer to livestreamAudioSampleRate:
 // on the fMP4 livestream a doorbell delivers 48 kHz and every other camera 16 kHz (the half livestreamAudioSampleRate owns), while a camera streamed directly over RTSP
-// (buffer-backed livestreaming off, or a camera not capable of it) delivers a 48 kHz source regardless of type. Both 48 kHz sources exceed what HomeKit supports; since
-// 16 and 24 kHz each divide 48 cleanly, we advertise both and let HomeKit choose. A buffer-backed camera's livestream delivers 16 kHz, so it advertises just that. A pure
-// helper, red-green testable per population.
-export function streamingSamplerates(input: { isDoorbell: boolean; usesTimeshiftLivestream: boolean }): AudioStreamingSamplerate | AudioStreamingSamplerate[] {
+// delivers a 48 kHz source regardless of type. Both 48 kHz sources exceed what HomeKit supports; since 16 and 24 kHz each divide 48 cleanly, we advertise both and let
+// HomeKit choose. The capability - not the user's transport preference - is what decides: a camera that can reach the livestream API may serve any given session from
+// the 16 kHz buffer track whatever the toggle says, so it advertises just 16 kHz, while doorbells and cameras the API cannot reach are RTSP-served and get both. The
+// wider advertisement coexists with buffer-served sessions the same way a 16 kHz advertisement coexists with the direct-RTSP sessions the buffer-down fallback serves.
+// A pure helper, red-green testable per population.
+export function streamingSamplerates(input: { canUseLivestreamApi: boolean; isDoorbell: boolean }): AudioStreamingSamplerate | AudioStreamingSamplerate[] {
 
-  return (input.isDoorbell || !input.usesTimeshiftLivestream) ? [ AudioStreamingSamplerate.KHZ_16, AudioStreamingSamplerate.KHZ_24 ] : AudioStreamingSamplerate.KHZ_16;
+  return (input.isDoorbell || !input.canUseLivestreamApi) ? [ AudioStreamingSamplerate.KHZ_16, AudioStreamingSamplerate.KHZ_24 ] : AudioStreamingSamplerate.KHZ_16;
 }
 
 // The surface consumers read off this.stream - the exact set grounded across camera, camera-package, record, nvr, and snapshot (no more, no less). The production

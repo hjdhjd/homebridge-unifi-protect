@@ -249,7 +249,7 @@ export const featureOptions: Record<string, FeatureOptionEntry<ProtectOptionMeta
   // Timeshift buffer options.
   "Video.Timeshift": [
 
-    { default: true, description: "Maintain a rolling timeshift buffer of the camera's livestream to power live viewing, HomeKit Secure Video, and snapshots. Disabling this streams live views directly from the camera over RTSP instead.", name: "Livestream" },
+    { default: true, description: "Maintain a rolling timeshift buffer of the camera's livestream to power live viewing, HomeKit Secure Video, and snapshots. Disabling this streams live views directly from the camera over RTSP whenever an RTSP-enabled stream is available.", name: "Livestream" },
     { default: false, description: "Populate the timeshift buffer that feeds HomeKit Secure Video, buffer-backed live views, and snapshots from the high quality video stream from the Protect controller.", name: "Only.High" },
     { default: false, description: "Populate the timeshift buffer that feeds HomeKit Secure Video, buffer-backed live views, and snapshots from the medium quality video stream from the Protect controller.", name: "Only.Medium" },
     { default: false, description: "Populate the timeshift buffer that feeds HomeKit Secure Video, buffer-backed live views, and snapshots from the low quality video stream from the Protect controller.", name: "Only.Low" }

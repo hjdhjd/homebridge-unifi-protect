@@ -20,19 +20,21 @@
 
 ### Protect Controller Autoconfiguration
 
-This plugin autoconfigures the devices it finds on a UniFi Protect controller so that everything works as seamlessly as possible, with minimal effort on your part. Most of that comes down to one thing: making sure every camera has at least one RTSP stream enabled, which is what HomeKit ultimately needs.
+This plugin autoconfigures the devices it finds on a UniFi Protect controller so that everything works as seamlessly as possible, with minimal effort on your part. Out of the box, there's nothing for you to switch on at all: HBUP sources your live views, your HomeKit Secure Video recordings, and your snapshots through the UniFi Protect livestream API, and that API works whether or not a camera has any RTSP streams turned on.
 
-You've got two ways to get there. Give the local user account you configure HBUP with the *full management role* in UniFi Protect, and HBUP will enable the RTSP streams for you...along with a handful of other niceties you can selectively turn on through feature options. That role is entirely optional, though. If you'd rather keep the account's permissions to a minimum, just enable at least one RTSP stream on each camera you want in HomeKit yourself, and you're all set.
+RTSP only comes into the picture when your configuration genuinely streams over RTSP, and there are two ways that happens. The first is switching live views to come straight from the camera, by disabling the `Video.Timeshift.Livestream` feature option. The second is publishing the M3U playlist for an external app such as Channels DVR.
 
-Why enable all the RTSP streams? There's no performance penalty on the Protect controller for having them on, and it gives HBUP more quality levels to work with...which you can then tailor in a granular way through feature options. Whichever route you take, keep the one hard requirement in mind: at least one RTSP stream enabled on every camera you want to see in HomeKit.
+For the direct-RTSP route, you've got two ways to get there. Give the local user account you configure HBUP with the *full management role* in UniFi Protect, and HBUP will enable the RTSP streams for you...along with a handful of other niceties you can selectively turn on through feature options. That role is entirely optional, though. If you'd rather keep the account's permissions to a minimum, just enable at least one RTSP stream yourself on each camera you're streaming that way, and you're all set. The playlist is different: HBUP never turns streams on for it, so there you enable exactly the ones you'd like published.
+
+Why enable all the RTSP streams on a camera you stream directly over RTSP? There's no performance penalty on the Protect controller for having them on, and it gives HBUP more quality levels to work with...which you can then tailor in a granular way through feature options.
 
 ### How HBUP Sources Your Video
 
 By default, HBUP keeps a small rolling *timeshift buffer* of each camera's livestream...think of it as a few seconds of continuously updated video that's always ready to go. That single buffer feeds everything that needs your camera's video: your live views in the Home app, HomeKit Secure Video event recordings, and snapshots. Keeping one shared, always-warm buffer is what lets a live view start almost instantly, and it's what lets HKSV capture the moments *before* a motion event rather than starting cold. It's on by default.
 
-The alternative is to stream each live view directly from the camera over RTSP, on demand. If you'd prefer that, disable the `Video.Timeshift.Livestream` feature option under the *Timeshift Buffer* section, and live views will come straight from the camera over RTSP instead. HomeKit Secure Video and snapshots keep using the buffer either way, so opting live views out of the buffer doesn't change how your events are recorded.
+The alternative is to stream each live view directly from the camera over RTSP, on demand. If you'd prefer that, disable the `Video.Timeshift.Livestream` feature option under the *Timeshift Buffer* section, and live views will come straight from the camera over RTSP whenever an RTSP-enabled stream is available to draw from. When none is, HBUP serves those live views from the buffer instead, so you always get a picture. HomeKit Secure Video and snapshots keep using the buffer either way, so opting live views out of the buffer doesn't change how your events are recorded.
 
-One caveat: a camera that streams AV1 can't use the direct-RTSP path...the bundled version of FFmpeg can't carry AV1 over RTSP. For an AV1 camera the buffer is the only way to get a live view, so leave `Video.Timeshift.Livestream` enabled (it is, by default). If you turn it off on an AV1 camera, HBUP will tell you exactly that in the log.
+One caveat: a camera that streams AV1 can't use the direct-RTSP path...the bundled version of FFmpeg can't carry AV1 over RTSP. That's not something you need to work around. An AV1 camera's live views come from the buffer no matter how `Video.Timeshift.Livestream` is set, and the streaming request line in the log names the transport it actually used, so you can always see which path a view took.
 
 ### Transcoding and Transmuxing
 

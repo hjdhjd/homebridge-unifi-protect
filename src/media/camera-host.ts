@@ -45,6 +45,10 @@ export interface ProtectCameraHost extends ProtectDeviceContext {
   // Builds the FFmpeg audio-filter chain against the camera's true input sample rate (live and HKSV-recording audio paths).
   getAudioFilters(sampleRate?: number): string[];
 
+  // Whether the camera currently has at least one RTSP-enabled stream to draw a direct session from. Read by the session-source decision so every RTSP-consuming path
+  // stays honest about what it can actually stream from, on the published list's own freshness envelope.
+  readonly hasRtspStream: boolean;
+
   // The camera family's hint bag, narrowed from the shared device shape the inherited device context declares: the media delegates read the streaming, transcoding, and
   // crop hints that live only on the camera extension.
   readonly hints: ProtectCameraHints;

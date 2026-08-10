@@ -83,7 +83,7 @@ The topics and messages that `homebridge-unifi-protect` publishes are:
 | <CODE>motion/smart/<I>object</I>/metadata</CODE> | Cameras | `JSON` when metadata associated with a smart motion detection event is available from Protect such as license plate information, vehicle type, or color. Currently, this is only valid for `vehicle` smart motion events.
 | `occupancy`           | Multiple            | `true` when occupancy is detected. `false` when occupancy is no longer detected.
 | `relay/<output>`      | Relay               | `true` or `false` for the on/off state of a relay output. Outputs are numbered starting at 1.
-| `rtsp`                | Camera              | `{name: "URL"}`. Represents a JSON containing all the valid RTSP URLs that can be used to stream from this camera. `Name` is the name assigned by UniFi Protect to the RTSP URL. `URL` represents the URL that can be used for streaming.
+| `rtsp`                | Camera              | `{name: "URL"}`. Represents a JSON containing the RTSP URLs for whichever of this camera's channels currently have RTSP enabled, which is an empty JSON object when none of them do. `Name` is the name assigned by UniFi Protect to the RTSP URL. `URL` represents the URL that can be used for streaming.
 | `securitysystem`      | Camera              | One of `Alarm`, `Away`, `Home`, `Night`, `Off`. This message is published every time the security state is set.
 | `snapshot`            | Camera              | A [data URL](https://developer.mozilla.org/en-US/docs/Web/HTTP/Basics_of_HTTP/Data_URIs) containing a base64-encoded JPEG of the snapshot that was requested (either by HomeKit or MQTT).
 | `systeminfo`          | Controller          | `JSON` containing the current Protect controller system information.

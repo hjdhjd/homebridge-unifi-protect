@@ -13,7 +13,8 @@
  * golden-master flags exactly the rows that move, and nothing else.
  *
  * makeChannel fills a complete ProtectCameraChannelConfig from the load-bearing fields (the resolution math reads only name/width/height/fps; isRtspEnabled filters the
- * primary channel; id and rtspAlias compose the URL). The remaining interface fields are filled with inert defaults so the corpus is a real typed channel, not a cast.
+ * per-consumer RTSP-enabled view; id and rtspAlias compose the URL). The remaining interface fields are filled with inert defaults so the corpus is a real typed channel,
+ * not a cast.
  * The rtspAlias is synthesized from the id so the URL is stable and deterministic; it never affects the resolution math, only the URL string, which
  * production composes the same way every time.
  */
@@ -133,8 +134,8 @@ export const C5_WITNESS_CHANNELS: ProtectCameraChannelConfig[] = [
   makeChannel({ fps: 15, height: 360, id: 1, name: "Low", width: 480 })
 ];
 
-// A synthetic regime with a disabled Medium channel: isPrimaryChannel gates on isRtspEnabled, so channel 1 is dropped from the native list and never appears in the
-// advertised output. Exercises the RTSP-enable filtering boundary.
+// A synthetic regime with a disabled Medium channel: channel 1 is advertised and substrate-selectable like any other primary channel, because the livestream API serves
+// it regardless of the flag...only the RTSP-consuming views (the direct-RTSP selector and the RTSP snapshot source) exclude it. Exercises that split.
 export const MIXED_RTSP_DISABLED_CHANNELS: ProtectCameraChannelConfig[] = [
 
   makeChannel({ fps: 30, height: 2160, id: 0, name: "High", width: 3840 }),

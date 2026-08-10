@@ -59,6 +59,10 @@ export class TestCameraHost implements ProtectCameraHost {
   // The settable feature predicate; defaults to "no feature enabled", the quiet default the delegate construction paths read against.
   public hasFeature: (option: string) => boolean = () => false;
 
+  // Whether the camera has an RTSP-enabled stream to draw a direct session from. Defaults true, so every media suite's standing assumption of an RTSP-capable camera
+  // holds unchanged; a test about the no-RTSP population flips it.
+  public hasRtspStream = true;
+
   // A complete neutral ProtectCameraHints literal - every boolean false, every number 0, every string empty, the nested cropOptions zeroed - so a delegate reads a fully
   // populated hint bag with no behavior turned on (crop false is required for the two-sided snapshot test, which must NOT enter the crop pass).
   public hints: ProtectCameraHints = {

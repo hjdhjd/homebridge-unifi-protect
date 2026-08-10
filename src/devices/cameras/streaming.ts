@@ -17,8 +17,9 @@ import { audioCapabilityAppeared } from "../../media/stream-delegate.ts";
  * by this class; what lives here is the policy that decides its lifetime, reached through the platform-held factory that keeps FFmpeg out of this dependency graph.
  *
  * ONE CLASS FOR BOTH CAMERA VIEWS. A parent camera and its package view are two hosts with one streaming policy between them, and the only thing that genuinely differs
- * is the DERIVATION - the parent negotiates RTSP across a channel set and awaits a controller write-through, while the package reads its single fixed channel straight
- * off the shared projection. That difference lives on the host, behind deriveAdvertisedStreams, so this class holds exactly one create-when-ready rule that serves both.
+ * is the DERIVATION - the parent negotiates its channel set and awaits a controller write-through where the configuration streams over RTSP, while the package reads its
+ * single fixed channel straight off the shared projection. That difference lives on the host, behind deriveAdvertisedStreams, so this class holds exactly one
+ * create-when-ready rule that serves both.
  *
  * NO PROJECTION HANDLE, deliberately, and a divergence from the two other camera-family capabilities: they hold a `device` handle because their host contract does not
  * expose the projection, while this capability's concrete host does. A second handle would be a second path to one truth, so every projection read here goes through
@@ -219,13 +220,29 @@ export class StreamingCapability extends ProtectDeviceCapability<ProtectCamera> 
     this.#stream?.timeshift?.shutdown();
   }
 
+  // The RTSP-enabled subset of the published list: the view every RTSP-consuming path selects from, since a channel without RTSP enabled has no stream to dial. The
+  // substrate selector deliberately reads the FULL published list instead, because the livestream API serves any channel regardless of the flag.
+  get #rtspProfiles(): ChannelProfile[] {
+
+    return this.#profiles.filter(profile => profile.channel.isRtspEnabled);
+  }
+
+  // Whether this camera currently has at least one RTSP-enabled stream to draw a direct session from - the camera-family fact the session-source decision reads. It reads
+  // the published list, which republishes on every successful derivation, so within a request the fact stays coherent with what selectChannel actually serves...the same
+  // freshness envelope every selector here already carries.
+  public get hasRtspStream(): boolean {
+
+    return this.#rtspProfiles.length > 0;
+  }
+
   // Find a direct-RTSP livestream configuration for a given target resolution. This is the device wrapper over the pure selectChannelProfile: it injects our published
   // entries and our host's state (the direct-RTSP default, which pins to a named channel, and the optional hardware pixel cap), then delegates the selection mathematics.
+  // We select over the RTSP-enabled subset because this is a direct-RTSP session: a channel the controller has not enabled has no stream for FFmpeg to connect to.
   // The pixel cap is applied as a mode-agnostic pre-filter BEFORE selection - intentionally a pre-filter, not part of the request, so it filters the name branch too (a
   // constrained request with an explicit profile preference still drops profiles above the cap); a future reader should not move it into the request.
   public selectChannel(width: number, height: number, opts?: { biasHigher?: boolean; maxPixels?: number }): Nullable<ChannelProfile> {
 
-    const entries = capByPixels(this.#profiles, opts?.maxPixels);
+    const entries = capByPixels(this.#rtspProfiles, opts?.maxPixels);
     const request: SelectRequest = this.host.hints.rtspDefault ? { mode: "name", name: this.host.hints.rtspDefault } :
       { bias: opts?.biasHigher ? "higher" : "lower", height: height, mode: "nearest", width: width };
 
@@ -233,12 +250,13 @@ export class StreamingCapability extends ProtectDeviceCapability<ProtectCamera> 
   }
 
   // Resolve the channel that populates the standing timeshift buffer feeding HomeKit Secure Video, buffer-backed live views, and snapshots. The policy is
-  // source-independent and HomeKit-Secure-Video-state-independent by construction, in order: (1) a user pin wins outright - an exact name match, null on a miss, the
-  // loud user-pin failure; (2) a pixel-constrained encoder host (a Raspberry Pi) takes the highest-quality channel at or below its constrained target, biased downward,
-  // preference-free so the buffer does not inherit the direct-RTSP quality preference; (3) otherwise the highest-quality channel the host's encoder can consume, taken
-  // structurally as the first entry after the record-context pixel cap, with no name lookup. The record-context cap is Infinity on every host today (HKSV
-  // software-encodes wherever a pixel cap would apply), so capByPixels passes everything and step 3 is simply the highest channel; it engages only when a future
-  // predicate change hardware-encodes on a pixel-limited host.
+  // source-independent, HomeKit-Secure-Video-state-independent, and RTSP-independent by construction - it selects over the full published list, because the livestream
+  // API that fills the buffer serves any channel whether or not the controller has RTSP enabled on it - in order: (1) a user pin wins outright - an exact name match,
+  // null on a miss, the loud user-pin failure; (2) a pixel-constrained encoder host (a Raspberry Pi) takes the highest-quality channel at or below its constrained
+  // target, biased downward, preference-free so the buffer does not inherit the direct-RTSP quality preference; (3) otherwise the highest-quality channel the host's
+  // encoder can consume, taken structurally as the first entry after the record-context pixel cap, with no name lookup. The record-context cap is Infinity on every host
+  // today (HKSV software-encodes wherever a pixel cap would apply), so capByPixels passes everything and step 3 is simply the highest channel; it engages only when a
+  // future predicate change hardware-encodes on a pixel-limited host.
   public selectSubstrateChannel(): Nullable<ChannelProfile> {
 
     // The published entries filtered by the host encoder's source ceiling. The cap is a mode-agnostic pre-filter applied BEFORE selection, so it filters the name-pin

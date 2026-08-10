@@ -236,7 +236,7 @@ These option(s) apply to: Protect cameras.
 
 | Option                                                                   | Description
 |--------------------------------------------------------------------------|-------------------------------------------------------------
-| <A NAME="Video.Timeshift.Livestream"></A>`Video.Timeshift.Livestream`    | Maintain a rolling timeshift buffer of the camera's livestream to power live viewing, HomeKit Secure Video, and snapshots. Disabling this streams live views directly from the camera over RTSP instead. **(default: enabled)**.
+| <A NAME="Video.Timeshift.Livestream"></A>`Video.Timeshift.Livestream`    | Maintain a rolling timeshift buffer of the camera's livestream to power live viewing, HomeKit Secure Video, and snapshots. Disabling this streams live views directly from the camera over RTSP whenever an RTSP-enabled stream is available. **(default: enabled)**.
 | <A NAME="Video.Timeshift.Only.High"></A>`Video.Timeshift.Only.High`      | Populate the timeshift buffer that feeds HomeKit Secure Video, buffer-backed live views, and snapshots from the high quality video stream from the Protect controller. **(default: disabled)**.
 | <A NAME="Video.Timeshift.Only.Medium"></A>`Video.Timeshift.Only.Medium`  | Populate the timeshift buffer that feeds HomeKit Secure Video, buffer-backed live views, and snapshots from the medium quality video stream from the Protect controller. **(default: disabled)**.
 | <A NAME="Video.Timeshift.Only.Low"></A>`Video.Timeshift.Only.Low`        | Populate the timeshift buffer that feeds HomeKit Secure Video, buffer-backed live views, and snapshots from the low quality video stream from the Protect controller. **(default: disabled)**.

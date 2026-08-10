@@ -100,12 +100,27 @@ export function servePlaylist(nvr: ProtectNvr): void {
   // The pending EADDRINUSE retry timer, if one is armed. We keep the handle so the shutdown teardown can cancel it and no retry can re-listen the port after teardown.
   let retryTimer: NodeJS.Timeout | undefined;
 
+  // The once-per-run latch for the empty-catalog narration, so a player polling the playlist does not fill the log with the same line.
+  let warnedEmptyPlaylist = false;
+
   // Respond to requests for a Protect camera playlist, reading the host and RTSP port from the live NVR projection at request time.
   server.on("request", (_request, response) => {
 
+    const body = buildPlaylist(nvr.client.cameras.map(projection => projection.config), nvr.ufp.host, nvr.ufp.ports.rtsp);
+
+    // A body equal to the bare header is the emptiness signal: the composer above emits that header and then nothing when no camera qualifies, so comparing against it
+    // keeps the pure composer untouched and leaves no second eligibility predicate here to drift out of step with the real one. The compared literal is the header
+    // buildPlaylist emits, so the two travel together. The message names both eligibility terms, so an all-AV1 fleet is not misread as an RTSP problem.
+    if(!warnedEmptyPlaylist && (body === "#EXTM3U\n")) {
+
+      warnedEmptyPlaylist = true;
+      nvr.log.info("The M3U playlist has no cameras available to publish. " +
+        "The playlist carries cameras that have at least one RTSP-enabled channel and do not stream AV1.");
+    }
+
     // Set the right MIME type for M3U playlists.
     response.writeHead(200, { "Content-Type": "application/x-mpegURL" });
-    response.write(buildPlaylist(nvr.client.cameras.map(projection => projection.config), nvr.ufp.host, nvr.ufp.ports.rtsp));
+    response.write(body);
     response.end();
   });
 

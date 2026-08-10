@@ -7,14 +7,14 @@
  * in the tree to compare against. A checked-in selector grid separately pins the per-request mapping under both biases and the pixel-cap pre-filter.
  *
  * The harness is pure - resolution.ts is FFmpeg-free and this-free, so no HAP double, no controller, no device instance is needed. The device wrappers selectChannel /
- * selectSubstrateChannel inject this-state (rtspDefault, substrateDefault, channelProfiles, the cap) and delegate to selectChannelProfile; we reproduce the exact
- * injection here in a local closure that mirrors camera.ts line-for-line, so the selector grid proves the wrapper logic, not just the bare selector.
+ * selectSubstrateChannel inject this-state (rtspDefault, substrateDefault, the published list, the cap) and delegate to selectChannelProfile; we reproduce the exact
+ * injection here in a local closure that mirrors the streaming capability line-for-line, so the selector grid proves the wrapper logic, not just the bare selector.
  *
  * The golden-master fixtures are the single source of expected behavior: when a later change intentionally alters behavior, the diff lands as a reviewed change to a
  * checked-in fixture value and these tests flag exactly the rows that moved.
  */
-import { AI_PRO_CHANNELS, C5_WITNESS_CHANNELS, CAMERA_FIXTURES, FIXTURE_HOST, FIXTURE_RTSPS_PORT, MIXED_RTSP_DISABLED_CHANNELS, PACKAGE_FIXTURES, SANITY_FAIL_CHANNELS,
-  makeChannel } from "../camera.fixtures.ts";
+import { AI_PRO_CHANNELS, C5_WITNESS_CHANNELS, CAMERA_FIXTURES, FIXTURE_HOST, FIXTURE_RTSPS_PORT, G6_PRO_ENTRY_CHANNELS, MIXED_RTSP_DISABLED_CHANNELS, PACKAGE_FIXTURES,
+  SANITY_FAIL_CHANNELS, makeChannel } from "../camera.fixtures.ts";
 import { buildAdvertisedProfiles, buildAdvertisedResolutions, buildChannelProfile, capByPixels, isPrimaryChannel, rtspUrl, selectChannelProfile } from "./resolution.ts";
 import { describe, test } from "node:test";
 import type { ChannelProfile } from "./resolution.ts";
@@ -44,8 +44,9 @@ function outcome(entry: Nullable<ChannelProfile>): SelectOutcome | null {
   return entry ? { id: entry.channel.id, resolution: entry.resolution } : null;
 }
 
-// Build the native RTSP entries the parent build consumes from a channel set, mirroring camera.ts refreshChannelProfiles: filter to RTSP-enabled primary channels, skip
-// the sanity-fail channels, and construct an entry per channel against the fixture host.
+// Build the native RTSP entries the parent build consumes from a channel set, mirroring the camera's derivation behind deriveAdvertisedStreams: filter to primary
+// channels, skip the sanity-fail channels, and construct an entry per channel against the fixture host. RTSP enablement is deliberately not a filter term here, which
+// is what keeps this mirroring the production derivation: it filters on the package complement alone.
 function nativeEntries(channels: ProtectCameraChannelConfig[]): ChannelProfile[] {
 
   const entries: ChannelProfile[] = [];
@@ -104,22 +105,30 @@ describe("resolution golden-master: package list (production == checked-in fixtu
   }
 });
 
-describe("resolution: the RTSP-enabled / sanity-fail channel filtering", () => {
+describe("resolution: the primary-channel / sanity-fail channel filtering", () => {
 
-  // A disabled channel is dropped from the native list before the build runs (isPrimaryChannel gates on isRtspEnabled). The Mixed-RTSP-disabled corpus has its Medium
-  // channel disabled, so no entry ever references channel 1.
-  test("a disabled channel never appears in the advertised list", () => {
+  // An RTSP-disabled channel IS advertised: isPrimaryChannel is the package-complement test alone, because the livestream API serves any channel. The Mixed-RTSP-disabled
+  // corpus has its Medium channel disabled, so channel 1 appears in the advertised list; the RTSP-enabled subset is a per-consumer view the selectors apply instead.
+  test("a disabled channel still appears in the advertised list", () => {
 
     const produced = buildAdvertisedProfiles(nativeEntries(MIXED_RTSP_DISABLED_CHANNELS));
 
-    assert.equal(produced.some((e) => (e.channel.id === 1)), false);
+    assert.equal(produced.some((e) => (e.channel.id === 1)), true);
+    assert.equal(produced.length > 0, true);
+  });
+
+  // The package channel is the one channel the primary build excludes, whatever its RTSP state - it belongs to the package class. The G6 Pro Entry corpus carries one.
+  test("the package channel never appears in the primary advertised list", () => {
+
+    const produced = buildAdvertisedProfiles(nativeEntries(G6_PRO_ENTRY_CHANNELS));
+
+    assert.equal(produced.some((e) => (e.channel.name === "Package Camera")), false);
     assert.equal(produced.length > 0, true);
   });
 
   // The all-sanity-fail case (a 0-width channel and an empty-name channel): the native list is empty, so buildAdvertisedProfiles([]) returns [] without throwing, and
-  // this case is asserted directly since there is no second implementation in the tree to compare against. The device level re-asserts this: camera.ts
-  // refreshChannelProfiles guards `if(!advertised.length) { return false; }` BEFORE constructing the streaming delegate or calling configureController, so an all-fail
-  // camera builds no controller.
+  // this case is asserted directly since there is no second implementation in the tree to compare against. The device level re-asserts this: the camera's derivation
+  // returns null BEFORE constructing the streaming delegate or calling configureController, so an all-fail camera builds no controller.
   test("buildAdvertisedProfiles([]) returns [] (no throw) - the device short-circuit signal", () => {
 
     const empty = nativeEntries(SANITY_FAIL_CHANNELS);
@@ -131,8 +140,8 @@ describe("resolution: the RTSP-enabled / sanity-fail channel filtering", () => {
 
 describe("resolution: selector per-request mapping through the selectChannel wrapper (checked-in grid)", () => {
 
-  // The published list the wrapper reads: the AI Pro's own advertised list, built uncapped and preference-free, as the device publishes it before selectChannel reads
-  // this.channelProfiles. AI Pro is a clean 16:9 4K camera (High 3840x2160 / Medium 1280x720 / Low 640x360), so the per-request mapping is legible.
+  // The published list the wrapper reads: the AI Pro's own advertised list, built uncapped and preference-free, as the streaming capability publishes it before
+  // selectChannel selects over it. AI Pro is a clean 16:9 4K camera (High 3840x2160 / Medium 1280x720 / Low 640x360), so the per-request mapping is legible.
   const published = buildAdvertisedProfiles(nativeEntries(AI_PRO_CHANNELS));
 
   // The 1080p pixel cap. Note capByPixels filters on the CHANNEL's native pixels, not the entry's advertised resolution, so a 2560x1440-labeled entry backed by the
