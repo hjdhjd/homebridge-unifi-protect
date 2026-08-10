@@ -361,11 +361,17 @@ export class ProtectTimeshiftSupervisor {
     }
 
     // Acknowledge the HKSV recording configuration once per enable episode, now that the timeshift is actually running - and only for the recording arm, since a
-    // streaming-only start must never emit HKSV narration. The demanded config is bound to a local so the bitrate read narrows cleanly; under the OR the field is no
-    // longer narrowed by shouldRun alone. The flag is reset only on the disable demand edge, so a mid-episode offline blip does not re-acknowledge on its return.
+    // streaming-only start must never emit HKSV narration. The demanded config is bound to a local so the bitrate read narrows cleanly, the OR that admits the
+    // streaming arm leaving shouldRun unable to narrow the field on its own.
+    //
+    // The gate consults the LIVE recording demand at this commit point, exactly as the resolution block above it does. A start can be suspended across its await while
+    // HomeKit disables recording underneath it, and the pass-start locals still describe the demand as it stood when the pass began; announcing against them would
+    // acknowledge a recording that is already over, and would latch the flag so the next genuine enable stayed silent. The config itself stays derived from those
+    // locals on purpose - the configuration the buffer actually started with is the one a still-live demand is acknowledged at. The flag is otherwise cleared only on
+    // the disable demand edge, so a mid-episode offline blip does not re-acknowledge on its return.
     const acknowledgeConfig = recordingDemand ? recordingConfig : undefined;
 
-    if(acknowledgeConfig && !this.hasAcknowledgedRecording) {
+    if(acknowledgeConfig && this.demand.isRecording && !this.hasAcknowledgedRecording) {
 
       this.hasAcknowledgedRecording = true;
       this.log.info("HKSV: %s%s [%s], %s.",
@@ -373,10 +379,11 @@ export class ProtectTimeshiftSupervisor {
         desiredRtspEntry.name, this.protectCamera.videoCodecName, formatBps(acknowledgeConfig.videoCodec.parameters.bitRate * 1000));
     }
 
-    // Return value contract for the recording arm's callers (updateRecordingActive reads it as an early-return gate): on the running path a live recording request
-    // returns true, while a request with no recording demand (a streaming-only run, or the {isRecording true, config undefined} cell) returns !this.demand.isRecording,
-    // matching the stopped path's return for that same cell so a caller reads one consistent result whichever path ran.
-    return recordingDemand ? true : !this.demand.isRecording;
+    // Return value contract for the recording arm's callers (updateRecordingActive reads it as an early-return gate), derived live-first to match the gate above it.
+    // The caller asks how this pass answers against the demand as it stands at the commit point: a demand that has gone away by now is owed nothing and answers true,
+    // which is exactly what the stopped path answers for that same cell, while a demand still live answers whether this pass actually served it (a streaming-only run,
+    // and the {isRecording true, config undefined} cell, both answer false). One consistent result whichever path ran.
+    return this.demand.isRecording ? recordingDemand : true;
   }
 
   // Shut buffer supervision down for good - the terminal teardown the controller-disconnect and camera-removal paths call. Arms the latch so no subsequent or

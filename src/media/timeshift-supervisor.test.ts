@@ -743,6 +743,79 @@ describe("timeshift supervisor enable-acknowledgment lifecycle", () => {
 
     assert.equal(countLogs(logEntries, "info", "HKSV:"), 2, "the re-enable re-acknowledged the configuration, so the ack fired on each enable");
   });
+
+  /* The disable race. A start can be suspended across its await while HomeKit turns recording off underneath it, and the pass that resumes still holds the demand it
+   * began with. This arranges exactly that window: the establishment is gated open, the disable lands synchronously while the pass is pinned, and the establishment is
+   * then released so the start genuinely SUCCEEDS - the pass runs all the way through its narration blocks with a buffer that is really up.
+   *
+   * The arrangement is shared by both arms below because the window is the same one; each asserts a different thing about what the pass does at the finish line.
+   */
+  async function arrangeDisableRace(): Promise<{ logEntries: TestLogEntry[]; passResult: boolean; supervisor: ProtectTimeshiftSupervisor }> {
+
+    const { controller, host, logEntries } = makeTestCameraHost();
+
+    controllers.push(controller);
+
+    host.stream = new TestStreamingDelegate();
+    host.selectSubstrateChannel = (): ChannelProfile => makeChannelProfile(host);
+
+    // Fill any LATER start (the follow-up enable below) through the default segment-yielding double, so a re-established buffer commits on its own.
+    host.livestreamMediaSegments = Math.ceil(PROTECT_TIMESHIFT_BUFFER_MAXDURATION / PROTECT_SEGMENT_RESOLUTION) + 10;
+
+    // The first start takes a double whose establishment stays open, which is what pins the pass mid-start.
+    const double = makeControllableLivestreamDouble({ deferEstablishment: true });
+
+    host.livestreamSubscriptions.push(double);
+
+    const supervisor = new ProtectTimeshiftSupervisor(host);
+
+    // Enable recording and let the pass reach the held start without awaiting it.
+    const suspendedPass = supervisor.setRecordingDemand({ config: makeRecordingConfig(), isRecording: true });
+
+    await settle();
+
+    assert.equal(supervisor.buffer.isStarted, false, "the start is held in flight, so the pass is suspended before its narration");
+    assert.equal(countLogs(logEntries, "info", "HKSV:"), 0, "nothing has been acknowledged yet - the buffer is not up");
+
+    // HomeKit disables recording while that pass is pinned. The demand write is synchronous, so it lands before the pass can resume.
+    void supervisor.setRecordingDemand({ config: makeRecordingConfig(), isRecording: false });
+
+    // Release the establishment. The start now COMMITS - no shutdown latch, no decline - so the resumed pass reaches the commit point with a running buffer and a
+    // recording demand that has already gone away.
+    double.releaseEstablishment();
+
+    const passResult = await suspendedPass;
+
+    await settle();
+
+    return { logEntries, passResult, supervisor };
+  }
+
+  // A recording disabled while its start was in flight must be honored at the finish line, not acknowledged over. The zero-count is the direct assertion; the follow-up
+  // enable is what proves the flag was also left unset, which the log alone cannot show - an enable acknowledges only if the raced pass never latched, so a count of one
+  // here reads true exactly when the disable was honored in both respects.
+  test("a recording disabled while its start was suspended is never acknowledged, and leaves the next enable free to acknowledge", async () => {
+
+    const { logEntries, supervisor } = await arrangeDisableRace();
+
+    assert.equal(countLogs(logEntries, "info", "HKSV:"), 0, "the pass acknowledged nothing for a recording that had already been disabled");
+
+    // A genuine enable afterwards. It re-establishes through the segment-yielding double and reaches the same commit point, this time with a live demand.
+    await supervisor.setRecordingDemand({ config: makeRecordingConfig(), isRecording: true });
+    await settle();
+
+    assert.equal(countLogs(logEntries, "info", "HKSV:"), 1, "the next genuine enable acknowledged exactly once, so the raced pass had left nothing latched");
+  });
+
+  // The same window, read through the pass's return value - the answer updateRecordingActive gates on. A demand that has gone away by the commit point is owed nothing,
+  // so the pass reports true for this cell, matching what the stopped path answers for it. This pins the CELL's contract value; it cannot tell the live-first expression
+  // from the pass-start-first one it replaces, because those two agree in every cell (that equivalence is a reading of the expressions, not something a test can show).
+  test("a pass whose recording demand vanished mid-start answers true for that cell", async () => {
+
+    const { passResult } = await arrangeDisableRace();
+
+    assert.equal(passResult, true, "a pass with no live recording demand left to serve owes the caller nothing and answers true");
+  });
 });
 
 describe("timeshift supervisor demand-edge episode resets", () => {
