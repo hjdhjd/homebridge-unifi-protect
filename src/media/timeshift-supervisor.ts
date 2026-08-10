@@ -22,6 +22,12 @@ export interface RecordingDemand {
   isRecording: boolean;
 }
 
+// The camera's current recording-deferral episode: "none" when no resolution narration is owed, and otherwise the origin captured at the moment the deferral opened.
+// The resolution fires much later - on the pass that finally re-establishes, by which time the controller's phase has typically returned to running - so it cannot read
+// the phase for itself. The single value therefore answers both questions the narration asks: whether a resolution is owed (any origin at all) and which level it
+// narrates at (which origin).
+type DeferralEpisode = "induced" | "none" | "organic";
+
 /* UniFi Protect timeshift buffer supervisor.
  *
  * The supervisor owns the standing timeshift buffer's lifecycle: it constructs and holds the buffer, reconciles the buffer's running state against its demand arms -
@@ -36,13 +42,11 @@ export class ProtectTimeshiftSupervisor {
   public readonly buffer: ProtectTimeshiftBuffer;
   private configurePromise?: Promise<boolean>;
   private configureRequested: boolean;
-  // Whether an opened deferral episode still owes its resolution narration. Set when the deferral opens and cleared only when the resolution actually fires (recording
-  // has re-established) or the episode is explicitly ended (recording disabled) - never re-derived from live inputs. This is the persistent half of what was one
-  // conflated flag: without it, a failed first post-online start would clear the edge-detect input and the later successful start would never announce the resumption.
-  // The deferral state family (this, wasDeferredOffline, wasDeferredWhileInduced) would read more cleanly as one discriminated-union episode value; that upgrade
-  // belongs to the architecture arc, deliberately kept as sibling plain booleans here. Protected (not private) only so a negative-control test can read it directly:
-  // the demand-disable reset's effect is not observable through a log, whose absence is coincidentally green whether or not the reset ran.
-  protected deferralResolutionPending: boolean;
+  // The deferral episode in flight. Opened when the deferral edge fires and closed only when the resolution actually narrates (recording has re-established) or the
+  // episode is explicitly ended (recording disabled) - it PERSISTS in between, never re-derived from live inputs, so a failed first post-online start cannot cost the
+  // later successful start its resumption narration. That persistence is why the edge-detect input below (wasDeferredOffline) stays a separate per-pass rolling
+  // comparison: a pass that clears the input because the camera came back must never be able to drop a resolution the episode still owes.
+  private deferralEpisode: DeferralEpisode;
   // The pushed recording demand - the supervisor's input register, not a second source of truth. The recording delegate's _isRecording and recordingConfig fields
   // remain the single sources of truth for HAP intent; every mutation there pushes a fresh demand here through setRecordingDemand, so this register always mirrors
   // the delegate's state and the reconciler reads its inputs without reaching back into the delegate.
@@ -59,20 +63,15 @@ export class ProtectTimeshiftSupervisor {
   private readonly protectCamera: ProtectCameraHost;
   // The camera's deferred-offline state observed on the previous pass - the edge-detect input alone. isDeferredOffline (recording requested while the camera is
   // unreachable) is compared against this to detect the deferral-OPEN edge, and it is re-derived from live inputs every pass. Whether an opened deferral still owes its
-  // resolution narration is the separate, persistent concern tracked by deferralResolutionPending above, so a pass that clears this (the camera came back) cannot also
-  // drop a pending resolution.
+  // resolution narration is the separate, persistent concern the deferral episode above carries, for the reason stated there.
   private wasDeferredOffline: boolean;
-  // The captured induced-origin of the current deferral episode. The deferral edge fires while the camera is offline (during an induced reboot the phase reads
-  // "rebooting"), but the resolution - logged later at the successful-start path, after the phase has already returned to "running" - can no longer read the phase
-  // reliably, so it consults what the deferral edge recorded here. Reset on the resolution (the episode closed) and on the disable demand edge (the episode ended).
-  private wasDeferredWhileInduced: boolean;
 
   // Create an instance of the timeshift buffer supervisor.
   constructor(protectCamera: ProtectCameraHost) {
 
     this.buffer = new ProtectTimeshiftBuffer(protectCamera, { isStartStale: (): boolean => this.isShutdown });
     this.configureRequested = false;
-    this.deferralResolutionPending = false;
+    this.deferralEpisode = "none";
     this.demand = { config: undefined, isRecording: false };
     this.hasAcknowledgedRecording = false;
     this.hasReportedSelectionFailure = false;
@@ -80,7 +79,6 @@ export class ProtectTimeshiftSupervisor {
     this.log = protectCamera.log;
     this.protectCamera = protectCamera;
     this.wasDeferredOffline = false;
-    this.wasDeferredWhileInduced = false;
 
     // Re-establish the buffer immediately when it stops for a recoverable reason (a codec-change restart or an unexpected out-of-band death) - the availability edge
     // that a deliberate teardown rides is not guaranteed to fire for these. A "giveUp" is left alone: the recovery policy's exhaustion is resolved by the availability
@@ -92,6 +90,14 @@ export class ProtectTimeshiftSupervisor {
         void this.reconcile();
       }
     });
+  }
+
+  // Whether the deferral episode in flight still owes its resolution narration. Every read of the episode's "is anything owed" question routes through here, so the
+  // comparison against the empty episode lives at exactly one site. Protected rather than private so a negative-control test can read it directly: the demand-disable
+  // reset's effect is not observable through a log, whose absence is coincidentally green whether or not the reset ran.
+  protected get deferralResolutionOwed(): boolean {
+
+    return this.deferralEpisode !== "none";
   }
 
   // Push an updated recording demand and reconcile against it. The demand write and the per-episode resets are synchronous, so they land at the demand edge itself
@@ -106,11 +112,9 @@ export class ProtectTimeshiftSupervisor {
       // successful-start path, restoring the per-enable symmetry with the delegate's disable log.
       this.hasAcknowledgedRecording = false;
 
-      // Disabling also ends any in-flight deferral episode, so drop both its captured origin and its pending-resolution narration. Otherwise a later re-enable could
-      // inherit a stale level and announce a resolution the disabled episode no longer owes. These stay symmetric with hasAcknowledgedRecording, reset here for the same
-      // reason.
-      this.deferralResolutionPending = false;
-      this.wasDeferredWhileInduced = false;
+      // Disabling also ends any deferral episode in flight, so drop the episode with the origin it captured. Otherwise a later re-enable could inherit a stale level and
+      // announce a resolution the disabled episode no longer owes. This stays symmetric with hasAcknowledgedRecording, reset here for the same reason.
+      this.deferralEpisode = "none";
     }
 
     // A pushed demand change is a genuine state change, so re-arm the selection-failure report: if the buffer still cannot find a valid profile after the change, the
@@ -238,14 +242,13 @@ export class ProtectTimeshiftSupervisor {
 
     if(isDeferredOffline && !this.wasDeferredOffline) {
 
-      // The camera went offline while HomeKit asked us to record. Open the deferral episode: mark that its resolution narration is owed - a field that PERSISTS across a
-      // failed post-online start, so the resolution still fires on the pass that finally re-establishes - and capture whether this is a disruption we induced (our own
-      // reboot/shutdown) so the resolution gates the same way. An induced disruption is expected (the controller-level narration already covers it) and logs at debug; an
-      // organic single-camera offline is a genuine "we wanted to record but cannot" signal and stays at warn.
-      this.deferralResolutionPending = true;
-      this.wasDeferredWhileInduced = isInducedDisruption(this.protectCamera.nvr.phase);
+      // The camera went offline while HomeKit asked us to record. Open the deferral episode: one write records both that its resolution narration is owed and whether
+      // this is a disruption we induced (our own reboot/shutdown), so the resolution gates the same way the deferral did. An induced disruption is expected (the
+      // controller-level narration already covers it) and logs at debug; an organic single-camera offline is a genuine "we wanted to record but cannot" signal and stays
+      // at warn.
+      this.deferralEpisode = isInducedDisruption(this.protectCamera.nvr.phase) ? "induced" : "organic";
 
-      if(this.wasDeferredWhileInduced) {
+      if(this.deferralEpisode === "induced") {
 
         this.log.debug("HomeKit Secure Video event recording is deferred until the camera is online.");
       } else {
@@ -254,8 +257,8 @@ export class ProtectTimeshiftSupervisor {
       }
     }
 
-    // Update the edge-detect input from live state. This is role 1 only: whether an opened deferral still owes its resolution lives in the persistent
-    // deferralResolutionPending, so clearing this here (the camera came back) never drops a pending narration.
+    // Update the edge-detect input from live state. This is role 1 only: whether an opened deferral still owes its resolution lives in the persistent episode value, so
+    // clearing this here (the camera came back) never drops a pending narration.
     this.wasDeferredOffline = isDeferredOffline;
 
     if(!shouldRun) {
@@ -341,12 +344,12 @@ export class ProtectTimeshiftSupervisor {
     // The buffer is now running on the desired channel, whether it was already up or freshly started. Both the resumption close and the acknowledgment run here so the
     // standing-buffer common case (an enabling recording arm finding the buffer already running) narrates identically to a fresh start.
     //
-    // A recording that had been deferred-offline has now actually re-established. Close the story the deferral opened, at the level its origin warranted. This consults
-    // the PERSISTENT deferralResolutionPending, not the per-pass edge-detect input, so a first post-online start that failed does not lose the resolution - it fires on
-    // this pass, the one that finally re-established. deferralResolutionPending is only ever set under a recording request, so this is inherently HKSV narration.
-    if(this.deferralResolutionPending) {
+    // A recording that had been deferred-offline has now actually re-established. Close the story the deferral opened, at the level its captured origin warrants. This
+    // consults the PERSISTENT episode value, not the per-pass edge-detect input, so a first post-online start that failed does not lose the resolution - it fires on this
+    // pass, the one that finally re-established. An episode is only ever opened under a recording request, so this is inherently HKSV narration.
+    if(this.deferralResolutionOwed) {
 
-      if(this.wasDeferredWhileInduced) {
+      if(this.deferralEpisode === "induced") {
 
         this.log.debug("HomeKit Secure Video event recording has started now that the camera is online.");
       } else {
@@ -354,8 +357,7 @@ export class ProtectTimeshiftSupervisor {
         this.log.warn("HomeKit Secure Video event recording has started now that the camera is online.");
       }
 
-      this.deferralResolutionPending = false;
-      this.wasDeferredWhileInduced = false;
+      this.deferralEpisode = "none";
     }
 
     // Acknowledge the HKSV recording configuration once per enable episode, now that the timeshift is actually running - and only for the recording arm, since a

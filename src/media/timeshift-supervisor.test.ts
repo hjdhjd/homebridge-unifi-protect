@@ -131,6 +131,17 @@ async function arrangeEnabledDelegate(): Promise<SupervisorArrange> {
 
 describe("timeshift supervisor deferred-offline and resolution logging", () => {
 
+  // The shared inspection subclass the demand-disable arms read the episode through: it surfaces the supervisor's protected "a resolution is owed" projection, which is
+  // the only observable that tells a ran-reset from a skipped one. The absence of a resolution line is coincidentally green either way, because the disable's own
+  // reconcile pass clears the edge-detect input regardless.
+  class InspectableSupervisor extends ProtectTimeshiftSupervisor {
+
+    public get pendingResolution(): boolean {
+
+      return this.deferralResolutionOwed;
+    }
+  }
+
   // Deferred while ORGANIC. A camera goes offline (isReachable false) at the running phase while HomeKit asks us to record: the reconcile head logs the deferral at
   // WARN - a genuine "we wanted to record but cannot" signal for a single camera unexpectedly in trouble. We assert BOTH the present level (warn === 1) AND the absent
   // level (debug === 0) so a level flip fails the test.
@@ -187,8 +198,8 @@ describe("timeshift supervisor deferred-offline and resolution logging", () => {
 
   // Resolution while INDUCED - the latch-not-phase proof. A recording deferred while the controller was rebooting (captured origin: induced), then the camera returns
   // AFTER the controller is back, so the phase is "running" again at the resolution reconcile. The resumption must announce at DEBUG, driven by the captured
-  // wasDeferredWhileInduced latch, NOT by a fresh phase read - a current-phase read at this point would see "running" and wrongly announce at warn, failing this test.
-  // This is the decisive case the captured-boolean design exists for.
+  // origin the episode captured, NOT by a fresh phase read - a current-phase read at this point would see "running" and wrongly announce at warn, failing this test.
+  // This is the decisive case capturing the origin at the open edge exists for.
   test("announces the resumption at debug from the captured induced origin even though the phase is running at resolution", async () => {
 
     const { delegate, host, logEntries, nvr } = arrangeDeferralDelegate();
@@ -241,8 +252,8 @@ describe("timeshift supervisor deferred-offline and resolution logging", () => {
 
   // #24: the deferred-offline resumption must survive a FAILED first post-online start and still fire on the pass that actually re-establishes. A recording is deferred
   // offline, the camera comes back but the first start fails (segment-less double), then the buffer re-fills and the second start succeeds. The resumption narration is
-  // owed by the persistent deferralResolutionPending, not the per-pass edge-detect input, so the earlier failure does not lose it. Pre-fix, the single conflated flag was
-  // cleared by the failing pass and the resumption was permanently lost.
+  // owed by the persistent episode value, not the per-pass edge-detect input, so the earlier failure does not lose it. The regression this test exists to pin: a single
+  // flag conflating both roles was cleared by the failing pass, and the resumption was permanently lost.
   test("the deferred-offline resumption survives a failed first post-online start and fires on the real restart", async () => {
 
     const { delegate, host, logEntries } = arrangeDeferralDelegate();
@@ -271,18 +282,131 @@ describe("timeshift supervisor deferred-offline and resolution logging", () => {
     assert.equal(countLogs(logEntries, "warn", "has started now that the camera is online"), 1, "the resumption fires on the real restart after the earlier failure");
   });
 
+  // Classification stability across a CONTINUOUS offline. The origin is captured once, at the open edge, and a phase change while the camera stays offline never
+  // re-opens the episode: no second deferral line, and - the arm that actually tells the two apart - the eventual resolution still announces at the ORIGINAL level. A
+  // mid-episode reclassification would leave the episode reading induced and quietly move the resolution to debug, even if it never logged a line of its own.
+  test("a phase change during a continuous offline neither re-logs the deferral nor moves the resolution's level", async () => {
+
+    const { delegate, host, logEntries, nvr } = arrangeDeferralDelegate();
+
+    // Open the episode organically: offline at the running phase.
+    delegate.updateRecordingActive(true);
+    await settle();
+
+    assert.equal(countLogs(logEntries, "warn", "deferred until the camera is online"), 1, "the organic deferral opened at warn");
+
+    // The controller starts an induced reboot while the camera is STILL offline. The camera never came back, so no open edge fires and the episode keeps its origin.
+    nvr.phase = "rebooting";
+
+    await delegate.configureTimeshifting();
+    await settle();
+
+    assert.equal(countLogs(logEntries, "warn", "deferred until the camera is online"), 1, "the continuous offline did not re-log the deferral at warn");
+    assert.equal(countLogs(logEntries, "debug", "deferred until the camera is online"), 0, "the continuous offline did not re-log the deferral at debug");
+
+    // The controller finishes rebooting and the camera returns, so the buffer starts and the resolution narrates against the origin captured at the open edge.
+    nvr.phase = "running";
+    host.isReachable = true;
+
+    await delegate.configureTimeshifting();
+    await settle();
+
+    assert.equal(countLogs(logEntries, "warn", "has started now that the camera is online"), 1, "the resolution kept the origin the episode opened with");
+    assert.equal(countLogs(logEntries, "debug", "has started now that the camera is online"), 0, "no mid-episode reclassification moved the resolution to debug");
+  });
+
+  // A flicker RE-OPENS the episode, and the last classification wins. The camera comes back but the start fails, clearing the edge-detect input without resolving
+  // anything; the camera then drops again under an induced reboot, so the open edge fires afresh, logs a second deferral line at the new level, and overwrites the
+  // captured origin. The resolution that finally lands narrates at that last-captured level, exactly once - and a further kick after it narrates nothing at all.
+  test("a flicker re-opens the deferral at the new classification and resolves once at the last captured origin", async () => {
+
+    const { delegate, host, logEntries, nvr } = arrangeDeferralDelegate();
+
+    // Open the episode organically: offline at the running phase.
+    delegate.updateRecordingActive(true);
+    await settle();
+
+    assert.equal(countLogs(logEntries, "warn", "deferred until the camera is online"), 1, "the organic deferral opened at warn");
+
+    // The camera returns, but a starved buffer fails the start: nothing resolves, and the edge-detect input clears.
+    host.isReachable = true;
+    host.livestreamMediaSegments = 0;
+
+    await delegate.configureTimeshifting();
+    await settle();
+
+    // The camera drops again, this time under a reboot we induced. The open edge fires afresh and reclassifies the episode.
+    host.isReachable = false;
+    nvr.phase = "rebooting";
+
+    await delegate.configureTimeshifting();
+    await settle();
+
+    assert.equal(countLogs(logEntries, "debug", "deferred until the camera is online"), 1, "the re-open logged its own deferral line at the new level");
+    assert.equal(countLogs(logEntries, "warn", "deferred until the camera is online"), 1, "the re-open did not repeat the original level's line");
+
+    // The reboot completes and the camera returns to a fillable buffer, so the start succeeds and the resolution narrates.
+    nvr.phase = "running";
+    host.isReachable = true;
+    host.livestreamMediaSegments = Math.ceil(PROTECT_TIMESHIFT_BUFFER_MAXDURATION / PROTECT_SEGMENT_RESOLUTION) + 10;
+
+    await delegate.configureTimeshifting();
+    await settle();
+
+    assert.equal(countLogs(logEntries, "debug", "has started now that the camera is online"), 1, "the resolution narrated once at the last captured origin");
+    assert.equal(countLogs(logEntries, "warn", "has started now that the camera is online"), 0, "the overwritten origin did not also narrate");
+
+    // A further kick against the running buffer must narrate nothing: the resolution closed the episode.
+    await delegate.configureTimeshifting();
+    await settle();
+
+    assert.equal(countLogs(logEntries, "debug", "has started now that the camera is online"), 1, "a kick after the resolution did not narrate a second time at debug");
+    assert.equal(countLogs(logEntries, "warn", "has started now that the camera is online"), 0, "a kick after the resolution did not narrate at warn either");
+  });
+
+  // The re-log is per RE-OPEN, not per level change: a flicker whose classification is unchanged still logs a second deferral line, because the open edge is what
+  // narrates. The single resolution that follows announces once at that same level.
+  test("a flicker at an unchanged classification still re-logs the deferral and resolves once", async () => {
+
+    const { delegate, host, logEntries } = arrangeDeferralDelegate();
+
+    // Open the episode organically: offline at the running phase.
+    delegate.updateRecordingActive(true);
+    await settle();
+
+    assert.equal(countLogs(logEntries, "warn", "deferred until the camera is online"), 1, "the organic deferral opened at warn");
+
+    // The camera returns, but a starved buffer fails the start: nothing resolves, and the edge-detect input clears.
+    host.isReachable = true;
+    host.livestreamMediaSegments = 0;
+
+    await delegate.configureTimeshifting();
+    await settle();
+
+    // The camera drops again with the phase unchanged, so the re-open classifies identically to the first.
+    host.isReachable = false;
+
+    await delegate.configureTimeshifting();
+    await settle();
+
+    assert.equal(countLogs(logEntries, "warn", "deferred until the camera is online"), 2, "the re-open logged a second deferral line at the same level");
+    assert.equal(countLogs(logEntries, "debug", "deferred until the camera is online"), 0, "the unchanged classification never dropped a line to debug");
+
+    // The camera returns to a fillable buffer, so the start succeeds and the single resolution narrates.
+    host.isReachable = true;
+    host.livestreamMediaSegments = Math.ceil(PROTECT_TIMESHIFT_BUFFER_MAXDURATION / PROTECT_SEGMENT_RESOLUTION) + 10;
+
+    await delegate.configureTimeshifting();
+    await settle();
+
+    assert.equal(countLogs(logEntries, "warn", "has started now that the camera is online"), 1, "the two deferral lines resolved with a single resumption");
+    assert.equal(countLogs(logEntries, "debug", "has started now that the camera is online"), 0, "the resumption did not also narrate at debug");
+  });
+
   // Negative control for the demand-disable reset, asserted on the FIELD. A recording is deferred offline (a resolution becomes owed), then disabled. The disable edge
   // must drop the pending-resolution narration so a later start cannot resurrect the disabled episode's resolution. We read the field directly through a test subclass:
   // the log-absence is coincidentally green whether or not the reset ran, because the disable's own reconcile pass clears the edge-detect input regardless.
   test("a demand-disable during a deferral clears the pending-resolution narration field", async () => {
-
-    class InspectableSupervisor extends ProtectTimeshiftSupervisor {
-
-      public get pendingResolution(): boolean {
-
-        return this.deferralResolutionPending;
-      }
-    }
 
     const { controller, host } = makeTestCameraHost();
 
@@ -300,11 +424,80 @@ describe("timeshift supervisor deferred-offline and resolution logging", () => {
 
     assert.equal(supervisor.pendingResolution, true, "the deferral opened, so a resolution narration is owed");
 
+    // The divergence moment, and what makes the reads above and below genuinely distinguishing: the camera comes back but the starved buffer fails the start, so the
+    // edge-detect input clears while the episode still owes its resolution. A projection reading the edge input instead of the episode answers false right here.
+    host.isReachable = true;
+    host.livestreamMediaSegments = 0;
+
+    await supervisor.reconcile();
+    await settle();
+
+    assert.equal(supervisor.pendingResolution, true, "the episode still owes its resolution even though the edge-detect input has cleared");
+
+    // Restore the offline state the disable is asserted against. This flip deliberately drives no reconcile: the disable below writes the demand before its own pass
+    // runs, so no pass ever observes an offline camera with recording still enabled, and no second deferral line can fire from it.
+    host.isReachable = false;
+
     // Disable recording during the deferral. The disable edge must clear the pending-resolution field so the disabled episode owes nothing.
     await supervisor.setRecordingDemand({ config: makeRecordingConfig(), isRecording: false });
     await settle();
 
     assert.equal(supervisor.pendingResolution, false, "the demand-disable cleared the pending-resolution narration field");
+  });
+
+  // The reset lives at the demand EDGE, not inside a reconcile pass, and the suspension window is where those two placements part company. A pass is pinned mid-start
+  // on a gated establishment while the episode is owed; the disable then lands synchronously, so at the assert below the suspended pass predates the disable and the
+  // coalesced follow-up has not begun - a reset relocated into the pass could not yet have run, and the projection would still read owed. The held start is then
+  // released against an armed shutdown latch, so it declines at its commit point and the suspended pass resumes into the guard rather than narrating from state the
+  // disable has already retired.
+  test("a demand-disable clears the pending resolution while a start is still suspended mid-pass", async () => {
+
+    const { controller, host, logEntries } = makeTestCameraHost();
+
+    controllers.push(controller);
+
+    host.stream = new TestStreamingDelegate();
+    host.selectSubstrateChannel = (): ChannelProfile => makeChannelProfile(host);
+    host.isReachable = false;
+
+    const supervisor = new InspectableSupervisor(host);
+
+    // Open the deferral: recording demanded while the camera is offline.
+    await supervisor.setRecordingDemand({ config: makeRecordingConfig(), isRecording: true });
+    await settle();
+
+    assert.equal(supervisor.pendingResolution, true, "the deferral opened, so a resolution narration is owed");
+
+    // Queue a double whose establishment stays open, bring the camera back, and kick a pass without awaiting it: the pass parks at the buffer's start with the episode
+    // still owed.
+    const double = makeControllableLivestreamDouble({ deferEstablishment: true });
+
+    host.livestreamSubscriptions.push(double);
+    host.isReachable = true;
+
+    const suspendedPass = supervisor.reconcile();
+
+    await settle();
+
+    assert.equal(supervisor.buffer.isStarted, false, "the start is held in flight, so the pass is suspended with the episode still owed");
+
+    // Disable recording while that pass is suspended. The demand write and its episode reset are synchronous, so they land before any pass can process them.
+    void supervisor.setRecordingDemand({ config: makeRecordingConfig(), isRecording: false });
+
+    assert.equal(supervisor.pendingResolution, false, "the demand edge cleared the episode while the in-flight pass was still suspended");
+
+    // End through the decline path: the shutdown latch arms before the establishment releases, so the resumed start declines at its commit point and the suspended
+    // pass never reaches the narration blocks with the configuration the disable retired.
+    supervisor.shutdown();
+    double.releaseEstablishment();
+
+    await suspendedPass;
+    await settle();
+
+    assert.equal(supervisor.pendingResolution, false, "the episode stayed closed once the suspended pass resumed");
+    assert.equal(countLogs(logEntries, "warn", "has started now that the camera is online"), 0, "the retired episode narrated no resolution at warn");
+    assert.equal(countLogs(logEntries, "debug", "has started now that the camera is online"), 0, "the retired episode narrated no resolution at debug");
+    assert.equal(countLogs(logEntries, "info", "HKSV:"), 0, "the declined start acknowledged no recording configuration");
   });
 });
 
