@@ -1,8 +1,9 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * nvr.test.ts: Unit tests for the controller root's pure decision logic - the startup-resilient connect retry policy, the HomeKit-membership set diff, the
- * request-outcome classifier, the removal-stability arithmetic, the livestream-disruption gating (induced/recency/episode-latch), the induced-reboot resume decision,
- * and the scheduled-reboot arithmetic with the recording-count rule behind its deferral - plus the NvrHealth connection-input mapping those drive.
+ * request-outcome classifier, the removal-stability arithmetic, the disruption-expectation gating (the classification, its induced and recency halves, and the
+ * episode-latch), the induced-reboot resume decision, and the scheduled-reboot arithmetic with the recording-count rule behind its deferral - plus the NvrHealth
+ * connection-input mapping those drive.
  *
  * ProtectNvr itself is a composition root: its constructor stands up the event handler and the controller logging, and it transitively imports the entire device and
  * media graph, so it is neither unit-constructable nor cheaply loadable. The response is to keep the *decisions* it makes in a pure leaf module (nvr-policy.ts) and pin
@@ -11,8 +12,8 @@
  * behavior it feeds is unchanged.
  */
 import { canTransition, classifyRebootAttempt, computeInitialRebootDelay, computeStableSince, countActiveRecordingViews, createConnectRetryPolicy,
-  createLivestreamEpisodeLatch, isInducedDisruption, isRequestForController, isStabilityWindowElapsed, isSuccessfulRequest, isWithinRebootRecency, membershipDelta,
-  shouldResumeFromInducedReboot } from "./nvr-policy.ts";
+  createLivestreamEpisodeLatch, isDisruptionExpected, isInducedDisruption, isRequestForController, isStabilityWindowElapsed, isSuccessfulRequest,
+  isWithinRebootRecency, membershipDelta, shouldResumeFromInducedReboot } from "./nvr-policy.ts";
 import { describe, test } from "node:test";
 import { NvrHealth } from "./nvr-health.ts";
 import type { NvrPhase } from "./nvr.ts";
@@ -316,6 +317,27 @@ describe("livestream disruption gating", () => {
 
     // No reboot observed this process. The small nowMs keeps the null guard load-bearing - dropping it would compute 0 - null < window and wrongly read as within-window.
     assert.equal(isWithinRebootRecency({ lastRebootMs: null, nowMs: 0, windowMs }), false);
+  });
+
+  // The composed classification every disruption-facing narration consults. The cells cover each way an answer can arise: the induced half standing alone (no reboot has
+  // ever been observed, so only the phase can answer yes), the settling-tail half standing alone (a controller already back to running), and the two ways the answer is
+  // no - the window elapsed, and no reboot observed at all. A mutant dropping either half fails a cell.
+  test("isDisruptionExpected is true for an induced phase or an observed reboot's settling tail", () => {
+
+    const windowMs = 60000;
+    const lastRebootMs = 1000;
+
+    // The induced half alone: no reboot observed this process, so the phase is the only thing that can classify this as expected.
+    assert.equal(isDisruptionExpected({ lastRebootMs: null, nowMs: 0, phase: "rebooting", windowMs }), true);
+
+    // The settling-tail half alone: the plugin has concluded the reboot and returned to running, and the blip lands inside the observed reboot's window.
+    assert.equal(isDisruptionExpected({ lastRebootMs, nowMs: lastRebootMs + 1, phase: "running", windowMs }), true);
+
+    // A running controller with the window elapsed - a genuine single-camera drop, and the reason the tail half is a window rather than a permanent quieting.
+    assert.equal(isDisruptionExpected({ lastRebootMs, nowMs: lastRebootMs + windowMs, phase: "running", windowMs }), false);
+
+    // A running controller with no reboot observed this process: nothing makes this disruption expected.
+    assert.equal(isDisruptionExpected({ lastRebootMs: null, nowMs: 0, phase: "running", windowMs }), false);
   });
 
   // The core latch protocol: the recovery edge reads the quiet/loud classification the interruption edge recorded, and the read drains the slot so a re-used key cannot

@@ -65,9 +65,8 @@ export function canTransition(options: { from: NvrPhase; to: NvrPhase }): boolea
 /**
  * Whether a livestream disruption is INDUCED - the controller is rebooting or shutting down because we asked it to - rather than ORGANIC. An induced disruption is
  * expected and already narrated at the controller level; an organic one is a single camera unexpectedly in trouble. It deliberately excludes "connecting", which is an
- * organic startup/reconnection window where a disruption should still surface to the user. The recovery policy's induced-disruption guard consults this directly. The
- * per-camera disruption logs consult a SUPERSET - induced OR {@link isWithinRebootRecency} - because a controller reboot's post-return re-establishment blip fires
- * after the plugin has already concluded the reboot and left the induced phase, so the phase alone no longer recognizes that blip as the reboot's tail.
+ * organic startup/reconnection window where a disruption should still surface to the user. The recovery policy's induced-disruption guard consults this directly; the
+ * narrations that ask whether a disruption is expected consult {@link isDisruptionExpected}, of which this is the induced half.
  */
 export function isInducedDisruption(phase: NvrPhase): boolean {
 
@@ -83,6 +82,26 @@ export function isWithinRebootRecency(options: { lastRebootMs: Nullable<number>;
   const { lastRebootMs, nowMs, windowMs } = options;
 
   return (lastRebootMs !== null) && ((nowMs - lastRebootMs) < windowMs);
+}
+
+/**
+ * Whether a disruption happening right now is EXPECTED. This is the one classification every disruption-facing narration consults, so the same blip reads the same way
+ * everywhere it is told rather than warning in one story and staying quiet in another. Expected means either half: a disruption the plugin induced
+ * ({@link isInducedDisruption}), or one landing inside the settling tail of a reboot the plugin observed ({@link isWithinRebootRecency}). The tail half covers what the
+ * phase alone cannot - a reboot's post-return re-establishment blip fires after the plugin has already concluded the reboot and resumed running, so the phase reads
+ * organic by then. An expected disruption is already narrated once at the controller level and stays quiet per camera; an unexpected one is a single camera in genuine
+ * trouble, where the noise is the signal.
+ *
+ * @param options - lastRebootMs: the plugin's own-clock timestamp of the last observed reboot, null until one is seen; nowMs: the current instant; phase: the
+ *                  controller's lifecycle phase; windowMs: how long a reboot's settling tail lasts.
+ *
+ * @returns `true` when a disruption right now is one we expect.
+ */
+export function isDisruptionExpected(options: { lastRebootMs: Nullable<number>; nowMs: number; phase: NvrPhase; windowMs: number }): boolean {
+
+  const { lastRebootMs, nowMs, phase, windowMs } = options;
+
+  return isInducedDisruption(phase) || isWithinRebootRecency({ lastRebootMs, nowMs, windowMs });
 }
 
 // Whether the plugin should conclude its induced reboot and return to running, given a connection-state transition and the current phase. True only on a RECOVERY edge

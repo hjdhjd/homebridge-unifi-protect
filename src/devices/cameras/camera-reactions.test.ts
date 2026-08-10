@@ -30,14 +30,16 @@
  */
 import type { Camera, ProtectCameraConfig } from "unifi-protect";
 import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../../testing.helpers.ts";
-import type { TestAccessory, TestStreamingDelegateFactory } from "../../testing.helpers.ts";
+import type { TestAccessory, TestLogEntry, TestStreamingDelegateFactory } from "../../testing.helpers.ts";
 import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
 import { TestRecordingDispatch, makeTestNvr } from "../../nvr/testing.helpers.ts";
-import { afterEach, describe, test } from "node:test";
+import { afterEach, describe, mock, test } from "node:test";
 import { G2_PRO_CHANNELS } from "../../camera.fixtures.ts";
 import type { ObserverWakePayload } from "../../diagnostics.ts";
+import { PROTECT_NVR_REBOOT_RECENCY_MS } from "../../settings.ts";
 import type { ProtectAccessory } from "../../types.ts";
 import { ProtectCamera } from "./camera.ts";
+import { ProtectCameraPackage } from "./camera-package.ts";
 import type { ProtectEventDispatch } from "../../nvr/event-dispatch.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
 import { ProtectReservedNames } from "../../types.ts";
@@ -52,14 +54,17 @@ function cameraPatch(patch: Record<string, unknown>): Partial<ProtectCameraConfi
   return patch as Partial<ProtectCameraConfig>;
 }
 
-// The construction handles a test holds onto, so the afterEach can unwind the per-accessory abort regardless of which build helper produced them.
-interface BuiltCamera {
+// The construction handles a test holds onto, so the afterEach can unwind the per-accessory abort regardless of which build helper produced them. Generic over the
+// constructed camera class so a describe that needs to read an inherited protected projection can build a thin subclass and keep it fully typed; it defaults to the
+// production ProtectCamera, which is what every arm outside the reboot-return watch builds.
+interface BuiltCamera<C extends ProtectCamera = ProtectCamera> {
 
   accessory: TestAccessory;
-  camera: ProtectCamera;
+  camera: C;
   cameraConfig: ProtectCameraConfig;
   controller: AbortController;
   factory: TestStreamingDelegateFactory;
+  logEntries: TestLogEntry[];
   nvr: TestProtectNvr;
   recording: TestRecordingDispatch;
 }
@@ -70,8 +75,8 @@ interface BuiltCamera {
 // The returned controller is the harness AbortController the afterEach aborts to unwind the observe loops. seedLastMotion, when supplied, is committed to the store
 // record BEFORE the camera is constructed, so the lastMotion observer seeds its baseline against an already-present value - the bootstrap-hydration case where a value
 // present at subscribe must never fire.
-async function buildCamera(options: { featureFlags?: Partial<ProtectCameraConfig["featureFlags"]>; seedLastMotion?: number; userOptions?: string[] } = {}):
-Promise<BuiltCamera> {
+async function buildCamera<C extends ProtectCamera = ProtectCamera>(options: { construct?: (nvr: ProtectNvr, accessory: ProtectAccessory, device: Camera) => C;
+  featureFlags?: Partial<ProtectCameraConfig["featureFlags"]>; seedLastMotion?: number; userOptions?: string[]; } = {}): Promise<BuiltCamera<C>> {
 
   const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, ...(options.featureFlags ? { featureFlags: options.featureFlags } : {}) });
   const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
@@ -86,17 +91,25 @@ Promise<BuiltCamera> {
   // Inject the recording dispatch through the NVR double's dispatch seam so the lastMotion observer's firehose routing is asserted against the REAL ProtectEventDispatch
   // contract (the recording subclass captures the delivery without arming the real reset timer or touching HAP), exactly as the sensor / light suites do. The recording
   // double is read back off nvr.events rather than captured from the factory closure - the same posture sensor.test.ts uses to avoid the assignment-expression smell.
-  const { controller, factory, nvr } = makeTestNvr({ dispatch: (innerNvr: ProtectNvr): ProtectEventDispatch => new TestRecordingDispatch(innerNvr), store,
+  const { controller, factory, logEntries, nvr } = makeTestNvr({ dispatch: (innerNvr: ProtectNvr): ProtectEventDispatch => new TestRecordingDispatch(innerNvr), store,
     userOptions: options.userOptions });
   const recording = nvr.events as TestRecordingDispatch;
   const accessory = makeTestAccessory("Test Camera", "uuid:74ACB9000001");
-  const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, new TestCameraProjection(cameraConfig.id, store) as unknown as
+
+  // How the camera under test is constructed, mirroring makeTestNvr's own dispatch factory: omitted, it is the plain production ProtectCamera every other arm builds,
+  // so those are unchanged. The reboot-return watch's describe supplies a subclass that adds one read over an inherited protected member and overrides no behavior, so
+  // the instance under test is still the production class running production paths.
+  const construct = options.construct ?? ((innerNvr: ProtectNvr, innerAccessory: ProtectAccessory, innerDevice: Camera): C => {
+
+    return new ProtectCamera(innerNvr, innerAccessory, innerDevice) as C;
+  });
+  const camera = construct(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, new TestCameraProjection(cameraConfig.id, store) as unknown as
     Camera);
 
   // Settle the floating configure IIFE and the observe loops' lazy registration before any push so the camera is fully wired when the reaction is driven.
   await settle();
 
-  return { accessory, camera, cameraConfig, controller, factory, nvr, recording };
+  return { accessory, camera, cameraConfig, controller, factory, logEntries, nvr, recording };
 }
 
 describe("camera-family observer reactions and bound read handlers (camera-reactions concern net)", () => {
@@ -491,6 +504,390 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
       assert.equal(built.accessory.context["doorbellMuted"], false, "onSet false un-muted the doorbell by clearing the context flag");
       assert.equal(await onChar.triggerGet(), false, "the onGet reflects the un-muted state");
+    });
+  });
+
+  /* The reboot-return watch: the camera-owned answer to "did this camera come back after the controller rebooted?".
+   *
+   * The watch is timer-backed for ABSENCE, because nothing fires when a camera simply fails to reappear, and kicked for the RETURN through both reachability paths.
+   * That split is what these arms drive: the keyed one-shot under a mocked clock for the absence half, and the state observe / reachability override for the return
+   * half. The mock clock is installed AFTER the camera is built, so construction's own real timers (the harness's stability sweep among them) stay under real time and
+   * only the watch armed afterward is mock-armed; each arm aborts its controller INSIDE its own finally BEFORE resetting the mock, so the mock-armed drain runs while
+   * the mock that armed it is still installed. The suite's shared afterEach abort then lands as a harmless second call.
+   */
+  describe("the reboot-return watch (the never-came-back narration and its paired all-clear)", () => {
+
+    // This file arms no mocked clock anywhere else, so the epoch is defined here rather than shared: the value is the removal suite's, and only this describe's tests
+    // run under it.
+    const MOCK_EPOCH = 1700000000000;
+
+    // A thin read over the inherited timer registry, mirroring the InspectableSupervisor idiom the media suites use for a protected projection: it adds one getter and
+    // overrides nothing, so the instance under test runs the production paths exactly. The registry's armed state is what tells a CANCELLED watch from one that fired
+    // and found nothing worth saying - the absence of a warn cannot tell those two apart on its own.
+    class InspectableCamera extends ProtectCamera {
+
+      public get hasRebootReturnWatch(): boolean {
+
+        return this.timers.has("rebootReturn");
+      }
+    }
+
+    // The same read for the package camera, whose whole claim here is that it arms nothing at all.
+    class InspectablePackageCamera extends ProtectCameraPackage {
+
+      public get hasRebootReturnWatch(): boolean {
+
+        return this.timers.has("rebootReturn");
+      }
+    }
+
+    // How many times the watch has told the user this camera never came back, and how many times it has announced the return. Both are counted rather than tested for
+    // presence, because the behavior under assertion is "exactly once per outage" - a boolean would pass the moment the first line landed, whatever followed it.
+    function countWarns(entries: TestLogEntry[], fragment: string): number {
+
+      return entries.filter((entry) => (entry.level === "warn") && (typeof entry.parameters[0] === "string") && entry.parameters[0].includes(fragment)).length;
+    }
+
+    const ABSENCE_LINE = "has not come back online since the controller rebooted";
+    const RETURN_LINE = "The camera is back online.";
+
+    // Build a camera whose watch can be inspected. The construction factory hands the subclass back fully typed, so an arm reads the armed state without a cast.
+    async function buildWatchCamera(): Promise<BuiltCamera<InspectableCamera>> {
+
+      const construct = (nvr: ProtectNvr, accessory: ProtectAccessory, device: Camera): InspectableCamera => new InspectableCamera(nvr, accessory, device);
+
+      return buildCamera({ construct });
+    }
+
+    // Drive the camera's own device state, exactly as a controller realtime packet would. Offline is what gives the watch something to find missing at its expiry.
+    async function setCameraOnline(watch: BuiltCamera<InspectableCamera>, online: boolean): Promise<void> {
+
+      watch.nvr.client.state.pushCameraPatch(watch.cameraConfig.id, { state: online ? "CONNECTED" : "DISCONNECTED" });
+
+      await settle();
+    }
+
+    // (c-a) The absence half, and the once-per-outage rule against a repeated reboot. A camera that is still gone when the window expires is told once; a second reboot
+    // arriving mid-outage restarts the wait, and its expiry finds the same unresolved story rather than a new one, so it says nothing.
+    test("an unreachable camera is called out once at the window's expiry, and a second reboot mid-outage re-arms without repeating it", async () => {
+
+      const watch = await buildWatchCamera();
+
+      built = watch;
+
+      await setCameraOnline(watch, false);
+
+      mock.timers.enable({ apis: [ "Date", "setTimeout" ], now: MOCK_EPOCH });
+
+      try {
+
+        watch.camera.noteControllerRebooted();
+
+        assert.equal(watch.camera.hasRebootReturnWatch, true, "the reboot armed the watch");
+
+        mock.timers.tick(PROTECT_NVR_REBOOT_RECENCY_MS);
+
+        assert.equal(countWarns(watch.logEntries, ABSENCE_LINE), 1, "the camera that never came back was called out at the window's expiry");
+
+        // A second reboot while the camera is still gone. The watch re-arms, but the story it would tell is already open.
+        watch.camera.noteControllerRebooted();
+
+        assert.equal(watch.camera.hasRebootReturnWatch, true, "the second reboot re-armed the watch");
+
+        mock.timers.tick(PROTECT_NVR_REBOOT_RECENCY_MS);
+
+        assert.equal(countWarns(watch.logEntries, ABSENCE_LINE), 1, "the second window's expiry did not repeat the line for the same unresolved outage");
+        assert.equal(countWarns(watch.logEntries, RETURN_LINE), 0, "no all-clear was announced for a camera that never returned");
+      } finally {
+
+        watch.controller.abort();
+        mock.timers.reset();
+      }
+    });
+
+    // (c-b) The return half through the camera's own state observe. The armed watch is CANCELLED rather than left to fire and decline, which is why this asserts the
+    // registry key itself: a silent expiry would look identical from the log alone.
+    test("a camera that returns inside the window cancels the watch outright", async () => {
+
+      const watch = await buildWatchCamera();
+
+      built = watch;
+
+      await setCameraOnline(watch, false);
+
+      mock.timers.enable({ apis: [ "Date", "setTimeout" ], now: MOCK_EPOCH });
+
+      try {
+
+        watch.camera.noteControllerRebooted();
+
+        assert.equal(watch.camera.hasRebootReturnWatch, true, "the watch is armed before the camera returns");
+
+        await setCameraOnline(watch, true);
+
+        assert.equal(watch.camera.hasRebootReturnWatch, false, "the camera's return cleared the armed watch rather than leaving it to expire");
+
+        mock.timers.tick(PROTECT_NVR_REBOOT_RECENCY_MS * 2);
+
+        assert.equal(countWarns(watch.logEntries, ABSENCE_LINE), 0, "a camera that came back inside the window was never called out");
+        assert.equal(countWarns(watch.logEntries, RETURN_LINE), 0, "a return that closed nothing announced nothing");
+      } finally {
+
+        watch.controller.abort();
+        mock.timers.reset();
+      }
+    });
+
+    // (c-c) The paired close, and the watch re-arming for a genuinely new outage. The all-clear rides the SAME level as the alert, so an operator scanning warn sees
+    // both halves of the story; once it has closed, a later reboot the camera again fails to survive is a fresh story and is told afresh.
+    test("a warned camera's return announces the all-clear at warn, and a later reboot it does not survive is called out again", async () => {
+
+      const watch = await buildWatchCamera();
+
+      built = watch;
+
+      await setCameraOnline(watch, false);
+
+      mock.timers.enable({ apis: [ "Date", "setTimeout" ], now: MOCK_EPOCH });
+
+      try {
+
+        watch.camera.noteControllerRebooted();
+        mock.timers.tick(PROTECT_NVR_REBOOT_RECENCY_MS);
+
+        assert.equal(countWarns(watch.logEntries, ABSENCE_LINE), 1, "the absent camera was called out");
+
+        // The camera comes back. The open story closes at the same level it opened.
+        await setCameraOnline(watch, true);
+
+        assert.equal(countWarns(watch.logEntries, RETURN_LINE), 1, "the return announced the all-clear");
+
+        // A later reboot that this camera again fails to come back from is a genuinely new outage, so it is told afresh.
+        await setCameraOnline(watch, false);
+
+        watch.camera.noteControllerRebooted();
+        mock.timers.tick(PROTECT_NVR_REBOOT_RECENCY_MS);
+
+        assert.equal(countWarns(watch.logEntries, ABSENCE_LINE), 2, "the closed story left the watch free to speak for the next outage");
+        assert.equal(countWarns(watch.logEntries, RETURN_LINE), 1, "the second outage has not been resolved, so no second all-clear was announced");
+      } finally {
+
+        watch.controller.abort();
+        mock.timers.reset();
+      }
+    });
+
+    // (c-d) The package camera arms nothing. Both polarities matter: the key is never registered, and ticking a full window past the call produces no line - which is
+    // what an inherited (un-overridden) watch on this offline camera would have produced.
+    test("the package camera's watch is inert - it arms nothing and says nothing", async () => {
+
+      const watch = await buildWatchCamera();
+
+      built = watch;
+
+      await setCameraOnline(watch, false);
+
+      // A package camera over the SAME physical device, built as the controller root builds it. Its parent's watch is deliberately never armed here, so any line the
+      // tick produces could only have come from the package.
+      const packageCamera = new InspectablePackageCamera(watch.nvr as unknown as ProtectNvr,
+        makeTestAccessory("Test Camera Package", "uuid:74ACB9000001:package") as unknown as ProtectAccessory,
+        new TestCameraProjection(watch.cameraConfig.id, watch.nvr.client.state) as unknown as Camera);
+
+      await settle();
+
+      mock.timers.enable({ apis: [ "Date", "setTimeout" ], now: MOCK_EPOCH });
+
+      try {
+
+        packageCamera.noteControllerRebooted();
+
+        assert.equal(packageCamera.hasRebootReturnWatch, false, "the package camera registered no watch timer");
+
+        mock.timers.tick(PROTECT_NVR_REBOOT_RECENCY_MS * 2);
+
+        assert.equal(countWarns(watch.logEntries, ABSENCE_LINE), 0, "the package camera never speaks for the hardware its parent already speaks for");
+      } finally {
+
+        packageCamera.cleanup();
+        watch.controller.abort();
+        mock.timers.reset();
+      }
+    });
+
+    // (c-e) The return half through the CONTROLLER-HEALTH path, both polarities. A whole-controller recovery never wakes the camera's state observe - the device state
+    // was frozen through the outage and the store dedups on the selected value - so the reachability override is the path that has to carry the cancel. The negative
+    // polarity is what proves the cancel is reachability-gated rather than firing on any push at all.
+    test("a controller-health recovery alone cancels the watch, and an unhealthy push does not", async () => {
+
+      const watch = await buildWatchCamera();
+
+      built = watch;
+
+      // The camera's own device state stays ONLINE throughout: only the controller's health moves, so the state observe never fires and the override is the only path
+      // that can reach the watch.
+      watch.nvr.client.connection.isHealthy = false;
+
+      mock.timers.enable({ apis: [ "Date", "setTimeout" ], now: MOCK_EPOCH });
+
+      try {
+
+        watch.camera.noteControllerRebooted();
+
+        assert.equal(watch.camera.hasRebootReturnWatch, true, "the reboot armed the watch");
+
+        // The negative polarity: a reachability push while the controller is STILL unhealthy must leave the watch armed.
+        watch.camera.refreshReachability();
+
+        assert.equal(watch.camera.hasRebootReturnWatch, true, "a reachability push on an unreachable camera left the watch armed");
+
+        // The controller returns. Nothing pushes the camera's device state, so this is the health path alone.
+        watch.nvr.client.connection.isHealthy = true;
+        watch.camera.refreshReachability();
+
+        assert.equal(watch.camera.hasRebootReturnWatch, false, "the controller-health recovery alone cancelled the watch");
+
+        mock.timers.tick(PROTECT_NVR_REBOOT_RECENCY_MS * 2);
+
+        assert.equal(countWarns(watch.logEntries, ABSENCE_LINE), 0, "a camera that was never actually absent was never called out");
+        assert.equal(countWarns(watch.logEntries, RETURN_LINE), 0, "a cancel that closed no open story announced nothing");
+      } finally {
+
+        watch.controller.abort();
+        mock.timers.reset();
+      }
+    });
+
+    // (c-f) A controller that is itself still away at the expiry. The camera cannot be blamed for the controller's absence, so the watch extends by another window
+    // instead of speaking - and once the controller is back with the camera still missing, the next expiry says so.
+    test("an expiry while the controller is still unhealthy extends the watch, and the next one speaks once the controller is back", async () => {
+
+      const watch = await buildWatchCamera();
+
+      built = watch;
+
+      await setCameraOnline(watch, false);
+
+      watch.nvr.client.connection.isHealthy = false;
+
+      mock.timers.enable({ apis: [ "Date", "setTimeout" ], now: MOCK_EPOCH });
+
+      try {
+
+        watch.camera.noteControllerRebooted();
+        mock.timers.tick(PROTECT_NVR_REBOOT_RECENCY_MS);
+
+        assert.equal(countWarns(watch.logEntries, ABSENCE_LINE), 0, "the camera was not blamed while the controller itself was still away");
+        assert.equal(watch.camera.hasRebootReturnWatch, true, "the expiry extended the watch by another window rather than ending it");
+
+        // The controller comes back, and this camera is still gone. Now the absence is the camera's own.
+        watch.nvr.client.connection.isHealthy = true;
+        mock.timers.tick(PROTECT_NVR_REBOOT_RECENCY_MS);
+
+        assert.equal(countWarns(watch.logEntries, ABSENCE_LINE), 1, "the camera still missing behind a recovered controller was called out");
+      } finally {
+
+        watch.controller.abort();
+        mock.timers.reset();
+      }
+    });
+
+    // (c-g) The once-per-outage rule across THREE reboot cycles. Two cycles alone cannot see a latch that resets on every other call; three can.
+    test("a camera that stays gone across three reboots is called out exactly once", async () => {
+
+      const watch = await buildWatchCamera();
+
+      built = watch;
+
+      await setCameraOnline(watch, false);
+
+      mock.timers.enable({ apis: [ "Date", "setTimeout" ], now: MOCK_EPOCH });
+
+      try {
+
+        for(let cycle = 0; cycle < 3; cycle++) {
+
+          watch.camera.noteControllerRebooted();
+          mock.timers.tick(PROTECT_NVR_REBOOT_RECENCY_MS);
+        }
+
+        assert.equal(countWarns(watch.logEntries, ABSENCE_LINE), 1, "three reboots over one unbroken outage told the user once");
+      } finally {
+
+        watch.controller.abort();
+        mock.timers.reset();
+      }
+    });
+
+    // (c-h) A camera whose controller record has vanished is being removed, which is not a failure to come back. The watch declines silently rather than announcing a
+    // camera the user has already taken away.
+    test("a camera whose controller record has vanished declines silently", async () => {
+
+      const watch = await buildWatchCamera();
+
+      built = watch;
+
+      await setCameraOnline(watch, false);
+
+      mock.timers.enable({ apis: [ "Date", "setTimeout" ], now: MOCK_EPOCH });
+
+      try {
+
+        watch.camera.noteControllerRebooted();
+
+        assert.equal(watch.camera.hasRebootReturnWatch, true, "the watch is armed before the record vanishes");
+
+        watch.nvr.client.state.removeCameraRecord(watch.cameraConfig.id);
+
+        await settle();
+
+        mock.timers.tick(PROTECT_NVR_REBOOT_RECENCY_MS);
+
+        assert.equal(countWarns(watch.logEntries, ABSENCE_LINE), 0, "a camera being removed was not reported as failing to come back");
+      } finally {
+
+        watch.controller.abort();
+        mock.timers.reset();
+      }
+    });
+
+    // (c-i) An open story closed through the controller-health path. The camera's own state comes back mid-outage, but the controller is still down so the camera is
+    // not yet reachable and nothing closes; the controller's return is what completes it. This is the arm that proves the all-clear is reachable through EITHER path,
+    // not only through the state observe that happens to be easiest to drive.
+    test("a warned camera's all-clear can arrive through the controller-health path", async () => {
+
+      const watch = await buildWatchCamera();
+
+      built = watch;
+
+      await setCameraOnline(watch, false);
+
+      mock.timers.enable({ apis: [ "Date", "setTimeout" ], now: MOCK_EPOCH });
+
+      try {
+
+        watch.camera.noteControllerRebooted();
+        mock.timers.tick(PROTECT_NVR_REBOOT_RECENCY_MS);
+
+        assert.equal(countWarns(watch.logEntries, ABSENCE_LINE), 1, "the absent camera was called out");
+
+        // The controller drops, and the camera's own state comes back underneath it. The camera is still not reachable, so the story stays open.
+        watch.nvr.client.connection.isHealthy = false;
+
+        await setCameraOnline(watch, true);
+
+        assert.equal(countWarns(watch.logEntries, RETURN_LINE), 0, "a device-state return behind an unhealthy controller does not yet close the story");
+
+        // The controller returns. The reachability push is now the only thing that moves, and it completes the pair.
+        watch.nvr.client.connection.isHealthy = true;
+        watch.camera.refreshReachability();
+
+        assert.equal(countWarns(watch.logEntries, RETURN_LINE), 1, "the controller-health path announced the all-clear and closed the story");
+        assert.equal(countWarns(watch.logEntries, ABSENCE_LINE), 1, "closing the story re-told nothing");
+      } finally {
+
+        watch.controller.abort();
+        mock.timers.reset();
+      }
     });
   });
 

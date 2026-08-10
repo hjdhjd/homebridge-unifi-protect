@@ -13,7 +13,7 @@
  * assertions. The assertions are behavior-first throughout: captured log lines, public buffer state, seam call counts, and promise identity - never a private field.
  */
 import type { ControllableLivestreamDouble, TestCameraHost } from "./testing.helpers.ts";
-import { PROTECT_SEGMENT_RESOLUTION, PROTECT_TIMESHIFT_BUFFER_MAXDURATION } from "../settings.ts";
+import { PROTECT_NVR_REBOOT_RECENCY_MS, PROTECT_SEGMENT_RESOLUTION, PROTECT_TIMESHIFT_BUFFER_MAXDURATION } from "../settings.ts";
 import { TestStreamingDelegate, settle } from "../testing.helpers.ts";
 import { after, describe, test } from "node:test";
 import { makeControllableLivestreamDouble, makeTestCameraHost } from "./testing.helpers.ts";
@@ -68,7 +68,8 @@ function makeChannelProfile(host: TestCameraHost): ChannelProfile {
 }
 
 // The arranged supervisor and its consuming delegate, plus the handles a test asserts against: logEntries captures the narration, host exposes the seam call logs
-// and the reachability knob, nvr is the controller double whose settable phase drives the induced-vs-organic deferred/resolution log gating.
+// and the reachability knob, nvr is the controller double whose settable phase and observed-reboot timestamp together drive the expected-vs-organic deferred/resolution
+// log gating.
 interface SupervisorArrange {
 
   delegate: ProtectRecordingDelegate;
@@ -157,8 +158,9 @@ describe("timeshift supervisor deferred-offline and resolution logging", () => {
     assert.equal(countLogs(logEntries, "debug", "deferred until the camera is online"), 0, "an organic deferral does not log at debug");
   });
 
-  // Deferred while INDUCED. The same offline deferral, but the controller is rebooting because we asked it to: the reconcile head drops the deferral to DEBUG, since the
-  // controller-level "rebooting..." narration already covers the disruption. Both-level assertion proves the gate flipped, not merely that one line is present.
+  // Deferred while EXPECTED, through the induced half. The same offline deferral, but the controller is rebooting because we asked it to: the reconcile head drops the
+  // deferral to DEBUG, since the controller-level "rebooting..." narration already covers the disruption. Both-level assertion proves the gate flipped, not merely that
+  // one line is present.
   test("quiets the deferred-offline notice to debug during an induced controller reboot", async () => {
 
     const { delegate, logEntries, nvr } = arrangeDeferralDelegate();
@@ -169,8 +171,41 @@ describe("timeshift supervisor deferred-offline and resolution logging", () => {
     delegate.updateRecordingActive(true);
     await settle();
 
-    assert.equal(countLogs(logEntries, "debug", "deferred until the camera is online"), 1, "an induced deferral logs at debug");
-    assert.equal(countLogs(logEntries, "warn", "deferred until the camera is online"), 0, "an induced deferral does not log at warn");
+    assert.equal(countLogs(logEntries, "debug", "deferred until the camera is online"), 1, "an expected deferral logs at debug");
+    assert.equal(countLogs(logEntries, "warn", "deferred until the camera is online"), 0, "an expected deferral does not log at warn");
+  });
+
+  // Deferred while EXPECTED, through the settling-tail half - the reclassification this classification exists for. The controller has already finished rebooting and
+  // returned to running, so the phase alone reads organic, yet the plugin observed that reboot moments ago and every camera blips as it re-establishes. The disruption
+  // belongs to the reboot rather than to this camera, so the deferral is expected and drops to DEBUG.
+  test("quiets the deferred-offline notice to debug inside the settling tail of an observed reboot", async () => {
+
+    const { delegate, logEntries, nvr } = arrangeDeferralDelegate();
+
+    // The phase is the default "running", so only the freshly-observed reboot can classify this disruption as expected.
+    nvr.lastRebootObservedAt = Date.now();
+
+    delegate.updateRecordingActive(true);
+    await settle();
+
+    assert.equal(countLogs(logEntries, "debug", "deferred until the camera is online"), 1, "a deferral inside the reboot's settling tail logs at debug");
+    assert.equal(countLogs(logEntries, "warn", "deferred until the camera is online"), 0, "a deferral inside the reboot's settling tail does not log at warn");
+  });
+
+  // The settling tail's far edge. The same running-phase deferral, but the observed reboot is older than the window, so the tail does not explain this camera and the
+  // deferral is organic at WARN. Paired with the arm above, this pins the tail as a window rather than a permanent quieting of everything that follows a reboot.
+  test("logs the deferred-offline notice at warn once an observed reboot's settling tail has elapsed", async () => {
+
+    const { delegate, logEntries, nvr } = arrangeDeferralDelegate();
+
+    // A reboot observed longer ago than the window puts this deferral comfortably outside the tail.
+    nvr.lastRebootObservedAt = Date.now() - PROTECT_NVR_REBOOT_RECENCY_MS - 5000;
+
+    delegate.updateRecordingActive(true);
+    await settle();
+
+    assert.equal(countLogs(logEntries, "warn", "deferred until the camera is online"), 1, "a deferral past the reboot's settling tail logs at warn");
+    assert.equal(countLogs(logEntries, "debug", "deferred until the camera is online"), 0, "a deferral past the reboot's settling tail does not log at debug");
   });
 
   // Resolution while ORGANIC. A recording deferred at the running phase, then the camera returns and the timeshift actually starts: the successful-start path announces
@@ -196,32 +231,33 @@ describe("timeshift supervisor deferred-offline and resolution logging", () => {
     assert.equal(countLogs(logEntries, "debug", "has started now that the camera is online"), 0, "an organic resumption does not announce at debug");
   });
 
-  // Resolution while INDUCED - the latch-not-phase proof. A recording deferred while the controller was rebooting (captured origin: induced), then the camera returns
+  // Resolution while EXPECTED - the latch-not-phase proof. A recording deferred while the controller was rebooting (captured origin: expected), then the camera returns
   // AFTER the controller is back, so the phase is "running" again at the resolution reconcile. The resumption must announce at DEBUG, driven by the captured
-  // origin the episode captured, NOT by a fresh phase read - a current-phase read at this point would see "running" and wrongly announce at warn, failing this test.
-  // This is the decisive case capturing the origin at the open edge exists for.
-  test("announces the resumption at debug from the captured induced origin even though the phase is running at resolution", async () => {
+  // origin the episode captured, NOT by a fresh classification read - a current read at this point would find a running controller with no reboot observed and wrongly
+  // announce at warn, failing this test. This is the decisive case capturing the origin at the open edge exists for.
+  test("announces the resumption at debug from the captured expected origin even though the phase is running at resolution", async () => {
 
     const { delegate, host, logEntries, nvr } = arrangeDeferralDelegate();
 
-    // Open the deferral while the controller is rebooting: the origin is captured as induced.
+    // Open the deferral while the controller is rebooting: the origin is captured as expected.
     nvr.phase = "rebooting";
 
     delegate.updateRecordingActive(true);
     await settle();
 
-    assert.equal(countLogs(logEntries, "debug", "deferred until the camera is online"), 1, "the induced deferral was logged at debug");
+    assert.equal(countLogs(logEntries, "debug", "deferred until the camera is online"), 1, "the expected deferral was logged at debug");
 
-    // The controller has finished rebooting (phase back to running) and the camera is online again. A current-phase read here would classify the recovery as organic; the
-    // captured latch must keep it induced.
+    // The controller has finished rebooting (phase back to running) and the camera is online again. A fresh classification read here would call the recovery organic;
+    // the captured latch must keep it expected.
     nvr.phase = "running";
     host.isReachable = true;
 
     await delegate.configureTimeshifting();
     await settle();
 
-    assert.equal(countLogs(logEntries, "debug", "has started now that the camera is online"), 1, "the induced resumption announces at debug from the captured origin");
-    assert.equal(countLogs(logEntries, "warn", "has started now that the camera is online"), 0, "the induced resumption does not announce at warn (a phase read would)");
+    assert.equal(countLogs(logEntries, "debug", "has started now that the camera is online"), 1, "the expected resumption announces at debug from the captured origin");
+    assert.equal(countLogs(logEntries, "warn", "has started now that the camera is online"), 0,
+      "the expected resumption does not announce at warn (a fresh classification read would)");
   });
 
   // No resolution when recording cannot actually run. A recording is deferred offline, then the camera becomes reachable BUT the timeshift start fails (the livestream
@@ -284,7 +320,7 @@ describe("timeshift supervisor deferred-offline and resolution logging", () => {
 
   // Classification stability across a CONTINUOUS offline. The origin is captured once, at the open edge, and a phase change while the camera stays offline never
   // re-opens the episode: no second deferral line, and - the arm that actually tells the two apart - the eventual resolution still announces at the ORIGINAL level. A
-  // mid-episode reclassification would leave the episode reading induced and quietly move the resolution to debug, even if it never logged a line of its own.
+  // mid-episode reclassification would leave the episode reading expected and quietly move the resolution to debug, even if it never logged a line of its own.
   test("a phase change during a continuous offline neither re-logs the deferral nor moves the resolution's level", async () => {
 
     const { delegate, host, logEntries, nvr } = arrangeDeferralDelegate();

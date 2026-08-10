@@ -150,13 +150,12 @@ export const PROTECT_NVR_REBOOT_DEFERRAL_MAX = 15 * 60;
 // concept - the settling room a freshly-connected plugin gives a long-up controller - so it stays inline with the arithmetic that applies it.
 export const PROTECT_NVR_REBOOT_CHECK_INTERVAL = 60000;
 
-// Window, in milliseconds, after the plugin observes a controller reboot within which a per-camera livestream interruption is treated as that reboot's tail -
-// quieted to debug, since a reboot blips every camera and is already narrated once at the controller level - rather than a genuine single-camera drop that
-// warns. Measured from our OWN observation of the reboot (the library's jitter-thresholded `controllerRebooted` event), not the controller's self-reported boot
-// time. The live trace showed roughly twelve seconds from the observed reboot to the camera's re-establishment edge, so sixty seconds covers slower
-// re-establishment while keeping the suppression window tight (the accepted false-negative: a genuinely dead camera's "interrupted" warn is held for this
-// window after a reboot, which is exactly when a camera most often fails to return; a tight window minimizes that, and a dead camera is surfaced elsewhere
-// through reachability and the HKSV deferred-offline warn).
+// Window, in milliseconds, after the plugin observes a controller reboot within which the reboot's after-effects are treated as that reboot's settling tail rather than
+// as anything wrong with an individual camera. It carries both halves of that idea: a disruption inside the window is expected, so it stays quiet instead of warning,
+// and a camera still away when the window expires has stopped being explainable by the reboot and is the exception worth telling the user about. Measured from our OWN
+// observation of the reboot (the library's jitter-thresholded `controllerRebooted` event), not the controller's self-reported boot time. The live trace showed roughly
+// twelve seconds from the observed reboot to the camera's re-establishment edge, so sixty seconds covers slower re-establishment while keeping the window tight - which
+// matters in both directions, since the same window decides how long a genuine single-camera drop is held quiet and how long a camera has to come back before we say so.
 export const PROTECT_NVR_REBOOT_RECENCY_MS = 60000;
 
 // Minimum duration, in milliseconds, that the controller must be continuously available and healthy before the plugin will perform any destructive device

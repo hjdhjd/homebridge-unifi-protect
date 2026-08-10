@@ -18,10 +18,11 @@ import type { Camera, Chime, ProtectEventMetadata, ProtectNvrConfig, ProtectNvrL
 import { Characteristic, Service, TestAccessory, TestCameraController, TestStreamingDelegateFactory } from "../testing.helpers.ts";
 import type { Clock, HomebridgePluginLogging, Nullable, RecordingProcessFactory } from "homebridge-plugin-utils";
 import { FeatureOptions, TestClock, TestRecordingProcessFactory } from "homebridge-plugin-utils";
-import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_NVR_REMOVAL_STABILITY_WINDOW } from "../settings.ts";
+import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_NVR_REBOOT_RECENCY_MS, PROTECT_NVR_REMOVAL_STABILITY_WINDOW } from "../settings.ts";
 import type { ProtectAccessory, ProtectDevices } from "../types.ts";
 import type { ProtectNvrOptions, ProtectOptions } from "../options.ts";
 import type { TestApiCall, TestLogEntry, TestStateStore } from "../testing.helpers.ts";
+import { countActiveRecordingViews, isDisruptionExpected } from "./nvr-policy.ts";
 import { featureOptionCategories, featureOptions } from "../options.ts";
 import { AmbientLightCapability } from "../devices/cameras/ambient-light.ts";
 import { DiagnosticsHealthBridge } from "./nvr-health-bridge.ts";
@@ -38,7 +39,6 @@ import { RebootScheduler } from "./nvr-reboot.ts";
 import { RemovalStabilityGate } from "./nvr-removal.ts";
 import { StreamingCapability } from "../devices/cameras/streaming.ts";
 import type { TestChimeProjection } from "../devices/testing.helpers.ts";
-import { countActiveRecordingViews } from "./nvr-policy.ts";
 import util from "node:util";
 
 // One recorded MQTT subscription registration: the composed topic tail, the human-readable type label, the registration kind, the per-subscription init options
@@ -212,6 +212,10 @@ export class TestProtectNvr {
   // this and nothing else: a double's stability facts arrive through the explicit pushControllerStability path, so a health transition here counts itself and leaves
   // the gate's clock to the tests that drive it deliberately.
   public healthStabilityRefreshes = 0;
+  // The plugin's own-clock timestamp of the last observed controller reboot, settable and defaulting to "none observed this process", mirroring the private field the
+  // production root stamps in onControllerRebooted. A test arranging a reboot's settling tail sets this alongside `phase`, and the two together are exactly the inputs
+  // the expectation classification below reads.
+  public lastRebootObservedAt: Nullable<number> = null;
   public readonly log: {
 
     debug: (...parameters: unknown[]) => void;
@@ -373,6 +377,15 @@ export class TestProtectNvr {
     }
 
     return countActiveRecordingViews(views);
+  }
+
+  /* Whether a disruption right now is expected, derived exactly as the production root derives it: the very same shared nvr-policy classification, over this double's
+   * two settable inputs and the same production window constant. Only the INPUTS are the double's; the decision is production's, so a consumer reading
+   * nvr.isDisruptionExpected against this double can never drift from what the controller would have answered.
+   */
+  public get isDisruptionExpected(): boolean {
+
+    return isDisruptionExpected({ lastRebootMs: this.lastRebootObservedAt, nowMs: Date.now(), phase: this.phase, windowMs: PROTECT_NVR_REBOOT_RECENCY_MS });
   }
 
   // Read-through to the controller record, mirroring the production getter.

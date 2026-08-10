@@ -11,8 +11,8 @@ import type { HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils"
 import type { NvrLifecyclePayload, ReachabilityFanoutPayload } from "../diagnostics.ts";
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_NVR_CONTROLLER_DISABLED_SETTLE_DELAY, PROTECT_NVR_REBOOT_RECENCY_MS } from "../settings.ts";
 import type { ProtectAccessory, ProtectAccessoryContext, ProtectDeviceTypes, ProtectDevices, ProtectProjectionMap } from "../types.ts";
-import { canTransition, countActiveRecordingViews, createConnectRetryPolicy, createLivestreamEpisodeLatch, isInducedDisruption, isWithinRebootRecency,
-  membershipDelta, shouldResumeFromInducedReboot } from "./nvr-policy.ts";
+import { canTransition, countActiveRecordingViews, createConnectRetryPolicy, createLivestreamEpisodeLatch, isDisruptionExpected, membershipDelta,
+  shouldResumeFromInducedReboot } from "./nvr-policy.ts";
 import { AmbientLightCapability } from "../devices/cameras/ambient-light.ts";
 import { DiagnosticsHealthBridge } from "./nvr-health-bridge.ts";
 import { DoorbellCapability } from "../devices/cameras/doorbell.ts";
@@ -84,9 +84,8 @@ export class ProtectNvr {
   private hap: HAP;
   public readonly health: DiagnosticsHealthBridge;
   // The plugin's own-clock timestamp (Date.now()) of the last controller reboot we observed via the library's jitter-thresholded `controllerRebooted` event, or null
-  // until one is seen this process. The per-camera livestream-disruption logs read this to recognize a blip that is the tail of a recent reboot - which fires after the
-  // plugin has left the induced phase - and quiet it, distinct from a genuine single-camera drop. Not a controller clock: it is when WE observed the reboot, on our own
-  // wall clock.
+  // until one is seen this process. It is the settling-tail half of the `isDisruptionExpected` classification and stays private to this root: callers ask whether a
+  // disruption is expected, never how recently a reboot landed. Not a controller clock: it is when WE observed the reboot, on our own wall clock.
   private lastRebootObservedAt: Nullable<number>;
   // Per-episode quiet-classification latch for the per-camera livestream-disruption logs. The interruption edge records whether the episode should be logged quietly
   // (the tail of an induced disruption or a recently-observed reboot); the recovery edge - which can no longer read the phase reliably - consumes that classification.
@@ -304,13 +303,12 @@ export class ProtectNvr {
       }
 
       // Classify whether to log this episode quietly, and record that so the recovery edge - which cannot read the phase reliably, the controller having returned by then
-      // - consults the same classification. Quiet is the SUPERSET of the cases the phase alone cannot cover: an interruption observed while still rebooting/shutting down
-      // (induced), AND the post-return re-establishment blip of a controller reboot, whose recovery:started fires at episode entry seconds after the controller returned,
-      // by which point the plugin has already concluded the reboot and resumed running - so isInducedDisruption(this.phase) reads false here and the recency half
-      // catches it. This sits AFTER the ownership guard above: the unifi-protect library's recovery channels are process-global, so recording before the guard would
-      // latch every OTHER controller's cameras too, and our own forgetCamera (scoped to our removals) could never reclaim a foreign started-never-recovered entry.
-      const quiet = isInducedDisruption(this.phase) ||
-        isWithinRebootRecency({ lastRebootMs: this.lastRebootObservedAt, nowMs: Date.now(), windowMs: PROTECT_NVR_REBOOT_RECENCY_MS });
+      // - consults the same classification. The root's own expectation decision answers it, which is what keeps this episode's level and the recording arm's deferral
+      // level in agreement: an interruption observed while we are rebooting or shutting down is expected, and so is the post-return re-establishment blip of a controller
+      // reboot, whose recovery:started fires at episode entry seconds after the controller returned. This sits AFTER the ownership guard above: the unifi-protect
+      // library's recovery channels are process-global, so recording before the guard would latch every OTHER controller's cameras too, and our own forgetCamera (scoped
+      // to our removals) could never reclaim a foreign started-never-recovered entry.
+      const quiet = this.isDisruptionExpected;
 
       this.livestreamEpisodes.record(payload.key, payload.cameraId, quiet);
 
@@ -373,6 +371,17 @@ export class ProtectNvr {
       protectChannels.livestreamRecoveryRecovered.unsubscribe(onRecoveryRecovered);
       protectChannels.livestreamRecoveryExhausted.unsubscribe(onRecoveryExhausted);
     }, { once: true });
+  }
+
+  /**
+   * Whether a disruption happening right now is one we expect - the plugin induced it, or it lands inside the settling tail of a reboot we observed. Every narration
+   * that tells a disruption story consults this one member, so the same blip reads the same way whichever story tells it. {@link isDisruptionExpected} in the policy
+   * module is the definition; the reboot observation feeding its tail half stays private here, because the classification is what consumers need and the timestamp is
+   * how it happens to be reached.
+   */
+  public get isDisruptionExpected(): boolean {
+
+    return isDisruptionExpected({ lastRebootMs: this.lastRebootObservedAt, nowMs: Date.now(), phase: this._phase, windowMs: PROTECT_NVR_REBOOT_RECENCY_MS });
   }
 
   /**
@@ -609,16 +618,17 @@ export class ProtectNvr {
   // self-tuning; the induced-reboot resume is driven separately by the connection's recovery edge in startConnectionObserver, so it is not this handler's concern.
   private onControllerRebooted(): void {
 
-    // Record our own-clock observation of this reboot. This is the SSOT moment the plugin learns a reboot happened (induced or organic), so it anchors the recency window
-    // the per-camera livestream-disruption logs consult to quiet a re-establishment blip that lands after the plugin has already concluded the reboot and
-    // resumed running.
+    // Record our own-clock observation of this reboot. This is the SSOT moment the plugin learns a reboot happened (induced or organic), so it anchors the settling
+    // window `isDisruptionExpected` weighs when a disruption lands after the plugin has already concluded the reboot and resumed running.
     this.lastRebootObservedAt = Date.now();
 
     this.publishLifecycle("controllerRebooted");
 
     // Every reboot re-adopts and restarts each camera's stream from scratch, so clear each camera's accumulated probesize self-tuning - a per-camera latch that at its
     // permanent ceiling arms no auto-reset and otherwise persists for the life of the delegate. We accept one baseline re-tune per reboot on a chronically-flaky camera
-    // rather than a forever-elevated probesize. The endpoints iterator walks package cameras alongside their parents, so the package's delegate resets here too.
+    // rather than a forever-elevated probesize. The endpoints iterator walks package cameras alongside their parents, so the package's delegate resets here too. The
+    // same walk starts each camera watching for its own return, so a camera that never comes back from this reboot is called out instead of disappearing quietly;
+    // package cameras take an inert override there, because their parent's watch already speaks for the shared hardware.
     for(const device of this.deviceEndpoints()) {
 
       if(!(device instanceof ProtectCamera)) {
@@ -627,6 +637,7 @@ export class ProtectNvr {
       }
 
       device.streaming?.recoverFromControllerReboot();
+      device.noteControllerRebooted();
     }
   }
 

@@ -6,7 +6,7 @@ import { AudioRecordingCodecType, AudioRecordingSamplerate, capabilityGate, form
 import type { Camera, LivestreamSource, SnapshotOptions, TalkbackSession } from "unifi-protect";
 import type { CharacteristicValue, Resolution } from "homebridge";
 import type { LivestreamHostOptions, ProtectCameraHost } from "../../media/camera-host.ts";
-import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_SEGMENT_RESOLUTION } from "../../settings.ts";
+import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_NVR_REBOOT_RECENCY_MS, PROTECT_SEGMENT_RESOLUTION } from "../../settings.ts";
 import type { ProtectAccessory, ProtectPersistedContextState } from "../../types.ts";
 import { ProtectAuthorizationError, deviceSelectors, livestreamAudioSampleRate } from "unifi-protect";
 import { buildAdvertisedProfiles, buildChannelProfile, formatResolution, isPrimaryChannel, rtspUrl } from "../../media/resolution.ts";
@@ -158,6 +158,10 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
   // after fixing it is narrated afresh rather than silently swallowed. Its grain is per-camera on purpose: the supervisor's buffer starts and the per-view pooled
   // sessions both route through livestream(), and they narrate one camera-level misconfiguration between them.
   #reportedRtspDebugFallback = false;
+  // Whether this camera's failure to return from a controller reboot has already been told. It opens one exception and holds it open: a camera that is still gone at a
+  // later reboot is the same unresolved story, not a fresh one, so the watch speaks once per outage and the return is what closes it. Initialized through a field
+  // initializer and written only by the watch's own two methods below.
+  #rebootReturnWarned = false;
   // Narrow the inherited hint bag to the camera family's shape. The bag is not projection-derived, so it cannot ride the class's projection parameter the way the device
   // handle and the config view do; a type-only re-declaration is the honest mechanism, and it costs one line because nothing is emitted for it.
   declare public hints: ProtectCameraHints;
@@ -509,8 +513,13 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
       () => void this.acquireStreaming().reconcile());
 
     // The lifecycle state enum drives independent reactions, so each gets its own observer on the same slice. We watch state because isOnline - and therefore the
-    // device-online half of isReachable - derives from it; the controller-health half is pushed by the NVR connection loop, not observed here.
-    this.observeState({ key: "camera.state", selector: state => cam(state)?.state, title: "availability" }, () => this.updateAvailability());
+    // device-online half of isReachable - derives from it; the controller-health half is pushed by the NVR connection loop, not observed here. Two reactions ride this
+    // wake: the availability projection, and the reboot-return watch, for which this is the path a camera that comes back on its own takes.
+    this.observeState({ key: "camera.state", selector: state => cam(state)?.state, title: "availability" }, () => {
+
+      this.updateAvailability();
+      this.#reconcileRebootReturn();
+    });
 
     // The tamper-detection setting governs whether the StatusTampered characteristic exists at all; the tamper occurrence itself is a firehose event the router delivers.
     // The setting slice wakes the one capability reconcile, so a user toggling tamper detection and the controller reporting hasTamperDetection late share the same
@@ -1836,7 +1845,78 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
       void this.stream?.timeshift?.reconcile();
     }
 
+    this.#reconcileRebootReturn();
+
     return transition;
+  }
+
+  /**
+   * Note that the controller rebooted and start watching for this camera to come back. Every camera blips when its controller reboots, so the plugin quiets those
+   * disruptions for a settling window...a camera that is still away when the window expires is the genuine exception, and this watch is what gives it a voice. The fact
+   * belongs to the physical camera rather than to HomeKit Secure Video, which is why it lives here beside the availability projection: a camera nobody records is
+   * exactly as gone as one that is.
+   *
+   * Arming is unconditional. The controller's reboot event arrives only after a fresh bootstrap has re-dispatched current device state, so there is no pre-reboot
+   * reading available to gate on, and gating on the live state would decline exactly the slow-reconnecting cameras this exists for. A reboot the plugin learns about
+   * through its periodic refresh, with no outage at all, arms a watch that finds the camera present and says nothing. Registering under the key replaces whatever it
+   * held, so a second reboot inside the window restarts the wait rather than stacking a second one.
+   */
+  public noteControllerRebooted(): void {
+
+    this.timers.setTimeout("rebootReturn", () => this.#reportRebootAbsence(), PROTECT_NVR_REBOOT_RECENCY_MS);
+  }
+
+  // The watch reaching its expiry, with three outcomes in order. An unhealthy controller means the reboot's tail is still running, so we extend the wait by another
+  // window rather than blame the camera for the controller's absence; that chain is bounded, ending when the controller returns, when the camera returns, or when this
+  // device tears down and its registry drains. A camera whose controller record has vanished is being removed, which is not a failure to come back. Otherwise the
+  // controller is healthy, this camera is still away, and that is the exception worth telling. The health read is deliberately separate from the reachability read
+  // below, because the two carry different news; past the health guard, isReachable is exactly the camera's own device-state half, read through the same peek-guarded
+  // helper every availability consumer uses.
+  #reportRebootAbsence(): void {
+
+    if(!this.nvr.client.connection.isHealthy) {
+
+      this.noteControllerRebooted();
+
+      return;
+    }
+
+    if(!this.recordPresent) {
+
+      return;
+    }
+
+    if(this.isReachable || this.#rebootReturnWarned) {
+
+      return;
+    }
+
+    this.#rebootReturnWarned = true;
+    this.log.warn("This camera has not come back online since the controller rebooted.");
+  }
+
+  // Reconcile the reboot-return watch against this camera's current reachability. A reachable camera has answered the question the watch asked, so the wait ends here,
+  // and a watch that had already spoken closes its story with a matching line at the same level - an operator scanning warn sees the alert and its all-clear together.
+  // Both reachability paths call this because they carry different news: the camera's own state observe sees the device itself come back, while the controller-health
+  // push is what a whole-controller recovery moves. An outage freezes the device state and the store dedups on the selected value, so a controller-health recovery
+  // never wakes the state observe at all, which makes the override the path a real reboot recovery most often takes. Safe to call more than once: clearing an unarmed
+  // key does nothing and the latch gates the line.
+  #reconcileRebootReturn(): void {
+
+    if(!this.isReachable) {
+
+      return;
+    }
+
+    this.timers.clear("rebootReturn");
+
+    if(!this.#rebootReturnWarned) {
+
+      return;
+    }
+
+    this.#rebootReturnWarned = false;
+    this.log.warn("The camera is back online.");
   }
 
   // Push the night-vision characteristics from the camera's ISP settings: the operating-mode indicator and, when the dimmer is enabled, its on/brightness state. Driven

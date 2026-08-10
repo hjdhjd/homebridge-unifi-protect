@@ -8,7 +8,6 @@ import type { HomebridgePluginLogging } from "homebridge-plugin-utils";
 import { PROTECT_TIMESHIFT_BUFFER_MAXDURATION } from "../settings.ts";
 import type { ProtectCameraHost } from "./camera-host.ts";
 import { ProtectTimeshiftBuffer } from "./timeshift.ts";
-import { isInducedDisruption } from "../nvr/nvr-policy.ts";
 
 // Lightning-bolt emoji (U+26A1 HIGH VOLTAGE SIGN + U+FE0F VARIATION SELECTOR-16) used to prefix the HKSV configuration log when this camera's HKSV recording encode
 // runs on the host's hardware encoder.
@@ -23,10 +22,11 @@ export interface RecordingDemand {
 }
 
 // The camera's current recording-deferral episode: "none" when no resolution narration is owed, and otherwise the origin captured at the moment the deferral opened.
-// The resolution fires much later - on the pass that finally re-establishes, by which time the controller's phase has typically returned to running - so it cannot read
-// the phase for itself. The single value therefore answers both questions the narration asks: whether a resolution is owed (any origin at all) and which level it
-// narrates at (which origin).
-type DeferralEpisode = "induced" | "none" | "organic";
+// An "expected" origin is a disruption the controller told us to expect - one the plugin induced, or one inside the settling tail of a reboot it observed - while an
+// "organic" origin is this one camera unexpectedly going away. The resolution fires much later - on the pass that finally re-establishes, by which time the
+// controller's phase has typically returned to running - so it cannot classify for itself. The single value therefore answers both questions the narration asks:
+// whether a resolution is owed (any origin at all) and which level it narrates at (which origin).
+type DeferralEpisode = "expected" | "none" | "organic";
 
 /* UniFi Protect timeshift buffer supervisor.
  *
@@ -242,13 +242,13 @@ export class ProtectTimeshiftSupervisor {
 
     if(isDeferredOffline && !this.wasDeferredOffline) {
 
-      // The camera went offline while HomeKit asked us to record. Open the deferral episode: one write records both that its resolution narration is owed and whether
-      // this is a disruption we induced (our own reboot/shutdown), so the resolution gates the same way the deferral did. An induced disruption is expected (the
-      // controller-level narration already covers it) and logs at debug; an organic single-camera offline is a genuine "we wanted to record but cannot" signal and stays
-      // at warn.
-      this.deferralEpisode = isInducedDisruption(this.protectCamera.nvr.phase) ? "induced" : "organic";
+      // The camera went offline while HomeKit asked us to record. Open the deferral episode: one write records both that its resolution narration is owed and whether the
+      // controller expected this disruption, so the resolution gates the same way the deferral did. The controller root owns that classification, so this deferral and
+      // the per-camera livestream narration agree on what a given blip means. An expected disruption is already covered by the controller-level narration and logs at
+      // debug; an organic single-camera offline is a genuine "we wanted to record but cannot" signal and stays at warn.
+      this.deferralEpisode = this.protectCamera.nvr.isDisruptionExpected ? "expected" : "organic";
 
-      if(this.deferralEpisode === "induced") {
+      if(this.deferralEpisode === "expected") {
 
         this.log.debug("HomeKit Secure Video event recording is deferred until the camera is online.");
       } else {
@@ -349,7 +349,7 @@ export class ProtectTimeshiftSupervisor {
     // pass, the one that finally re-established. An episode is only ever opened under a recording request, so this is inherently HKSV narration.
     if(this.deferralResolutionOwed) {
 
-      if(this.deferralEpisode === "induced") {
+      if(this.deferralEpisode === "expected") {
 
         this.log.debug("HomeKit Secure Video event recording has started now that the camera is online.");
       } else {

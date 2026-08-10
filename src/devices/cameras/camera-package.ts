@@ -124,6 +124,15 @@ export class ProtectCameraPackage extends ProtectCamera {
     return true;
   }
 
+  // The package camera arms no reboot-return watch of its own, deliberately doing nothing here. The package is a second HomeKit view of the parent's hardware, not a
+  // second piece of hardware, and the parent's watch already speaks for the physical camera - two watches over one device would tell the user the same camera is
+  // missing twice, and announce its return twice. The controller's post-reboot walk reaches package cameras alongside their parents, so the inert override is what
+  // keeps that walk uniform rather than making the caller ask which kind of camera it holds.
+  public override noteControllerRebooted(): void {
+
+    // Deliberately empty: the parent camera's watch speaks for the shared hardware.
+  }
+
   // Seed the package camera's synthetic identity. Unlike a real device, the package camera carries no MAC of its own - it is reserved for real Protect devices - so we
   // seed the controller MAC and the parent's bare MAC as the packageCamera identity instead. Identity is re-derived every configure from the raw record, never preserved
   // across a context reset; the package is the one family whose identity is synthetic, which is why it overrides the base seeding.
