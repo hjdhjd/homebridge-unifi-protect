@@ -479,11 +479,25 @@ export class ProtectNvr {
     this.removals.refresh(good ? { good, upSince: this.ufp.upSince } : { good });
   }
 
-  // How many camera views are actively transmitting HKSV recordings, which is what the reboot scheduler's deferral decision rests on. The walk is this root's - it owns
-  // the device graph - while the counting rule itself lives once in nvr-policy.ts, shared with every other caller that has its own population to count.
+  // How many camera views are actively transmitting HKSV recordings, which is what the reboot scheduler's deferral decision rests on. Every camera view this controller
+  // manages counts - package cameras alongside their parents - because a package recording an event has as much claim to finish it as its parent does, and the endpoints
+  // iterator is what reaches both. The walk is this root's, since it owns the device graph, while the counting rule itself lives once in nvr-policy.ts, shared with
+  // every other caller that has its own population to count.
   #activeHksvRecordings(): number {
 
-    return countActiveRecordingViews(this.devices("camera"));
+    const views: ProtectCamera[] = [];
+
+    for(const device of this.deviceEndpoints()) {
+
+      if(!(device instanceof ProtectCamera)) {
+
+        continue;
+      }
+
+      views.push(device);
+    }
+
+    return countActiveRecordingViews(views);
   }
 
   // Publish an NVR-level lifecycle milestone on the forward-only diagnostics channel. Zero-cost when no subscriber is attached (the Node-native sync check).
@@ -1301,10 +1315,10 @@ export class ProtectNvr {
   }
 
   // Iterate every HomeKit device endpoint this controller manages: each configured device and, immediately after a camera-family device that carries one, its package
-  // camera. Package cameras hang off the doorbell capability composed on their parent camera rather than configuredDevices, so any controller-wide push (the reachability
-  // fan-out, the probesize reset, the disconnect teardown) walks this iterator instead of hand-fanning the package at each site. Consumers that need camera-typed members
-  // narrow with instanceof ProtectCamera - sound and cast-free, since package cameras are ProtectCamera subclasses, and the parent's packageCamera getter delegates to
-  // the capability.
+  // camera. Package cameras hang off the doorbell capability composed on their parent camera rather than configuredDevices, so any controller-wide push or read (the
+  // reachability fan-out, the probesize reset, the disconnect teardown, the scheduled reboot's active-recording count) walks this iterator instead of hand-fanning the
+  // package at each site. Consumers that need camera-typed members narrow with instanceof ProtectCamera - sound and cast-free, since package cameras are ProtectCamera
+  // subclasses, and the parent's packageCamera getter delegates to the capability.
   private *deviceEndpoints(): Generator<ProtectDevice> {
 
     for(const device of this.configuredDevices.values()) {
