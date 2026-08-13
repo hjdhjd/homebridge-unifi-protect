@@ -68,7 +68,7 @@ HKSV in `homebridge-unifi-protect` works well by default if you have a decently 
 
 If you're struggling to get HKSV working in HBUP, try the following and see if it helps:
 
-  * Force the timeshift buffer that feeds HKSV to use the lowest-quality stream as its starting point. You'll find this under the *Timeshift Buffer* section of the HBUP feature options webUI (`Video.Timeshift.Only.Low`). Because that buffer is shared, this also lowers the quality of your live views and snapshots, not just your HKSV recordings.
+  * Force the timeshift buffer that feeds HKSV to use the lowest-quality stream as its starting point. You'll find this under the *Timeshift Buffer* section of the HBUP webUI's Settings tab (`Video.Timeshift.Only.Low`). Because that buffer is shared, this also lowers the quality of your live views and snapshots, not just your HKSV recordings.
 
 The above recommendation should help you get up and running in most lower-powered environments.
 

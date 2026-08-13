@@ -43,6 +43,7 @@ The reference below is generated directly from the plugin's own option catalog, 
  * [Fob](#fob): Fob
  * [Log](#log): Logging
  * [Motion](#motion): Motion &amp; Occupancy
+ * [Mqtt](#mqtt): MQTT
  * [Nvr](#nvr): Protect Controller
  * [Relay](#relay): Relay
  * [SecuritySystem](#securitysystem): Security System
@@ -98,6 +99,7 @@ These option(s) apply to: Protect cameras.
 | <A NAME="Doorbell.PhysicalChime"></A>`Doorbell.PhysicalChime`                                            | Add switch accessories to control the physical chimes attached to a Protect doorbell. **(default: disabled)**. <BR>*Supported on Protect doorbells that have a physical chime.*
 | <A NAME="Doorbell.PhysicalChime.Duration.Digital"></A>`Doorbell.PhysicalChime.Duration.Digital=<value>`  | Chime duration, in milliseconds, of a digital physical chime attached to a Protect doorbell. **(default: 1000)**. <BR>*Supported on Protect doorbells that have a physical chime.*
 | <A NAME="Doorbell.PackageCamera.Flashlight"></A>`Doorbell.PackageCamera.Flashlight`                      | Add a light accessory to control the flashlight on a Protect doorbell package camera. **(default: enabled)**. <BR>*Supported on Protect doorbells that have a package camera.*
+| <A NAME="Doorbell.Ring.Delay"></A>`Doorbell.Ring.Delay=<value>`                                          | Delay, in seconds, before a new doorbell ring event can be triggered, suppressing rapid duplicate rings. **(default: 15)**. <BR>*Supported on Protect devices that have a doorbell.*
 | <A NAME="Doorbell.Trigger"></A>`Doorbell.Trigger`                                                        | Add a switch accessory to trigger doorbell ring events on a Protect camera or doorbell. **(default: disabled)**.
 
 #### <A NAME="fob"></A>Fob
@@ -120,6 +122,7 @@ These option(s) apply to: Protect cameras, Protect lights, and Protect sensors.
 | Option                                     | Description
 |--------------------------------------------|-------------------------------------------------------------
 | <A NAME="Log.Doorbell"></A>`Log.Doorbell`  | Log doorbell ring events in Homebridge. **(default: enabled)**. <BR>*Supported on Protect cameras.*
+| <A NAME="Log.FFmpeg"></A>`Log.FFmpeg`      | Log verbose FFmpeg output in Homebridge, including the launch-time codec probe and every streaming and two-way audio FFmpeg session. **(default: disabled)**. <BR>*Supported on Protect cameras.*
 | <A NAME="Log.HKSV"></A>`Log.HKSV`          | Log HomeKit Secure Video recording events in Homebridge. **(default: disabled)**. <BR>*Supported on Protect cameras.*
 | <A NAME="Log.Motion"></A>`Log.Motion`      | Log motion events in Homebridge. **(default: disabled)**. <BR>*Supported on Protect devices that have a motion sensor.*
 
@@ -154,12 +157,20 @@ These option(s) apply to: Protect cameras, Protect lights, and Protect sensors.
 | <A NAME="Motion.Switch"></A>`Motion.Switch`                                                                          | Add a switch accessory to activate or deactivate motion detection in HomeKit. **(default: disabled)**. <BR>*Supported on Protect devices that have a motion sensor.*
 | <A NAME="Motion.Trigger"></A>`Motion.Trigger`                                                                        | Add a switch accessory to manually trigger a motion detection event in HomeKit. **(default: disabled)**. <BR>*Supported on Protect devices that have a motion sensor.*
 
+#### <A NAME="mqtt"></A>MQTT
+
+| Option                                         | Description
+|------------------------------------------------|-------------------------------------------------------------
+| <A NAME="Mqtt.Url"></A>`Mqtt.Url=<value>`      | URL of the MQTT broker to connect to (e.g. mqtt://1.2.3.4). **(default: none)**.
+| <A NAME="Mqtt.Topic"></A>`Mqtt.Topic=<value>`  | Topic prefix for published and subscribed MQTT messages. **(default: unifi/protect)**.
+
 #### <A NAME="nvr"></A>Protect Controller
 
 These option(s) apply to: Protect cameras and Protect controllers.
 
 | Option                                                                 | Description
 |------------------------------------------------------------------------|-------------------------------------------------------------
+| <A NAME="Nvr.OverrideAddress"></A>`Nvr.OverrideAddress=<value>`        | Override the address used when livestreaming from cameras attached to this controller. This option is intended for unusual network topologies and is unavailable for stacked controller configurations. **(default: none)**. <BR>*Supported on Protect controllers.*
 | <A NAME="Nvr.Service.Playlist"></A>`Nvr.Service.Playlist=<value>`      | Publish an M3U playlist of Protect cameras on the specified port of this Homebridge server that is suitable for use in apps (e.g. Channels DVR) that can make camera livestreams available through them. **(default: 10110)**. <BR>*Supported on Protect controllers.*
 | <A NAME="Nvr.DelayDeviceRemoval"></A>`Nvr.DelayDeviceRemoval=<value>`  | Delay, in seconds, before removing devices that are no longer detected on the Protect controller. Removal is held off while the controller is unreachable or restarting, and resumes once it is healthy again: immediately, if the delay is disabled. **(default: 60)**. <BR>*Supported on Protect controllers.*
 | <A NAME="Nvr.Publish.Telemetry"></A>`Nvr.Publish.Telemetry`            | Publish all the realtime telemetry received from the Protect controller to MQTT. **(default: disabled)**. <BR>*Supported on Protect controllers.*
@@ -206,6 +217,7 @@ These option(s) apply to: Protect cameras.
 
 | Option                                                                                           | Description
 |--------------------------------------------------------------------------------------------------|-------------------------------------------------------------
+| <A NAME="Video.FFmpeg.Path"></A>`Video.FFmpeg.Path=<value>`                                      | Path to the FFmpeg executable to use for video processing. Default: the bundled FFmpeg build for your platform, or the first ffmpeg found in your path. **(default: none)**.
 | <A NAME="Video.Transcode.Hardware"></A>`Video.Transcode.Hardware`                                | Use hardware-accelerated transcoding when available (Apple Macs, Intel Quick Sync Video-enabled CPUs, Raspberry Pi 4). **(default: enabled)**.
 | <A NAME="Video.Transcode"></A>`Video.Transcode`                                                  | When streaming to low-latency clients (e.g. at home), transcode livestreams, instead of transmuxing them. **(default: enabled)**.
 | <A NAME="Video.Transcode.Bitrate"></A>`Video.Transcode.Bitrate=<value>`                          | Bitrate, in kilobits per second, to use when transcoding to low-latency (e.g. at home) clients, ignoring the bitrate HomeKit requests. HomeKit typically requests lower video quality than you may desire in your environment. **(default: 2000)**.

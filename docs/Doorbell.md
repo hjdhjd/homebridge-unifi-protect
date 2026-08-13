@@ -50,7 +50,7 @@ If you're reading this, chances are you own, or would like to own, a [UniFi Prot
 
   * Unfortunately, AEC is not a solved problem in the open source community quite yet, though there are great commercial options. There are a couple of glimmers of hope: Protect cameras appear to actually support AEC, though there doesn't appear to be a straightforward way to access this capability at the moment. The second is that, things *do* work quite well, aside from the unfortunate challenge around AEC for the person using the Home app.
 
-  * Two-way audio is enabled by default. You can disable it through the two-way audio feature option under the Audio section of the HBUP feature options webUI, and it attaches live...if a camera or doorbell gains two-way audio, it shows up without a Homebridge restart. There's also a *direct* two-way audio option in the same section that sends audio straight to the camera, bypassing the controller, which can work around bugs in some Protect firmware versions.
+  * Two-way audio is enabled by default. You can disable it through the two-way audio feature option under the Audio section of the HBUP webUI's Settings tab, and it attaches live...if a camera or doorbell gains two-way audio, it shows up without a Homebridge restart. There's also a *direct* two-way audio option in the same section that sends audio straight to the camera, bypassing the controller, which can work around bugs in some Protect firmware versions.
 
   * Finally, since someone will inevitably ask: Ring and Nest-Cam (terrific plugins by terrific developers) - don't have this problem because Ring and Nest send all audio back to Ring and Nest's servers where audio is processed and dealt with, including AEC.
 
@@ -62,7 +62,7 @@ This plugin supports HomeKit's native video doorbell and doorbell ring functiona
 
 Enter automation support for doorbell ring events in this plugin. If you choose to enable support for doorbell ring automation, you can create HomeKit automations based on doorbell ring events. Here's how it works:
 
-  * Enable the doorbell trigger feature option under the Doorbell section of the HBUP feature options webUI.
+  * Enable the doorbell trigger feature option under the Doorbell section of the HBUP webUI's Settings tab.
 
   * This will create a switch service on the doorbell. Whenever the doorbell rings, the switch will turn on for a few seconds before resetting to the *off* state again.
 
@@ -87,44 +87,38 @@ When you select a message to be displayed, you can also set a duration for that 
 
 #### How Doorbell Messages Work In `homebridge-unifi-protect`
 
-There are a few challenges in implementing this feature for HomeKit, but the most significant one is that there's no way to take direct user input, like text. So what do we do? I decided to take the essence of this feature - preconfigured messages that you can set for arbitrary durations - and make it available through HomeKit as a switch.
+There are a few challenges in implementing this feature for HomeKit, but the most significant one is that there's no way to take direct user input, like text. So what do we do? I decided to take the essence of this feature...the saved messages you choose from...and make each one available through HomeKit as a switch.
 
 Here's how it works:
 
-  * The doorbell messages feature is off by default; you enable it under the Doorbell feature options. Once it's on, `homebridge-unifi-protect` reads, in realtime, any messages saved in UniFi Protect (that behavior is on by default too, though you can turn it off if you'd rather only use messages you configure in Homebridge). That means at a minimum, you'll always have the built in *Do not disturb* and *Leave package at door* messages available to you, in addition to any other messages you choose to setup in the UniFi Protect app.
+  * The doorbell messages feature is off by default; you enable it under the Doorbell section of the HBUP webUI's Settings tab. Once it's on, `homebridge-unifi-protect` reads, in realtime, the messages saved in UniFi Protect. That means at a minimum, you'll always have the built in *Do not disturb* and *Leave package at door* messages available to you, in addition to any other messages you choose to setup in the UniFi Protect app.
 
-    * This gives you the flexibility to add and remove messages at a whim, and this plugin will make sure those messages are available for you to use in HomeKit on a dynamic basis. What you get, is the simplicity of having a single place for all the messages you want to use with your doorbell - whether it's using the UniFi Protect iOS app or the Home app.
+    * Your messages are defined in one place, the UniFi Protect app, and this plugin makes whatever is saved there available to you in HomeKit on a dynamic basis. Add or remove a message in Protect and the switches in HomeKit follow along, no Homebridge restart required. What you get, is the simplicity of having a single place for all the messages you want to use with your doorbell - whether it's using the UniFi Protect iOS app or the Home app.
 
-    * **Messages you set within the Home app that come from UniFi Protect will always have a 60 second duration.** This is because Protect doesn't allow you to save a duration, only the message. There's no way for me to tell how long you intended to display this message for, so we do what Protect does by default - display the selected message for 60 seconds.
+    * **A message you set from the Home app is displayed for your controller's default message duration.** This is because Protect doesn't allow you to save a duration, only the message. There's no way for me to tell how long you intended to display this message for, so we do what Protect does and use the controller's own default, which is 60 seconds unless you've changed it in Protect.
 
-  * You can also configure messages in Homebridge - either in addition to, or in place of, whatever is saved in UniFi Protect.
-
-    * This approach provides you the most customization, but it comes at the expense of needing to reboot Homebridge whenever you want to make changes. In practice, I don't find this to be much of an issue when you combine this with the previous option. The combination allows you to use the flexibility provided in configuring messages through Homebridge, with the convenience of more ad hoc messages that you may need on a temporary basis.
-
-    * Messages configured within the HBUP webUI can have duration information associated with them. **You can choose to display a message indefinitely, or for any amount of time you choose, without restriction.**
-
-  * All configured messages - those that come from UniFi Protect and those that you configure in Homebridge - will be made available as individual switches on the doorbell accessory in the Home app. You can set or clear a given message by activating or deactivating the associated switch in the Home app.
+  * Every saved message is made available as an individual switch on the doorbell accessory in the Home app. You can set or clear a given message by activating or deactivating the associated switch in the Home app.
 
     * Any message switch that's made available through HomeKit will reflect its true state, whether it was activated within the Home app or through the UniFi Protect app. You'll always know what's being displayed on the doorbell, so long as it's *not* an ad hoc message that hasn't been saved in the UniFi Protect interface.
 
-  * When someone rings the doorbell, you'll receive a rich notification. If you swipe down on that notification, you'll see a complete list of all the message switches associated with the doorbell. While two-way audio isn't available through HomeKit, you *can* select any of the preset messages you've configured to communicate with the person who rang the doorbell.
+  * When someone rings the doorbell, you'll receive a rich notification. If you swipe down on that notification, you'll see a complete list of all the message switches associated with the doorbell. While two-way audio isn't available through HomeKit, you *can* select any of the saved messages to communicate with the person who rang the doorbell.
 
 #### Configuring the Doorbell Messages Feature
 
-Doorbell messages can be configured using the HBUP webUI:
+The messages themselves are created, edited, and deleted in the UniFi Protect app. That's the one place they're defined...this plugin keeps no message list of its own.
 
-  * Go to the **Settings** tab, then select **UniFi Protect Controllers** and then **Doorbell Message Presets**.
-  * You can configure a default doorbell message as well as an unlimited number of additional messages to be made available as message switches within HomeKit.
+What you configure in the HBUP webUI is how those messages surface in HomeKit. You'll find both of these under the Doorbell section of the Settings tab:
 
-To configure the behavior of this feature, see the HBUP feature options webUI, under the Doorbell feature options section.
+  * `Doorbell.Messages` turns the feature on. It's off by default, so no message switches appear in HomeKit until you enable it.
+  * `Doorbell.Messages.FromDoorbell` is what turns each message saved on your controller into a switch. It's on by default, and turning it off leaves you with no message switches at all, since the controller is where your messages live.
 
 ### Some Fun Facts
   * There is a 30 character limit to what can be displayed on the LCD.
   * No, you can't use emojis. Would've been nice, right?
   * No, you can't have newlines / carriage returns either. These are limitations in what the doorbell displays, not ones imposed by `homebridge-unifi-protect`. In my testing, it supports basic formatting and regular text, and that's it.
   * No, you can't display cool icons like the builtin *do not disturb* and *leave package at door* settings do. Would be nice, but these just aren't accessible. Would be an awesome feature to have though, if Ubiquiti chooses to make it customizable in the future.
-  * You get more flexibility in formatting when using the plugin-centric configuration option rather than configuring messages in Protect directly. Protect will always uppercase any message you enter. `homebridge-unifi-protect` will honor whatever case and formatting you enter.
-  * There's no practical limit to the number of messages you can configure.
+  * Protect will always uppercase any message you enter. That's Protect's own doing, not something this plugin imposes...`homebridge-unifi-protect` shows you exactly what the controller reports.
+  * There's no practical limit imposed by this plugin on how many messages you save. Every one the controller reports gets its own switch.
 
 ---
 

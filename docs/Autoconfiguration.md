@@ -65,7 +65,7 @@ For HomeKit Secure Video event recording:
 
 #### Customizing Defaults
 
-Everything above can be tailored to your environment and taste in the HBUP feature options webUI. Specifically, you can:
+Everything above can be tailored to your environment and taste in the HBUP webUI's Settings tab. Specifically, you can:
 
 * Stream live views directly from the camera over RTSP instead of from the buffer. **Default: buffer-backed live viewing (`Video.Timeshift.Livestream`, on).**
 * Transmux instead of transcode for local clients. **Default: transcode local clients.**

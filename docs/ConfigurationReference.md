@@ -22,13 +22,13 @@
 
 You shouldn't need this for day-to-day use...the defaults suit almost everyone, and the right place to configure HBUP is the webUI, where every option is validated for you. Hand-editing the JSON in your Homebridge `config.json` is error-prone and easy to get subtly wrong. This page is here for when you come across a setting and want to know exactly what it does.
 
+There isn't much left in `config.json`, and that's by design. It holds the plugin's identity, the login details for each of your Protect controllers, and the list of feature options you've set. Everything you can actually tailor is a [feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md), and the webUI is where you set those.
+
 ```js
 "platforms": [
   {
     "platform": "UniFi Protect",
-    "videoProcessor": "/usr/local/bin/ffmpeg",
-    "verboseFfmpeg": false,
-    "ringDelay": 0,
+    "name": "UniFi Protect",
 
     "options": [
       "Enable.Motion.Switch"
@@ -36,44 +36,49 @@ You shouldn't need this for day-to-day use...the defaults suit almost everyone, 
 
     "controllers": [
       {
-        "name": "My UniFi Protect Controller",
         "address": "1.2.3.4",
-        "overrideAddress": "a.b.c.d",
         "username": "some-homebridge-user (or create a new one just for homebridge)",
-        "password": "some-password",
-        "doorbellMessages": [
-          {
-             "message": "Be right there.",
-             "duration": 90
-          }
-        ],
-        "mqttUrl": "mqtt://test.mosquitto.org",
-        "mqttTopic": "unifi/protect"
+        "password": "some-password"
       }
     ]
   }
 ]
 ```
 
-The settings come in two groups: platform-level fields that apply to the whole plugin, and controller-level fields inside each entry of the `controllers` array. The `Level` column below tells you which is which (note that `name` exists at both levels, meaning two different things).
+The settings come in two groups: platform-level fields that apply to the whole plugin, and controller-level fields inside each entry of the `controllers` array. The `Level` column below tells you which is which.
 
 | Field            | Level      | Description                                             | Default                          | Required |
 |------------------|------------|---------------------------------------------------------|----------------------------------|----------|
 | platform         | Platform   | Must always be `UniFi Protect`.                         | UniFi Protect                    | Yes      |
 | name             | Platform   | An optional name for the plugin instance, shown in the Homebridge logs. | UniFi Protect    | No       |
 | controllers      | Platform   | The list of UniFi Protect controllers to connect to. Each entry takes the controller-level fields below. |  | Yes      |
-| videoProcessor   | Platform   | Path to FFmpeg. HBUP bundles its own FFmpeg build, and in general you shouldn't point this at a different one unless you have a specific need. | builtin, or falling back to `ffmpeg` in your PATH | No |
-| verboseFfmpeg    | Platform   | Enable additional logging for video streaming.          | false                            | No       |
-| ringDelay        | Platform   | Delay between doorbell rings. Setting this to a non-zero value will prevent multiple rings of a doorbell over the specified duration. | 0 | No |
-| options          | Platform   | Configure plugin [feature options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md). | [] | No |
-| name             | Controller | A name for the controller, used for Homebridge logging purposes. | the controller's own name | No |
+| options          | Platform   | The [feature options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md) you've set. The webUI writes this list for you...that reference is the authority on every option available to you and what each one does. | [] | No |
 | address          | Controller | Host or IP address of your UniFi Protect controller.    |                                  | Yes      |
 | username         | Controller | The username of the local UniFi Protect account you use with HBUP. |                       | Yes      |
 | password         | Controller | The password of that local UniFi Protect account.       |                                  | Yes      |
-| overrideAddress  | Controller | Override the address HBUP uses when livestreaming from the controller...useful in VPN and remote-access scenarios. Unavailable for stacked Protect controller configurations. |  | No |
-| doorbellMessages | Controller | Configure [doorbell messages](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Doorbell.md) for this controller. | [] | No |
-| mqttUrl          | Controller | The URL of your MQTT broker. **This must be in URL form**, e.g.: `mqtt://user:password@1.2.3.4`. |          | No       |
-| mqttTopic        | Controller | The base topic to use when publishing MQTT messages.    | unifi/protect                    | No       |
+
+### Where Your Older Settings Went
+
+If you've been using HBUP for a while, your `config.json` may still carry a few settings this page doesn't list. Most of them simply have a new home.
+
+The doorbell ring delay, verbose FFmpeg logging, the FFmpeg path, the MQTT broker URL, and the MQTT topic are all feature options now, as is the livestreaming address override. You don't need to do anything about them. The first time you open the plugin's settings page, HBUP moves each one into its matching feature option and clears the old property out of your configuration. The three per-controller settings among them...the MQTT broker URL, the MQTT topic, and the address override...need to reach the controller before HBUP knows where to file them, so if one of your controllers is offline at that moment, its settings stay put and HBUP tries again the next time you open the page. Until a setting moves, the plugin goes on reading the old property, so nothing changes underneath you in the meantime. The [feature options reference](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md) is the authority on what each one is now called and what it defaults to.
+
+Two settings didn't move anywhere. They're retired, because in each case there's a better single place for that information to live:
+
+  * **A controller's name.** HBUP uses the name your controller carries in the UniFi console. Set it there once and the plugin follows it, so there's no second name to keep in step.
+  * **Doorbell message presets.** Doorbell messages are defined in the UniFi Protect app, and HBUP surfaces the messages saved there as message switches on your doorbell in HomeKit. The [doorbell documentation](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Doorbell.md#doorbell-messages) covers how that works.
+
+### Managing Your Controllers
+
+You don't need to hand-edit `config.json` to add a controller or change one. It's all in the plugin's **Settings** tab in the webUI:
+
+  * **Adding a controller.** Use the **Add Controller** button at the top of the sidebar, just above the controller list. The login is checked against the controller before anything is saved.
+  * **Editing a controller.** Select the controller in the sidebar and open **Controller connection settings**, which sits just beneath its details. That's where you change its address, username, or password.
+  * **Removing a controller.** Same place...the editor offers removal alongside saving.
+
+A controller HBUP can't reach gets the same editor, on the connection error its page shows instead of the usual details. That's deliberate: a controller you can't connect to is exactly the one you most need to correct or remove, whether the password changed, the address moved, or the console is simply switched off.
+
+When you remove a controller, HBUP can also delete the feature options you'd set for that controller and its devices, but only when it knows what those devices are. If the controller answered with its device list during this webUI session, the removal offers you that cleanup as a choice. If it didn't...because it's unreachable, or because you haven't visited it in this session...those feature options are left in place. You can tidy them up by hand, or connect to the controller successfully and remove it again.
 
 ---
 

@@ -38,15 +38,15 @@
 
 This documentation assumes you know what MQTT is, what an MQTT broker does, and how to configure it. Setting up an MQTT broker will not be covered here. There are plenty of guides available on how to do so just a search away.
 
-You can configure MQTT settings in the plugin webUI. The settings are:
+You configure MQTT with feature options, in the MQTT section of the Settings tab in the HBUP webUI. Both are set per controller, so each of your Protect controllers can publish to a broker and a topic of its own. The settings are:
 
-| Configuration Setting | Description
-|-----------------------|----------------------------------
-| `mqttUrl`             | The URL of your MQTT broker. **This must be in URL form**, e.g.: `mqtt://user:password@1.2.3.4`.
-| `mqttTopic`           | The base topic to publish to. The default is: `unifi/protect`.
+| Feature Option | Description
+|----------------|----------------------------------
+| `Mqtt.Url`     | The URL of your MQTT broker. **This must be in URL form**, e.g.: `mqtt://user:password@1.2.3.4`.
+| `Mqtt.Topic`   | The base topic to publish to. The default is: `unifi/protect`.
 
 > [!IMPORTANT]
-> **mqttUrl** must be a valid URL. Just entering a hostname will result in an error. The URL can use any of these protocols: `mqtt`, `mqtts`, `tcp`, `tls`, `ws`, `wss`.
+> **Mqtt.Url** must be a valid URL. Just entering a hostname will result in an error. The URL can use any of these protocols: `mqtt`, `mqtts`, `tcp`, `tls`, `ws`, `wss`.
 
 When events are published, by default, the topics look like:
 
