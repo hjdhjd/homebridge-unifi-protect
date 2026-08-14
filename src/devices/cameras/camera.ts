@@ -756,8 +756,11 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
         return;
       }
 
-      // The unlock succeeded. Protect v7 no longer fires a feedback event for user-directed Access unlocks, so we drive the auto re-lock from here. HomeKit already
-      // set the lock to UNSECURED as part of the set request that brought us into this handler, so we just need to schedule the re-lock.
+      // The unlock succeeded, which confirms the controller released the strike...Protect fires no feedback event for user-directed Access unlocks, so we report the
+      // momentary unlock and drive the auto re-lock ourselves. HomeKit's own set request moved the target to UNSECURED on its way into this handler; mirroring
+      // current state is what lands the Home app tile on "Unlocked" rather than an "Unlocking" transition that never completes.
+      service.updateCharacteristic(this.hap.Characteristic.LockCurrentState, this.hap.Characteristic.LockCurrentState.UNSECURED);
+
       this.log.info("Unlocked.");
 
       // Two seconds is long enough for the momentary UNSECURED state to register visibly in the Home app before we revert it back to SECURED.

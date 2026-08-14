@@ -633,6 +633,11 @@ describe("the camera capability reconcile - the UniFi Access lock", () => {
       await restored.getCharacteristic(Characteristic.LockTargetState).triggerSet(Characteristic.LockTargetState.UNSECURED);
 
       assert.equal(projection.unlockCalls.length, 1, "the re-bound onSet dispatched exactly one unlock when driven to UNSECURED");
+
+      // (c) The success path reported the momentary unlock: current state mirrors UNSECURED so the Home app lands on "Unlocked" rather than a transition that never
+      // completes, and the auto re-lock timer restores SECURED afterwards (setTimeout is mocked here, so the re-lock never fires before this read).
+      assert.equal(restored.getCharacteristic(Characteristic.LockCurrentState).value, Characteristic.LockCurrentState.UNSECURED,
+        "the successful unlock pushed the momentary UNSECURED current state");
     } finally {
 
       mock.timers.reset();

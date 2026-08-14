@@ -229,15 +229,19 @@ describe("migrated onSet revert through the HAP test-double", () => {
 describe("access unlock onSet (real runDeviceCommand)", () => {
 
   // The access-unlock onSet shape the camera ships: push the unlock through the shared helper and, on failure, revert BOTH lock characteristics to SECURED. Production
-  // defers the revert via setTimeout(50); we apply it synchronously so the writes are observable without a timer. The success path schedules an auto-re-lock on
-  // a live keyed timer we do not model here, so we assert only that a successful unlock neither reverts the lock nor logs.
+  // defers the revert via setTimeout(50); we apply it synchronously so the writes are observable without a timer. On success, production reports the momentary unlock
+  // by pushing the UNSECURED current state and schedules an auto re-lock on a live keyed timer we do not model here, so we assert the report and that nothing logs.
   const unlockOnSet = (harness: CommandHarness, service: TestService, unlock: () => Promise<unknown>) => async (): Promise<void> => {
 
     if(!(await harness.instance.runCommand("unlock the Access device", unlock))) {
 
       service.updateCharacteristic(Characteristic.LockTargetState, Characteristic.LockTargetState.SECURED);
       service.updateCharacteristic(Characteristic.LockCurrentState, Characteristic.LockCurrentState.SECURED);
+
+      return;
     }
+
+    service.updateCharacteristic(Characteristic.LockCurrentState, Characteristic.LockCurrentState.UNSECURED);
   };
 
   test("a failed unlock reverts both lock characteristics to SECURED and reports the cause", async () => {
@@ -247,7 +251,8 @@ describe("access unlock onSet (real runDeviceCommand)", () => {
     const current = service.getCharacteristic(Characteristic.LockCurrentState);
     const target = service.getCharacteristic(Characteristic.LockTargetState);
 
-    // Model HomeKit's optimistic state: the set that brought us into the handler already moved both characteristics to UNSECURED.
+    // HomeKit's set moved the target to UNSECURED on the way into the handler; we pre-seed current UNSECURED as well so the failure revert below is observable as a
+    // genuine write rather than a default value.
     current.updateValue(Characteristic.LockCurrentState.UNSECURED);
     target.updateValue(Characteristic.LockTargetState.UNSECURED);
 
@@ -258,20 +263,21 @@ describe("access unlock onSet (real runDeviceCommand)", () => {
     assert.match(onlyError(harness.errors), /Unable to unlock the Access device: The Access device is unreachable\.$/);
   });
 
-  test("a successful unlock neither reverts the lock nor logs", async () => {
+  test("a successful unlock reports the momentary unlock and logs nothing", async () => {
 
     const harness = makeDevice();
     const service = makeTestAccessory().addService(Service.LockMechanism, "Lock");
     const current = service.getCharacteristic(Characteristic.LockCurrentState);
     const target = service.getCharacteristic(Characteristic.LockTargetState);
 
-    current.updateValue(Characteristic.LockCurrentState.UNSECURED);
+    // HomeKit's set moves only the target on the way into the handler; current stays SECURED until the success path reports the momentary unlock.
+    current.updateValue(Characteristic.LockCurrentState.SECURED);
     target.updateValue(Characteristic.LockTargetState.UNSECURED);
 
     await unlockOnSet(harness, service, () => Promise.resolve())();
 
-    assert.equal(current.value, Characteristic.LockCurrentState.UNSECURED, "a successful unlock leaves the optimistic UNSECURED current state in place");
-    assert.equal(target.value, Characteristic.LockTargetState.UNSECURED, "a successful unlock leaves the optimistic UNSECURED target in place");
+    assert.equal(current.value, Characteristic.LockCurrentState.UNSECURED, "a successful unlock pushed the momentary UNSECURED current state");
+    assert.equal(target.value, Characteristic.LockTargetState.UNSECURED, "a successful unlock leaves HomeKit's UNSECURED target in place");
     assert.equal(harness.errors.length, 0, "a successful unlock logs nothing");
   });
 
