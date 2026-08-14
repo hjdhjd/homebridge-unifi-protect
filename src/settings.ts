@@ -27,6 +27,10 @@ export const PROTECT_DOORBELL_CHIME_DURATION_DIGITAL = 1000;
 // Default duration, in milliseconds, to wait before allowing another trigger of the buzzer or speaker on the chime.
 export const PROTECT_DOORBELL_CHIME_SPEAKER_DURATION = 3500;
 
+// Suggested ring-suppression window, in seconds, pre-filled when a user enables the doorbell ring delay option. The option itself defaults off, so a configuration that
+// never enables it keeps today's behavior of delivering every ring event as it arrives.
+export const PROTECT_DOORBELL_RING_DELAY = 15;
+
 // Default duration, in milliseconds, of the trigger switch for a Protect doorbell, primarily for automation purposes.
 export const PROTECT_DOORBELL_TRIGGER_DURATION = 5000;
 

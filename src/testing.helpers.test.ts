@@ -8,9 +8,11 @@
  */
 import { Characteristic, Service, TestAccessory, TestStateStore, makeProtectState, makeTestAccessory, settle } from "./testing.helpers.ts";
 import type { CharacteristicType, TestService } from "./testing.helpers.ts";
+import type { Service as HapService, PlatformAccessory } from "homebridge";
 import type { ProtectCameraConfig, ProtectLightConfig, ProtectNvrConfig, ProtectNvrLiveviewConfig, ProtectRingtoneConfig, ProtectSensorConfig,
   ProtectViewerConfig } from "unifi-protect";
 import { describe, test } from "node:test";
+import { setAccessoryName, setServiceName } from "homebridge-plugin-utils";
 import assert from "node:assert/strict";
 import { makeCameraConfig } from "./devices/testing.helpers.ts";
 
@@ -608,5 +610,71 @@ describe("A2 controller owners, commit 2: the security-system HAP markers and re
     assert.equal(returned, characteristic, "setProps returns the characteristic so the production chain compiles");
     assert.deepEqual(service.getCharacteristic(Characteristic.SecuritySystemTargetState).props?.validValues, [ 3, 1 ],
       "setProps captured the exact validValues array for assertion");
+  });
+});
+
+/* The AccessoryInformation naming bridge: the pieces of real-platform behavior the doubles model so homebridge-plugin-utils' own accessory-naming surface runs
+ * unmodified against them - updateDisplayName on the accessory, and the service / characteristic statics the library reflects through to locate the information
+ * service and gate its name writes. These arms drive the REAL setAccessoryName and setServiceName, so a regression in either the bridge or the library's contract
+ * surfaces here rather than as a puzzling failure inside a device-family suite. The casts are the confined `as unknown as` form this file already uses for partial
+ * doubles.
+ */
+describe("harness growth: the AccessoryInformation naming bridge", () => {
+
+  test("updateDisplayName moves the platform wrapper's displayName and the underlying HAP accessory's together", () => {
+
+    const accessory = makeTestAccessory("Original Name");
+
+    assert.equal(accessory._associatedHAPAccessory.displayName, "Original Name", "both names start at the construction value");
+
+    accessory.updateDisplayName("Renamed Accessory");
+
+    assert.equal(accessory.displayName, "Renamed Accessory", "the platform wrapper's displayName follows the update");
+    assert.equal(accessory._associatedHAPAccessory.displayName, "Renamed Accessory", "the HAP accessory's displayName moves with it, never drifting apart");
+  });
+
+  test("the real setAccessoryName renames both display names and writes the information service's Name and ConfiguredName against real markers", () => {
+
+    const accessory = makeTestAccessory("Original Name");
+    const info = accessory.getService(Service.AccessoryInformation);
+
+    assert.ok(info, "the accessory carries an information service from construction for the naming surface to find");
+
+    // The before half, which is what makes every after-assertion a proven transition. The existence probes go through testCharacteristic, a pure has-predicate that
+    // (unlike getCharacteristic) never materializes the kind it reads: the information service is BORN carrying Name, the shape real HAP always gives it and the
+    // seed the naming surface destructures to recover the Characteristic constructor, while ConfiguredName does not exist until a name write creates it. Probing
+    // Name's existence without materializing it is what keeps this arm an honest end-to-end run against a born-shaped accessory rather than against a shape this
+    // test itself created.
+    assert.ok(info.testCharacteristic(Characteristic.Name), "the information service is born carrying its Name characteristic");
+    assert.equal(info.getCharacteristic(Characteristic.Name).value, null, "the born Name characteristic is unwritten until a rename lands");
+    assert.equal(info.testCharacteristic(Characteristic.ConfiguredName), false, "ConfiguredName is absent until the naming surface writes it");
+
+    setAccessoryName(accessory as unknown as PlatformAccessory, "Front Door");
+
+    assert.equal(accessory.displayName, "Front Door", "the platform wrapper's displayName took the rename");
+    assert.equal(accessory._associatedHAPAccessory.displayName, "Front Door", "the HAP accessory's displayName took the rename");
+    assert.equal(info.displayName, "Front Door", "setServiceName wrote the information service's own displayName");
+    assert.equal(info.getCharacteristic(Characteristic.Name).value, "Front Door", "the Name characteristic carries the new name");
+    assert.equal(info.getCharacteristic(Characteristic.ConfiguredName).value, "Front Door",
+      "the ConfiguredName characteristic, the Home app's editable name, carries it too");
+
+    // Both writes landed on the kinds this file's namespace exposes, which is the whole point of wiring real statics: a write against an undefined static would key a
+    // characteristic by undefined, leaving the reads above at null and polluting the double.
+    assert.ok(info.characteristics.every((characteristic) => characteristic.type !== undefined), "every characteristic the naming surface wrote is keyed by a real kind");
+  });
+
+  test("the bridge is scoped to AccessoryInformation: another service kind takes the displayName write but neither name characteristic", () => {
+
+    const accessory = makeTestAccessory();
+
+    // Constructed through the marker so the service arrives carrying its seed characteristic. The naming surface recovers the Characteristic constructor from that
+    // first slot and throws without it, so the legacy addService(type, ...) form would fail before ever reaching the predicate gate this arm exists to exercise.
+    const motion = accessory.addService(new Service.MotionSensor("Motion"));
+
+    setServiceName(motion as unknown as HapService, "Renamed Motion");
+
+    assert.equal(motion.displayName, "Renamed Motion", "setServiceName writes displayName on any service it runs against");
+    assert.equal(motion.testCharacteristic(Characteristic.Name), false, "the unwired kind's Name stays unmaterialized - the degenerate predicate withheld the write");
+    assert.equal(motion.testCharacteristic(Characteristic.ConfiguredName), false, "the unwired kind's ConfiguredName stays unmaterialized for the same reason");
   });
 });

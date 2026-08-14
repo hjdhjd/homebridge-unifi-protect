@@ -100,7 +100,7 @@ function loggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], substri
 // NVR / platform doubles with the test's userOptions threaded into the REAL FeatureOptions engine and an optional dispatch factory, the read-through projection, and a
 // fresh accessory. The casts are confined to this seam - the instance is the production ProtectCamera and its composed capability.
 async function buildDoorbell(options: { chimeConfigs?: ProtectChimeConfig[]; dispatch?: (nvr: ProtectNvr) => ProtectEventDispatch;
-  doorbellMessages?: { duration: number; message: string }[]; doorbellSettings?: ProtectNvrConfig["doorbellSettings"];
+  doorbellSettings?: ProtectNvrConfig["doorbellSettings"];
   featureFlags?: Partial<ProtectCameraConfig["featureFlags"]>; lcdMessage?: { duration?: number; resetAt?: Nullable<number>; text?: string; type?: string };
   userOptions?: string[]; } = {}): Promise<BuiltDoorbell> {
 
@@ -119,7 +119,6 @@ async function buildDoorbell(options: { chimeConfigs?: ProtectChimeConfig[]; dis
   // mqtt is always installed: the write-drive asserts the chime publish, and the reflection / ring tests never read mqtt, so an installed no-op recorder is
   // behavior-neutral for them. The held chime projections flow in through client.chimes; non-chime tests seed none (the empty default).
   const { controller, logEntries, mqtt, nvr } = makeTestNvr({ chimes: chimeProjections, ...(options.dispatch ? { dispatch: options.dispatch } : {}),
-    ...(options.doorbellMessages !== undefined ? { doorbellMessages: options.doorbellMessages } : {}),
     ...(options.doorbellSettings !== undefined ? { doorbellSettings: options.doorbellSettings } : {}), mqtt: true, store, userOptions: options.userOptions });
   const accessory = makeTestAccessory("Front Door", "uuid:74ACB9000001");
   const projection = new TestCameraProjection(cameraConfig.id, store);
@@ -796,19 +795,23 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
   describe("the LCD message switch net (self-re-syncing expiry, clear, and stale sync)", () => {
 
-    // A minimal truthy doorbell-settings shape whose allMessages is empty, so getMessages sees a valid source without seeding any controller messages; the user message
-    // below is what materializes a switch. defaultMessageResetTimeoutMs is the default the duration-less path would use, though every case here carries an explicit one.
-    const doorbellSettings = { allMessages: [], customImages: [], customMessages: [], defaultMessageResetTimeoutMs: 60000, defaultMessageText: "" };
+    // The rest of a truthy doorbell-settings shape, so getMessages sees a valid source; the saved messages each case seeds are what materialize the switches.
+    // defaultMessageResetTimeoutMs supplies the switch duration, since the controller's own allMessages entries carry a text and a type and no duration of their own.
+    const settingsShell = { customImages: [], customMessages: [], defaultMessageResetTimeoutMs: 60000, defaultMessageText: "" };
     const backSoon = "CUSTOM_MESSAGE.Back soon";
     const away = "CUSTOM_MESSAGE.Away";
 
-    // Build a doorbell with an LCD screen and one or two user messages plus the Doorbell.Messages option, so getMessages materializes a message switch per entry.
-    const buildMessageDoorbell = async (messages: { duration: number; message: string }[]): Promise<BuiltDoorbell> => buildDoorbell({ doorbellMessages: messages,
-      doorbellSettings, featureFlags: { hasLcdScreen: true }, userOptions: ["Enable.Doorbell.Messages"] });
+    // Build a doorbell with an LCD screen and one or two messages saved on the controller plus the Doorbell.Messages option, so getMessages materializes a message
+    // switch per saved entry, subtyped as its type and text.
+    const buildMessageDoorbell = async (messages: { text: string; type: string }[]): Promise<BuiltDoorbell> => {
+
+      return buildDoorbell({ doorbellSettings: { allMessages: messages, ...settingsShell }, featureFlags: { hasLcdScreen: true },
+        userOptions: ["Enable.Doorbell.Messages"] });
+    };
 
     test("clears every message switch when the active message reaches its resetAt deadline", async () => {
 
-      built = await buildMessageDoorbell([{ duration: 30, message: "Back soon" }]);
+      built = await buildMessageDoorbell([{ text: "Back soon", type: "CUSTOM_MESSAGE" }]);
 
       const messageSwitch = built.accessory.getServiceById(Service.Switch, backSoon);
 
@@ -840,7 +843,7 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
     test("clears the message switches on a null wire clear", async () => {
 
-      built = await buildMessageDoorbell([{ duration: 30, message: "Back soon" }]);
+      built = await buildMessageDoorbell([{ text: "Back soon", type: "CUSTOM_MESSAGE" }]);
 
       const messageSwitch = built.accessory.getServiceById(Service.Switch, backSoon);
 
@@ -862,7 +865,7 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
     test("latches no switch on when the observed message is already expired at sync time", async () => {
 
-      built = await buildMessageDoorbell([{ duration: 30, message: "Back soon" }]);
+      built = await buildMessageDoorbell([{ text: "Back soon", type: "CUSTOM_MESSAGE" }]);
 
       const messageSwitch = built.accessory.getServiceById(Service.Switch, backSoon);
 
@@ -878,7 +881,7 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
     test("a replacement message moves the expiry deadline and survives the superseded message's original deadline", async () => {
 
-      built = await buildMessageDoorbell([ { duration: 30, message: "Back soon" }, { duration: 90, message: "Away" } ]);
+      built = await buildMessageDoorbell([ { text: "Back soon", type: "CUSTOM_MESSAGE" }, { text: "Away", type: "CUSTOM_MESSAGE" } ]);
 
       const first = built.accessory.getServiceById(Service.Switch, backSoon);
       const second = built.accessory.getServiceById(Service.Switch, away);
@@ -919,7 +922,7 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
     test("the capability's teardown drains the pending expiry timer, so no post-teardown fire writes to the message switches", async () => {
 
-      built = await buildMessageDoorbell([{ duration: 30, message: "Back soon" }]);
+      built = await buildMessageDoorbell([{ text: "Back soon", type: "CUSTOM_MESSAGE" }]);
 
       const messageSwitch = built.accessory.getServiceById(Service.Switch, backSoon);
 
@@ -954,7 +957,7 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
     test("the MQTT message GET reports the empty string once the message's resetAt is past", async () => {
 
-      built = await buildMessageDoorbell([{ duration: 30, message: "Back soon" }]);
+      built = await buildMessageDoorbell([{ text: "Back soon", type: "CUSTOM_MESSAGE" }]);
 
       const get = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "get") && (subscription.topic === "74ACB9000001/message"));
 

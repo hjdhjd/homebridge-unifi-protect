@@ -3,77 +3,156 @@
      index.html: homebridge-unifi-protect webUI template.
 -->
 <style>
-  .hbup-blockquote {
-    background-color: #E6EEF9;
-    border-left: 5px solid #0559C9;
-    color: #536878;
-    font-size: 0.8rem;
-    font-weight: 550;
+  /* The plugin's logo, sized as a modest banner above the page rather than as its centerpiece, so the content below it leads. */
+  .hbup-logo {
+    width: 33%;
+  }
+
+  /* The login validation's result line. It holds its own height whether or not it is saying anything, so the card does not shift under the user's eye as a
+   * validation answers.
+   */
+  .hbup-result {
+    min-height: 1.25em;
+  }
+
+  /* The sidebar column is pinned to the same fixed width the framework gives #sidebar, so the control it anchors can never float with flex pressure from the
+   * options pane or with the sidebar region's visibility. It reads the framework's own width token, which is the same value #sidebar itself resolves, so the two
+   * cannot drift apart.
+   */
+  #hbupSidebarColumn {
+    max-width: var(--fo-sidebar-width);
+    min-width: var(--fo-sidebar-width);
+    width: var(--fo-sidebar-width);
+  }
+
+  /* The Add Controller control renders at the sidebar section headings' own type scale and rhythm, referencing the framework's design tokens so the two cannot
+   * drift apart; each fallback mirrors the token's registered default for any paint before the token sheet adopts. The label wraps within the pinned column
+   * rather than clipping when the host theme's font metrics run wide.
+   */
+  #hbupAddController {
+    font-size: var(--fo-font-size-xs, 0.75rem);
+    line-height: 1.2;
+    padding: var(--fo-space-xs, 0.25rem) var(--fo-space-md, 0.75rem);
+    white-space: normal;
   }
 </style>
 <p class="text-center">
-  <img src="https://raw.githubusercontent.com/hjdhjd/homebridge-unifi-protect/main/images/homebridge-unifi-protect.svg" alt="homebridge-unifi-protect logo" class="w-50" />
+  <img src="https://raw.githubusercontent.com/hjdhjd/homebridge-unifi-protect/main/images/homebridge-unifi-protect.svg" alt="homebridge-unifi-protect logo" class="hbup-logo" />
 </p>
-<div id="pageFirstRun" style="display: none;">
-  <div class="mx-auto text-left" style="width: 90%;">
-    <p>Please enter the address of your UniFi Protect controller (e.g. unvr.local or 10.0.0.1) and the login credentials for a <strong>local user</strong> to get started with <strong>homebridge-unifi-protect</strong>.</p>
-    <table class="table table-sm table-borderless text-center">
-      <tr>
-        <td>
-          <input type="text" autocomplete="off" placeholder="Protect controller hostname or IP address" size="40" id="address" />
-        </td>
-      </tr>
-      <tr>
-        <td>
-          <input type="text" autocomplete="username" placeholder="Protect controller username" size="40" id="username" />
-        </td>
-      </tr>
-      <tr>
-        <td>
-          <input type="password" autocomplete="current-password" placeholder="Protect controller password" size="40" id="password" />
-        </td>
-      </tr>
-      <tr>
-        <td class="m-0 p-2 text-center font-weight-bold text-danger" id="loginError">
-          &nbsp;
-        </td>
-      </tr>
-    </table>
-    <blockquote class="blockquote hbup-blockquote mb-0 mt-0 pb-0 pt-0">
-      Things to keep in mind regarding UniFi Protect:
-      <ul dir="auto">
-        <li style="font-weight: bold;">A local user account is required to use this plugin. Ubiquiti.com/UI.com accounts are not supported. You can create an account by accessing the <i>Admins & Users</i> tab in the UniFi console webUI.</li>
+<!-- The eye glyph the credential reveal wears, drawn once at page level and referenced by every card the connection-card template mounts, so the controls cannot
+     drift into different marks and a card mounted outside the first-run page still resolves it. Every stroke draws in currentColor and each instance sizes itself
+     in em, so a glyph takes the color and the scale of the button hosting it. -->
+<svg aria-hidden="true" class="d-none">
+  <symbol id="hbupEyeGlyph" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.25" viewBox="0 0 16 16">
+    <path d="M1 8c2-3.2 4.3-4.8 7-4.8s5 1.6 7 4.8c-2 3.2-4.3 4.8-7 4.8S3 11.2 1 8Z"></path>
+    <circle cx="8" cy="8" r="2.1"></circle>
+  </symbol>
+</svg>
+<!-- The controller connection card, defined once and cloned per mount by the card factory in ui.mjs. One card serves every place a controller's connection is
+     entered or edited: the first-run page, the Add Controller affordance, the docked editor in a controller's own stats panel, and the panel the framework's
+     connection-error view hosts for a controller it cannot reach.
+
+     Everything a mounted card is addressed by is a data attribute rather than an id, because a clone cannot carry ids that are unique on their own: fields carry
+     data-field, controls carry data-action, the verdict line carries data-role, and each label names the field it belongs to with data-label-for so the factory
+     can mint a matching id pair per instance and keep the label's association intact. The heading and helper text are the first-run wording, which the other
+     habitats override when they mount. Every control the template offers is present in every clone and the factory reveals only the ones its habitat asked for,
+     so a habitat declares what it offers rather than assembling markup of its own. -->
+<template id="hbupConnectionCard">
+  <div class="fo-card mb-3 p-3">
+    <h6 class="mb-1" data-role="heading">UniFi Protect controller</h6>
+    <p class="small mb-3" data-role="helper">Your controller's address and a local user's login are all this plugin needs to bring your entire UniFi Protect ecosystem into HomeKit.</p>
+    <label class="form-label mb-1" data-label-for="address">Controller address</label>
+    <input type="text" class="form-control fo-monospace" data-field="address" autocomplete="off" placeholder="unvr.local or 10.0.0.1">
+    <label class="form-label mb-1 mt-3" data-label-for="username">Username</label>
+    <input type="text" class="form-control fo-monospace" data-field="username" autocomplete="username">
+    <label class="form-label mb-1 mt-3" data-label-for="password">Password</label>
+    <div class="fo-secret-field">
+      <input type="password" class="form-control fo-monospace" data-field="password" autocomplete="current-password">
+      <button type="button" class="fo-secret-toggle" aria-label="Show the password." aria-pressed="false" data-action="reveal" data-reveal="password"
+        data-reveal-subject="password">
+        <svg aria-hidden="true" height="1em" width="1em"><use href="#hbupEyeGlyph"></use></svg>
+      </button>
+    </div>
+    <div class="d-flex flex-wrap gap-2 mt-2">
+      <button type="button" class="btn btn-primary btn-sm" data-action="validate">Validate Controller Login</button>
+      <button type="button" class="btn btn-primary btn-sm d-none" data-action="save">Save</button>
+      <button type="button" class="btn btn-primary btn-sm d-none" data-action="cancel">Cancel</button>
+      <button type="button" class="btn btn-warning btn-sm d-none" data-action="remove">Remove</button>
+    </div>
+    <div class="hbup-result small mt-2" data-role="verdict"></div>
+    <!-- The removal confirmation, armed by the Remove control above and answered here rather than in a browser dialog. The prompt names the controller in words
+         and the factory reveals the sweep choice only when it has a device list to strip settings for. -->
+    <div class="mt-2 d-none" data-role="removeConfirm">
+      <p class="small mb-2" data-role="removePrompt"></p>
+      <div class="d-flex flex-wrap gap-2">
+        <button type="button" class="btn btn-warning btn-sm" data-action="removeConfirmed">Remove</button>
+        <button type="button" class="btn btn-warning btn-sm d-none" data-action="removeSwept">Remove and Delete Its Settings</button>
+        <button type="button" class="btn btn-primary btn-sm" data-action="removeCancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+</template>
+<div id="pageFirstRun" class="fo-page" style="display: none;">
+  <div class="mx-auto text-start" style="width: 90%;">
+    <p class="mb-2">Welcome to <strong>homebridge-unifi-protect</strong>. To get started:</p>
+    <ol>
+      <li>Create a <strong>local user</strong> for this plugin from the <i>Admins &amp; Users</i> section of your UniFi console webUI, if you don't already have one. Ubiquiti.com/UI.com cloud accounts are not supported.</li>
+      <li>Enter your UniFi Protect controller's address and that local user's credentials below.</li>
+    </ol>
+    <!-- Where the controller login card mounts. The address and a local user's credentials are the plugin's whole requirement, so the card leads the page and
+         carries a validation of its own: pressing it tells the user whether the login works before they commit a configuration, and the submit below validates it
+         again in any case. -->
+    <div id="hbupFirstRunCard"></div>
+    <!-- The guidance card: the environment realities worth knowing before configuration, framed by the same kit class as the login card so the page reads as one
+         surface. -->
+    <div class="fo-card mb-3 p-3">
+      <h6 class="mb-1">Things to keep in mind</h6>
+      <ul class="small mb-0" dir="auto">
         <li>If you have a large number of cameras, make sure you are running this plugin on a machine that has sufficient CPU resources for the best performance. The recommended configuration is to use any Apple Silicon-based macOS environment.</li>
         <li>You may run into networking issues when using Docker-based environments. These are Homebridge-specific issues, not HBUP-specific ones. You can access the <a target="_blank" href="https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Troubleshooting.md">Troubleshooting</a> documentation for more information.</li>
       </ul>
-    </blockquote>
+    </div>
   </div>
   <div class="text-center">
-    <br>
-      <button type="button" class="btn btn-primary" id="firstRun">Configure Plugin &rarr;</button>
-    <br>
-      To optimize performance and responsiveness, please make this plugin a <a target="_blank" href="https://github.com/homebridge/homebridge/wiki/Child-Bridges">child bridge</a> once you've completed configuration.
+    <button type="button" class="btn btn-primary" id="firstRun">Configure Plugin &rarr;</button>
+    <p class="small text-muted mb-0 mt-3">To optimize performance and responsiveness, make this plugin a <a target="_blank" href="https://github.com/homebridge/homebridge/wiki/Child-Bridges">child bridge</a> once you've completed configuration.</p>
   </div>
 </div>
 <div id="menuWrapper" class="btn-group w-100 mb-0" role="group" aria-label="UI Menu" style="display: none;">
-  <button type="button" class="btn btn-primary" id="menuSettings">Settings</button>
-  <button type="button" class="btn btn-primary" id="menuFeatureOptions">Feature Options</button>
+  <button type="button" class="btn btn-primary" id="menuFeatureOptions">Settings</button>
   <button type="button" class="btn btn-primary mr-0" id="menuHome">Support</button>
 </div>
 <div id="pageFeatureOptions" class="mt-2" style="display: none;" tabindex="0">
   <div id="headerInfo" class="alert alert-info bg-transparent py-2 px-3 mb-2"></div>
   <div class="feature-main-content">
-    <aside id="sidebar" class="me-3">
-      <div class="sidebar-content">
-        <nav id="controllersContainer" class="p-2"></nav>
-        <nav id="devicesContainer" class="p-2"></nav>
+    <!-- The plugin-owned sidebar column. The framework manages only the #sidebar region inside it - its visibility, and its containers' contents - so the Add
+         Controller control anchored here sits directly above the controllers list, survives the framework's re-renders, and stays available even when the
+         framework hides the sidebar region itself. The column carries its own pinned width, so the control holds the sidebar's exact width in every state. -->
+    <div id="hbupSidebarColumn" class="d-flex flex-column me-3">
+      <div class="mb-2">
+        <button type="button" class="btn btn-primary btn-sm w-100" id="hbupAddController">Add Controller</button>
       </div>
-    </aside>
+      <aside id="sidebar">
+        <div class="sidebar-content">
+          <nav id="controllersContainer" class="p-2"></nav>
+          <nav id="devicesContainer" class="p-2"></nav>
+        </div>
+      </aside>
+    </div>
     <main class="feature-content">
-      <div id="deviceStatsContainer"></div>
-      <div id="search" class="mb-3"></div>
-      <div id="optionsContainer" class="options-content alert-info rounded p-3">
-        <div id="configTable"></div>
+      <!-- Where the Add Controller affordance mounts its card, as the whole of the main content while it is open. It is a region of our own rather than one of
+           the framework's, so nothing the framework clears or reveals reaches it.
+
+           The framework's own regions sit inside a wrapper of ours for the same reason. Presenting the card as the main content means hiding what it stands in
+           front of, and hiding our wrapper leaves every display the framework writes on the regions inside it exactly as the framework wrote it - so the two
+           never contend for the same element, and restoring the view is one assignment on something only this plugin owns. -->
+      <div id="hbupControllerEditor" style="display: none;"></div>
+      <div id="hbupFeatureContent">
+        <div id="deviceStatsContainer"></div>
+        <div id="search" class="mb-3"></div>
+        <div id="optionsContainer" class="options-content alert-info rounded p-3">
+          <div id="configTable"></div>
+        </div>
       </div>
     </main>
   </div>

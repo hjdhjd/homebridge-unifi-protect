@@ -29,7 +29,6 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
   public readonly recordingProcessFactory: RecordingProcessFactory;
   public readonly rtpPorts: RtpPortAllocator;
   public readonly streamingDelegateFactory: StreamingDelegateFactory;
-  public verboseFfmpeg: boolean;
 
   constructor(log: Logging, config: ProtectPlatformConfig | undefined, api: API) {
 
@@ -53,7 +52,10 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
     this.recordingProcessFactory = recordingProcessFactory;
     this.rtpPorts = new RtpPortAllocator();
     this.streamingDelegateFactory = streamingDelegateFactory;
-    this.verboseFfmpeg = false;
+
+    // The FFmpeg path, resolved from the feature option with the legacy configuration property as the transition fallback. An option that is enabled but left empty
+    // counts as absent, so an emptied field falls through to the bundled build rather than launching an empty executable name.
+    const ffmpegExec = this.featureOptions.value("Video.FFmpeg.Path");
 
     // Plugin options into our config variables.
     this.config = {
@@ -63,7 +65,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
       options: config?.options ?? [],
       ringDelay: config?.ringDelay ?? 0,
       verboseFfmpeg: config?.verboseFfmpeg === true,
-      videoProcessor: config?.videoProcessor ?? ffmpegPath ?? "ffmpeg"
+      videoProcessor: (ffmpegExec?.length ? ffmpegExec : undefined) ?? config?.videoProcessor ?? ffmpegPath ?? "ffmpeg"
     };
 
     // We need a UniFi Protect controller configured to do anything.
@@ -78,9 +80,8 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
     this.debug("Debug logging on. Expect a lot of data.");
 
     // Debug FFmpeg.
-    if(this.config.verboseFfmpeg) {
+    if(this.config.verboseFfmpeg || this.featureOptions.test("Log.FFmpeg")) {
 
-      this.verboseFfmpeg = true;
       this.log.info("Verbose logging of video streaming sessions enabled. Expect a lot of data.");
     }
 
@@ -140,7 +141,8 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
     // First things first - ensure we've got a working video processor before we do anything else. The probe runs the full FFmpeg capability detection and returns a
     // populated, immutable FfmpegCodecs value object on success, or null when probing fails. We run it without a cancellation signal: the platform has no shutdown
     // controller, and probing happens once at launch, before any controller is brought up.
-    const codecs = await FfmpegCodecs.probe({ ffmpegExec: this.config.videoProcessor, log: this.log, verbose: this.verboseFfmpeg });
+    const codecs = await FfmpegCodecs.probe({ ffmpegExec: this.config.videoProcessor, log: this.log,
+      verbose: this.featureOptions.test("Log.FFmpeg") || this.config.verboseFfmpeg });
 
     if(!codecs) {
 
@@ -160,11 +162,21 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
     }
   }
 
-  // Utility for debug logging. We route this through log.warn rather than log.debug so that plugin-level debug output stays visible regardless of whether
-  // Homebridge itself is run with its own debug flag, which is what gates log.debug.
+  // Utility for debug logging with no owner identity to name - the platform's own lines and anything else that speaks for the plugin as a whole. It resolves at global
+  // scope through the router below, so a plugin-wide debug entry turns it on and a device- or controller-suffixed one does not.
   public debug(message: string, ...parameters: unknown[]): void {
 
-    if(this.config.debugAll) {
+    this.debugAt({}, message, ...parameters);
+  }
+
+  /* The one debug gate and emitter. Whether a debug line speaks is resolved per call at the caller's own scope - a device-suffixed Log.Debug entry turns on one
+   * camera, a controller-suffixed entry one controller and everything it manages, a bare entry everything - with the hand-edited legacy debug property honored as
+   * the global fallback. Routed through log.warn rather than log.debug so plugin-level debug output stays visible regardless of whether Homebridge itself runs
+   * with its own debug flag.
+   */
+  public debugAt(context: { controller?: string; device?: string }, message: string, ...parameters: unknown[]): void {
+
+    if(this.config.debugAll || this.featureOptions.test("Log.Debug", context.device, context.controller)) {
 
       this.log.warn(util.format(message, ...parameters));
     }

@@ -601,6 +601,52 @@ describe("pure-test unlocks: package channel selection and the recording pixel c
     overrideHarness.controller.abort();
   });
 
+  /* The option leg of the same chain, and the empty-value hazard that comes with it. The address override resolves at controller scope from the feature option first,
+   * with the legacy per-controller property as the transition fallback - so a configuration that names the option and one that names only the property both reach the
+   * host they configured. An option that is enabled but left empty counts as absent rather than resolving the RTSP host to nothing, which is what lets an emptied
+   * field fall back through the rest of the chain instead of producing an unreachable URL.
+   */
+  test("the address override option outranks the legacy property, and an enabled-but-empty option falls through it", async () => {
+
+    // Both sources configured at once: the option must win. The controller mac addresses the entry, because the option declares controller scope and resolves through
+    // no other slot.
+    const optionConfig = makeCameraConfig({ channels: G6_PRO_ENTRY_CHANNELS, featureFlags: { hasPackageCamera: true, isDoorbell: true } });
+    const optionStore = new TestStateStore(makeProtectState({ cameras: [optionConfig] }));
+    const optionHarness = makeTestNvr({ overrideAddress: "legacy.example", store: optionStore,
+      userOptions: ["Enable.Nvr.OverrideAddress.74ACB9FFFFFF=option.example"] });
+    const optionDoorbell = constructDoorbell(optionHarness.nvr, makeTestAccessory(), new TestCameraProjection(optionConfig.id, optionStore));
+
+    await settle();
+
+    assert.equal(optionDoorbell.packageCamera?.selectChannel()?.url, "rtsps://option.example:7441/alias3?enableSrtp",
+      "the configured option outranks the legacy property");
+
+    optionDoorbell.cleanup();
+
+    await settle();
+
+    optionHarness.controller.abort();
+
+    // The option enabled with no value at all, alongside a legacy property: the empty option is absent, so the chain continues to the legacy address rather than
+    // resolving the host to an empty string.
+    const emptyConfig = makeCameraConfig({ channels: G6_PRO_ENTRY_CHANNELS, featureFlags: { hasPackageCamera: true, isDoorbell: true } });
+    const emptyStore = new TestStateStore(makeProtectState({ cameras: [emptyConfig] }));
+    const emptyHarness = makeTestNvr({ overrideAddress: "legacy.example", store: emptyStore,
+      userOptions: ["Enable.Nvr.OverrideAddress.74ACB9FFFFFF="] });
+    const emptyDoorbell = constructDoorbell(emptyHarness.nvr, makeTestAccessory(), new TestCameraProjection(emptyConfig.id, emptyStore));
+
+    await settle();
+
+    assert.equal(emptyDoorbell.packageCamera?.selectChannel()?.url, "rtsps://legacy.example:7441/alias3?enableSrtp",
+      "an enabled-but-empty option falls through to the legacy property");
+
+    emptyDoorbell.cleanup();
+
+    await settle();
+
+    emptyHarness.controller.abort();
+  });
+
   test("a finite substrate pixel ceiling drops channels above the cap from selectSubstrateChannel", async () => {
 
     // The capped camera with no substrate pin: a 720p ceiling drops the 4K High channel, so the structural default lands on the highest surviving channel, Medium.

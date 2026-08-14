@@ -103,8 +103,9 @@ export class TestMqttClient {
 // namespaces plus the deterministic uuid generator, the injected wall-clock seam (the recording delegate reads platform.clock for its pacing-time primitives), the
 // platform-accessory class and the four registration recorders (the doorbell's configurePackageCamera and the NVR removal tail drive them), the platform's mutable
 // accessories array, a concrete codecSupport (the real platform getter throws before the FFmpeg probe - a concrete object with a non-raspbian hostSystem keeps the
-// recording-default switch on its default branch), the ProtectOptions-shaped config, the REAL FeatureOptions engine, the log sinks, the recording-process factory seam
-// (the recording delegate constructs its FFmpeg process through it), and the streaming-delegate factory seam.
+// recording-default switch on its default branch), the ProtectOptions-shaped config, the REAL FeatureOptions engine, the log sinks, the scoped debug router every
+// owner's logger binds its debug channel against, the recording-process factory seam (the recording delegate constructs its FFmpeg process through it), and the
+// streaming-delegate factory seam.
 export interface TestProtectPlatform {
 
   readonly accessories: TestAccessory[];
@@ -121,6 +122,7 @@ export interface TestProtectPlatform {
   readonly codecSupport: { hostSystem: string };
   readonly config: ProtectOptions;
   readonly debug: (...parameters: unknown[]) => void;
+  readonly debugAt: (context: { controller?: string; device?: string }, message: string, ...parameters: unknown[]) => void;
   readonly featureOptions: FeatureOptions;
   readonly log: {
 
@@ -401,6 +403,13 @@ export class TestProtectNvr {
     return this.platform.featureOptions.getInteger(option, this.ufp.mac);
   }
 
+  // The production controller-scoped feature-value read, mirrored down to the argument slot: the mac rides the controller argument, because the options this serves
+  // declare controller scope and resolve through that slot alone. The camera's RTSP host chain reaches it, so every camera-family test drives the real resolution.
+  public getFeatureValue(option: string): Nullable<string | undefined> {
+
+    return this.platform.featureOptions.value(option, undefined, this.ufp.mac);
+  }
+
   // Return the managed Protect device whose protectId matches, or null - the production one-liner (nvr.ts), mirrored so the liveviews motion fanout resolves a member
   // camera against the seeded configuredDevices registry as production does. We match on the non-throwing protectId, so a wrapper whose store-backed record has
   // been removed still resolves (and reports unavailable) rather than throwing - the property the recovery policy and firehose lookups depend on.
@@ -591,7 +600,7 @@ export function makeNvrConfig(options: { doorbellSettings?: ProtectNvrConfig["do
  *          recording MQTT double when requested, else null; nvr: the NVR double.
  */
 export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: TestClock; controllerName?: string; dispatch?: (nvr: ProtectNvr) => ProtectEventDispatch;
-  doorbellMessages?: ProtectNvrOptions["doorbellMessages"]; doorbellSettings?: ProtectNvrConfig["doorbellSettings"]; mqtt?: boolean; overrideAddress?: string;
+  doorbellSettings?: ProtectNvrConfig["doorbellSettings"]; mqtt?: boolean; overrideAddress?: string;
   recordingProcessFactory?: RecordingProcessFactory;
   sharedPlatform?: { accessories: TestAccessory[]; apiCalls: TestApiCall[] }; store: TestStateStore; userOptions?: string[]; }):
 { apiCalls: TestApiCall[]; clock: TestClock; controller: AbortController; factory: TestStreamingDelegateFactory; logEntries: TestLogEntry[];
@@ -623,6 +632,12 @@ export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: T
     logEntries.push({ formatted: util.format(...parameters as [string, ...unknown[]]), level, parameters });
   };
   const log = { debug: sink("debug"), error: sink("error"), info: sink("info"), warn: sink("warn") };
+
+  // The platform double's config and feature-option engine, hoisted out of the literal below so the debug router can gate on the very instances the double exposes - a
+  // test steering platform.config.debugAll or seeding a scoped Log.Debug entry then drives the same resolution production performs. The local names deliberately avoid
+  // `featureOptions`, which would shadow the module-level catalog import the constructor call below reads.
+  const platformConfig: ProtectOptions = { controllers: [], debugAll: false, options: [], ringDelay: 0, verboseFfmpeg: false, videoProcessor: "ffmpeg" };
+  const platformFeatureOptions = new FeatureOptions(featureOptionCategories, featureOptions, options.userOptions ?? []);
   const client = {
 
     // The HELD chime projections, exposed as the production client.chimes array the doorbell's setChimeVolume filters by cameraIds and writes through. A plain held
@@ -696,8 +711,8 @@ export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: T
   const nvr = new TestProtectNvr({
 
     client: client,
-    config: { address: "nvr.test", ...(options.doorbellMessages !== undefined ? { doorbellMessages: options.doorbellMessages } : {}), mqttTopic: "test/protect",
-      password: "test-password", username: "test-user", ...(options.overrideAddress !== undefined ? { overrideAddress: options.overrideAddress } : {}) },
+    config: { address: "nvr.test", mqttTopic: "test/protect", password: "test-password", username: "test-user",
+      ...(options.overrideAddress !== undefined ? { overrideAddress: options.overrideAddress } : {}) },
     dispatch: options.dispatch,
     log: log,
     mqtt: mqtt,
@@ -707,9 +722,17 @@ export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: T
       api: api,
       clock: clock,
       codecSupport: { hostSystem: "macOS" },
-      config: { controllers: [], debugAll: false, options: [], ringDelay: 0, verboseFfmpeg: false, videoProcessor: "ffmpeg" },
+      config: platformConfig,
       debug: sink("debug"),
-      featureOptions: new FeatureOptions(featureOptionCategories, featureOptions, options.userOptions ?? []),
+      debugAt: (context: { controller?: string; device?: string }, message: string, ...parameters: unknown[]): void => {
+
+        // The production gate, mirrored exactly: the legacy plugin-wide flag, else a Log.Debug entry resolved at the caller's own device and controller scope.
+        if(platformConfig.debugAll || platformFeatureOptions.test("Log.Debug", context.device, context.controller)) {
+
+          log.warn(util.format(message, ...parameters));
+        }
+      },
+      featureOptions: platformFeatureOptions,
       log: log,
       pluginLog: log,
       recordingProcessFactory: recordingProcessFactory,

@@ -18,12 +18,13 @@
  * Observe registration is LAZY (each loop registers on iteration start, a microtask later), so every observerCount assertion and every wake assertion settles first.
  *
  * The vacuity gates: the name-sync direction is split by the Device.SyncName feature (default FALSE). WITH Enable.Device.SyncName the rename test asserts a proven
- * before->after Name transition ("Test Sensor" -> "Renamed Sensor") plus the exact change log; WITHOUT it the test captures the Name baseline immediately before the push
- * and asserts the device.name observer STILL woke (non-vacuous) but the Name characteristic is unchanged and no rename log fires - so the if(!syncName) return guard, not
- * a dead observer, suppresses the rename (mirroring light.test.ts's falsy-motion non-vacuity pattern). HardwareRevision is netted as a non-vacuous opt-in pair:
- * makeSensorConfig omits hardwareRevision by default, so setInfo's length-guard short-circuits; the accessory's AccessoryInformation service is a plain
- * characteristic-empty TestService that carries only the kinds setInfo itself wrote, so with the guard short-circuited the HardwareRevision kind is never materialized -
- * the absent case is asserted with testCharacteristic so the read stays a pure predicate; passing hardwareRevision opts the value in so the length-guarded write lands
+ * before->after transition ("Test Sensor" -> "Renamed Sensor") across BOTH HomeKit-visible name characteristics - Name and the ConfiguredName the Home app lets a user
+ * edit - plus the exact change log; WITHOUT it the test captures the Name baseline immediately before the push and asserts the device.name observer STILL woke
+ * (non-vacuous) but the Name characteristic is unchanged and no rename log fires - so the if(!syncName) return guard, not a dead observer, suppresses the rename
+ * (mirroring light.test.ts's falsy-motion non-vacuity pattern). HardwareRevision is netted as a non-vacuous opt-in pair: makeSensorConfig omits hardwareRevision by
+ * default, so setInfo's length-guard short-circuits; the accessory's AccessoryInformation service is born carrying only the Name characteristic every real HAP
+ * information service has, so beyond that seed it holds exactly the kinds the configure path itself wrote and the HardwareRevision kind is never materialized - the
+ * absent case is asserted with testCharacteristic so the read stays a pure predicate; passing hardwareRevision opts the value in so the length-guarded write lands
  * and is read back. The accessoryName getter's ?? "Unknown" fallback is unreachable here because the carrier's record name, read through peek()?.name, is always "Test
  * Sensor" (never nullish).
  *
@@ -38,6 +39,7 @@ import { after, afterEach, before, beforeEach, describe, test } from "node:test"
 import type { ObserverWakePayload } from "../diagnostics.ts";
 import type { ProtectAccessory } from "../types.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
+import type { TestProtectNvr } from "../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
 import { makeTestNvr } from "../nvr/testing.helpers.ts";
@@ -60,7 +62,7 @@ const controllers: AbortController[] = [];
 // and syncNameFromController read this.hints.syncName), then configureInfo (the AccessoryInformation writes plus the syncName-gated name sync), then spawnObservers (the
 // base observers). The userOptions thread into the REAL FeatureOptions engine, so Enable.Device.SyncName - and only it - flips hints.syncName true.
 function buildInfoDevice(configOptions: Parameters<typeof makeSensorConfig>[0] = {}, harnessOptions: { userOptions?: string[] } = {}): {
-  accessory: TestAccessory; device: TestBaseDevice; logEntries: TestLogEntry[]; store: TestStateStore;
+  accessory: TestAccessory; device: TestBaseDevice; logEntries: TestLogEntry[]; nvr: TestProtectNvr; store: TestStateStore;
 } {
 
   const sensorConfig = makeSensorConfig(configOptions);
@@ -78,7 +80,8 @@ function buildInfoDevice(configOptions: Parameters<typeof makeSensorConfig>[0] =
   device.configureInfoFor();
   device.spawnObserversFor();
 
-  return { accessory, device, logEntries, store };
+  // The NVR double rides along so a test can steer the platform config the debug router reads - the legacy plugin-wide debug flag, which no feature option expresses.
+  return { accessory, device, logEntries, nvr, store };
 }
 
 describe("base ProtectDevice device-information capability (device-info concern net)", () => {
@@ -157,11 +160,11 @@ describe("base ProtectDevice device-information capability (device-info concern 
 
     test("setInfo's HardwareRevision length-guard writes when hardwareRevision is present and skips it when absent (a non-vacuous opt-in pair)", () => {
 
-      // The absent half rides the default beforeEach build (the all-quiet carrier, which omits hardwareRevision). The accessory's AccessoryInformation service is a plain
-      // characteristic-empty TestService - it carries only the kinds setInfo itself wrote (Manufacturer/Model/SerialNumber/FirmwareRevision), nothing pre-seeded - so the
-      // HardwareRevision characteristic materializes ONLY if setInfo's length-guard wrote it; because the carrier omits hardwareRevision the guard short-circuits and the
-      // kind is never created. We probe with testCharacteristic, a pure has-predicate that (unlike getCharacteristic) does NOT lazily materialize the kind, so a false
-      // result is genuine evidence the write was skipped rather than an artifact of the read.
+      // The absent half rides the default beforeEach build (the all-quiet carrier, which omits hardwareRevision). The accessory's AccessoryInformation service carries
+      // its construction-time Name seed - the one characteristic every real HAP information service is born with - plus exactly the kinds setInfo itself wrote
+      // (Manufacturer/Model/SerialNumber/FirmwareRevision). HardwareRevision is in neither group, so it materializes ONLY if setInfo's length-guard wrote it; because
+      // the carrier omits hardwareRevision the guard short-circuits and the kind is never created. We probe with testCharacteristic, a pure has-predicate that (unlike
+      // getCharacteristic) does NOT lazily materialize the kind, so a false result is genuine evidence the write was skipped rather than an artifact of the read.
       const absentInfo = accessory.getService(Service.AccessoryInformation);
 
       assert.ok(absentInfo, "the all-quiet build carries an AccessoryInformation service");
@@ -217,10 +220,11 @@ describe("base ProtectDevice device-information capability (device-info concern 
 
   describe("the name-sync reaction (device.name -> syncNameFromController)", () => {
 
-    test("with Device.SyncName, a name push wakes the device.name observer, renames the Name characteristic, and logs the change", async () => {
+    test("with Device.SyncName, a name push wakes the device.name observer, renames the Name and ConfiguredName characteristics, and logs the change", async () => {
 
-      // Rebuild with the syncName feature enabled so hints.syncName is true. configureInfo's syncName-gated branch wrote the Name characteristic to the carrier name at
-      // construction, so the Name reads "Test Sensor" BEFORE the push - the construction value, which makes the post-push read a proven before->after transition.
+      // Rebuild with the syncName feature enabled so hints.syncName is true. configureInfo's syncName-gated branch renamed the accessory to the carrier name at
+      // construction, so both name characteristics read "Test Sensor" BEFORE the push - the construction value, which makes each post-push read a proven before->after
+      // transition. ConfiguredName is the name the Home app lets a user edit, so it must track the controller-side rename alongside Name rather than lag behind it.
       const built = buildInfoDevice({}, { userOptions: ["Enable.Device.SyncName"] });
 
       device = built.device;
@@ -231,6 +235,7 @@ describe("base ProtectDevice device-information capability (device-info concern 
 
       assert.ok(info, "the AccessoryInformation service exists");
       assert.equal(info.getCharacteristic(Characteristic.Name).value, "Test Sensor", "configureInfo synced the Name to the carrier name before the push");
+      assert.equal(info.getCharacteristic(Characteristic.ConfiguredName).value, "Test Sensor", "configureInfo synced the ConfiguredName to the carrier name too");
 
       const baseline = wakeLog.length;
 
@@ -242,6 +247,8 @@ describe("base ProtectDevice device-information capability (device-info concern 
 
       assert.deepEqual(wakeLog.slice(baseline), [{ accessoryId: built.accessory.UUID, key: "device.name" }], "exactly the device.name observer woke for this slice");
       assert.equal(info.getCharacteristic(Characteristic.Name).value, "Renamed Sensor", "the reaction renamed the Name characteristic (a before->after transition)");
+      assert.equal(info.getCharacteristic(Characteristic.ConfiguredName).value, "Renamed Sensor",
+        "the reaction renamed the ConfiguredName characteristic too, keeping the Home app's editable name in step");
       assert.ok(loggedAt(built.logEntries, "info", "Detected a name change on the controller; updating the HomeKit name to Renamed Sensor."),
         "the controller-rename line logged with the new name");
     });
@@ -314,6 +321,77 @@ describe("base ProtectDevice device-information capability (device-info concern 
       assert.ok(entry, "the probe line was captured");
       assert.ok(entry.formatted.startsWith("Test Sensor [Test Sensor Model]: "), "the line carries the device's logName prefix and the family separator");
       assert.equal(entry.formatted, "Test Sensor [Test Sensor Model]: A base-device prefix probe.", "the rendered line is exactly the prefix plus the message");
+    });
+  });
+
+  /* The debug channel's own derivation, netted family-agnostically on the same vehicle. Every owner's debug line is routed to the platform's debug router carrying that
+   * owner's identity, so whether it speaks is decided at the owner's own scope: a device-suffixed entry turns on one device, a bare entry turns on everything, and the
+   * legacy plugin-wide flag still turns on everything. Debug output leaves through warn, so a spoken line lands in the harness capture at that level - and a silent one
+   * lands nowhere, which is what the sibling arm proves.
+   */
+  describe("the device debug channel (per-owner scope resolution)", () => {
+
+    // Build a device carrying a known MAC, seeding the accessory identity the configure path writes. TestBaseDevice's constructor only super()s, so the configure-time
+    // identity seed a real family leaf performs never runs on this vehicle - and the device scope resolves from exactly that persisted MAC.
+    function buildDebugDevice(mac: string, userOptions: string[]): ReturnType<typeof buildInfoDevice> {
+
+      const built = buildInfoDevice({ mac }, { userOptions });
+
+      built.accessory.context["mac"] = mac;
+
+      return built;
+    }
+
+    // Emit a probe through the device's debug channel and report whether it reached the capture. The message is unique per call site, so a spoken line is unambiguous and
+    // a silent one cannot be confused with any other warn output the construction path produced.
+    function debugProbe(built: ReturnType<typeof buildInfoDevice>, probe: string): boolean {
+
+      built.device.log.debug(probe);
+
+      return built.logEntries.some((entry) => (entry.level === "warn") && entry.formatted.endsWith(probe));
+    }
+
+    test("a device-suffixed entry turns on that device's debug lines while a sibling stays silent", () => {
+
+      // One entry, addressed to the first device's MAC, applied to both harnesses. A resolution that ignored the device scope would turn the sibling on too, which is
+      // exactly what the second assertion catches.
+      const userOptions = ["Enable.Log.Debug.74ACB9000401"];
+      const addressed = buildDebugDevice("74ACB9000401", userOptions);
+      const sibling = buildDebugDevice("74ACB9000402", userOptions);
+
+      assert.equal(debugProbe(addressed, "The addressed device speaks."), true, "the addressed device's debug line is emitted through warn");
+      assert.equal(debugProbe(sibling, "The sibling device speaks."), false, "its sibling carries no entry of its own, so its debug line stays silent");
+
+      addressed.device.cleanup();
+      sibling.device.cleanup();
+    });
+
+    test("a bare entry turns on every device's debug lines", () => {
+
+      // The same option with no scope suffix resolves globally, so both devices speak - the plugin-wide debug posture expressed through the option surface.
+      const userOptions = ["Enable.Log.Debug"];
+      const first = buildDebugDevice("74ACB9000401", userOptions);
+      const second = buildDebugDevice("74ACB9000402", userOptions);
+
+      assert.equal(debugProbe(first, "The first device speaks."), true, "a bare entry reaches the first device");
+      assert.equal(debugProbe(second, "The second device speaks."), true, "and it reaches the second device too");
+
+      first.device.cleanup();
+      second.device.cleanup();
+    });
+
+    test("the legacy plugin-wide debug property still turns everything on", () => {
+
+      // The transition fallback: a configuration that never opens the webUI keeps the debug output it has always had, with no option configured anywhere.
+      const built = buildDebugDevice("74ACB9000401", []);
+
+      assert.equal(debugProbe(built, "The quiet device stays quiet."), false, "with neither source set, debug output is silent");
+
+      built.nvr.platform.config.debugAll = true;
+
+      assert.equal(debugProbe(built, "The legacy flag speaks."), true, "the legacy flag turns the same device's debug line on");
+
+      built.device.cleanup();
     });
   });
 });

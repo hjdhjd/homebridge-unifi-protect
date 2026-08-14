@@ -189,12 +189,15 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     return this.doorbell?.packageCamera ?? null;
   }
 
-  // The host the camera's RTSP(S) URLs resolve against: the user's address override, else the camera's own controller-reported connection host, else the controller's
-  // host. Protected so the package camera subclass resolves its own RTSP URLs through the exact same override/connection-host/controller-host chain as the parent's,
-  // rather than the controller's raw address.
+  // The host the camera's RTSP(S) URLs resolve against: the address override feature option for this controller, else the legacy per-controller override property, else
+  // the camera's own controller-reported connection host, else the controller's host. An override that is enabled but left empty counts as absent, so an emptied field
+  // falls through the rest of the chain rather than resolving against nothing. Protected so the package camera subclass resolves its own RTSP URLs through the exact
+  // same chain as the parent's, rather than the controller's raw address.
   protected get rtspHost(): string {
 
-    return this.nvr.config.overrideAddress ?? this.ufp.connectionHost ?? this.nvr.ufp.host;
+    const override = this.nvr.getFeatureValue("Nvr.OverrideAddress");
+
+    return (override?.length ? override : undefined) ?? this.nvr.config.overrideAddress ?? this.ufp.connectionHost ?? this.nvr.ufp.host;
   }
 
   // Whether a streaming delegate may be stood up for this camera at all. A delegate is never built for a camera that is being removed, nor once the controller has begun

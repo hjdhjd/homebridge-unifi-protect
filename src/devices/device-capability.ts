@@ -175,6 +175,13 @@ export abstract class ProtectDeviceCapability<H extends ProtectCapabilityHost = 
     return this.host.mac;
   }
 
+  // The debug scope: the host's identity, so a capability's debug lines answer to the same Log.Debug entry that turns on the device hosting it. A capability has no
+  // identity of its own on the controller, so resolving anywhere but its host's scope would leave its lines unreachable from the webUI.
+  protected override get debugScope(): { controller?: string; device?: string } {
+
+    return { controller: this.nvr.ufp.mac, device: this.host.mac };
+  }
+
   // Whether the host is currently reachable, delegated to the host - the two-scope composition of controller health with the device's own online state. A capability
   // consults this before issuing a controller read that would only fail, and reflects it onto any StatusActive characteristic its own services carry.
   protected get isReachable(): boolean {

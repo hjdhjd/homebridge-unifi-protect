@@ -10,19 +10,24 @@
  * observe-driven routing live with the camera leaf and its tests, not here. The casts are confined to the mock seam, matching the posture the reachability and nvr suites
  * already established; the instance under test is the production class.
  */
-import type { AuthMethod, ProtectEventMetadata, TypedEvent } from "unifi-protect";
-import { Characteristic, Service, makeTestAccessory } from "../testing.helpers.ts";
+import type { AuthMethod, Camera, ProtectEventMetadata, TypedEvent } from "unifi-protect";
+import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../testing.helpers.ts";
 import { ProtectReservedNames, packageCameraId } from "../types.ts";
+import { TestCameraProjection, makeCameraConfig } from "../devices/testing.helpers.ts";
 import { describe, mock, test } from "node:test";
+import { G2_PRO_CHANNELS } from "../camera.fixtures.ts";
 import { PROTECT_DOORBELL_AUTHSENSOR_DURATION } from "../settings.ts";
-import type { ProtectCamera } from "../devices/cameras/camera.ts";
+import type { ProtectAccessory } from "../types.ts";
+import { ProtectCamera } from "../devices/cameras/camera.ts";
 import type { ProtectDevice } from "../devices/device.ts";
 import { ProtectEventDispatch } from "./event-dispatch.ts";
 import type { ProtectNvr } from "./nvr.ts";
 import type { TestAccessory } from "../testing.helpers.ts";
+import type { TestProtectNvr } from "./testing.helpers.ts";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
 import { format } from "node:util";
+import { makeTestNvr } from "./testing.helpers.ts";
 
 // A finite async stream over a fixed item list. The router and telemetry loops consume client.events() / client.rawPackets() with `for await`, so a terminating
 // generator lets each loop complete on its own without the test needing to drive the abort signal.
@@ -1198,4 +1203,103 @@ describe("shared motion topic sibling ownership (real ProtectEventDispatch.motio
 
     assert.equal(falsePublishes(published, "motion").length, 1, "a lone camera resets its motion topic once when its window ends");
   }));
+});
+
+/* The ring-suppression window is the one dispatch decision that reads a per-device feature option, so it cannot be driven by the hand-rolled stubs above - they carry
+ * neither a feature-option engine nor a controller record. These pins use the full NVR double instead, whose platform carries the REAL FeatureOptions engine seeded
+ * through userOptions and whose dispatch is the real ProtectEventDispatch, and drive a REAL constructed doorbell so the resolution runs exactly as it does in the field.
+ *
+ * The suppression is observed through its user-visible effect rather than the private timer map: a second ring inside the window produces no HomeKit ding, and outside
+ * one it does. Every arrangement clears its device's timers and unwinds its doorbell, so neither the ring window nor the MQTT reset outlives its test.
+ */
+describe("the doorbell ring-suppression window (Doorbell.Ring.Delay resolution)", () => {
+
+  // Build a real doorbell against the full NVR double. The mac is threaded so a device-suffixed option entry can address exactly one of two siblings.
+  function buildDoorbell(options: { id: string; mac: string; name: string; userOptions?: string[] }):
+  { camera: ProtectCamera; controller: AbortController; nvr: TestProtectNvr } {
+
+    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { isDoorbell: true }, id: options.id, mac: options.mac, name: options.name });
+    const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
+    const { controller, nvr } = makeTestNvr({ store, userOptions: options.userOptions ?? [] });
+    const camera = new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory(options.name) as unknown as ProtectAccessory,
+      new TestCameraProjection(cameraConfig.id, store) as unknown as Camera);
+
+    return { camera, controller, nvr };
+  }
+
+  // Ring a doorbell twice through the REAL dispatch and report how many HomeKit dings reached its Doorbell service. One means the second ring was suppressed; two means
+  // it was delivered. The service is hard-asserted first so an absent Doorbell service throws rather than letting the count pass vacuously.
+  function ringTwice(camera: ProtectCamera, nvr: TestProtectNvr): number {
+
+    const doorbellService = (camera.accessory as unknown as TestAccessory).getService(Service.Doorbell);
+
+    assert.ok(doorbellService, "the doorbell service exists");
+
+    nvr.events.doorbellEventHandler(camera);
+    nvr.events.doorbellEventHandler(camera);
+
+    return doorbellService.getCharacteristic(Characteristic.ProgrammableSwitchEvent).events.length;
+  }
+
+  test("a device-suffixed entry suppresses that doorbell's rapid second ring while its sibling keeps ringing", async () => {
+
+    // The entry addresses the front door alone. The side door is built against the same option string, so any resolution that ignored the device scope would suppress
+    // both and the sibling assertion would catch it.
+    const userOptions = ["Enable.Doorbell.Ring.Delay.74ACB9000001=15"];
+    const front = buildDoorbell({ id: "ring-front", mac: "74ACB9000001", name: "Front Door", userOptions });
+    const side = buildDoorbell({ id: "ring-side", mac: "74ACB9000002", name: "Side Door", userOptions });
+
+    await settle();
+
+    assert.equal(ringTwice(front.camera, front.nvr), 1, "the addressed doorbell's second ring is suppressed inside its window");
+    assert.equal(ringTwice(side.camera, side.nvr), 2, "its sibling carries no window, so both of its rings are delivered");
+
+    for(const harness of [ front, side ]) {
+
+      harness.nvr.events.clearEventTimersForDevice(harness.camera.id);
+      harness.camera.cleanup();
+    }
+
+    await settle();
+
+    front.controller.abort();
+    side.controller.abort();
+  });
+
+  test("the legacy top-level ring delay applies when no option is configured", async () => {
+
+    // The transition fallback: a configuration that never opens the webUI keeps the delay it has always had. The double's config is an ordinary literal, so steering it
+    // after construction is how the harness expresses a plain configuration property.
+    const { camera, controller, nvr } = buildDoorbell({ id: "ring-legacy", mac: "74ACB9000001", name: "Legacy Door" });
+
+    await settle();
+
+    nvr.platform.config.ringDelay = 15;
+
+    assert.equal(ringTwice(camera, nvr), 1, "the legacy property still suppresses the rapid second ring");
+
+    nvr.events.clearEventTimersForDevice(camera.id);
+    camera.cleanup();
+
+    await settle();
+
+    controller.abort();
+  });
+
+  test("with neither the option nor the legacy property set, every ring is delivered", async () => {
+
+    // Today's default, and the one that must survive the consolidation untouched: no suppression window at all.
+    const { camera, controller, nvr } = buildDoorbell({ id: "ring-default", mac: "74ACB9000001", name: "Open Door" });
+
+    await settle();
+
+    assert.equal(ringTwice(camera, nvr), 2, "no window is armed, so both rings ding");
+
+    nvr.events.clearEventTimersForDevice(camera.id);
+    camera.cleanup();
+
+    await settle();
+
+    controller.abort();
+  });
 });

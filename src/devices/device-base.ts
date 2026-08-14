@@ -67,8 +67,11 @@ export abstract class ProtectBase {
     // Derive this device's logger from the plugin logging root, prefixing every line with this.logName: the plain name on the base, overridden by ProtectDevice to the
     // full "Name [Model]" descriptor so device lines show which hardware they belong to. The prefix supplier is read on every call, so a device rename reaches the next
     // line. logName is deliberately separate from the bare `name` getter, which is the stable functional identity (it keys the livestream request id and the HomeKit
-    // accessory) and must not carry the bracketed model.
-    this.log = prefixedLog(nvr.platform.pluginLog, () => this.logName);
+    // accessory) and must not carry the bracketed model. The debug channel is the one level that does not pass through unchanged: it carries this owner's own identity
+    // to the platform's debug router, so whether a debug line speaks is decided at this owner's scope rather than plugin-wide.
+    const debug = (message: string, ...parameters: unknown[]): void => nvr.platform.debugAt(this.debugScope, message, ...parameters);
+
+    this.log = prefixedLog({ ...nvr.platform.pluginLog, debug }, () => this.logName);
 
     this.controller = new AbortController();
     this.signal = composeSignals(this.controller.signal, parentSignal ?? nvr.signal);
@@ -136,6 +139,14 @@ export abstract class ProtectBase {
   protected get logName(): string {
 
     return this.name;
+  }
+
+  // The scope this owner's debug lines resolve at. The base carries the controller alone, because a controller-scoped owner (system information, liveviews, the security
+  // system) has no device identity of its own to name. ProtectDevice overrides this to add the device, and ProtectDeviceCapability delegates to its host, the same
+  // identity split mqttId makes. It is read on every debug call, so a line always resolves against the identity the owner holds at the moment it speaks.
+  protected get debugScope(): { controller?: string; device?: string } {
+
+    return { controller: this.nvr.ufp.mac };
   }
 
   // The lifetime signal that scopes this owner's state observers and its MQTT subscriptions, and the signal the MQTT subscribe wrappers below thread to

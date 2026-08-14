@@ -37,6 +37,7 @@ import { channels } from "../diagnostics.ts";
 import { describeDevice } from "../devices/device-descriptor.ts";
 import { isPackageCameraContext } from "../types.ts";
 import { livestreamRecoveryDecision } from "../media/livestream-recovery-policy.ts";
+import { mqttConnectionSettings } from "../mqtt.ts";
 import { servePlaylist } from "./nvr-playlist.ts";
 import { setTimeout as sleep } from "node:timers/promises";
 
@@ -146,7 +147,7 @@ export class ProtectNvr {
     this.lastRebootObservedAt = null;
     this.liveviews = null;
     this.mqtt = null;
-    this.name = nvrOptions.name ?? nvrOptions.address;
+    this.name = nvrOptions.address;
     this._phase = "connecting";
     this.platform = platform;
     this.#shutdownController = new AbortController();
@@ -185,8 +186,16 @@ export class ProtectNvr {
       warn: routeClientContext((message: string): void => this.platform.pluginLog.warn(message))
     };
 
-    // Derive our controller logger from the plugin logging root, prefixing every line with this.name so controller output is attributable at a glance.
-    this.log = prefixedLog(this.platform.pluginLog, () => this.name);
+    /* The controller half of this logger's per-call debug scope. The client field is definite-assigned at connect, so the pre-connect window is real even though
+     * the field's type says otherwise; the confined widening makes that window readable here without weakening the post-connect typing anywhere else. An
+     * unconnected controller resolves its debug lines at global scope - the only scope that can name it before its identity is known.
+     */
+    const controllerMac = (): string | undefined => (this.client as ProtectClient | undefined)?.nvr.config.mac;
+    const debug = (message: string, ...parameters: unknown[]): void => this.platform.debugAt({ controller: controllerMac() }, message, ...parameters);
+
+    // Derive our controller logger from the plugin logging root, prefixing every line with this.name so controller output is attributable at a glance. Debug lines
+    // additionally carry this controller's identity to the platform's debug router, so a controller-suffixed Log.Debug entry turns on this controller alone.
+    this.log = prefixedLog({ ...this.platform.pluginLog, debug }, () => this.name);
 
     // Initialize the health bridge. It owns the whole diagnostics-to-health translation - the observer, the channel subscriptions that feed it, and the user-facing
     // narration of every state it moves through - while the one act that reaches back into controller territory, re-evaluating the removal-stability clock, runs here
@@ -569,10 +578,9 @@ export class ProtectNvr {
     }
 
     // Assign our log-prefix name, decorated with the controller model - "Name [Model]" via describeDevice - so every controller-scoped line shows the hardware
-    // in its prefix. The name resolution follows the established precedence (a user preference wins, then the controller's reported name, then its address);
-    // describeDevice only appends the bracketed model, and is reached here post-bootstrap where this.ufp is populated. Early, pre-bootstrap logs keep the bare name set
-    // in the constructor.
-    this.name = describeDevice(this.ufp, { name: this.config.name ?? this.client.controllerName ?? this.config.address });
+    // in its prefix. The name is the controller's own reported name, falling back to its address when the controller has not reported one; describeDevice only appends
+    // the bracketed model, and is reached here post-bootstrap where this.ufp is populated. Early, pre-bootstrap logs keep the bare name set in the constructor.
+    this.name = describeDevice(this.ufp, { name: this.client.controllerName ?? this.config.address });
 
     // Wire the per-client connection-health inputs (throttle rails, controller-lost/recovered lifecycle) against the freshly-established client.
     this.wireConnectionHealth();
@@ -766,12 +774,16 @@ export class ProtectNvr {
     // Configure any NVR-specific settings.
     this.configureNvr();
 
-    // Initialize MQTT before constructing the accessory owners. Their constructor-time MQTT subscriptions (system information, and liveviews on its initial reconcile)
-    // bind through nvr.mqtt, so the client must exist first or those subscriptions would silently no-op against a not-yet-created client and never be retried. The client
-    // binds to the NVR's terminal shutdown signal, so it is an AsyncDisposable whose connection ends on plugin shutdown rather than leaking past it.
-    if(!this.mqtt && this.config.mqttUrl) {
+    /* Initialize MQTT before constructing the accessory owners. Their constructor-time MQTT subscriptions (system information, and liveviews on its initial reconcile)
+     * bind through nvr.mqtt, so the client must exist first or those subscriptions would silently no-op against a not-yet-created client and never be retried. The
+     * client binds to the NVR's terminal shutdown signal, so it is an AsyncDisposable whose connection ends on plugin shutdown rather than leaking past it. The
+     * resolution runs post-connect, where this.ufp is safe to read for the controller scope it resolves at.
+     */
+    const mqttSettings = mqttConnectionSettings(this.platform.featureOptions, this.config, this.ufp.mac);
 
-      this.mqtt = new MqttClient({ brokerUrl: this.config.mqttUrl, log: this.log, topicPrefix: this.config.mqttTopic }, { signal: this.signal });
+    if(!this.mqtt && mqttSettings) {
+
+      this.mqtt = new MqttClient({ brokerUrl: mqttSettings.brokerUrl, log: this.log, topicPrefix: mqttSettings.topicPrefix }, { signal: this.signal });
     }
 
     // Initialize our liveviews.
@@ -1372,6 +1384,13 @@ export class ProtectNvr {
   public getFeatureNumber(option: string): Nullable<number | undefined> {
 
     return this.platform.featureOptions.getInteger(option, this.ufp.mac);
+  }
+
+  // Utility to return a value-centric feature option for this controller. The mac rides the controller argument: the options this helper serves declare
+  // controller scope, which resolves only through that slot.
+  public getFeatureValue(option: string): Nullable<string | undefined> {
+
+    return this.platform.featureOptions.value(option, undefined, this.ufp.mac);
   }
 
   // Utility for checking the scope of feature options on the NVR.

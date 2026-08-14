@@ -7,7 +7,7 @@ import type { AcquireServiceTarget, HomebridgePluginLogging, Nullable } from "ho
 import type { DeviceCollectionKey, ProtectCameraConfig, ProtectDeviceConfig, ProtectState } from "unifi-protect";
 import { PROTECT_MOTION_DURATION, PROTECT_OCCUPANCY_DURATION} from "../settings.ts";
 import type { ProtectAccessory, ProtectPersistedContextState, ProtectProjectionMap, WithoutIdentity } from "../types.ts";
-import { acquireService, sanitizeName, validService } from "homebridge-plugin-utils";
+import { acquireService, setAccessoryName, validService } from "homebridge-plugin-utils";
 import { deviceSelectors, isDeviceOnline } from "unifi-protect";
 import type { ObserverWakePayload } from "../diagnostics.ts";
 import { ProtectBase } from "./device-base.ts";
@@ -85,7 +85,7 @@ export interface ProtectDeviceContext {
   // The owning controller.
   readonly nvr: ProtectNvr;
 
-  // The owning platform (codec support, config, verbose-FFmpeg flag).
+  // The owning platform (codec support, config, feature options).
   readonly platform: ProtectPlatform;
 
   // Toggles the recording-indicator status LED.
@@ -816,6 +816,14 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
     return config ? describeDevice(config) : (this.accessory.context.mac ?? "Unknown");
   }
 
+  // The debug scope for a device: its own MAC alongside the controller's, so a Log.Debug entry suffixed with this device turns on its debug lines alone while its
+  // siblings stay quiet, and a controller-suffixed entry still reaches it. We read the public mac getter rather than the projection, which drops identity fields by
+  // design, and the controller's mac through the NVR - a device exists only once the controller has bootstrapped, so both halves are always resolvable here.
+  protected override get debugScope(): { controller?: string; device?: string } {
+
+    return { controller: this.nvr.ufp.mac, device: this.mac };
+  }
+
   // Utility function to return the current accessory name of this device. The AccessoryInformation Name characteristic is the primary source and is always present; the
   // secondary fallback reads the controller-side name non-throwing through peek() so a vanished record does not throw.
   public get accessoryName(): string {
@@ -827,14 +835,7 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
   // Utility function to set the current accessory name of this device.
   public set accessoryName(name: string) {
 
-    const cleanedName = sanitizeName(name);
-
-    // Set all the internally managed names within Homebridge to the new accessory name.
-    this.accessory.displayName = cleanedName;
-    this.accessory._associatedHAPAccessory.displayName = cleanedName;
-
-    // Set all the HomeKit-visible names.
-    this.accessory.getService(this.hap.Service.AccessoryInformation)?.updateCharacteristic(this.hap.Characteristic.Name, cleanedName);
+    setAccessoryName(this.accessory, name);
   }
 
   // Build the write-through command that sets this device's status indicator light. The command is returned as a thunk so the update is issued against a narrowed

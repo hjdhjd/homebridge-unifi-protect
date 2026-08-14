@@ -201,7 +201,6 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
   private readonly probesizeTuning: ProbesizeSelfTune;
   private snapshot: ProtectSnapshot;
   public timeshift: Nullable<ProtectTimeshiftSupervisor>;
-  public verboseFfmpeg: boolean;
 
   // Internal development only: alternates the resolved transport source between the timeshift buffer and RTSP when Debug.Video.Stream.ABTest is enabled, so a live
   // A/B comparison can run without restarting the plugin.
@@ -221,7 +220,6 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
     this.platform = protectCamera.platform;
     this.probesizeTuning = new ProbesizeSelfTune(() => protectCamera.hints.probesize);
     this.timeshift = null;
-    this.verboseFfmpeg = false;
 
     // Configure our hardware acceleration support.
     this.ffmpegOptions = new FfmpegOptions({
@@ -1013,7 +1011,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
     );
 
     // Additional logging, but only if we're debugging.
-    if(this.platform.verboseFfmpeg || this.verboseFfmpeg || this.protectCamera.hasFeature("Debug.Video.FFmpeg")) {
+    if(this.protectCamera.hasFeature("Log.FFmpeg") || this.protectCamera.hasFeature("Debug.Video.FFmpeg") || this.platform.config.verboseFfmpeg) {
 
       ffmpegArgs.push("-loglevel", "level+verbose");
     }
@@ -1199,7 +1197,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
     }
 
     // Additional logging, but only if we're debugging.
-    if(this.platform.verboseFfmpeg || this.verboseFfmpeg) {
+    if(this.protectCamera.hasFeature("Log.FFmpeg") || this.platform.config.verboseFfmpeg) {
 
       ffmpegReturnAudioCmd.push("-loglevel", "level+verbose");
     }

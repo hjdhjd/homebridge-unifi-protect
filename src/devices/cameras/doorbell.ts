@@ -754,10 +754,10 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
     }
   }
 
-  // Get the list of messages from the doorbell and the user configuration.
+  // Get the list of messages saved on the controller, which is where a doorbell's message set lives.
   private getMessages(): MessageInterface[] {
 
-    // First, we get the controller's doorbell settings, the source for its builtin messages.
+    // The controller's doorbell settings, the source for its saved messages.
     const doorbellSettings = this.nvr.ufp.doorbellSettings;
 
     // Something's not right with the configuration...we're done.
@@ -768,29 +768,13 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
 
     let doorbellMessages: MessageInterface[] = [];
 
-    // Grab any messages that the user has configured.
-    if(this.nvr.config.doorbellMessages) {
-
-      for(const configEntry of this.nvr.config.doorbellMessages) {
-
-        let duration = this.defaultMessageDuration;
-
-        // If we've set a duration, let's honor it. If it's less than zero, use the default duration.
-        if(("duration" in configEntry) && !isNaN(configEntry.duration) && (configEntry.duration >= 0)) {
-
-          duration = configEntry.duration * 1000;
-        }
-
-        // Add it to our list.
-        doorbellMessages.push({ duration: duration, text: configEntry.message, type: "CUSTOM_MESSAGE" });
-      }
-    }
-
     // If we've got messages on the controller, let's configure those, unless the user has disabled that feature.
     if(this.isMessagesFromControllerEnabled) {
 
-      // The controller's allMessages may omit the duration field that MessageInterface declares; the switch-build loop tolerates that with its "duration" in entry
-      // fallback to defaultMessageDuration, which is what makes this cast safe.
+      /* The controller's allMessages may omit the duration field that MessageInterface declares; the switch-build loop tolerates that with its "duration" in entry
+       * fallback to defaultMessageDuration, which is what makes this cast safe. concat rather than a direct assignment because it hands back a fresh array: the
+       * controller's own message array is the library's to own, and a caller that reorders or trims what we return must never reach into it.
+       */
       doorbellMessages = (doorbellSettings.allMessages as MessageInterface[]).concat(doorbellMessages);
     }
 

@@ -720,8 +720,12 @@ export class ProtectEventDispatch {
       this.eventTimers.delete(protectDevice.id + ".Doorbell.Ring.MQTT");
     }, PROTECT_DOORBELL_TRIGGER_DURATION));
 
+    // The ring-suppression window resolves at the doorbell's own scope, so one camera's delay can differ from its siblings'; the legacy top-level property is the
+    // transition fallback and today's no-delay default survives both being absent.
+    const ringDelay = this.nvr.platform.featureOptions.getInteger("Doorbell.Ring.Delay", protectDevice.mac, this.nvr.ufp.mac) ?? this.nvr.platform.config.ringDelay;
+
     // If we don't have a ring duration defined, we're done.
-    if(!this.nvr.platform.config.ringDelay) {
+    if(!ringDelay) {
 
       return;
     }
@@ -731,7 +735,7 @@ export class ProtectEventDispatch {
 
       // Delete the timer from our event tracker.
       this.eventTimers.delete(protectDevice.id + ".Doorbell.Ring");
-    }, this.nvr.platform.config.ringDelay * 1000));
+    }, ringDelay * 1000));
   }
 
   // Deliver a UniFi Access occurrence to HomeKit. The only modeled Access occurrence today is a door_bell intercom press, which we surface as a doorbell ring through the

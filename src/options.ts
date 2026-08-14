@@ -3,9 +3,10 @@
  * options.ts: Feature option and type definitions for UniFi Protect.
  */
 import type { FeatureCategoryEntry, FeatureOptionEntry } from "homebridge-plugin-utils";
-import { PROTECT_DEVICE_REMOVAL_DELAY_INTERVAL, PROTECT_DOORBELL_CHIME_DURATION_DIGITAL, PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_FFMPEG_AUDIO_FILTER_HIGHPASS,
-  PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS, PROTECT_M3U_PLAYLIST_PORT, PROTECT_MOTION_DURATION, PROTECT_NVR_REBOOT_INTERVAL, PROTECT_OCCUPANCY_DURATION,
-  PROTECT_TRANSCODE_BITRATE, PROTECT_TRANSCODE_HIGH_LATENCY_BITRATE } from "./settings.ts";
+import { PROTECT_DEVICE_REMOVAL_DELAY_INTERVAL, PROTECT_DOORBELL_CHIME_DURATION_DIGITAL, PROTECT_DOORBELL_RING_DELAY, PROTECT_FFMPEG_AUDIO_FILTER_FFTNR,
+  PROTECT_FFMPEG_AUDIO_FILTER_HIGHPASS, PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS, PROTECT_M3U_PLAYLIST_PORT, PROTECT_MOTION_DURATION, PROTECT_MQTT_TOPIC,
+  PROTECT_NVR_REBOOT_INTERVAL, PROTECT_OCCUPANCY_DURATION, PROTECT_TRANSCODE_BITRATE, PROTECT_TRANSCODE_HIGH_LATENCY_BITRATE } from "./settings.ts";
+import { mqttFeatureOptions } from "homebridge-plugin-utils";
 
 // Plugin configuration options.
 export interface ProtectOptions {
@@ -22,14 +23,8 @@ export interface ProtectOptions {
 export interface ProtectNvrOptions {
 
   address: string;
-  doorbellMessages?: {
-
-    duration: number;
-    message: string;
-  }[];
   mqttTopic: string;
   mqttUrl?: string;
-  name?: string;
   overrideAddress?: string;
   password: string;
   username: string;
@@ -73,6 +68,10 @@ interface ProtectCategoryMeta {
   modelKey?: string[];
 }
 
+// The MQTT option group, composed from the shared generator so every plugin exposing an MQTT broker offers the same two options under the same names. Both entries are
+// declared at controller scope: each configured Protect controller reaches its own broker and publishes under its own topic prefix.
+const mqtt = mqttFeatureOptions({ defaultTopic: PROTECT_MQTT_TOPIC, scopes: ["controller"] });
+
 /* eslint-disable @stylistic/max-len */
 
 // Feature option categories.
@@ -84,6 +83,9 @@ export const featureOptionCategories: FeatureCategoryEntry<ProtectCategoryMeta>[
   { description: "Fob", meta: { modelKey: ["fob"] }, name: "Fob" },
   { description: "Logging", meta: { modelKey: [ "camera", "light", "sensor" ] }, name: "Log" },
   { description: "Motion & Occupancy", meta: { featureByModel: { sensor: ["motion"] }, isNotProperty: [ "isAdoptedByAccessApp", "isThirdPartyCamera" ], modelKey: [ "camera", "light", "sensor" ] }, name: "Motion" },
+  // The generated group carries no meta at all, so the cast widens nothing our own entries declare - it only bridges the generator's unannotated entry type into our
+  // meta-typed array.
+  mqtt.category as FeatureCategoryEntry<ProtectCategoryMeta>,
   { description: "Protect Controller", meta: { modelKey: [ "camera", "nvr" ] }, name: "Nvr" },
   { description: "Relay", meta: { modelKey: ["relay"] }, name: "Relay" },
   { description: "Security System", meta: { modelKey: ["nvr"] }, name: "SecuritySystem" },
@@ -133,6 +135,7 @@ export const featureOptions: Record<string, FeatureOptionEntry<ProtectOptionMeta
     { default: false, description: "Add switch accessories to control the physical chimes attached to a Protect doorbell.", meta: { hasFeature: ["hasChime"] }, name: "PhysicalChime" },
     { default: true, defaultValue: PROTECT_DOORBELL_CHIME_DURATION_DIGITAL, description: "Chime duration, in milliseconds, of a digital physical chime attached to a Protect doorbell.", group: "PhysicalChime", meta: { hasFeature: ["hasChime"] }, name: "PhysicalChime.Duration.Digital" },
     { default: true, description: "Add a light accessory to control the flashlight on a Protect doorbell package camera.", meta: { hasFeature: ["hasPackageCamera"] }, name: "PackageCamera.Flashlight" },
+    { default: false, defaultValue: PROTECT_DOORBELL_RING_DELAY, description: "Delay, in seconds, before a new doorbell ring event can be triggered, suppressing rapid duplicate rings.", meta: { hasFeature: ["isDoorbell"] }, name: "Ring.Delay" },
     { default: false, description: "Add a switch accessory to trigger doorbell ring events on a Protect camera or doorbell.", name: "Trigger" }
   ],
 
@@ -151,6 +154,7 @@ export const featureOptions: Record<string, FeatureOptionEntry<ProtectOptionMeta
   "Log": [
 
     { default: true, description: "Log doorbell ring events in Homebridge.", meta: { modelKey: ["camera"] }, name: "Doorbell" },
+    { default: false, description: "Log verbose FFmpeg output in Homebridge, including the launch-time codec probe and every streaming and two-way audio FFmpeg session.", meta: { modelKey: ["camera"] }, name: "FFmpeg" },
     { default: false, description: "Log HomeKit Secure Video recording events in Homebridge.", meta: { isNotProperty: ["isThirdPartyCamera"], modelKey: ["camera"] }, name: "HKSV" },
     { default: false, description: "Log motion events in Homebridge.", meta: { hasProperty: [ "isMotionDetected", "isPirMotionDetected" ], isNotProperty: ["isThirdPartyCamera"] }, name: "Motion" }
   ],
@@ -184,9 +188,14 @@ export const featureOptions: Record<string, FeatureOptionEntry<ProtectOptionMeta
     { default: false, description: "Add a switch accessory to manually trigger a motion detection event in HomeKit.", meta: { hasProperty: [ "isMotionDetected", "isPirMotionDetected" ] }, name: "Trigger" }
   ],
 
+  // MQTT options, generated alongside the category above by the shared generator. The cast is the option-side half of the category's: the generated entries carry no
+  // meta of their own.
+  [mqtt.category.name]: mqtt.options as FeatureOptionEntry<ProtectOptionMeta>[],
+
   // NVR options.
   "Nvr": [
 
+    { default: false, defaultValue: "", description: "Override the address used when livestreaming from cameras attached to this controller. This option is intended for unusual network topologies and is unavailable for stacked controller configurations.", inputSize: 30, meta: { modelKey: ["nvr"] }, name: "OverrideAddress", scopes: ["controller"] },
     { default: false, defaultValue: PROTECT_M3U_PLAYLIST_PORT, description: "Publish an M3U playlist of Protect cameras on the specified port of this Homebridge server that is suitable for use in apps (e.g. Channels DVR) that can make camera livestreams available through them.", meta: { modelKey: ["nvr"] }, name: "Service.Playlist" },
     { default: true, defaultValue: PROTECT_DEVICE_REMOVAL_DELAY_INTERVAL, description: "Delay, in seconds, before removing devices that are no longer detected on the Protect controller. Removal is held off while the controller is unreachable or restarting, and resumes once it is healthy again: immediately, if the delay is disabled.", meta: { modelKey: ["nvr"] }, name: "DelayDeviceRemoval" },
     { default: false, description: "Publish all the realtime telemetry received from the Protect controller to MQTT.", meta: { modelKey: ["nvr"] }, name: "Publish.Telemetry" },
@@ -223,6 +232,7 @@ export const featureOptions: Record<string, FeatureOptionEntry<ProtectOptionMeta
   // Video options.
   "Video": [
 
+    { default: false, defaultValue: "", description: "Path to the FFmpeg executable to use for video processing. Default: the bundled FFmpeg build for your platform, or the first ffmpeg found in your path.", inputSize: 40, name: "FFmpeg.Path", scopes: ["global"] },
     { default: true, description: "Use hardware-accelerated transcoding when available (Apple Macs, Intel Quick Sync Video-enabled CPUs, Raspberry Pi 4).", name: "Transcode.Hardware" },
     { default: true, description: "When streaming to low-latency clients (e.g. at home), transcode livestreams, instead of transmuxing them.", name: "Transcode" },
     { default: true, defaultValue: PROTECT_TRANSCODE_BITRATE, description: "Bitrate, in kilobits per second, to use when transcoding to low-latency (e.g. at home) clients, ignoring the bitrate HomeKit requests. HomeKit typically requests lower video quality than you may desire in your environment.", group: "Transcode", name: "Transcode.Bitrate" },

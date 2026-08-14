@@ -322,6 +322,11 @@ export interface TestCharacteristicProps extends Record<string, unknown> {
 // triggerGet / triggerSet are the test-side knobs that exercise the bound handlers without going through a real HAP request path.
 export class TestCharacteristic {
 
+  // The two characteristic cross-references the naming surface reads: setServiceName recovers the characteristic namespace from an instance's constructor and writes
+  // through its ConfiguredName and Name statics, mirroring real hap-nodejs. Only the naming pair is wired, matching the AccessoryInformation-scoped bridge on the
+  // service side.
+  public static readonly ConfiguredName = Characteristic.ConfiguredName;
+  public static readonly Name = Characteristic.Name;
   public readonly type: CharacteristicType;
   // The event-notification log, mirroring HAP's sendEventNotification semantics: an event is a transient occurrence pushed to subscribers (the doorbell ring's
   // SINGLE_PRESS), recorded in order here, and it deliberately never changes the characteristic's cached value.
@@ -427,13 +432,29 @@ export class TestCharacteristic {
  * - displayName is MUTABLE, because setServiceName assigns it on every acquire.
  *
  * UUID is the kind's identity string, mirrored from the marker class's static (see the UUID getter below). It must NEVER resolve to the empty string: the real
- * helpers' name-set predicates (serviceHasName and friends) build their sets from static properties the marker classes do not carry, so every set degenerates to
- * containing only the empty string - and a service whose UUID resolved to "" would false-positive into setServiceName's ConfiguredName / Name writes against
- * undefined characteristic statics, silently polluting the double with undefined-keyed characteristics. Non-empty kind strings keep every degenerate predicate
- * honestly false, while giving production code that matches services by identity (the doorbell's validateMessageSwitches compares service.UUID against
- * Service.Switch.UUID) real, distinct identities to match on.
+ * helpers' name-set predicates (serviceHasName and friends) build their sets by looking up one static per service kind on a service's constructor, and
+ * AccessoryInformation is the single kind the doubles wire (the static getter below), so every other kind's lookup misses and maps to the empty string - and a
+ * service whose UUID resolved to "" would false-positive into setServiceName's ConfiguredName / Name writes against undefined characteristic statics, silently
+ * polluting the double with undefined-keyed characteristics. Non-empty kind strings keep those degenerate predicates honestly false, while giving production code
+ * that matches services by identity (the doorbell's validateMessageSwitches compares service.UUID against Service.Switch.UUID) real, distinct identities to match
+ * on.
+ *
+ * AccessoryInformation is the one deliberately-wired exception, scoped to the surface the family exercises: its statics are real on both sides (the service kind
+ * here, the ConfiguredName / Name pair on TestCharacteristic), so the library's accessory-naming surface - locating the information service, gating its name
+ * writes behind the predicates, and performing them - behaves against the double the way it does against real HAP. Every other kind stays unwired, which is what
+ * keeps the degenerate predicates false and the name writes off every service whose naming no test characterizes.
  */
 export class TestService {
+
+  // The one static cross-reference the doubles carry: homebridge-plugin-utils locates the AccessoryInformation service - and keys its name-write predicates -
+  // through constructor statics, the way real hap-nodejs service classes expose the whole service registry on every subclass. AccessoryInformation alone is wired
+  // so the library's accessory-naming surface behaves genuinely against the double; every other kind stays deliberately unwired, keeping the degenerate name
+  // predicates honestly false outside the one service whose naming the family tests. A getter rather than an initializer because the Service namespace is declared
+  // after this class; the getter reads it lazily, after both exist.
+  public static get AccessoryInformation(): ServiceType {
+
+    return Service.AccessoryInformation;
+  }
 
   public readonly type: ServiceType;
   public displayName: string;
@@ -891,7 +912,19 @@ export class TestAccessory {
     this.displayName = displayName;
     this.UUID = uuid;
     this._associatedHAPAccessory = { bridged: true, displayName };
-    this.services.push(new TestService(Service.AccessoryInformation, displayName, undefined));
+
+    // Construct the information service through its marker so it is born carrying the Name characteristic real HAP always gives it. The seed is what the real name
+    // helpers destructure to recover the Characteristic constructor, and a device's syncName-gated rename runs before setInfo seeds anything, so an empty
+    // information service would throw on the very first rename of a fresh accessory.
+    this.services.push(new Service.AccessoryInformation(displayName));
+  }
+
+  // Update the accessory display-name pair the way Homebridge's own setter does: the platform wrapper's displayName and the underlying HAP accessory's move
+  // together, so a production path that renames through the documented API leaves the double in the same state the real platform would carry.
+  public updateDisplayName(name: string): void {
+
+    this.displayName = name;
+    this._associatedHAPAccessory.displayName = name;
   }
 
   // The configure-side view of the controller-event log, derived so existing identity-and-count assertions keep working against the unified ordered log.
