@@ -28,7 +28,7 @@
 /* The resolved session-source decision: the chosen transport, plus whether the caller should wake the supervisor to revive a momentarily-down buffer behind a fallback.
  * See the module header for each transport's meaning.
  *
- * The two variants split on whether a transport was found. A served decision carries no cause, because there is nothing to explain; an unavailable one always carries
+ * The variants split on whether a transport was found. A served decision carries no cause, because there is nothing to explain; an unavailable one always carries
  * the cause, which is what picks the remedy the caller narrates. Writing it as a union rather than one shape with an optional cause is what makes both illegal states -
  * a cause on a served decision, and an unavailable decision without one - unrepresentable rather than merely unexpected.
  */

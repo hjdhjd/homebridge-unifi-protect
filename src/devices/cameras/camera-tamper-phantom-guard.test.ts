@@ -28,8 +28,9 @@ import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import { makeTestNvr } from "../../nvr/testing.helpers.ts";
 
-// Construct a real ProtectCamera, with the casts confined to this one seam - the instance under test is the production class and its real configure path. A doorbell
-// config (isDoorbell plus hasPackageCamera) composes the doorbell capability, which creates the package camera reachable through the camera's packageCamera getter.
+// Construct a real ProtectCamera, with the casts confined to this one construction call - the instance under test is the production class and its real configure path.
+// A doorbell config (isDoorbell plus hasPackageCamera) composes the doorbell capability, which creates the package camera reachable through the camera's packageCamera
+// getter.
 function construct(nvr: TestProtectNvr, accessory: TestAccessory, projection: TestCameraProjection): ProtectCamera {
 
   return new ProtectCamera(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Camera);

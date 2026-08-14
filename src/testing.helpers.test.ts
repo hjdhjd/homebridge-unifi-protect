@@ -372,7 +372,7 @@ describe("the state-store double (TestStateStore)", () => {
 describe("makeProtectState device-slice widening", () => {
 
   // No per-slice config builder exists yet (each lands with its own device-family suite), so each record is a minimal id-bearing literal bridged through the same
-  // confined `as unknown as` seam cast the harness uses for makeCameraConfig / makeNvrConfig - honest about being a partial double, while keeping the population and
+  // confined `as unknown as` cast the harness uses for makeCameraConfig / makeNvrConfig - honest about being a partial double, while keeping the population and
   // keying under test exactly the production-shaped path.
   const lightRecord = { id: "light-1" } as unknown as ProtectLightConfig;
   const liveviewRecord = { id: "liveview-1" } as unknown as ProtectNvrLiveviewConfig;
@@ -465,7 +465,7 @@ describe("harness growth: service identity, controller log, and event notificati
 
     accessory.configureController(first);
 
-    // HAP throws on a second controller registration while one is configured - the double enforces the same invariant.
+    // HAP throws on a second controller registration while one is configured - the double enforces the same rule.
     assert.throws(() => accessory.configureController(second), /already added/, "a double configure throws, mirroring HAP");
 
     accessory.removeController(first);
@@ -497,7 +497,7 @@ describe("harness growth: service identity, controller log, and event notificati
 
     // The sensor-family markers added for the ProtectSensor real-construction net. Each must construct without throwing (acquireService's create branch invokes the
     // namespace entry directly) AND carry its seed characteristic as the materialized first element (getCharacteristicConstructor destructures it), mirroring the
-    // OccupancySensor / MotionSensor precedent. The seed pairing is the load-bearing claim: a wrong seed would let construction succeed yet break the kind-true read.
+    // OccupancySensor / MotionSensor precedent. Getting the seed pairing right matters: a wrong seed would let construction succeed yet break the kind-true read.
     // We pair each marker with its expected seed and assert the first characteristic IS that kind - reading characteristics[0] with a length guard so the index access
     // is type-honest under strict null checks rather than asserted away.
     const cases: { expectedSeed: CharacteristicType; service: TestService }[] = [
@@ -574,7 +574,7 @@ describe("A2 controller owners, commit 2: the security-system HAP markers and re
 
   test("the SecuritySystem state characteristic markers carry HAP's distinct named arm-state statics", () => {
 
-    // The five Current values and four Target values are verified against @homebridge/hap-nodejs CharacteristicDefinitions. Distinct values are load-bearing: the
+    // The five Current values and four Target values are verified against @homebridge/hap-nodejs CharacteristicDefinitions. Distinct values matter: the
     // currentSecuritySystemState string map is keyed by the Current statics, and the setProps validValues array carries the Target statics. Note DISARMED (Current) and
     // DISARM (Target) are the same integer 3 under HAP-distinct names, both reached by name in production.
     assert.deepEqual(

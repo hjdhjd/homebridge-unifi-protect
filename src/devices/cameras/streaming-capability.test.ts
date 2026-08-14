@@ -2,8 +2,8 @@
  *
  * streaming-capability.test.ts: The controller-side members of the camera family's streaming capability.
  *
- * The NVR reaches into every camera's streaming arm from three walks - the reboot-recovery probesize reset, the disconnect release, and the scheduled-reboot deferral
- * gate - and each walk speaks to the capability through one intent-named member rather than reaching through the delegate itself. This suite pins those three members
+ * The NVR reaches into every camera's streaming arm from several walks - the reboot-recovery probesize reset, the disconnect release, and the scheduled-reboot deferral
+ * gate among them - and each walk speaks to the capability through one intent-named member rather than reaching into the delegate itself. This suite pins those members
  * against a REAL constructed doorbell-plus-package family: the release is exactly the pooled-subscription pair and deliberately NOT the full teardown (no recording-off,
  * no controller removal), the reboot recovery reaches parent and package alike, and the recording-transmitting gate answers safely at every level of absence.
  *
@@ -141,7 +141,7 @@ describe("the streaming capability's controller-side members", () => {
   });
 
   /* One capability per camera, no matter how many times the camera asks for it. The acquire accessor's whole body is a ??= assignment, which is what makes double
-   * construction unrepresentable rather than merely unlikely - the construct pass, the capability reconcile, and all three streaming observers each call it, and a
+   * construction unrepresentable rather than merely unlikely - the construct pass, the capability reconcile, and every streaming observer each call it, and a
    * second construction would strand the first capability's delegate with a registered HomeKit controller nothing would ever release. Turning that ??= into a plain
    * assignment leaves this RED on the very first observer wake.
    *

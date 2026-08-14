@@ -11,14 +11,14 @@
  * The suite drives a REAL constructed ProtectCamera against the camera-construction harness doubles (the faithful store, the read-through Camera projection, the stub
  * streaming-delegate factory) and exercises the capability observers and the reconcileCapabilities chokepoint they drive. Each scenario is behavior-FIRST - a
  * structural-sharing push followed by a settle and an assertion on the HomeKit surface the reconcile produced (the LightSensor / LockMechanism service) or did not - and
- * the load-bearing scenarios are DISCRIMINATING: the self-heal proves the OBSERVER (remove it and the late capability never appears), and the restart re-wire proves the
- * wiring runs on every configure (restore the if(existing) early-return and a cached-but-unwired sensor is never re-wired - no controller lux read occurs). The
- * wake-attribution and leak scenarios are the selector-correctness and no-leaked-loop controls.
+ * the scenarios that matter most tell causes apart precisely: the self-heal proves the OBSERVER (remove it and the late capability never appears), and the restart
+ * re-wire proves the wiring runs on every configure (restore the if(existing) early-return and a cached-but-unwired sensor is never re-wired - no controller lux read
+ * occurs). The wake-attribution and leak scenarios are the selector-correctness and no-leaked-loop controls.
  *
  * Every capability suite shares the function-form predicate's asymmetry (additive-eager on the capability, absolutely-pruning on the toggle). The Access lock and the
  * night vision dimmer add an establishment-only push on top: a live observe reconcile over an existing service never re-pushes the display (so an in-flight unlock or
  * night-vision command is never stomped), while create and the construct path (adoption or restart) do. The lock stamps SECURED; the dimmer pushes On / Brightness from
- * the device's irLedMode reading. Each suite's discriminating mutations are traced in its tests' comments - the predicate's hasService and toggle clauses, the
+ * the device's irLedMode reading. Each suite's distinguishing mutations are traced in its tests' comments - the predicate's hasService and toggle clauses, the
  * early-return removal (lock only), and the !existing || (source === "construct") establishment condition.
  */
 import type { Camera, ProtectCameraConfig } from "unifi-protect";
@@ -60,13 +60,13 @@ function buildTestNvr(options: Parameters<typeof makeTestNvr>[0]): ReturnType<ty
   return built;
 }
 
-// Construct a real ProtectCamera, with the casts confined to this one seam - the instance under test is the production class and its real configure path.
+// Construct a real ProtectCamera, with the casts confined to this one construction call - the instance under test is the production class and its real configure path.
 function construct(nvr: TestProtectNvr, accessory: TestAccessory, projection: TestCameraProjection): ProtectCamera {
 
   return new ProtectCamera(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Camera);
 }
 
-// The count of bare LightSensor services on the accessory - the discriminator for "exactly one ambient light sensor", which proves the reconcile re-run never sprouted a
+// The count of bare LightSensor services on the accessory - the check for "exactly one ambient light sensor", which proves the reconcile re-run never sprouted a
 // duplicate (acquireService is get-or-create, so a re-run returns the existing instance).
 function lightSensorCount(accessory: TestAccessory): number {
 
@@ -80,7 +80,7 @@ function accessLock(accessory: TestAccessory): TestService | undefined {
   return accessory.getServiceById(Service.LockMechanism, ProtectReservedNames.LOCK_ACCESS);
 }
 
-// The count of LOCK_ACCESS LockMechanism services - the discriminator for "exactly one lock", which proves a reconcile re-run never sprouted a duplicate.
+// The count of LOCK_ACCESS LockMechanism services - the check for "exactly one lock", which proves a reconcile re-run never sprouted a duplicate.
 function accessLockCount(accessory: TestAccessory): number {
 
   return accessory.services.filter((service) => (service.type === Service.LockMechanism) && (service.subtype === ProtectReservedNames.LOCK_ACCESS)).length;
@@ -93,7 +93,7 @@ function nightVisionDimmer(accessory: TestAccessory): TestService | undefined {
   return accessory.getServiceById(Service.Lightbulb, ProtectReservedNames.LIGHTBULB_NIGHTVISION);
 }
 
-// The count of LIGHTBULB_NIGHTVISION Lightbulb services - the discriminator for "exactly one dimmer", which proves a reconcile re-run never sprouted a duplicate.
+// The count of LIGHTBULB_NIGHTVISION Lightbulb services - the check for "exactly one dimmer", which proves a reconcile re-run never sprouted a duplicate.
 function nightVisionDimmerCount(accessory: TestAccessory): number {
 
   return accessory.services.filter((service) => (service.type === Service.Lightbulb) && (service.subtype === ProtectReservedNames.LIGHTBULB_NIGHTVISION)).length;
@@ -545,7 +545,7 @@ describe("the camera capability reconcile - the UniFi Access lock", () => {
       assert.ok(lock, "the supportUnlock capability plus the default-on option created the Access lock at adoption");
 
       // The establishment stamp wrote SECURED to both characteristics. Removing the stamp leaves the double's value at its null default - null !== SECURED - so this is
-      // RED, which is exactly why the SECURED assertion discriminates SECURED-vs-null rather than SECURED-vs-UNSECURED.
+      // RED, which is exactly why the SECURED assertion tells apart SECURED-vs-null rather than SECURED-vs-UNSECURED.
       assert.equal(lock.getCharacteristic(Characteristic.LockCurrentState).value, Characteristic.LockCurrentState.SECURED,
         "the lock current state reads SECURED at creation");
       assert.equal(lock.getCharacteristic(Characteristic.LockTargetState).value, Characteristic.LockTargetState.SECURED,
@@ -628,7 +628,7 @@ describe("the camera capability reconcile - the UniFi Access lock", () => {
       assert.equal(restored.getCharacteristic(Characteristic.LockTargetState).value, Characteristic.LockTargetState.SECURED,
         "the construct reconcile recovered the lock target state to SECURED");
 
-      // (b) The onSet was re-bound on this configure (the wire-every-configure invariant - existing does NOT gate the wiring). Driving the LockTargetState onSet to
+      // (b) The onSet was re-bound on this configure (the wire-every-configure rule - existing does NOT gate the wiring). Driving the LockTargetState onSet to
       // UNSECURED dispatches exactly one unlock command. Re-introducing an if(existing) return true guard before the onSet bind leaves nothing recorded -> RED.
       await restored.getCharacteristic(Characteristic.LockTargetState).triggerSet(Characteristic.LockTargetState.UNSECURED);
 
@@ -842,7 +842,7 @@ describe("the camera capability reconcile - the night vision dimmer", () => {
   test("the feature option off prunes an existing night vision dimmer (the toggle half on an existing service; parity, not a divergence)", async () => {
 
     // Pre-seed a cached LIGHTBULB_NIGHTVISION Lightbulb BEFORE construction - a restart whose Enable toggle was removed. The camera adopts WITH the infrared hardware (so
-    // the strict-boolean mutation cannot discriminate here - capability true with toggle false prunes either way) but the toggle off.
+    // the strict-boolean mutation cannot tell these apart here - capability true with toggle false prunes either way) but the toggle off.
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasIcrSensitivity: true, hasInfrared: true } });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
     const { nvr } = buildTestNvr({ store });
@@ -859,8 +859,8 @@ describe("the camera capability reconcile - the night vision dimmer", () => {
     try {
 
       // The toggle half prunes the present dimmer: hasFeature is false, so validService removes it. This is PARITY - a plain boolean also passes to validService, which
-      // removes on false, so the gate and a plain boolean BOTH prune (there is no toggle-off divergence, unlike the lock cell). ONLY the dropped-toggle-half
-      // mutation discriminates here ((hasService || capability) = true -> keeps -> RED); the strict-boolean mutation does NOT (capability true && toggle false = false =
+      // removes on false, so the gate and a plain boolean BOTH prune (there is no toggle-off divergence, unlike the lock cell). ONLY the dropped-toggle-half mutation
+      // tells these apart here ((hasService || capability) = true -> keeps -> RED); the strict-boolean mutation does NOT (capability true && toggle false = false =
       // prune, same as production).
       assert.equal(nightVisionDimmer(accessory), undefined, "the absent Enable toggle pruned the cached night vision dimmer");
     } finally {
@@ -947,7 +947,7 @@ describe("the camera capability reconcile - the night vision dimmer", () => {
       assert.equal(restored.getCharacteristic(Characteristic.On).value, true, "the construct reconcile re-established On true from the device irLedMode auto reading");
       assert.equal(restored.getCharacteristic(Characteristic.Brightness).value, 10, "the construct reconcile re-established Brightness 10 from the device reading");
 
-      // (b) The On onSet was re-bound on this configure (the wire-every-configure invariant - existing does NOT gate the wiring). Driving it to false dispatches
+      // (b) The On onSet was re-bound on this configure (the wire-every-configure rule - existing does NOT gate the wiring). Driving it to false dispatches
       // exactly one irLedMode off write. Re-introducing an if(existing) return true guard before the onSet bind leaves nothing recorded -> RED.
       await restored.getCharacteristic(Characteristic.On).triggerSet(false);
 
@@ -1177,7 +1177,7 @@ describe("the camera capability reconcile - tamper detection", () => {
 
     try {
 
-      // The construct reconcile's keep branch re-bound the onGet over the existing characteristic (the wire-every-configure invariant - existing does NOT gate the
+      // The construct reconcile's keep branch re-bound the onGet over the existing characteristic (the wire-every-configure rule - existing does NOT gate the
       // wiring). triggerGet now reads this.isTampered at rest (false), NOT the stale cached true. Re-introducing an if(existing) return true guard before the onGet bind
       // leaves the cached characteristic unwired, so triggerGet falls through to the stale cached true -> RED.
       assert.equal(await restored.getCharacteristic(Characteristic.StatusTampered).triggerGet(), false,
@@ -1308,7 +1308,7 @@ describe("the camera capability reconcile - two-way audio", () => {
   test("a late hasSpeaker with Audio.TwoWay disabled never churns the controller (negative control, fails without the Audio.TwoWay clause)", async () => {
 
     // The speaker hardware will report, but the user disabled two-way audio. The hint derivation gates on the Audio.TwoWay feature option, so two-way audio stays off and
-    // the controller is never rebuilt - the control that proves the hasFeature clauses are not undiscriminated.
+    // the controller is never rebuilt - the control that proves the hasFeature clauses are each actually exercised.
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasSpeaker: false } });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
     const { nvr } = buildTestNvr({ store, userOptions: ["Disable.Audio.TwoWay"] });
@@ -1329,7 +1329,7 @@ describe("the camera capability reconcile - two-way audio", () => {
       await settle();
 
       // Zero churn and the hint stays false, because twoWayAudio = hasSpeaker && hasFeature("Audio.TwoWay")(false) = false. A hasSpeaker-only predicate (dropping the
-      // && this.hasFeature("Audio.TwoWay") clause) would flip the hint true and rebuild -> RED, so this discriminates the otherwise-undiscriminated hasFeature clauses.
+      // && this.hasFeature("Audio.TwoWay") clause) would flip the hint true and rebuild -> RED, so this tells apart the otherwise-unexercised hasFeature clauses.
       assert.equal(accessory.controllerEvents.length, churnBaseline, "the disabled Audio.TwoWay option drove zero controller churn despite the late speaker");
       assert.equal(camera.hints.twoWayAudio, false, "the disabled Audio.TwoWay option held two-way audio off");
     } finally {

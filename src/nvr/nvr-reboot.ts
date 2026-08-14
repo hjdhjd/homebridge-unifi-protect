@@ -182,7 +182,7 @@ export class RebootScheduler {
     const nextCycleStart = cycleStart ?? Date.now();
     const decision = classifyRebootAttempt({ activeRecordings, ceilingMs: deferralCeilingMs, elapsedCycleMs });
 
-    // Every arm terminates, so the reboot choreography below is reached only by the two arms that let the attempt through.
+    // Every arm terminates, so the reboot choreography below is reached only by the decision arms that let the attempt continue rather than return early.
     switch(decision) {
 
       case "defer":

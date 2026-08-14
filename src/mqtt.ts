@@ -11,7 +11,7 @@ import { guardedDispatch } from "homebridge-plugin-utils";
  * resolve at the controller's own scope first, with the legacy per-controller schema properties as the transition fallback, so a configuration nobody has opened the
  * webUI on keeps working exactly as it did.
  *
- * The two reads ask their question differently, and deliberately. The broker option defaults off, so an unconfigured broker resolves to nothing and the legacy
+ * Each read asks its question differently, and deliberately. The broker option defaults off, so an unconfigured broker resolves to nothing and the legacy
  * property answers through the nullish fallback. The topic option carries an always-on default, so reading its value would answer that default even when the user
  * has configured nothing...which would silently outrank a legacy topic. Configured-ness for the topic is therefore read through scope(), and only a topic the user
  * actually configured supersedes the legacy property. With neither configured, the plugin's canonical topic prefix answers.

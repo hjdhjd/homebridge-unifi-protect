@@ -4,8 +4,8 @@
  *
  * This module owns one pure decision: whether a camera's bare motion - a raw motion start with no smart-object classification - should trip the HomeKit MotionSensor, or
  * whether the matching smart detection owns motion for this camera and firing here would double-report it. It is deliberately pure - `this`-free and free of any device
- * or controller I/O, three camera facts in and a boolean out - so the camera leaf's bare-motion observer can import it without value-importing the non-leaf
- * event-dispatch.ts (the device-layer module invariant), and its truth table is exhaustively testable without standing up a camera accessory.
+ * or controller I/O, camera facts in and a boolean out - so the camera leaf's bare-motion observer can import it without value-importing the non-leaf
+ * event-dispatch.ts (a rule the device layer enforces), and its truth table is exhaustively testable without standing up a camera accessory.
  *
  * The home is the camera leaf's `lastMotion` observer. The controller signals bare motion by advancing the camera record's `lastMotion` device-state field, which the
  * camera observes exactly as the sensor and light families observe their own motion state. The policy itself is simple: we trip the MotionSensor from a bare motion

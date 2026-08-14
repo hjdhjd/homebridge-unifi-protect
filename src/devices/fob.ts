@@ -48,6 +48,7 @@ function resolveFobButtons(config: ProtectFobConfig): Nullable<readonly FobButto
   return ((config.marketName === "USL Fob") || (config.type?.startsWith("USL-Fob-") ?? false)) ? USL_FOB_BUTTONS : null;
 }
 
+// Projects one UniFi Protect LoRa fob's fixed button set and battery state onto a HomeKit accessory.
 export class ProtectFob extends ProtectDevice<Fob> {
 
   // The fob's button table, resolved ONCE from the immutable model identity (marketName/type) at construction. This is a documented, principled exemption to the

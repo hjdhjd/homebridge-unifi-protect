@@ -132,7 +132,7 @@ describe("livestreamRecoveryDecision", () => {
 
     // The precedence case that pins the ordering: an offline camera that is ALSO past the self-heal threshold must wait, never give up. The gate sits before the
     // self-heal step, so the offline defer wins; if it were placed after the self-heal step, this case would give up instead. The controller is healthy and non-throttled
-    // so the wait can only come from the new gate (step 2 cannot fire), which is what makes this discriminate the ordering rather than merely the gate's presence.
+    // so the wait can only come from the new gate (step 2 cannot fire), which is what makes this tell apart the ordering rather than merely the gate's presence.
     test("an offline camera past the self-heal threshold still waits, never gives up (gate precedes self-heal)", () => {
 
       assert.deepEqual(livestreamRecoveryDecision(makeContext({ attempts: LIVE_SELF_HEAL_THRESHOLD }), makeNvr(), false), { forMs: LIVESTREAM_STRESS_WAIT_MS,
@@ -260,8 +260,8 @@ describe("livestreamRecoveryDecision", () => {
 
     // Every decision the policy returns must be one of RecoveryDecision's arms. We sweep representative inputs across all steps and assert the returned kind
     // is in the allowed set, so a future arm added to the union (or a step returning a malformed shape) is caught here rather than only at the library's recovery-loop
-    // boundary. This is coverage, not the offline-defer gate's discriminating test: every case here passes a reachable camera (the gate's dedicated deepEqual
-    // cases above own the offline discrimination), so the sweep exercises the reachable-camera steps without conflating the two concerns.
+    // boundary. This is coverage, not the offline-defer gate's distinguishing test: every case here passes a reachable camera (the gate's dedicated deepEqual
+    // cases above own telling the offline case apart), so the sweep exercises the reachable-camera steps without conflating the two concerns.
     test("every returned decision carries a kind in the RecoveryDecision union", () => {
 
       const allowed: readonly RecoveryDecision["kind"][] = [ "giveUp", "reconnect", "wait" ];

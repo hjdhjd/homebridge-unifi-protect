@@ -164,8 +164,8 @@ export class ProtectLight extends ProtectDevice<Light> {
     return true;
   }
 
-  // Spawn the light's narrow-selector observers. super spawns the two universal observers (name sync and firmware/device-info refresh); the light adds its four
-  // reactions, each waking only on its own slice through the store's reference dedup.
+  // Spawn the light's narrow-selector observers. super spawns the base class's universal observers (name sync and firmware/device-info refresh); the light adds its
+  // own narrow reactions below, each waking only on its own slice through the store's reference dedup.
   protected override spawnObservers(): void {
 
     super.spawnObservers();

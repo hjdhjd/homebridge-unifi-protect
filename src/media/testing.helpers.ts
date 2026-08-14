@@ -7,9 +7,9 @@
  * timeshift buffer without a controller or an FFmpeg process. The fragment builders compose genuine boxes through homebridge-plugin-utils' real writers, so what a
  * buffer parses here is what it would parse on the wire, and the controllable livestream double exposes the steering a recovery or discontinuity test needs.
  *
- * Fidelity to the cited contracts, not invention, is the line these doubles hold: the camera-host surface is the plugin's own, and the segment and subscription
- * shapes are unifi-protect's. The cross-cutting core - the HAP double, the state store, and the streaming and timeshift stubs three families share - lives in the
- * root harness this file imports from.
+ * Fidelity to the cited contracts, not invention, is the line these doubles hold: the camera-host surface is the plugin's own, and the segment and subscription shapes
+ * are unifi-protect's. The cross-cutting core - the HAP double, the state store, and the streaming and timeshift stubs - lives in the root harness every subsystem's
+ * testing.helpers.ts imports from.
  */
 import type { HomebridgePluginLogging, Nullable, RecordingProcessFactory, TestClock } from "homebridge-plugin-utils";
 import type { LivestreamSubscriptionState, ProtectCameraConfig, Segment, SnapshotOptions, TalkbackSession } from "unifi-protect";
@@ -31,24 +31,26 @@ import { makeCameraConfig } from "../devices/testing.helpers.ts";
 import { makeTestNvr } from "../nvr/testing.helpers.ts";
 
 /* The reusable camera-host test double: the small stand-in every media-delegate test constructs a delegate against, in place of a full ProtectCamera. The
- * ProtectCameraHost interface segregation (the dependency-inversion seam on the camera side of the media stack) exists precisely so the streaming, recording,
+ * ProtectCameraHost interface segregation (the dependency-inversion boundary on the camera side of the media stack) exists precisely so the streaming, recording,
  * snapshot, and timeshift delegates type their camera handle as this narrow contract rather than the concrete class - and this double is what cashes that in: it
  * structurally satisfies every member of ProtectCameraHost (the same compile-time proof the production ProtectCamera passes), so a delegate constructs against it
  * with no FFmpeg and no live camera.
  *
  * The shape mirrors TestStreamingDelegate's discipline: controllable fields a test sets to steer a branch (isReachable is the behavior-bearing one - the snapshot
- * delegate's reachability gate reads it), recordable call logs the behavior-bearing seams push their arguments into (so a later test asserts a seam was invoked),
- * and settable seam returns (snapshotResult is the Buffer snapshotFromController resolves, the value the two-sided snapshot test threads through the delegate).
+ * delegate's reachability gate reads it), recordable call logs the behavior-bearing interfaces push their arguments into (so a later test asserts an interface was
+ * invoked), and settable interface returns (snapshotResult is the Buffer snapshotFromController resolves, the value the two-sided snapshot test threads through the
+ * delegate).
  *
  * The context half composes the EXISTING harness doubles rather than reinventing them: accessory is a real TestAccessory, and nvr/platform/api/log all flow from a
  * real makeTestNvr context (so the very next behavior step, which reads platform.codecSupport and nvr.mqtt, finds real doubles there, not sentinels that would
  * throw). The four context handles (accessory/api/nvr/platform) plus ufp are typed as their production types by the interface, which the intentionally-partial
- * doubles do not structurally satisfy, so each is bridged with a confined `as unknown as <ProductionType>` seam cast - the same honest harness pattern the
+ * doubles do not structurally satisfy, so each is bridged with a confined `as unknown as <ProductionType>` boundary cast - the same honest harness pattern the
  * construction suites use at their own construction-arg boundaries. The casts bridge the deliberate double->production gap only; tsc still verifies every member is
  * present and interface-typed, so the completeness proof holds.
  *
- * Member order mirrors TestStreamingDelegate: the fields group alphabetized, then the methods group alphabetized (not one global run). The settable seam predicates
- * hasFeature / selectChannel / selectSubstrateChannel are public arrow-function fields so a test can reassign them, satisfying the interface's method members.
+ * Member order mirrors TestStreamingDelegate: the fields group alphabetized (except where a boundary's return value is kept adjacent to its own call log), then the
+ * methods group alphabetized (not one global run). The settable interface predicates hasFeature / selectChannel / selectSubstrateChannel are public arrow-function fields
+ * so a test can reassign them, satisfying the interface's method members.
  */
 export class TestCameraHost implements ProtectCameraHost {
 
@@ -105,7 +107,7 @@ export class TestCameraHost implements ProtectCameraHost {
   // ways. Defaults true.
   public isReachable = true;
 
-  // Recordable call logs: each behavior-bearing seam pushes its arguments here so a later test can assert the seam was invoked exactly as expected.
+  // Recordable call logs: each behavior-bearing interface pushes its arguments here so a later test can assert the interface was invoked exactly as expected.
   public readonly livestreamCalls: { channelProfile: ChannelProfile; opts?: { segmentLength?: number; signal?: AbortSignal; urgency?: () => number } }[] = [];
 
   // The segment-count knob the transmit test sets to fill the timeshift buffer: the number of keyframe-bearing media segments livestream() yields. Defaults 0, which
@@ -119,7 +121,7 @@ export class TestCameraHost implements ProtectCameraHost {
   public log: HomebridgePluginLogging;
 
   // The bare device MAC for topic addressing, read through the device projection so it stays consistent with the ufp fixture's mac even if a test reassigns ufp. This is
-  // the identity the narrowed live-state view no longer carries; a delegate reads it (the MQTT snapshot topic) through protectCamera.mac.
+  // the identity the narrowed live-state view does not carry; a delegate reads it (the MQTT snapshot topic) through protectCamera.mac.
   public get mac(): string {
 
     return this.ufp.mac;
@@ -156,14 +158,14 @@ export class TestCameraHost implements ProtectCameraHost {
   public usesTimeshiftLivestream = false;
   public videoCodecName = "h264";
 
-  // Compose the context half from real harness doubles, bridging each to its interface-required production type at the confined seam.
+  // Compose the context half from real harness doubles, bridging each to its interface-required production type at the confined boundary.
   public constructor(init: { accessory: TestAccessory; nvr: TestProtectNvr }) {
 
-    // The double is a partial TestAccessory; the interface requires the production ProtectAccessory. The confined seam cast bridges the deliberate gap.
+    // The double is a partial TestAccessory; the interface requires the production ProtectAccessory. The confined boundary cast bridges the deliberate gap.
     this.accessory = init.accessory as unknown as ProtectAccessory;
 
     // The api/log/platform/nvr handles all flow from the real makeTestNvr context. Each is a partial double the interface types as a production handle, so each
-    // takes the same confined seam cast.
+    // takes the same confined boundary cast.
     this.api = init.nvr.platform.api as unknown as API;
     this.log = init.nvr.log;
     this.nvr = init.nvr as unknown as ProtectNvr;
@@ -180,7 +182,7 @@ export class TestCameraHost implements ProtectCameraHost {
     return [];
   }
 
-  // The recordable livestream seam. It records its arguments and hands back a LivestreamSubscription double whose profile is selected by this host's
+  // The recordable livestream interface. It records its arguments and hands back a LivestreamSubscription double whose profile is selected by this host's
   // livestreamMediaSegments knob: the default 0 yields the inert double (empty iterator, no-op dispose, "closed" state) the construction suites stay on, while a
   // positive count yields the established segment-yielding double (one init then that many keyframe-bearing media segments, then a parked iterator) the transmit net
   // fills its timeshift buffer from.
@@ -194,7 +196,7 @@ export class TestCameraHost implements ProtectCameraHost {
     return this.livestreamSubscriptions.shift() ?? makeLivestreamSubscriptionDouble({ mediaSegments: this.livestreamMediaSegments });
   }
 
-  // The recordable reboot seam; records the call, then rejects with rebootError when one is set (the self-heal reboot-failure path) or resolves otherwise.
+  // The recordable reboot interface; records the call, then rejects with rebootError when one is set (the self-heal reboot-failure path) or resolves otherwise.
   public async reboot(): Promise<void> {
 
     this.rebootCalls.push(this.rebootCalls.length + 1);
@@ -205,7 +207,7 @@ export class TestCameraHost implements ProtectCameraHost {
     }
   }
 
-  // The recordable status-LED seam; records every requested value and resolves true.
+  // The recordable status-LED interface; records every requested value and resolves true.
   public async setStatusLed(value: boolean): Promise<boolean> {
 
     this.setStatusLedCalls.push(value);
@@ -213,7 +215,7 @@ export class TestCameraHost implements ProtectCameraHost {
     return true;
   }
 
-  // The behavior-bearing controller-snapshot seam: records the options and resolves the settable snapshotResult Buffer - the value the two-sided snapshot test
+  // The behavior-bearing controller-snapshot interface: records the options and resolves the settable snapshotResult Buffer - the value the two-sided snapshot test
   // observes flow through the delegate's controller source.
   public async snapshotFromController(opts?: SnapshotOptions): Promise<Buffer> {
 
@@ -222,7 +224,7 @@ export class TestCameraHost implements ProtectCameraHost {
     return this.snapshotResult;
   }
 
-  // The recordable talkback seam. NOT exercised by the construction suites - TalkbackSession has a private constructor and #private fields, so there is no
+  // The recordable talkback interface. NOT exercised by the construction suites - TalkbackSession has a private constructor and #private fields, so there is no
   // constructible literal; the never-called stub returns a confined sentinel cast, the same harness pattern TestStreamingDelegate uses for its opaque
   // CameraController sentinel.
   public async talkback(opts?: { signal?: AbortSignal }): Promise<TalkbackSession> {
@@ -236,7 +238,7 @@ export class TestCameraHost implements ProtectCameraHost {
 }
 
 // Synthesize a genuine fMP4 media fragment on the published fMP4 builders so the production isKeyframe TRUN-flag parse runs against REAL bytes on the REAL path - no
-// isKeyframe injection seam, so the test exercises the actual fMP4 keyframe coupling rather than a test-only divergence. The fragment is moof>traf>trun with a
+// isKeyframe injection point, so the test exercises the actual fMP4 keyframe coupling rather than a test-only divergence. The fragment is moof>traf>trun with a
 // first_sample_flags-bearing trun (the builder sets the data_offset and first_sample_flags TRUN flags, sample_count 1, data_offset 0). The ONLY difference between a
 // keyframe and a non-keyframe fragment is that first_sample_flags value: 0 leaves the SAMPLE_FLAG_NON_SYNC bit clear, marking a sync sample (a keyframe), while
 // SAMPLE_FLAG_NON_SYNC sets it, marking a non-sync sample (a non-keyframe) the production parse rejects. The mdat carries an empty body - the timeshift never decodes
@@ -273,7 +275,7 @@ export function makeNonKeyframeFragment(): { data: Buffer; mdat: Buffer; moof: B
 const KEYFRAME_FRAGMENT = makeKeyframeFragment();
 const INIT_SEGMENT_DATA = Buffer.from("test-init-segment");
 
-/* Build a LivestreamSubscription double for the camera-host stub's livestream seam, in one of two profiles selected by the requested media-segment count:
+/* Build a LivestreamSubscription double for the camera-host stub's livestream interface, in one of two profiles selected by the requested media-segment count:
  *
  *   - mediaSegments === 0 (the default): the byte-identical INERT profile the construction tests rely on - initSegment null, state "closed", whenEstablished resolves
  *     false, an empty iterator, no-op reassess/dispose. The construction suites never exercise it; it exists only so the host's livestream return type-checks
@@ -363,6 +365,8 @@ let controllableLivestreamCounter = 0;
  * @property push           - Enqueue one media (or init) segment and wake the iterator. One push plus one settle() processes exactly that one segment; MULTIPLE pushes
  *                            plus one settle() drain all of them in a single macrotask, so an intermediate-state test must settle() after EACH push.
  * @property reassessCalls  - The number of times the timeshift called reassess() (its transmit-start recovery escalation).
+ * @property releaseEstablishment - Resolve a deferred whenEstablished() to true, committing a start that was held in flight; the release handle for the
+ *                                  deferEstablishment gate.
  * @property throwError     - Enqueue an iterator error. Processed after queued segments, then thrown into the for-await so the timeshift classifies it (and self-heals).
  */
 export interface ControllableLivestreamDouble extends LivestreamSubscription {
@@ -390,9 +394,9 @@ export interface ControllableLivestreamDouble extends LivestreamSubscription {
  * dropped) and wakes the iterator. whenEstablished resolves immediately (default true) so start() commits the subscription before the test pushes media; setting
  * deferEstablishment instead holds whenEstablished open until releaseEstablishment() resolves it true, so a start can be pinned in flight across a racing shutdown().
  *
- * The terminal transition is one-shot and idempotent: once the generator has returned (end/dispose) or thrown (error), the double is terminated and push/end/throwError
- * and a second dispose are NO-OPS, and the parking resolver is resolved at most once (guarded so no double-resolve). asyncDispose records disposed = true and signals a
- * graceful end if the double is not already terminated.
+ * The terminal transition is one-shot and safe to repeat: once the generator has returned (end/dispose) or thrown (error), the double is terminated and
+ * push/end/throwError and a second dispose are NO-OPS, and the parking resolver is resolved at most once (guarded so no double-resolve). asyncDispose records disposed =
+ * true and signals a graceful end if the double is not already terminated.
  */
 export function makeControllableLivestreamDouble(options: { deferEstablishment?: boolean; id?: string; initSegment?: { codec: string; data: Buffer } | null;
   state?: LivestreamSubscriptionState; whenEstablished?: boolean; } = {}): ControllableLivestreamDouble {
@@ -526,7 +530,7 @@ export function makeControllableLivestreamDouble(options: { deferEstablishment?:
     },
     [Symbol.asyncDispose]: async (): Promise<void> => {
 
-      // Record the dispose and, if the double has not already terminated, signal a graceful end so the parked iterator completes its finally. Idempotent: a second
+      // Record the dispose and, if the double has not already terminated, signal a graceful end so the parked iterator completes its finally. Safe to repeat: a second
       // dispose after termination no-ops via the enqueue terminated-guard.
       disposed = true;
       enqueue({ kind: "end" });
@@ -535,14 +539,14 @@ export function makeControllableLivestreamDouble(options: { deferEstablishment?:
 }
 
 /**
- * Build a TestCameraHost wired to a real makeTestNvr context, returning the host plus its test-side handles. This is the media-delegate counterpart to makeTestNvr:
- * it composes the existing doubles (a TestStateStore-backed makeTestNvr context and a TestAccessory) into the camera-host seam every media-delegate test constructs
- * against, so a delegate is unit-constructed with no real camera. The single seam casts live inside TestCameraHost's constructor (the doubles are not the
- * production handle types); the host returned here is the production-interface-typed double.
+ * Build a TestCameraHost wired to a real makeTestNvr context, returning the host plus its test-side handles. This is the media-delegate counterpart to makeTestNvr: it
+ * composes the existing doubles (a TestStateStore-backed makeTestNvr context and a TestAccessory) into the camera-host interface every media-delegate test constructs
+ * against, so a delegate is unit-constructed with no real camera. The single boundary casts live inside TestCameraHost's constructor (the doubles are not the production
+ * handle types); the host returned here is the production-interface-typed double.
  *
- * @param options - clock: an optional controllable TestClock forwarded into the makeTestNvr platform double's clock seam and re-returned, so a transmit test holds the
- *                  exact instance the recording delegate reads via platform.clock and advances it to release pacing (omitted, a fresh default TestClock is created);
- *                  recordingProcessFactory: the test recording-process factory injected into the makeTestNvr platform double's recordingProcessFactory seam, so a
+ * @param options - clock: an optional controllable TestClock forwarded into the makeTestNvr platform double's clock interface and re-returned, so a transmit test holds
+ *                  the exact instance the recording delegate reads via platform.clock and advances it to release pacing (omitted, a fresh default TestClock is created);
+ *                  recordingProcessFactory: the test recording-process factory injected into the makeTestNvr platform double's recordingProcessFactory interface, so a
  *                  transmit test's delegate constructs its FFmpeg process through the test double (omitted, makeTestNvr installs a fresh default factory); userOptions:
  *                  feature-option config strings forwarded to the makeTestNvr context's REAL FeatureOptions engine (for a later behavior test that steers a feature-gated
  *                  delegate path); the default empty context is the quiet-default host.

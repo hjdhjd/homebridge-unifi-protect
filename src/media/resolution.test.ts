@@ -150,8 +150,8 @@ describe("resolution: selector per-request mapping through the selectChannel wra
 
   // The checked-in selector grid: { bias } x { uncapped, 1080p cap } x { target } => the expected (id, resolution) outcome, derived from the reference implementation and
   // confirmed by the independent production-vs-reference sweep. Bias-lower picks the next-narrower (or lowest) channel; bias-higher picks the next-wider (or highest).
-  // Under the 1080p cap the High channel is filtered out, so every selection lands on Medium or Low. The two 1280x720 rows reflect the exact channel-dimension-match fix:
-  // an exact channel-dimension match now returns the native-dimensioned [1280,720,30] entry rather than the higher [2560,1440,30] synthetic that shares the Medium
+  // Under the 1080p cap the High channel is filtered out, so every selection lands on Medium or Low. The two 1280x720 rows reflect the exact channel-dimension-match
+  // behavior: an exact channel-dimension match returns the native-dimensioned [1280,720,30] entry rather than the higher [2560,1440,30] synthetic that shares the Medium
   // channel - same channel/id, honest label.
   const GRID: { bias: "higher" | "lower"; expected: SelectOutcome; height: number; maxPixels: number; width: number }[] = [
 
@@ -213,7 +213,7 @@ describe("resolution: the deep-low-resolution drift (the regression locus, exerc
 
   // The 640x480 4:3 deep-low-resolution witness is the regression locus: the 1920 mandate inserts a 1920x1440 entry ABOVE the 640x480 native top, which re-sorts to the
   // front, so the per-candidate gate's drifting current-top becomes 1920 - which is precisely what then admits the 1280x960 and 1024x768 entries (all < 1920). A frozen
-  // native-top would have dropped them. The golden-master fixture above already pins the exact list; here we additionally assert the structural invariants the regression
+  // native-top would have dropped them. The golden-master fixture above already pins the exact list; here we additionally assert the structural rules the regression
   // violated, so the regression's signature is named explicitly in a test.
   test("the deep-low-resolution 4:3 camera admits the under-mandate resolutions (no under-mandate drop)", () => {
 

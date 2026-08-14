@@ -2,7 +2,7 @@
  *
  * camera-host.ts: the camera contract the media delegates depend on for UniFi Protect.
  *
- * This is the dependency-inversion seam on the camera side of the media stack: the streaming, recording, snapshot, and timeshift delegates each operate on a
+ * This is the dependency-inversion boundary on the camera side of the media stack: the streaming, recording, snapshot, and timeshift delegates each operate on a
  * camera, but they read only this narrow slice of it, not the whole concrete ProtectCamera. Typing the delegates against ProtectCameraHost (rather than the
  * class) decouples the media layer from the device leaf and lets a test construct a delegate against a small stub host instead of standing up a full camera.
  * ProtectCameraHost is the camera-specific media surface; it extends ProtectDeviceContext, the shared device-and-plugin-context slice every collaborator reads,
@@ -19,7 +19,7 @@ import type { ProtectDeviceContext } from "../devices/device.ts";
 import type { StreamingDelegate } from "./stream-delegate.ts";
 import type { WithoutIdentity } from "../types.ts";
 
-// The per-subscription options a media consumer passes to ProtectCameraHost.livestream(). One definition shared by the seam contract below and ProtectCamera's
+// The per-subscription options a media consumer passes to ProtectCameraHost.livestream(). One definition shared by the interface contract below and ProtectCamera's
 // implementation, so a widening lands in a single place rather than drifting between two inline literals.
 export interface LivestreamHostOptions {
 
@@ -72,7 +72,7 @@ export interface ProtectCameraHost extends ProtectDeviceContext {
   // Resolves the channel profile that populates the standing timeshift buffer feeding HomeKit Secure Video, buffer-backed live views, and snapshots.
   selectSubstrateChannel(): Nullable<ChannelProfile>;
 
-  // Acquires a snapshot via the controller's snapshot command (the narrow controller-snapshot seam).
+  // Acquires a snapshot via the controller's snapshot command (the narrow controller-snapshot interface).
   snapshotFromController(opts?: SnapshotOptions): Promise<Buffer>;
 
   // The streaming delegate the camera owns - the gateway the recording, snapshot, and timeshift consumers read for ffmpegOptions, hksv, and the controller.

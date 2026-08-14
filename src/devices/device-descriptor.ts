@@ -5,7 +5,8 @@
  * This module owns one pure decision: how to render a Protect device or controller config as a human-readable log descriptor - "Name [Model]" plainly, or
  * "Name [Model] (address: IP mac: MAC)" with its network detail for support triage. It is deliberately pure - `this`-free, free of any device or controller I/O, and
  * free of imports - so any consumer (the nvr composition root or a device class) can import it without forming a value-edge that would couple the device layer to the
- * root or to a sibling device class (the device-layer module invariant), and the format is exhaustively testable from a plain config object.
+ * root or to a sibling device class, keeping the device layer's module graph free of cross-sibling value edges, and the format is exhaustively testable from a plain
+ * config object.
  *
  * Why this lives in the plugin and not in the unifi-protect library: composing a human display string is presentation, which is a consumer concern. The library's job
  * is to expose structured fields (name, marketName, host, mac, type), and how a consumer formats them for a log line is the consumer's choice. This leaf establishes

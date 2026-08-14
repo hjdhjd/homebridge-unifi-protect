@@ -57,7 +57,7 @@ function loggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], substri
 const controllers: AbortController[] = [];
 
 // The reusable construction helper: build a REAL TestBaseDevice (a concrete ProtectDevice leaf whose ctor only super()s) against the harness doubles, seeded with the
-// all-quiet sensor carrier. The casts are confined to the construction seam exactly as the light / chime / device-statusled suites do; the instance under test is the
+// all-quiet sensor carrier. The casts are confined to the point of construction exactly as the light / chime / device-statusled suites do; the instance under test is the
 // production base, running its real configureHints / configureInfo / spawnObservers paths. We drive the wiring a family leaf would: configureHints first (configureInfo
 // and syncNameFromController read this.hints.syncName), then configureInfo (the AccessoryInformation writes plus the syncName-gated name sync), then spawnObservers (the
 // base observers). The userOptions thread into the REAL FeatureOptions engine, so Enable.Device.SyncName - and only it - flips hints.syncName true.
@@ -259,7 +259,8 @@ describe("base ProtectDevice device-information capability (device-info concern 
       // characteristic. We seed a STALE Name ("Stale Name", modeling the value Homebridge restored from the cached accessory) so it deliberately DIFFERS from the
       // post-push synced name ("Renamed Sensor"). This isolates the first guard: with the stale value differing from synced, syncNameFromController's SECOND guard
       // (the accessoryName === synced change-gate) would NOT suppress, so only the if(!this.hints.syncName) return guard - not the change guard, and not a dead
-      // observer - keeps the rename from firing. (A captured baseline that equalled synced would let the change guard suppress too, masking which guard is load-bearing.)
+      // observer - keeps the rename from firing. (A captured baseline that equalled synced would let the change guard suppress too, masking which guard actually
+      // blocks the rename.)
       const info = accessory.getService(Service.AccessoryInformation);
 
       assert.ok(info, "the AccessoryInformation service exists");

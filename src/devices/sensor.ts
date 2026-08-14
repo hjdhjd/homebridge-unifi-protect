@@ -393,8 +393,8 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
     return true;
   }
 
-  // The sensor facts the leak policy reads, extracted off the projection as primitives. channelNames is the controller's own water-leak capability statement (the
-  // discriminator between the single-channel mount-role model and the multi-channel live-settings model); leakSettings and mountType carry the two enable signals.
+  // The sensor facts the leak policy reads, extracted off the projection as primitives. channelNames is the controller's own water-leak capability statement - the
+  // field that tells apart the single-channel mount-role model from the multi-channel live-settings model; leakSettings and mountType carry the enable signals.
   private get leakContext(): LeakChannelContext {
 
     return { channelNames: this.ufp.featureFlags.waterLeak?.channelNames ?? [], leakSettings: this.ufp.leakSettings, mountType: this.ufp.mountType };
@@ -642,8 +642,8 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
     this.subscribeGet("temperature", "temperature", () => this.temperature.toString());
   }
 
-  // Spawn the sensor's narrow-selector observers. super spawns the universal observers (name sync and firmware/device-info refresh); the sensor adds further reactions,
-  // each waking only on its own slice through the store's reference dedup.
+  // Spawn the sensor's narrow-selector observers. super spawns the base device's universal observers (currently name sync and firmware/device-info refresh); the sensor
+  // adds further reactions, each waking only on its own slice through the store's reference dedup.
   protected override spawnObservers(): void {
 
     super.spawnObservers();
@@ -677,9 +677,9 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
     // settings sub-objects and live stat values, so we observe the whole sensor record and re-derive - reproducing a refresh-on-any-change, but now structurally silent
     // when nothing changed (the store's reference dedup). The alarm family and tamper own their VALUE pushes through their dedicated observers above; what this broad
     // observer still uniquely provides is each service's per-device StatusActive push (via the unconditional configureStateCharacteristics) and the runtime
-    // capability-flip existence reconcile. Decomposing this into per-service observers - which would also retire the idempotent StatusTampered re-apply the dedicated
-    // tamper observer already owns - is a tracked follow-up; any such retirement MUST first add a sensor.state -> refreshReachability availability observer to preserve
-    // the per-device StatusActive push this broad observer currently provides.
+    // capability-flip existence reconcile. Decomposing this into per-service observers - which would also retire the StatusTampered re-apply - safe to run more than once
+    // - the dedicated tamper observer already owns - is a tracked follow-up; any such retirement MUST first add a sensor.state -> refreshReachability availability
+    // observer to preserve the per-device StatusActive push this broad observer currently provides.
     this.observeState({ key: "sensor.config", selector: sensor, title: "sensor settings" }, () => this.updateDevice());
   }
 

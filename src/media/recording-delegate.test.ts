@@ -14,8 +14,8 @@
  * on a field-by-field source trace, not on this net; this net's value is the real-but-narrow one of pinning the observable decline contract green before and after.
  *
  * The segment-producing recording path (which exercises the pacing/reserve telemetry) now lives in recording-transmit.test.ts: it fills the timeshift buffer with the
- * harness's segment-yielding livestream double and constructs the FFmpeg process through the platform's recording-process factory seam, so it drives the transmit path
- * FFmpeg-free with deterministic injected-clock pacing.
+ * harness's segment-yielding livestream double and constructs the FFmpeg process through the platform's recording-process factory interface, so it drives the transmit
+ * path FFmpeg-free with deterministic injected-clock pacing.
  */
 import { Characteristic, Service, TestStreamingDelegate, settle } from "../testing.helpers.ts";
 import { PROTECT_SEGMENT_RESOLUTION, PROTECT_TIMESHIFT_BUFFER_MAXDURATION } from "../settings.ts";
@@ -55,8 +55,8 @@ async function drainRecordingStream(delegate: ProtectRecordingDelegate, streamId
   return packets;
 }
 
-// A minimal-but-truthy recording configuration cast to the HAP type at this confined seam. The supervisor reads only videoCodec.parameters.bitRate (the enable-ack
-// config log) off it now that channel selection is HKSV-state-independent.
+// A minimal-but-truthy recording configuration cast to the HAP type at this confined boundary. The supervisor reads only videoCodec.parameters.bitRate (the enable-ack
+// config log) off it, since channel selection does not depend on HKSV recording state.
 function makeRecordingConfig(): CameraRecordingConfiguration {
 
   return { prebufferLength: 4000, videoCodec: { parameters: { bitRate: 2000 } } } as unknown as CameraRecordingConfiguration;
@@ -136,7 +136,7 @@ describe("recording delegate synchronous configuration observables", () => {
 
     controllers.push(controller);
 
-    // Wire the success-path seams so an armed reconcile genuinely starts the buffer in its production shape: the streaming delegate the HKSV acknowledgment reads, a
+    // Wire the success-path interfaces so an armed reconcile genuinely starts the buffer in its production shape: the streaming delegate the HKSV acknowledgment reads, a
     // substrate channel to select, and enough buffered segments for whenEstablished.
     host.stream = new TestStreamingDelegate();
     host.selectSubstrateChannel = (): ChannelProfile => makeChannelProfile(host);
@@ -190,8 +190,8 @@ describe("recording delegate synchronous configuration observables", () => {
 
   // guardedDispatch owns updateRecordingActive's async reconcile: HomeKit calls the void-returning method fire-and-forget, so a rejecting reconcile must be caught and
   // logged rather than surfacing as an unhandled rejection. We force setRecordingDemand to reject and prove both halves of the contract - the fault is logged and nothing
-  // floats - with a test-scoped unhandledRejection listener, since the suites carry no ready-made float-detection seam. Pre-fix, when the method was a bare async whose
-  // rejected promise HomeKit discarded, the same throw floated instead.
+  // floats - with a test-scoped unhandledRejection listener, since the suites carry no ready-made float-detection helper. HomeKit invokes the void-returning method
+  // fire-and-forget, so a rejecting reconcile must be caught and logged rather than left to float.
   test("a throwing recording activation is logged and never floats an unhandled rejection", async () => {
 
     const { controller, host, logEntries } = makeTestCameraHost();

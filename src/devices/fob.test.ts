@@ -13,8 +13,8 @@
  * TestFobProjection, the slice keys, the fob's own battery observers, and the fob-specific button table are fob-particular.
  *
  * NOTE the create/address round-trip and pressType->constant mapping tests verify plugin-INTERNAL consistency only: they are authored against the SAME assumed wire
- * strings the production table is (the six button wire ids and the three gesture strings), so they cannot catch a wire mismatch between the plugin and a real controller
- * - only HJD's live validation can. The INFO log on an unrecognized gesture is the field tell.
+ * strings the production table is (the button wire ids and gesture strings the production table carries), so they cannot catch a wire mismatch between the plugin and a
+ * real controller - only HJD's live validation can. The INFO log on an unrecognized gesture is the field tell.
  */
 import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../testing.helpers.ts";
 import type { Fob, ProtectFobConfig } from "unifi-protect";
@@ -57,9 +57,9 @@ const buttonOption = (label: string): string => "Fob.Button." + label;
 // is the single push site, so an extra build inside a test body is captured exactly as the fixture's is.
 const controllers: AbortController[] = [];
 
-// The reusable construction helper: build a REAL ProtectFob against the harness doubles. The casts are confined to the construction seam exactly as the relay and light
-// suites do; the instance under test runs its real configureHints / configureDevice / spawnObservers paths. Each call builds a fresh store, so an extra build inside a
-// test is fully isolated from the beforeEach fob. An optional accessory lets a test seed a restored-across-restart accessory (the grouped->lone reconfigure).
+// The reusable construction helper: build a REAL ProtectFob against the harness doubles. The casts are confined to where the class is constructed, exactly as the relay
+// and light suites do; the instance under test runs its real configureHints / configureDevice / spawnObservers paths. Each call builds a fresh store, so an extra build
+// inside a test is fully isolated from the beforeEach fob. An optional accessory lets a test seed a restored-across-restart accessory (the grouped->lone reconfigure).
 function buildFob(configOptions: Parameters<typeof makeFobConfig>[0] = {}, harnessOptions: { accessory?: TestAccessory; userOptions?: string[] } = {}): {
   accessory: TestAccessory; events: ProtectEventDispatch; fob: ProtectFob; fobConfig: ProtectFobConfig; logEntries: TestLogEntry[]; mqtt: TestMqttClient;
   store: TestStateStore;
@@ -73,7 +73,7 @@ function buildFob(configOptions: Parameters<typeof makeFobConfig>[0] = {}, harne
 
   const accessory = harnessOptions.accessory ?? makeTestAccessory("Test Fob", "uuid:test-fob");
 
-  // The projection is named (not cast inline) so its read-through config feeds the SAME store the pushFobPatch battery test moves; the lone construction-seam cast is
+  // The projection is named (not cast inline) so its read-through config feeds the SAME store the pushFobPatch battery test moves; the lone cast at construction is
   // confined to the new ProtectFob(...) call, and the presses route through the REAL ProtectEventDispatch this NVR double carries as nvr.events.
   const projection = new TestFobProjection(fobConfig.id, store);
   const fob = new ProtectFob(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Fob);
@@ -375,7 +375,8 @@ describe("real ProtectFob construction and behavior", () => {
     assert.equal(built.accessory.getService(Service.ServiceLabel), undefined, "no ServiceLabel is created for an unrecognized fob");
     assert.ok(built.accessory.getService(Service.Battery), "the battery service is still present on an unrecognized fob");
 
-    // The button-label observer is gated on a non-empty button table, so an unrecognized fob registers only the two base observers plus the two battery observers.
+    // The button-label observer is gated on a non-empty button table, so an unrecognized fob registers only the base class's universal observers plus the fob's battery
+    // observers.
     assert.equal(built.store.observerCount, 4, "an unrecognized fob registers no button-label observer - it has no buttons to rename");
 
     // ...but the adoption is never silent: one actionable warning names the unrecognized model.

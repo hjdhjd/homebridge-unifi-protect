@@ -159,8 +159,8 @@ export class StreamingCapability extends ProtectDeviceCapability<ProtectCamera> 
    * configureController fire here. This is the shipped reclassification semantics - the HKSV factory reset (removeController) and the supported-config hash change -
    * preserved at exactly this transition. The tail can resolve on a later microtask, since the parent's derivation may await a write-through update, so the create half's
    * construction gate is what prevents a re-register when the accessory is removed, or controller shutdown begins, inside that window. The re-create rides the host's own
-   * derivation, so each camera view rebuilds from the surface it actually advertises. (It inherits the benign fire-and-forget updateRecordingActive(false) teardown race
-   * the teardown below documents.)
+   * derivation, so each camera view rebuilds from the surface it actually advertises. (It inherits the benign fire-and-forget updateRecordingActive(false) call in
+   * #teardown below, which issues that write without awaiting it.)
    */
   #rebuild(): void {
 
@@ -174,7 +174,7 @@ export class StreamingCapability extends ProtectDeviceCapability<ProtectCamera> 
   // path: HKSV recording off, the live and timeshift consumers shut down (releasing their pool subscriptions), and the controller removed from HomeKit.
   #teardown(): void {
 
-    // If we've got HomeKit Secure Video enabled and recording, disable it.
+    // If we've got HomeKit Secure Video enabled and recording, disable it - fire-and-forget, since teardown does not wait on the controller's acknowledgment.
     if(this.#stream?.hksv?.isRecording) {
 
       this.#stream.hksv.updateRecordingActive(false);

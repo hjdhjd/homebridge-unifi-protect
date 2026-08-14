@@ -7,8 +7,8 @@
  * gate. The delivery methods are the dispatch decision's observable effect, so a thin recording subclass overrides them to capture exactly what the router routed; the
  * real run() applies the smart-detect gate before invoking them, so routing is verified against the production class. Bare camera motion is not a firehose arm -
  * the controller signals it as a lastMotion device-state advance, which the camera leaf observes directly, so its delivery policy (shouldDeliverBareMotion) and its
- * observe-driven routing live with the camera leaf and its tests, not here. The casts are confined to the mock seam, matching the posture the reachability and nvr suites
- * already established; the instance under test is the production class.
+ * observe-driven routing live with the camera leaf and its tests, not here. The casts are confined to the mock boundary, matching the posture the reachability and nvr
+ * suites already established; the instance under test is the production class.
  */
 import type { AuthMethod, Camera, ProtectEventMetadata, TypedEvent } from "unifi-protect";
 import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../testing.helpers.ts";

@@ -3,7 +3,7 @@
  * light.test.ts: The reference family - behavior tests over a REAL constructed ProtectLight.
  *
  * ProtectLight is the simplest device class that still exercises the whole device template - accessory info, a primary Lightbulb service, the default-on motion
- * sensor, MQTT, and four narrow state observers - so this suite is the per-family pattern the chime / viewer / sensor / controller steps copy: a read-through
+ * sensor, MQTT, and its narrow state observers - so this suite is the per-family pattern the chime / viewer / sensor / controller steps copy: a read-through
  * projection double, a config builder, per-slice push helpers, and behavior-FIRST assertions (observer count, the four slice reactions, topic composition). Every
  * assertion drives the REAL production class and, for the motion routing, the REAL ProtectEventDispatch contract through a recording subclass - never a modeled
  * stand-in for the leaf.
@@ -11,7 +11,7 @@
  * The light's lastMotion observer routes to nvr.events.motionEventHandler, which in production arms a motionDuration-second reset setTimeout on the dispatch's own
  * eventTimers map - a handle light.cleanup() cannot clear. A real-dispatch motion test would therefore leak a dangling timer. The established suite idiom (see
  * event-dispatch.test.ts) is a recording subclass that overrides the delivery method to record into an array and arm no timer; injecting it through the harness's
- * dispatch-injection seam is the clean, reusable way to assert the observer's routing (called on truthy, suppressed on falsy) with no leaked handle.
+ * dispatch-injection point is the clean, reusable way to assert the observer's routing (called on truthy, suppressed on falsy) with no leaked handle.
  *
  * The isolation model is per-test-fresh, not a single shared before(): a beforeEach builds a fresh light so recording.calls, the characteristic state, the observer
  * baselines, and store.observerCount are clean every test with no cross-test ordering coupling. The wake log is windowed per push via a captured baseline, so a wake
@@ -39,10 +39,11 @@ import diagnosticsChannel from "node:diagnostics_channel";
 // is the single push site, so an extra build inside a test body is captured exactly as the fixture's is.
 const controllers: AbortController[] = [];
 
-// The reusable construction helper: build a REAL ProtectLight against the harness doubles, with the recording dispatch injected through the NVR double's dispatch seam.
-// The casts are confined to the construction seam exactly as camera-construction.test.ts does; the instance under test is the production class, running its real
-// configureHints / configureDevice / spawnObservers paths. The injected recording dispatch is read off nvr.events after construction rather than captured from the
-// factory closure - reading it back avoids both the assignment-expression smell and a TS2454 definite-assignment error on a factory-captured binding.
+// The reusable construction helper: build a REAL ProtectLight against the harness doubles, with the recording dispatch injected through the NVR double's
+// dispatch-injection point. The casts are confined to where the class is constructed exactly as camera-construction.test.ts does; the instance under test is the
+// production class, running its real configureHints / configureDevice / spawnObservers paths. The injected recording dispatch is read off nvr.events after construction
+// rather than captured from the factory closure - reading it back avoids both the assignment-expression smell and a TS2454 definite-assignment error on a
+// factory-captured binding.
 function buildLight(configOptions: Parameters<typeof makeLightConfig>[0] = {}, harnessOptions: { accessory?: TestAccessory; userOptions?: string[] } = {}): {
   accessory: TestAccessory; light: ProtectLight; lightConfig: ProtectLightConfig; lightProjection: TestLightProjection; mqtt: TestMqttClient;
   recording: TestRecordingDispatch; store: TestStateStore;
@@ -59,7 +60,7 @@ function buildLight(configOptions: Parameters<typeof makeLightConfig>[0] = {}, h
   const accessory = harnessOptions.accessory ?? makeTestAccessory("Test Light", "uuid:test-light");
 
   // The projection is named (not cast inline) so the MQTT SET-body tests read its updateCalls / set its updateRejection on the SAME instance the light's onSet
-  // write-through reaches; the lone construction-seam cast is confined to the new ProtectLight(...) call.
+  // write-through reaches; the lone cast at construction is confined to the new ProtectLight(...) call.
   const projection = new TestLightProjection(lightConfig.id, store);
   const light = new ProtectLight(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Light);
 
@@ -323,7 +324,7 @@ describe("real ProtectLight construction and observer behavior", () => {
       assert.ok(set?.setValue, "the light registered a /light SET subscription");
 
       // value === "true" is false for "false", so the On onSet receives false: device.update({ lightOnSettings: { isLedForceOn: false } }) and publish "false". The
-      // boolean is the discriminator that kills a mutation of the value === "true" comparison.
+      // boolean is the value that distinguishes a true SET from a false one, catching a mutation of the value === "true" comparison.
       await set.setValue("false", "false");
       await settle();
 

@@ -20,7 +20,7 @@
  * established event-dispatch.test.ts pattern); settle() is one setImmediate macrotask and does NOT advance setTimeout timers, so a revert assertion relying on
  * settle alone is vacuous.
  * Every timed assertion enables mock.timers, awaits the onSet to completion (which schedules the timer), ticks(50), asserts, and resets in finally. The vacuity gate is
- * two-part, carried from the device-* law: a gated service is HARD-asserted to EXIST as the FIRST discriminator (a non-optional assert.ok) before any value assertion,
+ * two-part, carried from the device-* law: a gated service is HARD-asserted to EXIST as the FIRST check (a non-optional assert.ok) before any value assertion,
  * paired with the exact Enable.* userOption string; the without-gate reaction absence is already netted by the camera-reactions suite, so here the mandatory half is
  * the existence assert.
  */
@@ -48,7 +48,7 @@ function cameraPatch(patch: Record<string, unknown>): Partial<ProtectCameraConfi
 }
 
 // The construction handle a test holds, so the afterEach can unwind the per-accessory abort regardless of which onSet it drove. logEntries is exposed (unlike the Tier-1
-// camera-reactions seam) because the failure-path drives assert the runDeviceCommand error lines.
+// camera-reactions interface) because the failure-path drives assert the runDeviceCommand error lines.
 interface BuiltCamera {
 
   accessory: TestAccessory;
@@ -64,8 +64,8 @@ interface BuiltCamera {
 // Build a REAL plain ProtectCamera against the doubles, exactly as camera-reactions.test.ts's buildCamera assembles it: a camera config (optionally carrying feature
 // flags), the store double over it, the typed NVR / platform doubles with the test's userOptions threaded into the REAL FeatureOptions engine, the read-through camera
 // projection (held so a test sets updateRejection and reads updateCalls on the SAME instance the onSet wrote into), and a fresh accessory. The casts are confined to this
-// seam - the instance is the production ProtectCamera and everything it runs is the production path. The returned controller is the harness AbortController the
-// afterEach aborts to unwind the observe loops.
+// construction call - the instance is the production ProtectCamera and everything it runs is the production path. The returned controller is the harness AbortController
+// the afterEach aborts to unwind the observe loops.
 async function buildCamera(options: { featureFlags?: Partial<ProtectCameraConfig["featureFlags"]>; userOptions?: string[] } = {}): Promise<BuiltCamera> {
 
   const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, ...(options.featureFlags ? { featureFlags: options.featureFlags } : {}) });
@@ -148,8 +148,7 @@ describe("camera-family device.update-backed onSet handlers (camera-onsets conce
 
       assert.ok(dimmer, "the night-vision dimmer exists");
 
-      // Seed Brightness 100 - the mode picker quantizes it and turns night vision ON. The drift the fix closes: without a 100 arm on the On path, a 100 brightness fell
-      // to the custom arm and silently downgraded the mode instead of setting irLedMode on.
+      // Seed Brightness 100 - the mode picker quantizes it and turns night vision ON, the arm that keeps a 100 setting from falling through to the custom branch.
       dimmer.updateCharacteristic(Characteristic.Brightness, 100);
 
       await dimmer.getCharacteristic(Characteristic.On).triggerSet(true);

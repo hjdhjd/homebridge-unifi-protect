@@ -136,6 +136,7 @@ export abstract class ProtectDeviceCapability<H extends ProtectCapabilityHost = 
     return this.host.hasFeature(option);
   }
 
+  // Numeric feature-option reads resolve through the host, the same delegation hasFeature uses.
   protected getFeatureNumber(option: string): Nullable<number | undefined> {
 
     return this.host.getFeatureNumber(option);

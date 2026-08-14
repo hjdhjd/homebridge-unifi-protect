@@ -12,7 +12,7 @@
  * When a later change intentionally alters that behavior, the diff lands HERE as a reviewed change to a checked-in value - the
  * golden-master flags exactly the rows that move, and nothing else.
  *
- * makeChannel fills a complete ProtectCameraChannelConfig from the load-bearing fields (the resolution math reads only name/width/height/fps; isRtspEnabled filters the
+ * makeChannel fills a complete ProtectCameraChannelConfig from the fields the resolution math actually reads (name/width/height/fps; isRtspEnabled filters the
  * per-consumer RTSP-enabled view; id and rtspAlias compose the URL). The remaining interface fields are filled with inert defaults so the corpus is a real typed channel,
  * not a cast.
  * The rtspAlias is synthesized from the id so the URL is stable and deterministic; it never affects the resolution math, only the URL string, which
@@ -50,8 +50,8 @@ export interface PackageFixture {
   nativeTop: Resolution;
 }
 
-// Build a complete typed channel from the load-bearing fields. The defaults are inert - the resolution math never reads them - and rtspAlias is synthesized from the id
-// so URLs are deterministic.
+// Build a complete typed channel from the fields the resolution math reads. The remaining defaults are inert - the resolution math never reads them - and rtspAlias is
+// synthesized from the id so URLs are deterministic.
 export function makeChannel(options: { fps: number; height: number; id: number; isRtspEnabled?: boolean; name: string; width: number }): ProtectCameraChannelConfig {
 
   return {

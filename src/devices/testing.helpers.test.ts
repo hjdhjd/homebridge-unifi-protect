@@ -199,7 +199,7 @@ describe("A2 light family: config builder, push helpers, and projection double",
     assert.equal(projection.flashlightCalls.length, 2, "the rejected pulse is still recorded");
   });
 
-  test("the dispatch-injection seam defaults to the real ProtectEventDispatch and replaces it with the injected factory's instance", () => {
+  test("the dispatch-injection hook defaults to the real ProtectEventDispatch and replaces it with the injected factory's instance", () => {
 
     const store = new TestStateStore(makeProtectState());
 
@@ -209,7 +209,8 @@ describe("A2 light family: config builder, push helpers, and projection double",
 
     assert.equal(defaultNvr.events.constructor, ProtectEventDispatch, "the default events member is exactly a ProtectEventDispatch, not a subclass");
 
-    // The injected path: a trivial recording subclass arms no reset timer. The seam must replace the default with this exact instance, proving the factory ran.
+    // The injected path: a trivial recording subclass arms no reset timer. The injected factory must replace the default with this exact instance, proving the
+    // factory ran.
     class TrivialRecordingDispatch extends ProtectEventDispatch {
 
       public readonly calls: string[] = [];
@@ -273,7 +274,8 @@ describe("A2 chime + viewer family: config builders, projection doubles, push he
 
     const defaults = makeRingtoneConfig();
 
-    // LOAD-BEARING: the chime filters ringtones by nvrMac === nvr.ufp.mac (the makeNvrConfig mac), so the default must match or every seeded ringtone is dropped.
+    // Required, not incidental: the chime filters ringtones by nvrMac === nvr.ufp.mac (the makeNvrConfig mac), so the default must match or every seeded ringtone
+    // is dropped.
     assert.equal(defaults.nvrMac, "74ACB9FFFFFF", "nvrMac defaults to the makeNvrConfig controller mac");
     assert.equal(defaults.id, "test-ringtone-1", "the id defaults");
     assert.equal(defaults.modelKey, "ringtone", "the modelKey is ringtone");
@@ -427,10 +429,10 @@ describe("A2 chime + viewer family: config builders, projection doubles, push he
 
   test("a whole-collection push preserves every POPULATED sibling slice, its records, and the nvr record - including a null one", () => {
 
-    /* The sibling slices are populated here, which is what separates this from the structural-sharing pin above: that store seeds only the two replaceable
-     * collections, so its untouched slices are empty maps and it cannot show the round-trip carrying real records through. Both whole-collection helpers reduce
-     * through a bootstrap rebuilt from the current snapshot, one line per modeled slice, so a builder that dropped a slice or fabricated an nvr would surface here as
-     * a lost record or a moved reference rather than as a silent hole.
+    /* The sibling slices are populated here, which is what separates this from the structural-sharing pin above: that store seeds only the replaceable collections
+     * (ringtones, liveviews today), so its untouched slices are empty maps and it cannot show the round-trip carrying real records through. Both whole-collection
+     * helpers reduce through a bootstrap rebuilt from the current snapshot, one line per modeled slice, so a builder that dropped a slice or fabricated an nvr would
+     * surface here as a lost record or a moved reference rather than as a silent hole.
      */
     const nvr = makeNvrConfig();
     const store = new TestStateStore(makeProtectState({ cameras: [makeCameraConfig({ channels: [], id: "camera-keep" })],

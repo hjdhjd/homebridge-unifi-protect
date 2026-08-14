@@ -2,7 +2,7 @@
  *
  * stream-encode-policy.test.ts: Exhaustive red-green coverage of the pure transcode, channel-request, and video-encoding decisions.
  *
- * All three are pure functions - no `this`, no I/O - so every cell is provable against constructed inputs, the property that makes pure decision modules exhaustively
+ * Each is a pure function - no `this`, no I/O - so every cell is provable against constructed inputs, the property that makes pure decision modules exhaustively
  * testable in a way `this`-bound logic is not. The transcode table walks each circumstance that forces a re-encode and the high-latency packet-time boundary; the
  * channel-request table walks the transcode and hardware-encoder axes; the encoding table walks the bitrate hints, the channel ceiling, the copy-mode transmux, and
  * every axis of the interpolation predicate.

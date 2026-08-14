@@ -159,7 +159,7 @@ export class ProtectChime extends ProtectDevice<Chime> {
     return true;
   }
 
-  // Play the specified tone on the chime - a ringtone through the speaker or the piezo buzzer, selected by the typed kind discriminant. The unifi-protect library
+  // Play the specified tone on the chime - a ringtone through the speaker or the piezo buzzer, selected by the typed kind parameter. The unifi-protect library
   // exposes these as two distinct commands (playSpeaker / playBuzzer), so we dispatch on kind rather than reconstructing a controller path string.
   private async playTone(name: string, kind: "buzzer" | "speaker", tone?: string): Promise<boolean> {
 

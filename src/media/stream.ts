@@ -88,9 +88,9 @@ interface SessionInfo {
 }
 
 // Classify a talkback teardown as a clean stop rather than a fault: either the session's own AbortController fired (our own teardown), or the shipped typed caller-abort
-// surfaced. Both talkback failure sites in startStream - the open-call catch and the in-flight send catch - consume this one definition, so the clean-versus-fault
-// decision lives in a single place. The signal.aborted arm is required, not the error type alone: a clean send-stop rejects with ProtectNetworkError rather than
-// ProtectAbortedError, because the shared signal's abort listener races ahead of send's own onAbort.
+// surfaced. Three talkback-adjacent failure sites in startStream - the RTP-demuxer mediaReady wait, the open-call catch, and the in-flight send catch - consume this one
+// definition, so the clean-versus-fault decision lives in a single place. The signal.aborted arm is required, not the error type alone: a clean send-stop rejects with
+// ProtectNetworkError rather than ProtectAbortedError, because the shared signal's abort listener races ahead of send's own onAbort.
 function isCleanTalkbackStop(error: unknown, signal: AbortSignal): boolean {
 
   return signal.aborted || (error instanceof ProtectAbortedError);
@@ -100,7 +100,7 @@ function isCleanTalkbackStop(error: unknown, signal: AbortSignal): boolean {
  * the input. The camera's configured probesize is the baseline, injected as a supplier rather than a value so this owns the whole effective-probesize story - a caller
  * cannot hand it a stale current value - and so a hint the user changes mid-life is picked up on the next read.
  *
- * The tuning moves through four states:
+ * The tuning moves through these states:
  *
  *   - Baseline: no elevation, no adjustments yet, no timer. Streams start at the camera's configured probesize.
  *   - Elevated: an adjustment raised the probesize and armed the auto-reset timer, so the elevation expires on its own.
@@ -479,7 +479,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
         // The audioIncomingRtpPort reservation owns port and port + 1 (FFmpeg's "RTP port N implies RTCP port N+1" convention), so we only read its first port.
         audioIncomingRtpPort = (await reservePort(request.addressVersion, 2)).port;
 
-        // Setup the RTP demuxer for two-way audio scenarios. The talkback URL is no longer fetched here - camera.talkback() negotiates it in startStream.
+        // Setup the RTP demuxer for two-way audio scenarios. The talkback URL is negotiated separately: camera.talkback() resolves it in startStream.
         rtpDemuxer = new RtpDemuxer({ inputPort: audioIncomingPort, ipFamily: request.addressVersion, log: this.log, rtcpPort: audioIncomingRtcpPort,
           rtpPort: audioIncomingRtpPort, signal: abortController.signal });
       }
@@ -867,7 +867,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
 
     // Select the streams our single tee-muxed output carries. Protect actually maps audio and video tracks in opposite locations from where FFmpeg typically expects
     // them, so we name the track locations generally rather than positionally in case Protect changes this in the future. The video map always binds, and a bound
-    // explicit map disables FFmpeg's automatic stream selection for the whole output...that is load-bearing for the audio map's optionality: when the input carries no
+    // explicit map disables FFmpeg's automatic stream selection for the whole output...which is why the audio map must stay optional: when the input carries no
     // audio track (the livestream API can transiently deliver an fMP4 without one, and an RTSP stream can carry a track layout the index-specific map misses), the
     // audio map simply matches nothing rather than inviting automatic selection to improvise a substitute into the audio sink.
     //
@@ -942,8 +942,8 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
     // -codec:a                         Encode using the codecs available to us on given platforms.
     // -profile:a 38                    Specify enhanced, low-delay AAC for HomeKit.
     // -flags:a +global_header          Sets the global header in the audio bitstream. Needed for FDK-AAC to correctly initialize. For encoders like aac_at it becomes a
-    //                                  no-op. The :a specifier is load-bearing: with a single output, an unqualified option binds to every stream it can apply to, and
-    //                                  a global header on the video encoder would strip the in-band SPS and PPS that HomeKit requires from RTP video.
+    //                                  no-op. The :a specifier is required, not incidental: with a single output, an unqualified option binds to every stream it can
+    //                                  apply to, and a global header on the video encoder would strip the in-band SPS and PPS that HomeKit requires from RTP video.
     // -ar samplerate                   Sample rate to use for this audio. This is specified by HomeKit.
     // -b:a bitrate                     Bitrate to use for this audio stream. This is specified by HomeKit.
     // -ac number                       Set the number of audio channels.
@@ -972,12 +972,12 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
       }
     }
 
-    // Send the stream to HomeKit through a single tee-muxed output rather than two top-level outputs. The distinction is load-bearing: a top-level output that ends up
+    // Send the stream to HomeKit through a single tee-muxed output rather than two top-level outputs. The distinction matters: a top-level output that ends up
     // with no streams is a fatal error for the entire command, while a tee sink is isolable...this is the shape that lets a session survive its optional audio map
     // matching nothing. Video and audio are routed to their negotiated SRTP destinations with per-sink select filters, and only the audio sink carries onfail=ignore:
     // an input without an audio track costs us that sink alone, degrading the session to video-only - the truth of the input - while a failure on the video sink
     // keeps tee's default behavior and ends the session loudly. Because no input to this command is synthetic or unbounded, every output stream ends when the camera
-    // input does, and FFmpeg's organic exit on input EOF is a design invariant here...the teardown in consumeStreamSegments depends on it.
+    // input does, and FFmpeg's organic exit on input EOF is a rule this design relies on here...the teardown in consumeStreamSegments depends on it.
     //
     // The options inside each sink's brackets combine tee's own per-sink directives - format, stream routing, and failure policy - with options that pass through to
     // that sink's RTP muxer and SRTP protocol:
@@ -1047,9 +1047,9 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
 
     // Force-stop bridge: when FFmpeg exits, reclaim the subscription and writer, and (when the session is still live and the exit was organic, not a self-initiated
     // shutdown) force HomeKit to reclaim the streaming slot. We observe BOTH settlements of exited - it rejects on the never-spawned/ENOENT path, and a never-spawned
-    // FFmpeg still needs its subscription/writer reclaimed - so the same cleanup runs on either branch. The organic discriminator reads signal.reason: stopStream
-    // aborts with an explicit HbpuAbortError("shutdown"), so isHbpuAbortReason(reason, "shutdown") suppresses the self-stop double-fire; the entry-existence guard is
-    // defense-in-depth. This is the started-then-died force-stop, and the returnPort watchdog timeout flows through the same path.
+    // FFmpeg still needs its subscription/writer reclaimed - so the same cleanup runs on either branch. The check that tells the two apart reads signal.reason:
+    // stopStream aborts with an explicit HbpuAbortError("shutdown"), so isHbpuAbortReason(reason, "shutdown") suppresses the self-stop double-fire; the entry-existence
+    // guard is defense-in-depth. This is the started-then-died force-stop, and the returnPort watchdog timeout flows through the same path.
     const bridge = (): void => {
 
       void subscription?.[Symbol.asyncDispose]();
@@ -1069,14 +1069,14 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
       // Feed segments to FFmpeg with backpressure handling...if FFmpeg can't keep up, segments are queued and written when it's ready.
       segmentWriter = new BackpressureWriter(() => ffmpegStream.stdin, { signal: sessionInfo.abortController.signal });
 
-      // Subscribe to the pooled livestream via the camera seam. This call is synchronous and returns the subscription handle immediately; the underlying connection
+      // Subscribe to the pooled livestream via the camera interface. This call is synchronous and returns the subscription handle immediately; the underlying connection
       // begins establishing in the background. We start consuming segments below within the same synchronous frame, before any asynchronous segment can be delivered.
       //
       // A live view is always active (no idle phase, unlike the timeshift's transmit toggle), so the recovery urgency closure is the constant active tolerance: the
       // pool reconnects immediately on a stall because a HomeKit live view is latency-sensitive. The value only matters when the controller is unhealthy.
       //
-      // POOL-SHARING INVARIANT: the unifi-protect library's pool sharing key includes segmentLength/chunkSize/timestamps. The live and HKSV-timeshift subscribers
-      // share ONE pooled session only because BOTH go through this same seam with the same defaults - the live call OMITS segmentLength, so the seam default
+      // POOL-SHARING RULE: the unifi-protect library's pool sharing key includes segmentLength/chunkSize/timestamps. The live and HKSV-timeshift subscribers share
+      // ONE pooled session only because BOTH go through this same interface with the same defaults - the live call OMITS segmentLength, so the interface default
       // (PROTECT_SEGMENT_RESOLUTION = 100) matches the timeshift's explicit 100. If either consumer's opts ever diverge, the session silently splits into two sockets
       // (double controller load, broken self-heal/discontinuity coupling).
       subscription = this.protectCamera.livestream(channelProfile, { signal: sessionInfo.abortController.signal, urgency: () => PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS });
@@ -1164,6 +1164,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
     // -f sdp                 Specify that our input will be an SDP file.
     // -codec:a               Decode AAC input using the specified decoder.
     // -i pipe:0              Read input from standard input.
+    // -map 0:a:0             Select the single incoming audio track from the SDP input before re-encoding it.
     // -codec:a               Encode to AAC. This format is set by Protect.
     // -flags +global_header  Sets the global header in the bitstream.
     // -ar                    Sets the audio rate to what Protect is expecting.
@@ -1266,7 +1267,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
 
         // Drain the return-audio FFmpeg's ADTS stdout into the talkback session. send() resolves only when stdout is exhausted (the return-audio lifetime), so it is
         // detached, not awaited. A Node Readable is an AsyncIterable<Buffer>, so stdout feeds in with no adapter. We dispose the session when send settles (the
-        // return-audio FFmpeg ended or faulted), proactively closing on return-audio exit; it is idempotent with the stopStream abort backstop.
+        // return-audio FFmpeg ended or faulted), proactively closing on return-audio exit; it is safe to run again alongside the stopStream abort backstop.
         void tb.send(ffmpegReturnAudio.stdout, { signal: sessionInfo.abortController.signal }).catch((error: unknown) => {
 
           // A clean in-flight stop is the normal end of every two-way-audio session, so we note it at debug and stay quiet. A genuine mid-stream fault still surfaces as
@@ -1317,7 +1318,8 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
 
       case StreamRequestTypes.RECONFIGURE:
 
-        // Once FFmpeg is updated to support this, we'll enable this one.
+        // HomeKit's reconfigure request has no effect on the running FFmpeg process: there is no way to adjust an already-spawned FFmpeg's encoding parameters
+        // mid-stream, so we log the request and acknowledge it without acting on it.
         this.log.debug("Streaming parameters adjustment requested by HomeKit: %sx%s, %s fps, %s.",
           request.video.width, request.video.height, request.video.fps, formatBps(request.video.max_bit_rate));
 
@@ -1368,12 +1370,13 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
       if(ongoingSession) {
 
         // Single-abort teardown. The per-session AbortController is the SOLE teardown trigger: it fans out (via its signal) to the demuxer, every FFmpeg, the
-        // backpressure writer, the talkback session, and the livestream subscription. The explicit HbpuAbortError("shutdown") reason is load-bearing - the .exited
-        // force-stop bridge reads isHbpuAbortReason(reason, "shutdown") to suppress the self-stop double-fire; a bare abort() would set the reason to a DOMException
-        // the discriminator never matches.
+        // backpressure writer, the talkback session, and the livestream subscription. The explicit HbpuAbortError("shutdown") reason is required, not incidental - the
+        // .exited force-stop bridge reads isHbpuAbortReason(reason, "shutdown") to suppress the self-stop double-fire; a bare abort() would set the reason to a
+        // DOMException the check never matches.
         ongoingSession.abortController.abort(new HbpuAbortError("shutdown"));
 
-        // Dispose the talkback session as a backstop. The abort above already closed it through the shared signal, so this is an idempotent no-op (no double error).
+        // Dispose the talkback session as a backstop. The abort above already closed it through the shared signal, so this is safe to call again as a no-op (no
+        // double error).
         void ongoingSession.talkback?.[Symbol.asyncDispose]();
 
         // Turn off the flashlight on package cameras, if enabled. This HomeKit-state side effect cannot fold into the abort, so it stays explicit. We explicitly want

@@ -8,7 +8,7 @@
  * (the Doorbell service, LCD, physical chimes, chime volume), and the observers (the camera's plain-camera set, now including the always-armed isDoorbell
  * observer, the bare-motion lastMotion observer, and the capability-reconcile featureFlags observer, plus the capability's own). Suite B constructs
  * the full doorbell-plus-package family and pins the self-observing package camera: its exact persisted context, its
- * suffixed display name through the syncedName seam, its observer census, and the fact that firmware, name, availability, and reachability all flow through
+ * suffixed display name through the syncedName delegation, its observer census, and the fact that firmware, name, availability, and reachability all flow through
  * the package's own observers or the NVR's endpoints iterator. The reclassification-flap regression and the
  * deleted-copy-forward hints-equality pin guard the two known hazards of the reshape, and the UUID-seed pin guards the persistence-critical identity suffix against
  * drift. The pure-test unlocks ride along: the package selectChannel lens-2/URL-host rows and the parent selectSubstrateChannel pixel-ceiling row.
@@ -33,7 +33,7 @@ import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
 
-// Construct a real ProtectCamera against an isDoorbell-true config so it construction-attaches its DoorbellCapability, with the casts confined to this seam - the
+// Construct a real ProtectCamera against an isDoorbell-true config so it construction-attaches its DoorbellCapability, with the casts confined to this one boundary - the
 // instance under test is the production ProtectCamera and its composed capability.
 function constructDoorbell(nvr: TestProtectNvr, accessory: TestAccessory, projection: TestCameraProjection): ProtectCamera {
 
@@ -99,7 +99,7 @@ describe("real doorbell construction (suite A)", () => {
 
   test("the capability is attached, its name delegates to the camera's, and messageSwitches stays capability-private (no camera field)", () => {
 
-    // The composition seam: the camera carries the live capability, attached at construction because the config reports isDoorbell.
+    // The composition point: the camera carries the live capability, attached at construction because the config reports isDoorbell.
     assert.ok(doorbell.doorbell, "the camera carries an attached DoorbellCapability");
 
     // Log-prefix parity: the capability's name override resolves to the camera's name (the live controller projection name), the exact value the pre-collapse doorbell
@@ -129,7 +129,7 @@ describe("real doorbell construction (suite A)", () => {
     await settle();
 
     // The wake assertion for one key: push the slice that drives the keyed observer, settle, and assert a wake carrying that verbatim key under the camera's accessory
-    // UUID - which proves the key is preserved, the capability's observer is armed, AND the publishObserverWake delegation seam attributes it to the camera.
+    // UUID - which proves the key is preserved, the capability's observer is armed, AND the publishObserverWake delegation attributes it to the camera.
     const assertWake = async (key: string, push: () => void): Promise<void> => {
 
       const baseline = localWakes.length;
@@ -247,7 +247,7 @@ describe("doorbell + package camera family construction (suite B)", () => {
 
     diagnosticsChannel.subscribe("hbup:observer:wake", onWake);
 
-    // Name syncing is enabled for this family so the suffixed-name seam and the rename reaction are exercised; everything else sits at its default.
+    // Name syncing is enabled for this family so the suffixed-name delegation and the rename reaction are exercised; everything else sits at its default.
     const cameraConfig = makeCameraConfig({ channels: G6_PRO_ENTRY_CHANNELS, featureFlags: { hasPackageCamera: true, isDoorbell: true }, name: "Front Door" });
 
     cameraId = cameraConfig.id;
@@ -279,7 +279,7 @@ describe("doorbell + package camera family construction (suite B)", () => {
     assert.equal(accessory.context["detectMotion"], true, "motion awareness defaults on");
   });
 
-  test("the package camera's display name flows through the syncedName seam with the display suffix applied", () => {
+  test("the package camera's display name flows through the syncedName accessor with the display suffix applied", () => {
 
     const accessory = packageAccessory();
 
@@ -447,7 +447,7 @@ describe("doorbell + package camera family construction (suite B)", () => {
 });
 
 // Suite C drives the parent doorbell's bare-motion lastMotion observer for its package-forward effect against the REAL ProtectEventDispatch contract, with the recording
-// dispatch injected through the NVR double's seam (the recording subclass captures the delivery without arming a reset timer or touching HAP). A plain camera has
+// dispatch injected through the NVR double's dispatch hook (the recording subclass captures the delivery without arming a reset timer or touching HAP). A bare camera has
 // no packageCamera, so this case can only live in the doorbell-plus-package family harness. The parent owns the single forward: when the package camera is recording for
 // HKSV, the parent's raw motion always trips the package's motion sensor (the package has no motion signal of its own), independent of whether the parent itself
 // fired. The parent is built smart-capable and smart-enabled (and is not itself recording), so shouldDeliverBareMotion SUPPRESSES the parent's own delivery - which is
@@ -459,7 +459,7 @@ describe("doorbell bare-motion package forward (suite C)", () => {
   let harnessController: AbortController | undefined;
 
   // Build a real doorbell-plus-package family with the package channel provisioned (so the package camera holds a stub stream), wiring the recording dispatch through the
-  // dispatch seam. The doorbell is smart-capable and smart-enabled so its OWN bare motion is suppressed by the policy, isolating the package forward. Returns the family
+  // dispatch hook. The doorbell is smart-capable and smart-enabled so its OWN bare motion is suppressed by the policy, isolating the package forward. Returns the family
   // handles the tests drive: the shared parent record id, the recording dispatch, and the store.
   async function buildFamily(): Promise<{ cameraId: string; recording: TestRecordingDispatch; store: TestStateStore }> {
 
@@ -497,7 +497,7 @@ describe("doorbell bare-motion package forward (suite C)", () => {
 
     // Mark the package camera recording for HKSV: the production forward reads packageCamera.stream.hksv.isRecording. The afterEach cleanup also reads hksv through
     // the capability's delegate teardown (isRecording -> updateRecordingActive, then timeshift.stop), so the stub carries those no-ops - the same shape the camera-
-    // self-heal test seeds, cast once through the confined seam.
+    // self-heal test seeds, cast once through the confined boundary.
     (doorbell.packageCamera.stream as TestStreamingDelegate).hksv = { isRecording: true,
       timeshift: { isStarted: false, stop: (): void => { /* No-op: the double owns no buffer to release on teardown. */ } },
       updateRecordingActive: (): void => { /* No-op: the double records no HKSV state. */ } } as unknown as TestStreamingDelegate["hksv"];

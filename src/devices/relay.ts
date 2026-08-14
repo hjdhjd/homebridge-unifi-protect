@@ -125,14 +125,15 @@ export class ProtectRelay extends ProtectDevice<Relay> {
 
   // Drive one relay output toward a desired on/off state, reconciling HomeKit's set-state semantics against the controller's faithful toggle primitive. The controller
   // offers only toggleOutput - a flip that is write-through - so we record the state we are driving the output toward in #pendingDesired and decide against that intent
-  // rather than the pre-toggle controller value, which lags until the broadcast lands. This is what makes a rapid second tap resolve correctly. The toggle is not
-  // idempotent, so we must never re-issue toward a state we are already in or heading to.
+  // rather than the pre-toggle controller value, which lags until the broadcast lands. This is what makes a rapid second tap resolve correctly. Calling
+  // toggleOutput twice flips the output back to where it started, so we must never re-issue toward a state we are already in or heading to.
   private async setOutput(id: number, label: string, desired: boolean): Promise<void> {
 
     // Compare against the pending intent if one is outstanding, else the live controller state (both non-throwing reads).
     const current = this.#pendingDesired.get(id) ?? this.outputState(id);
 
-    // We are already in, or heading to, the desired state - re-issuing the non-idempotent toggle here would flip us the wrong way, so there is nothing to do.
+    // We are already in, or heading to, the desired state - re-issuing the toggle here would flip the output the wrong way, since a second call reverses it,
+    // so there is nothing to do.
     if(desired === current) {
 
       return;

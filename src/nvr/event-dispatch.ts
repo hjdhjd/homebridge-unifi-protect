@@ -39,14 +39,14 @@ function matchesEventKeyBoundary(options: { boundary: string; candidate: string 
  * drives. Controller-state merge, packet re-emit, and per-id fan-out belong to the unifi-protect library's reducer and observe loops; what lives here is purely the
  * routing and delivery.
  *
- *   - `run()` is one controller-level consumer of `client.events()` - the typed, classified firehose. It switches on the discriminated `kind` and dispatches each
+ *   - `run()` is one controller-level consumer of `client.events()` - the typed, classified firehose. It switches on the event's `kind` and dispatches each
  *     activity occurrence (smart detection, doorbell ring, tamper, Access doorbell ring, doorbell auth) to the addressed accessory's delivery method. State transitions
  *     (deviceAdded/devicePatched/...) are the NVR observe loops' concern and are ignored here. Bare camera motion is NOT routed here: the controller signals it only as a
  *     `lastMotion` device-state advance with no occurrence packet, so the camera leaf observes that field directly, exactly as the sensor and light families do.
  *   - `publishTelemetry()` is the controller telemetry republisher: every raw frame off `client.rawPackets()` is mirrored to MQTT when the user opts in.
  *   - the delivery methods (`motionEventHandler`, `doorbellEventHandler`) own the HomeKit-facing behavior - the characteristic writes, the reset timers, and the MQTT
  *     side-channels - while `accessEventHandler` maps a UniFi Access intercom doorbell press onto that same doorbell ring delivery rather than owning a path of its own.
- *     Their *trigger* is the typed firehose: each delivery fires on a discriminated event kind.
+ *     Their *trigger* is the typed firehose: each delivery fires on its own event kind.
  *
  * A plain class, not an EventEmitter: nothing here emits. The accessory leaves call the delivery methods directly through `nvr.events`, and the router and telemetry
  * publisher are spawned as NVR observe loops, so no event bus survives. The controller's systemInfo is consumed the same way, through a narrow `client.state.observe`
@@ -76,7 +76,7 @@ export class ProtectEventDispatch {
   }
 
   // The typed-firehose router. One controller-level consumer of the classified event stream: each event arrives already modeled (the unifi-protect library owns the
-  // decode and classification), so we switch on the discriminated kind and route each activity occurrence to the addressed accessory's HomeKit delivery method. The
+  // decode and classification), so we switch on the event's kind and route each activity occurrence to the addressed accessory's HomeKit delivery method. The
   // caller binds this to the NVR's terminal shutdown signal; the loop ends quietly when that signal aborts (the library smooths the caller's own abort into a clean
   // return).
   public async run(signal: AbortSignal): Promise<void> {
@@ -430,8 +430,8 @@ export class ProtectEventDispatch {
           confidence: detection.confidence,
           name: detection.name,
 
-          // The source and target types already match here. We keep this assertion as a visible, load-bearing marker that the raw thumbnail is intentionally carried
-          // through unmodified as the enricher payload, so a future change to either type is caught by the compiler rather than silently drifting apart.
+          // The source and target types already match here. We keep this assertion as a visible marker that the raw thumbnail is intentionally carried through
+          // unmodified as the enricher payload, so removing it would let a future change to either type silently drift apart instead of being caught by the compiler.
           payload: detection as ProtectEventMetadataDetectedThumbnail,
           type: detection.type ?? ""
         })));
@@ -720,8 +720,8 @@ export class ProtectEventDispatch {
       this.eventTimers.delete(protectDevice.id + ".Doorbell.Ring.MQTT");
     }, PROTECT_DOORBELL_TRIGGER_DURATION));
 
-    // The ring-suppression window resolves at the doorbell's own scope, so one camera's delay can differ from its siblings'; the legacy top-level property is the
-    // transition fallback and today's no-delay default survives both being absent.
+    // The ring-suppression window resolves at the doorbell's own scope, so one camera's delay can differ from its siblings'; platform.config.ringDelay is the
+    // top-level fallback consulted only when no per-device option is set, and today's no-delay default survives both being absent.
     const ringDelay = this.nvr.platform.featureOptions.getInteger("Doorbell.Ring.Delay", protectDevice.mac, this.nvr.ufp.mac) ?? this.nvr.platform.config.ringDelay;
 
     // If we don't have a ring duration defined, we're done.
@@ -800,7 +800,7 @@ export class ProtectEventDispatch {
   // how the doorbell-ring delivery sets isRinging, so the camera's own tamper-detection onGet and availability projection read back a single source of truth.
   public tamperEventHandler(protectDevice: ProtectCamera): void {
 
-    // Idempotent: once latched, a repeat tamper occurrence is a no-op until the state is cleared - we act only on the false-to-true edge.
+    // This handler is a no-op on repeat: once latched, a repeat tamper occurrence changes nothing until the state is cleared - we act only on the false-to-true edge.
     if(protectDevice.isTampered) {
 
       return;
@@ -848,9 +848,9 @@ export class ProtectEventDispatch {
       getCharacteristic(this.hap.Characteristic.ProgrammableSwitchEvent).sendEventNotification(value);
   }
 
-  // Map a fob's wire press gesture to HomeKit's ProgrammableSwitchEvent value, or null for an unrecognized gesture. The null sentinel is load-bearing: SINGLE_PRESS is 0,
-  // which is falsy, so the caller MUST test the result against null rather than truthiness or every single press would be swallowed. The unifi-protect library owns the
-  // classification; this is the plugin's translation of that classification onto HomeKit's fixed press values.
+  // Map a fob's wire press gesture to HomeKit's ProgrammableSwitchEvent value, or null for an unrecognized gesture. Testing the result against null matters: SINGLE_PRESS
+  // is 0, which is falsy, so a truthiness check would swallow every single press rather than delivering it. The unifi-protect library owns the classification; this is
+  // the plugin's translation of that classification onto HomeKit's fixed press values.
   private pressValue(pressType: string): Nullable<number> {
 
     switch(pressType) {

@@ -30,7 +30,7 @@ import { canUseLivestreamApi } from "../../media/stream-source-policy.ts";
 import { doorbellReconcileAction } from "./doorbell-reconcile-policy.ts";
 import { shouldDeliverBareMotion } from "./motion-policy.ts";
 
-// The source discriminant threaded through the capability-reconcile and doorbell-capability methods: "construct" marks establishment (a fresh adoption or a Homebridge
+// The source tag threaded through the capability-reconcile and doorbell-capability methods: "construct" marks establishment (a fresh adoption or a Homebridge
 // restart), "observe" a live reconcile. The establishment-only side effects - the Access lock's SECURED resting stamp, the night vision dimmer's value push and its
 // "Enabling" log - branch on it; the members with no resting state ignore it.
 type ReconcileSource = "construct" | "observe";
@@ -141,7 +141,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
   // the ctor-body configureDevice that attaches it - declared and set by ProtectCamera itself, so the subclass field-wipe class does not apply.
   public doorbell: Nullable<DoorbellCapability> = null;
   // Whether the doorbell ring-trigger MQTT subscription has been registered, so the one registration site (configureMqtt at construction) and the late-promotion attach
-  // arm never double-register (homebridge-plugin-utils subscribe is not idempotent). Initialized to false through a field initializer, set by ProtectCamera's own
+  // arm never double-register (homebridge-plugin-utils subscribe is not safe to call twice). Initialized to false through a field initializer, set by ProtectCamera's own
   // configureDoorbellRingMqtt after the gate passes - never inside a super constructor - so it carries no ctor-chain-computed state and the subclass field-wipe class
   // does not apply.
   #ringMqttRegistered = false;
@@ -182,7 +182,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
   }
 
   // The package camera, delegated to the doorbell capability that owns its lifecycle. Null when no doorbell capability is attached, or when an attached doorbell has no
-  // package camera. This is the single seam the external readers (event-dispatch's package-motion branch and the NVR's deviceEndpoints iterator) consume, so the
+  // package camera. This is the single interface the external readers (event-dispatch's package-motion branch and the NVR's deviceEndpoints iterator) consume, so the
   // package's ownership can live entirely on the capability without touching either caller.
   public get packageCamera(): Nullable<ProtectCameraPackage> {
 
@@ -240,8 +240,8 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
   /* Configure device-specific settings for this device. The base derives the shared hints and assigns them, then this pass spreads that bag into the camera's own
    * literal, so the camera family's complete shape exists in one expression. Smart detection is the one hint whose type lives on the base while its real value is derived
-   * here, and it is hoisted into a local first because two keys need the same freshly-computed value: an object literal's value expressions all evaluate against the
-   * PRE-assignment bag, so a sibling key reading this.hints.smartDetect would see the base's inert seed rather than the camera's answer.
+   * here, and it is hoisted into a local first because more than one key needs the same freshly-computed value: an object literal's value expressions all evaluate
+   * against the PRE-assignment bag, so a sibling key reading this.hints.smartDetect would see the base's inert seed rather than the camera's answer.
    *
    * The literal deliberately omits cropOptions, rtspDefault, and substrateDefault. Those three are written by their own later passes (configureCrop and
    * onStreamingEstablish), and leaving them unset here is what preserves their unset-until-then state.
@@ -386,7 +386,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
   /* Reconcile this camera's doorbell capability against the controller's live state - the single chokepoint the construction-time arm and the always-armed isDoorbell
    * observer both route through, driven by the pure doorbellReconcileAction over (hasCapability, isDoorbell). A promotion composes the capability onto the running
    * instance in place; the one HAP object that cannot change in place (the CameraController) is rebuilt by the streaming capability's audio reconcile, not here, since a
-   * doorbell-ness is one of the frozen audio capabilities that reconcile watches for. The source discriminant separates the two attach contexts: at
+   * doorbell-ness is one of the frozen audio capabilities that reconcile watches for. The source tag separates the two attach contexts: at
    * construction the normal flow (the pending IIFE building the stream with the now-true flag, the IIFE tail running mute/trigger, configureMqtt registering ring) covers
    * the camera-side wiring, so the construct arm does only the capability compose; a live promotion ("observe") must additionally re-run that camera-side wiring because
    * the construction flow already ran with the flag false.
@@ -411,9 +411,9 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
       case "sweep-stale":
 
-        // A demoted-while-down doorbell reconstructs as a plain camera with no capability: remove the doorbell-only services it left behind (idempotent - a no-op on a
-        // steady plain camera). The removal routes through the NVR composition root so the camera never value-imports the sibling capability class (the device-layer
-        // structural-cycle-proof invariant); the Doorbell service itself is left to configureDoorbellTrigger's existing removal arm.
+        // A demoted-while-down doorbell reconstructs as a plain camera with no capability: remove the doorbell-only services it left behind (safe to call more than once
+        // - a no-op on a steady plain camera). The removal routes through the NVR composition root so the camera never value-imports the sibling capability class (the
+        // device-layer structural-cycle-proof rule); the Doorbell service itself is left to configureDoorbellTrigger's existing removal arm.
         this.nvr.removeStaleDoorbellServices(this.accessory);
 
         break;
@@ -448,7 +448,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     }
 
     // Re-run the camera's doorbell-adjacent configures now that the Doorbell service exists (the construction IIFE tail ran them while the flag was false).
-    // acquireService is idempotent, so a re-run that finds the service in place is harmless.
+    // acquireService is safe to call more than once, so a re-run that finds the service in place is harmless.
     this.configureDoorbellMuteSwitch();
     this.configureDoorbellTrigger();
 
@@ -483,7 +483,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
   /* The camera family's observer template, effectively final: super spawns the universal base observers (name sync and device information), then spawnCameraObservers
    * spawns the family-specific set. Camera-family leaves extend spawnCameraObservers, never this template - a deliberate asymmetry with the other device families, which
    * extend spawnObservers directly. Only the camera family has a leaf-of-a-leaf (the package camera under the doorbell) that must suppress part of its parent's observer
-   * set, and the seam is what lets it replace exactly the camera reactions while still inheriting the base pair. The package replaces spawnCameraObservers without a
+   * set, and this is what lets it replace exactly the camera reactions while still inheriting the base pair. The package replaces spawnCameraObservers without a
    * super call (its own bespoke set); the doorbell's own reactions are not a camera subclass - they spawn through the composed DoorbellCapability's own configure, keyed
    * on the capability's signal - so the camera's set is the plain-camera set and the per-class observer count pins in the construction tests are the enforcement.
    */
@@ -546,9 +546,9 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
     // The controller can finish reporting a camera's hardware capabilities AFTER adoption - a fresh add bootstraps featureFlags incrementally. The whole-featureFlags
     // slice drives the one capability reconcile, so a capability the controller reports late is reflected live without a restart. One observer over the object slice, not
-    // one per flag: the flags complete together in a single bootstrap drain, the reconcile is idempotent, and the store's structural sharing yields a new featureFlags
-    // reference only on a real change. The value-selecting isDoorbell observer above dedups independently, so a flag change that does not touch isDoorbell wakes
-    // only this observer.
+    // one per flag: the flags complete together in a single bootstrap drain, the reconcile is a no-op on repeat, and the store's structural sharing yields a new
+    // featureFlags reference only on a real change. The value-selecting isDoorbell observer above dedups independently, so a flag change that does not touch isDoorbell
+    // wakes only this observer.
     this.observeState({ key: "camera.featureFlags", selector: state => cam(state)?.featureFlags, title: "device capabilities" },
       () => void this.reconcileCapabilities("observe"));
 
@@ -608,8 +608,8 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     return this.#ambientLight ??= this.nvr.createAmbientLightCapability(this, this.device, this.signal);
   }
 
-  // Capture a JPEG snapshot of this camera from the controller. This is the narrow public seam onto the camera projection's snapshot command - the camera owns "take a
-  // snapshot of me" while keeping the device projection encapsulated. ProtectSnapshot calls this as the Protect-API source in its multi-source acquisition. The command
+  // Capture a JPEG snapshot of this camera from the controller. This is the narrow public interface onto the camera projection's snapshot command - the camera owns "take
+  // a snapshot of me" while keeping the device projection encapsulated. ProtectSnapshot calls this as the Protect-API source in its multi-source acquisition. The command
   // throws on failure (a non-2xx, or a ProtectUnsupportedError when a package snapshot is requested on a camera without a package sensor); the caller treats a throw as
   // "this source failed" and falls through to the next source.
   public async snapshotFromController(opts: SnapshotOptions = {}): Promise<Buffer> {
@@ -617,7 +617,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     return this.device.snapshot(opts);
   }
 
-  // The narrow public seam onto the camera projection's pooled livestream, mirroring snapshotFromController. We map our ChannelProfile to the `source` selector
+  // The narrow public interface onto the camera projection's pooled livestream, mirroring snapshotFromController. We map our ChannelProfile to the `source` selector
   // (the lens=>channel-0 coercion now lives in the library), default the segment length to our 100 ms resolution (the native pool
   // also floors at 100, but the RTSP adapter would otherwise default to 1000), declare the plugin's livestream defaults (a 16384-byte chunk for lower fragmentation and
   // per-segment timestamps - both enter the pool's sharing key, so they must be passed explicitly or two plugin subscribers would silently fail to share a session),
@@ -672,7 +672,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
       source: source, timestamps: true, urgency: opts.urgency });
   }
 
-  // Reboot this camera through the controller. This is the narrow public seam onto the camera projection's reboot command, mirroring snapshotFromController - the
+  // Reboot this camera through the controller. This is the narrow public interface onto the camera projection's reboot command, mirroring snapshotFromController - the
   // camera owns "reboot me" while keeping the device projection encapsulated. The HKSV timeshift's livestream self-heal calls this to reset a wedged camera's
   // livestream endpoint after the recovery policy gives up. The command throws on failure; the caller decides how to handle a failed reboot.
   public async reboot(): Promise<void> {
@@ -680,7 +680,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     return this.device.reboot();
   }
 
-  // Open a send-direction two-way-audio (talkback) channel to this camera's speaker. The narrow public seam onto the camera projection's talkback command, mirroring
+  // Open a send-direction two-way-audio (talkback) channel to this camera's speaker. The narrow public interface onto the camera projection's talkback command, mirroring
   // snapshotFromController - the camera owns "talk to me" while keeping the device projection encapsulated. The streaming delegate's two-way-audio path opens this, then
   // drains the return-audio FFmpeg's stdout into the returned session. The command negotiates the WebSocket and connects atomically (returns a live session or throws),
   // and throws a ProtectUnsupportedError for a camera with no speaker; the caller treats a throw as "no talkback" and tears down its return-audio plumbing.
@@ -725,7 +725,8 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
       // Protect only supports unlocking. If the user taps lock while we're in the momentary unlock window, revert the optimistic SECURED target back to UNSECURED. We
       // guard on the auto re-lock timer being pending so we don't stomp a SECURED state that our own timer just wrote...the registry deletes the keyed entry before
-      // invoking its callback, so by the time we check, a just-fired timer is already gone and we correctly become a no-op.
+      // invoking its callback, so by the time we check, a just-fired timer is already gone and we correctly become a no-op. The 50ms delay below is the same margin used
+      // throughout this file to let HomeKit settle the value it just wrote before we write back over it, mirroring the package camera's flashlight reset.
       if(value === this.hap.Characteristic.LockTargetState.SECURED) {
 
         setTimeout(() => {
@@ -955,9 +956,8 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
    * hints.smartDetect read true, and the delivery gate would then match no detection type at all. The base method keeps its own fill for its own contract (a live
    * re-creation of the occupancy service, on any device family); this is the camera's live refresher, and it deliberately expresses the same rule rather than a new one.
    *
-   * @param smartDetectTypes - the detection types this camera currently delivers, the intersection the reconcile pass derives once.
-   *
-   * @returns the delivered detection types the user has selected for occupancy, empty when smart detection is not this camera's source of truth.
+   * It takes smartDetectTypes, the detection types this camera currently delivers (the intersection the reconcile pass derives once), and returns the delivered
+   * detection types the user has selected for occupancy, empty when smart detection is not this camera's source of truth.
    */
   private deriveSmartOccupancy(smartDetectTypes: ReadonlySet<string>): string[] {
 
@@ -1128,7 +1128,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     return true;
   }
 
-  // The camera's "ensure my Doorbell service exists and is primary" seam, public so both the trigger path (configureDoorbellTrigger, when a plain camera enables the
+  // The camera's "ensure my Doorbell service exists and is primary" interface, public so both the trigger path (configureDoorbellTrigger, when a plain camera enables the
   // automation trigger) and - from the attached capability - the doorbell attach sequence consume the one definition. HomeKit requires the Doorbell service to be the
   // primary service on the accessory.
   public configureDoorbellService(): boolean {
@@ -1759,7 +1759,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
   }
 
   // Register the doorbell ring-trigger MQTT subscription, exactly once, when the camera is a Protect doorbell or the user enabled the doorbell trigger.
-  // homebridge-plugin-utils subscribe is not idempotent, so the registered-once guard prevents a double-subscription across the call sites (configureMqtt at
+  // homebridge-plugin-utils subscribe is not safe to call twice, so the registered-once guard prevents a double-subscription across the call sites (configureMqtt at
   // construction, and the attach arm for a late promotion). The guard is set ONLY after the gate passes and the registration happens, so a no-op construction call on a
   // plain camera (gate false) does not latch it - the later attach-time registration must not be suppressed.
   private configureDoorbellRingMqtt(): void {
@@ -1869,7 +1869,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     this.timers.setTimeout("rebootReturn", () => this.#reportRebootAbsence(), PROTECT_NVR_REBOOT_RECENCY_MS);
   }
 
-  // The watch reaching its expiry, with three outcomes in order. An unhealthy controller means the reboot's tail is still running, so we extend the wait by another
+  // The watch reaching its expiry, evaluated in order. An unhealthy controller means the reboot's tail is still running, so we extend the wait by another
   // window rather than blame the camera for the controller's absence; that chain is bounded, ending when the controller returns, when the camera returns, or when this
   // device tears down and its registry drains. A camera whose controller record has vanished is being removed, which is not a failure to come back. Otherwise the
   // controller is healthy, this camera is still away, and that is the exception worth telling. The health read is deliberately separate from the reachability read
@@ -1900,7 +1900,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
   // Reconcile the reboot-return watch against this camera's current reachability. A reachable camera has answered the question the watch asked, so the wait ends here,
   // and a watch that had already spoken closes its story with a matching line at the same level - an operator scanning warn sees the alert and its all-clear together.
-  // Both reachability paths call this because they carry different news: the camera's own state observe sees the device itself come back, while the controller-health
+  // Every reachability path calls this because each carries different news: the camera's own state observe sees the device itself come back, while the controller-health
   // push is what a whole-controller recovery moves. An outage freezes the device state and the store dedups on the selected value, so a controller-health recovery
   // never wakes the state observe at all, which makes the override the path a real reboot recovery most often takes. Safe to call more than once: clearing an unarmed
   // key does nothing and the latch gates the line.
@@ -2074,7 +2074,8 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     // See what the user has set for the afftdn filter for this camera.
     let fftNr = this.getFeatureFloat("Audio.Filter.Noise.FftNr") ?? PROTECT_FFMPEG_AUDIO_FILTER_FFTNR;
 
-    // If we have an invalid setting, use the defaults.
+    // If we have an out-of-range setting, clamp it to the valid range. FFmpeg's afftdn filter only accepts its noise-reduction (nr) parameter in the 0.01-97 decibel
+    // range, so an out-of-range value lands at that boundary rather than causing FFmpeg to reject the filter outright.
     fftNr = Math.max(0.01, Math.min(97, fftNr));
 
     const highpass = this.getFeatureNumber("Audio.Filter.Noise.HighPass");

@@ -61,7 +61,7 @@ export interface TestMqttSubscription {
  * aborts) is homebridge-plugin-utils' contract, pinned by its own tests, so the double does not stand up a broker; it captures each handler closure onto the
  * recorded subscription so a test can find it by topic / kind and invoke it directly. That lets a test exercise the plugin's own MQTT-specific dispatch (the
  * chime's switch(value) tone dispatch and empty-payload default, the viewer's liveview name lookup and unknown-name error) - the handler bodies that the
- * HomeKit onSet machinery never reaches. What THIS double proves is the plugin's side of the seam: which subscriptions a device registered, on which topics,
+ * HomeKit onSet machinery never reaches. What THIS double proves is the plugin's side of the interface: which subscriptions a device registered, on which topics,
  * carrying which lifetime signal, what each handler does, and what was published.
  */
 export class TestMqttClient {
@@ -100,12 +100,12 @@ export class TestMqttClient {
 }
 
 // The platform double's honest structural type. The members mirror what ProtectBase and the camera-family construction paths read off nvr.platform: the HAP
-// namespaces plus the deterministic uuid generator, the injected wall-clock seam (the recording delegate reads platform.clock for its pacing-time primitives), the
+// namespaces plus the deterministic uuid generator, the injected wall clock (the recording delegate reads platform.clock for its pacing-time primitives), the
 // platform-accessory class and the four registration recorders (the doorbell's configurePackageCamera and the NVR removal tail drive them), the platform's mutable
 // accessories array, a concrete codecSupport (the real platform getter throws before the FFmpeg probe - a concrete object with a non-raspbian hostSystem keeps the
 // recording-default switch on its default branch), the ProtectOptions-shaped config, the REAL FeatureOptions engine, the log sinks, the scoped debug router every
-// owner's logger binds its debug channel against, the recording-process factory seam (the recording delegate constructs its FFmpeg process through it), and the
-// streaming-delegate factory seam.
+// owner's logger binds its debug channel against, the recording-process factory interface (the recording delegate constructs its FFmpeg process through it), and the
+// streaming-delegate factory interface.
 export interface TestProtectPlatform {
 
   readonly accessories: TestAccessory[];
@@ -152,7 +152,7 @@ export const asProtectAccessory = (accessory: TestAccessory): ProtectAccessory =
  * their types still anchor the override against production. Recording arms NO reset timer, so a motion test leaks no handle.
  *
  * This serves every family and base-capability path whose motion routes through the firehose - the light family's lastMotion observer and the base motion trigger / the
- * base motion-set MQTT seam alike - injected through makeTestNvr's dispatch seam and read back off nvr.events. It is the SSOT for that recording shape: the
+ * base motion-set MQTT interface alike - injected through makeTestNvr's dispatch interface and read back off nvr.events. It is the SSOT for that recording shape: the
  * light suite and the device-motion concern net share this one definition rather than each carrying its own near-identical subclass.
  */
 export class TestRecordingDispatch extends ProtectEventDispatch {
@@ -248,9 +248,9 @@ export class TestProtectNvr {
 
   // The managed-device registry, mirroring ProtectNvr.configuredDevices: a Map keyed by accessory UUID whose values are the constructed device objects. The
   // controller-owner motion fanouts resolve a member camera through it - the security-system fanout reads configuredDevices.get(accessory.UUID)?.protectId, the liveviews
-  // fanout reaches it through getDeviceById. A test seeds a minimal member double through the ProtectDevices cast at the construction seam, exactly as the device-class
-  // doubles are cast elsewhere. Both fanouts read only a narrow slice of the device (protectId for the security path, accessory / accessoryName for the liveviews path),
-  // so the seeded double carries just that slice.
+  // fanout reaches it through getDeviceById. A test seeds a minimal member double through the ProtectDevices cast at the construction boundary, exactly as the
+  // device-class doubles are cast elsewhere. Both fanouts read only a narrow slice of the device (protectId for the security path, accessory / accessoryName for the
+  // liveviews path), so the seeded double carries just that slice.
   public readonly configuredDevices = new Map<string, ProtectDevices>();
 
   // The once-per-option feature log gate, mirroring ProtectNvr.logFeature's featureLog record.
@@ -341,7 +341,7 @@ export class TestProtectNvr {
     });
 
     // The real event dispatcher, wired against this double - its constructor reads only the platform's HAP namespace, the log, and the NVR handle itself. The optional
-    // dispatch factory is the reusable injection seam: when omitted, the default factory is byte-identical to today's new ProtectEventDispatch(this), so every existing
+    // dispatch factory is the reusable injection point: when omitted, the default factory is byte-identical to today's new ProtectEventDispatch(this), so every existing
     // consumer is unchanged; a test injects a recording subclass (overriding motionEventHandler to record without arming the real reset timer) to assert the device
     // observers' firehose routing without leaking a dangling timer handle. The factory runs at exactly the point this.events was assigned before, the last write in
     // the constructor, so nothing reads events before this line either way.
@@ -469,7 +469,7 @@ export class TestProtectNvr {
     this.log.info(message);
   }
 
-  // The composition-root construction seams, mirroring production: each constructs the REAL device-family class, faithful to ProtectNvr (the harness already constructs
+  // The composition-root construction methods, mirroring production: each constructs the REAL device-family class, faithful to ProtectNvr (the harness already constructs
   // real device objects). The double sits ABOVE the device layer exactly as the real NVR does - it value-imports the device classes - so routing construction through it
   // forms no module-initialization cycle, the property the live attach relies on.
   public createDoorbellCapability(camera: ProtectCamera, device: Camera, signal: AbortSignal): DoorbellCapability {
@@ -496,9 +496,9 @@ export class TestProtectNvr {
     return new StreamingCapability(this as unknown as ProtectNvr, { host: camera, signal: signal });
   }
 
-  // The sweep-stale removal seam, mirroring production: route the camera's request to the REAL DoorbellCapability.removeServices SSOT, with the platform's HAP namespace
-  // and the double's log - so suite D exercises the actual removal logic, not a stand-in. The double's structural HAP shape is cast to the production parameter type
-  // through unknown, the same confined-cast discipline every other harness seam uses; the log shape already satisfies HomebridgePluginLogging structurally.
+  // The sweep-stale removal interface, mirroring production: route the camera's request to the REAL DoorbellCapability.removeServices SSOT, with the platform's HAP
+  // namespace and the double's log - so suite D exercises the actual removal logic, not a stand-in. The double's structural HAP shape is cast to the production parameter
+  // type through unknown, the same confined-cast discipline every other harness boundary uses; the log shape already satisfies HomebridgePluginLogging structurally.
   public removeStaleDoorbellServices(accessory: ProtectAccessory): void {
 
     DoorbellCapability.removeServices(accessory, this.platform.api.hap as unknown as HAP, this.log);
@@ -530,14 +530,15 @@ export class TestProtectNvr {
  * feature-option controller scope key, and the chime / ringtone nvrMac filter key), the RTSP(S) ports (the RTSPS port pinned to the fixture value so channel profile
  * URLs match the golden-master corpus), plus the controller-owner read set: a marketName / name / type for setInfo's Model and the system-info accessory's display
  * name, and a populated systemInfo so the nvr-systeminfo owner's initial pass (which dereferences systemInfo.cpu.temperature with no optional chaining) and its
- * MQTT JSON.stringify read meaningfully. The single confined cast seam for the controller record, mirroring makeCameraConfig's discipline.
+ * MQTT JSON.stringify read meaningfully. The single confined cast point for the controller record, mirroring makeCameraConfig's discipline.
  *
- * @param options - hardwareRevision: OPT-IN with no default (stays undefined) - the security-system owner writes nvr.ufp.hardwareRevision onto HardwareRevision
- *                  unconditionally, so buildSecuritySystem (in security-system.test.ts) opts a value in to net that write non-vacuously, while the default omission
- *                  keeps ProtectBase.setInfo's HardwareRevision length-guard short-circuited for the device-info concern net; mac: the controller MAC override
- *                  (defaults to "74ACB9FFFFFF"), so a multi-controller test seeds two stores with distinct controller identities and the owners scope their accessories
- *                  apart; marketName / name / type: identity overrides setInfo and the system-info accessory read; temperature: the optional systemInfo.cpu.temperature
- *                  override, so the observer's reactive refresh can be asserted on a known value.
+ * @param options - doorbellSettings: OPT-IN only, kept absent by default - the raw doorbell settings record the message-switch net seeds so getMessages reads a
+ *                  truthy source and its builtin-message list; hardwareRevision: OPT-IN with no default (stays undefined) - the security-system owner writes
+ *                  nvr.ufp.hardwareRevision onto HardwareRevision unconditionally, so buildSecuritySystem (in security-system.test.ts) opts a value in to net that
+ *                  write non-vacuously, while the default omission keeps ProtectBase.setInfo's HardwareRevision length-guard short-circuited for the device-info
+ *                  concern net; mac: the controller MAC override (defaults to "74ACB9FFFFFF"), so a multi-controller test seeds two stores with distinct controller
+ *                  identities and the owners scope their accessories apart; marketName / name / type: identity overrides setInfo and the system-info accessory
+ *                  read; temperature: the optional systemInfo.cpu.temperature override, so the observer's reactive refresh can be asserted on a known value.
  *
  * @returns an NVR config record the construction path reads as real.
  */
@@ -574,25 +575,25 @@ export function makeNvrConfig(options: { doorbellSettings?: ProtectNvrConfig["do
 
 /**
  * Build the NVR / platform double pair for real device construction, returning the double plus its test-side handles. The double is honestly typed as
- * TestProtectNvr; the single cast to ProtectNvr is confined to the construction seam in the test itself, mirroring the reachability suite's discipline - the
- * casts live at the seam, and the instance under test is the production class.
+ * TestProtectNvr; the single cast to ProtectNvr is confined to the construction point in the test itself, mirroring the reachability suite's discipline - the
+ * casts live at that point, and the instance under test is the production class.
  *
  * @param options - chimes: the HELD chime projection doubles client.chimes exposes (omitted, the empty default), kept as the same instances across every access so the
  *                  doorbell's cross-device setChimeVolume write hits, and a test's updateRejection lever is set on, ONE projection - a per-access rebuild would silently
- *                  break the rejection drive; clock: an optional controllable TestClock installed on the platform double's clock seam and returned so a transmit test can
- *                  advance virtual time to drive the recording delegate's pacing (omitted, a fresh default TestClock seeded at 0 is created); controllerName: the
- *                  controller label (defaults
- *                  to "Test Controller"); dispatch: an optional event-dispatch factory threaded into the NVR double's events seam (omitted, the default builds the real
- *                  ProtectEventDispatch unchanged; a test injects a recording subclass to assert the device observers' firehose routing without arming the real reset
- *                  timer); mqtt: pass true to install the recording MQTT double (the default null makes every MQTT wrapper a no-op, matching an unconfigured broker);
- *                  overrideAddress: the controller-level address override for rtspHost-chain tests; recordingProcessFactory: an optional test recording-process factory
- *                  installed on the platform double's recordingProcessFactory seam (omitted, a fresh default factory is created so the recording delegate constructs its
- *                  FFmpeg process through the test double); sharedPlatform: an optional { accessories, apiCalls } pair captured from a previously built double, so a
- *                  second controller reconciles over the SAME platform accessories array and registration recorder as the first, mirroring production's one shared
- *                  ProtectPlatform - the seam a multi-controller test uses to prove one controller's reconcile leaves the other's switches untouched (omitted, each call
- *                  builds its own fresh accessories array and apiCalls recorder); store: the state-store double backing client.state; userOptions: feature-option config
- *                  strings (the production options array shape, e.g. "Enable.Device.SyncName" or "Disable.Nvr.DelayDeviceRemoval") applied to the REAL FeatureOptions
- *                  engine.
+ *                  break the rejection drive; clock: an optional controllable TestClock installed on the platform double's clock interface and returned so a transmit
+ *                  test can advance virtual time to drive the recording delegate's pacing (omitted, a fresh default TestClock seeded at 0 is created); controllerName:
+ *                  the controller label (defaults to "Test Controller"); dispatch: an optional event-dispatch factory threaded into the NVR double's events interface
+ *                  (omitted, the default builds the real ProtectEventDispatch unchanged; a test injects a recording subclass to assert the device observers' firehose
+ *                  routing without arming the real reset timer); doorbellSettings: the raw doorbell settings record forwarded to the store's default NVR config fallback
+ *                  (omitted, the fallback carries no doorbell settings); mqtt: pass true to install the recording MQTT double (the default null makes every MQTT wrapper
+ *                  a no-op, matching an unconfigured broker); overrideAddress: the controller-level address override for rtspHost-chain tests; recordingProcessFactory:
+ *                  an optional test recording-process factory installed on the platform double's recordingProcessFactory interface (omitted, a fresh default factory is
+ *                  created so the recording delegate constructs its FFmpeg process through the test double); sharedPlatform: an optional { accessories, apiCalls } pair
+ *                  captured from a previously built double, so a second controller reconciles over the SAME platform accessories array and registration recorder as the
+ *                  first, mirroring production's one shared ProtectPlatform - the shared state a multi-controller test uses to prove one controller's reconcile leaves
+ *                  the other's switches untouched (omitted, each call builds its own fresh accessories array and apiCalls recorder); store: the state-store double
+ *                  backing client.state; userOptions: feature-option config strings (the production options array shape, e.g. "Enable.Device.SyncName" or
+ *                  "Disable.Nvr.DelayDeviceRemoval") applied to the REAL FeatureOptions engine.
  *
  * @returns apiCalls: every homebridge accessory-registration call the platform double recorded; clock: the controllable TestClock installed on the platform double (the
  *          same instance the recording delegate reads via platform.clock, so a transmit test advances it to release pacing); controller: the AbortController behind
@@ -642,7 +643,7 @@ export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: T
 
     // The HELD chime projections, exposed as the production client.chimes array the doorbell's setChimeVolume filters by cameraIds and writes through. A plain held
     // property (not a store-rebuild getter like liveviews / ringtones below): the volume write and the test's assertion / rejection lever must see the SAME instance, so
-    // the projections are captured once above. Projected to the library's Chime shape through the confined seam cast, exactly as the other client members project.
+    // the projections are captured once above. Projected to the library's Chime shape through the confined structural cast, exactly as the other client members project.
     chimes: chimes as unknown as Chime[],
     connection: { isHealthy: true },
     controllerName: options.controllerName ?? "Test Controller",

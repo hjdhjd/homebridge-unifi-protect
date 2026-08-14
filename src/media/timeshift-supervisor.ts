@@ -51,6 +51,7 @@ export class ProtectTimeshiftSupervisor {
   // remain the single sources of truth for HAP intent; every mutation there pushes a fresh demand here through setRecordingDemand, so this register always mirrors
   // the delegate's state and the reconciler reads its inputs without reaching back into the delegate.
   private demand: RecordingDemand;
+  // Whether the current recording episode has already logged its HKSV configuration acknowledgment; reset on the disable edge so the next enable re-acknowledges.
   private hasAcknowledgedRecording: boolean;
   // The once-per-episode latch for the "no valid stream profile" selection failure. Under the streaming arm the reconcile is kicked frequently (activation,
   // availability, and the live-view stream-source kick), so an unresolvable selection would otherwise re-log on every kick. The latch suppresses repeats; it clears
@@ -128,7 +129,7 @@ export class ProtectTimeshiftSupervisor {
 
   // Reconcile the timeshift buffer against the current desired state. The single reconciliation entry point for the timeshift lifecycle, invoked from any trigger
   // that might have changed an input (a recording demand push, camera online/offline, controller reconnect). Safe to call from any caller, any number of times,
-  // concurrently. Two invariants make this correct:
+  // concurrently. Two rules make this correct:
   //
   //   1. At most one reconciliation runs at a time (shared-promise serialization).
   //   2. Every request is honored. If inputs change mid-flight, a follow-up pass runs against the new inputs. The request-flag-and-loop pattern ensures no
@@ -195,13 +196,13 @@ export class ProtectTimeshiftSupervisor {
       }
     }
 
-    // Test sequencing seam: fires at the loop's exit, before the wrapper promise settles and its .finally clears configurePromise. Production leaves it a no-op.
+    // Test sequencing hook: fires at the loop's exit, before the wrapper promise settles and its .finally clears configurePromise. Production leaves it a no-op.
     this.onReconcileLoopExit();
 
     return result;
   }
 
-  // Test sequencing seam invoked at the reconcile loop's exit, before the wrapper promise settles. A no-op in production; a test subclass overrides it to land a
+  // Test sequencing hook invoked at the reconcile loop's exit, before the wrapper promise settles. A no-op in production; a test subclass overrides it to land a
   // reconcile() request in the exit window - the single-microtask gap between the loop's return and the .finally that clears configurePromise - which no coarser timing
   // primitive can hit deterministically.
   protected onReconcileLoopExit(): void {

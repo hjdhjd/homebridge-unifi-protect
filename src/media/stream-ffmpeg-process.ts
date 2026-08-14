@@ -24,10 +24,10 @@ const LIVESTREAM_API_ERROR_MESSAGE = "FFmpeg ended unexpectedly due to issues pr
 // Classify a failed FFmpeg teardown on the live (HomeKit) video path into one of three policy verdicts, given the accumulated stderr and whether this instance suppresses
 // livestream-API hiccups. The decision is a pure total function of those two observed values, with a fixed short-circuit precedence: first a known-benign livestream-API
 // hiccup, but ONLY when suppression is enabled, because a genuine RTSP/transcode/crop failure must still produce the canonical dump rather than the friendly sentence;
-// then an FFmpeg probesize-estimation failure, which is ungated because the probesize self-tune runs for every FFmpeg error regardless of source; otherwise the
-// canonical verdict. The benign branch matches the known-benign livestream-API patterns; the order (benign before probesize) is load-bearing because both can match on
-// the same teardown. This function returns the protocol VERDICT only - the user-facing label (LIVESTREAM_API_ERROR_MESSAGE) and all I/O stay with the dispatcher that
-// consumes it.
+// then an FFmpeg probesize-estimation failure, which is ungated because the probesize self-tune runs for every FFmpeg error regardless of source; otherwise the canonical
+// verdict. The benign branch matches the known-benign livestream-API patterns; the order (benign before probesize) matters because both can match on the same teardown,
+// and checking probesize first would mask the friendlier benign message. This function returns the protocol VERDICT only - the user-facing label
+// (LIVESTREAM_API_ERROR_MESSAGE) and all I/O stay with the dispatcher that consumes it.
 export function classifyTeardownFailure(stderrLog: readonly string[], suppressLivestreamApiErrors: boolean): "benign-api" | "canonical" | "probesize" {
 
   // benign-API suppression first (gated on the captured flag); then probesize self-tune (ungated); else canonical.

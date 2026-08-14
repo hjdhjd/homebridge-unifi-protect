@@ -31,7 +31,7 @@ export const hasValidCredentials = (config) => {
 
 // Produce the controllers patch that writes the supplied credentials into the primary controller, preserving any additional controllers and the primary's other
 // fields. On a true first run controllers[0] is undefined; object spread of undefined is a safe no-op that yields just the three credential fields, so no separate
-// initialization is needed. Returned as a `{ controllers }` patch for the session's commit seam to merge onto the platform entry.
+// initialization is needed. Returned as a `{ controllers }` patch for the session's commit to merge onto the platform entry.
 export const withPrimaryCredentials = (config, { address, password, username }) => {
 
   const next = [...controllers(config)];

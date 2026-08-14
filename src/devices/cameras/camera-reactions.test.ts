@@ -8,13 +8,14 @@
  * structural-sharing store push (pushCameraPatch / pushCameraFeatureFlags) followed by a settle and an assertion on the effect the reaction produced (the characteristic
  * it WROTE, or the recording dispatch it routed to), never on the private updater that wrote it - plus the bound GET read-throughs and the two pure-context onSets (HKSV
  * recording, doorbell mute) whose handlers write only accessory.context and never touch the controller. The camera.lastMotion bare-motion observer is netted here through
- * the injected recording-dispatch seam, exactly as the sensor / light suites net their own lastMotion observe. Each reaction is constructed against a plain ProtectCamera
- * through the same camera-construction harness seam (the stub streaming-delegate factory), so the instance under test is the production class and the casts are confined
- * to the construction call. The smart-detect object sensors belong to capability-reconcile.test.ts, alongside the other gates the reconcile chokepoint drives.
+ * the injected recording-dispatch interface, exactly as the sensor / light suites net their own lastMotion observe. Each reaction is constructed against a plain
+ * ProtectCamera through the same camera-construction harness interface (the stub streaming-delegate factory), so the instance under test is the production class and
+ * the casts are confined to the construction call. The smart-detect object sensors belong to capability-reconcile.test.ts, alongside the other gates the reconcile
+ * chokepoint drives.
  *
  * The vacuity gate is two-part, carried from the device-* law: a gated reaction needs both its HARDWARE precondition (a makeCameraConfig featureFlags flag) and, where a
  * sub-option defaults FALSE, the exact Enable.* userOption string. Every with-feature reaction HARD-asserts the gated service or characteristic EXISTS as its FIRST
- * discriminator (a non-optional assert.ok, so an absent service throws here rather than letting a later optional-chained assertion pass vacuously) and pairs with a
+ * existence assertion (a non-optional assert.ok, so an absent service throws here rather than letting a later optional-chained assertion pass vacuously) and pairs with a
  * without-gate test that proves the same push produces nothing when the precondition is omitted.
  *
  * Two writes are honestly out of this suite's reach and left uncovered, NOT asserted: the night-vision operating-mode write (camera.ts, gated on
@@ -71,7 +72,7 @@ interface BuiltCamera<C extends ProtectCamera = ProtectCamera> {
 
 // Build a REAL plain ProtectCamera against the harness doubles, exactly as camera-construction.test.ts assembles it: a camera config (optionally carrying feature
 // flags), the store double over it, the typed NVR / platform doubles with the test's userOptions threaded into the REAL FeatureOptions engine, the read-through camera
-// projection, and a fresh accessory. The casts are confined to this seam - the instance is the production ProtectCamera and everything it runs is the production path.
+// projection, and a fresh accessory. The casts are confined to construction - the instance is the production ProtectCamera and everything it runs is the production path.
 // The returned controller is the harness AbortController the afterEach aborts to unwind the observe loops. seedLastMotion, when supplied, is committed to the store
 // record BEFORE the camera is constructed, so the lastMotion observer seeds its baseline against an already-present value - the bootstrap-hydration case where a value
 // present at subscribe must never fire.
@@ -88,7 +89,7 @@ async function buildCamera<C extends ProtectCamera = ProtectCamera>(options: { c
     store.pushCameraPatch(cameraConfig.id, { lastMotion: options.seedLastMotion });
   }
 
-  // Inject the recording dispatch through the NVR double's dispatch seam so the lastMotion observer's firehose routing is asserted against the REAL ProtectEventDispatch
+  // Inject the recording dispatch through the NVR double's dispatch hook so the lastMotion observer's firehose routing is asserted against the REAL ProtectEventDispatch
   // contract (the recording subclass captures the delivery without arming the real reset timer or touching HAP), exactly as the sensor / light suites do. The recording
   // double is read back off nvr.events rather than captured from the factory closure - the same posture sensor.test.ts uses to avoid the assignment-expression smell.
   const { controller, factory, logEntries, nvr } = makeTestNvr({ dispatch: (innerNvr: ProtectNvr): ProtectEventDispatch => new TestRecordingDispatch(innerNvr), store,
@@ -137,7 +138,7 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
       // The videoCodec reaction is identical to the (already-netted) channels reaction: both drive the streaming reconcile. Its only observable output is the WAKE KEY
       // re-derive side effect (the factory is not invoked again), so a one-shot wake subscription windows the single push and the create-call count proves the re-run
-      // republished profiles and exited through the this.stream idempotency gate rather than building a second delegate.
+      // republished profiles and exited through the this.stream gate that makes a repeat call a no-op, rather than building a second delegate.
       const wakes: ObserverWakePayload[] = [];
       const onWake = (message: unknown): void => { wakes.push(message as ObserverWakePayload); };
 

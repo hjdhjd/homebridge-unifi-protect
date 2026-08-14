@@ -3,7 +3,7 @@
  * nvr-health.ts: Cohesive observability for the NVR's current operating condition.
  *
  * This module models the *health* of a UniFi Protect NVR as a first-class, NVR-scoped concept that the rest of the plugin can read instead of having to stitch
- * the picture together from per-component counters and per-camera errors. The design follows three principles:
+ * the picture together from per-component counters and per-camera errors. The design follows these principles:
  *
  *   1. Health is *derived*, not *set*. Inputs are typed symptoms (`HealthSymptom`) flowing in from the controller's health bridge, which translates the library's
  *      diagnostics wire - request outcomes, throttle transitions, livestream recovery episodes - into them. The state is computed by a pure reducer over a sliding
@@ -53,8 +53,8 @@ export type NvrHealthState = "degraded" | "healthy" | "stressed";
 
 /**
  * Symptoms feed the reducer. Each variant carries the timestamp when the symptom occurred (stamped by the caller, so the reducer remains pure with respect to
- * wall time), and a discriminating `kind`. A `cameraId` is included on livestream variants so future policies can distinguish per-camera vs. correlated stress
- * without changing the symptom shape.
+ * wall time), and a `kind` field that marks the variant. A `cameraId` is included on livestream variants so future policies can distinguish per-camera vs.
+ * correlated stress without changing the symptom shape.
  *
  *   - `apiError`: an API request returned a failure (timeout, 4xx/5xx, network error, etc.).
  *   - `apiSuccess`: an API request returned a successful response. Counted as evidence of recovery; reduces the apparent symptom rate.
@@ -241,6 +241,9 @@ export interface Clock {
   now(): number;
 }
 
+/**
+ * The production clock, backed by Date.now(). The default {@link Clock} implementation everywhere except tests, which substitute a deterministic clock.
+ */
 export const systemClock: Clock = { now: (): number => Date.now() };
 
 /**
@@ -317,7 +320,7 @@ export class NvrHealth extends EventEmitter<NvrHealthEvents> {
 
   /**
    * Stop observing symptoms until {@link resume} is called. Used to bracket operations the plugin is intentionally driving (controlled disconnects, scheduled
-   * reboots) so the induced API errors and stalls do not get surfaced as if they were organic controller stress. Idempotent.
+   * reboots) so the induced API errors and stalls do not get surfaced as if they were organic controller stress. Safe to call more than once.
    */
   public suspend(): void {
 
@@ -325,8 +328,8 @@ export class NvrHealth extends EventEmitter<NvrHealthEvents> {
   }
 
   /**
-   * Resume observing symptoms. Idempotent. Does not change the current state...if the parent wants a clean slate after the suspend window, it should call
-   * {@link reset} explicitly.
+   * Resume observing symptoms. Safe to call more than once. Does not change the current state...if the parent wants a clean slate after the suspend window, it
+   * should call {@link reset} explicitly.
    */
   public resume(): void {
 

@@ -69,7 +69,7 @@ export function effectiveLcdMessage(options: { lcdMessage: DeepPartial<ProtectCa
  * spine - rather than ProtectCamera, because doorbell-ness is temporally dynamic capability state, not a static identity: the camera the controller late-flips to a
  * doorbell stays the same instance, and this capability attaches to it live. The capability owns the doorbell services (LCD message switches, physical chimes, the
  * chime-volume lightbulb, the auth sensor), the read-through settings getters, the doorbell observers, the doorbell MQTT topics, and the package-camera lifecycle. Of the
- * contract's two detachability policies it holds both, at its two levels: the capability itself is promotion-only, while the package camera it owns follows the
+ * contract's detachability policies it holds both: the capability itself is promotion-only, while the package camera it owns follows the
  * graced-cycle child-detach checklist, because a package camera genuinely comes and goes.
  */
 export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
@@ -135,9 +135,9 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
     return this.#device.peek()?.chimeDuration ?? 0;
   }
 
-  // Configure the doorbell capability for HomeKit. The configure order is: the package camera, the Doorbell service (through the camera's seam, at the package-to-service
-  // point), the auth sensor, the LCD messages, the physical chimes, the chime volume, then the MQTT topics and the observers. The Doorbell service is stood up
-  // through the camera's configureDoorbellService seam here, so the camera does not separately call it on attach.
+  // Configure the doorbell capability for HomeKit. The configure order is: the package camera, the Doorbell service (through the camera's own configureDoorbellService
+  // call, at the package-to-service point), the auth sensor, the LCD messages, the physical chimes, the chime volume, then the MQTT topics and the observers. The
+  // Doorbell service is stood up through the camera's configureDoorbellService call here, so the camera does not separately call it on attach.
   public override configure(): void {
 
     // Configure our package camera, if we have one.
@@ -223,7 +223,7 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
       return false;
     }
 
-    // Walk the consolidated list of messages from the doorbell and the user's configuration, registering a switch in HomeKit for each.
+    // Walk the doorbell's saved messages from the controller, registering a switch in HomeKit for each.
     for(const entry of this.getMessages()) {
 
       // Truncate anything longer than the character limit that the doorbell will accept.
@@ -335,20 +335,21 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
 
     // Now create the package camera accessory through the NVR composition root. The package camera is a HomeKit sub-view of this same physical device, so it shares our
     // live camera projection rather than holding a synthesized config snapshot. It is self-observing: its display name is the parent's name plus the display suffix,
-    // applied through its syncedName seam, and its own name, firmware, and availability observers keep it tracking the shared device live - this capability owns only its
-    // lifecycle (the WHEN, the observers, the sweep triggers), never its construction; only the new lives at the composition root, so no sibling-class value-import.
+    // applied through its syncedName delegation, and its own name, firmware, and availability observers keep it tracking the shared device live - this capability owns
+    // only its lifecycle (the WHEN, the observers, the sweep triggers), never its construction; only the new lives at the composition root, so no sibling-class
+    // value-import.
     this.packageCamera = this.nvr.createPackageCamera(packageCameraAccessory, this.#device);
 
     return true;
   }
 
-  /* Reconcile the package camera's lifecycle against the controller's live capability flag, idempotently in both directions. The hasPackageCamera observer drives
-   * this on a flag change, and the NVR's stability sweep drives it at every stability return - the sweep is both the construction-time arm (a capability withdrawn
-   * while the plugin was down leaves a cached BRIDGED package accessory that no other removal path can ever reach, since the orphan sweep keys on a mac the package
-   * deliberately lacks and the orphan guard refuses parent-alive packages) and the re-arm (a detach grace dropped by a stability loss, or a fire that failed its
-   * stability re-check, is re-scheduled once the controller settles). STANDALONE EXCLUSION: homebridge never restores external accessories at startup, so a
-   * standalone package ghost after a restart is invisible here - we cannot know one existed, its HomeKit-side pairing cleanup is inherently the user's, and no
-   * speculative guidance is emitted.
+  /* Reconcile the package camera's lifecycle against the controller's live capability flag, as a no-op in both directions when nothing has changed. The
+   * hasPackageCamera observer drives this on a flag change, and the NVR's stability sweep drives it at every stability return - the sweep is both the construction-time
+   * arm (a capability withdrawn while the plugin was down leaves a cached BRIDGED package accessory that no other removal path can ever reach, since the orphan sweep
+   * keys on a mac the package deliberately lacks and the orphan guard refuses parent-alive packages) and the re-arm (a detach grace dropped by a stability loss, or a
+   * fire that failed its stability re-check, is re-scheduled once the controller settles). STANDALONE EXCLUSION: homebridge never restores external accessories at
+   * startup, so a standalone package ghost after a restart is invisible here - we cannot know one existed, its HomeKit-side pairing cleanup is inherently the user's,
+   * and no speculative guidance is emitted.
    */
   public reconcilePackageCamera(): void {
 
@@ -926,7 +927,7 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
   }
 
   // Push the chime-volume projection onto the doorbell's volume Lightbulb. Shares the read path (chimeVolume / chimeVolumeFor) with the onGet handlers, so the displayed
-  // volume and the live value never disagree. Idempotent - HomeKit coalesces an unchanged write.
+  // volume and the live value never disagree. A no-op on an unchanged write - HomeKit coalesces it.
   private updateChimeVolume(): void {
 
     const volume = this.chimeVolume;
@@ -940,7 +941,7 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
    * runs when a demoted-while-down doorbell reconstructs as a plain camera, where today's doorbell-only services would otherwise linger forever. Removes the reserved
    * doorbell subtypes (the three physical-chime switches, the chime-volume lightbulb, the auth contact sensor) and the non-reserved message-switch Switch services
    * (whose subtype is shaped "type.text", never a reserved name). Deliberately does NOT remove the Doorbell service (configureDoorbellTrigger's existing arm owns its
-   * removal for non-doorbell hardware), the mute switch, the HKSV-recording switch, or the three UFP-recording switches - those are camera-level or owned elsewhere.
+   * removal for non-doorbell hardware), the mute switch, the HKSV-recording switch, or the UFP-recording switches - those are camera-level or owned elsewhere.
    * Static and accessory-scoped because it runs without a live capability (none is attached when this fires).
    */
   public static removeServices(accessory: ProtectAccessory, hap: HAP, log: HomebridgePluginLogging): void {

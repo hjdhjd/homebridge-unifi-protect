@@ -8,16 +8,16 @@
  * minimal TestBaseDevice vehicle, rather than re-asserted inside each family suite. Each family suite nets only that the family wires these base methods; the base
  * behavior itself is this file's job.
  *
- * The vacuity gate (load-bearing): every Motion option defaults to FALSE, so the runtime service gate is the Enable.Motion.* userOptions string, NOT the carrier's
- * isMotionDetected. The carrier's isMotionDetected only satisfies the hasProperty APPLICABILITY check (it makes the option visible to FeatureOptions) and backs the
- * read-through; it does NOT materialize a service. So every with-feature test builds with the exact alphabetical Enable.Motion.* userOptions subset and HARD-asserts the
- * service EXISTS (a non-optional assert.ok as the FIRST discriminator) - an absent service then throws rather than passing vacuously - paired with a without-feature
- * absence test that proves the same path produces nothing when the string is omitted.
+ * The vacuity gate (required for these assertions to be meaningful): every Motion service option defaults to FALSE, so the runtime service gate is the Enable.Motion.*
+ * userOptions string, NOT the carrier's isMotionDetected. The carrier's isMotionDetected only satisfies the hasProperty APPLICABILITY check (it makes the option visible
+ * to FeatureOptions) and backs the read-through; it does NOT materialize a service. So every with-feature test builds with the exact alphabetical Enable.Motion.*
+ * userOptions subset and HARD-asserts the service EXISTS (a non-optional assert.ok checked first) - an absent service then throws rather than passing vacuously - paired
+ * with a without-feature absence test that proves the same path produces nothing when the string is omitted.
  *
  * The trigger's reverts are bare setTimeout(...,50) NOT registered in this.timers, so device.cleanup() does not clear them; the disabled-revert and the off-revert
  * tests await ~60ms so the bare revert fires within the test, touching only that test's fresh accessory. The firehose routing goes through the shared
- * TestRecordingDispatch (a real ProtectEventDispatch whose motion delivery records into an array and arms no reset timer), injected through makeTestNvr's dispatch seam
- * and read off nvr.events.
+ * TestRecordingDispatch (a real ProtectEventDispatch whose motion delivery records into an array and arms no reset timer), injected through makeTestNvr's dispatch
+ * parameter and read off nvr.events.
  *
  * The isolation model is per-test-fresh: each test calls buildMotionDevice with its own userOptions, and an afterEach unwinds the device's per-accessory abort. These
  * base services are HAP- and MQTT-driven, not observeState-driven, so there is no observer-wake subscription here (unlike the family suites).
@@ -58,10 +58,10 @@ const SENSOR_MAC = "74ACB9000401";
 const controllers: AbortController[] = [];
 
 // The reusable construction helper: build a REAL TestBaseDevice (a concrete ProtectDevice leaf whose ctor only super()s) against the harness doubles, seeded with the
-// all-quiet sensor carrier and the recording dispatch injected through the NVR double's dispatch seam. The casts are confined to the construction seam exactly as the
-// light / chime suites do; the instance under test is the production base, running its real configureHints / configureMotionSensor / configureOccupancySensor paths. We
-// drive the wiring a family leaf would: configureHints first (the motion configurators read this.hints), then the base's motion-capability configurators with isEnabled
-// true. The userOptions thread into the REAL FeatureOptions engine, so the Enable.Motion.* strings - and only those - materialize the services.
+// all-quiet sensor carrier and the recording dispatch injected through the NVR double's dispatch parameter. The casts are confined to the point of construction exactly
+// as the light / chime suites do; the instance under test is the production base, running its real configureHints / configureMotionSensor / configureOccupancySensor
+// paths. We drive the wiring a family leaf would: configureHints first (the motion configurators read this.hints), then the base's motion-capability configurators with
+// isEnabled true. The userOptions thread into the REAL FeatureOptions engine, so the Enable.Motion.* strings - and only those - materialize the services.
 function buildMotionDevice(harnessOptions: { userOptions?: string[] } = {}): {
   accessory: TestAccessory; device: TestBaseDevice; logEntries: TestLogEntry[]; mqtt: TestMqttClient; recording: TestRecordingDispatch;
 } {
@@ -259,7 +259,7 @@ describe("base ProtectDevice motion capability (device-motion concern net)", () 
 
       device = built.device;
 
-      // HARD-assert the SERVICE exists FIRST - this is the primary, non-optional discriminator that defeats vacuity.
+      // HARD-assert the SERVICE exists FIRST - this is the primary, non-optional check that defeats vacuity.
       const occupancy = built.accessory.getService(Service.OccupancySensor);
 
       assert.ok(occupancy, "the Motion.OccupancySensor feature materializes the OccupancySensor service");
@@ -285,9 +285,10 @@ describe("base ProtectDevice motion capability (device-motion concern net)", () 
 
     test("an occupancy service created during a steady-state reconcile runs its full init block", async () => {
 
-      // Fold C28: Motion.OccupancySensor must be enabled so validService re-creates the service on the enable. The constructor's first configure stood the service up
-      // and registered its GET; a disable removes it, then a steady-state reconcile (isInitialized TRUE - the shape a runtime enable takes) must re-create the service
-      // AND run the init block, which pre-fix it skipped because isInitialized was true and there was no creation-detection reset.
+      // Motion.OccupancySensor must be enabled so validService re-creates the service on the enable. The constructor's first configure stands the service up and
+      // registers its GET; a disable removes it, and a steady-state reconcile (isInitialized TRUE, the shape a runtime enable takes) re-creates the service. The
+      // acquireService onServiceCreate callback resets isInitialized to false on that re-creation, which is what makes the init block run again rather than being
+      // skipped.
       const built = buildMotionDevice({ userOptions: ["Enable.Motion.OccupancySensor"] });
 
       device = built.device;
@@ -311,7 +312,7 @@ describe("base ProtectDevice motion capability (device-motion concern net)", () 
 
     test("re-creating the occupancy service does not accumulate duplicate smart-occupancy types", async () => {
 
-      // Fold C34: the smart-detect occupancy branch (only cameras reach it in production) is driven here on the base carrier by seeding the config's smart-detect type
+      // The smart-detect occupancy branch (only cameras reach it in production) is driven here on the base carrier by seeding the config's smart-detect type
       // list and flipping hints.smartDetect true, so the init block's push loop runs. The creation-detection reset must clear smartOccupancy before each re-run, so a
       // re-created service repopulates from empty rather than accumulating a duplicate - a latent hazard today, since the reachable runtime re-entry carries smartDetect
       // false.
@@ -351,7 +352,7 @@ describe("base ProtectDevice motion capability (device-motion concern net)", () 
     });
   });
 
-  describe("the base motion get/set MQTT seam", () => {
+  describe("the base motion get/set MQTT interface", () => {
 
     test("the motion set handler fires the firehose on \"true\" and is a no-op otherwise; the get handler reads MotionDetected; the topic is MAC-scoped", async () => {
 

@@ -24,8 +24,14 @@ export const NIGHTVISION_ICR_STEP = 7;
  */
 export type NightVisionCommand = { irLedMode: "auto" | "autoFilterOnly" | "off" | "on" } | { icrCustomValue?: number; irLedMode: "custom" | "customFilterOnly" };
 
-// Narrow a raw irLedMode string to a NightVisionMode, or null for an unrecognized value. The one wire-boundary classifier: unknown-value handling lives here, so every
-// other function in the module takes the narrow type and its maps stay exhaustive.
+/**
+ * Narrow a raw irLedMode string to a NightVisionMode, or null for an unrecognized value. The one wire-boundary classifier: unknown-value handling lives here, so
+ * every other function in the module takes the narrow type and its maps stay exhaustive.
+ *
+ * @param raw - The raw irLedMode string as reported by the controller.
+ *
+ * @returns The narrow NightVisionMode the raw value maps to, or null when the value is unrecognized.
+ */
 export function parseNightVisionMode(raw: string): NightVisionMode | null {
 
   switch(raw) {
@@ -45,21 +51,39 @@ export function parseNightVisionMode(raw: string): NightVisionMode | null {
   }
 }
 
-// Whether night vision is active for a mode: any mode other than "off". A null - an unrecognized wire value - reads as active, matching the shipped `irLedMode !== "off"`
-// semantics of the binary getter.
+/**
+ * Whether night vision is active for a mode: any mode other than "off". A null - an unrecognized wire value - reads as active, matching the shipped
+ * `irLedMode !== "off"` semantics of the binary getter.
+ *
+ * @param mode - The narrow night vision mode, or null for an unrecognized wire value.
+ *
+ * @returns `true` when night vision is active for the mode, `false` when it is off.
+ */
 export function nightVisionActive(mode: NightVisionMode | null): boolean {
 
   return mode !== "off";
 }
 
-// The command for the binary NightVision characteristic: auto when turning on, off when turning off.
+/**
+ * The command for the binary NightVision characteristic: auto when turning on, off when turning off.
+ *
+ * @param value - The characteristic's requested boolean value.
+ *
+ * @returns The command to send to the controller.
+ */
 export function nightVisionToggleCommand(value: boolean): NightVisionCommand {
 
   return { irLedMode: value ? "auto" : "off" };
 }
 
-// The brightness a mode maps to - the inverse of the level math: off 0, autoFilterOnly 5, auto 10, on 100, and the custom pair through the shared icr transform. Total
-// over the narrow mode; the unknown case lives in the classifier, not here.
+/**
+ * The brightness a mode maps to - the inverse of the level math: off 0, autoFilterOnly 5, auto 10, on 100, and the custom pair through the shared icr transform.
+ * Total over the narrow mode; the unknown case lives in the classifier, not here.
+ *
+ * @param options - icrCustomValue is the controller's custom infrared-cutoff-removal value; mode is the narrow night vision mode to map.
+ *
+ * @returns The HomeKit brightness the mode maps to.
+ */
 export function nightVisionBrightnessForMode(options: { icrCustomValue: number; mode: NightVisionMode }): number {
 
   const { icrCustomValue, mode } = options;
@@ -89,8 +113,14 @@ export function nightVisionBrightnessForMode(options: { icrCustomValue: number; 
   }
 }
 
-// Snap a raw brightness to the discrete stops night vision recognizes: below 5 -> 0, the open 5..10 band -> 5, the open 10..20 band -> 10, above 90 -> 100, and every
-// other value unchanged (the exact 5, 10, and 100 stops and the 20..90 custom range pass through).
+/**
+ * Snap a raw brightness to the discrete stops night vision recognizes: below 5 -> 0, the open 5..10 band -> 5, the open 10..20 band -> 10, above 90 -> 100, and
+ * every other value unchanged (the exact 5, 10, and 100 stops and the 20..90 custom range pass through).
+ *
+ * @param level - The raw HomeKit brightness to snap.
+ *
+ * @returns The quantized brightness stop.
+ */
 export function quantizeNightVisionLevel(level: number): number {
 
   if(level < 5) {
@@ -123,8 +153,15 @@ function customModeFor(currentMode: NightVisionMode | null): "custom" | "customF
   return ((currentMode === "autoFilterOnly") || (currentMode === "customFilterOnly")) ? "customFilterOnly" : "custom";
 }
 
-// The command and reflected brightness for a raw dimmer brightness set: quantize, then map each stop to its mode. The custom range computes the icrCustomValue through
-// the shared transform and reflects the brightness that value maps back to (Protect's granularity is coarser than HomeKit's, so the reflected value can differ from set).
+/**
+ * The command and reflected brightness for a raw dimmer brightness set: quantize, then map each stop to its mode. The custom range computes the icrCustomValue
+ * through the shared transform and reflects the brightness that value maps back to (Protect's granularity is coarser than HomeKit's, so the reflected value can
+ * differ from set).
+ *
+ * @param options - currentMode is the camera's current night vision mode, used to preserve a filter-only custom pick; level is the raw brightness being set.
+ *
+ * @returns The command to send to the controller and the brightness HomeKit should reflect back.
+ */
 export function nightVisionCommandForLevel(options: { currentMode: NightVisionMode | null; level: number }): { command: NightVisionCommand; reflectedLevel: number } {
 
   const { currentMode, level } = options;
@@ -156,9 +193,15 @@ export function nightVisionCommandForLevel(options: { currentMode: NightVisionMo
   }
 }
 
-// The command for turning the dimmer On, over the same table but never selecting "off" (turning on must not turn night vision off) and never sending an icrCustomValue
-// (the custom arm is mode only, so the controller keeps its current custom value): quantize the current brightness, then 5 -> autoFilterOnly, 10 -> auto, 100 -> on, and
-// anything else -> the mode-preserving custom pick.
+/**
+ * The command for turning the dimmer On, over the same table but never selecting "off" (turning on must not turn night vision off) and never sending an
+ * icrCustomValue (the custom arm is mode only, so the controller keeps its current custom value): quantize the current brightness, then 5 -> autoFilterOnly,
+ * 10 -> auto, 100 -> on, and anything else -> the mode-preserving custom pick.
+ *
+ * @param options - currentLevel is the camera's current brightness; currentMode is its current night vision mode, used for the mode-preserving custom pick.
+ *
+ * @returns The command to send to the controller.
+ */
 export function nightVisionModeForToggleOn(options: { currentLevel: number; currentMode: NightVisionMode | null }): NightVisionCommand {
 
   const { currentLevel, currentMode } = options;

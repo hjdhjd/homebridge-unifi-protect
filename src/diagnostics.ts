@@ -19,7 +19,7 @@ import diagnosticsChannel from "node:diagnostics_channel";
 export const channels = {
 
   // The typed-firehose router dispatched an activity event (smart detection, tamper, doorbell ring, access, authentication, or button press) to a HomeKit delivery
-  // method. Fires once per routed event that reaches a delivery method, carrying the discriminated kind and, when a target accessory was resolved, the addressed
+  // method. Fires once per routed event that reaches a delivery method, carrying the event's kind tag and, when a target accessory was resolved, the addressed
   // camera id.
   firehoseDispatch: diagnosticsChannel.channel("hbup:firehose:dispatch"),
 
@@ -38,7 +38,7 @@ export const channels = {
 } as const;
 
 /**
- * Payload published on {@link channels.firehoseDispatch}. `kind` is the dispatched event's discriminated kind (e.g. `smartDetect`, `tamperDetected`, `doorbellRing`,
+ * Payload published on {@link channels.firehoseDispatch}. `kind` is the dispatched event's kind tag (e.g. `smartDetect`, `tamperDetected`, `doorbellRing`,
  * `accessEvent`, `authDetected`, `buttonPressed`); `cameraId` is the addressed camera/device id, present whenever the router resolved a target accessory.
  */
 export interface FirehoseDispatchPayload {
@@ -58,7 +58,7 @@ export interface NvrLifecyclePayload {
 
 /**
  * Payload published on {@link channels.reachabilityFanout}. `accessoryId` is the HomeKit accessory UUID; `was` and `now` are the StatusActive value before and
- * after the fan-out, so a subscriber sees the actual reachability flip rather than every idempotent rewrite.
+ * after the fan-out, so a subscriber sees the actual reachability flip rather than every repeat write that changes nothing.
  */
 export interface ReachabilityFanoutPayload {
 

@@ -287,11 +287,11 @@ export class ProtectNvr {
    * livestream-recovery diagnostics channels. The library owns the recovery protocol and publishes each episode's lifecycle on these channels; what this root does with
    * them is decide how loudly each episode is told to the user and keep the ledger that keeps the two edges of one episode consistent.
    *
-   * We subscribe the three episode-terminal channels. `recovery:started` (a stream was disrupted; the episode begins) opens the narration and latches the episode's
-   * quiet-or-loud classification, `recovery:recovered` (it resumed) closes it by consuming that classification, and `recovery:exhausted` (the policy gave up) is
-   * consumed for ledger hygiene alone - it drains the episode's latch entry so the ledger holds only episodes in flight; the give-up's narration belongs to the
-   * buffer's consume loop and its retry to the availability edge and the demand kicks, so that handler logs nothing. The health symptoms these same episodes feed ride
-   * the health bridge's own subscriptions, whose doc carries the channel-choice rationale.
+   * We subscribe each episode-terminal channel the library publishes for this concern. `recovery:started` (a stream was disrupted; the episode begins) opens the
+   * narration and latches the episode's quiet-or-loud classification, `recovery:recovered` (it resumed) closes it by consuming that classification, and
+   * `recovery:exhausted` (the policy gave up) is consumed for ledger hygiene alone - it drains the episode's latch entry so the ledger holds only episodes in flight;
+   * the give-up's narration belongs to the buffer's consume loop and its retry to the availability edge and the demand kicks, so that handler logs nothing. The health
+   * symptoms these same episodes feed ride the health bridge's own subscriptions, whose doc carries the channel-choice rationale.
    *
    * The channels are process-global - shared by every `ProtectNvr` in this process - so each handler filters to this controller's cameras via `getDeviceById(cameraId)`
    * and drops the rest (another controller's camera, or one we do not configure). A package-camera stream carries its PARENT camera's device id, so the lookup resolves
@@ -487,8 +487,8 @@ export class ProtectNvr {
    * feature-disabled controller never reaches good-state, so the stability sweep never arms during the disabled-controller startup path (login's sleep window). A
    * library throttle makes connection.isHealthy false, since it derives the throttled state, so a throttle conservatively resets the clock.
    *
-   * The three facts each have their own trigger: transition() (phase), the health stateChange handler (health), and the connection observe loop (reachability). All
-   * three call here rather than assembling the conjunction themselves, so it has exactly one definition.
+   * Each of these facts has its own trigger: transition() moves phase, the health stateChange handler moves health, and the connection observe loop moves reachability.
+   * Every trigger calls here rather than assembling the conjunction itself, so the conjunction has exactly one definition.
    */
   #pushRemovalStability(): void {
 
@@ -684,9 +684,9 @@ export class ProtectNvr {
 
     // Tear down all connection-dependent camera resources. Active HomeKit streaming sessions and HKSV timeshift buffers both depend on the controller connection.
     // Shutting them down proactively prevents error noise from livestream self-healing and FFmpeg processes communicating with a disconnected controller. The camera
-    // does not own its own session manager, so disposing these consumers is what releases their underlying unifi-protect livestream pool subscriptions. This is a HARD
-    // ORDERING INVARIANT - the connection-dependent consumers (and the pool subscriptions they hold) are torn down in this loop BEFORE the unifi-protect client is
-    // disposed below, so no subscription outlives the client it draws from. The endpoints iterator walks package cameras alongside their parents.
+    // does not own its own session manager, so disposing these consumers is what releases their underlying unifi-protect livestream pool subscriptions. This
+    // is a STRICT ORDERING REQUIREMENT - the connection-dependent consumers (and the pool subscriptions they hold) are torn down in this loop BEFORE the
+    // unifi-protect client is disposed below, so no subscription outlives the client it draws from. The endpoints iterator walks package cameras alongside their parents.
     for(const device of this.deviceEndpoints()) {
 
       if(!(device instanceof ProtectCamera)) {
@@ -950,11 +950,11 @@ export class ProtectNvr {
     }
   }
 
-  // Spawn the per-category device-membership observe loops, seeding each with an initial population pass. The unifi-protect client's observe() yields on change, not the
-  // current value, so each loop reconciles once against the current snapshot before awaiting deltas. The loops are bound to the terminal shutdown signal and assume a
-  // stable client for the plugin's connected lifetime - a unifi-protect library invariant, since the ConnectionMonitor recovers an outage without recreating the client.
-  // The scheduled reboot rides that same surviving client (it POSTs client.reboot() and lets the connection monitor auto-recover, recreating nothing), so the
-  // stable-client assumption holds across a reboot too and the loops never need re-spawning.
+  // Spawn the per-category device-membership observe loops, seeding each with an initial population pass. The unifi-protect client's observe() yields on change, not
+  // the current value, so each loop reconciles once against the current snapshot before awaiting deltas. The loops are bound to the terminal shutdown signal and
+  // assume a stable client for the plugin's connected lifetime - a rule the unifi-protect library guarantees, since the ConnectionMonitor recovers an outage without
+  // recreating the client. The scheduled reboot rides that same surviving client (it POSTs client.reboot() and lets the connection monitor auto-recover, recreating
+  // nothing), so the stable-client assumption holds across a reboot too and the loops never need re-spawning.
   private startDeviceObservers(): void {
 
     for(const key of DEVICE_COLLECTION_KEYS) {
@@ -1027,7 +1027,7 @@ export class ProtectNvr {
           this.resumeFromInducedReboot();
         }
 
-        // Re-evaluate the removal stability clock - reachability is the third fact `good` depends on, and this is the load-bearing driver. An organic outage publishes
+        // Re-evaluate the removal stability clock - reachability is the third fact `good` depends on, and this loop is what drives that fact. An organic outage publishes
         // only a lifecycle event (controllerLost emits no phase or health change) and the symptom-rate health model drifts back to healthy during a quiet outage, so
         // without re-evaluating here on every connection-state transition a grace timer could fire mid-outage. connection.observe() yields on every state change
         // (degraded / lost / reconnecting / healthy), so reading connection.isHealthy here is what closes the gate the moment a socket-dropping outage begins.
@@ -1055,7 +1055,7 @@ export class ProtectNvr {
 
   /* Construct a doorbell capability for a camera that the controller reports as a doorbell. Constructing a device-family object is graph-assembly knowledge, which lives
    * at the composition root - the camera keeps the entire lifecycle DECISION (it observes the flag and decides WHEN to attach), and only the new lands here. This method
-   * holds zero policy: one new, on request, by the decision-owner. Routing construction upward rides the codebase invariant that device-layer objects reach the NVR only
+   * holds zero policy: one new, on request, by the decision-owner. Routing construction upward rides the codebase rule that device-layer objects reach the NVR only
    * through inherited fields, never value-imports - so the camera calling this DURING its own construction forms no module import edge, and the device layer is
    * structurally cycle-proof. It is safe to call mid-construction because the method has no dependence on NVR state being mutated at that time.
    */
@@ -1089,9 +1089,10 @@ export class ProtectNvr {
   }
 
   // Remove the doorbell-only services a demoted-while-down doorbell left on a now-plain camera accessory - the sweep-stale removal the camera's reconcile runs when the
-  // controller does not report a doorbell and no capability is attached. The removal logic is the DoorbellCapability's own SSOT (it owns the doorbell-only service set);
-  // this seam routes the camera's request through the composition root so the camera never value-imports the sibling capability class - the same removal-machinery-at-the
-  // -root rule the package sweep follows, keeping the device layer structurally cycle-proof (sibling device classes are type-only in the device leaves).
+  // controller does not report a doorbell and no capability is attached. The removal logic is the DoorbellCapability's own SSOT (it owns the doorbell-only service
+  // set); this interface routes the camera's request through the composition root so the camera never value-imports the sibling capability class - the same
+  // removal-machinery-at-the-root rule the package sweep follows, keeping the device layer structurally cycle-proof (sibling device classes are type-only in the
+  // device leaves).
   public removeStaleDoorbellServices(accessory: ProtectAccessory): void {
 
     DoorbellCapability.removeServices(accessory, this.hap, this.log);

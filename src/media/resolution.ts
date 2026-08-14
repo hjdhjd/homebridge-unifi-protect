@@ -21,8 +21,8 @@ import type { ProtectCameraChannelConfig } from "unifi-protect";
 import type { Resolution } from "homebridge";
 
 // One RTSP entry: a camera channel mapped to a HomeKit resolution, with the friendly display name and the FFmpeg `-i` input URL the media path consumes. The full
-// shape is load-bearing - the URL flows to live streaming, RTSP snapshots, and the livestream RTSP fallback - so the entry stays whole rather than split into a
-// transport-free profile.
+// shape carries the whole transport contract - the URL flows to live streaming, RTSP snapshots, and the livestream RTSP fallback, and splitting it would break each
+// of those consumers - so the entry stays whole rather than split into a transport-free profile.
 export interface ChannelProfile {
 
   channel: ProtectCameraChannelConfig;
@@ -218,15 +218,15 @@ export function selectChannelProfile(entries: readonly ChannelProfile[], request
 
     default: {
 
-      // SelectRequest is a closed discriminated union under today's two variants, so this branch is unreachable; the fallback returns null as a safe default
-      // rather than a compile-time exhaustiveness guarantee.
+      // SelectRequest is a closed discriminated union, so this branch is unreachable; the fallback returns null as a safe default rather than a compile-time
+      // exhaustiveness guarantee.
       return null;
     }
   }
 }
 
-// Build the per-camera advertised resolution list HomeKit consumes, from the camera's native RTSP entries. This is the entangled crux of the resolution surface, lifted
-// verbatim from the camera's own derivation behind deriveAdvertisedStreams: sort high to low; capture the native top (the empty list returns []); pick the
+// Build the per-camera advertised resolution list HomeKit consumes, from the camera's native RTSP entries. This is the entangled crux of the resolution surface, and it
+// is the exact sequence the camera's deriveAdvertisedStreams delegates to: sort high to low; capture the native top (the empty list returns []); pick the
 // aspect-appropriate base table; expand each row to 30 and 15 fps; then, for each candidate that belongs (under the drifting current top), find the closest RTSP match
 // and append it with the matched channel's native frame rate, re-sorting after each insert. Finally, normalize non-conforming frame rates to {15,24,30} so HomeKit will
 // attempt the camera.

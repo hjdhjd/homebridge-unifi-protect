@@ -14,7 +14,8 @@
  * hardwareDecoding, hardwareTranscoding, highResSnapshots, and the rest) are set by the CAMERA family's configureHints OVERRIDE - family-owned and out of scope here;
  * this nets the hints the BASE sets and the clamps.
  *
- * The value-option override syntax (load-bearing, verified against homebridge-plugin-utils featureOptions.js): Motion.Duration and Motion.OccupancySensor.Duration are
+ * The value-option override syntax (these duration assertions depend on it staying correct, verified against homebridge-plugin-utils featureOptions.js): Motion.Duration
+ * and Motion.OccupancySensor.Duration are
  * value-centric options (default: true, defaultValue 10 / 300). The global value override is Enable.<Option>.<N> - a single trailing numeric segment parsed as the value
  * - so Enable.Motion.Duration.20 sets the value to 20 and Enable.Motion.Duration.1 sets it to 1 (then the clamp raises it to 2). Each duration / clamp test asserts the
  * EXACT resulting device.hints value, so a no-op override (the value staying at its default) fails loudly rather than passing vacuously.
@@ -53,8 +54,8 @@ function loggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], substri
 const controllers: AbortController[] = [];
 
 // The reusable construction helper: build a REAL TestBaseDevice (a concrete ProtectDevice leaf whose ctor only super()s) against the harness doubles, seeded with the
-// all-quiet sensor carrier, then run the production base configureHints through the configureHintsFor window. The casts are confined to the construction seam exactly as
-// the device-motion / device-statusled suites do; the instance under test is the production base, running its real configureHints derivation / clamp / log paths. The
+// all-quiet sensor carrier, then run the production base configureHints through the configureHintsFor window. The casts are confined to the point of construction exactly
+// as the device-motion / device-statusled suites do; the instance under test is the production base, running its real configureHints derivation / clamp / log paths. The
 // userOptions thread into the REAL FeatureOptions engine, so the supplied Enable.* / Disable.* strings - and only those - move the hints off their defaults. There is no
 // projection recorder, no MQTT, and no observer wiring: configureHints reads only feature options (resolved against the carrier's MAC), so a plain TestSensorProjection
 // supplies the read-through identity and nothing more.

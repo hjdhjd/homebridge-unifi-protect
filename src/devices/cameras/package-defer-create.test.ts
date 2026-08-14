@@ -6,8 +6,8 @@
  * just-adopted doorbell sits in - and pins the deferral contract: no streaming delegate is created and no HomeKit camera controller is registered for the package
  * until the channel exists, the deferral is narrated to the user exactly once at construction, and the package-channel observer then builds the stream from the
  * REAL channel (the golden-master advertised list) the moment the controller provisions it. The post-build rows pin parent parity: a dimension change wakes the
- * observer and returns at the idempotency gate (the advertised list stays frozen until a restart), and a channel-list rebuild with identical package-channel
- * dimensions never wakes the observer at all - the computed-primitive selector's value dedup is the change detection.
+ * observer and returns at the gate that makes a re-derive safe to repeat (the advertised list stays frozen until a restart), and a channel-list rebuild with
+ * identical package-channel dimensions never wakes the observer at all - the computed-primitive selector's value dedup is the change detection.
  */
 import { G6_PRO_ENTRY_CHANNELS, PACKAGE_FIXTURES } from "../../camera.fixtures.ts";
 import { Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../../testing.helpers.ts";
@@ -98,8 +98,9 @@ describe("package camera defer-create (BC1)", () => {
 
   test("the family wires twenty-two observers: eighteen doorbell plus the package's four, including the package-channel observer", () => {
 
-    // The doorbell-attached camera carries eighteen (the always-armed isDoorbell observer, the bare-motion lastMotion observer, the capability-reconcile featureFlags
-    // observer, and the Access-lock supportUnlock observer all joined the set), and the package camera its bespoke four.
+    // The doorbell-attached camera carries the always-armed isDoorbell observer, the bare-motion lastMotion observer, the capability-reconcile featureFlags
+    // observer, and the Access-lock supportUnlock observer on top of its base set, and the package camera carries its own bespoke set - the assertion below
+    // pins the exact tally.
     assert.equal(store.observerCount, 22, "eighteen doorbell observers plus the package's four (name, firmware, state, and the package channel)");
   });
 
@@ -134,7 +135,7 @@ describe("package camera defer-create (BC1)", () => {
     assert.equal(deferralLineCount(), 1, "the observer's successful re-attempt narrates nothing further");
   });
 
-  test("a post-build dimension change wakes the observer and returns at the idempotency gate - the advertised list stays frozen, parent parity", async () => {
+  test("a post-build dimension change wakes the observer and returns at the build-once gate - the advertised list stays frozen, parent parity", async () => {
 
     const pushBaseline = wakeLog.length;
     const record = store.snapshot().cameras.get(cameraId);
@@ -152,7 +153,7 @@ describe("package camera defer-create (BC1)", () => {
 
     assert.ok(wakeLog.slice(pushBaseline).some((wake) => (wake.accessoryId === accessory.UUID) && (wake.key === "camera.packageChannel")),
       "the dimension change wakes the package-channel observer");
-    assert.equal(factory.createCalls.length, 2, "no second delegate is ever created - the idempotency gate returned");
+    assert.equal(factory.createCalls.length, 2, "no second delegate is ever created - the build-once gate returned");
     assert.equal(accessory.controllerEvents.length, 1, "no second controller registration");
   });
 

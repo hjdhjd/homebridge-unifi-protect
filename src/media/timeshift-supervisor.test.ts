@@ -4,13 +4,13 @@
  *
  * The supervisor owns the reconcile loop, the pushed recording demand, the per-episode narration state, and the terminal shutdown latch; the recording delegate
  * consumes it through the configureTimeshifting forwarder and the setRecordingDemand pushes. This suite covers that surface from both directions: through the
- * delegate's public seams (the deferred-offline and resolution narration, and the enable-acknowledgment lifecycle - reconcile-only behaviors that never touch the
+ * delegate's public interface (the deferred-offline and resolution narration, and the enable-acknowledgment lifecycle - reconcile-only behaviors that never touch the
  * transmit path, so no recording-process factory is involved) and through the supervisor directly (the demand-edge episode resets, the shutdown latch, the buffer's
  * channel-profile lifecycle, and the forwarder's promise-identity join semantics).
  *
  * The arrangement reuses the harness's camera-host double end to end: the segment-yielding parking livestream double fills the buffer so starts genuinely succeed,
  * the controllable livestream double drives the channel-profile lifecycle's failure and out-of-band-death arms, and the recorded log sink carries the narration
- * assertions. The assertions are behavior-first throughout: captured log lines, public buffer state, seam call counts, and promise identity - never a private field.
+ * assertions. The assertions are behavior-first throughout: captured log lines, public buffer state, recorded call counts, and promise identity - never a private field.
  */
 import type { ControllableLivestreamDouble, TestCameraHost } from "./testing.helpers.ts";
 import { PROTECT_NVR_REBOOT_RECENCY_MS, PROTECT_SEGMENT_RESOLUTION, PROTECT_TIMESHIFT_BUFFER_MAXDURATION } from "../settings.ts";
@@ -40,13 +40,13 @@ after(() => {
 
 // The count of INFO/WARN log lines whose first format string contains the given fragment - the harness records the raw parameters, so we match the message template. The
 // enable-ack re-acknowledgment test counts occurrences (not a boolean .some()), because a boolean would pass after the FIRST enable regardless of whether the second
-// re-acknowledged - the count discriminates the per-enable acknowledgment behavior.
+// re-acknowledged - the count distinguishes the per-enable acknowledgment behavior.
 function countLogs(entries: TestLogEntry[], level: TestLogEntry["level"], fragment: string): number {
 
   return entries.filter((entry) => (entry.level === level) && (typeof entry.parameters[0] === "string") && entry.parameters[0].includes(fragment)).length;
 }
 
-// A minimal-but-truthy recording configuration cast to the HAP type at this confined seam - the same harness discipline the sibling suites use. The reconcile path
+// A minimal-but-truthy recording configuration cast to the HAP type at this single boundary - the same harness discipline the sibling suites use. The reconcile path
 // reads only videoCodec.resolution (channel selection) and videoCodec.parameters.bitRate (the enable-ack config log).
 function makeRecordingConfig(): CameraRecordingConfiguration {
 
@@ -67,7 +67,7 @@ function makeChannelProfile(host: TestCameraHost): ChannelProfile {
   return { channel, name: channel.name, resolution: [ 1920, 1080, 30 ], url: "rtsps://test" };
 }
 
-// The arranged supervisor and its consuming delegate, plus the handles a test asserts against: logEntries captures the narration, host exposes the seam call logs
+// The arranged supervisor and its consuming delegate, plus the handles a test asserts against: logEntries captures the narration, host exposes the recorded call logs
 // and the reachability knob, nvr is the controller double whose settable phase and observed-reboot timestamp together drive the expected-vs-organic deferred/resolution
 // log gating.
 interface SupervisorArrange {
@@ -79,8 +79,8 @@ interface SupervisorArrange {
   supervisor: ProtectTimeshiftSupervisor;
 }
 
-// Arrange a supervisor+delegate pair whose success-path seams (stream, channel selector, segment-yielding buffer fill, recording configuration) are wired, but which
-// is NOT yet armed and starts with the camera OFFLINE. This lets the deferred/resolution tests own the ordering: enable while offline to open a deferral episode,
+// Arrange a supervisor+delegate pair whose success-path dependencies (stream, channel selector, segment-yielding buffer fill, recording configuration) are wired, but
+// which is NOT yet armed and starts with the camera OFFLINE. This lets the deferred/resolution tests own the ordering: enable while offline to open a deferral episode,
 // then bring the camera online and reconcile to drive the successful-start resolution. The caller flips host.isReachable and nvr.phase to steer the gating.
 function arrangeDeferralDelegate(): SupervisorArrange {
 
@@ -106,8 +106,8 @@ function arrangeDeferralDelegate(): SupervisorArrange {
   return { delegate, host, logEntries, nvr, supervisor };
 }
 
-// Arrange an armed, successfully-started supervisor+delegate pair: seams wired, buffer filled through the segment-yielding double, recording enabled and settled, so
-// the enable acknowledgment has fired exactly once by the time the test proceeds.
+// Arrange an armed, successfully-started supervisor+delegate pair: the success-path dependencies wired, buffer filled through the segment-yielding double,
+// recording enabled and settled, so the enable acknowledgment has fired exactly once by the time the test proceeds.
 async function arrangeEnabledDelegate(): Promise<SupervisorArrange> {
 
   const { controller, host, logEntries, nvr } = makeTestCameraHost();
@@ -611,9 +611,9 @@ describe("timeshift supervisor exit-window coalesce", () => {
     }
   }
 
-  // #23: a reconcile request landing in the loop-exit-to-finally-clear microtask window must not be dropped. We inject exactly one such request via the sequencing seam
+  // #23: a reconcile request landing in the loop-exit-to-finally-clear microtask window must not be dropped. We inject exactly one such request via the sequencing hook
   // and observe the re-kick's effect by outcome, not timing: a second loop runs (loopExits === 2). The injection itself is the positive control - the request genuinely
-  // lands inside the window, since the seam's reconcile() joins a still-truthy configurePromise; pre-fix, the same interleaving runs only one loop.
+  // lands inside the window, since the hook's reconcile() joins a still-truthy configurePromise; pre-fix, the same interleaving runs only one loop.
   test("a reconcile request in the exit window coalesces into a fresh loop", async () => {
 
     const { controller, host } = makeTestCameraHost();
@@ -626,7 +626,7 @@ describe("timeshift supervisor exit-window coalesce", () => {
 
     const supervisor = new ExitWindowSupervisor(host);
 
-    // Drive one reconcile; the seam injects a second request into the exit window of this loop.
+    // Drive one reconcile; the hook injects a second request into the exit window of this loop.
     await supervisor.reconcile();
 
     await settle();
@@ -714,7 +714,7 @@ describe("timeshift supervisor enable-acknowledgment lifecycle", () => {
   // configure of an episode, again on a true re-enable after a disable, never on a redundant within-episode reconcile. This pins both halves of the acknowledgment
   // lifecycle - the trigger on the reconcile's successful-start path (so the trigger is the configuration event) and the reset on the disable demand edge (so the next
   // enable re-acknowledges). We count occurrences rather than a boolean .some(): the boolean would pass after the FIRST enable regardless of whether the second
-  // re-acknowledged, so it cannot discriminate a set-once-never-cleared flag that logs only the first enable.
+  // re-acknowledged, so it cannot distinguish a set-once-never-cleared flag that logs only the first enable.
   test("acknowledges the recording configuration on each enable episode, not within an episode and not only the first", async () => {
 
     const { delegate, logEntries } = await arrangeEnabledDelegate();
@@ -737,7 +737,7 @@ describe("timeshift supervisor enable-acknowledgment lifecycle", () => {
 
     // Re-enable starts a fresh episode: the reconcile re-establishes the buffer (the segment-yielding double re-yields on the second start) and reaches the
     // successful-start path again, so the acknowledgment fires a SECOND time. countLogs === 2 is false against the un-reset flag (which would log only the first enable,
-    // leaving the count at 1) and true after the reset - the discriminating assertion.
+    // leaving the count at 1) and true after the reset - the distinguishing assertion.
     delegate.updateRecordingActive(true);
     await settle();
 
@@ -807,9 +807,9 @@ describe("timeshift supervisor enable-acknowledgment lifecycle", () => {
     assert.equal(countLogs(logEntries, "info", "HKSV:"), 1, "the next genuine enable acknowledged exactly once, so the raced pass had left nothing latched");
   });
 
-  // The same window, read through the pass's return value - the answer updateRecordingActive gates on. A demand that has gone away by the commit point is owed nothing,
-  // so the pass reports true for this cell, matching what the stopped path answers for it. This pins the CELL's contract value; it cannot tell the live-first expression
-  // from the pass-start-first one it replaces, because those two agree in every cell (that equivalence is a reading of the expressions, not something a test can show).
+  // The same window, read through the pass's return value - the answer updateRecordingActive gates on. This pins the CELL's contract value: a demand that has gone
+  // away by the commit point is owed nothing, matching the stopped path's answer for that same cell (a test cannot show this from the expression alone, only from its
+  // behavior).
   test("a pass whose recording demand vanished mid-start answers true for that cell", async () => {
 
     const { passResult } = await arrangeDisableRace();
@@ -847,7 +847,7 @@ describe("timeshift supervisor shutdown latch", () => {
 
   // Shutdown is the terminal teardown: it must stop the buffer synchronously, produce no narration of its own, and latch the supervisor so a post-shutdown reconcile
   // settles on stopped rather than restarting the buffer. The reconcile still runs - the pushed demand is unchanged and still wants recording - but the latch gates
-  // the desired state to stopped, so the pass reports unmet prerequisites and never touches the livestream seam again.
+  // the desired state to stopped, so the pass reports unmet prerequisites and never opens the livestream again.
   test("shutdown stops the buffer synchronously, logs nothing, and post-shutdown reconciles settle on stopped", async () => {
 
     const { host, logEntries, supervisor } = await arrangeEnabledDelegate();
@@ -864,12 +864,12 @@ describe("timeshift supervisor shutdown latch", () => {
     assert.equal(logEntries.length, logCountBeforeShutdown, "shutdown produced no narration");
 
     // A post-shutdown reconcile settles on stopped: recording is still demanded, so the pass reports unmet prerequisites (false), no restart happens, and the
-    // livestream seam is never called again.
+    // livestream is never opened again.
     assert.equal(await supervisor.reconcile(), false, "a post-shutdown reconcile reports the demand cannot be met");
     await settle();
 
     assert.equal(supervisor.buffer.isStarted, false, "the buffer stayed stopped through the post-shutdown reconcile");
-    assert.equal(host.livestreamCalls.length, 1, "no restart reached the livestream seam");
+    assert.equal(host.livestreamCalls.length, 1, "no restart reached the livestream interface");
     assert.equal(logEntries.length, logCountBeforeShutdown, "the post-shutdown reconcile produced no narration");
   });
 
@@ -1113,8 +1113,8 @@ describe("timeshift supervisor forwarder identity", () => {
   });
 });
 
-// Arrange a streaming-arm-capable supervisor: buffer-backed livestreaming is on and the success-path seams are wired (the buffer fills through the segment-yielding
-// double), but HomeKit recording is never armed. The streaming demand arm alone drives the buffer here.
+// Arrange a streaming-arm-capable supervisor: buffer-backed livestreaming is on and the success-path dependencies are wired (the buffer fills through the segment-
+// yielding double), but HomeKit recording is never armed. The streaming demand arm alone drives the buffer here.
 function arrangeStreamingHost(): { host: TestCameraHost; logEntries: TestLogEntry[]; supervisor: ProtectTimeshiftSupervisor } {
 
   const { controller, host, logEntries } = makeTestCameraHost();
@@ -1293,7 +1293,7 @@ describe("timeshift supervisor cause-tagged re-arm", () => {
     await settle();
 
     assert.equal(supervisor.buffer.isStarted, false, "the give-up left the buffer down");
-    assert.equal(host.livestreamCalls.length, 1, "no re-establish reached the livestream seam - the queued second subscription was untouched");
+    assert.equal(host.livestreamCalls.length, 1, "no re-establish reached the livestream interface - the queued second subscription was untouched");
   });
 });
 

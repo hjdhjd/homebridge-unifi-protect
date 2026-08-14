@@ -62,7 +62,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
   private abortController?: AbortController;
   private readonly accessory: ProtectAccessory;
   private readonly api: API;
-  // The injected wall-clock seam (production systemClock, a controllable TestClock under test). The delegate reads it for every time primitive - the per-event
+  // The injected wall-clock interface (production systemClock, a controllable TestClock under test). The delegate reads it for every time primitive - the per-event
   // pacingStartTime, the per-yield delivery anchor, the pacing-delay computation and await, and the early-end duration - so the whole pacing path is test-deterministic.
   private readonly clock: Clock;
   private ffmpegStream?: RecordingProcess;
@@ -117,8 +117,8 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
   // Apply a HomeKit recording-active change: record the demand, force the motion sensor off on a disable, and reconcile the timeshift buffer against the new demand.
   private async applyRecordingActive(active: boolean): Promise<void> {
 
-    // Log only on the active-to-inactive transition, not on idempotent "already inactive" calls. `this.isRecording` is still the pre-update value here since we
-    // haven't written `_isRecording` yet.
+    // Log only on the active-to-inactive transition, not on repeat "already inactive" calls that are no-ops. `this.isRecording` is still the pre-update value here since
+    // we haven't written `_isRecording` yet.
     if(!active && this.isRecording) {
 
       this.log.info("Disabling HomeKit Secure Video event recording.");
@@ -137,7 +137,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
 
     // Push the updated demand to the supervisor and reconcile the timeshift buffer against it. The demand setter owns the per-episode narration resets on the
     // disable edge, so they land synchronously with the demand write even when reconcile passes coalesce. The reconciler is bidirectional, concurrency-safe, and
-    // idempotent...see the supervisor for the invariants.
+    // safe to call more than once...see the supervisor for the rules it holds to.
     if(!(await this.supervisor.setRecordingDemand({ config: this.recordingConfig, isRecording: active }))) {
 
       return;
@@ -184,9 +184,9 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     }
 
     // If HKSV is disabled, the timeshift buffer is restarting, the camera is offline, the buffer isn't full, or transmission setup fails, we're done. The timeshift.time
-    // check covers both "timeshift never started" (time is zero) and "timeshift started but prebuffer not yet filled". The trailing !this.ffmpegStream is load-bearing
-    // for TypeScript narrowing at the subsequent direct access (the recording process's stream() invocation)...TypeScript does not track field assignments across method
-    // calls.
+    // check covers both "timeshift never started" (time is zero) and "timeshift started but prebuffer not yet filled". Removing the trailing !this.ffmpegStream check
+    // breaks TypeScript's narrowing at the subsequent direct access (the recording process's stream() invocation)...TypeScript does not track field assignments across
+    // method calls.
     if(this.accessory.context.hksvRecordingDisabled || this.timeshift.isRestarting || !this.protectCamera.isReachable ||
       (this.timeshift.time < this.timeshift.configuredDuration) || !this.startTransmitting() || !this.ffmpegStream) {
 
@@ -225,8 +225,8 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     //   - "terminated": the subscription died out-of-band (the recovery give-up, a codec change, an unexpected iterator error). Terminal...we stop FFmpeg and exit
     //     the event. The timeshift has already self-cleaned its state, so there is no subscription to recover onto.
     //
-    // Both handlers call ffmpegStream.abort() and abort the combined signal to interrupt any in-flight pacing delay. The discriminator between "restart the
-    // loop" and "exit the loop" is which local flag the handler sets...the outer do-while's condition gates on isDiscontinuity, not isTerminated.
+    // Both handlers call ffmpegStream.abort() and abort the combined signal to interrupt any in-flight pacing delay. What tells apart "restart the
+    // loop" from "exit the loop" is which local flag the handler sets...the outer do-while's condition gates on isDiscontinuity, not isTerminated.
     let isDiscontinuity = false;
     let isTerminated = false;
 
@@ -357,7 +357,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     //     not kick the wire from here. We just end this event with its final marker; the next event re-establishes a fresh FFmpeg pipeline.
     //
     // Normal completion (HAP-initiated close via signal.aborted or _isTransmitting false) falls through both branches...HAP already knows the stream is done
-    // and doesn't need a marker. The optional chain on ffmpegStream is load-bearing: the discontinuity-recovery path's startTransmitting(true) call inside
+    // and doesn't need a marker. Removing the optional chain on ffmpegStream breaks this: the discontinuity-recovery path's startTransmitting(true) call inside
     // the do/while above may have cleared the field, and TS does not track that across the method call.
     if(isTerminated) {
 
@@ -436,9 +436,9 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     const alignment = this.timeshift.getKeyframeAlignedStart(this.recordingConfig.prebufferLength);
 
     // Start a new FFmpeg instance to transcode using HomeKit's requirements. Construction routes through the platform's recording-process factory, mirroring the
-    // streaming-delegate factory seam: the production factory's create is exactly the FfmpegRecordingProcess constructor call (so this is behavior-neutral), while a test
-    // substitutes an FFmpeg-free double. The homebridge-plugin-utils process spawns the child synchronously on construction, so there is no separate start() step...by
-    // the time create returns the FFmpeg child is already running. The recording options move into init.recording, the HomeKit recording configuration into
+    // streaming-delegate factory interface: the production factory's create is exactly the FfmpegRecordingProcess constructor call (so this is behavior-neutral), while a
+    // test substitutes an FFmpeg-free double. The homebridge-plugin-utils process spawns the child synchronously on construction, so there is no separate start()
+    // step...by the time create returns the FFmpeg child is already running. The recording options move into init.recording, the HomeKit recording configuration into
     // init.recordingConfig, and the debug flag into init.verbose.
     this.ffmpegStream = this.protectCamera.platform.recordingProcessFactory.create(this.protectCamera.stream.ffmpegOptions, {
 

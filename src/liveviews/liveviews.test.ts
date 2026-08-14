@@ -62,8 +62,8 @@ function loggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], substri
 
 // Seed a member-camera double into the NVR's configuredDevices registry so the liveviews motion fanout resolves it via getDeviceById. The fanout targets the member's
 // SWITCH_MOTION_SENSOR-subtyped Switch and its accessory.context.detectMotion (and accessoryName for the log). The accessory carries that subtyped switch PLUS a plain,
-// unsubtyped decoy Switch sitting FIRST: a scene toggle must land on the subtyped switch alone, so the decoy's untouched state is the subtyped-lookup discriminator.
-// detectMotion starts FALSY by default. Returns the member accessory, its plain decoy switch, and its subtyped motion switch for assertion.
+// unsubtyped decoy Switch sitting FIRST: a scene toggle must land on the subtyped switch alone, so the decoy's untouched state is what proves the subtyped lookup, not a
+// plain one. detectMotion starts FALSY by default. Returns the member accessory, its plain decoy switch, and its subtyped motion switch for assertion.
 function seedMember(nvr: TestProtectNvr, options: { detectMotion?: boolean; id: string; name: string; uuid: string }):
 { accessory: TestAccessory; decoySwitch: TestService; motionSwitch: TestService } {
 
@@ -83,7 +83,7 @@ function seedMember(nvr: TestProtectNvr, options: { detectMotion?: boolean; id: 
   motionSwitch.updateCharacteristic(Characteristic.On, accessory.context["detectMotion"]);
 
   // The managed-device double the fanout resolves through getDeviceById, which now matches on the non-throwing protectId: it reads accessory / accessoryName / context.
-  // Cast through ProtectDevices at the seam.
+  // Cast through ProtectDevices at the construction boundary.
   const member = { accessory, accessoryName: options.name, protectId: options.id, ufp: { id: options.id } } as unknown as ProtectDevices;
 
   nvr.configuredDevices.set(accessory.UUID, member);
@@ -93,9 +93,9 @@ function seedMember(nvr: TestProtectNvr, options: { detectMotion?: boolean; id: 
 
 // The reusable construction helper: build a REAL ProtectLiveviews against the harness doubles and drive the initial reconcile by calling configureLiveviews() on the
 // CONSTRUCTED instance (NOT nvr.liveviews - the double has no liveviews member). makeProtectState seeds the liveviews with DISTINCT ids per the makeLiveviewConfig
-// distinct-id discipline; the casts are confined to the construction seam exactly as the family suites do. Optional cachedAccessories are pushed onto the array BEFORE
-// construction (orphan-removal / pre-seeded-switch-state fixtures). The returned controller is aborted in teardown: the fixture tears down through the controller it
-// built, the scope that owns every registration the test created.
+// distinct-id discipline; the casts are confined to the construction boundary exactly as the family suites do. Optional cachedAccessories are pushed onto the array
+// BEFORE construction (orphan-removal / pre-seeded-switch-state fixtures). The returned controller is aborted in teardown: the fixture tears down through the controller
+// it built, the scope that owns every registration the test created.
 function buildLiveviews(harnessOptions: { cachedAccessories?: TestAccessory[]; liveviews?: ProtectNvrLiveviewConfig[]; mac?: string;
   sharedPlatform?: { accessories: TestAccessory[]; apiCalls: ReturnType<typeof makeTestNvr>["apiCalls"] }; userOptions?: string[]; } = {}): {
   apiCalls: ReturnType<typeof makeTestNvr>["apiCalls"]; controller: AbortController; logEntries: TestLogEntry[]; mqtt: TestMqttClient; nvr: TestProtectNvr;
@@ -472,7 +472,7 @@ describe("real ProtectLiveviews construction and controller-owner wiring", () =>
 
     // Re-run controller A's reconcile. Its orphan sweep filters to its own controller MAC (this.platform.accessories.filter(x => this.isOwnedLiveviewSwitch(x))), so
     // controller B's Other switch is never iterated. Without the MAC scoping this pass would find B's switch, fail to match "Protect-Other" against A's liveviews, and
-    // unregister it - the discriminator for this test.
+    // unregister it - the proof point for this test.
     controllerA.owner.configureLiveviews();
 
     await settle();
@@ -512,8 +512,8 @@ describe("real ProtectLiveviews construction and controller-owner wiring", () =>
     ghostTwo.context["nvr"] = CONTROLLER_MAC;
     ghostTwo.addService(new Service.Switch("Ghost Two"));
 
-    // One reconcile pass must remove BOTH orphans. The discriminator is the filtered-snapshot iteration: an in-place splice over the live array (the mutation this
-    // test forbids) shifts the second orphan into the just-vacated slot, so the for...of iterator steps past it and it survives the pass.
+    // One reconcile pass must remove BOTH orphans. The filtered-snapshot iteration is what proves it: an in-place splice over the live array (the mutation this test
+    // forbids) shifts the second orphan into the just-vacated slot, which is exactly what this test would catch.
     const built = buildLiveviews({ cachedAccessories: [ ghostOne, ghostTwo ], liveviews: [] });
 
     activeController = built.controller;

@@ -5,7 +5,7 @@
  * The acquisition chain tries the timeshift buffer first, then RTSP, then the controller command, then the cache. This suite drives that chain over doubles and asserts
  * SOURCE SELECTION - which source the chain uses - never a real FFmpeg spawn: the timeshift buffer's snapshotSource is steered to "stale" or "empty" so the buffer
  * declines before the FFmpeg pipeline, and the RTSP and controller sources are wired to decline too (no channel to select, the controller command rejects), so the whole
- * chain resolves without producing (or caching) any image. The load-bearing assertions are that a STALE buffer declines and notes it at debug (so a stalled buffer never
+ * chain resolves without producing (or caching) any image. The assertions that matter are that a STALE buffer declines and notes it at debug (so a stalled buffer never
  * serves, and then caches, a frozen image), that an EMPTY buffer declines SILENTLY (no staleness to claim), and that in both cases the chain moves past the buffer to the
  * next source. The freshness DECISION itself - whether the buffer reads fresh, stale, or empty - is covered directly over ProtectTimeshiftBuffer in timeshift.test.ts.
  */

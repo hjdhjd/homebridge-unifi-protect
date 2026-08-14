@@ -136,7 +136,7 @@ export class ProtectSnapshot {
         return null;
       }
 
-      // Snapshots from the Protect API need a standalone crop pass since they bypass the FFmpeg pipeline where crop is now integrated into the filter chain.
+      // Snapshots from the Protect API need a standalone crop pass since they bypass the FFmpeg pipeline, where crop is applied as part of the filter chain.
       if(needsExternalCrop && this.protectCamera.hints.crop) {
 
         snapAttempt = await this.cropSnapshot(snapAttempt, signal) ?? snapAttempt;
@@ -245,7 +245,7 @@ export class ProtectSnapshot {
   }
 
   // Snapshots using the Protect controller's snapshot command as the source. This is the unifi-protect library's camera projection snapshot, exposed through the
-  // camera's narrow public seam. Unlike the FFmpeg-based sources, the controller command throws on failure rather than returning null - a non-2xx response, or a
+  // camera's narrow public interface. Unlike the FFmpeg-based sources, the controller command throws on failure rather than returning null - a non-2xx response, or a
   // ProtectUnsupportedError when a package snapshot is requested on a camera without a package sensor. We translate that throw into a null so the multi-source
   // acquisition falls through to the next source exactly as it always has, and so a snapshot failure never escapes acquireSnapshot.
   private async snapFromController(opts: SnapshotOptions): Promise<Nullable<Buffer>> {

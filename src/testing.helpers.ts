@@ -10,9 +10,9 @@
  * entry in the namespace object.
  *
  * Alongside the HAP double this file holds the rest of the harness's cross-cutting core: TestStateStore, the facade over unifi-protect's real state store, with
- * makeProtectState to seed it; the streaming and timeshift stubs three families share (the streaming delegate and its factory, which satisfies the platform's
- * dependency-inversion contract so a REAL device can be constructed with no FFmpeg, and the timeshift buffer and supervisor doubles); the TestLogEntry and TestApiCall
- * record shapes the log and registration sinks capture into; and settle(), the one-macrotask wait every asynchronous assertion turns on.
+ * makeProtectState to seed it; the streaming and timeshift stubs every device family that constructs a real camera host shares (the streaming delegate and its factory,
+ * which satisfies the platform's dependency-inversion contract so a REAL device can be constructed with no FFmpeg, and the timeshift buffer and supervisor doubles); the
+ * TestLogEntry and TestApiCall record shapes the log and registration sinks capture into; and settle(), the one-macrotask wait every asynchronous assertion turns on.
  *
  * The per-subsystem helpers live beside the code they serve, each importing this file: devices/testing.helpers.ts owns the config builders, the projection doubles,
  * and TestBaseDevice; media/testing.helpers.ts owns TestCameraHost and the fragment and livestream doubles; nvr/testing.helpers.ts owns the NVR, platform, and MQTT
@@ -476,7 +476,7 @@ export class TestService {
   // The service kind's identity string, mirrored from the TYPE's static. this.type is the marker class on BOTH construction paths - the marker constructors pass
   // their own class and the legacy addService(type, ...) form passes the namespace entry - whereas this.constructor is the bare TestService on the legacy path and
   // carries no static. Real HAP identifies kinds by UUID; the double uses the kind string, which is just as unique within the namespace and far more legible in
-  // assertion failures. The fallback is a non-empty sentinel for a hand-rolled type outside the namespace, preserving the never-empty invariant documented above.
+  // assertion failures. The fallback is a non-empty sentinel for a hand-rolled type outside the namespace, preserving the never-empty rule documented above.
   public get UUID(): string {
 
     return (this.type as { UUID?: string }).UUID ?? "unidentified-service-kind";
@@ -488,7 +488,7 @@ export class TestService {
     this.isPrimary = isPrimary;
   }
 
-  // Link another service to this one, mirroring HAP's Service.addLinkedService (a faithful mirror: a void push, includes-guarded so a repeat link is idempotent exactly
+  // Link another service to this one, mirroring HAP's Service.addLinkedService (a faithful mirror: a void push, includes-guarded so a repeat link is a no-op exactly
   // as real HAP dedups). The fob's ServiceLabel links each grouped button switch through this.
   public addLinkedService(service: TestService): void {
 
@@ -541,7 +541,7 @@ export class TestService {
   }
 
   // Declare an optional characteristic on this service, mirroring HAP's Service.addOptionalCharacteristic. The camera's ambient light capability takes this path directly
-  // from its acquire initializer (it permits StatusActive on the LightSensor before binding its onGet), a seam no other construction path reaches - the real
+  // from its acquire initializer (it permits StatusActive on the LightSensor before binding its onGet), a path no other construction route reaches - the real
   // acquireService's own addOptionalCharacteristic calls for ConfiguredName / Name stay gated off the markers by the degenerate name-set predicates (see the class doc).
   // HAP lazily materializes a permitted characteristic on first access, so the double materializes it now through getCharacteristic, keeping the later
   // getCharacteristic / onGet bind against the SAME instance and never throwing on the direct call.
@@ -884,7 +884,7 @@ export class TestCameraController {
  * services. getService / getServiceById mirror HAP's distinction between "the bare service of this type" and "the service of this type with a specific subtype".
  *
  * The construction-harness growth: a mutable context record (the camera's configureDevice reassigns it wholesale, then writes keys), the ordered controller-event
- * log with HAP's one-controller-per-accessory invariant enforced (the double records identity and order, and never operates on the controller's innards),
+ * log with HAP's one-controller-per-accessory rule enforced (the double records identity and order, and never operates on the controller's innards),
  * removeService (the faithful removal homebridge-plugin-utils' validService performs when an existing service fails validation), and the _associatedHAPAccessory
  * mirror with a mutable displayName (the accessoryName setter writes both) plus the bridged flag the NVR's removal tail gates its unregister on - true by default
  * (a registered or restored accessory is bridged), flipped false by the platform double's publishExternalAccessories recorder, exactly as standalone publication
@@ -957,7 +957,7 @@ export class TestAccessory {
   }
 
   // Record a controller registration. HAP permits exactly one camera controller per accessory and throws on a same-id double configure (hap-nodejs
-  // Accessory.configureController); the double enforces the same invariant through the configuredController chokepoint, so a production path that double-registers
+  // Accessory.configureController); the double enforces the same rule through the configuredController chokepoint, so a production path that double-registers
   // fails a test as loudly as it would fail live.
   public configureController(controller: unknown): void {
 
@@ -1207,10 +1207,10 @@ export class TestStateStore {
    * adoption normalization ahead of it reads the controller MAC off that same nvr, going inert when it is null.
    *
    * The single cast is what lets that work. ProtectNvrBootstrap describes the controller's full bootstrap document: it requires a non-nullable nvr, which the store
-   * legitimately holds as null before a controller identity exists, plus thirteen further fields - accessKey, lastUpdateId, the group and unmodeled-device collections -
-   * that ProtectState does not model and applyBootstrap never reads. Fabricating them would be invention, and fabricating the nvr in particular would silently overwrite
-   * the null slice these fixtures depend on, so the literal carries exactly the fields the reducer consumes and the cast confines the gap, in the same wire-shape idiom
-   * the config builders use.
+   * legitimately holds as null before a controller identity exists, plus the further fields it requires that ProtectState does not model and applyBootstrap never reads -
+   * accessKey, lastUpdateId, the group and unmodeled-device collections among them. Fabricating them would be invention, and fabricating the nvr in particular would
+   * silently overwrite the null slice these fixtures depend on, so the literal carries exactly the fields the reducer consumes and the cast confines the gap, in the same
+   * wire-shape idiom the config builders use.
    */
   private bootstrapReplacing(replacements: { liveviews?: ProtectNvrLiveviewConfig[]; ringtones?: ProtectRingtoneConfig[] }): ProtectNvrBootstrap {
 
@@ -1332,7 +1332,7 @@ export interface TestTimeshiftBuffer {
 }
 
 // A steerable timeshift-supervisor double the streaming-delegate factory installs at create time, so the construction-time activation kick and the per-lifecycle-edge
-// availability kicks land on a spy rather than a null seam. reconcileCalls tallies every reconcile the camera fires; the buffer members are steerable so the
+// availability kicks land on a spy rather than an inert stand-in. reconcileCalls tallies every reconcile the camera fires; the buffer members are steerable so the
 // session-source and snapshot tests drive the buffer-liveness and empty-read branches.
 export interface TestTimeshiftSupervisor {
 
@@ -1373,7 +1373,7 @@ export function makeTimeshiftSupervisorDouble(): TestTimeshiftSupervisor {
 }
 
 /* The stub StreamingDelegate, typed as the abstraction and entirely FFmpeg-free. The controller is a distinct sentinel object tests can identity-match
- * through the accessory's controller-event log; ffmpegOptions is the one documented cast seam on this class - the camera family reads maxSourcePixels off it (via
+ * through the accessory's controller-event log; ffmpegOptions is the one documented cast boundary on this class - the camera family reads maxSourcePixels off it (via
  * selectSubstrateChannel, never at construction) and hardwareEncodes off it (the HKSV acknowledgment marker), with the ceiling injectable and the encoder answer
  * configurable so the substrate-channel pixel cap and the hardware marker are both exercisable; hksv is null, the correct pre-HKSV-configuration state cleanup reads
  * through this.stream?.hksv?.isRecording; shutdown records its calls; and resetProbesizeOverride is a recordable no-op.
@@ -1405,7 +1405,7 @@ export class TestStreamingDelegate implements StreamingDelegate {
     // the camera beyond registration.
     this.controller = { hbupTestSentinel: "camera-controller" } as unknown as CameraController;
 
-    // The confined cast seam: the camera family reads maxSourcePixels and hardwareEncodes off ffmpegOptions. An Infinity ceiling means "no hardware pixel cap" - the
+    // The confined cast boundary: the camera family reads maxSourcePixels and hardwareEncodes off ffmpegOptions. An Infinity ceiling means "no hardware pixel cap" - the
     // pass-everything-through default - while a finite injected ceiling lets the recording-channel cap path select against a real constraint. The hardwareEncodes closure
     // reads the configurable field, which defaults false so the HKSV hardware marker is absent unless a test opts in.
     this.ffmpegOptions = {
@@ -1439,8 +1439,8 @@ export class TestStreamingDelegate implements StreamingDelegate {
   }
 }
 
-// The stub StreamingDelegateFactory satisfying the platform's dependency-inversion seam. Records every create call (the camera identity, the resolutions array,
-// and the delegate it returned) so tests can assert the seam was exercised exactly once with exactly the advertised resolutions, then hand back the recorded
+// The stub StreamingDelegateFactory satisfying the platform's dependency-inversion interface. Records every create call (the camera identity, the resolutions array,
+// and the delegate it returned) so tests can assert the interface was exercised exactly once with exactly the advertised resolutions, then hand back the recorded
 // delegate's sentinel controller for identity assertions. The maxSourcePixels ceiling is forwarded into every delegate it creates - set it before construction to
 // exercise the recording-channel pixel cap with a finite value.
 export class TestStreamingDelegateFactory implements StreamingDelegateFactory {
@@ -1456,7 +1456,7 @@ export class TestStreamingDelegateFactory implements StreamingDelegateFactory {
     const delegate = new TestStreamingDelegate({ isDoorbell: camera.ufp.featureFlags.isDoorbell, twoWayAudio: camera.hints.twoWayAudio }, this.maxSourcePixels);
 
     // Install the timeshift-supervisor double at create time - before the camera's construction-time activation kick reads it - so the kick and the per-edge availability
-    // kicks land on a spy rather than a null seam. Cast at the confined double->production seam the harness uses throughout.
+    // kicks land on a spy rather than an inert stand-in. Cast at the confined double->production boundary the harness uses throughout.
     delegate.timeshift = makeTimeshiftSupervisorDouble() as unknown as StreamingDelegate["timeshift"];
 
     this.createCalls.push({ camera, delegate, resolutions });

@@ -115,8 +115,9 @@ const renderVerdict = ({ detail = "", lines = [], row, tone = "" }) => {
   row.replaceChildren(...nodes);
 };
 
-/* Validate a controller login against the UI server and paint the outcome, shared by every card's validate control and by the first-run submit so the two can never
- * drift. The browser cannot reach the Protect controller directly, so the request bridges through the plugin's UI server. Returns the discovered device list on
+/* Validate a controller login against the UI server and paint the outcome, shared by every card's validate control, every card's Save, and the first-run submit
+ * so none of them can drift apart. The browser cannot reach the Protect controller directly, so the request bridges through the plugin's UI server. Returns the
+ * discovered device list on
  * success and null on any failure - a missing field, a rejected login, or a request that threw - with the result line already painted for every outcome but
  * success, whose message belongs to the caller (the validate control says so in words; the submit moves straight on to committing).
  *
@@ -222,8 +223,9 @@ const isController = (device) => device.modelKey === "nvr";
  */
 let injectedConfig = null;
 
-/* Each controller address's device list, as this session last fetched it and already processed for the framework to render. One answer serves three readers, which
- * is why what is kept is the processed list rather than any narrower derivative of it: the device view returns it on every re-entry, a removal derives from it the
+/* Each controller address's device list, as this session last fetched it and already processed for the framework to render. One answer serves every reader that
+ * needs it, which is why what is kept is the processed list rather than any narrower derivative of it: the device view returns it on every re-entry, a removal
+ * derives from it the
  * MAC addresses a settings sweep would strip, and the sidebar reads the controller's own name from it. A controller login and bootstrap costs a user five to twenty
  * seconds of dead air, and almost nothing about a controller changes between one re-entry and the next, so that price is paid once per address per session and the
  * Refresh control is how a user asks to pay it again.
@@ -492,24 +494,24 @@ const buildStatRow = (label, value, valueClassName) => {
 // The number of cards this module copy has mounted, which is what makes each clone's field ids unique within the page.
 let cardInstances = 0;
 
-/* Mount one connection card into a habitat's container and hand back the surface that habitat drives it through.
+/* Mount one connection card into a caller's container and hand back the surface that caller drives it through.
  *
- * One card serves every place a controller's connection is entered or edited, so the markup lives in a template and each habitat mounts a clone of it. A clone
+ * One card serves every place a controller's connection is entered or edited, so the markup lives in a template and each caller mounts a clone of it. A clone
  * cannot carry the ids the template would otherwise hold - two mounted cards would answer the same lookup and each label would point at whichever field the
  * document happened to reach first - so every element is addressed by a data attribute and each field is given an id of this instance's own, with the label that
  * names it pointed at that id so the association survives cloning.
  *
- * The habitat declares what it offers by supplying handlers: a card with no onSave shows no Save control, and one with no onRemove shows no Remove. Validation is
+ * The caller declares what it offers by supplying handlers: a card with no onSave shows no Save control, and one with no onRemove shows no Remove. Validation is
  * the exception and is always offered, because it costs nothing and is the whole reason a user can find out whether a login works before committing it.
  *
  * @param options.container      - The element the card mounts into, whose children it replaces.
  * @param options.heading        - The card's heading, null for no heading at all, or absent to keep the template's own wording.
  * @param options.helper         - The card's explanatory line, on the same terms as the heading.
  * @param options.noSweepReason  - What the removal confirmation says when there are no device settings it can offer to strip.
- * @param options.onCancel       - Invoked by the Cancel control, when the habitat offers one.
- * @param options.onRemove       - Invoked with the MAC addresses to strip once a removal is confirmed, when the habitat offers removal.
- * @param options.onSave         - Invoked by the Save control, when the habitat offers one.
- * @param options.signal         - The habitat's own lifecycle, when it has one. The card's teardown composes with it.
+ * @param options.onCancel       - Invoked by the Cancel control, when the caller offers one.
+ * @param options.onRemove       - Invoked with the MAC addresses to strip once a removal is confirmed, when the caller offers removal.
+ * @param options.onSave         - Invoked by the Save control, when the caller offers one.
+ * @param options.signal         - The caller's own lifecycle, when it has one. The card's teardown composes with it.
  *
  * @returns The card's surface: close, populate, values, and the verdict line.
  */
@@ -534,8 +536,8 @@ const mountConnectionCard = ({ container, heading, helper, noSweepReason = "", o
   const removeConfirm = card.querySelector("[data-role='removeConfirm']");
   const row = card.querySelector("[data-role='verdict']");
 
-  // The card's own teardown, composed with whatever lifetime the habitat gave it, so a habitat that closes its card retires the card's wiring without disturbing
-  // anything else the habitat registered.
+  // The card's own teardown, composed with whatever lifetime the caller gave it, so a caller that closes its card retires the card's wiring without disturbing
+  // anything else the caller registered.
   const teardown = new AbortController();
   const cardSignal = signal ? AbortSignal.any([ signal, teardown.signal ]) : teardown.signal;
 
@@ -547,7 +549,7 @@ const mountConnectionCard = ({ container, heading, helper, noSweepReason = "", o
    */
   let generation = 0;
 
-  // The MAC addresses a removal would offer to strip settings for, as the habitat's last population named them.
+  // The MAC addresses a removal would offer to strip settings for, as the caller's last population named them.
   let removalMacs = [];
 
   const verdict = {
@@ -583,7 +585,7 @@ const mountConnectionCard = ({ container, heading, helper, noSweepReason = "", o
     removeConfirm.classList.remove("d-none");
   };
 
-  // The habitat's own framing, where it wants something other than the first-run wording the template carries. A habitat that wants no framing at all passes null,
+  // The caller's own framing, where it wants something other than the first-run wording the template carries. A caller that wants no framing at all passes null,
   // which takes the element out of the flow rather than leaving an empty line of space behind.
   for(const [ role, copy ] of [ [ "heading", heading ], [ "helper", helper ] ]) {
 
@@ -600,7 +602,7 @@ const mountConnectionCard = ({ container, heading, helper, noSweepReason = "", o
 
   const surface = {
 
-    // Retire the card's wiring and take it off the page. Only a habitat whose card is transient calls this; the docked cards live as long as the mount that
+    // Retire the card's wiring and take it off the page. Only a caller whose card is transient calls this; the docked cards live as long as the mount that
     // created them and are torn down by the mount signal instead.
     close: () => {
 
@@ -794,9 +796,9 @@ const removeController = async ({ address, card, macs }) => {
   document.querySelector("#controllersContainer .nav-link[data-navigation='global']")?.click();
 };
 
-/* Mount a card that edits a controller already in the configuration, in whichever of its two homes the habitat names.
+/* Mount a card that edits a controller already in the configuration, in whichever home the caller names.
  *
- * The two homes differ in where they sit and in what a removal can offer, and in nothing else. The docked editor rides a reachable controller's own stats panel
+ * Each home differs in where it sits and in what a removal can offer, and in nothing else. The docked editor rides a reachable controller's own stats panel
  * and can strip the settings of every device that controller answered with; the editor the connection-error view hosts reaches a controller the page cannot talk
  * to at all, where no device list exists and removal is offered on its own. Both correlate to a configuration item by address, both validate before they write,
  * and both follow the address they wrote so a second save edits the same item rather than appending a duplicate beside it.

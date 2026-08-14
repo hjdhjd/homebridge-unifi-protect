@@ -2,7 +2,7 @@
  *
  * stream-delegate.ts: FFmpeg-free streaming-delegate abstractions for UniFi Protect.
  *
- * These abstractions are the dependency-inversion seam between the camera devices and the concrete, FFmpeg-bound ProtectStreamingDelegate. A camera depends only on
+ * These abstractions are the dependency-inversion boundary between the camera devices and the concrete, FFmpeg-bound ProtectStreamingDelegate. A camera depends only on
  * the StreamingDelegate surface it reads off this.stream, and constructs its delegate through the StreamingDelegateFactory the platform holds (typed as the abstraction).
  * This keeps the camera free of any direct dependency on the FFmpeg-backed implementation, and lets a test platform substitute a stub factory so construction completes
  * without a real FFmpeg/HAP environment. The imports here are almost entirely type-only by design; the one runtime import is the hap `AudioStreamingSamplerate` enum the
@@ -16,7 +16,7 @@ import type { ProtectCameraHost } from "./camera-host.ts";
 import type { ProtectRecordingDelegate } from "./record.ts";
 import type { ProtectTimeshiftSupervisor } from "./timeshift-supervisor.ts";
 
-// The frozen audio-options inputs a CameraController is built from - the two live-volatile capabilities that shape its constructor-frozen audio surface. A camera the
+// The frozen audio-options inputs a CameraController is built from - the live-volatile capabilities that shape its constructor-frozen audio surface. A camera the
 // controller late-reports as a doorbell, or as having a speaker, carries a controller built for the wrong identity; the live capability reconcile compares the
 // controller's current capabilities against this and rebuilds in place only when one has appeared.
 export interface AudioOptionsIdentity {
@@ -45,27 +45,39 @@ export function streamingSamplerates(input: { canUseLivestreamApi: boolean; isDo
   return (input.isDoorbell || !input.canUseLivestreamApi) ? [ AudioStreamingSamplerate.KHZ_16, AudioStreamingSamplerate.KHZ_24 ] : AudioStreamingSamplerate.KHZ_16;
 }
 
-// The surface consumers read off this.stream - the exact set grounded across camera, camera-package, record, nvr, and snapshot (no more, no less). The production
+// The surface consumers read off this.stream - the exact set grounded across camera, camera-package, record, and snapshot (no more, no less). The production
 // implementation is ProtectStreamingDelegate; a test substitutes a stub. Properties are listed alphabetically.
 export interface StreamingDelegate {
 
-  // The frozen audio-options identity the controller was built for - its two live-volatile capabilities, doorbell-ness and two-way audio. The CameraController's audio
+  // The frozen audio-options identity the controller was built for - its live-volatile capabilities, doorbell-ness and two-way audio. The CameraController's audio
   // options, twoWayAudio/Speaker service, and supported-configuration TLVs are constructor-frozen, so a camera the controller late-reports as a doorbell or as having a
   // speaker carries a controller built for the wrong identity; the live capability reconcile reads this to detect that staleness and rebuilds in place only when a frozen
   // audio capability has appeared, performing zero controller churn when the delegate was already built for the current identity.
   readonly builtFor: AudioOptionsIdentity;
+
+  // The HAP CameraController this delegate drives.
   controller: CameraController;
+
+  // The resolved FFmpeg invocation options every pipeline this delegate spawns shares.
   readonly ffmpegOptions: FfmpegOptions;
+
+  // HAP's snapshot-request entry point, forwarded to the camera's multi-source snapshot acquisition.
   handleSnapshotRequest(request?: SnapshotRequest, callback?: SnapshotRequestCallback): void;
+
+  // The camera's HomeKit Secure Video recording delegate, or null when the camera cannot back HKSV.
   hksv: Nullable<ProtectRecordingDelegate>;
+
+  // The current FFmpeg probesize, self-tuned upward after a probesize-estimation failure and read by the delegate's next spawn.
   readonly probesize: number;
+
+  // Clear any self-tuned probesize override, returning the next spawn to the configured default.
   resetProbesizeOverride(): void;
 
   // End every streaming session this delegate holds and wind its probesize self-tuning back. Safe to call more than once - a repeat call finds no sessions and nothing
   // to reset - so a caller that pairs this with another teardown never needs to track whether it has already run.
   shutdown(): void;
 
-  // The camera's standing-buffer supervision seam: the timeshift supervisor that owns the standing buffer's lifecycle for an HKSV-capable camera, or null when the
+  // The camera's standing-buffer supervision interface: the timeshift supervisor that owns the standing buffer's lifecycle for an HKSV-capable camera, or null when the
   // camera cannot back HomeKit Secure Video. The controller-disconnect and camera-teardown paths reach through this to shut supervision down terminally, and the
   // snapshot and livestream paths read the supervised buffer through it.
   timeshift: Nullable<ProtectTimeshiftSupervisor>;

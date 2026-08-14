@@ -13,8 +13,8 @@
  * virtual-time 0 is indistinguishable from "no keyframe" - every snapshotSource-fresh (and staleness-boundary) test advances the clock to a nonzero base BEFORE pushing
  * its keyframe, or the staleness compare is never reached and the test is vacuous.
  *
- * All assertions are behavior-first: emitted events, returned buffers, recorded seam calls (livestreamCalls, rebootCalls, the double's reassessCalls/disposed), and the
- * public getters - never a private field (_segments, _pendingDiscontinuity, _isTransmitting, _lastKeyframeTime, subscription). Because both the per-push forward and
+ * All assertions are behavior-first: emitted events, returned buffers, recorded interface calls (livestreamCalls, rebootCalls, the double's reassessCalls/disposed), and
+ * the public getters - never a private field (_segments, _pendingDiscontinuity, _isTransmitting, _lastKeyframeTime, subscription). Because both the per-push forward and
  * transmitStart's own concat emit the "segment" event, forwarding tests assert on the forwarded PAYLOAD (which fragment's data), never the event count.
  */
 import type { ControllableLivestreamDouble, TestCameraHost } from "./testing.helpers.ts";
@@ -48,7 +48,7 @@ after(() => {
   }
 });
 
-// Build a minimal-but-truthy ChannelProfile from the host's first G2 Pro channel. start() only forwards this to the host's livestream() seam (which the controllable
+// Build a minimal-but-truthy ChannelProfile from the host's first G2 Pro channel. start() only forwards this to the host's livestream() interface (which the controllable
 // double ignores), so the profile needs only to type-check. We guard the indexed access because host.ufp.channels[0] widens to ProtectCameraChannelConfig | undefined
 // under noUncheckedIndexedAccess.
 function makeChannelProfile(host: TestCameraHost): ChannelProfile {
@@ -77,8 +77,8 @@ function makeMediaSegment(fragment: { data: Buffer; mdat: Buffer; moof: Buffer }
 
 // The arranged, started timeshift plus the handles a test asserts against. clock is the controllable TestClock the timeshift reads via platform.clock (advance it to
 // drive the staleness gate); double is the controllable livestream the test pushes segments into; events captures every emitted segment/discontinuity/terminated; host
-// exposes the seam call logs (livestreamCalls, rebootCalls, the settable hasFeature/isReachable); nvr is the settable TestProtectNvr (set nvr.phase for the shuttingDown
-// variant); timeshift is the SUT.
+// exposes the interface call logs (livestreamCalls, rebootCalls, the settable hasFeature/isReachable); nvr is the settable TestProtectNvr (set nvr.phase for the
+// shuttingDown variant); timeshift is the SUT.
 interface StartedTimeshift {
 
   clock: TestClock;
@@ -277,7 +277,7 @@ describe("timeshift buffer behavior", () => {
   });
 
   // Target (d): starting an already-started timeshift disposes the prior subscription and commits the new one. Two DISTINCT-id doubles are supplied via the queue; the
-  // second start runs start's if(isStarted) stop() path, disposing doubleA, then commits doubleB. This is ALSO the genuine discriminator of the consumeSegments
+  // second start runs start's if(isStarted) stop() path, disposing doubleA, then commits doubleB. This is ALSO the genuine distinguishing case of the consumeSegments
   // id-identity guard (the finally's this.subscription?.id === subscription.id): start() commits doubleB BEFORE doubleA's iterator finally runs, so that finally reaches
   // the distinct-id arm (this.subscription is doubleB, doubleB.id !== doubleA.id) and no-ops. A guard-removed timeshift instead tears doubleB down here, flipping
   // isStarted false - so the isStarted assertion below is what pins the guard.
@@ -427,9 +427,10 @@ describe("timeshift buffer behavior", () => {
     assert.equal(events.segment.some((payload) => payload.equals(pushed.data)), false, "no segment event carries the pushed fragment while not transmitting");
   });
 
-  // Target (k): the LOAD-BEARING discontinuity keyframe-gate. While transmitting, a discontinuity-marked NON-keyframe segment defers the discontinuity emit and
-  // suppresses forwarding until a clean keyframe arrives. We settle after EACH push so the intermediate deferred state is observable (multiple pushes + one settle would
-  // drain all in one macrotask and hide the defer). The non-keyframe choice is deliberate: a discontinuity-marked keyframe emits immediately and the gate is untested.
+  // Target (k): the discontinuity keyframe-gate, required for correctness. While transmitting, a discontinuity-marked NON-keyframe segment defers the discontinuity
+  // emit and suppresses forwarding until a clean keyframe arrives. We settle after EACH push so the intermediate deferred state is observable (multiple pushes + one
+  // settle would drain all in one macrotask and hide the defer). The non-keyframe choice is deliberate: a discontinuity-marked keyframe emits immediately and the gate
+  // is untested.
   test("the discontinuity emit is deferred until a clean keyframe after a discontinuity-marked non-keyframe", async () => {
 
     const { double, events, timeshift } = await buildStartedTimeshift();
@@ -621,7 +622,7 @@ describe("timeshift buffer behavior", () => {
   // terminated. This is the explicit-stop teardown path - the first of the consumeSegments teardown identities: stop() synchronously clears the subscription and
   // fires the one terminated, and doubleA's iterator finally then runs while the subscription is undefined, so it no-ops via the undefined short-circuit. (The
   // id-identity guard's distinct-id arm - a prior subscription's finally running while a NEW subscription is committed - is the SEPARATE path that target (d) genuinely
-  // discriminates; here doubleA's teardown completes before doubleB starts, so this test exercises the explicit-stop path, not the distinct-id arm.)
+  // tells apart; here doubleA's teardown completes before doubleB starts, so this test exercises the explicit-stop path, not the distinct-id arm.)
   test("an explicit stop while transmitting emits one terminated and the restart commits cleanly", async () => {
 
     const doubleA = makeControllableLivestreamDouble();
@@ -904,8 +905,8 @@ describe("timeshift buffer behavior", () => {
 
   // getters.
 
-  // Target (z): isRestarting reflects the double's state (recovering -> true, live -> false); the configuredDuration round-trip is discriminating (set 250 -> get 300 via
-  // Math.ceil(250/100)=3 segments; set 0 -> get 100, floored at one segment); segmentLength is 100; time is 0 on a started-but-empty buffer.
+  // Target (z): isRestarting reflects the double's state (recovering -> true, live -> false); the configuredDuration round-trip is what tells the two arms apart (set
+  // 250 -> get 300 via Math.ceil(250/100)=3 segments; set 0 -> get 100, floored at one segment); segmentLength is 100; time is 0 on a started-but-empty buffer.
   test("the getters reflect state, configured duration, segment length, and empty time", async () => {
 
     const recovering = await buildStartedTimeshift({ double: makeControllableLivestreamDouble({ state: "recovering" }) });
@@ -948,7 +949,7 @@ describe("timeshift buffer behavior", () => {
 
   // Target (bb): reboot does NOT fire on the recovery give-up's negatives. attempts below the threshold takes the first early return; the second early-return guard's
   // disjuncts - self-healing disabled, the camera unreachable, and the nvr shutting down - each independently suppress the reboot. Each leaves rebootCalls empty.
-  // (The reboot().catch rejection path is a deeper defensive branch not exercised here; the host's reboot stub does not reject - acknowledged as a gap.)
+  // (The reboot().catch rejection path is exercised separately below, by the test that sets rebootError.)
   test("selfHeal does not reboot below the threshold, with self-healing off, when unreachable, or while shutting down", async () => {
 
     const belowThreshold = await buildStartedTimeshift();

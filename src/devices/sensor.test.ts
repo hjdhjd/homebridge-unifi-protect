@@ -67,12 +67,12 @@ function countLoggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], su
 // is the single push site, so the many per-test variant builds are captured exactly as the fixture's is.
 const controllers: AbortController[] = [];
 
-// The reusable construction helper: build a REAL ProtectSensor against the harness doubles, with the recording dispatch injected through the NVR double's dispatch seam
-// so the motionDetectedAt observer's firehose routing is asserted against the REAL ProtectEventDispatch contract (the recording subclass arms no reset timer). The
-// casts are confined to the construction seam exactly as the light / chime suites do; the instance under test is the production class, running its real configureHints /
-// configureDevice / spawnObservers paths. The accessory factory is injectable so the moisture mode-flip test can pre-seed a LeakSensor before construction. The injected
-// recording dispatch is read off nvr.events after construction rather than captured from the factory closure - reading it back avoids both the assignment-expression
-// smell and a TS2454 definite-assignment error on a factory-captured binding.
+// The reusable construction helper: build a REAL ProtectSensor against the harness doubles, with the recording dispatch injected through the NVR double's
+// dispatch-injection point so the motionDetectedAt observer's firehose routing is asserted against the REAL ProtectEventDispatch contract (the recording subclass arms no
+// reset timer). The casts are confined to where the class is constructed exactly as the light / chime suites do; the instance under test is the production class,
+// running its real configureHints / configureDevice / spawnObservers paths. The accessory factory is injectable so the moisture mode-flip test can pre-seed a LeakSensor
+// before construction. The injected recording dispatch is read off nvr.events after construction rather than captured from the factory closure - reading it back avoids
+// both the assignment-expression smell and a TS2454 definite-assignment error on a factory-captured binding.
 function buildSensor(configOptions: Parameters<typeof makeSensorConfig>[0] = {}, harnessOptions: { accessory?: TestAccessory; userOptions?: string[] } = {}): {
   accessory: TestAccessory; logEntries: TestLogEntry[]; mqtt: TestMqttClient; projection: TestSensorProjection; recording: TestRecordingDispatch; sensor: ProtectSensor;
   store: TestStateStore;
@@ -616,9 +616,9 @@ describe("real ProtectSensor construction and family behavior", () => {
 
   test("re-running the reconcile does not register a second leak GET handler (the once-guard holds across config churn)", async () => {
 
-    // subscribeGet is NOT idempotent (homebridge-plugin-utils accumulates a handler per call), so the leak GET registration is once-guarded behind isInitialized. A
-    // re-run of updateDevice - driven here by a non-leak config push that wakes the whole-record sensor.config observer - must NOT register a second leak GET. The
-    // TestMqttClient records every subscribeGet, so a duplicate is directly countable.
+    // subscribeGet accumulates a handler on every call rather than replacing one (homebridge-plugin-utils), so the leak GET registration is once-guarded behind
+    // isInitialized. A re-run of updateDevice - driven here by a non-leak config push that wakes the whole-record sensor.config observer - must NOT register a second
+    // leak GET. The TestMqttClient records every subscribeGet, so a duplicate is directly countable.
     const built = buildSensor({ leakChannelNames: ["internal"], mountType: "leak" });
     const mac = built.projection.config.mac;
     const leakGetCount = (): number => built.mqtt.subscriptions.filter((subscription) => (subscription.kind === "get") && (subscription.topic === mac + "/leak")).length;

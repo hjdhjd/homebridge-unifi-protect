@@ -19,10 +19,10 @@
  * - nvr.ufp reads THROUGH the store (the harness's read-through client.nvr.config getter), so the opt-in hardwareRevision seeded into the store's nvr slice is what the
  *   configureInfo HardwareRevision write reads - making that write non-vacuous.
  *
- * Two non-vacuity disciplines load-bearing here. First, the alarm-switch feature gate (Enable.SecuritySystem.Alarm, default off): the with-feature test passes the exact
- * string and HARD-asserts the alarm Switch exists FIRST, paired with a without-feature absence test. Second, the motion fanout is CHANGE-GATED (security-system.ts
- * writes only when detectMotion !== targetState), so the member's context.detectMotion is seeded FALSY before driving toward enabled, and the test asserts the switch
- * FLIPPED false->true and the "...Motion detection enabled." log FIRED - not merely that detectMotion ended true.
+ * Two non-vacuity disciplines matter here, both required rather than incidental. First, the alarm-switch feature gate (Enable.SecuritySystem.Alarm, default off): the
+ * with-feature test passes the exact string and HARD-asserts the alarm Switch exists FIRST, paired with a without-feature absence test. Second, the motion fanout is
+ * CHANGE-GATED (security-system.ts writes only when detectMotion !== targetState), so the member's context.detectMotion is seeded FALSY before driving toward enabled,
+ * and the test asserts the switch FLIPPED false->true and the "...Motion detection enabled." log FIRED - not merely that detectMotion ended true.
  */
 import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../testing.helpers.ts";
 import type { ProtectAccessory, ProtectDevices } from "../types.ts";
@@ -74,7 +74,7 @@ function seedMember(nvr: TestProtectNvr, options: { detectMotion?: boolean; id: 
   nvr.platform.accessories.push(accessory);
 
   // The managed-device double the fanout resolves through configuredDevices: the security path gates each member on recordPresent and modelKey, and matches on the
-  // non-throwing protectId. Cast through ProtectDevices at the construction seam.
+  // non-throwing protectId. Cast through ProtectDevices at the construction boundary.
   const member = { accessory, accessoryName: options.name, modelKey: options.modelKey ?? "camera", protectId: options.id, recordPresent: options.recordPresent ?? true,
     ufp: { id: options.id } } as unknown as ProtectDevices;
 
@@ -85,7 +85,7 @@ function seedMember(nvr: TestProtectNvr, options: { detectMotion?: boolean; id: 
 
 // The reusable construction helper: build a REAL ProtectSecuritySystem against the harness doubles. makeProtectState seeds the Protect-* liveviews (DISTINCT ids per the
 // makeLiveviewConfig distinct-id discipline) and the nvr record carrying the opt-in hardwareRevision so configureInfo's HardwareRevision write reads a real value; the
-// casts are confined to the construction seam exactly as the family suites do. The owner RECEIVES its accessory (it does not self-create), so the test supplies one. The
+// casts are confined to construction exactly as the family suites do. The owner RECEIVES its accessory (it does not self-create), so the test supplies one. The
 // returned controller is the AbortController behind nvr.signal, aborted in teardown: the fixture tears down through the controller it built, the scope that owns every
 // registration the test created.
 function buildSecuritySystem(
@@ -260,9 +260,9 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
 
   test("updateDevice narrows the TargetState menu to disarm-only when only a non-arm liveview remains (the D4 blessed change)", async () => {
 
-    // A lone Protect-Off liveview adds no arm state (DISARM is always present, Off is not Away/Home/Night), so availableSecurityStates stays [DISARM]. Under D4 the prior
-    // <2-states early return is gone: setProps now lands unconditionally, so removing the last arm liveview re-narrows the Home app's menu to disarm-only instead of
-    // latching the previous shape - a non-Protect liveview behaves identically.
+    // A lone Protect-Off liveview adds no arm state (DISARM is always present, Off is not Away/Home/Night), so availableSecurityStates stays [DISARM]. setProps lands
+    // unconditionally even when fewer than two arm states are available, so removing the last arm liveview re-narrows the Home app's menu to disarm-only rather than
+    // leaving the previous menu in place - a non-Protect liveview behaves identically.
     const built = buildSecuritySystem({ liveviews: [makeLiveviewConfig({ id: "lv-off", name: "Protect-Off" })] });
 
     activeController = built.controller;
@@ -397,7 +397,7 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
     // Drive the STAY_ARM scene through the real TargetState onSet (HomeKit's set path).
     await built.accessory.getService(Service.SecuritySystem)?.getCharacteristic(TargetState).triggerSet(TargetState.STAY_ARM);
 
-    // The member FLIPPED on (the discriminating assertion: false -> true, not merely ended true) and its context updated.
+    // The member FLIPPED on (the distinguishing assertion: false -> true, not merely ended true) and its context updated.
     assert.equal(member.motionSwitch.getCharacteristic(Characteristic.On).value, true, "the member's motion switch flipped on for the armed scene");
     assert.equal(member.accessory.context["detectMotion"], true, "the member's detectMotion context flipped to true");
 
@@ -430,7 +430,7 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
     activeController = built.controller;
 
     // Both ids are in the SAME target liveview - the only difference is recordPresent. The graced member must be skipped by the security fanout's recordPresent gate
-    // BEFORE the protectId match, so removing that gate would flip its motion switch true (this is the discriminator).
+    // BEFORE the protectId match, so removing that gate would flip its motion switch true (this is what the test would catch).
     const present = seedMember(built.nvr, { detectMotion: false, id: "camera-present", name: "Present Camera", uuid: "uuid:present-camera" });
     const graced = seedMember(built.nvr, { detectMotion: false, id: "camera-graced", name: "Graced Camera", recordPresent: false, uuid: "uuid:graced-camera" });
 
@@ -444,7 +444,7 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
     // The present member flipped on (its id is in the liveview and its record is present).
     assert.equal(present.motionSwitch.getCharacteristic(Characteristic.On).value, true, "the present member's motion switch flipped on for the armed scene");
 
-    // The DISCRIMINATING assertions: the graced member's id is ALSO in the target liveview, so deleting the recordPresent gate would flip it true; the gate skips it
+    // The DISTINGUISHING assertions: the graced member's id is ALSO in the target liveview, so deleting the recordPresent gate would flip it true; the gate skips it
     // because its record has vanished, so its motion switch and detectMotion context stay untouched.
     assert.equal(graced.motionSwitch.getCharacteristic(Characteristic.On).value, false,
       "the recordPresent gate skipped the graced member - its motion switch stayed off despite its id matching the target liveview");
@@ -455,7 +455,7 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
 
     // A Protect-Home liveview carrying one camera member. The sensor is NOT a liveview member (a sensor can never be one), seeded with detectMotion TRUE: the sweep must
     // leave it untouched through BOTH arm and disarm because the modelKey !== "camera" gate skips it before any state write. Without that gate an arm would find the
-    // sensor a non-member and latch its detectMotion off (true -> false) - that is the discriminator.
+    // sensor a non-member and latch its detectMotion off (true -> false) - that is the distinguishing assertion.
     const built = buildSecuritySystem({ liveviews: [makeLiveviewConfig({ cameras: ["camera-home"], id: "lv-home", name: "Protect-Home" })] });
 
     activeController = built.controller;

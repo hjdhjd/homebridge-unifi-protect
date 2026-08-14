@@ -2,13 +2,13 @@
  *
  * stream-encode-policy.ts: the pure decisions of whether and how a live view's video is encoded, for UniFi Protect.
  *
- * Once the transport a live view draws from is settled (stream-source-policy.ts), three questions remain before an FFmpeg command line can be assembled: whether the
- * video is re-encoded at all, what source channel to ask the camera for, and - when we do re-encode - the exact encoder parameters. Each is a small decision over plain
- * facts about the HomeKit request and the camera, so all three live here as pure functions - no `this`, no I/O - and every cell is exhaustively unit-testable with
+ * Once the transport a live view draws from is settled (stream-source-policy.ts), a handful of questions remain before an FFmpeg command line can be assembled: whether
+ * the video is re-encoded at all, what source channel to ask the camera for, and - when we do re-encode - the exact encoder parameters. Each is a small decision over
+ * plain facts about the HomeKit request and the camera, so each lives here as a pure function - no `this`, no I/O - and every cell is exhaustively unit-testable with
  * constructed inputs, matching the pure-module voice of stream-source-policy.ts, livestream-recovery-policy.ts, and resolution.ts. The streaming delegate keeps the
  * impure half: the `this`-state reads that feed these, the channel selection itself, and the FFmpeg argument rendering that consumes the results.
  *
- * The three results:
+ * The results:
  *
  *   - TranscodeDecision: whether we re-encode, plus the high-latency reading of the connection that shapes the bitrate below.
  *   - ChannelRequest: the dimensions to hunt a source channel with, and whether to bias toward a richer one. The delegate makes the selection call itself, and the
@@ -126,7 +126,7 @@ export function resolveChannelRequest(input: { isTranscoding: boolean; requestHe
  *      copy passes the request through untouched, since the camera's own encode is what it is.
  *   2. Interpolation. When on high-performance hardware like Apple Silicon, using the TSB, and we don't have low-FPS cameras like the package camera, enable the use of
  *      the CPU-intensive FFmpeg minterpolate filter to enable very smooth video, especially when there's motion involved. M3+ Apple Silicon environments are able to
- *      reliably use this filter in realtime and with great results. I'm hoping to be able to enable this in the future for other platforms.
+ *      reliably use this filter in realtime and with great results; other platforms do not get this treatment yet.
  *   3. The encoding itself. A transcode composes the encoder-options bag homebridge-plugin-utils renders, taking its frame rate from the source channel while
  *      interpolating (the filters resample to the rate HomeKit asked for). A copy reports only whether the input needs transmuxing.
  *

@@ -6,16 +6,16 @@
  * Both are best-effort, cadenced calls onto the live projection (this.device.lux() and this.device.turnOnFlashlight()): the lux query runs at construction and on a
  * 60-second poll, the flashlight pulse on a retry-and-timer keepalive. Because a higher-level cadence re-issues each one, a failure is swallowed to a no-op sentinel -
  * the lux query's -1 ("no reading", which the poll skips on, the init floors only the first read) and the flashlight pulse's reflected-off switch (stop the heartbeat) -
- * rather than routed through runDeviceCommand, which would log every failed poll or pulse. That is the one-sentence reason these two do not share the command-error seam
+ * rather than routed through runDeviceCommand, which would log every failed poll or pulse. That is the one-sentence reason these two do not share the command-error path
  * the configuration writes use, and it is the cohesive identity this suite pins.
  *
  * The lux describe drives a plain ProtectCamera built INLINE (so it can pass featureFlags.hasLuxCheck, flip controller health to unreachable BEFORE construction, and
- * thread an MQTT double); the flashlight describe drives the REAL doorbell-plus-package family through the package-defer-create seam, reaching the flashlight on the
- * package camera's own accessory. Each sentinel is asserted against the production path: the projection's lux() / turnOnFlashlight() RECORD their calls and resolve with
- * a settable reading / rejection, so the command (the recorded call count and the returned reading) and the reflection (the characteristic write, the poll's MQTT
- * publish) are asserted INDEPENDENTLY. The 60-second lux poll and the 20-second flashlight heartbeat are GLOBAL setInterval callbacks captured by mock.timers; because
- * each callback is an async fire-and-forget (() => void asyncFn()), a tick fires it but does not drain its await-chain, so every poll / heartbeat assertion settle()s
- * after the tick.
+ * thread an MQTT double); the flashlight describe drives the REAL doorbell-plus-package family through the package-defer-create construction path, reaching the
+ * flashlight on the package camera's own accessory. Each sentinel is asserted against the production path: the projection's lux() / turnOnFlashlight() RECORD their
+ * calls and resolve with a settable reading / rejection, so the command (the recorded call count and the returned reading) and the reflection (the characteristic write,
+ * the poll's MQTT publish) are asserted INDEPENDENTLY. The 60-second lux poll and the 20-second flashlight heartbeat are GLOBAL setInterval callbacks captured by
+ * mock.timers; because each callback is an async fire-and-forget (() => void asyncFn()), a tick fires it but does not drain its await-chain, so every poll / heartbeat
+ * assertion settle()s after the tick.
  * The flashlight retry backoff is node:timers/promises and is un-reachable by mock.timers, so the one failure test pays its real ~2-second retry budget by design.
  */
 import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../../testing.helpers.ts";
@@ -46,7 +46,7 @@ interface BuiltLuxCamera {
 
 describe("camera best-effort device-command paths (camera-best-effort concern net)", () => {
 
-  describe("the ambient-light lux query (configureAmbientLightSensor / getLux in camera.ts, a plain ProtectCamera)", () => {
+  describe("the ambient-light lux query (the AmbientLightCapability's getLux, in ambient-light.ts, a plain ProtectCamera)", () => {
 
     // The per-test handle, torn down in afterEach so each test's per-accessory abort unwinds and no observe loop or registered interval outlives the test.
     let built: BuiltLuxCamera | undefined;
@@ -91,8 +91,8 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
 
     test("with hasLuxCheck the LightSensor materializes and a positive init reading passes through", async () => {
 
-      // The reachable build's init getLux ran at construction (camera.ts) against the projection's default positive reading (100), proving the projection's lux() is
-      // wired (a missing member would throw at construction).
+      // The reachable build's init getLux ran at construction (ambient-light.ts) against the projection's default positive reading (100), proving the projection's lux()
+      // is wired (a missing member would throw at construction).
       built = await buildLuxCamera();
 
       try {
@@ -102,7 +102,7 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
         // HARD-assert the LightSensor exists FIRST (non-optional): an absent service would let every onGet assertion pass vacuously.
         assert.ok(lightSensor, "featureFlags.hasLuxCheck materializes the ambient LightSensor");
 
-        // The CurrentAmbientLightLevel onGet (camera.ts) reads the stored init value, and the StatusActive onGet (camera.ts) reads isReachable (true here).
+        // The CurrentAmbientLightLevel onGet (ambient-light.ts) reads the stored init value, and the StatusActive onGet (ambient-light.ts) reads isReachable (true here).
         assert.equal(await lightSensor.getCharacteristic(Characteristic.CurrentAmbientLightLevel).triggerGet(), 100,
           "the positive init reading passes through untouched to the CurrentAmbientLightLevel onGet");
         assert.equal(await lightSensor.getCharacteristic(Characteristic.StatusActive).triggerGet(), true, "the StatusActive onGet reads isReachable");
@@ -116,7 +116,7 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
     test("without hasLuxCheck, no LightSensor is configured (the featureFlag absence pair)", async () => {
 
       // The featureFlag without-pair: with the Device.AmbientLightSensor toggle on (the default) but hasLuxCheck false and no existing service, the capabilityGate
-      // predicate votes false, so no LightSensor is created and no lux query issues (camera.ts).
+      // predicate votes false, so no LightSensor is created and no lux query issues (ambient-light.ts).
       const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS });
       const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
       const { controller, nvr } = makeTestNvr({ store });
@@ -139,7 +139,7 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
 
     test("a genuine zero reading is floored to HomeKit's 0.0001 minimum at init", async () => {
 
-      // getLux floors a successful zero to the HomeKit minimum (camera.ts: lux ||= 0.0001). Set the reading BEFORE construction so the init stores the floor.
+      // getLux floors a successful zero to the HomeKit minimum (ambient-light.ts: lux ||= 0.0001). Set the reading BEFORE construction so the init stores the floor.
       const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasLuxCheck: true } });
       const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
       const { controller, nvr } = makeTestNvr({ store });
@@ -169,8 +169,8 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
 
     test("an unreachable camera skips the init query and re-maps -1 to 0.0001, never calling lux()", async () => {
 
-      // Build unreachable: getLux short-circuits at if(!this.isReachable) return -1 (camera.ts) WITHOUT calling this.device.lux(), and the init re-maps -1 -> 0.0001
-      // (camera.ts). The doomed query is never issued - the model's queried === false assertion, now real against the production path.
+      // Build unreachable: getLux short-circuits at if(!this.isReachable) return -1 (ambient-light.ts) WITHOUT calling this.device.lux(), and the init re-maps -1 ->
+      // 0.0001 (ambient-light.ts). The doomed query is never issued - the model's queried === false assertion, now real against the production path.
       const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasLuxCheck: true } });
       const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
       const { controller, nvr } = makeTestNvr({ store });
@@ -202,8 +202,8 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
     test("the 60-second poll updates a changed reading and publishes it on MQTT", async () => {
 
       // Construct with a known init reading (42), then change it (80) and fire the poll: getLux returns 80, the guard if((42 === 80) || (80 === -1)) is false, so the
-      // poll updates CurrentAmbientLightLevel to 80 (camera.ts) and publishes "ambientlight" "80" (camera.ts). The publish fires ONLY in the poll path, never at
-      // init.
+      // poll updates CurrentAmbientLightLevel to 80 (ambient-light.ts) and publishes "ambientlight" "80" (ambient-light.ts). The publish fires ONLY in the poll path,
+      // never at init.
       const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasLuxCheck: true } });
       const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
       const { controller, nvr } = makeTestNvr({ mqtt: true, store });
@@ -289,7 +289,7 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
     test("a failed refresh read preserves the last-known reading at re-init (fails on the unconditional floor)", async () => {
 
       // Construct with the lux capability and a genuine positive first reading (100): the init read stores 100 and the sensor displays it. Then make a subsequent read
-      // fail (the luxRejection seam, exactly as the poll-skip test drives it) and trigger a configureAmbientLightSensor RE-RUN through a featureFlags push that keeps
+      // fail (the luxRejection hook, exactly as the poll-skip test drives it) and trigger a configureAmbientLightSensor RE-RUN through a featureFlags push that keeps
       // hasLuxCheck true - a controller capability refresh, the reconnect frame the Device.AmbientLightSensor gate later makes routine. The re-run's init read returns
       // the -1 no-reading sentinel; the guard keeps the last-known 100 in place rather than stamping the HomeKit floor.
       const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasLuxCheck: true } });
@@ -348,8 +348,8 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
       harnessController = undefined;
     });
 
-    // Build a REAL doorbell-plus-package family (the package-defer-create.test.ts seam) with the package channel PRESENT (G6_PRO_ENTRY_CHANNELS carries it), so the
-    // package camera materializes immediately and its flashlight Lightbulb is configured. The HELD projection is the SAME instance the package camera shares
+    // Build a REAL doorbell-plus-package family (the package-defer-create.test.ts construction path) with the package channel PRESENT (G6_PRO_ENTRY_CHANNELS carries it),
+    // so the package camera materializes immediately and its flashlight Lightbulb is configured. The HELD projection is the SAME instance the package camera shares
     // (doorbell.ts passes the doorbell's own #device to createPackageCamera), so a test sets flashlightRejection and reads flashlightCalls on it directly. isDark is
     // threaded at construction (makeCameraConfig.isDark) so the dark-guard resolves deterministically.
     async function buildFlashlightFamily(options: { isDark: boolean }): Promise<{ cameraId: string; projection: TestCameraProjection; store: TestStateStore }> {
@@ -456,10 +456,10 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
 
     test("dark with a persistently rejecting pulse: the retry exhausts three attempts and reflects off", async () => {
 
-      // The failure path (camera-package.ts, an accepted ~2-second real cost): the retry attempts three times at a 1000ms node:timers/promises backoff
-      // (un-reachable by mock.timers), the catch swallows the persistent rejection to lit = false, and the switch reflects off. mock.timers(setInterval) + reset()
-      // discards the heartbeat interval line 257 arms even on failure, so no real interval leaks; we do NOT tick it (that would cost another ~2 seconds, and the
-      // heartbeat-arm is already netted on the happy path).
+      // The failure path (camera-package.ts, an accepted ~2-second real cost): the retry attempts three times at a 1000ms node:timers/promises backoff (un-reachable by
+      // mock.timers), the catch swallows the persistent rejection to lit = false, and the switch reflects off. mock.timers(setInterval) + reset() discards the heartbeat
+      // interval that arms after activateFlashlight() resolves, even on failure, so no real interval leaks; we do NOT tick it (that would cost another ~2 seconds, and
+      // the heartbeat-arm is already netted on the happy path).
       const { projection } = await buildFlashlightFamily({ isDark: true });
 
       mock.timers.enable({ apis: ["setInterval"] });

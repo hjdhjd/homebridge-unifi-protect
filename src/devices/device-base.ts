@@ -135,7 +135,7 @@ export abstract class ProtectBase {
 
   // The log-line prefix for this owner. The base returns the bare name because a controller-scoped owner (system information, liveviews) has no hardware model to
   // surface. ProtectDevice overrides this to append "[Model]", so each device line shows its hardware model. It is deliberately a separate accessor from `name`: as the
-  // constructor's log seam notes, `name` is the stable functional identity (livestream request id, HomeKit accessory) and must never carry the bracketed model.
+  // constructor's log setup notes, `name` is the stable functional identity (livestream request id, HomeKit accessory) and must never carry the bracketed model.
   protected get logName(): string {
 
     return this.name;
@@ -159,7 +159,7 @@ export abstract class ProtectBase {
 
   // Hook fired each time a state observer wakes, so a leaf can attribute the wake to a diagnostics subject. The base is a deliberate no-op: controller-scoped owners have
   // no single accessory identity to key a wake to, mirroring the NVR's own observe loops which likewise publish nothing here. ProtectDevice overrides this to publish the
-  // accessory-scoped wake milestone. Another of the seams the shared observeState varies by leaf.
+  // accessory-scoped wake milestone. Another of the points the shared observeState varies by leaf.
   protected onObserverWake(_key: string): void {
 
     // No-op by default; the per-accessory wake milestone is published by ProtectDevice's override.
@@ -169,7 +169,7 @@ export abstract class ProtectBase {
   // the security system) has no per-device record that can vanish - its backing controller record is present for the whole connection. ProtectDevice overrides this to
   // peek() !== undefined, and DoorbellCapability delegates to its camera, so the one observeState gate below neutralizes a vanished record on every owner. Another of the
   // protected variation points the shared observeState reads through, so an owner whose answer differs supplies its own.
-  // eslint-disable-next-line @typescript-eslint/class-literal-property-style -- Polymorphic seam overridden by getters; the base cannot be a readonly field.
+  // eslint-disable-next-line @typescript-eslint/class-literal-property-style -- Overridden by getters in every leaf; the base cannot be a readonly field.
   protected get recordPresent(): boolean {
 
     return true;
@@ -221,7 +221,7 @@ export abstract class ProtectBase {
 
   // The MQTT topic-scope identifier for this owner - the leading path segment under homebridge-plugin-utils' configured topic prefix, yielding the wire topic
   // {topicPrefix}/{mqttId}/{topic}. Controller-scoped owners (system information, liveviews, the security system) scope under the controller's MAC; ProtectDevice
-  // overrides this to its own device MAC. It is the single seam the MQTT wrappers vary by, so the device-scoped-topic convention is defined in exactly one place.
+  // overrides this to its own device MAC. It is the single point the MQTT wrappers vary by, so the device-scoped-topic convention is defined in exactly one place.
   protected get mqttId(): string {
 
     return this.nvr.ufp.mac;
@@ -235,7 +235,7 @@ export abstract class ProtectBase {
   }
 
   // Configure an MQTT get subscription under this owner's scope. The registration is bound to the owner-lifetime signal, so an owner's teardown (cleanup, removal,
-  // reclassification) releases exactly this owner's handler - load-bearing on shared topics, where the package camera and its parent doorbell each hold handlers on
+  // reclassification) releases exactly this owner's handler - required on shared topics, where the package camera and its parent doorbell each hold handlers on
   // the same parent-MAC tuple and a tuple-wide unsubscribe would clobber the survivor's. The signal governs registration lifetime only; an in-flight handler runs to
   // completion under homebridge-plugin-utils' client-level signal, by design.
   protected subscribeGet(topic: string, type: string, getValue: () => string): void {

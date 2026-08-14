@@ -9,7 +9,7 @@
  * fires the in-place controller rebuild a late doorbell-ness needs. The capability attaches, the Doorbell service is primary, the census grows to eighteen, the
  * accessory's ordered controller-event log shows EXACTLY one removeController then one configureController (the rebuild), the stream's builtFor.isDoorbell is now
  * true, the ring MQTT is registered exactly once, and one promotion INFO is logged. It then pins the no-churn cases: a construction-attach (a flag-true construction)
- * yields the same service set with ZERO removeController (the stub stream is built with builtFor.isDoorbell true, so the gate is a no-op), an idempotent re-push does
+ * yields the same service set with ZERO removeController (the stub stream is built with builtFor.isDoorbell true, so the gate is a no-op), an unchanged re-push does
  * not re-attach or churn the controller, a within-drain flap self-collapses to no WARN and no churn, and a SETTLED demotion raises exactly one WARN while removing
  * nothing. Suite D (sweep-stale) pre-seeds a plain camera accessory with stale doorbell-only services and asserts removeServices strips exactly those - the chime
  * switches, the volume lightbulb, the auth sensor, and a message switch - while leaving the Doorbell, mute, HKSV-recording, and UFP-recording switches untouched, and
@@ -33,7 +33,7 @@ import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import { makeTestNvr } from "../../nvr/testing.helpers.ts";
 
-// Construct a real ProtectCamera, with the casts confined to this one seam - the instance under test is the production class and its composed capability.
+// Construct a real ProtectCamera, with the casts confined to this one boundary - the instance under test is the production class and its composed capability.
 function construct(nvr: TestProtectNvr, accessory: TestAccessory, projection: TestCameraProjection): ProtectCamera {
 
   return new ProtectCamera(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Camera);
@@ -123,7 +123,7 @@ describe("live-attach reclassification (suite C)", () => {
     controller.abort();
   });
 
-  test("an idempotent re-push of isDoorbell does not re-attach or churn the controller", async () => {
+  test("a repeated isDoorbell push does not re-attach or churn the controller", async () => {
 
     const cameraConfig = makeCameraConfig({ channels: G6_PRO_ENTRY_CHANNELS, featureFlags: { isDoorbell: false }, name: "Front Door" });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
@@ -204,7 +204,7 @@ describe("sweep-stale removal and the audio-derivation observability (suite D)",
 
   test("removeServices strips exactly the doorbell-only services, leaving the Doorbell, mute, HKSV, and UFP services untouched", () => {
 
-    // The SSOT removal contract, exercised directly through the NVR's sweep seam (which routes to the real DoorbellCapability.removeServices). We hand-seed an accessory
+    // The SSOT removal contract, exercised directly through the NVR's sweep hook (which routes to the real DoorbellCapability.removeServices). We hand-seed an accessory
     // with the doorbell-only services a demoted-while-down doorbell would leave behind, plus the camera-level / owned-elsewhere services that must survive, then assert
     // the sweep strips exactly the former. Driving removeServices directly isolates its own selectivity from the feature-gated construction configures (the mute switch,
     // HKSV switch, and Doorbell service each have their own removers in the construction path).

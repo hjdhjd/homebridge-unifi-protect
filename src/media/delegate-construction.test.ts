@@ -2,7 +2,7 @@
  *
  * delegate-construction.test.ts: The first media-delegate construction tests - the proof the ProtectCameraHost interface segregation unlocks delegate testability.
  *
- * The ProtectCameraHost interface (the dependency-inversion seam on the camera side of the media stack) lets the recording, snapshot, and timeshift delegates type
+ * The ProtectCameraHost interface (the dependency-inversion boundary on the camera side of the media stack) lets the recording, snapshot, and timeshift delegates type
  * their camera handle as a narrow contract instead of the concrete ProtectCamera. The promised payoff is that a delegate can now
  * be unit-constructed against a small stub host instead of a full camera. This suite cashes that in for the Tier-1 (field-copy ctor) delegates: each
  * constructs against the reusable TestCameraHost double with no real camera and no FFmpeg.
@@ -10,7 +10,7 @@
  * The construction proof for a field-copy ctor is necessarily thin, so the real-behavior anchor is the snapshot delegate's reachability gate, tested TWO-SIDED: with
  * the host unreachable getSnapshot returns null (the gate, the first statement of getSnapshot), and with the host reachable it returns the stub's controller Buffer
  * (the non-package pipeline falls through the timeshift and RTSP sources - both early-return on the host's undefined stream - to the controller source, with no crop
- * because the host's hints.crop is false). Two-sided proves isReachable is actually READ and that a stubbed seam value flows THROUGH the delegate's logic - the
+ * because the host's hints.crop is false). Two-sided proves isReachable is actually READ and that a stubbed interface value flows THROUGH the delegate's logic - the
  * capability the interface unlocked - not a coincidental null.
  *
  * The streaming delegate constructs here too, and it is the one member of the group that composes rather than field-copies: it builds a real FfmpegOptions (inert
@@ -30,7 +30,8 @@ import assert from "node:assert/strict";
 import { makeTestCameraHost } from "./testing.helpers.ts";
 
 // Every host this suite builds shares the one makeTestNvr AbortController. Aborting it in teardown releases the harness signal so a leaked observer (none here, the
-// trio ctors spawn none) could never outlive the suite. The trio ctors are pure field-copies, so construction floats no async machinery and needs no settle().
+// field-copy ctors spawn none) could never outlive the suite. The field-copy ctors are pure field-copies, so construction floats no async machinery and needs no
+// settle().
 const controllers: AbortController[] = [];
 
 after(() => {
@@ -62,7 +63,7 @@ describe("media-delegate construction against the ProtectCameraHost stub", () =>
   });
 
   // The snapshot delegate: a field-copy ctor reading log only, then the suite's real-behavior anchor. The two-sided reachability gate proves the delegate actually
-  // READS host.isReachable and that a stubbed seam value flows through its source pipeline.
+  // READS host.isReachable and that a stubbed interface value flows through its source pipeline.
   test("ProtectSnapshot constructs and its reachability gate is two-sided", async () => {
 
     const { controller, host } = makeTestCameraHost();
@@ -77,11 +78,11 @@ describe("media-delegate construction against the ProtectCameraHost stub", () =>
 
     // Side two: a reachable host returns the stub's controller Buffer. With stream undefined the timeshift and RTSP sources early-return, and with no packageCamera
     // key on the accessory context the non-package branch falls through to the controller source, which resolves snapshotResult; hints.crop is false so no crop pass
-    // runs. The returned Buffer being exactly the stubbed value is the proof a seam value threads through the delegate's logic with no FFmpeg.
+    // runs. The returned Buffer being exactly the stubbed value is the proof an interface value threads through the delegate's logic with no FFmpeg.
     host.isReachable = true;
     assert.equal(await snapshot.getSnapshot(), host.snapshotResult);
 
-    // The controller source was actually the path taken - the seam was invoked exactly once on the reachable side (the unreachable side returned before any source).
+    // The controller source was actually the path taken - the interface was invoked exactly once on the reachable side (the unreachable side returned before any source).
     assert.equal(host.snapshotFromControllerCalls.length, 1);
   });
 
@@ -161,10 +162,8 @@ describe("media-delegate construction against the ProtectCameraHost stub", () =>
   });
 
   /* The streaming delegate's shutdown is safe to call more than once, and structurally so rather than through a latch: both session maps drain on the first call, and
-   * the reset assigns fixed values, so there is no state a second call could find in an unexpected shape.
-   *
-   * HONESTY NOTE: this pin characterizes repeat-safety that already held; it is a tripwire against a future edit that introduces state a second call would trip over,
-   * and it tells apart no change made alongside it. The delegate's shutdown body is untouched by the work that added this test.
+   * the reset assigns fixed values, so there is no state a second call could find in an unexpected shape. This test is a tripwire against a future edit that
+   * introduces state a second call could trip over.
    */
   test("a repeat delegate shutdown tears nothing down and reports nothing", () => {
 

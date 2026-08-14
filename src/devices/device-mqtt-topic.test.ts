@@ -1,10 +1,11 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * device-mqtt-topic.test.ts: Unit tests for the ProtectBase MQTT wrappers and the mqttId seam that single-source the device- and controller-scoped topic conventions.
+ * device-mqtt-topic.test.ts: Unit tests for the ProtectBase MQTT wrappers and the mqttId override point that single-source the device- and controller-scoped
+ * topic conventions.
  *
  * Every MQTT publish / subscribe routes through ProtectBase.publish, subscribeGet, and subscribeSet. Those wrappers are the one place the plugin composes an owner's
  * mqttId into the topic tail that homebridge-plugin-utils' MqttClient then prefixes with the configured topic, so the wire topic is {topicPrefix}/{mqttId}/{subtopic}
- * (subscribeGet / subscribeSet additionally append the internal /get and /set suffixes). mqttId is the single seam the wrappers vary by: ProtectDevice overrides it to
+ * (subscribeGet / subscribeSet additionally append the internal /get and /set suffixes). mqttId is the single field the wrappers vary by: ProtectDevice overrides it to
  * the device MAC (device scope), while the controller-scoped owners (system information, liveviews, the security system) inherit the base default of the controller MAC
  * (controller scope). These tests pin both compositions against the real production wrappers, capturing the topic each forwards to a mock nvr.mqtt. The MQTT topic
  * structure is a user-facing contract (automations subscribe to it), so a changed composition is a regression these tests guard against. ProtectDevice and a bare
@@ -75,8 +76,8 @@ interface MqttCapture {
 const MAC = "AABBCCDDEEFF";
 
 // Construct a real ProtectDevice against the minimal mocks the MQTT wrappers read: the device-leaf mqttId sources the bare MAC from the persisted accessory context
-// (context.mac), not this.ufp.mac, so we seed it on the accessory; and an nvr whose mqtt captures the composed topic for each verb. The casts are confined to this seam;
-// the instance itself is the production class.
+// (context.mac), not this.ufp.mac, so we seed it on the accessory; and an nvr whose mqtt captures the composed topic for each verb. The casts are confined to this
+// construction step; the instance itself is the production class.
 const makeDevice = (): { capture: MqttCapture; instance: TestProtectDevice } => {
 
   const capture: MqttCapture = { publish: [], subscribeGet: [], subscribeSet: [] };
@@ -137,7 +138,7 @@ const makeGuardedDevice = (): { errors: string[]; instance: TestProtectDevice; m
 const NVR_MAC = "112233445566";
 
 // Construct a bare ProtectBase against the minimal mocks its MQTT wrappers read: an nvr carrying the controller MAC (the base mqttId reads through to this.nvr.ufp.mac)
-// and an mqtt that captures the composed topic for each verb. The casts are confined to this seam; the instance itself is the production base class.
+// and an mqtt that captures the composed topic for each verb. The casts are confined to this construction step; the instance itself is the production base class.
 const makeController = (): { capture: MqttCapture; instance: TestProtectBase } => {
 
   const capture: MqttCapture = { publish: [], subscribeGet: [], subscribeSet: [] };

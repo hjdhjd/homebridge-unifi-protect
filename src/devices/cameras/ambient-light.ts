@@ -27,6 +27,7 @@ import { capabilityGate } from "homebridge-plugin-utils";
  */
 export class AmbientLightCapability extends ProtectDeviceCapability<ProtectCamera> {
 
+  // The live Camera projection this capability reads and calls lux() against, handed in by the owning camera at construction.
   readonly #device: Camera;
   // The last-known ambient light reading, in lux. Seeded to zero, which HomeKit cannot represent, so the first genuine read (or the initial-read floor below) replaces it
   // before anything displays it. It is the poll's change-detection baseline and the value the CurrentAmbientLightLevel handler reports.
@@ -124,6 +125,7 @@ export class AmbientLightCapability extends ProtectDeviceCapability<ProtectCamer
       this.publish("ambientlight", this.#ambientLight.toString());
     };
 
+    // Poll every 60 seconds - ambient light changes slowly enough that a faster cadence would only add controller chatter without a visible HomeKit benefit.
     this.timers.setInterval("ambientLight", () => void updateAmbientLight(), 60 * 1000);
 
     // Retrieve the active state when requested.

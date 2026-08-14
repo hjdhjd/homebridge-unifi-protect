@@ -15,6 +15,8 @@ import ffmpegPath from "ffmpeg-for-homebridge";
 import { streamingDelegateFactory } from "./media/stream.ts";
 import util from "node:util";
 
+// The Homebridge dynamic platform plugin for UniFi Protect. Owns FFmpeg capability detection, the RTP port allocator, and the per-controller ProtectNvr
+// instances the plugin manages.
 export class ProtectPlatform implements DynamicPlatformPlugin {
 
   public accessories: ProtectAccessory[];

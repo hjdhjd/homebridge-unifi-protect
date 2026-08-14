@@ -5,7 +5,8 @@
  * recording-delegate.test.ts proved the decline contract but could not reach the transmit path: against a segment-less livestream stub the timeshift buffer never fills,
  * so the gate always declines, and reaching transmit at all would spawn a real FFmpeg child. This suite clears both blockers FFmpeg-free. It fills the timeshift buffer
  * with the harness's segment-yielding livestream double (real keyframe-bearing fMP4 the production isKeyframe parse accepts), and it constructs the FFmpeg process
- * through the platform's recording-process factory seam - injecting an FFmpeg-free TestRecordingProcess - so the delegate runs its full accept-path logic with no child.
+ * through the platform's recording-process factory interface - injecting an FFmpeg-free TestRecordingProcess - so the delegate runs its full accept-path logic
+ * with no child.
  *
  * Pacing is made deterministic by the injected clock, not by node:test mock timers (which cannot reach the production node:timers/promises delay) and not by mocking
  * Date: the delegate reads platform.clock for both its delay() and its now(), and the test holds that exact TestClock instance (returned by makeTestCameraHost). The
@@ -48,14 +49,14 @@ after(() => {
 
 // The count of INFO/WARN log lines whose first format string contains the given fragment - the harness records the raw parameters, so we match the message template. The
 // enable-ack re-acknowledgment test counts occurrences (not a boolean .some()), because a boolean would pass after the FIRST enable regardless of whether the second
-// re-acknowledged - the count discriminates the per-enable acknowledgment behavior.
+// re-acknowledged - the count tells apart the per-enable acknowledgment behavior.
 function countLogs(entries: TestLogEntry[], level: TestLogEntry["level"], fragment: string): number {
 
   return entries.filter((entry) => (entry.level === level) && (typeof entry.parameters[0] === "string") && entry.parameters[0].includes(fragment)).length;
 }
 
-// A minimal-but-truthy recording configuration cast to the HAP type at this confined seam - the same harness discipline the decline suite uses. The transmit path reads
-// only videoCodec.parameters.bitRate (the enable-ack config log) and prebufferLength; videoCodec.resolution is present solely to satisfy the
+// A minimal-but-truthy recording configuration cast to the HAP type at this confined boundary - the same harness discipline the decline suite uses. The transmit path
+// reads only videoCodec.parameters.bitRate (the enable-ack config log) and prebufferLength; videoCodec.resolution is present solely to satisfy the
 // CameraRecordingConfiguration shape and is not consumed by the code under test. prebufferLength is well below the filled buffer time (10000ms) so the
 // early-end telemetry gate's time >= prebufferLength conjunct stays satisfied.
 function makeRecordingConfig(): CameraRecordingConfiguration {
@@ -171,7 +172,7 @@ function makeInitLosingSubscription(mediaSegments: number): { loseInitSegment: (
 }
 
 // The arranged transmitting delegate plus the handles a test asserts against. The clock is the controllable TestClock the delegate's pacing awaits; logEntries captures
-// the telemetry log; host exposes the seam call logs; nvr is the controller double backing the context.
+// the telemetry log; host exposes the interface call logs; nvr is the controller double backing the context.
 interface TransmittingArrange {
 
   clock: TestClock;
@@ -358,7 +359,7 @@ describe("recording delegate transmit-path behavior", () => {
   // Test C - per-event RecordingSession reset. Two successive events on one armed delegate, each create handing back a fresh configured process (3 media for event 1, 1
   // for event 2) via the sequenced factory. The two telemetry logs carry distinct event ids AND distinct yield counts - event 2's count is its own (1, not 3 and not an
   // accumulation of event 1's) - which is the behavior-first proof a fresh RecordingSession is established per request. Event 2's telemetry also carries its own reserve
-  // fragment, re-seeded from POSITIVE_INFINITY to a finite value (here 0, since the sequenced inits set no bufferedSegments) - the load-bearing observable is the
+  // fragment, re-seeded from POSITIVE_INFINITY to a finite value (here 0, since the sequenced inits set no bufferedSegments) - what proves the reset is the
   // per-event re-seed away from the Infinity sentinel, not a positive count.
   test("establishes a fresh per-event session so successive events report independent telemetry", async () => {
 
@@ -446,8 +447,8 @@ describe("recording delegate transmit-path behavior", () => {
     packets.push(...rest);
 
     // The restart fired a second create, and the resumed process's segments reached HomeKit. We assert on rest (the packets drained AFTER the discontinuity) rather than
-    // the running total, so the resume half is genuinely discriminating: packets already held the pre-restart init and in-flight segment, so a total >= 2 would pass even
-    // if the restarted process yielded nothing.
+    // the running total, so the resume half genuinely tells the cases apart: packets already held the pre-restart init and in-flight segment, so a total >= 2 would pass
+    // even if the restarted process yielded nothing.
     assert.equal(factory.createCalls.length, 2);
     assert.ok(rest.length >= 1, "Expected the restarted process to resume yielding segments after the discontinuity.");
   });
@@ -592,8 +593,7 @@ describe("recording delegate transmit-path behavior", () => {
 
     // The summary fires from the session's own counters, and reports transmitted-video seconds exactly (finding #25). The tally is the prebuffer blob's real fragment
     // count plus the two live fragments: the blob is the keyframe-aligned prebuffer window, prebufferLength / segmentLength = 4000 / 100 = 40 fragments, so the tally is
-    // 40 + 2 = 42 fragments at 100ms each = 4.2 seconds, rounded to 4. Pre-fix, the blob was mis-credited as a single segment (then discounted to zero), so this same
-    // event reported 0.2 seconds.
+    // 40 + 2 = 42 fragments at 100ms each = 4.2 seconds, rounded to 4.
     const summary = logEntries.find((e) => (e.level === "info") && (String(e.parameters[0]) === "HKSV: transmitted a %s %s recording to HomeKit."));
 
     assert.ok(summary, "Expected the recorded-event summary log entry.");
@@ -637,7 +637,7 @@ describe("recording delegate transmit-path behavior", () => {
 
   // Test I - the starved source stays calm. The same timed-out recording, but no fresh segment arrives before the close: the source has gone quiet, so the only
   // arrival was the transmit-start one, now stale after the drain advanced the clock past the watchdog window. The finalization sees a stale arrival under a timeout
-  // and says nothing - the benign starve the offline/deferred path already narrates. The discriminant against Test H is exactly the absence of the fresh arrival.
+  // and says nothing - the benign starve the offline/deferred path already narrates. What tells this apart from Test H is exactly the absence of the fresh arrival.
   test("stays quiet when a recording times out after the source has gone quiet", async () => {
 
     const ffmpegProcess = new TestRecordingProcess({ initSegment: Buffer.from("init"), isTimedOut: true, segments: [Buffer.from("seg1")] });
@@ -653,7 +653,7 @@ describe("recording delegate transmit-path behavior", () => {
   });
 
   // Test J - a recording that did not time out is unaffected. Even with a fresh arrival right before the close, a recording the watchdog did NOT reap (isTimedOut
-  // false) never warns: the warning is gated on the timeout, since a recent arrival alone is the normal healthy case, not a stall. The discriminant against Test H
+  // false) never warns: the warning is gated on the timeout, since a recent arrival alone is the normal healthy case, not a stall. What tells this apart from Test H
   // is exactly the timeout flag.
   test("stays quiet when the recording did not time out even though the source is still delivering segments", async () => {
 

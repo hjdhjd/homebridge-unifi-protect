@@ -2,7 +2,7 @@
  *
  * stream-source-policy.test.ts: Exhaustive red-green coverage of the pure session-source decision and the pure streaming-samplerate helper.
  *
- * Both are pure functions - no `this`, no I/O - so every cell is provable against constructed inputs, the property that makes pure decision modules exhaustively testable
+ * Each is a pure function - no `this`, no I/O - so every cell is provable against constructed inputs, the property that makes pure decision modules exhaustively testable
  * in a way `this`-bound logic is not. The session-source table walks the seed, the A/B test flip, the recording-demand overrides, and the buffer-liveness fallback across
  * the codec and package axes; the samplerate table walks the doorbell and capability axes.
  */
@@ -13,8 +13,9 @@ import { resolveSessionSource } from "./stream-source-policy.ts";
 import { streamingSamplerates } from "./stream-delegate.ts";
 
 // The neutral session-source input: buffer-backed livestreaming off, no recording, buffer down, a plain camera on H.264 that can reach the livestream API and has an
-// RTSP-enabled stream to dial, no A/B flip. Each test overrides only the axes it exercises, so the single variable per cell is the input under test. The two capability
-// defaults are true because that is the ordinary camera every pre-existing cell below was written against, which is what makes those cells the parity floor.
+// RTSP-enabled stream to dial, no A/B flip. Each test overrides only the axes it exercises, so the single variable per cell is the input under test. The capability
+// defaults (canUseBuffer, hasRtspStream) are true because that is the ordinary camera every pre-existing cell below was written against, which is what makes those cells
+// the parity floor.
 function input(overrides: Partial<Parameters<typeof resolveSessionSource>[0]> = {}): Parameters<typeof resolveSessionSource>[0] {
 
   return { abTestFlip: false, bufferStarted: false, canUseBuffer: true, hasRecordingDemand: false, hasRtspStream: true, isPackageCamera: false,

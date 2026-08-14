@@ -9,8 +9,8 @@
  * declines the write - an account without the full management role, or any other failure - the camera narrates a warn and carries on, with its direct-RTSP selection
  * confined to the channels that are actually enabled. There is no failure latch: a later channels wake re-attempts the write.
  *
- * The two terminals are pinned independently: a camera reporting no primary channels at all, and a camera that can neither reach the livestream API nor dial a usable
- * RTSP stream - the only population that declines to advertise.
+ * The terminals are pinned independently: a camera reporting no primary channels at all, and a camera that can neither reach the livestream API nor dial a usable RTSP
+ * stream - the only population that declines to advertise.
  *
  * The exact advertised-list mathematics for the mixed regime are the resolution suite's golden-master concern (resolution.test.ts pins buildAdvertisedProfiles over
  * MIXED_RTSP_DISABLED_CHANNELS); this net asserts the device wiring - which arm ran, the exact PATCH payload, the narration, whether the delegate stood up, and which

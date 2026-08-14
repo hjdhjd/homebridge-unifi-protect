@@ -5,7 +5,7 @@
  * ProtectChime extends ProtectDevice directly (no streaming-stack drag), so like ProtectLight it is unit-constructable, and this suite is the next such family after the
  * light reference: a read-through projection double with a play command surface, config builders, per-slice and collection push helpers, and behavior-FIRST assertions
  * (the observers, the buzzer / ringtone speaker switches, the legacy-service removal, the play dispatch, and the MQTT tone handler). Every assertion drives the
- * REAL production class through its real configureDevice / spawnObservers paths and its real playTone over the real runDeviceCommand seam - never a modeled stand-in.
+ * REAL production class through its real configureDevice / spawnObservers paths and its real playTone over the real runDeviceCommand path - never a modeled stand-in.
  *
  * This suite covers the chime's complete playTone behavior through the real production class: the chime's speaker join,
  * the missing-ring fallback, the empty-ringSettings no-op, the buzzer no-join, the no-tone-selected empty payload, the rejection and the authorization paths are all
@@ -50,7 +50,7 @@ function loggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], substri
 const controllers: AbortController[] = [];
 
 // The reusable construction helper: build a REAL ProtectChime against the harness doubles, seeding the chime record plus whatever ringtones the test wants. The casts
-// are confined to the construction seam exactly as the light suite does; the instance under test is the production class running its real configureDevice /
+// are confined to the construction boundary exactly as the light suite does; the instance under test is the production class running its real configureDevice /
 // spawnObservers paths. Returns logEntries and mqtt (the light suite needs neither; the chime asserts both the failure log lines and the captured MQTT tone handler).
 // The accessory factory is injectable so the legacy-removal test can pre-seed a Lightbulb and a bare speaker Switch before construction.
 function buildChime(configOptions: Parameters<typeof makeChimeConfig>[0] = {}, harnessOptions: { accessory?: TestAccessory; ringtones?: ProtectRingtoneConfig[] } = {}): {

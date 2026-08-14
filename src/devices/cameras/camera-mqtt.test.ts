@@ -9,12 +9,12 @@
  * SET (the value !== "true" gate routing to the stream's snapshot request), and the /doorbell ring SET (the value !== "true" gate routing to doorbellEventHandler). The
  * captured-handler idiom is the established one (chime.test.ts, viewer.test.ts, sensor.test.ts): find by topic / kind, then invoke the closure and assert its effect.
  *
- * The vacuity gate is two-part (carried from the device-* law): every gated handler HARD-asserts its captured subscription EXISTS as the FIRST discriminator (a
+ * The vacuity gate is two-part (carried from the device-* law): every gated handler HARD-asserts its captured subscription EXISTS as the first check (a
  * non-optional assert.ok on the closure) before any behavior assertion - a find(...) returning undefined whose closure is then optional-chained would let the test pass
  * vacuously. The ring's feature-gated registration is paired with a without-gate test that proves no /doorbell subscription is registered on a plain camera.
  *
  * The ring is captured through a TEST-LOCAL ProtectEventDispatch subclass that overrides doorbellEventHandler into a recording array (the pattern
- * doorbell-effects.test.ts established), injected through makeTestNvr's dispatch seam and read back off nvr.events - NOT the shared TestRecordingDispatch, which
+ * doorbell-effects.test.ts established), injected through makeTestNvr's dispatch hook and read back off nvr.events - NOT the shared TestRecordingDispatch, which
  * overrides only motionEventHandler. The override captures the routing (which device the ring fired for); it deliberately does not re-test the handler's HomeKit effects,
  * which are event-dispatch.ts's own concern, and it arms no reset timer, so cleanup leaks no handle.
  *
@@ -69,9 +69,9 @@ interface BuiltCamera {
 
 // Build a REAL plain ProtectCamera against the doubles, exactly as camera-onsets.test.ts's buildCamera assembles it, with the additions this suite needs: mqtt is always
 // threaded true (the captured subscriptions are the surface under test), and an optional dispatch factory installs the recording ring double. The casts are confined to
-// this seam - the instance is the production ProtectCamera and everything it runs is the production path. makeTestNvr returns mqtt as Nullable<TestMqttClient>, so the
-// helper narrows it (a throwing guard, exactly as buildDoorbell / buildLight do) before returning the non-null double; otherwise every mqtt.subscriptions.find is a
-// strict-null TS error.
+// this construction boundary - the instance is the production ProtectCamera and everything it runs is the production path. makeTestNvr returns mqtt as
+// Nullable<TestMqttClient>, so the helper narrows it (a throwing guard, exactly as buildDoorbell / buildLight do) before returning the non-null double; otherwise every
+// mqtt.subscriptions.find is a strict-null TS error.
 async function buildCamera(options: { channels?: ProtectCameraConfig["channels"]; dispatch?: (nvr: ProtectNvr) => ProtectEventDispatch;
   featureFlags?: Partial<ProtectCameraConfig["featureFlags"]>; userOptions?: string[]; } = {}): Promise<BuiltCamera> {
 

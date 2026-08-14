@@ -4,7 +4,7 @@
  *
  * Removing an accessory is the plugin's one destructive act, so it is gated on the controller having been continuously good for a settling window. This module owns
  * that whole decision - the good-state clock, the window, the delayed-removal graces, and the single chokepoint every controller-state-driven removal routes through.
- * The design follows three principles:
+ * The design follows these principles:
  *
  *   1. Facts in, actions out. The gate holds no controller reference and reads no controller state. The root recomputes the good-state conjunction and PUSHES the
  *      result through `refresh`; every act that touches the accessory graph is reached through the narrow {@link RemovalGateActions} surface handed at construction.
@@ -125,8 +125,8 @@ export class RemovalStabilityGate {
 
     if(facts.good && (this.#stableSince === null)) {
 
-      // One instant serves the stamp, the uptime backdate, and the delay arithmetic below, so all three describe the same moment rather than three reads that could
-      // straddle a millisecond boundary and disagree.
+      // One instant serves the stamp, the uptime backdate, and the delay arithmetic below, so they all describe the same moment rather than drifting across separate
+      // reads that could straddle a millisecond boundary and disagree.
       const nowMs = Date.now();
 
       // A zero uptime reads as absent: the controller has reported no boot time we could backdate from, so the period counts from now.

@@ -17,10 +17,11 @@ describe("doorbell reconcile decision (doorbellReconcileAction)", () => {
 
   test("the exhaustive 2x2 over (hasCapability, isDoorbell) maps to the four live-attach actions", () => {
 
-    // The full truth table over the two inputs: whether this camera already has a doorbell capability attached, and the camera's current featureFlags.isDoorbell. The
-    // live-attach model attaches the capability in place rather than tearing down and recreating, so the four actions are: a late-arriving doorbell flag on a plain
-    // camera attaches the capability; a withdrawn flag on a camera that still has one is reported (observability-only, nothing removed); a plain camera with no
-    // capability sweeps any stale doorbell-only services; and a steady doorbell (with its capability) or a steady plain camera (with none) is a no-op.
+    // The exhaustive truth table over whether this camera already has a doorbell capability attached and the camera's current featureFlags.isDoorbell. The
+    // live-attach model attaches the capability in place rather than tearing down and recreating, so every combination resolves to one of the reconcile actions: a
+    // late-arriving doorbell flag on a plain camera attaches the capability; a withdrawn flag on a camera that still has one is reported (observability-only,
+    // nothing removed); a plain camera with no capability sweeps any stale doorbell-only services; and a steady doorbell (with its capability) or a steady plain
+    // camera (with none) is a no-op.
     const cases: { expected: ReturnType<typeof doorbellReconcileAction>; hasCapability: boolean; isDoorbell: boolean }[] = [
 
       { expected: "attach", hasCapability: false, isDoorbell: true },

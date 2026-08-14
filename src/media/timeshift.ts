@@ -54,8 +54,8 @@ interface KeyframeAlignedStart {
 }
 
 // A single buffered timeshift entry. The fMP4 fragment and its keyframe classification are bound together in one struct so the segment and its keyframe flag are
-// stored, trimmed, and cleared as an indivisible unit. This makes a desync between a fragment and its keyframe flag structurally unrepresentable rather than an
-// invariant a caller must uphold by convention.
+// stored, trimmed, and cleared as an indivisible unit. This makes a desync between a fragment and its keyframe flag structurally unrepresentable rather than a
+// rule a caller must uphold by convention.
 interface TimeshiftSegment {
 
   data: Buffer;
@@ -86,7 +86,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
   // Segment resolution for the timeshift buffer. Fixed at PROTECT_SEGMENT_RESOLUTION (100ms) because a small value gives HKSV a better event recording experience
   // at a trivial CPU cost on modern systems.
   private readonly _segmentLength: number = PROTECT_SEGMENT_RESOLUTION;
-  // The injected wall-clock seam (production systemClock, a controllable TestClock under test). The timeshift reads it for keyframe-staleness timing - the
+  // The injected wall-clock interface (production systemClock, a controllable TestClock under test). The timeshift reads it for keyframe-staleness timing - the
   // _lastKeyframeTime write on each keyframe and the now-versus-then staleness compare in snapshotSource - so that path is test-deterministic without a real-time
   // wait. This mirrors the recording delegate's clock field-copy exactly (record.ts), reaching the clock through the platform handle the camera already carries.
   private readonly clock: Clock;
@@ -137,7 +137,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
     // Clear out the timeshift buffer, if it's been previously filled, and then fire up the timeshift buffer.
     this.clearBuffer();
 
-    // Create the pooled livestream subscription via the camera seam. This call is synchronous: it returns the subscription handle immediately and begins
+    // Create the pooled livestream subscription via the camera interface. This call is synchronous: it returns the subscription handle immediately and begins
     // establishing the underlying connection in the background. We start consuming segments below within the same synchronous frame, which guarantees the consumer
     // is in place before any asynchronous segment can be delivered on the subscription.
     //
@@ -199,7 +199,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
   // rules.
   //
   // The finally block is the self-cleaning anchor for out-of-band iterator termination (the recovery give-up, a codec change, unexpected errors). The id-based
-  // identity guard discriminates the teardown paths with a single compare, and is resilient to future indirection (proxies, wrappers) because subscription ids
+  // identity guard tells the teardown paths apart with a single compare, and is resilient to future indirection (proxies, wrappers) because subscription ids
   // are stable strings rather than object references:
   //
   //   - stop() called externally: stop() cleared `this.subscription` before the iterator observed the queue close, so the id compare against undefined fails
@@ -409,7 +409,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
 
     // Precondition: the timeshift buffer must already be started and have received its initialization segment before transmission can begin. The HKSV recording
     // delegate reconciles via configureTimeshifting before invoking transmitStart, so reaching this method without the timeshift running indicates a contract
-    // violation or a livestream that failed to establish. Surfacing this as an error preserves the single-entry invariant the reconciler relies on.
+    // violation or a livestream that failed to establish. Surfacing this as an error preserves the single-entry rule the reconciler relies on.
     if(!this.subscription?.initSegment) {
 
       this.log.error("HKSV event recording unavailable: the livestream connection is not ready. This can occur when the Protect controller or camera is " +

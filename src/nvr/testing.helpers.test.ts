@@ -199,7 +199,7 @@ describe("harness growth: MQTT recording double and the family builder", () => {
 
 describe("A2 controller owners: the widened makeNvrConfig, the read-through client.nvr.config getter, and pushNvrPatch", () => {
 
-  test("makeNvrConfig populates the controller-owner read set and preserves the load-bearing mac / host / ports byte-for-byte", () => {
+  test("makeNvrConfig populates the controller-owner read set and preserves the required mac / host / ports byte-for-byte", () => {
 
     const defaults = makeNvrConfig();
 
@@ -211,8 +211,8 @@ describe("A2 controller owners: the widened makeNvrConfig, the read-through clie
     assert.equal(defaults.name, "Test Controller", "name defaults so sanitizeName(nvr.ufp.name) resolves");
     assert.equal(defaults.type, "UDMPRO", "type defaults so setInfo's marketName ?? type Model fallback is non-empty");
 
-    // LOAD-BEARING: the chime / ringtone nvrMac filter and the makeRingtoneConfig nvrMac default both depend on this exact mac, and the golden-master channel URLs depend
-    // on the exact host / ports, so the widening must only ADD fields.
+    // REQUIRED EXACTLY AS WRITTEN: the chime / ringtone nvrMac filter and the makeRingtoneConfig nvrMac default both depend on this exact mac, and the golden-master
+    // channel URLs depend on the exact host / ports, so the widening must only ADD fields.
     assert.equal(defaults.mac, "74ACB9FFFFFF", "the controller mac is preserved byte-for-byte");
     assert.equal(defaults.host, "nvr.test", "the host is preserved byte-for-byte");
     assert.deepEqual(defaults.ports, { rtsp: 7447, rtsps: 7441 }, "the RTSP(S) ports are preserved byte-for-byte");
@@ -283,7 +283,7 @@ describe("A2 controller owners, commit 2: the managed-device registry and the ne
 
     // A store-backed member, not a static stub: its ufp reads through the store (and throws once the record is removed) while its protectId comes from the projection's
     // stable id field and stays non-throwing. That is what makes the absence assertion non-vacuous - getDeviceById must keep resolving by protectId after a
-    // removeCameraRecord, not merely "not throw" against a stub that could never throw. (membershipDelta is an orthogonal set-diff guard, not a survival proxy.)
+    // removeCameraRecord, not merely "not throw" against a stub that could never throw. (membershipDelta is an unrelated set-diff guard, not a survival proxy.)
     const camera = makeCameraConfig({ channels: [] });
     const store = new TestStateStore(makeProtectState({ cameras: [camera] }));
     const { controller, nvr } = makeTestNvr({ store });

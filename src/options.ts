@@ -68,7 +68,7 @@ interface ProtectCategoryMeta {
   modelKey?: string[];
 }
 
-// The MQTT option group, composed from the shared generator so every plugin exposing an MQTT broker offers the same two options under the same names. Both entries are
+// The MQTT option group, composed from the shared generator so every plugin exposing an MQTT broker offers the same options under the same names. Both entries are
 // declared at controller scope: each configured Protect controller reaches its own broker and publishes under its own topic prefix.
 const mqtt = mqttFeatureOptions({ defaultTopic: PROTECT_MQTT_TOPIC, scopes: ["controller"] });
 
@@ -267,7 +267,7 @@ export const featureOptions: Record<string, FeatureOptionEntry<ProtectOptionMeta
 };
 /* eslint-enable @stylistic/max-len */
 
-/* Documentation presentation. The two maps and the two scope hooks below are build-time-only doc copy, colocated with the catalog they describe so all option-related
+/* Documentation presentation. The maps and scope hooks below are build-time-only doc copy, colocated with the catalog they describe so all option-related
  * knowledge lives in one module. homebridge-plugin-utils' `prepare-docs` CLI optionally imports `describeOptionScope` / `describeCategoryScope` from this module and
  * threads them into the shared documentation renderer, which owns all base-shaped scaffolding (index, headings, anchors, the key cell, the default cell, the column
  * math) and delegates only the plugin-private scope prose to these hooks. They read the typed `meta` channel directly.

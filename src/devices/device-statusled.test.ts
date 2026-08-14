@@ -4,18 +4,18 @@
  *
  * The status-indicator switch (Device.StatusLed.Switch) is a BASE ProtectDevice behavior: configureStatusLedSwitch (device.ts) acquires the switch, setStatusLed
  * (device.ts) routes the onSet through the shared command-error helper, and statusLedCommand (device.ts) resolves the device-appropriate write-through update.
- * Cameras, sensors, and relays share the ledSettings.isEnabled routing the base serves directly (it narrows this.device through its modelKey discriminant), so this net
+ * Cameras, sensors, and relays share the ledSettings.isEnabled routing the base serves directly (it narrows this.device through its modelKey tag), so this net
  * rides the all-quiet makeSensorConfig carrier - which always carries ledSettings - as the shared vehicle. Per the two-layer test architecture the base
  * camera/sensor/relay routing is netted ONCE here against the shared minimal TestBaseDevice vehicle rather than re-asserted inside each family suite. The light's
  * statusLedCommand override (its lightDeviceSettings command) is LIGHT-family-specific and stays owned by light.test.ts; the chime / viewer projections expose no status
  * indicator and never configure the switch, so the statusLed false-branch (the hasLedSettings structural check finding no "ledSettings" key on the peeked device record)
  * is unreachable via this carrier and is honestly out of this file's reach.
  *
- * The vacuity gate (load-bearing, carried from device-motion): the Device.StatusLed.Switch option defaults to FALSE, so the runtime service gate is the
- * Enable.Device.StatusLed.Switch userOptions string, NOT the carrier's ledSettings. The carrier's ledSettings only backs the read-through (the switch's On state) and
- * satisfies the option's hasSensorProperty applicability check; it does NOT materialize a service. So every with-feature test builds with the exact
- * Enable.Device.StatusLed.Switch userOptions and HARD-asserts the switch EXISTS (a non-optional assert.ok as the FIRST discriminator) - an absent service then throws
- * rather than passing vacuously - paired with a without-feature absence test that proves the same path produces nothing when the string is omitted.
+ * The vacuity gate (required for these assertions to be meaningful, carried from device-motion): the Device.StatusLed.Switch option defaults to FALSE, so the runtime
+ * service gate is the Enable.Device.StatusLed.Switch userOptions string, NOT the carrier's ledSettings. The carrier's ledSettings only backs the read-through (the
+ * switch's On state) and satisfies the option's hasSensorProperty applicability check; it does NOT materialize a service. So every with-feature test builds with the
+ * exact Enable.Device.StatusLed.Switch userOptions and HARD-asserts the switch EXISTS (a non-optional assert.ok checked first) - an absent service then throws rather
+ * than passing vacuously - paired with a without-feature absence test that proves the same path produces nothing when the string is omitted.
  *
  * The command-routing net exercises TestSensorProjection.update's recorder for the first time: the onSet drives setStatusLed -> statusLedCommand ->
  * device.update({ ledSettings: { isEnabled: <value> } }), and the projection RECORDS that payload (it deliberately does not fold it back into the store), so the test
@@ -61,8 +61,8 @@ function tailLoggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], suf
 const controllers: AbortController[] = [];
 
 // The reusable construction helper: build a REAL TestBaseDevice (a concrete ProtectDevice leaf whose ctor only super()s) against the harness doubles, seeded with the
-// all-quiet sensor carrier whose ledSettings.isEnabled the configOptions.ledEnabled toggles. We HOLD the TestSensorProjection instance (cast to Sensor only at the
-// construction seam, exactly as the light / chime suites confine their casts) so the test asserts the recorded update payloads. We drive the wiring a family leaf would:
+// all-quiet sensor carrier whose ledSettings.isEnabled the configOptions.ledEnabled toggles. We HOLD the TestSensorProjection instance (cast to Sensor only at the point
+// of construction, exactly as the light / chime suites confine their casts) so the test asserts the recorded update payloads. We drive the wiring a family leaf would:
 // configureHints first (the base configurators read this.hints), then the status-LED switch with isEnabled true. The userOptions thread into the REAL FeatureOptions
 // engine, so the Enable.Device.StatusLed.Switch string - and only it - materializes the switch.
 function buildStatusLedDevice(configOptions: { ledEnabled?: boolean } = {}, harnessOptions: { userOptions?: string[] } = {}): {

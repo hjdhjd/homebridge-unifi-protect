@@ -35,7 +35,7 @@ class CountingCamera extends ProtectCamera {
   }
 }
 
-// Construct a real CountingCamera, with the casts confined to this one seam - the instance under test is the production class and its real observe loops.
+// Construct a real CountingCamera, with the casts confined to this one boundary - the instance under test is the production class and its real observe loops.
 function construct(nvr: TestProtectNvr, accessory: TestAccessory, projection: TestCameraProjection): CountingCamera {
 
   return new CountingCamera(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Camera);
@@ -85,7 +85,7 @@ describe("the observeState recordPresent gate during the removal grace", () => {
         "the recordPresent gate suppressed the async-void capability observer once the record vanished - reconcileCapabilities was not invoked");
       assert.equal(store.observerCount, observerCount,
         "every observe loop stayed subscribed across the vanished record (continue, not break) so a re-adoption resumes them - the survival " +
-        "invariant (the reconcileCount assertion above is what tells the two apart)");
+        "guarantee (the reconcileCount assertion above is what tells the two apart)");
     } finally {
 
       camera.cleanup();
@@ -94,8 +94,8 @@ describe("the observeState recordPresent gate during the removal grace", () => {
   });
 
   // #17/G2-D1: the camera capability getters read the throwing ufp projection, and the reconcile pass reads them on every kick - including after an await where the
-  // record can vanish. Hardened through fromRecord, they must report safe defaults over a vanished record rather than throwing. Pre-fix the raw ufp read threw
-  // ReferenceError, which the supervisor's reconcile pass then floated through its many fire-and-forget kicks.
+  // record can vanish. Hardened through fromRecord, they report safe defaults over a vanished record rather than throwing, which keeps the supervisor's reconcile
+  // pass safe across its many fire-and-forget kicks.
   test("the camera capability getters return safe defaults over a vanished record instead of throwing", async () => {
 
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS });

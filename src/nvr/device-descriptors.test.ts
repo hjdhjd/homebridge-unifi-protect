@@ -25,8 +25,8 @@ import assert from "node:assert/strict";
 import { makeTestNvr } from "./testing.helpers.ts";
 
 // One category's construction against the harness doubles: seed a store with the category's config, build the real ProtectDevice off its Test projection, and hand back
-// the constructed device plus the harness abort controller so the caller can unwind the observe loops the construction spawned. The construction-seam casts mirror every
-// device-family suite; the instance itself is the production class running its real configure and spawnObservers paths.
+// the constructed device plus the harness abort controller so the caller can unwind the observe loops the construction spawned. The construction-boundary casts mirror
+// every device-family suite; the instance itself is the production class running its real configure and spawnObservers paths.
 interface Row {
 
   build: () => { controller: AbortController; device: ProtectDevice };

@@ -1,6 +1,6 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * camera-construction.test.ts: The first real-ProtectCamera construction test - the proof of the platform-held streaming-delegate factory seam.
+ * camera-construction.test.ts: The first real-ProtectCamera construction test - the proof of the platform-held streaming-delegate factory interface.
  *
  * This suite constructs a REAL minimal ProtectCamera end to end - the base constructors, configureHints, configureDevice, the floating configure IIFE
  * (the streaming reconcile through the stub factory and accessory.configureController), and every state-observe loop the camera registers - against the reusable
@@ -10,7 +10,7 @@
  *
  * One honest infeasibility, recorded rather than papered over: asserting "no FFmpeg" directly is not meaningful, because camera.ts value-imports FFmpeg-adjacent
  * modules harmlessly at load. What the factory assertions prove is the real claim - the REAL streaming delegate class was never constructed, because the stub
- * factory satisfied the seam.
+ * factory satisfied the interface.
  *
  * The suite holds ONE observer-wake subscription across all phases (construction, push, teardown), windowing the wake log per phase; the zero-wake-during-
  * construction assertion is vacuity-proofed by the SAME subscription later observing the positive push wake. The subscription is removed once, in the suite's
@@ -49,7 +49,7 @@ function isSameResolution(a: Resolution, b: Resolution): boolean {
   return (a[0] === b[0]) && (a[1] === b[1]) && (a[2] === b[2]);
 }
 
-describe("real ProtectCamera construction through the streaming-delegate factory seam", () => {
+describe("real ProtectCamera construction through the streaming-delegate factory", () => {
 
   // The construction fixture (G2 Pro) and the push fixture (G6 Pro Entry - fully RTSP-enabled, so the re-run never enters the write-through PATCH branch). Both
   // expected advertised lists come from the golden-master corpus, single-sourcing this suite with the resolution suite.
@@ -83,7 +83,7 @@ describe("real ProtectCamera construction through the streaming-delegate factory
 
     accessory = makeTestAccessory("Test Camera", "11111111-2222-3333-4444-555555555555");
 
-    // The construction under test: a REAL ProtectCamera against the harness doubles. The casts are confined to this seam; the instance itself is the production
+    // The construction under test: a REAL ProtectCamera against the harness doubles. The casts are confined to this boundary; the instance itself is the production
     // class, and everything it runs - configureHints, configureDevice, the floating IIFE, spawnObservers - is the production code path.
     camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Camera);
 
@@ -101,7 +101,7 @@ describe("real ProtectCamera construction through the streaming-delegate factory
 
   test("construction completes and invokes the stub factory exactly once, with the camera itself and the golden-master advertised resolutions", () => {
 
-    assert.equal(factory.createCalls.length, 1, "the factory seam was exercised exactly once");
+    assert.equal(factory.createCalls.length, 1, "the factory was exercised exactly once");
 
     const call = factory.createCalls[0];
 
@@ -183,7 +183,7 @@ describe("real ProtectCamera construction through the streaming-delegate factory
     assert.equal(selected.url, modelOnlyEntry.url, "the selected profile's URL matches the golden-master row");
     assert.equal(selected.channel.id, modelOnlyEntry.channelId, "the selected profile maps to the golden-master channel");
 
-    // The this.stream idempotency gate: the re-run republishes profiles and exits - no second delegate, no second controller registration.
+    // The this.stream reuse gate: a re-run is safe to repeat - it republishes profiles and exits, with no second delegate and no second controller registration.
     assert.equal(factory.createCalls.length, 1, "the factory was not invoked again on the re-run");
     assert.equal(accessory.configureControllerCalls.length, 1, "the controller was not registered again on the re-run");
     assert.equal(projection.updateCalls.length, 0, "the fully-RTSP-enabled push issues no enable write on the re-run either");

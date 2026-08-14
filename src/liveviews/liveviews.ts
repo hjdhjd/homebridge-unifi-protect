@@ -277,7 +277,8 @@ export class ProtectLiveviews extends ProtectBase {
         return;
       }
 
-      // Update state on the liveviews.
+      // Update state on the liveviews. The array check above confirms the payload's outer shape; individual entries are trusted as mqttLiveviewJSON without a
+      // per-entry shape guard, so a malformed entry (a missing name) surfaces as an unhandled exception rather than the validation error above.
       for(const entry of incomingPayload as mqttLiveviewJSON[]) {
 
         // Lookup this controller's liveview matching the requested name.
@@ -368,9 +369,8 @@ export class ProtectLiveviews extends ProtectBase {
   // Get the devices associated with a particular liveview.
   private getLiveviewCameras(liveviewName: string): string[] {
 
-    // Get the complete list of cameras in the liveview we're interested in. This cryptic line grabs the list of liveviews
-    // that have the name we're interested in (turns out, you can define multiple liveviews in Protect with the same name...who knew!),
-    // and then create a single list containing all of the cameras found.
+    // Collect every camera across every liveview matching this name - Protect allows multiple liveviews with the same name, so this returns the union of their
+    // member cameras rather than assuming a single match.
     return this.liveviews.filter(view => view.name.toUpperCase() === ("Protect-" + liveviewName).toUpperCase())
       .map(view => view.slots.map(slots => slots.cameras)).flat(2);
   }

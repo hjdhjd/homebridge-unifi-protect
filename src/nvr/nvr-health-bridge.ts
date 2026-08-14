@@ -216,7 +216,7 @@ export class DiagnosticsHealthBridge {
    * Attach the health feeds to the unifi-protect library's process-global diagnostics channels. This is a separate act from construction because the root wires only
    * past its credential guard, which is what keeps a misconfigured controller from ever subscribing.
    *
-   * Three channels carry the feeds. `http:request:end` is the request-outcome half: a 2xx is recovery evidence and everything else - a transport error, or a non-2xx
+   * These channels carry the feeds. `http:request:end` is the request-outcome half: a 2xx is recovery evidence and everything else - a transport error, or a non-2xx
    * status - is a stress symptom, scoped to this controller by an exact host match. `recovery:started` (a stream was disrupted and an episode begins) and
    * `recovery:recovered` (it resumed) are the livestream half: one stress symptom per disruption episode and one recovery symptom per recovery, so a recovered
    * episode nets zero while a failed one stays +1 - correct stress accounting with no double count. The recovery-lifecycle channels are chosen over the narrower

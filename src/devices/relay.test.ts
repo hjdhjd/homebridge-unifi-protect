@@ -11,8 +11,8 @@
  *
  * The isolation model mirrors the light reference: a per-test-fresh beforeEach builds a clean relay against a clean store so #pendingDesired, the recorded toggles, the
  * characteristic state, and the observer baselines are clean every test. The wake log is windowed per push via a captured baseline. buildRelay is the copyable skeleton;
- * only makeRelayConfig, TestRelayProjection, the slice keys, the observer count (two base, one per output, plus ledSettings), and the relay-specific reactions are
- * relay-particular.
+ * only makeRelayConfig, TestRelayProjection, the slice keys, the observer count (the base class's universal observers, one per output, plus ledSettings), and the
+ * relay-specific reactions are relay-particular.
  */
 import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../testing.helpers.ts";
 import { TestRelayProjection, makeRelayConfig } from "./testing.helpers.ts";
@@ -39,8 +39,8 @@ const outputSubtype = (id: number): string => ProtectReservedNames.SWITCH_RELAY_
 // is the single push site, so an extra build inside a test body is captured exactly as the fixture's is.
 const controllers: AbortController[] = [];
 
-// The reusable construction helper: build a REAL ProtectRelay against the harness doubles. The casts are confined to the construction seam exactly as the light and
-// camera suites do; the instance under test runs its real configureHints / configureDevice / spawnObservers paths. Each call builds a fresh store, so an extra build
+// The reusable construction helper: build a REAL ProtectRelay against the harness doubles. The casts are confined to where the class is constructed, exactly as the light
+// and camera suites do; the instance under test runs its real configureHints / configureDevice / spawnObservers paths. Each call builds a fresh store, so an extra build
 // inside a test (the feature-enabled variants) is fully isolated from the beforeEach relay.
 function buildRelay(configOptions: Parameters<typeof makeRelayConfig>[0] = {}, harnessOptions: { userOptions?: string[] } = {}): {
   accessory: TestAccessory; mqtt: TestMqttClient; relay: ProtectRelay; relayConfig: ProtectRelayConfig; relayProjection: TestRelayProjection; store: TestStateStore;
@@ -55,7 +55,7 @@ function buildRelay(configOptions: Parameters<typeof makeRelayConfig>[0] = {}, h
   const accessory = makeTestAccessory("Test Relay", "uuid:test-relay");
 
   // The projection is named (not cast inline) so the toggle / status-LED tests read its toggleCalls / updateCalls - and set its rejection levers - on the SAME instance
-  // the relay's onSet write-through reaches; the lone construction-seam cast is confined to the new ProtectRelay(...) call.
+  // the relay's onSet write-through reaches; the lone cast at construction is confined to the new ProtectRelay(...) call.
   const projection = new TestRelayProjection(relayConfig.id, store);
   const relay = new ProtectRelay(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Relay);
 
@@ -180,7 +180,7 @@ describe("real ProtectRelay construction and behavior", () => {
 
     assert.ok(output0, "output 0's switch exists");
 
-    // The output starts off, so turning it off again is a no-op - the toggle is not idempotent, and re-issuing it would flip it the wrong way.
+    // The output starts off, so turning it off again is a no-op - calling toggleOutput twice would flip it back, so re-issuing it here would flip it the wrong way.
     await output0.getCharacteristic(Characteristic.On).triggerSet(false);
 
     assert.deepEqual(relayProjection.toggleCalls, [], "an off-when-already-off set issued no toggle");

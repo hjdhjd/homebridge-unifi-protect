@@ -62,19 +62,19 @@ export class ProtectCameraPackage extends ProtectCamera {
   }
 
   // The package camera's display name is the parent's synced name plus the display suffix, single-sourced from the shared live parent projection through the base
-  // syncedName seam. Every name-sync path (configureInfo at configure time, syncNameFromController on a controller-side rename) reads this derivation, so the suffix
+  // syncedName accessor. Every name-sync path (configureInfo at configure time, syncNameFromController on a controller-side rename) reads this derivation, so the suffix
   // applies uniformly with name syncing on; with it off, the creation-time name persists untouched.
   protected override get syncedName(): string {
 
     return super.syncedName + PACKAGE_CAMERA_NAME_SUFFIX;
   }
 
-  // The package camera's log prefix mirrors the syncedName seam: the parent's "Name [Model]" descriptor with the Package Camera suffix on the name, so the package's log
-  // lines are attributable instead of colliding with the parent doorbell's (they share the same projection, so the base logName would render identically).
+  // The package camera's log prefix mirrors the syncedName accessor: the parent's "Name [Model]" descriptor with the Package Camera suffix on the name, so the package's
+  // log lines are attributable instead of colliding with the parent doorbell's (they share the same projection, so the base logName would render identically).
   protected override get logName(): string {
 
     // Derive from the live record when present, decorated with the suffixed package name; when the parent record has vanished (in the removal grace), fall back
-    // to the suffixed name alone - itself non-throwing through the base syncedName seam - so a detached package timer callback names the device instead of throwing.
+    // to the suffixed name alone - itself non-throwing through the base syncedName accessor - so a detached package timer callback names the device instead of throwing.
     const config = this.device.peek();
 
     return config ? describeDevice(config, { name: this.syncedName }) : this.syncedName;
@@ -244,8 +244,8 @@ export class ProtectCameraPackage extends ProtectCamera {
 
         // The flashlight is momentary, so this heartbeat re-issues the pulse on a timer. We assume the pulse lands and unset only if every attempt fails.
         // turnOnFlashlight throws on a failed pulse (a non-2xx, or an unreachable controller), so a failure drives a re-attempt directly - reachability is the
-        // command's to report, not a second check here. We retry up to three times at a fixed one-second cadence, swallow a persistent failure to a reflected-off
-        // switch (the timer re-issues), and bind this.signal so a teardown aborts an in-flight backoff and pulse.
+        // command's to report, not a second check here. We retry the pulse a bounded number of times on a fixed cadence, swallow a persistent failure to a
+        // reflected-off switch (the timer re-issues), and bind this.signal so a teardown aborts an in-flight backoff and pulse.
         let lit = true;
 
         try {

@@ -16,7 +16,7 @@
  * what detaches an arm's subscriptions before the next arm publishes.
  *
  * Honest coverage notes: the bridge deliberately does NOT subscribe the recovery-exhausted channel - a given-up episode is the root's ledger and narration territory -
- * and the exhausted-channel arm is the empirical form of that claim. The three state-transition lines are written by the bridge, so this is the one suite that pins
+ * and the exhausted-channel arm is the empirical form of that claim. Each state-transition line is written by the bridge, so this is the one suite that pins
  * their exact text.
  */
 import type { HttpRequestEndPayload, LivestreamRecoveryExhaustedPayload, LivestreamRecoveryRecoveredPayload, LivestreamRecoveryStartedPayload } from "unifi-protect";

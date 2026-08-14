@@ -2,14 +2,14 @@
  *
  * livestream.ts: the HomeKit-side livestream surface for UniFi Protect.
  *
- * This module is the thin plugin-owned seam onto the unifi-protect library's pooled livestream. The library owns the livestream protocol entirely - the websocket,
+ * This module is the thin plugin-owned boundary onto the unifi-protect library's pooled livestream. The library owns the livestream protocol entirely - the websocket,
  * decode, pooling, recovery, the fMP4 Segment shape, and the subscription lifecycle state. The plugin owns only the HomeKit projection: the minimal subscription surface
  * its FFmpeg consumers (the live streaming delegate and the HKSV timeshift buffer) actually depend on, and the RTSP-debug variant of that same surface.
  *
  * This module holds:
  *
  *   - LivestreamSubscription: the plugin-owned interface (dependency inversion). The unifi-protect library's pooled subscription class and the RTSP-debug adapter
- *     below are interchangeable implementations behind it. The camera seam (ProtectCamera.livestream) returns this type.
+ *     below are interchangeable implementations behind it. The camera interface (ProtectCamera.livestream) returns this type.
  *   - RtspLivestreamSubscription: the RTSP-debug adapter, a pure-FFmpeg plugin concern that produces the same Segment stream behind the same interface.
  *   - logLivestreamIterationError: the shared classification and logging for errors thrown from a livestream subscription iterator, used by every consumer.
  */
@@ -38,7 +38,7 @@ export interface LivestreamSubscription extends AsyncIterable<Segment>, AsyncDis
   whenEstablished(): Promise<boolean>;
 }
 
-// The fully-resolved options the RTSP-debug adapter needs. Every value is derived from camera facts at the camera seam, so the adapter never re-narrows or uses
+// The fully-resolved options the RTSP-debug adapter needs. Every value is derived from camera facts at the camera interface, so the adapter never re-narrows or uses
 // non-null assertions. The audio target mirrors the livestream API's native delivery shape and is the adapter's sole audio-encode input - it carries no HKSV
 // recording configuration.
 interface RtspLivestreamSubscriptionOptions {
@@ -55,7 +55,7 @@ interface RtspLivestreamSubscriptionOptions {
 /**
  * The RTSP-debug adapter (Debug.Video.Timeshift.UseRtsp). It implements the plugin's LivestreamSubscription interface over a single FfmpegLivestreamProcess that
  * transcodes the camera's RTSP stream into the same fMP4 Segment stream the unifi-protect library's pool produces, feeding the standing timeshift buffer from RTSP
- * rather than the native livestream API. This is a pure-FFmpeg plugin concern, so it stays the plugin behind the seam, and it is the mechanical seed of a future
+ * rather than the native livestream API. This is a pure-FFmpeg plugin concern, so it stays the plugin behind the interface, and it is the mechanical seed of a future
  * first-class RTSP-fed-buffer option.
  *
  * There is deliberately NO recovery loop here: a failed RTSP transcode simply ends. The lifecycle state is correspondingly simple - "connecting" before the init
@@ -168,7 +168,7 @@ export class RtspLivestreamSubscription implements LivestreamSubscription {
     }
   }
 
-  // Dispose the underlying process. Idempotent - subsequent disposes after the first are no-ops.
+  // Dispose the underlying process. Safe to call more than once - subsequent disposes after the first are no-ops.
   public async [Symbol.asyncDispose](): Promise<void> {
 
     if(this.#disposed) {

@@ -15,9 +15,9 @@ import { settle } from "../testing.helpers.ts";
 
 describe("harness growth: the recording transmit doubles", () => {
 
-  // The keyframe-fragment box builder must synthesize a genuine fMP4 fragment the PRODUCTION isKeyframe parse accepts - there is no isKeyframe injection seam, so the
-  // transmit test exercises the real fMP4 keyframe coupling. If the builder ever drifts (a wrong box nesting, a flipped TRUN flag, the NON_SYNC bit set), production
-  // would read these segments as non-keyframes and the timeshift's keyframe-aligned start would never resolve.
+  // The keyframe-fragment box builder must synthesize a genuine fMP4 fragment the PRODUCTION isKeyframe parse accepts - there is no isKeyframe injection point to
+  // substitute a fake, so the transmit test exercises the real fMP4 keyframe coupling. If the builder ever drifts (a wrong box nesting, a flipped TRUN flag, the NON_SYNC
+  // bit set), production would read these segments as non-keyframes and the timeshift's keyframe-aligned start would never resolve.
   test("makeKeyframeFragment synthesizes a fragment the production isKeyframe parse accepts", () => {
 
     assert.equal(isKeyframe(makeKeyframeFragment().data), true, "the synthesized moof>traf>trun fragment reads as a sync sample (keyframe)");
@@ -85,7 +85,7 @@ describe("harness growth: the timeshift behavior doubles", () => {
 
   // The non-keyframe builder is the negative counterpart to the held keyframe self-test: it must synthesize a fragment the PRODUCTION isKeyframe parse REJECTS, so the
   // timeshift suite's discontinuity keyframe-gate (a discontinuity-marked non-keyframe must defer until a clean keyframe) is genuinely exercised. There is no isKeyframe
-  // injection seam, so the only way to drive the non-keyframe path is real bytes with the SAMPLE_FLAG_NON_SYNC bit set.
+  // injection point to substitute a fake, so the only way to drive the non-keyframe path is real bytes with the SAMPLE_FLAG_NON_SYNC bit set.
   test("makeNonKeyframeFragment synthesizes a fragment the production isKeyframe parse rejects", () => {
 
     assert.equal(isKeyframe(makeNonKeyframeFragment().data), false, "the synthesized non-sync fragment reads as a non-keyframe");
@@ -186,8 +186,7 @@ describe("harness growth: the timeshift behavior doubles", () => {
     assert.equal(segments.length, 0, "end with no queued segments completes the iterator immediately");
   });
 
-  // Distinct ids per instance are LOAD-BEARING for the timeshift restart / id-identity targets (the consumeSegments finally guards on subscription id equality). Two
-  // default-id doubles must not collide.
+  // Distinct ids per instance are required for the timeshift restart / id-identity targets - two default-id doubles must not collide.
   test("makeControllableLivestreamDouble mints a distinct id per instance", () => {
 
     assert.notEqual(makeControllableLivestreamDouble().id, makeControllableLivestreamDouble().id, "two doubles have distinct ids");

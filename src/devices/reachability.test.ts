@@ -1,12 +1,11 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * reachability.test.ts: Unit tests for the projection-backed accessory base's load-bearing primitives - the composed per-accessory abort signal (teardown) and the
- * StatusActive reachability fan-out - exercised against the real production ProtectDevice.
+ * reachability.test.ts: Unit tests for the primitives the projection-backed accessory base depends on for correct teardown and reachability reporting - the composed
+ * per-accessory abort signal (teardown) and the StatusActive reachability fan-out - exercised against the real production ProtectDevice.
  *
- * These import the real ProtectDevice and drive its own isReachable, refreshReachability, and cleanup. That became possible once the source loads under the project's
- * "node --strip-types" test runner: every relative import specifier now resolves to its on-disk ".ts" sibling (the rig adopted the ".ts"-specifier convention the
- * shared tsconfig's rewriteRelativeImportExtensions already rewrites back to ".js" on emit), and the lone non-erasable construct - the ProtectReservedNames string
- * enum - became an erasable "as const" object.
+ * These import the real ProtectDevice and drive its own isReachable, refreshReachability, and cleanup directly: every relative import specifier resolves to its
+ * on-disk ".ts" sibling under the project's "node --strip-types" test runner (the shared tsconfig's rewriteRelativeImportExtensions rewrites it back to ".js" on
+ * emit), and the lone non-erasable construct - the ProtectReservedNames string identifiers - is an erasable "as const" object.
  *
  * The abstract base is exercised through the smallest possible concrete leaf: ProtectDevice declares no abstract members, so the subclass adds nothing but a window
  * onto the protected composed signal, and every method under test is the base's own. It is constructed against the minimal mocks isReachable / refreshReachability /
@@ -39,7 +38,7 @@ class TestProtectDevice extends ProtectDevice {
 // and a real AbortSignal for composeSignals. ProtectBase binds platform.debug at construction, so that one member must be callable. The total isReachable reads the
 // device's online state through peek().state, so the lever is the record's state field, and a vanished record (present false -> peek()
 // undefined) is the unreachable-without-throwing case. Returns the mutable health / record handles so a test can flip either input and re-read the real getter. The casts
-// are confined to this seam; the instance itself is the production class.
+// are confined to this construction step; the instance itself is the production class.
 const makeReachableDevice = (accessory: TestAccessory):
 { connection: { isHealthy: boolean }; device: { config: { state: string }; present: boolean }; instance: TestProtectDevice } => {
 

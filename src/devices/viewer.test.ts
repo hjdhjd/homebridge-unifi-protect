@@ -6,7 +6,7 @@
  * read-through projection double with a write-through update command surface, config builders, per-slice and collection push helpers,
  * and behavior-FIRST assertions (the observers, the liveview switches, the active-liveview reflection, the set-liveview command, the observers' reactions, and
  * the MQTT liveview get/set handlers). Every assertion drives the REAL production class through its real configureDevice / spawnObservers paths and its real setViewer
- * over the real runDeviceCommand seam.
+ * over the real runDeviceCommand path.
  *
  * Two framing details the assertions honor exactly. First, the set-liveview COMMAND (the update payload, the publish-on-found, the clear-with-no-publish, the rejection)
  * is asserted separately from the active-liveview REFLECTION: setViewer does NOT update the local config (the projection double's update records rather than folding), so
@@ -43,7 +43,7 @@ function loggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], substri
 const controllers: AbortController[] = [];
 
 // The reusable construction helper: build a REAL ProtectViewer against the harness doubles, seeding the viewer record plus whatever liveviews the test wants. The casts
-// are confined to the construction seam exactly as the light suite does; the instance under test is the production class running its real configureDevice /
+// are confined to the construction boundary exactly as the light suite does; the instance under test is the production class running its real configureDevice /
 // spawnObservers paths. Returns logEntries and mqtt (the viewer asserts both the failure/configured log lines and the captured MQTT liveview handlers).
 function buildViewer(configOptions: Parameters<typeof makeViewerConfig>[0] = {}, harnessOptions: { liveviews?: ProtectNvrLiveviewConfig[] } = {}): {
   accessory: TestAccessory; logEntries: TestLogEntry[]; mqtt: TestMqttClient; projection: TestViewerProjection; store: TestStateStore; viewer: ProtectViewer;

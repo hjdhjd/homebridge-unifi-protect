@@ -3,7 +3,7 @@
  * command-error.test.ts: Unit tests for the shared device command-error helper (ProtectDevice.runDeviceCommand) and the write-through command path it single-sources.
  *
  * Device commands are write-through: this.device.update(payload) PATCHes the controller and throws the classified FatalError on a non-2xx, rather than returning null
- * on failure. runDeviceCommand is the one seam that converts that throw contract into the boolean every HomeKit onSet handler branches on, and the one place a
+ * on failure. runDeviceCommand is the one place that converts that throw contract into the boolean every HomeKit onSet handler branches on, and the one place a
  * user-initiated command failure is reported - an authorization failure earns the actionable "full management role" guidance, any other is reported with its underlying
  * cause, rendered through the family-wide formatErrorMessage so the reported sentence carries exactly one terminal period. These tests pin that contract against the
  * real production method, then exercise the command paths that route through it - setStatusLed and the night-vision and access-unlock onSet reverts - through the HAP
@@ -12,7 +12,7 @@
  * ProtectDevice is the smallest real surface that carries the helper: the abstract base declares no abstract members, so a near-empty concrete leaf is a faithful
  * instance whose runDeviceCommand, setStatusLed, and statusLedCommand are all the base's own (the same admission reachability.test.ts relies on). The camera/light/etc.
  * leaves are not unit-constructable - they stand up a HAP accessory and, for cameras, the streaming stack at construction - so the leaf onSet closures themselves are
- * modeled here in the exact shape they ship, while the shared command seam they all route through is the real one.
+ * modeled here in the exact shape they ship, while the shared command path they all route through is the real one.
  */
 import { Characteristic, Service, makeTestAccessory } from "../testing.helpers.ts";
 import { describe, test } from "node:test";

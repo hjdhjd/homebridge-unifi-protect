@@ -37,7 +37,7 @@
     white-space: normal;
   }
 
-  /* A connection card in a working habitat - docked beneath a controller's stats, hosted by the connection-error view, or presented by Add Controller - renders
+  /* A connection card in a working placement - docked beneath a controller's stats, hosted by the connection-error view, or presented by Add Controller - renders
    * its controls at the panel's own type scale and rhythm, referencing the framework's design tokens so the two cannot drift apart; each fallback mirrors the
    * token's registered default for any paint before the token sheet adopts. First run keeps the stock control scale, where the card is the page.
    */
@@ -73,10 +73,10 @@
      Everything a mounted card is addressed by is a data attribute rather than an id, because a clone cannot carry ids that are unique on their own: fields carry
      data-field, controls carry data-action, the verdict line carries data-role, and each label names the field it belongs to with data-label-for so the factory
      can mint a matching id pair per instance and keep the label's association intact. The heading and helper text are the first-run wording, which the other
-     habitats override when they mount. Every control the template offers is present in every clone and the factory reveals only the ones its habitat asked for,
-     so a habitat declares what it offers rather than assembling markup of its own. -->
+     placements override when they mount. Every control the template offers is present in every clone and the factory reveals only the ones its placement asked
+     for, so a placement declares what it offers rather than assembling markup of its own. -->
 <template id="hbupConnectionCard">
-  <!-- The card root wears fo-page, the framework's opt-in marker scoping its dark-mode form-control corrections, so every habitat's inputs adapt with the theme
+  <!-- The card root wears fo-page, the framework's opt-in marker scoping its dark-mode form-control corrections, so every placement's inputs adapt with the theme
        no matter where the clone mounts. -->
   <div class="fo-card fo-page mb-3 p-3">
     <h6 class="mb-1" data-role="heading">UniFi Protect controller</h6>

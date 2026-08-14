@@ -22,8 +22,8 @@
  * - nvr.ufp reads THROUGH the store (the harness's read-through client.nvr.config getter), so seeding the store's nvr slice IS how the construction record reaches
  *   nvr.ufp, and a pushNvrPatch that moves systemInfo by reference changes both selectNvr(state) and nvr.ufp at once.
  *
- * The observer non-vacuity trap (load-bearing): the onGet is bound only on the initial pass (the configureHandler guard) and reads live nvr.ufp, so after a push
- * triggerGet returns the NEW temperature REGARDLESS of whether the observer fired - it cannot prove the reaction. The discriminator is the characteristic's CACHED
+ * The observer non-vacuity trap: the onGet is bound only on the initial pass (the configureHandler guard) and reads live nvr.ufp, so after a push
+ * triggerGet returns the NEW temperature REGARDLESS of whether the observer fired - it cannot prove the reaction. What tells the two apart is the characteristic's CACHED
  * .value, which is written ONLY by the observer-driven updateCharacteristic: a non-firing observer leaves .value at the initial-pass write. So the observer test asserts
  * CurrentTemperature.value === NEW after pushNvrPatch moves a FRESH systemInfo by reference, never triggerGet.
  */
@@ -51,8 +51,8 @@ function loggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], substri
 
 // The reusable construction helper: build a REAL ProtectNvrSystemInfo against the harness doubles, taking ONLY an nvr (the owner extends ProtectBase, so its ctor is
 // (nvr)). makeNvrConfig carries the systemInfo the initial pass dereferences; the store's nvr slice is seeded NON-NULL so nvr.ufp - which reads through the store -
-// returns that record. The casts are confined to the construction seam exactly as the family suites do; the instance under test is the production class running its real
-// configureAccessory / configureMqtt / observe paths. The owner SELF-CREATES its accessory, so there is no accessory pass-in; the test reads it back off
+// returns that record. The casts are confined to the construction boundary exactly as the family suites do; the instance under test is the production class running its
+// real configureAccessory / configureMqtt / observe paths. The owner SELF-CREATES its accessory, so there is no accessory pass-in; the test reads it back off
 // nvr.platform.accessories. The returned controller is the AbortController behind nvr.signal, aborted in teardown to tear down the owner's observe loop and its MQTT
 // subscriptions: the fixture tears down through the controller it built, the scope that owns every registration the test created.
 function buildSystemInfo(configOptions: Parameters<typeof makeNvrConfig>[0] = {}, harnessOptions: { seedCachedAccessory?: boolean; userOptions?: string[] } = {}): {
@@ -184,7 +184,8 @@ describe("real ProtectNvrSystemInfo construction and controller-owner behavior",
     await settle();
 
     // Assert the CACHED .value, NOT triggerGet: the initial-pass onGet reads live nvr.ufp and would return 47 even if the observer never fired, so it cannot prove the
-    // reaction; the cached .value is written ONLY by the observer-driven updateCharacteristic, so a non-firing observer would leave it at 20 - that is the discriminator.
+    // reaction; the cached .value is written ONLY by the observer-driven updateCharacteristic, so a non-firing observer would leave it at 20 - that is what tells the two
+    // apart.
     assert.equal(temperature.getCharacteristic(Characteristic.CurrentTemperature).value, 47,
       "the observer's updateDevice refreshed the cached CurrentTemperature to the pushed value");
   });

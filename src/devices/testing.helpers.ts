@@ -41,7 +41,7 @@ export interface TestCameraFeatureFlags {
 /**
  * Build a minimal-but-real camera config record for construction tests: every field the ProtectCamera construction path actually reads is populated with the
  * quiet-default shape (every feature flag false, recording mode "always", a CONNECTED state, and the fixture host so channel URLs match the golden-master
- * corpus), and the record is then cast once to the full wire type. This is the ONE confined cast seam for the camera record: the ProtectCameraConfig wire type
+ * corpus), and the record is then cast once to the full wire type. This is the ONE confined cast boundary for the camera record: the ProtectCameraConfig wire type
  * carries many fields the construction path never touches, so we populate the verified read set and document the cast here rather than scattering casts through
  * tests - the same spirit as camera.fixtures.ts' makeChannel, carried as far as is practical for a much wider record. Every override merges BEFORE the single
  * cast, so an overridden record is exactly as type-honest as the default one.
@@ -49,9 +49,11 @@ export interface TestCameraFeatureFlags {
  * @param options - accessDeviceMetadata: seeds the paired Access reader's supportUnlock capability flag for the camera's UniFi Access lock construction tests;
  *                  channels: the typed channel array (reuse the camera.fixtures.ts corpus); featureFlags: per-flag overrides merged over the all-false
  *                  defaults (a doorbell test sets isDoorbell, a package test adds hasPackageCamera); chimeDuration / enableNfc / isDark / lcdMessage: the
- *                  doorbell-adjacent fields its configure paths read; id / mac / name: optional identity overrides; smartDetectSettings: the controller-side
- *                  smart-detection settings, whose enabled-type lists default to mirroring the advertised capability (see below); videoCodec: the codec string
- *                  (default "h264"), overridable to "av1" so the playlist filter's codec exclusion can be exercised.
+ *                  doorbell-adjacent fields its configure paths read; id / mac / name: optional identity overrides; isPairedWithAiPort /
+ *                  isThirdPartyCamera: the livestream-API capability pair, overridable so a test can model a third-party camera with no AiPort (both default
+ *                  to the first-party camera every other suite assumes); smartDetectSettings: the controller-side smart-detection settings, whose
+ *                  enabled-type lists default to mirroring the advertised capability (see below); videoCodec: the codec string (default "h264"), overridable
+ *                  to "av1" so the playlist filter's codec exclusion can be exercised.
  *
  * @returns a camera config record the construction path reads as real.
  */
@@ -486,8 +488,10 @@ export function makeLiveviewConfig(options: { cameras?: string[]; id?: string; n
  * default with a settable updateRejection so a test drives the real runDeviceCommand failure path. It also exposes the best-effort, runDeviceCommand-bypassing
  * commands the camera issues on a cadence - the ambient-light lux query (a reading the configure path reads at construction and on a 60-second poll) and the
  * package-camera flashlight pulse (the dark-guarded retry-and-heartbeat) - each RECORDING its calls and resolving by default with a settable rejection so a test
- * drives the real sentinel-swallowing failure paths. The remaining METHODS (livestream, talkback, snapshot, reboot) sit behind gates the minimal construction
- * scenario never opens and are deliberately omitted - a test that reaches one fails loudly on the missing member instead of silently succeeding against a stub.
+ * drives the real sentinel-swallowing failure paths. It also exposes the recorded UniFi Access unlock command (unlockCalls / unlockRejection) the lock's
+ * LockTargetState onSet dispatches, resolving by default with a settable rejection so a test drives the runDeviceCommand failure -> optimistic-revert path.
+ * The remaining METHODS (livestream, talkback, snapshot, reboot) sit behind gates the minimal construction scenario never opens and are deliberately omitted
+ * - a test that reaches one fails loudly on the missing member instead of silently succeeding against a stub.
  */
 export class TestCameraProjection {
 
@@ -1084,7 +1088,7 @@ export class TestBaseDevice extends ProtectDevice<Sensor> {
     return this.configureHints();
   }
 
-  // Public window onto the base configureMotionSensor (the motion sensor service plus the motion switch / trigger and the motion get/set MQTT seam).
+  // Public window onto the base configureMotionSensor (the motion sensor service plus the motion switch / trigger and the motion get/set MQTT interface).
   public configureMotionSensorFor(isEnabled = true, isInitialized = false): boolean {
 
     return this.configureMotionSensor(isEnabled, isInitialized);

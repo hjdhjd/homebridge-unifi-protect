@@ -6,13 +6,14 @@
  *
  * The doorbell capability registers its observers (doorbell.ts). Their WAKE is netted by doorbell-construction.test.ts; this suite nets the two reflections
  * whose EFFECT is observable without a controller write surface: chimeDuration -> updatePhysicalChimes (the mutually-exclusive physical-chime switch fan-out) and
- * chimeVolume -> updateChimeVolume (the volume Lightbulb's On + Brightness). The lcdMessage reflection is NOT nettable here (updateLcdSwitch iterates messageSwitches,
- * which getMessages leaves empty unless nvr.ufp.doorbellSettings is seeded - a harness addition this suite does not make), so it is left to the LCD-message net; the
- * hasPackageCamera reflection is a lifecycle reconcile already netted by the family construction suite.
+ * chimeVolume -> updateChimeVolume (the volume Lightbulb's On + Brightness). The lcdMessage reflection needs its own harness support - updateLcdSwitch iterates
+ * messageSwitches, which getMessages leaves empty unless nvr.ufp.doorbellSettings is seeded - so it gets its own dedicated section below (the LCD message switch net)
+ * rather than the simple push-and-assert shape the other two reflections use; the hasPackageCamera reflection is a lifecycle reconcile already netted by the family
+ * construction suite.
  *
  * The doorbell-trigger ring onSet is also netted here: triggering the switch with a truthy value fires nvr.events.doorbellEventHandler(this) - it writes no
  * accessory.context and never touches the controller. The ring is captured through a TEST-LOCAL ProtectEventDispatch subclass that overrides doorbellEventHandler into a
- * recording array (the pattern event-dispatch.test.ts established), injected through makeTestNvr's dispatch seam and read back off nvr.events - NOT the shared
+ * recording array (the pattern event-dispatch.test.ts established), injected through makeTestNvr's dispatch hook and read back off nvr.events - NOT the shared
  * TestRecordingDispatch, which overrides only motionEventHandler. The override captures the routing (which device the ring fired for); it deliberately does not
  * re-test the handler's HomeKit effects, which are event-dispatch.ts's own concern.
  *
@@ -24,7 +25,7 @@
  * chime volume through the same Lightbulb path) and the /message GET and SET (reading the current LCD message and parsing, validating, translating, and routing a
  * new one to setMessage).
  *
- * The vacuity gate is two-part (carried from the device-* law): every gated reflection HARD-asserts its gated service or switch EXISTS as the FIRST discriminator (a
+ * The vacuity gate is two-part (carried from the device-* law): every gated reflection HARD-asserts its gated service or switch EXISTS as the FIRST check (a
  * non-optional assert.ok, so an absent service throws here rather than passing vacuously) and pairs with a without-gate test that proves the same push produces nothing
  * when the precondition is omitted. The chime-volume push MUST move the computed mean, because the volume selector dedups on the COMPUTED volume - a push that leaves the
  * mean unchanged would never wake the observer, making the assertion vacuous.
@@ -98,7 +99,7 @@ function loggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], substri
 // Build a REAL ProtectCamera against an isDoorbell-true config (so it construction-attaches its DoorbellCapability), exactly as doorbell-construction.test.ts
 // assembles it: the doorbell camera config (with the test's extra feature flags merged over isDoorbell), an optional chime serving it, the store double, the typed
 // NVR / platform doubles with the test's userOptions threaded into the REAL FeatureOptions engine and an optional dispatch factory, the read-through projection, and a
-// fresh accessory. The casts are confined to this seam - the instance is the production ProtectCamera and its composed capability.
+// fresh accessory. The casts are confined to this one boundary - the instance is the production ProtectCamera and its composed capability.
 async function buildDoorbell(options: { chimeConfigs?: ProtectChimeConfig[]; dispatch?: (nvr: ProtectNvr) => ProtectEventDispatch;
   doorbellSettings?: ProtectNvrConfig["doorbellSettings"];
   featureFlags?: Partial<ProtectCameraConfig["featureFlags"]>; lcdMessage?: { duration?: number; resetAt?: Nullable<number>; text?: string; type?: string };
@@ -245,7 +246,7 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
   describe("the volume-Lightbulb Brightness onSet -> setChimeVolume cross-device write (real client.chimes drive)", () => {
 
     // The doorbell's identity in this suite: makeCameraConfig defaults the id to "test-camera-1" and the mac to "74ACB9000001", so a chime serving this doorbell must
-    // list "test-camera-1" in its cameraIds and key its ring there, and the publish rides the "74ACB9000001/chime" topic. These literals are load-bearing - a mismatch
+    // list "test-camera-1" in its cameraIds and key its ring there, and the publish rides the "74ACB9000001/chime" topic. These literals must match exactly - a mismatch
     // makes the filter / find skip every chime and the write becomes vacuous, which the single-chime case's captured payload proves against directly.
     const doorbellId = "test-camera-1";
     const chimeTopic = "74ACB9000001/chime";
@@ -467,7 +468,7 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
   describe("the doorbell-capability MQTT handler bodies (the /chime and /message get/set bodies)", () => {
 
     // The doorbell's identity in this suite: makeCameraConfig defaults the mac to "74ACB9000001", so every captured subscription rides a "74ACB9000001/<tail>" topic and
-    // the publish rides "74ACB9000001/chime". These literals are load-bearing - a mismatch makes the subscription find skip and the test reads as vacuous, which the
+    // the publish rides "74ACB9000001/chime". These literals must match exactly - a mismatch makes the subscription find skip and the test reads as vacuous, which the
     // HARD-assert-exists gate catches.
     const mac = "74ACB9000001";
     const doorbellId = "test-camera-1";
@@ -661,7 +662,7 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
       test("a duration of 0 writes a non-expiring CUSTOM_MESSAGE (resetAt null)", async () => {
 
         // Deterministic, no time dependence: duration 0 is present and not negative, so * 1000 = 0; setMessage's resetAt = duration ? ... : null yields null. The
-        // null-vs-T0 discriminator kills a mutation flipping the ternary.
+        // null-vs-T0 check kills a mutation flipping the ternary.
         built = await buildDoorbell({});
 
         const set = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === mac + "/message"));
@@ -746,8 +747,8 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
         assert.ok(set?.setValue, "the /message SET subscription registered");
 
-        // A duration of "abc" is present but not a number, so the typeof-duration guard rejects it. Pre-fix, Number.isNaN("abc") was false, so it slipped through and
-        // "abc" * 1000 became NaN, which setMessage mapped to a never-expiring message.
+        // A duration of "abc" is present but not a number, so the typeof-duration guard rejects it - without it, "abc" * 1000 would evaluate to NaN, which setMessage
+        // would map to a never-expiring message.
         const payload = JSON.stringify({ duration: "abc", message: "Back soon" });
 
         await set.setValue(payload, payload);
@@ -764,7 +765,8 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
         assert.ok(set?.setValue, "the /message SET subscription registered");
 
-        // A message of 42 is present but not a string, so the typeof-message guard rejects it. Pre-fix, the presence-only check let it slip past.
+        // A message of 42 is present but not a string, so the typeof-message guard rejects it - a presence-only check would let it slip past, since 42 is neither
+        // undefined nor an empty string.
         const payload = JSON.stringify({ duration: 5, message: 42 });
 
         await set.setValue(payload, payload);
@@ -781,8 +783,8 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
         assert.ok(set?.setValue, "the /message SET subscription registered");
 
-        // The blessed behavior-narrowing: "30" is a numeric-looking STRING. Pre-fix it passed Number.isNaN and worked by arithmetic coercion ("30" * 1000 === 30000);
-        // now the typeof-duration guard rejects it, since the documented contract has always required a numeric duration.
+        // The blessed behavior-narrowing: "30" is a numeric-looking STRING, and the typeof-duration guard rejects it rather than accepting it through arithmetic
+        // coercion ("30" * 1000 === 30000), since the documented contract has always required a numeric duration.
         const payload = JSON.stringify({ duration: "30", message: "Back soon" });
 
         await set.setValue(payload, payload);
@@ -855,8 +857,9 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
       assert.equal(messageSwitch.getCharacteristic(Characteristic.On).value, true, "the message switch is on before the clear");
 
-      // A null wire clear replaces the record wholesale and wakes the observer, which reads the absent message as a clear and blanks the switch (the pre-fix truthy guard
-      // skipped this). The controller can send lcdMessage: null even though the projection type models only the object shape, so the null is cast at this seam.
+      // A null wire clear replaces the record wholesale and wakes the observer, which reads the absent message as a clear and blanks the switch - a guard that only
+      // checked the whole payload's truthiness would skip this case. The controller can send lcdMessage: null even though the projection type models only the object
+      // shape, so the null is cast at this boundary.
       built.nvr.client.state.pushCameraPatch(built.cameraConfig.id, { lcdMessage: null } as unknown as Partial<ProtectCameraConfig>);
       await settle();
 

@@ -4,7 +4,7 @@
  *
  * The ProtectBase MQTT wrappers thread the owner-lifetime signal (observeSignal) into every subscribeGet / subscribeSet registration, so an owner's teardown releases
  * exactly that owner's handlers. This matters most on SHARED topics: the package camera's motion handlers live on the parent doorbell's MAC tuple, and a tuple-wide
- * unsubscribe would clobber the live parent's handlers - the per-subscription signal is the structural fix. What this suite pins is the plugin's side of the seam: each
+ * unsubscribe would clobber the live parent's handlers - the per-subscription signal is the structural fix. This suite pins the plugin's side of that boundary: each
  * registration carries a signal, the signal is the registering owner's (the package's registrations on the shared tuple carry the package's signal, not the parent's),
  * and each owner's cleanup aborts its own registrations' signals while leaving the other owner's live. The release-on-abort mechanics themselves - removing exactly the
  * aborted handler from the topic's handler set - are homebridge-plugin-utils' per-subscription-signal contract, pinned by homebridge-plugin-utils' own tests; re-testing

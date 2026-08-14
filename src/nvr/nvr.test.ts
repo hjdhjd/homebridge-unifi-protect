@@ -21,7 +21,7 @@ import { ProtectAuthError } from "unifi-protect";
 import assert from "node:assert/strict";
 
 // A deterministic clock for NvrHealth so the sliding window is driven by the test, not wall time. Starts at an arbitrary fixed epoch and advances only when the test
-// asks; mirrors the Clock seam the production NvrHealth already accepts.
+// asks; mirrors the Clock interface the production NvrHealth already accepts.
 class FakeClock {
 
   public current = 1_000_000;
@@ -315,7 +315,7 @@ describe("livestream disruption gating", () => {
     // Comfortably past the window: loud.
     assert.equal(isWithinRebootRecency({ lastRebootMs, nowMs: lastRebootMs + windowMs + 5000, windowMs }), false);
 
-    // No reboot observed this process. The small nowMs keeps the null guard load-bearing - dropping it would compute 0 - null < window and wrongly read as within-window.
+    // No reboot observed this process. The small nowMs means removing the null guard would compute 0 - null < window and wrongly read as within-window.
     assert.equal(isWithinRebootRecency({ lastRebootMs: null, nowMs: 0, windowMs }), false);
   });
 
@@ -428,7 +428,7 @@ describe("induced-reboot resume decision", () => {
 
 describe("phase transition legality", () => {
 
-  // canTransition owns the two refusals the NVR's transition chokepoint honors: a same-phase change (the long-standing no-op), and any change OUT of the terminal
+  // canTransition owns every refusal the NVR's transition chokepoint honors: a same-phase change (a no-op), and any change out of the terminal
   // "shuttingDown". The same-phase rows and the shuttingDown-exit rows are false; every ordinary lifecycle change is legal, and entering "shuttingDown" from any
   // phase is legal. The shuttingDown-exit rows are precisely what a same-phase-only guard - the rule before the terminal one-way clause - would wrongly permit.
   test("canTransition refuses same-phase changes and any exit from shuttingDown", () => {

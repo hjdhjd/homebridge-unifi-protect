@@ -92,6 +92,10 @@ export interface ProtectDeviceContext {
   setStatusLed(value: boolean): Promise<boolean>;
 }
 
+// The per-accessory device base every device family extends: it owns the live projection handle, the resolved feature-option hints bag, the shared HomeKit service
+// helpers (acquireService/validService), the base motion/occupancy/status-LED capabilities, and the observers every family shares. The generic parameter D is the
+// concrete live-projection type the family supplies on its own class header; it defaults to the full device-collection union so a bare ProtectDevice reference (the
+// NVR's device iterator, a test stand-in) still type-checks against every category.
 export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollectionKey] = ProtectProjectionMap[DeviceCollectionKey]> extends ProtectBase
   implements ProtectCapabilityHost, ProtectDeviceContext {
 
@@ -152,7 +156,7 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
     return this.device.modelKey;
   }
 
-  // Whether this device's controller record is currently present. Overrides the ProtectBase seam (which is unconditionally true for a controller-scoped owner) with the
+  // Whether this device's controller record is currently present. Overrides the ProtectBase default (which is always true for a controller-scoped owner) with the
   // library's documented presence idiom - peek() !== undefined - so the one observeState gate neutralizes a vanished record during the DelayDeviceRemoval grace. PUBLIC
   // because the membership/removal/sweep chokepoints and the security-system fan-out gate their per-device reads on it.
   public override get recordPresent(): boolean {
@@ -710,7 +714,7 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
   }
 
   // The controller-side display name this device syncs into HomeKit: the user-assigned name, falling back to the model's market name. This is the single derivation the
-  // two name-sync consumers (configureInfo and syncNameFromController) read, and the one variation seam a leaf overrides to decorate its synced name - the package camera
+  // two name-sync consumers (configureInfo and syncNameFromController) read, and the one place a leaf overrides to decorate its synced name - the package camera
   // appends its display suffix here, so every sync path picks the decoration up without the parent fanning anything out.
   protected get syncedName(): string {
 
@@ -720,7 +724,7 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
   }
 
   // Sync the controller's device name into HomeKit when the user enabled name syncing. The cooked display name is the syncedName derivation above, and we only touch
-  // HomeKit (and log) when it actually differs from the current accessory name, so the idempotent re-read on an unrelated name-slice yield is silent.
+  // HomeKit (and log) when it actually differs from the current accessory name, so a re-read on an unrelated name-slice yield is a harmless no-op.
   protected syncNameFromController(): void {
 
     if(!this.hints.syncName) {
@@ -839,7 +843,7 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
   }
 
   // Build the write-through command that sets this device's status indicator light. The command is returned as a thunk so the update is issued against a narrowed
-  // projection: cameras, sensors, and relays all carry ledSettings.isEnabled, so the base serves them by narrowing this.device through its modelKey discriminant; the
+  // projection: cameras, sensors, and relays all carry ledSettings.isEnabled, so the base serves them by narrowing this.device through its modelKey tag; the
   // light projection has no ledSettings and overrides this with its lightDeviceSettings command. Returning the thunk (rather than a bare payload) is what lets each
   // device kind issue a typed update against its own config - the base's device union, spanning every supported device kind, could not.
   protected statusLedCommand(value: boolean): () => Promise<unknown> {

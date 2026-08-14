@@ -5,7 +5,7 @@
  * This module owns one pure decision: whether a given leak channel on a sensor should be exposed as a HomeKit service, given the device's own capability and the
  * model-correct enable signal. It is deliberately pure - `this`-free and free of any device or controller I/O, sensor facts in and a boolean out - so the sensor
  * leaf's leak consumers (the service gate, the enabled-sensors log, and the leak MQTT registration) import it without value-importing a non-leaf module (the
- * device-layer module invariant), and its truth table is exhaustively testable without standing up a sensor accessory.
+ * device layer's module-structure rule), and its truth table is exhaustively testable without standing up a sensor accessory.
  *
  * Why a leaf at all: the leak ENABLE signal differs by sensor model, and a single raw flag no longer expresses the truth for every device. The single-channel UP-Sense
  * (featureFlags.waterLeak.channelNames ["internal"]) drives leak via its physical mount role - the user sets mountType "leak" - while its leakSettings.isInternalEnabled
