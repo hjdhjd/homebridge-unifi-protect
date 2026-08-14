@@ -25,15 +25,33 @@
     width: var(--fo-sidebar-width);
   }
 
-  /* The Add Controller control renders at the sidebar section headings' own type scale and rhythm, referencing the framework's design tokens so the two cannot
-   * drift apart; each fallback mirrors the token's registered default for any paint before the token sheet adopts. The label wraps within the pinned column
-   * rather than clipping when the host theme's font metrics run wide.
+  /* The sidebar column's controls render at the sidebar section headings' own type scale and rhythm, referencing the framework's design tokens so the two cannot
+   * drift apart; each fallback mirrors the token's registered default for any paint before the token sheet adopts. Each label wraps within the pinned column
+   * rather than clipping when the host theme's font metrics run wide. One rule serves every control the column carries, so a control added beside the others
+   * cannot render at a scale of its own.
    */
-  #hbupAddController {
+  .hbup-sidebar-control {
     font-size: var(--fo-font-size-xs, 0.75rem);
     line-height: 1.2;
     padding: var(--fo-space-xs, 0.25rem) var(--fo-space-md, 0.75rem);
     white-space: normal;
+  }
+
+  /* A connection card in a working habitat - docked beneath a controller's stats, hosted by the connection-error view, or presented by Add Controller - renders
+   * its controls at the panel's own type scale and rhythm, referencing the framework's design tokens so the two cannot drift apart; each fallback mirrors the
+   * token's registered default for any paint before the token sheet adopts. First run keeps the stock control scale, where the card is the page.
+   */
+  .hbup-compact-card .btn {
+    font-size: var(--fo-font-size-xs, 0.75rem);
+    line-height: 1.2;
+    padding: var(--fo-space-xs, 0.25rem) var(--fo-space-md, 0.75rem);
+  }
+
+  /* The docked editor's disclosure hint sits between the card's small helper text and its heading - prominent enough to read as the affordance it is, without
+   * competing with the stats beside it. No framework type token lands in that interval, so the size is stated directly.
+   */
+  .hbup-compact-card summary {
+    font-size: 0.9375rem;
   }
 </style>
 <p class="text-center">
@@ -58,7 +76,9 @@
      habitats override when they mount. Every control the template offers is present in every clone and the factory reveals only the ones its habitat asked for,
      so a habitat declares what it offers rather than assembling markup of its own. -->
 <template id="hbupConnectionCard">
-  <div class="fo-card mb-3 p-3">
+  <!-- The card root wears fo-page, the framework's opt-in marker scoping its dark-mode form-control corrections, so every habitat's inputs adapt with the theme
+       no matter where the clone mounts. -->
+  <div class="fo-card fo-page mb-3 p-3">
     <h6 class="mb-1" data-role="heading">UniFi Protect controller</h6>
     <p class="small mb-3" data-role="helper">Your controller's address and a local user's login are all this plugin needs to bring your entire UniFi Protect ecosystem into HomeKit.</p>
     <label class="form-label mb-1" data-label-for="address">Controller address</label>
@@ -74,7 +94,7 @@
       </button>
     </div>
     <div class="d-flex flex-wrap gap-2 mt-2">
-      <button type="button" class="btn btn-primary btn-sm" data-action="validate">Validate Controller Login</button>
+      <button type="button" class="btn btn-primary btn-sm" data-action="validate">Validate Login</button>
       <button type="button" class="btn btn-primary btn-sm d-none" data-action="save">Save</button>
       <button type="button" class="btn btn-primary btn-sm d-none" data-action="cancel">Cancel</button>
       <button type="button" class="btn btn-warning btn-sm d-none" data-action="remove">Remove</button>
@@ -125,12 +145,15 @@
 <div id="pageFeatureOptions" class="mt-2" style="display: none;" tabindex="0">
   <div id="headerInfo" class="alert alert-info bg-transparent py-2 px-3 mb-2"></div>
   <div class="feature-main-content">
-    <!-- The plugin-owned sidebar column. The framework manages only the #sidebar region inside it - its visibility, and its containers' contents - so the Add
-         Controller control anchored here sits directly above the controllers list, survives the framework's re-renders, and stays available even when the
-         framework hides the sidebar region itself. The column carries its own pinned width, so the control holds the sidebar's exact width in every state. -->
-    <div id="hbupSidebarColumn" class="d-flex flex-column me-3">
+    <!-- The plugin-owned sidebar column. The framework manages only the #sidebar region inside it - its visibility, and its containers' contents - so the control
+         anchored here sits directly above the controllers list and survives the framework's re-renders. The data-fo-region attribute joins the column to the page's
+         own visibility rhythm: it hides with the page's teardown and reveals with the page, while remaining the plugin's to fill - the framework never clears it.
+         The column carries its own pinned width, so the control holds the sidebar's exact width in every state. Its click handler lives in ui.mjs and opens a card
+         for a new controller; the session-refresh action is the framework's own, docked on the controller-list heading and registered through the sidebar
+         configuration. -->
+    <div id="hbupSidebarColumn" class="d-flex flex-column me-3" data-fo-region>
       <div class="mb-2">
-        <button type="button" class="btn btn-primary btn-sm w-100" id="hbupAddController">Add Controller</button>
+        <button type="button" class="btn btn-sm w-100 hbup-sidebar-control fo-action" id="hbupAddController">Add Controller</button>
       </div>
       <aside id="sidebar">
         <div class="sidebar-content">
@@ -146,7 +169,7 @@
            The framework's own regions sit inside a wrapper of ours for the same reason. Presenting the card as the main content means hiding what it stands in
            front of, and hiding our wrapper leaves every display the framework writes on the regions inside it exactly as the framework wrote it - so the two
            never contend for the same element, and restoring the view is one assignment on something only this plugin owns. -->
-      <div id="hbupControllerEditor" style="display: none;"></div>
+      <div id="hbupControllerEditor" class="hbup-compact-card" style="display: none;"></div>
       <div id="hbupFeatureContent">
         <div id="deviceStatsContainer"></div>
         <div id="search" class="mb-3"></div>
@@ -178,6 +201,7 @@
 
 <!-- DOCUMENTATION:BEGIN - Auto-generated by homebridge-plugin-utils. Do not edit this region by hand. -->
 <h5>Getting Started</h5>
+<div class="px-4">
 <ul dir="auto">
   <li><a target="_blank" href="https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/README.md#installation">Installation</a>: installing this plugin, including system requirements.</li>
   <li><a target="_blank" href="https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/README.md#getting-started">Plugin Configuration</a>: how to quickly get up and running.</li>
@@ -185,8 +209,10 @@
   <li><a target="_blank" href="https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Troubleshooting.md">Troubleshooting</a>: running into login problems or streaming issues? Give this a read before looking anywhere else.</li>
   <li><a target="_blank" href="https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Changelog.md">Changelog</a>: changes and release history of this plugin, starting with v3.0.</li>
 </ul>
+</div>
 
 <h5>Additional Topics</h5>
+<div class="px-4">
 <ul dir="auto">
   <li><a target="_blank" href="https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md">Feature Options</a>: granular options to allow you to set the camera quality individually, show or hide specific cameras, controllers, and more.</li>
   <li><a target="_blank" href="https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Autoconfiguration.md">Autoconfiguration</a>: how HBUP sources and selects your video (the timeshift buffer, stream selection, transcoding, and transmuxing), autoconfigures your controller, and why.</li>
@@ -198,9 +224,11 @@
   <li><a target="_blank" href="https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/MQTT.md">MQTT</a>: how to configure MQTT support.</li>
   <li><a target="_blank" href="https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/ConfigurationReference.md">Plugin Configuration Reference</a>: complete list of configuration options available in this plugin.</li>
 </ul>
+</div>
 <!-- DOCUMENTATION:END -->
 
   <h5>Support</h5>
+  <div class="px-4">
   <ul>
     <li>
       <a target="_blank" href="https://discord.gg/QXqfHEW">Discord Support Channel</a>
@@ -212,6 +240,7 @@
       <a target="_blank" href="https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Changelog.md">View the Changelog and Release Notes</a>
     </li>
   </ul>
+  </div>
 </div>
 <!-- WEBUI LOADER CONFIG {"bust":["./protect-config.mjs"],"entry":"./ui.mjs"} -->
 <!-- WEBUI LOADER:BEGIN - Auto-generated by homebridge-plugin-utils. Do not edit this region by hand. -->

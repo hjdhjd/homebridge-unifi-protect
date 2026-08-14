@@ -222,11 +222,73 @@ const isController = (device) => device.modelKey === "nvr";
  */
 let injectedConfig = null;
 
-/* The MAC addresses each controller address last answered with, keyed by the address the plugin connects to. The removal sweep is the consumer: stripping a removed
- * controller's configuration entries means knowing which devices it brought with it, and a device's entries are addressed by its MAC rather than by anything the
- * configuration file records. The map lives as long as this module copy, which is the page's own lifetime.
+/* Each controller address's device list, as this session last fetched it and already processed for the framework to render. One answer serves three readers, which
+ * is why what is kept is the processed list rather than any narrower derivative of it: the device view returns it on every re-entry, a removal derives from it the
+ * MAC addresses a settings sweep would strip, and the sidebar reads the controller's own name from it. A controller login and bootstrap costs a user five to twenty
+ * seconds of dead air, and almost nothing about a controller changes between one re-entry and the next, so that price is paid once per address per session and the
+ * Refresh control is how a user asks to pay it again.
+ *
+ * Only an answer that actually arrived is ever kept. A fetch that fails answers no devices at all and writes nothing here, so the connection-error view and the
+ * framework's own retry cycle always act on a live attempt rather than on a hopeful memory of one. The map lives as long as this module copy, which is the page's
+ * own lifetime, so a reopened panel connects afresh.
  */
-const macsByAddress = new Map();
+const devicesByAddress = new Map();
+
+/* The generation the map above is on, bumped by every event that retires what it holds: a controller saved, a controller removed, and the Refresh control. A fetch
+ * captures this value before it calls the bridge and compares it after, writing only when the two still agree.
+ *
+ * The bridge offers no cancellation, so a fetch issued before an invalidation cannot be recalled and would otherwise be free to land its pre-invalidation answer
+ * afterwards - the same supersession problem a card's login verdict solves the same way. A retired fill costs one extra fetch at the next selection, where a stale
+ * serve would cost the rest of the session. One counter covers every address deliberately: its only failure mode is that extra fetch, and a counter nobody can
+ * misindex beats a map of counters somebody can.
+ */
+let cacheGeneration = 0;
+
+/* Add the fields the webUI framework renders from, and mark the controller entry with the address the plugin reached it at. It touches the device records and
+ * nothing on the page, which is what lets both writers into the map above run it: the device view's own fetch, and a save re-seeding from the answer its validation
+ * just received. One helper is what keeps those two from processing the same list into two different shapes.
+ */
+const processDeviceList = ({ address, devices }) => {
+
+  for(const device of devices) {
+
+    device.name ??= device.marketName;
+    device.serialNumber = device.mac;
+    device.sidebarGroup = device.modelKey + "s";
+
+    /* Stamp the configured address onto the controller entry, which is what lets the docked editor find the configuration item this node stands for. The
+     * serialNumber the framework correlates on has just been overwritten with the MAC above, and a configuration file records the address the plugin connects to
+     * and never a MAC, so the two can never be matched to each other - the stamp is the only thing carrying that correspondence across.
+     */
+    if(isController(device)) {
+
+      device.hbupConfigAddress = address;
+    }
+  }
+
+  return devices;
+};
+
+/* Show a controller's own name on its sidebar entry, which is something only a controller we have connected to can tell us - the configuration records an address
+ * and the sidebar has nothing else to label the entry with until then. Every device fetch runs this, whether the list came off the wire or out of the map above: a
+ * served list re-asserts the same string, and one uniform path is worth more than the assignment a divergent fast path would save.
+ */
+const patchControllerLabel = ({ address, devices }) => {
+
+  const controllerDevice = devices.find(isController);
+
+  if(!controllerDevice) {
+
+    return;
+  }
+
+  const activeController = [...document.querySelectorAll("[data-navigation='controller']")].find((c) => c.getAttribute("data-device-serial") === address);
+
+  if(activeController) {
+
+    activeController.textContent = controllerDevice.name;
+  }
+};
 
 // Return the list of controllers from our plugin configuration, paired with a clean connection outcome - the list is configuration-derived, so no fetch is involved
 // and no failure can occur. The framework injects our primary platform-config entry; we map each configured controller to the sidebar shape, deliberately carrying
@@ -242,9 +304,14 @@ const getControllers = ({ config }) => {
    */
   closeControllerEditor();
 
+  /* Each entry is labeled with the controller's own name once this session has heard it, and with the configured address until then. The device list this session
+   * already fetched is where that name comes from, so a repaint of the sidebar arrives carrying the same labels the user was already reading rather than reverting
+   * every entry to its raw address until a controller is selected again.
+   */
   return {
 
-    controllers: controllers(config).map((controller) => ({ name: controller.address, serialNumber: controller.address })),
+    controllers: controllers(config).map((controller) => ({ name: devicesByAddress.get(controller.address)?.find(isController)?.name ?? controller.address,
+      serialNumber: controller.address })),
     error: ""
   };
 };
@@ -271,40 +338,34 @@ const getDevices = async (selectedController, { config }) => {
     return { devices: [], error: "The selected controller is no longer in the plugin configuration." };
   }
 
+  const cached = devicesByAddress.get(controller.address);
+
+  // A controller this session has already reached answers from what it said then, ahead of any bridge call at all. Every tab re-entry and every re-select passes
+  // through here, and repeating a full login and bootstrap for each of them is the wait the user notices most, for data that is almost never different.
+  if(cached) {
+
+    patchControllerLabel({ address: controller.address, devices: cached });
+
+    return { devices: cached, error: "" };
+  }
+
+  // The generation this fetch belongs to, read before the call and checked against after it, so an answer that an invalidation has overtaken can complete without
+  // being kept.
+  const generation = cacheGeneration;
+
   // The browser cannot reach the Protect controller directly, so we bridge the request through the plugin's UI server, which holds the controller credentials. The
   // server returns the device list and the connection error together.
   const { devices, error } = await homebridge.request("/getDevices", { address: controller.address, password: controller.password, username: controller.username });
 
-  // Add the fields that the webUI framework is looking for to render.
-  for(const device of devices) {
+  processDeviceList({ address: controller.address, devices });
+  patchControllerLabel({ address: controller.address, devices });
 
-    device.name ??= device.marketName;
-    device.serialNumber = device.mac;
-    device.sidebarGroup = device.modelKey + "s";
+  // Remember what this controller answered with, so every later re-entry is served from it. A fetch that failed answers no devices at all and is never kept, which
+  // is what keeps the connection-error view and its retry acting on live attempts; an answer a save or a removal overtook while it was in flight is dropped for the
+  // same reason, at the cost of one more fetch the next time this controller is selected.
+  if(devices.length && (generation === cacheGeneration)) {
 
-    // We update the name of the controller that we show users once we've connected with the controller and have its name.
-    if(isController(device)) {
-
-      /* Stamp the configured address onto the controller entry, which is what lets the docked editor find the configuration item this node stands for. The
-       * serialNumber the framework correlates on has just been overwritten with the MAC above, and a configuration file records the address the plugin connects to
-       * and never a MAC, so the two can never be matched to each other - the stamp is the only thing carrying that correspondence across.
-       */
-      device.hbupConfigAddress = controller.address;
-
-      const activeController = [...document.querySelectorAll("[data-navigation='controller']")].find(c => c.getAttribute("data-device-serial") === controller.address);
-
-      if(activeController) {
-
-        activeController.textContent = device.name;
-      }
-    }
-  }
-
-  // Remember what this controller answered with, so a later removal can offer to strip the settings of everything it brought with it. A fetch that failed answers
-  // no devices at all and leaves the previous answer standing rather than erasing what we already knew.
-  if(devices.length) {
-
-    macsByAddress.set(controller.address, devices.map((device) => device.mac).filter((mac) => typeof mac === "string"));
+    devicesByAddress.set(controller.address, devices);
   }
 
   return { devices, error };
@@ -668,6 +729,23 @@ const saveController = async ({ card, originalAddress }) => {
 
   card.verdict.render({ lines: ["This controller has been saved."], tone: "text-success" });
 
+  /* What this session remembers about the controllers is now a write behind, so the generation moves and every fetch still in flight loses its claim to be kept.
+   * An address change also strands whatever was remembered under the address the user replaced, which names nothing the configuration holds any more; the Add
+   * Controller path has no previous address and strands nothing.
+   */
+  cacheGeneration++;
+
+  if(originalAddress && (originalAddress !== address)) {
+
+    devicesByAddress.delete(originalAddress);
+  }
+
+  /* The address that was just written is then re-seeded from this save's own validation, which logged into the controller with exactly these credentials moments
+   * ago and came back with its device list. That is newer than anything a deletion would have left behind, so the repaint below labels the entry with the
+   * controller's live name rather than falling back to the raw address, and the next selection is served rather than reconnecting.
+   */
+  devicesByAddress.set(address, processDeviceList({ address, devices }));
+
   await ui.featureOptions.refreshControllers();
 
   return address;
@@ -706,6 +784,11 @@ const removeController = async ({ address, card, macs }) => {
     return;
   }
 
+  // The controller is gone from the configuration, so what this session remembered about it goes with it, and the generation moves so a fetch that was already in
+  // flight for that address cannot put it back. The settings sweep read its MAC addresses long before this, when the card was populated.
+  cacheGeneration++;
+  devicesByAddress.delete(address);
+
   await ui.featureOptions.refreshControllers();
 
   document.querySelector("#controllersContainer .nav-link[data-navigation='global']")?.click();
@@ -737,7 +820,6 @@ const mountControllerEditor = ({ collapsible = false, container, heading, helper
     const disclosure = document.createElement("details");
     const summary = document.createElement("summary");
 
-    summary.className = "small";
     summary.textContent = "Controller connection settings";
     disclosure.append(summary, slot);
     container.replaceChildren(disclosure);
@@ -787,10 +869,14 @@ const mountControllerEditor = ({ collapsible = false, container, heading, helper
 
       const item = controllers(injectedConfig).find((controller) => controller?.address === address);
 
+      /* The MAC addresses a removal could offer to strip are read out of this controller's remembered device list here rather than stored beside it, so the one
+       * answer this session holds is the only thing describing what a controller brought with it. A controller this session never reached has nothing remembered
+       * and offers removal without the sweep, which is the case the card's own no-sweep wording is written for.
+       */
       card.populate({
 
         address: address,
-        macs: sweepable ? (macsByAddress.get(address) ?? []) : [],
+        macs: sweepable ? (devicesByAddress.get(address)?.map((device) => device.mac).filter((mac) => typeof mac === "string") ?? []) : [],
         password: item?.password ?? "",
         username: item?.username ?? ""
       });
@@ -811,11 +897,14 @@ const showControllerErrorPanel = ({ controller, panel, signal }) => {
 
   if(errorPanel?.signal !== signal) {
 
+    // The compact-card class keys the page's style block, so this card's controls render at the panel's own type rhythm rather than the full-size card scale.
+    panel.classList.add("hbup-compact-card");
+
     errorPanel = { editor: mountControllerEditor({
 
       container: panel,
       heading: "Controller connection settings",
-      helper: "Correct this controller's address or login and save it, or remove it from this plugin.",
+      helper: "Update this controller's address or login, or remove it from this plugin.",
       noSweepReason: "This controller cannot be reached, so the feature options set for its devices cannot be identified and will be left in place.",
       signal
     }), signal };
@@ -845,6 +934,10 @@ const showProtectDetails = ({ device, panel, signal }) => {
     const dock = document.createElement("div");
     const statsRegion = document.createElement("div");
 
+    // The compact-card class keys the page's style block, so the standing editor's controls render at the panel's own type rhythm rather than the full-size
+    // card scale.
+    dock.className = "hbup-compact-card";
+
     panel.replaceChildren(statsRegion, dock);
 
     detailsPanel = { editor: mountControllerEditor({
@@ -852,7 +945,7 @@ const showProtectDetails = ({ device, panel, signal }) => {
       collapsible: true,
       container: dock,
       heading: null,
-      helper: "Correct this controller's address or login and save it, or remove it from this plugin.",
+      helper: "Update this controller's address or login, or remove it from this plugin.",
       noSweepReason: "This controller has not answered with a device list in this session, so the feature options set for its devices cannot be identified and " +
         "will be left in place.",
       signal,
@@ -909,13 +1002,33 @@ const featureOptionsParams = {
   infoPanel: showProtectDetails,
   sidebar: {
 
-    controllerLabel: "Protect Controllers"
+    controllerLabel: "Protect Controllers",
+
+    /* The refresh action the framework docks on the controller-list heading. Reloading the world is one generation bump and one cleared map: the handler is
+     * invalidation and nothing more, because the framework owns everything around it - the re-entry through its own show(), the boot affordance that clothes the
+     * refetch, and the control's in-flight state. The selection landing back on the first controller is what reloading costs, the same landing every framework
+     * re-entry makes.
+     */
+    refresh: {
+
+      label: "Refresh controllers",
+      onRefresh: () => {
+
+        cacheGeneration++;
+        devicesByAddress.clear();
+      }
+    }
   },
   ui: {
 
     // The delay before the connection-error view re-enables its retry button, overriding the library's five-second default. A UniFi Protect controller can take well
     // over five seconds to authenticate and return its bootstrap, so twenty seconds keeps an impatient user from hammering retry while the first connection attempt is
     // still in flight.
+    // The copy the framework's boot affordance shows while a controller connection is in flight, in place of its generic default.
+    connectingMessage: "Connecting to your UniFi Protect controller...",
+    // The guidance line for a controller that cannot be reached, pointing at the connection editor mounted beneath the error rather than at a tab the reader is
+    // already on.
+    controllerFailureGuidance: "You can correct this controller's connection details below, or retry.",
     controllerRetryEnableDelayMs: 20000,
     isController: isController,
     validOption: validOption,

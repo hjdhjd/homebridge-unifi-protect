@@ -135,8 +135,8 @@ export const featureOptions: Record<string, FeatureOptionEntry<ProtectOptionMeta
     { default: false, description: "Add switch accessories to control the physical chimes attached to a Protect doorbell.", meta: { hasFeature: ["hasChime"] }, name: "PhysicalChime" },
     { default: true, defaultValue: PROTECT_DOORBELL_CHIME_DURATION_DIGITAL, description: "Chime duration, in milliseconds, of a digital physical chime attached to a Protect doorbell.", group: "PhysicalChime", meta: { hasFeature: ["hasChime"] }, name: "PhysicalChime.Duration.Digital" },
     { default: true, description: "Add a light accessory to control the flashlight on a Protect doorbell package camera.", meta: { hasFeature: ["hasPackageCamera"] }, name: "PackageCamera.Flashlight" },
-    { default: false, defaultValue: PROTECT_DOORBELL_RING_DELAY, description: "Delay, in seconds, before a new doorbell ring event can be triggered, suppressing rapid duplicate rings.", meta: { hasFeature: ["isDoorbell"] }, name: "Ring.Delay" },
-    { default: false, description: "Add a switch accessory to trigger doorbell ring events on a Protect camera or doorbell.", name: "Trigger" }
+    { default: false, description: "Add a switch accessory to trigger doorbell ring events on a Protect camera or doorbell.", name: "Trigger" },
+    { default: false, defaultValue: PROTECT_DOORBELL_RING_DELAY, description: "Delay, in seconds, before a new doorbell ring event can be triggered, suppressing rapid duplicate rings.", meta: { hasFeature: ["isDoorbell"] }, name: "Ring.Delay" }
   ],
 
   // Fob options.
@@ -154,9 +154,9 @@ export const featureOptions: Record<string, FeatureOptionEntry<ProtectOptionMeta
   "Log": [
 
     { default: true, description: "Log doorbell ring events in Homebridge.", meta: { modelKey: ["camera"] }, name: "Doorbell" },
-    { default: false, description: "Log verbose FFmpeg output in Homebridge, including the launch-time codec probe and every streaming and two-way audio FFmpeg session.", meta: { modelKey: ["camera"] }, name: "FFmpeg" },
     { default: false, description: "Log HomeKit Secure Video recording events in Homebridge.", meta: { isNotProperty: ["isThirdPartyCamera"], modelKey: ["camera"] }, name: "HKSV" },
-    { default: false, description: "Log motion events in Homebridge.", meta: { hasProperty: [ "isMotionDetected", "isPirMotionDetected" ], isNotProperty: ["isThirdPartyCamera"] }, name: "Motion" }
+    { default: false, description: "Log motion events in Homebridge.", meta: { hasProperty: [ "isMotionDetected", "isPirMotionDetected" ], isNotProperty: ["isThirdPartyCamera"] }, name: "Motion" },
+    { default: false, description: "Log verbose FFmpeg output in Homebridge. Expect a significant amount of additional logging whenever FFmpeg is active.", meta: { modelKey: ["camera"] }, name: "FFmpeg" }
   ],
 
   // Motion options.
@@ -195,13 +195,13 @@ export const featureOptions: Record<string, FeatureOptionEntry<ProtectOptionMeta
   // NVR options.
   "Nvr": [
 
-    { default: false, defaultValue: "", description: "Override the address used when livestreaming from cameras attached to this controller. This option is intended for unusual network topologies and is unavailable for stacked controller configurations.", inputSize: 30, meta: { modelKey: ["nvr"] }, name: "OverrideAddress", scopes: ["controller"] },
     { default: false, defaultValue: PROTECT_M3U_PLAYLIST_PORT, description: "Publish an M3U playlist of Protect cameras on the specified port of this Homebridge server that is suitable for use in apps (e.g. Channels DVR) that can make camera livestreams available through them.", meta: { modelKey: ["nvr"] }, name: "Service.Playlist" },
     { default: true, defaultValue: PROTECT_DEVICE_REMOVAL_DELAY_INTERVAL, description: "Delay, in seconds, before removing devices that are no longer detected on the Protect controller. Removal is held off while the controller is unreachable or restarting, and resumes once it is healthy again: immediately, if the delay is disabled.", meta: { modelKey: ["nvr"] }, name: "DelayDeviceRemoval" },
     { default: false, description: "Publish all the realtime telemetry received from the Protect controller to MQTT.", meta: { modelKey: ["nvr"] }, name: "Publish.Telemetry" },
     { default: false, defaultValue: PROTECT_NVR_REBOOT_INTERVAL, description: "Proactively reboot the UniFi Protect controller on a scheduled interval, in hours. Active HomeKit Secure Video recording events will be allowed to complete before rebooting. Use with care.", meta: { modelKey: ["nvr"] }, name: "Reboot" },
     { default: false, description: "Add switch accessories to control the native recording capabilities of the UniFi Protect NVR.", meta: { modelKey: ["camera"] }, name: "Recording.Switch" },
-    { default: false, description: "Add sensor accessories to display the Protect controller system information (currently only the temperature).", meta: { modelKey: ["nvr"] }, name: "SystemInfo" }
+    { default: false, description: "Add sensor accessories to display the Protect controller system information (currently only the temperature).", meta: { modelKey: ["nvr"] }, name: "SystemInfo" },
+    { default: false, defaultValue: "", description: "Override the address used when livestreaming from cameras attached to this controller. This option is intended for unusual network topologies and is unavailable for stacked controller configurations.", inputSize: 30, meta: { modelKey: ["nvr"] }, name: "OverrideAddress", scopes: ["controller"] }
   ],
 
   // Relay options.
@@ -232,7 +232,7 @@ export const featureOptions: Record<string, FeatureOptionEntry<ProtectOptionMeta
   // Video options.
   "Video": [
 
-    { default: false, defaultValue: "", description: "Path to the FFmpeg executable to use for video processing. Default: the bundled FFmpeg build for your platform, or the first ffmpeg found in your path.", inputSize: 40, name: "FFmpeg.Path", scopes: ["global"] },
+    { default: false, defaultValue: "", description: "Path to the FFmpeg executable HBUP uses for streaming and recording. Default: the bundled FFmpeg build for your platform, or the first FFmpeg found in your path.", inputSize: 40, name: "FFmpeg.Path", scopes: ["global"] },
     { default: true, description: "Use hardware-accelerated transcoding when available (Apple Macs, Intel Quick Sync Video-enabled CPUs, Raspberry Pi 4).", name: "Transcode.Hardware" },
     { default: true, description: "When streaming to low-latency clients (e.g. at home), transcode livestreams, instead of transmuxing them.", name: "Transcode" },
     { default: true, defaultValue: PROTECT_TRANSCODE_BITRATE, description: "Bitrate, in kilobits per second, to use when transcoding to low-latency (e.g. at home) clients, ignoring the bitrate HomeKit requests. HomeKit typically requests lower video quality than you may desire in your environment.", group: "Transcode", name: "Transcode.Bitrate" },
