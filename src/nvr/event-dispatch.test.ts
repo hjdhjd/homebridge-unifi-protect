@@ -131,8 +131,8 @@ const makeFob = (id: string, options: { recordPresent?: boolean } = {}): unknown
 };
 
 // Build a real ProtectEventDispatch (via the recording subclass) over a mock NVR exposing only what the constructor and the loops read. The published array captures
-// every mqtt.publish call so the telemetry assertions can read the tuples back; under the homebridge-plugin-utils signature each tuple is [composed {id}/{topic} tail,
-// payload]. The streams are finite, so run() / publishTelemetry() complete on their own without needing the signal to abort.
+// every mqtt.publishGuarded call so the telemetry assertions can read the tuples back; under the homebridge-plugin-utils signature each tuple is [composed
+// {id}/{topic} tail, payload]. The streams are finite, so run() / publishTelemetry() complete on their own without needing the signal to abort.
 const makeDispatch = (options: DispatchOptions = {}): { dispatch: RecordingDispatch; published: unknown[][] } => {
 
   const { devices = new Map<string, unknown>(), events = [], rawPackets = [], telemetryEnabled = false } = options;
@@ -143,7 +143,7 @@ const makeDispatch = (options: DispatchOptions = {}): { dispatch: RecordingDispa
   const rawPacketsFn = (): AsyncGenerator => streamOf(rawPackets);
   const getDeviceById = (id: string): unknown => devices.get(id) ?? null;
   const hasFeature = (): boolean => telemetryEnabled;
-  const publish = (...args: unknown[]): void => { published.push(args); };
+  const publishGuarded = (...args: unknown[]): void => { published.push(args); };
 
   const nvr = {
 
@@ -151,7 +151,7 @@ const makeDispatch = (options: DispatchOptions = {}): { dispatch: RecordingDispa
     getDeviceById,
     hasFeature,
     log,
-    mqtt: { publish },
+    mqtt: { publishGuarded },
     platform: { api: { hap: {} }, config: {} },
     ufp: { mac: "AA:BB:CC:DD:EE:FF" }
   };
@@ -555,15 +555,15 @@ describe("camera tamper delivery (real ProtectEventDispatch.tamperEventHandler)"
 // Build a real ProtectEventDispatch wired to the ContactSensor / ContactSensorState HAP double and an mqtt publish spy, plus a camera stand-in carrying the supplied
 // TestAccessory. The auth delivery trips the doorbell's authentication contact sensor, so these drive the real method against real HAP-double services rather than
 // recording the routing. Only the surface authEventHandler touches is mocked: the ContactSensor / ContactSensorState identities on hap, the camera's accessory / id / log
-// / ufp.mac, and an mqtt.publish spy whose calls land in `published`.
+// / ufp.mac, and an mqtt.publishGuarded spy whose calls land in `published`.
 const makeAuthDispatch = (accessory: TestAccessory): { camera: ProtectCamera; dispatch: ProtectEventDispatch; published: unknown[][] } => {
 
   const published: unknown[][] = [];
   const noop = (): void => { /* swallow log output in tests */ };
   const log = { debug: noop, error: noop, info: noop, warn: noop };
   const hap = { Characteristic: { ContactSensorState: Characteristic.ContactSensorState }, Service: { ContactSensor: Service.ContactSensor } };
-  const publish = (...args: unknown[]): void => { published.push(args); };
-  const nvr = { log, mqtt: { publish }, platform: { api: { hap }, config: {} } };
+  const publishGuarded = (...args: unknown[]): void => { published.push(args); };
+  const nvr = { log, mqtt: { publishGuarded }, platform: { api: { hap }, config: {} } };
   const dispatch = new ProtectEventDispatch(nvr as unknown as ProtectNvr);
   const camera = { accessory, id: "cam-auth", log, mac: "AA:BB:CC:DD:EE:FF", ufp: { mac: "AA:BB:CC:DD:EE:FF" } };
 
@@ -689,8 +689,8 @@ describe("doorbell auth delivery (real ProtectEventDispatch.authEventHandler)", 
 
 // Build a real ProtectEventDispatch wired to the HAP doubles motionEventDelivery touches, plus a camera stand-in carrying the supplied TestAccessory and the motion
 // hints the delivery reads. The info log is captured (formatted through util.format, as the real Homebridge logger renders its printf-style calls) so the assertions
-// can pin the coalescing of simultaneous types and the strictly-grows enrichment dedup; mqtt.publish calls land in `published`. Smart detection and motion logging are
-// enabled by default so a test names only the axis it varies. Every delivery arms a motionDuration reset timer, so the suite runs under mock timers.
+// can pin the coalescing of simultaneous types and the strictly-grows enrichment dedup; mqtt.publishGuarded calls land in `published`. Smart detection and motion
+// logging are enabled by default so a test names only the axis it varies. Every delivery arms a motionDuration reset timer, so the suite runs under mock timers.
 const makeMotionDispatch = (accessory: TestAccessory, hints: Record<string, unknown> = {}): { camera: ProtectCamera; dispatch: ProtectEventDispatch;
   logged: string[]; published: unknown[][]; } => {
 
@@ -704,8 +704,8 @@ const makeMotionDispatch = (accessory: TestAccessory, hints: Record<string, unkn
       OccupancyDetected: Characteristic.OccupancyDetected, On: Characteristic.On },
     Service: { ContactSensor: Service.ContactSensor, MotionSensor: Service.MotionSensor, OccupancySensor: Service.OccupancySensor, Switch: Service.Switch }
   };
-  const publish = (...args: unknown[]): void => { published.push(args); };
-  const nvr = { log, mqtt: { publish }, platform: { api: { hap }, config: {} } };
+  const publishGuarded = (...args: unknown[]): void => { published.push(args); };
+  const nvr = { log, mqtt: { publishGuarded }, platform: { api: { hap }, config: {} } };
   const dispatch = new ProtectEventDispatch(nvr as unknown as ProtectNvr);
   const camera = {
 
@@ -1062,8 +1062,8 @@ const makeRetireDispatch = (): { dispatch: ProtectEventDispatch; makeCam: (id: s
       OccupancyDetected: Characteristic.OccupancyDetected, On: Characteristic.On },
     Service: { ContactSensor: Service.ContactSensor, MotionSensor: Service.MotionSensor, OccupancySensor: Service.OccupancySensor, Switch: Service.Switch }
   };
-  const publish = (...args: unknown[]): void => { published.push(args); };
-  const nvr = { log, mqtt: { publish }, platform: { api: { hap }, config: {} } };
+  const publishGuarded = (...args: unknown[]): void => { published.push(args); };
+  const nvr = { log, mqtt: { publishGuarded }, platform: { api: { hap }, config: {} } };
   const dispatch = new ProtectEventDispatch(nvr as unknown as ProtectNvr);
   const makeCam = (id: string, mac: string, options: { occupancy?: boolean } = {}): ProtectCamera => {
 

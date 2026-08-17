@@ -90,7 +90,7 @@ const makeDevice = (): { capture: MqttCapture; instance: TestProtectDevice } => 
 
   const mqtt = {
 
-    publish: async (topic: string): Promise<void> => { capture.publish.push(topic); },
+    publishGuarded: (topic: string): void => { capture.publish.push(topic); },
     subscribeGet: (topic: string): void => { capture.subscribeGet.push(topic); },
     subscribeSet: (topic: string): void => { capture.subscribeSet.push(topic); }
   };
@@ -105,17 +105,18 @@ const makeDevice = (): { capture: MqttCapture; instance: TestProtectDevice } => 
   return { capture, instance };
 };
 
-// Construct the same real ProtectDevice, but wired to a real TestMqttClient (so its injectable rejection lever drives the funnel's guarded-publish failure path) and a
-// capturing error log (so the guard's reported line is observable). error renders through util.format - the line the real Homebridge sink would write - the same posture
-// command-error.test.ts uses; the other levels sink.
+// Construct the same real ProtectDevice, but wired to a real TestMqttClient (so its injectable rejection lever drives the client's guarded-publish failure path) and a
+// capturing error log (so the reported line is observable). The double reports on the log it is handed at construction, which is the same capturing sink the device
+// logs through, so one array collects the line either origin would write. error renders through util.format - the line the real Homebridge sink would write - the same
+// posture command-error.test.ts uses; the other levels sink.
 const makeGuardedDevice = (): { errors: string[]; instance: TestProtectDevice; mqtt: TestMqttClient } => {
 
   const errors: string[] = [];
   const sink = (): void => undefined;
   const log = { debug: sink, error: (message: string, ...parameters: unknown[]): void => { errors.push(util.format(message, ...parameters)); }, info: sink, warn: sink };
-  const mqtt = new TestMqttClient();
-  // logName reads the live record through peek() (non-throwing) when the prefixed logger renders a line, so the projection mock exposes it alongside config - without it,
-  // the guard's error render would throw inside its own catch and be swallowed. The empty-but-present config makes describeDevice render the same bare descriptor.
+  const mqtt = new TestMqttClient({ log });
+  // logName reads the live record through peek() (non-throwing) when the prefixed logger renders a line, so the projection mock exposes it alongside config. The
+  // empty-but-present config makes describeDevice render the same bare descriptor.
   const config = { mac: MAC };
   const device = { config, peek: (): Record<string, unknown> => config };
   const accessory = makeTestAccessory();
@@ -146,7 +147,7 @@ const makeController = (): { capture: MqttCapture; instance: TestProtectBase } =
   const log = { debug: sink, error: sink, info: sink, warn: sink };
   const mqtt = {
 
-    publish: async (topic: string): Promise<void> => { capture.publish.push(topic); },
+    publishGuarded: (topic: string): void => { capture.publish.push(topic); },
     subscribeGet: (topic: string): void => { capture.subscribeGet.push(topic); },
     subscribeSet: (topic: string): void => { capture.subscribeSet.push(topic); }
   };
@@ -193,11 +194,11 @@ describe("ProtectDevice MQTT topic composition", () => {
 
 describe("ProtectDevice MQTT publish guard", () => {
 
-  test("a rejected publish is reported under the guard's publish-specific label and floats no unhandled rejection", async () => {
+  test("a rejected publish is reported by the client's guarded path and floats no unhandled rejection", async () => {
 
     const { errors, instance, mqtt } = makeGuardedDevice();
 
-    // Arm the rejection lever so the funnel's publish rejects, driving guardedDispatch's failure path rather than recording the message.
+    // Arm the rejection lever so the publish the wrapper hands off rejects, driving the client's guarded failure path rather than recording the message.
     mqtt.publishRejection = new Error("the broker connection dropped");
 
     // Capture any unhandled rejection the guarded publish might float, so the test proves the guard consumed the rejection rather than merely logging alongside a float.
@@ -217,9 +218,9 @@ describe("ProtectDevice MQTT publish guard", () => {
     }
 
     assert.equal(floats.length, 0, "the rejected publish did not float an unhandled rejection");
-    assert.equal(errors.length, 1, "the guard reported exactly one failure line");
-    assert.match(errors[0] ?? "", /MQTT publish \(AABBCCDDEEFF\/motion\) handler failed/,
-      "the reported line carries the publish-specific label naming the full topic");
+    assert.equal(errors.length, 1, "the guarded path reported exactly one failure line");
+    assert.match(errors[0] ?? "", /Unable to publish to the MQTT topic AABBCCDDEEFF\/motion/,
+      "the reported line names the composed topic the publish was attempted on");
   });
 });
 

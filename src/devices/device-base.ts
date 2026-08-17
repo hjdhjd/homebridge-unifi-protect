@@ -8,12 +8,12 @@
 import type { API, HAP } from "homebridge";
 import type { ProtectDeviceConfig, ProtectNvrConfig, ProtectState } from "unifi-protect";
 import { TimerRegistry, composeSignals, formatErrorMessage, loopFaultReporter, prefixedLog, superviseLoop } from "homebridge-plugin-utils";
-import { guardedPublish, mqttTopic } from "../mqtt.ts";
 import type { HomebridgePluginLogging } from "homebridge-plugin-utils";
 import type { ProtectAccessory } from "../types.ts";
 import { ProtectAuthorizationError } from "unifi-protect";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import type { ProtectPlatform } from "../platform.ts";
+import { mqttTopic } from "../mqtt.ts";
 
 // An observed slice of controller state, expressed in the projections a single observer needs. `key` is a stable, dotted, machine-facing tag ("camera.ispSettings")
 // that identifies the slice on the observer-wake diagnostics channel - it stays put across field renames so diagnostic filters keep working. `selector` reads the slice
@@ -228,10 +228,10 @@ export abstract class ProtectBase {
   }
 
   // Publish an MQTT event under this owner's scope: compose the owner's mqttId into the topic tail (homebridge-plugin-utils' MqttClient then prefixes the configured
-  // topic) and route through the shared guardedPublish, so a rejected publish is logged under its own label rather than floating as an unhandled rejection.
+  // topic) and hand delivery to the client's guarded path, which is fire-and-forget by design and reports a failed publish on its own logger.
   protected publish(topic: string, message: string): void {
 
-    guardedPublish(this.log, this.nvr.mqtt, mqttTopic(this.mqttId, topic), message);
+    this.nvr.mqtt?.publishGuarded(mqttTopic(this.mqttId, topic), message);
   }
 
   // Configure an MQTT get subscription under this owner's scope. The registration is bound to the owner-lifetime signal, so an owner's teardown (cleanup, removal,

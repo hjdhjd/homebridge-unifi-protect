@@ -1,11 +1,10 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * mqtt.ts: Shared MQTT connection settings, topic composition, and publishing for homebridge-unifi-protect.
+ * mqtt.ts: Shared MQTT connection settings and topic composition for homebridge-unifi-protect.
  */
 
-import type { FeatureOptions, HomebridgePluginLogging, MqttClient, Nullable } from "homebridge-plugin-utils";
+import type { FeatureOptions, Nullable } from "homebridge-plugin-utils";
 import { PROTECT_MQTT_TOPIC } from "./settings.ts";
-import { guardedDispatch } from "homebridge-plugin-utils";
 
 /* Resolve the MQTT broker and topic prefix for one controller, or null when that controller has no broker anywhere and MQTT is therefore off for it. Both settings
  * resolve at the controller's own scope first, with the legacy per-controller schema properties as the transition fallback, so a configuration nobody has opened the
@@ -40,12 +39,4 @@ export function mqttConnectionSettings(featureOptions: FeatureOptions, config: {
 export function mqttTopic(id: string, topic: string): string {
 
   return id + "/" + topic;
-}
-
-// Publish an MQTT message through guardedDispatch, so a rejected publish - the broker vanishing mid-write, a teardown race - lands in the log under a
-// publish-specific label instead of floating as an unhandled rejection. Publishing is fire-and-forget by design; the guard makes the rare failure visible,
-// not awaited. The caller composes the full topic, because topic composition is the one thing the call sites legitimately differ on.
-export function guardedPublish(log: HomebridgePluginLogging, mqtt: Nullable<MqttClient>, topic: string, message: string): void {
-
-  guardedDispatch({ handler: async (): Promise<void> => { await mqtt?.publish(topic, message); }, label: "MQTT publish (" + topic + ")", log });
 }

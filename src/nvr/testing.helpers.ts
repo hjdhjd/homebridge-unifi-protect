@@ -17,7 +17,7 @@
 import type { Camera, Chime, ProtectEventMetadata, ProtectNvrConfig, ProtectNvrLiveviewConfig, ProtectRingtoneConfig } from "unifi-protect";
 import { Characteristic, Service, TestAccessory, TestCameraController, TestStreamingDelegateFactory } from "../testing.helpers.ts";
 import type { Clock, HomebridgePluginLogging, Nullable, RecordingProcessFactory } from "homebridge-plugin-utils";
-import { FeatureOptions, TestClock, TestRecordingProcessFactory } from "homebridge-plugin-utils";
+import { FeatureOptions, TestClock, TestRecordingProcessFactory, formatErrorMessage, isHbpuAbortError } from "homebridge-plugin-utils";
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_NVR_REBOOT_RECENCY_MS, PROTECT_NVR_REMOVAL_STABILITY_WINDOW } from "../settings.ts";
 import type { ProtectAccessory, ProtectDevices } from "../types.ts";
 import type { ProtectNvrOptions, ProtectOptions } from "../options.ts";
@@ -56,13 +56,17 @@ export interface TestMqttSubscription {
   type: string;
 }
 
-/* A minimal recording double of the homebridge-plugin-utils MqttClient surface ProtectBase's wrappers and the event dispatcher reach: publish, subscribeGet,
- * subscribeSet, and unsubscribe. Registration-recording, plus handler CAPTURE - delivering a message to a registered handler (and releasing it when its signal
- * aborts) is homebridge-plugin-utils' contract, pinned by its own tests, so the double does not stand up a broker; it captures each handler closure onto the
+/* A minimal recording double of the homebridge-plugin-utils MqttClient surface ProtectBase's wrappers and the event dispatcher reach: publish, publishGuarded,
+ * subscribeGet, subscribeSet, and unsubscribe. Registration-recording, plus handler CAPTURE - delivering a message to a registered handler (and releasing it when its
+ * signal aborts) is homebridge-plugin-utils' contract, pinned by its own tests, so the double does not stand up a broker; it captures each handler closure onto the
  * recorded subscription so a test can find it by topic / kind and invoke it directly. That lets a test exercise the plugin's own MQTT-specific dispatch (the
  * chime's switch(value) tone dispatch and empty-payload default, the viewer's liveview name lookup and unknown-name error) - the handler bodies that the
  * HomeKit onSet machinery never reaches. What THIS double proves is the plugin's side of the interface: which subscriptions a device registered, on which topics,
  * carrying which lifetime signal, what each handler does, and what was published.
+ *
+ * publishGuarded mirrors the client's fire-and-forget contract over the same recording publish, so the published array and the rejection lever serve the guarded path
+ * too: a cancelled publish drops to a debug line and every other failure lands at error level, each on the logger handed in at construction. The double carries no
+ * topic prefix, so its lines name the tail the caller composed rather than the wire topic a real broker would receive.
  */
 export class TestMqttClient {
 
@@ -73,6 +77,17 @@ export class TestMqttClient {
   public readonly subscriptions: TestMqttSubscription[] = [];
   public readonly unsubscribes: { id: string; topic: string }[] = [];
 
+  readonly #log: HomebridgePluginLogging;
+
+  // The reporting logger is optional because most arrangements never arm the rejection lever and have nothing to report; those get a silent sink so an unwired double
+  // emits nothing at all. A test that reads the guarded path's own lines hands in the sink it captures.
+  public constructor(options: { log?: HomebridgePluginLogging } = {}) {
+
+    const silent = (): void => undefined;
+
+    this.#log = options.log ?? { debug: silent, error: silent, info: silent, warn: silent };
+  }
+
   public async publish(topic: string, message: string): Promise<void> {
 
     if(this.publishRejection) {
@@ -81,6 +96,23 @@ export class TestMqttClient {
     }
 
     this.published.push({ message, topic });
+  }
+
+  public publishGuarded(topic: string, message: string): void {
+
+    void this.publish(topic, message).catch((error: unknown) => {
+
+      // Cancellation is the lifetime working as designed rather than a delivery fault, and every cancellation shape a caller can produce counts: homebridge-plugin-utils'
+      // own abort error, and the platform DOMException a raw AbortController signal yields.
+      if(isHbpuAbortError(error) || ((error instanceof Error) && (error.name === "AbortError"))) {
+
+        this.#log.debug("MQTT publish aborted: %s.", topic);
+
+        return;
+      }
+
+      this.#log.error("Unable to publish to the MQTT topic %s: %s.", topic, formatErrorMessage(error));
+    });
   }
 
   public subscribeGet(topic: string, type: string, getValue: () => string, init?: { signal?: AbortSignal }): void {
@@ -626,13 +658,16 @@ export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: T
   const factory = new TestStreamingDelegateFactory();
   const logEntries: TestLogEntry[] = [];
   const recordingProcessFactory = options.recordingProcessFactory ?? new TestRecordingProcessFactory();
-  const mqtt = options.mqtt ? new TestMqttClient() : null;
   const sink = (level: TestLogEntry["level"]): ((...parameters: unknown[]) => void) => (...parameters: unknown[]): void => {
 
     // Capture both channels: the raw argument list for media tests that read a structured object argument, and the util.format line the real Homebridge sink would emit.
     logEntries.push({ formatted: util.format(...parameters as [string, ...unknown[]]), level, parameters });
   };
   const log = { debug: sink("debug"), error: sink("error"), info: sink("info"), warn: sink("warn") };
+
+  // The MQTT double reports through the harness sink, so a guarded publish that fails or is cancelled lands in logEntries alongside every other line the construction
+  // path emits. It is built after the sink for that reason.
+  const mqtt = options.mqtt ? new TestMqttClient({ log }) : null;
 
   // The platform double's config and feature-option engine, hoisted out of the literal below so the debug router can gate on the very instances the double exposes - a
   // test steering platform.config.debugAll or seeding a scoped Log.Debug entry then drives the same resolution production performs. The local names deliberately avoid
