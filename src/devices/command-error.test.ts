@@ -63,7 +63,7 @@ const makeDevice = (update: (payload: unknown) => Promise<unknown> = () => Promi
   const nvr = {
 
     client: { connection: { isHealthy: true } },
-    platform: { api: { hap }, debug: sink, log, pluginLog: log },
+    platform: { api: { hap }, log, pluginLog: log, testDebug: () => false },
     signal: new AbortController().signal
   };
   const instance = new TestProtectDevice(nvr as unknown as ProtectNvr, makeTestAccessory() as unknown as ProtectAccessory, device as unknown as Camera);

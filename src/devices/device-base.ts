@@ -7,7 +7,7 @@
  */
 import type { API, HAP } from "homebridge";
 import type { ProtectDeviceConfig, ProtectNvrConfig, ProtectState } from "unifi-protect";
-import { TimerRegistry, composeSignals, formatErrorMessage, loopFaultReporter, prefixedLog, superviseLoop } from "homebridge-plugin-utils";
+import { TimerRegistry, composeSignals, debugGatedLog, formatErrorMessage, loopFaultReporter, prefixedLog, superviseLoop } from "homebridge-plugin-utils";
 import type { HomebridgePluginLogging } from "homebridge-plugin-utils";
 import type { ProtectAccessory } from "../types.ts";
 import { ProtectAuthorizationError } from "unifi-protect";
@@ -64,14 +64,16 @@ export abstract class ProtectBase {
     this.nvr = nvr;
     this.platform = nvr.platform;
 
-    // Derive this device's logger from the plugin logging root, prefixing every line with this.logName: the plain name on the base, overridden by ProtectDevice to the
-    // full "Name [Model]" descriptor so device lines show which hardware they belong to. The prefix supplier is read on every call, so a device rename reaches the next
-    // line. logName is deliberately separate from the bare `name` getter, which is the stable functional identity (it keys the livestream request id and the HomeKit
-    // accessory) and must not carry the bracketed model. The debug channel is the one level that does not pass through unchanged: it carries this owner's own identity
-    // to the platform's debug router, so whether a debug line speaks is decided at this owner's scope rather than plugin-wide.
-    const debug = (message: string, ...parameters: unknown[]): void => nvr.platform.debugAt(this.debugScope, message, ...parameters);
-
-    this.log = prefixedLog({ ...nvr.platform.pluginLog, debug }, () => this.logName);
+    /* Derive this device's logger from the plugin logging root, prefixing every line with this.logName: the plain name on the base, overridden by ProtectDevice to the
+     * full "Name [Model]" descriptor so device lines show which hardware they belong to. The prefix supplier is read on every call, so a device rename reaches the
+     * next line. logName is deliberately separate from the bare `name` getter, which is the stable functional identity (it keys the livestream request id and the
+     * HomeKit accessory) and must not carry the bracketed model.
+     *
+     * The debug channel is the one level that does not pass through unchanged: it resolves at this owner's own scope through the platform's gate and emits through
+     * warn, so whether a debug line speaks is decided here rather than plugin-wide. The gate sits outermost, so a suppressed line pays for one predicate call and no
+     * prefix work at all.
+     */
+    this.log = debugGatedLog(prefixedLog(nvr.platform.pluginLog, () => this.logName), () => nvr.platform.testDebug(this.debugScope));
 
     this.controller = new AbortController();
     this.signal = composeSignals(this.controller.signal, parentSignal ?? nvr.signal);

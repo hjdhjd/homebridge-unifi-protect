@@ -408,10 +408,10 @@ describe("protect webUI legacy-settings migration, whole-pass behavior", () => {
 
       return {
 
-        debugAt: (state.debug === true) || engine.test("Log.Debug", CAMERA_MAC, CONTROLLER_MAC),
         mqtt: mqttConnectionSettings(engine, controller, CONTROLLER_MAC),
         ringDelay: engine.getInteger("Doorbell.Ring.Delay", CAMERA_MAC, CONTROLLER_MAC) ?? state.ringDelay ?? 0,
         rtspHost: (override?.length ? override : undefined) ?? controller.overrideAddress,
+        testDebug: (state.debug === true) || engine.test("Log.Debug", CAMERA_MAC, CONTROLLER_MAC),
         verboseFfmpeg: engine.test("Log.FFmpeg", CAMERA_MAC, CONTROLLER_MAC) || (state.verboseFfmpeg === true),
         videoProcessor: (ffmpegExec?.length ? ffmpegExec : undefined) ?? state.videoProcessor
       };
@@ -421,7 +421,7 @@ describe("protect webUI legacy-settings migration, whole-pass behavior", () => {
 
     assert.deepEqual(resolve(applyPatch(config, migrated(config, RESOLVED))), before,
       "every setting the migration moved resolves to the value the plugin was running on before it moved");
-    assert.deepEqual(before, { debugAt: true, mqtt: { brokerUrl: LEGACY_BROKER, topicPrefix: LEGACY_TOPIC }, ringDelay: 20, rtspHost: LEGACY_OVERRIDE,
+    assert.deepEqual(before, { mqtt: { brokerUrl: LEGACY_BROKER, topicPrefix: LEGACY_TOPIC }, ringDelay: 20, rtspHost: LEGACY_OVERRIDE, testDebug: true,
       verboseFfmpeg: true, videoProcessor: LEGACY_VIDEO_PROCESSOR }, "and the values being compared are the legacy configuration's own, not two matching blanks");
   });
 });

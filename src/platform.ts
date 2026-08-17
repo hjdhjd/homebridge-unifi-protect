@@ -3,7 +3,7 @@
  * platform.ts: homebridge-unifi-protect platform class.
  */
 import type { API, DynamicPlatformPlugin, Logging } from "homebridge";
-import { APIEvent, FeatureOptions, FfmpegCodecs, RtpPortAllocator, recordingProcessFactory, systemClock } from "homebridge-plugin-utils";
+import { APIEvent, FeatureOptions, FfmpegCodecs, RtpPortAllocator, debugGatedLog, recordingProcessFactory, systemClock } from "homebridge-plugin-utils";
 import type { Clock, HomebridgePluginLogging, Nullable, RecordingProcessFactory } from "homebridge-plugin-utils";
 import type { ProtectAccessory, ProtectPlatformConfig } from "./types.ts";
 import { featureOptionCategories, featureOptions } from "./options.ts";
@@ -13,7 +13,6 @@ import type { ProtectOptions } from "./options.ts";
 import type { StreamingDelegateFactory } from "./media/stream-delegate.ts";
 import ffmpegPath from "ffmpeg-for-homebridge";
 import { streamingDelegateFactory } from "./media/stream.ts";
-import util from "node:util";
 
 // The Homebridge dynamic platform plugin for UniFi Protect. Owns FFmpeg capability detection, the RTP port allocator, and the per-controller ProtectNvr
 // instances the plugin manages.
@@ -41,16 +40,10 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
     this.featureOptions = new FeatureOptions(featureOptionCategories, featureOptions, config?.options ?? []);
     this.log = log;
 
-    // The plugin-side logging root. Debug routes through our gated debug utility; the other levels route to the Homebridge logger, which formats each line
-    // once at the sink. Per-device and per-controller loggers derive from this root through prefixedLog, so the sink wiring lives here and nowhere else;
-    // this.log stays the raw Homebridge logger for direct platform-level output.
-    this.pluginLog = {
-
-      debug: (message: string, ...parameters: unknown[]): void => this.debug(message, ...parameters),
-      error: (message: string, ...parameters: unknown[]): void => this.log.error(message, ...parameters),
-      info: (message: string, ...parameters: unknown[]): void => this.log.info(message, ...parameters),
-      warn: (message: string, ...parameters: unknown[]): void => this.log.warn(message, ...parameters)
-    };
+    // The plugin-side logging root. Debug is gated at global scope and emitted through warn; the other levels route to the Homebridge logger, which formats each
+    // line once at the sink. Per-device and per-controller loggers derive from this root through prefixedLog with scope predicates of their own, so the sink wiring
+    // lives here and nowhere else; this.log stays the raw Homebridge logger for direct platform-level output.
+    this.pluginLog = debugGatedLog(this.log, () => this.testDebug({}));
     this.recordingProcessFactory = recordingProcessFactory;
     this.rtpPorts = new RtpPortAllocator();
     this.streamingDelegateFactory = streamingDelegateFactory;
@@ -79,7 +72,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
     }
 
     // Debugging - most people shouldn't enable this.
-    this.debug("Debug logging on. Expect a lot of data.");
+    this.pluginLog.debug("Debug logging on. Expect a lot of data.");
 
     // Debug FFmpeg.
     if(this.config.verboseFfmpeg || this.featureOptions.test("Log.FFmpeg")) {
@@ -164,23 +157,13 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
     }
   }
 
-  // Utility for debug logging with no owner identity to name - the platform's own lines and anything else that speaks for the plugin as a whole. It resolves at global
-  // scope through the router below, so a plugin-wide debug entry turns it on and a device- or controller-suffixed one does not.
-  public debug(message: string, ...parameters: unknown[]): void {
-
-    this.debugAt({}, message, ...parameters);
-  }
-
-  /* The one debug gate and emitter. Whether a debug line speaks is resolved per call at the caller's own scope - a device-suffixed Log.Debug entry turns on one
-   * camera, a controller-suffixed entry one controller and everything it manages, a bare entry everything - with the hand-edited legacy debug property honored as
-   * the global fallback. Routed through log.warn rather than log.debug so plugin-level debug output stays visible regardless of whether Homebridge itself runs
-   * with its own debug flag.
+  /* The one debug gate. Whether a debug line speaks is resolved per call at the caller's own scope - a device-suffixed Log.Debug entry turns on one camera, a
+   * controller-suffixed entry one controller and everything it manages, a bare entry everything - with the hand-edited legacy debug property honored as the global
+   * fallback. Emission belongs to the composed loggers, which route a gated debug line through warn rather than debug so plugin-level debug output stays visible
+   * regardless of whether Homebridge itself runs with its own debug flag.
    */
-  public debugAt(context: { controller?: string; device?: string }, message: string, ...parameters: unknown[]): void {
+  public testDebug(context: { controller?: string; device?: string }): boolean {
 
-    if(this.config.debugAll || this.featureOptions.test("Log.Debug", context.device, context.controller)) {
-
-      this.log.warn(util.format(message, ...parameters));
-    }
+    return this.config.debugAll || this.featureOptions.test("Log.Debug", context.device, context.controller);
   }
 }

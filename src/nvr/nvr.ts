@@ -3,7 +3,8 @@
  * nvr.ts: NVR device class for UniFi Protect.
  */
 import type { API, HAP } from "homebridge";
-import { APIEvent, MqttClient, formatErrorMessage, formatSeconds, loopFaultReporter, prefixedLog, retry, sanitizeName, superviseLoop } from "homebridge-plugin-utils";
+import { APIEvent, MqttClient, debugGatedLog, formatErrorMessage, formatSeconds, loopFaultReporter, prefixedLog, retry, sanitizeName,
+  superviseLoop } from "homebridge-plugin-utils";
 import type { Camera, CollectionSelectors, DeviceCollectionKey, LivestreamRecoveryExhaustedPayload, LivestreamRecoveryRecoveredPayload,
   LivestreamRecoveryStartedPayload, ProtectDeviceConfig, ProtectDeviceConfigMap, ProtectLogging, ProtectNvrConfig } from "unifi-protect";
 import { DEVICE_COLLECTION_KEYS, ProtectClient, deviceSelectors, channels as protectChannels } from "unifi-protect";
@@ -191,11 +192,10 @@ export class ProtectNvr {
      * unconnected controller resolves its debug lines at global scope - the only scope that can name it before its identity is known.
      */
     const controllerMac = (): string | undefined => (this.client as ProtectClient | undefined)?.nvr.config.mac;
-    const debug = (message: string, ...parameters: unknown[]): void => this.platform.debugAt({ controller: controllerMac() }, message, ...parameters);
 
     // Derive our controller logger from the plugin logging root, prefixing every line with this.name so controller output is attributable at a glance. Debug lines
-    // additionally carry this controller's identity to the platform's debug router, so a controller-suffixed Log.Debug entry turns on this controller alone.
-    this.log = prefixedLog({ ...this.platform.pluginLog, debug }, () => this.name);
+    // resolve at this controller's own scope, so a controller-suffixed Log.Debug entry turns on this controller alone.
+    this.log = debugGatedLog(prefixedLog(this.platform.pluginLog, () => this.name), () => this.platform.testDebug({ controller: controllerMac() }));
 
     // Initialize the health bridge. It owns the whole diagnostics-to-health translation - the observer, the channel subscriptions that feed it, and the user-facing
     // narration of every state it moves through - while the one act that reaches back into controller territory, re-evaluating the removal-stability clock, runs here

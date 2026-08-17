@@ -135,8 +135,8 @@ export class TestMqttClient {
 // namespaces plus the deterministic uuid generator, the injected wall clock (the recording delegate reads platform.clock for its pacing-time primitives), the
 // platform-accessory class and the four registration recorders (the doorbell's configurePackageCamera and the NVR removal tail drive them), the platform's mutable
 // accessories array, a concrete codecSupport (the real platform getter throws before the FFmpeg probe - a concrete object with a non-raspbian hostSystem keeps the
-// recording-default switch on its default branch), the ProtectOptions-shaped config, the REAL FeatureOptions engine, the log sinks, the scoped debug router every
-// owner's logger binds its debug channel against, the recording-process factory interface (the recording delegate constructs its FFmpeg process through it), and the
+// recording-default switch on its default branch), the ProtectOptions-shaped config, the REAL FeatureOptions engine, the log sinks, the scoped debug gate every
+// owner's logger asks before it speaks, the recording-process factory interface (the recording delegate constructs its FFmpeg process through it), and the
 // streaming-delegate factory interface.
 export interface TestProtectPlatform {
 
@@ -153,8 +153,6 @@ export interface TestProtectPlatform {
   readonly clock: Clock;
   readonly codecSupport: { hostSystem: string };
   readonly config: ProtectOptions;
-  readonly debug: (...parameters: unknown[]) => void;
-  readonly debugAt: (context: { controller?: string; device?: string }, message: string, ...parameters: unknown[]) => void;
   readonly featureOptions: FeatureOptions;
   readonly log: {
 
@@ -166,6 +164,7 @@ export interface TestProtectPlatform {
   readonly pluginLog: HomebridgePluginLogging;
   readonly recordingProcessFactory: RecordingProcessFactory;
   readonly streamingDelegateFactory: TestStreamingDelegateFactory;
+  readonly testDebug: (context: { controller?: string; device?: string }) => boolean;
 }
 
 /* Present a harness accessory to an API typed on the production accessory - the removal gate's action surface and its schedule options both are. The double's graph
@@ -669,9 +668,9 @@ export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: T
   // path emits. It is built after the sink for that reason.
   const mqtt = options.mqtt ? new TestMqttClient({ log }) : null;
 
-  // The platform double's config and feature-option engine, hoisted out of the literal below so the debug router can gate on the very instances the double exposes - a
-  // test steering platform.config.debugAll or seeding a scoped Log.Debug entry then drives the same resolution production performs. The local names deliberately avoid
-  // `featureOptions`, which would shadow the module-level catalog import the constructor call below reads.
+  // The platform double's config and feature-option engine, hoisted out of the literal below so the debug gate can resolve against the very instances the double
+  // exposes - a test steering platform.config.debugAll or seeding a scoped Log.Debug entry then drives the same resolution production performs. The local names
+  // deliberately avoid `featureOptions`, which would shadow the module-level catalog import the constructor call below reads.
   const platformConfig: ProtectOptions = { controllers: [], debugAll: false, options: [], ringDelay: 0, verboseFfmpeg: false, videoProcessor: "ffmpeg" };
   const platformFeatureOptions = new FeatureOptions(featureOptionCategories, featureOptions, options.userOptions ?? []);
   const client = {
@@ -759,20 +758,18 @@ export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: T
       clock: clock,
       codecSupport: { hostSystem: "macOS" },
       config: platformConfig,
-      debug: sink("debug"),
-      debugAt: (context: { controller?: string; device?: string }, message: string, ...parameters: unknown[]): void => {
-
-        // The production gate, mirrored exactly: the legacy plugin-wide flag, else a Log.Debug entry resolved at the caller's own device and controller scope.
-        if(platformConfig.debugAll || platformFeatureOptions.test("Log.Debug", context.device, context.controller)) {
-
-          log.warn(util.format(message, ...parameters));
-        }
-      },
       featureOptions: platformFeatureOptions,
       log: log,
       pluginLog: log,
       recordingProcessFactory: recordingProcessFactory,
-      streamingDelegateFactory: factory
+      streamingDelegateFactory: factory,
+
+      // The production predicate, mirrored exactly: the legacy plugin-wide flag, else a Log.Debug entry resolved at the caller's own device and controller scope. It
+      // is the gate alone and emits nothing - the composed loggers own emission, exactly as they do in production.
+      testDebug: (context: { controller?: string; device?: string }): boolean => {
+
+        return platformConfig.debugAll || platformFeatureOptions.test("Log.Debug", context.device, context.controller);
+      }
     },
     signal: controller.signal
   });

@@ -97,7 +97,7 @@ const makeDevice = (): { capture: MqttCapture; instance: TestProtectDevice } => 
   const nvr = {
 
     mqtt,
-    platform: { api: { hap: {} }, debug: sink, log, pluginLog: log },
+    platform: { api: { hap: {} }, log, pluginLog: log, testDebug: () => false },
     signal: new AbortController().signal
   };
   const instance = new TestProtectDevice(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, device as unknown as Camera);
@@ -126,7 +126,7 @@ const makeGuardedDevice = (): { errors: string[]; instance: TestProtectDevice; m
   const nvr = {
 
     mqtt,
-    platform: { api: { hap: {} }, debug: sink, log, pluginLog: log },
+    platform: { api: { hap: {} }, log, pluginLog: log, testDebug: () => false },
     signal: new AbortController().signal
   };
   const instance = new TestProtectDevice(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, device as unknown as Camera);
@@ -154,7 +154,7 @@ const makeController = (): { capture: MqttCapture; instance: TestProtectBase } =
   const nvr = {
 
     mqtt,
-    platform: { api: { hap: {} }, debug: sink, log, pluginLog: log },
+    platform: { api: { hap: {} }, log, pluginLog: log, testDebug: () => false },
     ufp: { mac: NVR_MAC }
   };
   const instance = new TestProtectBase(nvr as unknown as ProtectNvr);
