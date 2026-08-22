@@ -1286,7 +1286,7 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     // The negative control: a reconcile driven by an unrelated field change, with the vape state unmoved. The state must not be re-narrated on every patch, and this
     // sensor sees one roughly every second and a half in the field.
-    built.store.pushSensorPatch("test-sensor-1", { batteryStatus: { isLow: false, percentage: 99 } });
+    built.store.pushSensorPatch("test-sensor-1", { batteryStatus: { isLow: false, modelKey: "sensorBatteryStatus", percentage: 99 } });
 
     await settle();
 
