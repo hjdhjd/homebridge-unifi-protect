@@ -11,8 +11,10 @@
  * Fidelity to the cited contracts, not invention, is the line these doubles hold: the projection surface is unifi-protect's, and the record shapes are the
  * controller's own. The cross-cutting core - the HAP double, the state store, the streaming and timeshift stubs - lives in the root harness this file imports from.
  */
-import type { PlaySpeakerOptions, ProtectCameraChannelConfig, ProtectCameraConfig, ProtectChimeConfig, ProtectFobConfig, ProtectLightConfig, ProtectNvrLiveviewConfig,
-  ProtectRelayConfig, ProtectRingtoneConfig, ProtectSensorConfig, ProtectViewerConfig, Sensor } from "unifi-protect";
+import { DISABLED_THRESHOLD_SETTINGS, DISABLED_VAPE_SENSITIVITY, NOT_CAPABLE_AIR_QUALITY } from "./air-quality-policy.ts";
+import type { PlaySpeakerOptions, ProtectAirQualityThresholdSettings, ProtectCameraChannelConfig, ProtectCameraConfig, ProtectChimeConfig, ProtectFobConfig,
+  ProtectLightConfig, ProtectNvrLiveviewConfig, ProtectRelayConfig, ProtectRingtoneConfig, ProtectSensorAirQuality, ProtectSensorConfig, ProtectViewerConfig,
+  Sensor } from "unifi-protect";
 import { FIXTURE_HOST } from "../camera.fixtures.ts";
 import type { Nullable } from "homebridge-plugin-utils";
 import { ProtectDevice } from "./device.ts";
@@ -237,7 +239,8 @@ export function makeViewerConfig(options: { id?: string; liveview?: Nullable<str
  * Build a minimal-but-real sensor config record, mirroring makeCameraConfig's wide-read-set discipline: every field the ProtectSensor construction, the base
  * device-capability paths (motion / occupancy / status-LED), and the later sensor-family configure paths actually read is populated for real, and the record is cast
  * once to the full wire type. A bare makeSensorConfig() is an all-quiet sensor - every *Settings.isEnabled is false, the LED indicator is off, the mount type is "none",
- * a battery is present and healthy, no air-quality stats are present - and isMotionDetected defaults to TRUE so the Motion.* feature options satisfy their hasProperty
+ * a battery is present and healthy, no air-quality stats are present, and every air-quality metric reads the not-capable unknown/null shape a sensor without that
+ * hardware sends - and isMotionDetected defaults to TRUE so the Motion.* feature options satisfy their hasProperty
  * applicability gate (which makes the option visible to FeatureOptions; it is NOT the runtime service gate - that is the Enable.Motion.* userOptions string, since every
  * Motion.* option defaults to false). This is the ONE carrier the base-capability concern tests ride on AND the sensor-family fixture, so it is the single source for
  * the sensor shape - there is no second "base config" builder. type is omitted exactly as makeLightConfig omits it: marketName wins the model-name derivation, so the
@@ -247,8 +250,15 @@ export function makeViewerConfig(options: { id?: string; liveview?: Nullable<str
  * ProtectSensorConfig carries the whole record's type honesty (the ProtectThresholdSettings and ProtectAirQualityMetricInterface shapes are populated faithfully behind
  * it rather than imported separately).
  *
- * @param options - alarmEnabled: the alarm settings toggle (defaults false); alarmTriggeredAt: the alarm-trip timestamp (defaults null); ambientLight: the ambient light
+ * Two levels of the record carry same-named settings members with DIFFERENT shapes, and they must never be cross-wired: the record's TOP-LEVEL humiditySettings /
+ * temperatureSettings are the margin-bearing environmental thresholds the humidity and temperature services read, while airQualitySettings nests its own
+ * humiditySettings / temperatureSettings in the nullable, margin-less air-quality threshold shape. Each level is built by its own helper for exactly that reason.
+ *
+ * @param options - airQuality: per-metric readings folded over the not-capable defaults, keyed by metric name (defaults to none, every metric quiet); alarmEnabled: the
+ *                  alarm settings toggle (defaults false); alarmTriggeredAt: the alarm-trip timestamp (defaults null); ambientLight: the ambient light
  *                  reading folded into stats.light.value (omitted, no light stat); batteryLow / batteryPercentage: the battery status (default false / 100);
+ *                  co2Enabled: the carbon dioxide alert toggle folded into airQualitySettings.co2Settings.isEnabled (defaults false); co2Threshold: the carbon dioxide
+ *                  alert level folded into airQualitySettings.co2Settings.highThreshold (defaults null, nothing configured);
  *                  externalLeakDetectedAt: the external-leak timestamp the leak path index-reads (defaults null); glassBreak: whether the controller advertises the
  *                  glass-break capability channel in featureFlags.glassBreak - the flag the alarm-family glass-break gate reads (defaults false, channel
  *                  absent); glassBreakEnabled: the glass-break settings toggle folded into glassBreakSettings.isEnabled (defaults false); hardwareRevision: the hardware
@@ -262,16 +272,18 @@ export function makeViewerConfig(options: { id?: string; liveview?: Nullable<str
  *                  sensor-distinct value); motionDetectedAt: the motion timestamp the sensor motion observer gates on (defaults 0); motionEnabled: the motion settings
  *                  toggle (defaults false); mountType: the sensor mount type (defaults "none"); name: display name (defaults "Test Sensor"); tamperingDetectedAt: the
  *                  tamper timestamp (defaults null); temperature: the temperature reading folded into stats.temperature.value (omitted, no temperature stat);
- *                  temperatureEnabled: the temperature settings toggle (defaults false).
+ *                  temperatureEnabled: the temperature settings toggle (defaults false); vapeEnabled: the controller's own vape detection toggle folded into
+ *                  airQualitySettings.vapeSensitivitySettings.isEnabled (defaults false).
  *
  * @returns a sensor config record the construction, base-capability, and sensor-family paths read as real.
  */
-export function makeSensorConfig(options: { alarmEnabled?: boolean; alarmTriggeredAt?: Nullable<number>; ambientLight?: number; batteryLow?: boolean;
-  batteryPercentage?: Nullable<number>; externalLeakDetectedAt?: Nullable<number>; glassBreak?: boolean; glassBreakEnabled?: boolean; hardwareRevision?: string;
+export function makeSensorConfig(options: { airQuality?: Partial<ProtectSensorAirQuality>; alarmEnabled?: boolean; alarmTriggeredAt?: Nullable<number>;
+  ambientLight?: number; batteryLow?: boolean; batteryPercentage?: Nullable<number>; co2Enabled?: boolean; co2Threshold?: Nullable<number>;
+  externalLeakDetectedAt?: Nullable<number>; glassBreak?: boolean; glassBreakEnabled?: boolean; hardwareRevision?: string;
   humidity?: number; humidityEnabled?: boolean; id?: string; isConnected?: boolean; isMotionDetected?: boolean; isOpened?: Nullable<boolean>; leakChannelNames?: string[];
   leakDetectedAt?: Nullable<number>; leakExternalEnabled?: boolean; leakInternalEnabled?: boolean; ledEnabled?: boolean; lightEnabled?: boolean; mac?: string;
   motionDetectedAt?: number; motionEnabled?: boolean; mountType?: string;
-  name?: string; tamperingDetectedAt?: Nullable<number>; temperature?: number; temperatureEnabled?: boolean; } = {}): ProtectSensorConfig {
+  name?: string; tamperingDetectedAt?: Nullable<number>; temperature?: number; temperatureEnabled?: boolean; vapeEnabled?: boolean; } = {}): ProtectSensorConfig {
 
   const name = options.name ?? "Test Sensor";
 
@@ -279,6 +291,12 @@ export function makeSensorConfig(options: { alarmEnabled?: boolean; alarmTrigger
   // are quiet, valid defaults the construction path never inspects.
   const thresholdSettings = (isEnabled: boolean): { highThreshold: number; isEnabled: boolean; lowThreshold: number; margin: number } => ({ highThreshold: 0, isEnabled,
     lowThreshold: 0, margin: 0 });
+
+  // The air-quality per-metric threshold shape, which is NULLABLE and carries no margin - a different shape from the environmental thresholds above, so the two are
+  // never interchangeable even where the member names collide. The defaults derive from the policy leaf's disabled constant, so the fixture and production agree on
+  // what "nothing configured" looks like, and only the carbon dioxide alert a test drives departs from it.
+  const airQualityThreshold = (isEnabled = DISABLED_THRESHOLD_SETTINGS.isEnabled, highThreshold = DISABLED_THRESHOLD_SETTINGS.highThreshold):
+  ProtectAirQualityThresholdSettings => ({ highThreshold, isEnabled, lowThreshold: DISABLED_THRESHOLD_SETTINGS.lowThreshold });
 
   // Build the air-quality stats record only with the metrics a test supplies; each present metric is a ProtectAirQualityMetricInterface ({ status, value }) shape, so the
   // status string is carried alongside the value rather than overloading a bare { value }. An all-quiet sensor supplies no metrics, so stats is absent entirely.
@@ -301,6 +319,36 @@ export function makeSensorConfig(options: { alarmEnabled?: boolean; alarmTrigger
 
   const populated = {
 
+    // Every metric quiet unless a test names one: the controller sends the full block on every sensor, so the fixture does too, and a metric a test supplies simply
+    // replaces its not-capable default.
+    airQuality: { ...NOT_CAPABLE_AIR_QUALITY, ...options.airQuality },
+
+    // The controller sends a threshold member for every metric with no exceptions - vape and voc included - alongside the reading cadence, the ring LED, the night-mode
+    // schedule, and the vape sensitivity. All quiet by default; carbon dioxide and the vape enable are the levers a test reaches for.
+    airQualitySettings: {
+
+      alertInterval: 300,
+      aqiSettings: airQualityThreshold(),
+      co2Settings: airQualityThreshold(options.co2Enabled, options.co2Threshold),
+      humiditySettings: airQualityThreshold(),
+      nightModeBrightness: 0,
+      nightModeEnabled: false,
+      nightModeEndTime: "07:00",
+      nightModeStartTime: "22:00",
+      noxSettings: airQualityThreshold(),
+      pm10p0Settings: airQualityThreshold(),
+      pm1p0Settings: airQualityThreshold(),
+      pm2p5Settings: airQualityThreshold(),
+      pm4p0Settings: airQualityThreshold(),
+      readingInterval: 60,
+      ringLedBrightness: 0,
+      ringLedMetric: 0,
+      temperatureSettings: airQualityThreshold(),
+      tvocSettings: airQualityThreshold(),
+      vapeSensitivitySettings: { isEnabled: options.vapeEnabled ?? DISABLED_VAPE_SENSITIVITY.isEnabled, sensitivity: DISABLED_VAPE_SENSITIVITY.sensitivity },
+      vapeSettings: airQualityThreshold(),
+      vocSettings: airQualityThreshold()
+    },
     alarmSettings: { isEnabled: options.alarmEnabled ?? false },
     alarmTriggeredAt: options.alarmTriggeredAt ?? null,
     batteryStatus: { isLow: options.batteryLow ?? false, percentage: options.batteryPercentage ?? 100 },

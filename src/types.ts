@@ -158,6 +158,7 @@ export const ProtectReservedNames = {
   CONTACT_SENSOR: "ContactSensor",
   CONTACT_SENSOR_ALARM_SOUND: "ContactAlarmSound",
   CONTACT_SENSOR_GLASS_BREAK: "ContactGlassBreak",
+  CONTACT_SENSOR_VAPE: "ContactVape",
 
   // Manage our leak sensor types.
   LEAKSENSOR_EXTERNAL: "External",

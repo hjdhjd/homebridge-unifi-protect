@@ -9,9 +9,14 @@
  *
  * The sensor-specific surface: the always-present Battery service (configureBatteryService is unconditional, and updateBatteryStatus writes BatteryLevel /
  * StatusLowBattery), the per-mode services (the alarm family's alarm sound and glass-break twins / ambient light / contact-via-mountType / humidity / temperature) with
- * their read-through getters, the ambient 0.0001 and humidity <0 HomeKit floors, the StatusActive / StatusTampered state characteristics each carries, and the per-mode
- * MQTT publishes; the leak (default LeakSensor, internal / external subtypes) plus the moisture variant (Sensor.MoistureSensor swaps to a subtyped ContactSensor, and the
- * mode-flip cleanup removes the opposite-type service); the sensor observers (the motionDetectedAt firehose routed through the injected TestRecordingDispatch
+ * their read-through getters, the ambient 0.0001 HomeKit floor and the two-source read-select behind temperature and humidity (the stats block for the USL family, the
+ * air-quality block for UP Air Quality hardware) with its resolve-else-hold write path, the StatusActive / StatusTampered state characteristics each carries, and the
+ * per-mode MQTT publishes; the leak (default LeakSensor, internal / external subtypes) plus the moisture variant (Sensor.MoistureSensor swaps to a subtyped
+ * ContactSensor, and the mode-flip cleanup removes the opposite-type service); the air-quality surface (the AirQualitySensor with its always-present level and its
+ * presence-driven densities, the CarbonDioxideSensor with the controller-configured alert threshold and its presence-driven level, the opt-in vape ContactSensor at its
+ * own subtype, and the curated air-quality telemetry topic that publishes on capability alone), where a service holds through an offline window and sheds when its
+ * measurements read the off signature on a device we can see, and the characteristic set never shrinks while the device is unreachable; the sensor observers (the
+ * motionDetectedAt firehose routed through the injected TestRecordingDispatch
  * exactly like the light's lastMotion; the tamperingDetectedAt fan-out across every state-bearing service; the alarmTriggeredAt push across each present alarm-family
  * contact sensor; the whole-record sensor.config reconcile); the always-on GET MQTT subscriptions plus the model-aware leak GETs (registered per-channel,
  * present-iff-enabled, once-guarded, and unsubscribed when a channel is toggled off).
@@ -33,17 +38,19 @@
  * store.observerCount are clean every test, the wake log is windowed per push via a captured baseline, and an afterEach unwinds the sensor's per-accessory abort.
  */
 import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../testing.helpers.ts";
-import type { TestAccessory, TestLogEntry } from "../testing.helpers.ts";
+import type { CharacteristicType, TestAccessory, TestLogEntry } from "../testing.helpers.ts";
+import type { ProtectSensorAirQuality, Sensor } from "unifi-protect";
 import { TestRecordingDispatch, makeTestNvr } from "../nvr/testing.helpers.ts";
 import { TestSensorProjection, makeSensorConfig } from "./testing.helpers.ts";
 import { after, afterEach, before, beforeEach, describe, test } from "node:test";
+import { NOT_CAPABLE_AIR_QUALITY } from "./air-quality-policy.ts";
+import type { Nullable } from "homebridge-plugin-utils";
 import type { ObserverWakePayload } from "../diagnostics.ts";
 import type { ProtectAccessory } from "../types.ts";
 import type { ProtectEventDispatch } from "../nvr/event-dispatch.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
 import { ProtectSensor } from "./sensor.ts";
-import type { Sensor } from "unifi-protect";
 import type { TestMqttClient } from "../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
@@ -61,6 +68,13 @@ function loggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], substri
 function countLoggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], substring: string): number {
 
   return entries.filter((entry) => (entry.level === level) && entry.formatted.includes(substring)).length;
+}
+
+// A full block of air-quality readings, quiet except the metrics a case names - the shape the controller always sends, where every metric is present whether or not the
+// hardware measures it. Air-quality patches carry the WHOLE block, matching how this suite pushes every other nested settings object.
+function airQualityBlock(overrides: Partial<ProtectSensorAirQuality>): ProtectSensorAirQuality {
+
+  return { ...NOT_CAPABLE_AIR_QUALITY, ...overrides };
 }
 
 // Every harness controller this suite opens, drained in afterEach so the controller lifetime signal bounds each test's constructions rather than the file's. The builder
@@ -369,17 +383,31 @@ describe("real ProtectSensor construction and family behavior", () => {
     built.sensor.cleanup();
   });
 
-  test("the humidity sensor reads through CurrentRelativeHumidity and floors a negative reading to zero", async () => {
+  test("the humidity sensor materializes from its toggle with nothing to say, then writes and publishes once a reading arrives", async () => {
 
-    // No humidity option, so stats.humidity is absent and the getter returns -1, floored to 0.
+    // A service carried by its Protect toggle alone, walked through both phases. No humidity option and no air-quality hardware, so neither source resolves a reading:
+    // nothing is written and nothing is published, leaving HomeKit on its own default rather than being told a made-up number. Then a stats reading arrives, and the
+    // service writes it to the characteristic and publishes it on the device-scoped topic.
     const built = buildSensor({ humidityEnabled: true });
+    const mac = built.projection.config.mac;
+
+    await settle();
 
     const humidity = built.accessory.getService(Service.HumiditySensor);
 
     assert.ok(humidity, "enabling humidity settings materializes the HumiditySensor");
-    assert.equal(humidity.getCharacteristic(Characteristic.CurrentRelativeHumidity).value, 0, "an absent humidity stat floors the initialized value to 0");
-    assert.equal(await humidity.getCharacteristic(Characteristic.CurrentRelativeHumidity).triggerGet(), 0, "the onGet floors a negative reading to 0");
-    assert.ok(built.mqtt.published.some((entry) => entry.topic === built.projection.config.mac + "/humidity"), "the humidity state published on the device-scoped topic");
+    assert.equal(humidity.getCharacteristic(Characteristic.CurrentRelativeHumidity).writes.length, 0,
+      "no source reporting means no write at all - no sentinel, no floor");
+    assert.equal(built.mqtt.published.some((entry) => entry.topic === (mac + "/humidity")), false, "nothing was published for a reading the sensor never gave");
+
+    built.store.pushSensorPatch("test-sensor-1", { stats: { humidity: { status: "", value: 47.5 } } });
+
+    await settle();
+
+    assert.equal(humidity.getCharacteristic(Characteristic.CurrentRelativeHumidity).value, 47.5, "the arriving stats reading landed on the characteristic");
+    assert.equal(await humidity.getCharacteristic(Characteristic.CurrentRelativeHumidity).triggerGet(), 47.5, "the onGet reads through the live stat value");
+    assert.ok(built.mqtt.published.some((entry) => (entry.topic === (mac + "/humidity")) && (entry.message === "47.5")),
+      "the humidity state published on the device-scoped topic");
 
     built.sensor.cleanup();
   });
@@ -410,6 +438,31 @@ describe("real ProtectSensor construction and family behavior", () => {
     assert.ok(built.mqtt.published.some((entry) => entry.topic === built.projection.config.mac + "/temperature"),
       "the temperature state published on the device-scoped topic");
     assert.ok(loggedAt(built.logEntries, "info", "Enabled sensor: temperature."), "one enabled sensor logs the SINGULAR enabled-sensor line");
+
+    built.sensor.cleanup();
+  });
+
+  test("a temperature service materialized by its toggle alone holds HomeKit's own default until the first reading arrives", async () => {
+
+    // The first-materialization case for a service whose toggle is on before any reading exists. A dropout must never manufacture a number, and neither must a service
+    // that has simply never heard one: the characteristic goes unwritten and the topic stays silent, so HomeKit shows its own default rather than a sentinel.
+    const built = buildSensor({ temperatureEnabled: true });
+    const mac = built.projection.config.mac;
+
+    await settle();
+
+    const temperature = built.accessory.getService(Service.TemperatureSensor);
+
+    assert.ok(temperature, "the toggle alone materializes the TemperatureSensor with no reading in sight");
+    assert.equal(temperature.getCharacteristic(Characteristic.CurrentTemperature).writes.length, 0, "the unwritten characteristic never took a sentinel value");
+    assert.equal(built.mqtt.published.some((entry) => entry.topic === (mac + "/temperature")), false, "no temperature was published for a reading nobody gave");
+
+    built.store.pushSensorPatch("test-sensor-1", { stats: { temperature: { status: "", value: 18.25 } } });
+
+    await settle();
+
+    assert.equal(temperature.getCharacteristic(Characteristic.CurrentTemperature).value, 18.25, "the first arriving reading landed on the characteristic");
+    assert.ok(built.mqtt.published.some((entry) => (entry.topic === (mac + "/temperature")) && (entry.message === "18.25")), "the first reading published too");
 
     built.sensor.cleanup();
   });
@@ -996,6 +1049,611 @@ describe("real ProtectSensor construction and family behavior", () => {
     const built = buildSensor({ glassBreak: true, glassBreakEnabled: true });
 
     assert.ok(loggedAt(built.logEntries, "info", "Enabled sensor: glass break."), "one enabled glass-break sensor logs the singular enabled-sensor line");
+
+    built.sensor.cleanup();
+  });
+
+  test("a sensor reporting an air-quality index materializes the AirQualitySensor with the mapped level, its state characteristics, and the enabled-sensor label", () => {
+
+    // An index of 42 sits inside the EPA's first band, which maps to HomeKit's excellent. Only the index reports here, so the service carries AirQuality and none of the
+    // presence-driven densities - the per-metric independence the next test walks in full.
+    const built = buildSensor({ airQuality: { aqi: { status: "neutral", value: 42 } } });
+    const service = built.accessory.getService(Service.AirQualitySensor);
+
+    assert.ok(service, "a reporting index materializes the AirQualitySensor service");
+    assert.equal(service.getCharacteristic(Characteristic.AirQuality).value, 1, "AirQuality initialized to excellent from an index of 42");
+    assert.equal(service.getCharacteristic(Characteristic.StatusActive).value, true, "StatusActive carried from isReachable");
+    assert.equal(service.getCharacteristic(Characteristic.StatusTampered).value, false, "StatusTampered carried from the tamper read-through");
+    assert.equal(service.testCharacteristic(Characteristic.PM2_5Density), false, "an index-only sensor carries no PM2.5 density");
+    assert.equal(service.testCharacteristic(Characteristic.PM10Density), false, "an index-only sensor carries no PM10 density");
+    assert.equal(service.testCharacteristic(Characteristic.VOCDensity), false,
+      "no reading projects onto VOCDensity at all - Protect's gas readings are unitless indexes, and HomeKit's density characteristic wants a concentration");
+    assert.ok(loggedAt(built.logEntries, "info", "Enabled sensor: air quality."), "the air quality label reached the enabled-sensors log");
+
+    built.sensor.cleanup();
+  });
+
+  test("each density characteristic tracks its own metric independently, carrying that metric's own value", () => {
+
+    // The per-metric matrix: a sensor reporting exactly one particulate carries exactly that density and not the other, and the value on it is its own metric's -
+    // presence alone would pass even if every density read the same source.
+    const cases: { characteristic: CharacteristicType; label: string; metric: string; value: number }[] = [
+
+      { characteristic: Characteristic.PM2_5Density, label: "PM2.5", metric: "pm2p5", value: 3 },
+      { characteristic: Characteristic.PM10Density, label: "PM10", metric: "pm10p0", value: 5 }
+    ];
+
+    for(const { characteristic, label, metric, value } of cases) {
+
+      const built = buildSensor({ airQuality: { [metric]: { status: "neutral", value } } });
+      const service = built.accessory.getService(Service.AirQualitySensor);
+
+      assert.ok(service, "the " + label + "-only sensor materializes the AirQualitySensor service");
+      assert.equal(service.getCharacteristic(characteristic).value, value, "the " + label + " density carries its own metric's value");
+
+      for(const other of cases.filter((entry) => entry.characteristic !== characteristic)) {
+
+        assert.equal(service.testCharacteristic(other.characteristic), false, "the " + label + "-only sensor carries no " + other.label + " density");
+      }
+
+      assert.equal(service.getCharacteristic(Characteristic.AirQuality).value, 0, "with no index reading the level reports unknown");
+
+      built.sensor.cleanup();
+    }
+  });
+
+  test("an all-quiet sensor creates none of the air quality, carbon dioxide, or vape services", () => {
+
+    // The fleet gate. Every Protect sensor carries the air-quality block whether or not its hardware measures anything, so a sensor without that hardware reads
+    // unknown/null on all twelve metrics - and must grow nothing, even with the vape option turned on.
+    const built = buildSensor({ vapeEnabled: true }, { userOptions: ["Enable.Sensor.Vape"] });
+
+    assert.equal(built.accessory.getService(Service.AirQualitySensor), undefined, "no AirQualitySensor on a sensor with no air-quality hardware");
+    assert.equal(built.accessory.getService(Service.CarbonDioxideSensor), undefined, "no CarbonDioxideSensor on a sensor with no air-quality hardware");
+    assert.equal(built.accessory.getServiceById(Service.ContactSensor, ProtectReservedNames.CONTACT_SENSOR_VAPE), undefined,
+      "no vape ContactSensor even with both the option and the controller's own vape enable on, because the metric never reports");
+    assert.equal(loggedAt(built.logEntries, "info", "air quality"), false, "nothing air-quality reached the enabled-sensors log");
+
+    built.sensor.cleanup();
+  });
+
+  test("cached air quality and carbon dioxide services over a block that never reports are removed on the first pass", async () => {
+
+    // The cached-restore form: Homebridge restores a service from its accessory cache before the plugin runs, so a sensor whose hardware never measured any of this -
+    // one whose accessory carries the services from an earlier configuration, or from hardware that has since been swapped - must have them REMOVED rather than merely
+    // not created. Without the pre-seed this would pass vacuously. The device is reachable throughout, which is what makes the quiet readings believable.
+    const seeded = makeTestAccessory("Cached Sensor", "uuid:cached-sensor");
+
+    seeded.addService(new Service.AirQualitySensor("Cached Air Quality"));
+    seeded.addService(new Service.CarbonDioxideSensor("Cached Carbon Dioxide"));
+
+    assert.ok(seeded.getService(Service.AirQualitySensor), "the cached AirQualitySensor was seeded before construction");
+    assert.ok(seeded.getService(Service.CarbonDioxideSensor), "the cached CarbonDioxideSensor was seeded before construction");
+
+    const restored = buildSensor({}, { accessory: seeded });
+
+    await settle();
+
+    assert.equal(seeded.getService(Service.AirQualitySensor), undefined, "the cached air quality service was removed on the first reconcile");
+    assert.equal(seeded.getService(Service.CarbonDioxideSensor), undefined, "the cached carbon dioxide service was removed on the first reconcile");
+
+    restored.sensor.cleanup();
+  });
+
+  test("a gating metric falling quiet sheds its density, and every gating metric falling quiet sheds the service itself while the device is reachable", async () => {
+
+    // The two levels of the same rule, staged so both are observable. First a patch that leaves ONE gating metric reporting: the service stands, the metric that left
+    // liveness sheds exactly its own density, and the level reports unknown with no index. Then a patch turning everything quiet: the service itself goes, because on a
+    // device we can see, the not-capable signature is how the controller says the user turned that measurement off in the Protect app.
+    const built = buildSensor({ airQuality: { aqi: { status: "neutral", value: 42 }, pm10p0: { status: "neutral", value: 5 }, pm2p5: { status: "neutral", value: 3 } } });
+
+    await settle();
+
+    const service = built.accessory.getService(Service.AirQualitySensor);
+
+    assert.ok(service, "the service exists before the patch");
+    assert.equal(service.testCharacteristic(Characteristic.PM2_5Density), true, "the PM2.5 density exists before the patch");
+
+    built.store.pushSensorPatch("test-sensor-1", { airQuality: airQualityBlock({ pm10p0: { status: "neutral", value: 5 } }) });
+
+    await settle();
+
+    assert.ok(built.accessory.getService(Service.AirQualitySensor), "one gating metric still reporting keeps the service standing");
+    assert.equal(service.testCharacteristic(Characteristic.PM2_5Density), false, "the PM2.5 density was shed, its metric having left liveness while the device is here");
+    assert.equal(service.getCharacteristic(Characteristic.AirQuality).value, 0, "the level reports unknown with no index reading");
+
+    built.store.pushSensorPatch("test-sensor-1", { airQuality: airQualityBlock({}) });
+
+    await settle();
+
+    assert.equal(built.accessory.getService(Service.AirQualitySensor), undefined,
+      "every gating metric reading the off signature on a reachable device sheds the service itself");
+
+    built.sensor.cleanup();
+  });
+
+  test("a metric that goes live-but-null holds its characteristic and its value, while one that leaves liveness entirely sheds it", async () => {
+
+    // The two halves of the hold rule, in one patch: pm2p5 keeps a status but loses its number (still reporting, momentarily between readings) and must neither be
+    // written nor removed; pm10p0 goes fully quiet and must be removed. The write log - not the cached value - is what proves nothing was written, since a re-write of
+    // the same value is invisible in the value alone.
+    const built = buildSensor({ airQuality: { pm10p0: { status: "neutral", value: 5 }, pm2p5: { status: "neutral", value: 3 } } });
+
+    await settle();
+
+    const service = built.accessory.getService(Service.AirQualitySensor);
+
+    assert.ok(service, "the service exists before the patch");
+
+    const writeBaseline = service.getCharacteristic(Characteristic.PM2_5Density).writes.length;
+
+    built.store.pushSensorPatch("test-sensor-1", { airQuality: airQualityBlock({ pm2p5: { status: "neutral", value: null } }) });
+
+    await settle();
+
+    assert.equal(service.testCharacteristic(Characteristic.PM2_5Density), true, "a live-but-null metric holds its characteristic rather than shedding it");
+    assert.equal(service.getCharacteristic(Characteristic.PM2_5Density).value, 3, "the held characteristic still reports the last reading the sensor gave");
+    assert.equal(service.getCharacteristic(Characteristic.PM2_5Density).writes.length, writeBaseline, "the hold wrote nothing at all");
+    assert.equal(await service.getCharacteristic(Characteristic.PM2_5Density).triggerGet(), 3, "a pull during the hold answers with the held value, not a dead reading");
+    assert.equal(service.testCharacteristic(Characteristic.PM10Density), false, "the metric that left liveness entirely shed exactly its own characteristic");
+
+    built.sensor.cleanup();
+  });
+
+  test("an unreachable device holds its whole characteristic set even as its metrics fall quiet", async () => {
+
+    // The offline window. Everything the sensor last said stays put: a controller outage or a battery sensor dropping off must never churn the accessory's
+    // configuration, so the removal rule waits for the device to be reachable before believing a metric has stopped reporting.
+    const built = buildSensor({ airQuality: { aqi: { status: "neutral", value: 42 }, pm2p5: { status: "neutral", value: 3 } } });
+
+    await settle();
+
+    const service = built.accessory.getService(Service.AirQualitySensor);
+
+    assert.ok(service, "the service exists before the device goes offline");
+
+    built.store.pushSensorPatch("test-sensor-1", { airQuality: airQualityBlock({}), state: "DISCONNECTED" });
+
+    await settle();
+
+    assert.equal(service.getCharacteristic(Characteristic.StatusActive).value, false, "the device is genuinely unreachable for this pass");
+    assert.equal(service.testCharacteristic(Characteristic.PM2_5Density), true, "the density held through the offline window despite its metric reading quiet");
+    assert.equal(service.getCharacteristic(Characteristic.PM2_5Density).value, 3, "the held density still reports the last reading");
+    assert.ok(built.accessory.getService(Service.AirQualitySensor), "the service itself held too");
+
+    built.sensor.cleanup();
+  });
+
+  test("the vape sensor appears only with all three of its conjuncts, each one falsifying on its own", () => {
+
+    // A falsifying row per conjunct, each with the other two satisfied, so no single condition can be carrying the gate: the user's option, the controller's own vape
+    // enable, and the metric actually reporting.
+    const live = { vape: { status: "neutral", value: null } };
+    const vapeOption = ["Enable.Sensor.Vape"];
+
+    const cases: { config: Parameters<typeof makeSensorConfig>[0]; label: string; present: boolean; userOptions: string[] }[] = [
+
+      { config: { airQuality: live, vapeEnabled: true }, label: "all three satisfied", present: true, userOptions: vapeOption },
+      { config: { airQuality: live, vapeEnabled: true }, label: "the user's option off alone", present: false, userOptions: [] },
+      { config: { airQuality: live, vapeEnabled: false }, label: "the controller's own vape enable off alone", present: false, userOptions: vapeOption },
+      { config: { airQuality: {}, vapeEnabled: true }, label: "the metric not reporting alone", present: false, userOptions: vapeOption }
+    ];
+
+    for(const { config, label, present, userOptions } of cases) {
+
+      const built = buildSensor(config, { userOptions });
+      const service = built.accessory.getServiceById(Service.ContactSensor, ProtectReservedNames.CONTACT_SENSOR_VAPE);
+
+      assert.equal(service !== undefined, present, "the vape contact sensor with " + label);
+
+      built.sensor.cleanup();
+    }
+  });
+
+  test("a reporting vape metric reading its all-clear status opens no contact and narrates nothing", async () => {
+
+    const built = buildSensor({ airQuality: { vape: { status: "neutral", value: null } }, vapeEnabled: true }, { userOptions: ["Enable.Sensor.Vape"] });
+
+    await settle();
+
+    const service = built.accessory.getServiceById(Service.ContactSensor, ProtectReservedNames.CONTACT_SENSOR_VAPE);
+
+    assert.ok(service, "the vape contact sensor exists");
+    assert.equal(service.getCharacteristic(Characteristic.ContactSensorState).value, false, "the all-clear status leaves the contact closed");
+    assert.equal(service.getCharacteristic(Characteristic.StatusActive).value, true, "the vape sensor carries the shared state characteristics");
+    assert.equal(countLoggedAt(built.logEntries, "info", "Vaping"), 0, "a quiet first reading is saved silently rather than narrated");
+    assert.ok(loggedAt(built.logEntries, "info", "vape"), "the vape label reached the enabled-sensors log");
+
+    built.sensor.cleanup();
+  });
+
+  test("a vape detection opens the contact and logs once, while a later reconcile holding the same state logs nothing", async () => {
+
+    const built = buildSensor({ airQuality: { vape: { status: "neutral", value: null } }, vapeEnabled: true }, { userOptions: ["Enable.Sensor.Vape"] });
+
+    await settle();
+
+    const service = built.accessory.getServiceById(Service.ContactSensor, ProtectReservedNames.CONTACT_SENSOR_VAPE);
+
+    assert.ok(service, "the vape contact sensor exists");
+
+    built.store.pushSensorPatch("test-sensor-1", { airQuality: airQualityBlock({ vape: { status: "detected", value: null } }) });
+
+    await settle();
+
+    assert.equal(service.getCharacteristic(Characteristic.ContactSensorState).value, true, "the detection opened the contact");
+    assert.equal(countLoggedAt(built.logEntries, "info", "Vaping detected."), 1, "the transition was narrated exactly once");
+
+    // The negative control: a reconcile driven by an unrelated field change, with the vape state unmoved. The state must not be re-narrated on every patch, and this
+    // sensor sees one roughly every second and a half in the field.
+    built.store.pushSensorPatch("test-sensor-1", { batteryStatus: { isLow: false, percentage: 99 } });
+
+    await settle();
+
+    assert.equal(countLoggedAt(built.logEntries, "info", "Vaping detected."), 1, "a reconcile that changed nothing about vaping said nothing about it");
+    assert.equal(service.getCharacteristic(Characteristic.ContactSensorState).value, true, "the contact still reports the ongoing detection");
+
+    built.sensor.cleanup();
+  });
+
+  test("a sensor already detecting at construction narrates it once, while a quiet one narrates nothing", () => {
+
+    // The first-pass seed. A user restarting Homebridge mid-detection should be told what the sensor is reporting; one that is quiet has nothing worth a sentence.
+    const detecting = buildSensor({ airQuality: { vape: { status: "detected", value: null } }, vapeEnabled: true },
+      { userOptions: ["Enable.Sensor.Vape"] });
+
+    assert.equal(countLoggedAt(detecting.logEntries, "info", "Vaping detected."), 1, "an ongoing detection at construction is narrated exactly once");
+
+    detecting.sensor.cleanup();
+
+    const quiet = buildSensor({ airQuality: { vape: { status: "neutral", value: null } }, vapeEnabled: true }, { userOptions: ["Enable.Sensor.Vape"] });
+
+    assert.equal(countLoggedAt(quiet.logEntries, "info", "Vaping"), 0, "a quiet sensor at construction narrates nothing");
+
+    quiet.sensor.cleanup();
+  });
+
+  test("a vape liveness dropout holds the contact silently, and the returning detection is not narrated twice", async () => {
+
+    const built = buildSensor({ airQuality: { vape: { status: "detected", value: null } }, vapeEnabled: true }, { userOptions: ["Enable.Sensor.Vape"] });
+
+    await settle();
+
+    const service = built.accessory.getServiceById(Service.ContactSensor, ProtectReservedNames.CONTACT_SENSOR_VAPE);
+
+    assert.ok(service, "the vape contact sensor exists");
+    assert.equal(countLoggedAt(built.logEntries, "info", "Vaping detected."), 1, "the ongoing detection was narrated once at construction");
+
+    // The metric falls to the not-capable shape. Reading that as an all-clear would tell the user vaping stopped when the sensor simply stopped answering.
+    built.store.pushSensorPatch("test-sensor-1", { airQuality: airQualityBlock({}) });
+
+    await settle();
+
+    assert.equal(countLoggedAt(built.logEntries, "info", "Vaping no longer detected."), 0, "the dropout narrated no all-clear the sensor never reported");
+    assert.equal(service.getCharacteristic(Characteristic.ContactSensorState).value, true, "the contact held its last reported state through the dropout");
+
+    built.store.pushSensorPatch("test-sensor-1", { airQuality: airQualityBlock({ vape: { status: "detected", value: null } }) });
+
+    await settle();
+
+    assert.equal(countLoggedAt(built.logEntries, "info", "Vaping detected."), 1, "the returning detection was not narrated a second time - the state never changed");
+
+    built.sensor.cleanup();
+  });
+
+  test("a cached vape sensor restored while the metric is quiet keeps its state rather than being written to an all-clear", async () => {
+
+    // The restart-during-a-dropout case, and the one that proves the value path is gated on a LIVE reading rather than merely reading through a held state: Homebridge
+    // restores the contact from its accessory cache still reporting a detection, and this process has no held state of its own yet. Writing at all here would push an
+    // all-clear the sensor never sent, to HomeKit and to any MQTT subscriber, purely because the metric happened to be quiet at startup.
+    const seeded = makeTestAccessory("Cached Vape Sensor", "uuid:cached-vape-sensor");
+    const cached = new Service.ContactSensor("Cached Vape", ProtectReservedNames.CONTACT_SENSOR_VAPE);
+
+    seeded.addService(cached);
+    cached.updateCharacteristic(Characteristic.ContactSensorState, true);
+
+    // The metric is NOT live, so only the gate's conservative half - an already-present service is kept - can hold this sensor in place.
+    const built = buildSensor({ vapeEnabled: true }, { accessory: seeded, userOptions: ["Enable.Sensor.Vape"] });
+
+    await settle();
+
+    const service = seeded.getServiceById(Service.ContactSensor, ProtectReservedNames.CONTACT_SENSOR_VAPE);
+
+    assert.ok(service, "the cached vape sensor survives a quiet metric - only the toggles remove it");
+    assert.equal(service.getCharacteristic(Characteristic.ContactSensorState).value, true, "the restored detection stands; no all-clear was manufactured over it");
+    assert.equal(countLoggedAt(built.logEntries, "info", "Vaping"), 0, "nothing was narrated about a metric that said nothing");
+    assert.equal(built.mqtt.published.some((entry) => entry.topic === (built.projection.config.mac + "/vape")), false,
+      "no vape state was published from a reading the sensor never gave");
+
+    built.sensor.cleanup();
+  });
+
+  test("the vape bookkeeping clears with the service, so a re-enabled sensor re-seeds without narrating a stale all-clear", async () => {
+
+    // The reset round-trip in the shape that tells a real reset from stale bookkeeping: detect, tear the service down through the controller's own vape enable, then
+    // bring it back with a quiet reading. Bookkeeping that survived the teardown would read the quiet reading as a transition and wrongly announce an all-clear.
+    const built = buildSensor({ airQuality: { vape: { status: "detected", value: null } }, vapeEnabled: true }, { userOptions: ["Enable.Sensor.Vape"] });
+
+    await settle();
+
+    assert.ok(built.accessory.getServiceById(Service.ContactSensor, ProtectReservedNames.CONTACT_SENSOR_VAPE), "the vape contact sensor exists while detecting");
+    assert.equal(countLoggedAt(built.logEntries, "info", "Vaping detected."), 1, "the detection was narrated once");
+
+    const settings = built.projection.config.airQualitySettings;
+
+    built.store.pushSensorPatch("test-sensor-1", { airQualitySettings: { ...settings, vapeSensitivitySettings: { isEnabled: false, sensitivity: 0 } } });
+
+    await settle();
+
+    assert.equal(built.accessory.getServiceById(Service.ContactSensor, ProtectReservedNames.CONTACT_SENSOR_VAPE), undefined,
+      "turning vape detection off on the controller removed the sensor immediately");
+
+    built.store.pushSensorPatch("test-sensor-1", { airQuality: airQualityBlock({ vape: { status: "neutral", value: null } }),
+      airQualitySettings: { ...settings, vapeSensitivitySettings: { isEnabled: true, sensitivity: 0 } } });
+
+    await settle();
+
+    const service = built.accessory.getServiceById(Service.ContactSensor, ProtectReservedNames.CONTACT_SENSOR_VAPE);
+
+    assert.ok(service, "re-enabling brought the sensor back");
+    assert.equal(service.getCharacteristic(Characteristic.ContactSensorState).value, false, "the returning sensor reports the quiet reading");
+    assert.equal(countLoggedAt(built.logEntries, "info", "Vaping no longer detected."), 0,
+      "the fresh service seeded silently - stale bookkeeping would have announced an all-clear here");
+
+    built.sensor.cleanup();
+  });
+
+  test("carbon dioxide alerts on the controller's configured threshold, and its level moves with a pushed reading", async () => {
+
+    // The alert answers to the number the user set in the Protect app, so HomeKit fires exactly when Protect does. The level is proven by a PUSH rather than by the
+    // construction-time read alone, which is what shows the reconcile keeps it current.
+    const built = buildSensor({ airQuality: { co2: { status: "neutral", value: 800 } }, co2Enabled: true, co2Threshold: 1000 });
+
+    await settle();
+
+    const service = built.accessory.getService(Service.CarbonDioxideSensor);
+
+    assert.ok(service, "a reporting carbon dioxide metric materializes the CarbonDioxideSensor service");
+    assert.equal(service.getCharacteristic(Characteristic.CarbonDioxideDetected).value, false, "a reading below the configured threshold is not an alert");
+    assert.equal(service.getCharacteristic(Characteristic.CarbonDioxideLevel).value, 800, "the level carries the reading");
+    assert.equal(service.getCharacteristic(Characteristic.StatusActive).value, true, "the carbon dioxide service carries the shared state characteristics");
+    assert.ok(loggedAt(built.logEntries, "info", "carbon dioxide"), "the carbon dioxide label reached the enabled-sensors log");
+
+    built.store.pushSensorPatch("test-sensor-1", { airQuality: airQualityBlock({ co2: { status: "neutral", value: 1200 } }) });
+
+    await settle();
+
+    assert.equal(service.getCharacteristic(Characteristic.CarbonDioxideDetected).value, true, "crossing the configured threshold raised the alert");
+    assert.equal(service.getCharacteristic(Characteristic.CarbonDioxideLevel).value, 1200, "the level moved with the pushed reading");
+
+    built.sensor.cleanup();
+  });
+
+  test("the air-quality threshold fixture mints the nullable, margin-less shape and lands its carbon dioxide overrides", () => {
+
+    // The air-quality thresholds are a DIFFERENT shape from the record's top-level environmental thresholds, which carry a margin and no nulls. The two are
+    // structurally assignable to each other, so only a shape assertion catches a fixture that reached for the wrong helper.
+    const defaults = makeSensorConfig();
+
+    assert.deepEqual(defaults.airQualitySettings.co2Settings, { highThreshold: null, isEnabled: false, lowThreshold: null },
+      "the air-quality threshold defaults are nullable and carry no margin key");
+    assert.equal("margin" in defaults.airQualitySettings.co2Settings, false, "the margin key belongs to the top-level environmental thresholds, not these");
+    assert.deepEqual(defaults.airQualitySettings.vapeSettings, { highThreshold: null, isEnabled: false, lowThreshold: null },
+      "every metric carries a threshold member, vape included");
+    assert.deepEqual(defaults.airQualitySettings.vocSettings, { highThreshold: null, isEnabled: false, lowThreshold: null },
+      "every metric carries a threshold member, voc included");
+    assert.equal(defaults.airQualitySettings.vapeSensitivitySettings.isEnabled, false, "the controller's vape detection defaults off");
+    assert.deepEqual(defaults.airQuality.aqi, { status: "unknown", value: null }, "every metric defaults to the not-capable shape");
+
+    const configured = makeSensorConfig({ co2Enabled: true, co2Threshold: 1000, vapeEnabled: true });
+
+    assert.deepEqual(configured.airQualitySettings.co2Settings, { highThreshold: 1000, isEnabled: true, lowThreshold: null }, "the carbon dioxide overrides land");
+    assert.equal(configured.airQualitySettings.vapeSensitivitySettings.isEnabled, true, "the vape enable override lands");
+  });
+
+  test("an air-quality patch reaches the characteristics through the existing sensor.config wake, adding no observer of its own", async () => {
+
+    const built = buildSensor({ airQuality: { aqi: { status: "neutral", value: 42 } } });
+
+    await settle();
+
+    const service = built.accessory.getService(Service.AirQualitySensor);
+
+    assert.ok(service, "the service exists before the patch");
+    assert.equal(built.store.observerCount, 6, "the air-quality surface added no observer - it rides the reconcile the whole-record observer already drives");
+
+    const baseline = wakeLog.length;
+
+    built.store.pushSensorPatch("test-sensor-1", { airQuality: airQualityBlock({ aqi: { status: "neutral", value: 175 } }) });
+
+    await settle();
+
+    assert.deepEqual(wakeLog.slice(baseline), [{ accessoryId: built.accessory.UUID, key: "sensor.config" }],
+      "an air-quality patch wakes the whole-record observer alone, exactly as every other settings change does");
+    assert.equal(service.getCharacteristic(Characteristic.AirQuality).value, 4, "the pushed index of 175 mapped to inferior");
+
+    built.sensor.cleanup();
+  });
+
+  test("the airquality topic carries the curated twelve-metric JSON, published on capability alone", async () => {
+
+    // MQTT is the full-fidelity surface: it publishes whenever the sensor reports anything, whatever set of HomeKit services the accessory materializes, because the
+    // metrics HomeKit cannot model - the VOC index, NOx, vape, and the finer particulate sizes - reach a user only here.
+    const built = buildSensor({ airQuality: { aqi: { status: "neutral", value: 42 }, voc: { status: "neutral", value: 68 } } });
+    const mac = built.projection.config.mac;
+
+    await settle();
+
+    const published = built.mqtt.published.find((entry) => entry.topic === (mac + "/airquality"));
+
+    assert.ok(published, "the telemetry published on the device-scoped topic");
+
+    const payload = JSON.parse(published.message) as Record<string, { status: string; value: Nullable<number> }>;
+
+    assert.deepEqual(Object.keys(payload).sort(), [ "aqi", "co2", "humidity", "nox", "pm10p0", "pm1p0", "pm2p5", "pm4p0", "temperature", "tvoc", "vape", "voc" ].sort(),
+      "the payload carries exactly the twelve metrics we document and nothing else");
+    assert.deepEqual(payload["aqi"], { status: "neutral", value: 42 }, "each metric carries its status and value");
+    assert.deepEqual(payload["voc"], { status: "neutral", value: 68 }, "the VOC index rides MQTT, having no HomeKit service to live on");
+    assert.deepEqual(payload["nox"], { status: "unknown", value: null }, "a metric the sensor does not measure reports null rather than being dropped");
+
+    const airQualityGet = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "get") && (subscription.topic === (mac + "/airquality")));
+
+    assert.ok(airQualityGet?.getValue, "the airquality GET registered");
+    assert.equal(airQualityGet.getValue(), published.message, "the GET answers with the same curated payload the publish carries");
+
+    built.sensor.cleanup();
+
+    // The capability gate's negative control: a sensor with no air-quality hardware publishes nothing at all on the topic.
+    const quiet = buildSensor();
+
+    await settle();
+
+    assert.equal(quiet.mqtt.published.some((entry) => entry.topic === (quiet.projection.config.mac + "/airquality")), false,
+      "a sensor with no air-quality hardware never publishes the telemetry topic");
+
+    quiet.sensor.cleanup();
+  });
+
+  test("the vape topic carries the boolean state through both the publish and the GET", async () => {
+
+    const built = buildSensor({ airQuality: { vape: { status: "neutral", value: null } }, vapeEnabled: true }, { userOptions: ["Enable.Sensor.Vape"] });
+    const mac = built.projection.config.mac;
+    const vapeGet = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "get") && (subscription.topic === (mac + "/vape")));
+
+    await settle();
+
+    assert.ok(vapeGet?.getValue, "the vape GET registered");
+    assert.equal(vapeGet.getValue(), "false", "the GET reads through the vape state, clear at start");
+    assert.ok(built.mqtt.published.some((entry) => (entry.topic === (mac + "/vape")) && (entry.message === "false")), "the quiet state published");
+
+    built.store.pushSensorPatch("test-sensor-1", { airQuality: airQualityBlock({ vape: { status: "detected", value: null } }) });
+
+    await settle();
+
+    assert.equal(vapeGet.getValue(), "true", "the GET reads through the detection");
+    assert.ok(built.mqtt.published.some((entry) => (entry.topic === (mac + "/vape")) && (entry.message === "true")), "the detection published");
+
+    built.sensor.cleanup();
+  });
+
+  test("air-quality hardware lands its temperature and humidity in HomeKit with no toggle and no option", async () => {
+
+    // The delivered feature, on a fixture shaped like the field: a UP Air Quality unit reports temperature and humidity through its air-quality telemetry while both
+    // top-level threshold toggles read false and the stats block stays at the not-capable signature. Both services must materialize on the readings alone.
+    const built = buildSensor({ airQuality: { humidity: { status: "neutral", value: 50.25 }, temperature: { status: "neutral", value: 23.92 } } });
+    const mac = built.projection.config.mac;
+
+    await settle();
+
+    const humidity = built.accessory.getService(Service.HumiditySensor);
+    const temperature = built.accessory.getService(Service.TemperatureSensor);
+
+    assert.ok(humidity, "the air-quality humidity reading materialized the HumiditySensor with the top-level toggle off");
+    assert.ok(temperature, "the air-quality temperature reading materialized the TemperatureSensor with the top-level toggle off");
+    assert.equal(humidity.getCharacteristic(Characteristic.CurrentRelativeHumidity).value, 50.25, "CurrentRelativeHumidity carries the air-quality reading");
+    assert.equal(temperature.getCharacteristic(Characteristic.CurrentTemperature).value, 23.92, "CurrentTemperature carries the air-quality reading");
+    assert.equal(await humidity.getCharacteristic(Characteristic.CurrentRelativeHumidity).triggerGet(), 50.25, "the humidity onGet reads through the same source");
+    assert.equal(await temperature.getCharacteristic(Characteristic.CurrentTemperature).triggerGet(), 23.92, "the temperature onGet reads through the same source");
+    assert.ok(built.mqtt.published.some((entry) => (entry.topic === (mac + "/humidity")) && (entry.message === "50.25")), "the humidity reading published");
+    assert.ok(built.mqtt.published.some((entry) => (entry.topic === (mac + "/temperature")) && (entry.message === "23.92")), "the temperature reading published");
+
+    built.sensor.cleanup();
+  });
+
+  test("a live-but-null environmental reading holds the characteristic and publishes nothing", async () => {
+
+    // The dropout. A metric that keeps its status but loses its number is still reporting, so the service stands and HomeKit keeps the last thing the sensor said - and
+    // no subscriber is told a dropout was a reading. The write log, not the cached value, is what proves nothing was written: a re-write of the same number would be
+    // invisible in the value alone.
+    const built = buildSensor({ airQuality: { humidity: { status: "neutral", value: 50.25 } } });
+    const mac = built.projection.config.mac;
+
+    await settle();
+
+    const humidity = built.accessory.getService(Service.HumiditySensor);
+
+    assert.ok(humidity, "the service exists before the dropout");
+
+    const writeBaseline = humidity.getCharacteristic(Characteristic.CurrentRelativeHumidity).writes.length;
+    const publishBaseline = built.mqtt.published.filter((entry) => entry.topic === (mac + "/humidity")).length;
+
+    built.store.pushSensorPatch("test-sensor-1", { airQuality: airQualityBlock({ humidity: { status: "neutral", value: null } }) });
+
+    await settle();
+
+    assert.ok(built.accessory.getService(Service.HumiditySensor), "a live-but-null reading holds the service");
+    assert.equal(humidity.getCharacteristic(Characteristic.CurrentRelativeHumidity).value, 50.25, "the characteristic still reports the last reading the sensor gave");
+    assert.equal(humidity.getCharacteristic(Characteristic.CurrentRelativeHumidity).writes.length, writeBaseline, "the hold wrote nothing at all");
+    assert.equal(await humidity.getCharacteristic(Characteristic.CurrentRelativeHumidity).triggerGet(), 50.25, "a pull during the hold answers with the held reading");
+    assert.equal(built.mqtt.published.filter((entry) => entry.topic === (mac + "/humidity")).length, publishBaseline, "nothing was published during the hold");
+
+    built.sensor.cleanup();
+  });
+
+  test("turning a measurement off and back on in the Protect app takes the service away and brings it back", async () => {
+
+    // The realtime requirement, in both directions - the air-quality twin of the USL toggle transition. A measurement the user disables in the Protect app arrives as
+    // the not-capable signature on a device we can plainly see, which is what sheds the service; re-enabling it brings the service back with a fresh reading rather
+    // than leaving it dead until a restart.
+    const built = buildSensor({ airQuality: { humidity: { status: "neutral", value: 50.25 } } });
+
+    await settle();
+
+    assert.ok(built.accessory.getService(Service.HumiditySensor), "the reporting measurement carries the service");
+
+    built.store.pushSensorPatch("test-sensor-1", { airQuality: airQualityBlock({}) });
+
+    await settle();
+
+    assert.equal(built.accessory.getService(Service.HumiditySensor), undefined, "the measurement reading the off signature took the service away on that pass");
+
+    built.store.pushSensorPatch("test-sensor-1", { airQuality: airQualityBlock({ humidity: { status: "neutral", value: 58.65 } }) });
+
+    await settle();
+
+    const humidity = built.accessory.getService(Service.HumiditySensor);
+
+    assert.ok(humidity, "re-enabling the measurement brought the service back");
+    assert.equal(humidity.getCharacteristic(Characteristic.CurrentRelativeHumidity).value, 58.65, "the returning service carries the fresh reading");
+
+    built.sensor.cleanup();
+  });
+
+  test("the humidity and temperature MQTT gets always answer, with the no-reading stand-in when no source reports", () => {
+
+    // The get contract is unconditional: a subscriber asking an all-quiet sensor still gets an answer, and the stand-in tells it apart from a real reading.
+    const mac = projection.config.mac;
+    const humidityGet = mqtt.subscriptions.find((subscription) => (subscription.kind === "get") && (subscription.topic === (mac + "/humidity")));
+    const temperatureGet = mqtt.subscriptions.find((subscription) => (subscription.kind === "get") && (subscription.topic === (mac + "/temperature")));
+
+    assert.ok(humidityGet?.getValue, "the humidity GET registered on an all-quiet sensor");
+    assert.ok(temperatureGet?.getValue, "the temperature GET registered on an all-quiet sensor");
+    assert.equal(humidityGet.getValue(), "-1", "the humidity GET answers the no-reading stand-in rather than staying silent");
+    assert.equal(temperatureGet.getValue(), "-1", "the temperature GET answers the no-reading stand-in rather than staying silent");
+  });
+
+  test("a fully-reporting air-quality sensor logs every one of its services in the enabled-sensors line, in order", async () => {
+
+    // The whole air-quality family live at once, which is what a UP Air Quality unit looks like in the field. This pins the single rendered log line - its exact
+    // membership and its order - and, with temperature and humidity now materializing on this hardware, it also exercises the shared state characteristics on the two
+    // services that newly reach them.
+    const built = buildSensor({ airQuality: { aqi: { status: "neutral", value: 42 }, co2: { status: "neutral", value: 800 },
+      humidity: { status: "neutral", value: 50.25 }, temperature: { status: "neutral", value: 23.92 }, vape: { status: "neutral", value: null } }, vapeEnabled: true },
+    { userOptions: ["Enable.Sensor.Vape"] });
+
+    await settle();
+
+    assert.ok(loggedAt(built.logEntries, "info", "Enabled sensors: air quality, carbon dioxide, humidity, temperature, vape."),
+      "every service the sensor grew reached the enabled-sensors line, in the order updateDevice configures them");
+
+    const humidity = built.accessory.getService(Service.HumiditySensor);
+    const temperature = built.accessory.getService(Service.TemperatureSensor);
+
+    assert.ok(humidity, "the humidity service exists");
+    assert.ok(temperature, "the temperature service exists");
+    assert.equal(humidity.getCharacteristic(Characteristic.StatusActive).value, true, "the humidity service carries the shared state characteristics");
+    assert.equal(temperature.getCharacteristic(Characteristic.StatusActive).value, true, "the temperature service carries the shared state characteristics");
+    assert.equal(humidity.getCharacteristic(Characteristic.StatusTampered).value, false, "the humidity service carries the tamper read-through too");
 
     built.sensor.cleanup();
   });

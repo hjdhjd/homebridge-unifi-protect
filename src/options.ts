@@ -220,6 +220,7 @@ export const featureOptions: Record<string, FeatureOptionEntry<ProtectOptionMeta
   // Sensor options.
   "Sensor": [
 
+    { default: false, description: "Add a contact sensor that opens when the sensor detects vaping.", name: "Vape" },
     { default: false, description: "Expose the Protect leak sensor as a contact sensor instead of a leak sensor. This is useful for automation scenarios since HomeKit contact sensors offer more flexible automation options than leak sensors, which are primarily designed for alerts.", name: "MoistureSensor" }
   ],
 

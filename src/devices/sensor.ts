@@ -2,13 +2,18 @@
  *
  * sensor.ts: Sensor device class for UniFi Protect.
  */
+import type { Characteristic, Service, WithUUID } from "homebridge";
+import { DISABLED_THRESHOLD_SETTINGS, DISABLED_VAPE_SENSITIVITY, NOT_CAPABLE_AIR_QUALITY, NO_READING, airQualityLevel, airQualityMetricLive,
+  airQualityMetricReported, airQualityReporting, airQualitySensorCapable, co2AlertDetected, environmentalReading, environmentalServiceGate,
+  vapeDetected } from "./air-quality-policy.ts";
 import type { ProtectAccessory, WithoutIdentity } from "../types.ts";
-import type { ProtectSensorConfig, Sensor } from "unifi-protect";
+import type { ProtectAirQualityMetric, ProtectAirQualityThresholdSettings, ProtectSensorAirQuality, ProtectSensorConfig, Sensor } from "unifi-protect";
 import type { LeakChannelContext } from "./leak-policy.ts";
+import type { Nullable } from "homebridge-plugin-utils";
 import { ProtectDevice } from "./device.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
-import type { Service } from "homebridge";
+import { capabilityGate } from "homebridge-plugin-utils";
 import { deviceSelectors } from "unifi-protect";
 import { leakChannelEnabled } from "./leak-policy.ts";
 
@@ -67,11 +72,17 @@ const SENSOR_ALARM_CONTACTS: readonly AlarmContactDescriptor[] = [
     mqtt: "glassbreak", name: " Glass Break", subtype: ProtectReservedNames.CONTACT_SENSOR_GLASS_BREAK }
 ];
 
+// The characteristic-class shape the reconcile helpers below accept. Service.getCharacteristic and updateCharacteristic want a constructor signature while
+// testCharacteristic wants the static class shape, so the intersection of the two is the only type that satisfies every call they make - the same intersection
+// homebridge-plugin-utils uses to type its own service-acquisition target. Every real characteristic class satisfies it.
+type CharacteristicClass = WithUUID<typeof Characteristic> & (new () => Characteristic);
+
 export class ProtectSensor extends ProtectDevice<Sensor> {
 
   private enabledSensors: string[];
   private lastAlarm?: boolean;
   private lastLeak: Record<string, boolean | undefined>;
+  private lastVape?: boolean;
 
   // Create an instance.
   constructor(nvr: ProtectNvr, accessory: ProtectAccessory, device: Sensor) {
@@ -139,6 +150,19 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
     // Update the battery status for the accessory.
     this.updateBatteryStatus();
 
+    // Configure the air quality sensor.
+    if(this.configureAirQualitySensor()) {
+
+      currentEnabledSensors.push("air quality");
+    }
+
+    // Publish the sensor's full air-quality telemetry. This rides the reporting capability alone: MQTT is the full-fidelity surface, carrying every metric the
+    // controller reports - including the ones HomeKit has no service for - whatever set of HomeKit services this accessory happens to materialize.
+    if(airQualityReporting(this.airQuality)) {
+
+      this.publish("airquality", this.airQualityPayload);
+    }
+
     // Configure the alarm-family contact sensors (alarm sound and glass break), threading updateDevice's own isInitialized exactly as the leak and motion paths do.
     currentEnabledSensors.push(...this.configureAlarmContactSensors(isInitialized));
 
@@ -146,6 +170,12 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
     if(this.configureAmbientLightSensor()) {
 
       currentEnabledSensors.push("ambient light");
+    }
+
+    // Configure the carbon dioxide sensor.
+    if(this.configureCo2Sensor()) {
+
+      currentEnabledSensors.push("carbon dioxide");
     }
 
     // Configure the contact sensor.
@@ -203,6 +233,12 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
       currentEnabledSensors.push("temperature");
     }
 
+    // Configure the vape sensor.
+    if(this.configureVapeSensor()) {
+
+      currentEnabledSensors.push("vape");
+    }
+
     // Update the status indicator light switch.
     this.accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_STATUS_LED)?.updateCharacteristic(this.hap.Characteristic.On, this.statusLed);
 
@@ -220,6 +256,51 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
         this.log.info("No sensors enabled.");
       }
     }
+  }
+
+  // Configure the air quality sensor for HomeKit. The AirQuality characteristic is always present on the service - it reports unknown while the index has no reading,
+  // which is what HomeKit shows for a sensor that cannot answer - while the densities are presence-driven, each appearing only while its own metric reports.
+  private configureAirQualitySensor(): boolean {
+
+    const airQuality = this.airQuality;
+
+    // Validate whether we should have this service enabled, on the lifecycle rule every capability-driven sensor service shares, asked here of the metrics HomeKit's
+    // air quality service can model. No feature option gates it: the service has a direct HomeKit analog, and the Protect app is where a user chooses what a sensor
+    // measures.
+    if(!this.validService(this.hap.Service.AirQualitySensor,
+      (hasService) => environmentalServiceGate({ capability: airQualitySensorCapable(airQuality), hasService, isReachable: this.isReachable }))) {
+
+      return false;
+    }
+
+    // Acquire the service.
+    const service = this.acquireService(this.hap.Service.AirQualitySensor);
+
+    // Fail gracefully.
+    if(!service) {
+
+      this.log.error("Unable to add air quality sensor.");
+
+      return false;
+    }
+
+    // Retrieve the current air quality when requested.
+    service.getCharacteristic(this.hap.Characteristic.AirQuality).onGet(() => airQualityLevel(this.airQuality.aqi));
+
+    // Update the sensor.
+    service.updateCharacteristic(this.hap.Characteristic.AirQuality, airQualityLevel(airQuality.aqi));
+
+    // The particulate densities each track their own metric independently: a sensor reporting one particulate size and not another carries only the density it can
+    // actually answer for. The gas readings stay off this service entirely - Protect reports VOC, TVOC, and NOx as baseline-relative indexes carrying no unit, while
+    // HomeKit's density characteristics describe a mass concentration, and there is no honest conversion from one to the other. They ride the MQTT telemetry instead,
+    // where a subscriber sees them for what they are. Revisit the moment Protect reports a gas reading as a real concentration.
+    this.updatePresenceCharacteristic({ characteristic: this.hap.Characteristic.PM2_5Density, read: () => this.airQuality.pm2p5, service });
+    this.updatePresenceCharacteristic({ characteristic: this.hap.Characteristic.PM10Density, read: () => this.airQuality.pm10p0, service });
+
+    // Update the state characteristics.
+    this.configureStateCharacteristics(service);
+
+    return true;
   }
 
   // Configure the alarm-family contact sensors (alarm sound and glass break) for HomeKit. Each reads the single alarmTriggeredAt field through the shared alarmDetected
@@ -319,6 +400,46 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
     return true;
   }
 
+  // Configure the carbon dioxide sensor for HomeKit. HomeKit splits CO2 into an alert state and a level: the alert answers to the threshold the user configured on the
+  // controller, while the level is presence-driven like the densities, since a sensor can be reporting the metric without carrying a number at this instant.
+  private configureCo2Sensor(): boolean {
+
+    const airQuality = this.airQuality;
+
+    // Validate whether we should have this service enabled, on the same shared lifecycle rule, asked here of the carbon dioxide metric alone. No feature option gates
+    // it either: carbon dioxide is its own HomeKit service with its own direct analog, and the user chooses whether the sensor measures it in the Protect app.
+    if(!this.validService(this.hap.Service.CarbonDioxideSensor,
+      (hasService) => environmentalServiceGate({ capability: airQualityMetricLive(airQuality.co2), hasService, isReachable: this.isReachable }))) {
+
+      return false;
+    }
+
+    // Acquire the service.
+    const service = this.acquireService(this.hap.Service.CarbonDioxideSensor);
+
+    // Fail gracefully.
+    if(!service) {
+
+      this.log.error("Unable to add carbon dioxide sensor.");
+
+      return false;
+    }
+
+    // Retrieve the current carbon dioxide alert state when requested.
+    service.getCharacteristic(this.hap.Characteristic.CarbonDioxideDetected).onGet(() => co2AlertDetected(this.airQuality.co2, this.co2Settings));
+
+    // Update the sensor.
+    service.updateCharacteristic(this.hap.Characteristic.CarbonDioxideDetected, co2AlertDetected(airQuality.co2, this.co2Settings));
+
+    // The measured level, present only while the sensor is actually reporting a number.
+    this.updatePresenceCharacteristic({ characteristic: this.hap.Characteristic.CarbonDioxideLevel, read: () => this.airQuality.co2, service });
+
+    // Update the state characteristics.
+    this.configureStateCharacteristics(service);
+
+    return true;
+  }
+
   // Configure the contact sensor for HomeKit.
   private configureContactSensor(): boolean {
 
@@ -358,8 +479,10 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
   // Configure the humidity sensor for HomeKit.
   private configureHumiditySensor(): boolean {
 
-    // Validate whether we should have this service enabled.
-    if(!this.validService(this.hap.Service.HumiditySensor, this.ufp.humiditySettings.isEnabled)) {
+    // Validate whether we should have this service enabled, on the shared lifecycle rule: the user's Protect-side humidity toggle carries the USL family, while
+    // air-quality hardware reports humidity through its own telemetry with no toggle at all.
+    if(!this.validService(this.hap.Service.HumiditySensor, (hasService) => environmentalServiceGate({ capability: airQualityMetricLive(this.airQuality.humidity),
+      enabled: this.ufp.humiditySettings.isEnabled, hasService, isReachable: this.isReachable }))) {
 
       return false;
     }
@@ -375,20 +498,12 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
       return false;
     }
 
-    // Retrieve the current humidity when requested.
-    service.getCharacteristic(this.hap.Characteristic.CurrentRelativeHumidity).onGet(() => {
-
-      return this.humidity < 0 ? 0 : this.humidity;
-    });
-
-    // Update the sensor.
-    service.updateCharacteristic(this.hap.Characteristic.CurrentRelativeHumidity, this.humidity < 0 ? 0 : this.humidity);
+    // Wire the read-through, write the current reading, and publish it.
+    this.updateEnvironmentalCharacteristic({ characteristic: this.hap.Characteristic.CurrentRelativeHumidity, read: () => this.humidity, service,
+      topic: "humidity" });
 
     // Update the state characteristics.
     this.configureStateCharacteristics(service);
-
-    // Publish the state.
-    this.publish("humidity", this.humidity.toString());
 
     return true;
   }
@@ -495,8 +610,10 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
   // Configure the temperature sensor for HomeKit.
   private configureTemperatureSensor(): boolean {
 
-    // Validate whether we should have this service enabled.
-    if(!this.validService(this.hap.Service.TemperatureSensor, this.ufp.temperatureSettings.isEnabled)) {
+    // Validate whether we should have this service enabled, on the shared lifecycle rule: the user's Protect-side temperature toggle carries the USL family, while
+    // air-quality hardware reports temperature through its own telemetry with no toggle at all.
+    if(!this.validService(this.hap.Service.TemperatureSensor, (hasService) => environmentalServiceGate({ capability:
+      airQualityMetricLive(this.airQuality.temperature), enabled: this.ufp.temperatureSettings.isEnabled, hasService, isReachable: this.isReachable }))) {
 
       return false;
     }
@@ -512,17 +629,72 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
       return false;
     }
 
-    // Retrieve the current temperature when requested.
-    service.getCharacteristic(this.hap.Characteristic.CurrentTemperature).onGet(() => this.temperature);
-
-    // Update the sensor.
-    service.updateCharacteristic(this.hap.Characteristic.CurrentTemperature, this.temperature);
+    // Wire the read-through, write the current reading, and publish it.
+    this.updateEnvironmentalCharacteristic({ characteristic: this.hap.Characteristic.CurrentTemperature, read: () => this.temperature, service,
+      topic: "temperature" });
 
     // Update the state characteristics.
     this.configureStateCharacteristics(service);
 
-    // Publish the state.
-    this.publish("temperature", this.temperature.toString());
+    return true;
+  }
+
+  // Configure the vape sensor for HomeKit. Vaping has no HomeKit service of its own, so we project it as a contact sensor that opens on a detection - an opt-in surface
+  // a user turns on deliberately. The controller's own vape enable rides the absolute half of the gate alongside the user's option: it is a setting someone changes in
+  // the Protect app, not a wire reading that flaps, so turning it off there should take the sensor away immediately.
+  private configureVapeSensor(): boolean {
+
+    if(!this.validService(this.hap.Service.ContactSensor, capabilityGate({ capability: airQualityMetricLive(this.airQuality.vape),
+      toggle: this.hasFeature("Sensor.Vape") && this.vapeSensitivity.isEnabled }), ProtectReservedNames.CONTACT_SENSOR_VAPE)) {
+
+      // With no service on the accessory there is no state to hold, so the bookkeeping clears: a sensor turned off and later back on re-seeds from its first live
+      // reading rather than narrating a transition against a state nobody has seen since.
+      this.lastVape = undefined;
+
+      return false;
+    }
+
+    // Acquire the service.
+    const service = this.acquireService(this.hap.Service.ContactSensor, this.accessoryName + " Vape", ProtectReservedNames.CONTACT_SENSOR_VAPE);
+
+    // Fail gracefully.
+    if(!service) {
+
+      this.log.error("Unable to add vape contact sensor.");
+
+      return false;
+    }
+
+    // Retrieve the current vape state when requested.
+    service.getCharacteristic(this.hap.Characteristic.ContactSensorState).onGet(() => this.vapeState);
+
+    // The VALUE path writes only from a LIVE reading. While the metric is quiet - the sensor between readings, or a record that has vanished - the characteristic keeps
+    // whatever it holds and nothing is narrated, so a dropout can never manufacture an all-clear the sensor never reported.
+    if(airQualityMetricLive(this.airQuality.vape)) {
+
+      const detected = this.vapeState;
+
+      // On the first live reading of this service's lifetime we save the state silently when nothing is happening, and speak up when a detection is already underway -
+      // the same first-run shape the leak sensor uses. After that, only genuine changes are worth a sentence.
+      if((this.lastVape === undefined) && !detected) {
+
+        this.lastVape = detected;
+      } else if(detected !== this.lastVape) {
+
+        this.lastVape = detected;
+
+        this.log.info("Vaping %sdetected.", detected ? "" : "no longer ");
+      }
+
+      // Update the sensor.
+      service.updateCharacteristic(this.hap.Characteristic.ContactSensorState, detected);
+
+      // Publish the state.
+      this.publish("vape", detected.toString());
+    }
+
+    // Update the state characteristics.
+    this.configureStateCharacteristics(service);
 
     return true;
   }
@@ -538,6 +710,87 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
     batteryService?.updateCharacteristic(this.hap.Characteristic.StatusLowBattery, this.ufp.batteryStatus.isLow);
 
     return true;
+  }
+
+  /* Reconcile one environmental characteristic - the temperature or humidity a sensor reports - against whichever of the two sources this hardware reports through,
+   * and publish what it says. The same resolve-else-hold shape updatePresenceCharacteristic applies to the densities, minus the removal half: these two services own
+   * their characteristic for their whole lifetime, so the only question is whether there is a reading to write.
+   *
+   * WRITE - a source is reporting a number, so the characteristic takes it and the reading goes out on its MQTT topic.
+   *
+   * HOLD - neither source is reporting. Nothing is written and nothing is published, so HomeKit and every subscriber keep the last thing the sensor actually said
+   * rather than being told a dropout was a reading of its own. On a service's FIRST materialization - a Protect toggle enabled before any reading has arrived - that
+   * means the characteristic reads HomeKit's own default, zero for both of these, until the first reading lands.
+   *
+   * The reading arrives as a read-through rather than a value so the bound handler answers from the record at pull time, exactly as every other characteristic on
+   * this accessory does; a pull arriving mid-hold answers with what HomeKit already holds. Re-registering the handler on every pass is the file's established idiom -
+   * registration replaces rather than accumulates.
+   */
+  private updateEnvironmentalCharacteristic(options: { characteristic: CharacteristicClass; read: () => Nullable<number>; service: Service; topic: string }): void {
+
+    // Retrieve the current reading when requested, honoring a hold.
+    options.service.getCharacteristic(options.characteristic).onGet(() => options.read() ?? options.service.getCharacteristic(options.characteristic).value);
+
+    const reading = options.read();
+
+    if(reading === null) {
+
+      return;
+    }
+
+    // Update the sensor and publish the state.
+    options.service.updateCharacteristic(options.characteristic, reading);
+    this.publish(options.topic, reading.toString());
+  }
+
+  /* Reconcile one presence-driven characteristic against the metric behind it, applying the same additive-eager / subtractive-conservative asymmetry capabilityGate
+   * applies to services, one level down. Four outcomes, from one read of the metric:
+   *
+   * ADD or UPDATE - the metric carries a reading, so the characteristic appears (HomeKit vends it on first access) and takes the current value. There is deliberately no
+   * reachability gate on this half: the guarantee we want is asymmetric, in that the characteristic set never shrinks outside a real loss of the metric, while growth is
+   * welcome the moment data arrives.
+   *
+   * HOLD - the metric is still reporting but has no number at this instant, or the device is unreachable. Nothing is written and nothing is removed, so a momentary null
+   * or an offline window leaves HomeKit showing the last thing the sensor actually said.
+   *
+   * REMOVE - the metric has left liveness entirely while the device is reachable, meaning it genuinely stopped reporting (disabled, failed, or withdrawn by a firmware
+   * update) rather than merely going quiet. Only then does the characteristic go, which keeps the accessory's configuration stable across the transient cases.
+   *
+   * The metric arrives as a read-through rather than a value so the bound handler answers from the record at pull time, exactly as every other characteristic on this
+   * accessory does.
+   */
+  private updatePresenceCharacteristic(options: { characteristic: CharacteristicClass; read: () => ProtectAirQualityMetric; service: Service }): void {
+
+    const metric = options.read();
+
+    if(airQualityMetricReported(metric)) {
+
+      // Retrieve the current reading when requested, honoring a hold: a pull arriving while the metric is between readings answers with what HomeKit already holds
+      // rather than recomputing a value the sensor has not given us.
+      options.service.getCharacteristic(options.characteristic).onGet(() => {
+
+        const current = options.read();
+
+        return airQualityMetricReported(current) ? current.value : options.service.getCharacteristic(options.characteristic).value;
+      });
+
+      // Update the characteristic.
+      options.service.updateCharacteristic(options.characteristic, metric.value);
+
+      return;
+    }
+
+    // A metric that is still reporting, or a device we cannot currently see, holds whatever HomeKit has.
+    if(airQualityMetricLive(metric) || !this.isReachable) {
+
+      return;
+    }
+
+    // Read prior existence side-effect-free; getCharacteristic would lazily materialize the characteristic we are about to remove.
+    if(options.service.testCharacteristic(options.characteristic)) {
+
+      options.service.removeCharacteristic(options.service.getCharacteristic(options.characteristic));
+    }
   }
 
   // Configure the additional state characteristics in HomeKit.
@@ -566,6 +819,26 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
     return sensorTamperState(this.fromRecord((config) => config.tamperingDetectedAt, null));
   }
 
+  // The sensor's air-quality readings, read non-throwing through the record. An absent record (a sensor lingering in the removal grace) reports the shape a sensor with
+  // no air-quality hardware sends - every metric quiet - so every gate and every characteristic reads not-capable rather than throwing.
+  private get airQuality(): Readonly<ProtectSensorAirQuality> {
+
+    return this.fromRecord((config) => config.airQuality, NOT_CAPABLE_AIR_QUALITY);
+  }
+
+  // The air-quality telemetry payload: the twelve metrics the controller reports, each as its status and value. Built member by member rather than passed through from
+  // the record, because the wire shape carries an open index signature and a subscriber's topic should carry exactly the metrics we document, whatever a future
+  // firmware adds alongside them. This is where the metrics HomeKit has no service for - the VOC index, NOx, vape, and the finer particulate sizes - reach a user.
+  private get airQualityPayload(): string {
+
+    const airQuality = this.airQuality;
+    const reading = (metric: ProtectAirQualityMetric): { status: string; value: Nullable<number> } => ({ status: metric.status, value: metric.value });
+
+    return JSON.stringify({ aqi: reading(airQuality.aqi), co2: reading(airQuality.co2), humidity: reading(airQuality.humidity), nox: reading(airQuality.nox),
+      pm10p0: reading(airQuality.pm10p0), pm1p0: reading(airQuality.pm1p0), pm2p5: reading(airQuality.pm2p5), pm4p0: reading(airQuality.pm4p0),
+      temperature: reading(airQuality.temperature), tvoc: reading(airQuality.tvoc), vape: reading(airQuality.vape), voc: reading(airQuality.voc) });
+  }
+
   // The sensor's HomeKit alarm-family state, read non-throwing through the record. An absent record (a sensor lingering in the removal grace) reports no alarm rather
   // than throwing; the projection's alarmTriggeredAt is mapped through the shared sensorAlarmState predicate so the onGet, the create-time seed, the MQTT get, and the
   // reactive push can never disagree on what "alarm" means. A pure read-through: the transition log and the lastAlarm bookkeeping live in updateAlarmState.
@@ -580,16 +853,24 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
     return this.fromRecord((config) => config.stats?.light?.value ?? -1, -1);
   }
 
+  // The carbon dioxide alert threshold the user configured on the controller, read non-throwing through the record. An absent record reports nothing configured, so the
+  // alert cannot fire on a sensor whose record has vanished.
+  private get co2Settings(): Readonly<ProtectAirQualityThresholdSettings> {
+
+    return this.fromRecord((config) => config.airQualitySettings.co2Settings, DISABLED_THRESHOLD_SETTINGS);
+  }
+
   // Get the current contact sensor information. An absent record reports closed rather than throwing.
   private get contact(): boolean {
 
     return this.fromRecord((config) => config.isOpened ?? false, false);
   }
 
-  // Get the current humidity information. An absent record reports the stats sentinel rather than throwing.
-  private get humidity(): number {
+  // Get the current humidity reading, from whichever of the two sources this sensor reports through. An absent record - a sensor lingering in the removal grace -
+  // reports no reading rather than throwing, exactly as a live record with both sources quiet does.
+  private get humidity(): Nullable<number> {
 
-    return this.fromRecord((config) => config.stats?.humidity?.value ?? -1, -1);
+    return this.fromRecord((config) => environmentalReading({ metric: config.airQuality.humidity, stat: config.stats?.humidity }), null);
   }
 
   // Get the current leak sensor information. The record read is non-throwing - an absent record reports no leak - while the lastLeak bookkeeping and log stay outside the
@@ -619,10 +900,28 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
     return value;
   }
 
-  // Get the current temperature information. An absent record reports the stats sentinel rather than throwing.
-  private get temperature(): number {
+  // Get the current temperature reading, from whichever of the two sources this sensor reports through. An absent record - a sensor lingering in the removal grace -
+  // reports no reading rather than throwing, exactly as a live record with both sources quiet does.
+  private get temperature(): Nullable<number> {
 
-    return this.fromRecord((config) => config.stats?.temperature?.value ?? -1, -1);
+    return this.fromRecord((config) => environmentalReading({ metric: config.airQuality.temperature, stat: config.stats?.temperature }), null);
+  }
+
+  // The controller's vape detection setting, read non-throwing through the record. An absent record reports detection turned off, so a vanished sensor's contact sensor
+  // is removed rather than left standing on a record nobody can read.
+  private get vapeSensitivity(): Readonly<{ isEnabled: boolean; sensitivity: number }> {
+
+    return this.fromRecord((config) => config.airQualitySettings.vapeSensitivitySettings, DISABLED_VAPE_SENSITIVITY);
+  }
+
+  // The sensor's HomeKit vape state, and the single answer every read path gives. While the metric is live it is the predicate over the current status; while it is not,
+  // it is the last state we saw, defaulting to no detection for a sensor that has never reported. The characteristic's onGet, the MQTT get, and the reconcile's own push
+  // all read through here, so a pull arriving during a dropout can never report an all-clear the sensor did not send.
+  private get vapeState(): boolean {
+
+    const vape = this.airQuality.vape;
+
+    return airQualityMetricLive(vape) ? vapeDetected(vape) : (this.lastVape ?? false);
   }
 
   // Configure MQTT capabilities for sensors. The leak get handlers are NOT registered here: leak is the one sensor mode whose per-channel enablement is model-aware, so
@@ -636,10 +935,12 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
       this.subscribeGet(descriptor.mqtt, descriptor.label + " detected", () => this.alarmDetected.toString());
     }
 
+    this.subscribeGet("airquality", "air quality", () => this.airQualityPayload);
     this.subscribeGet("ambientlight", "ambient light", () => this.ambientLight.toString());
     this.subscribeGet("contact", "contact sensor", () => this.contact.toString());
-    this.subscribeGet("humidity", "humidity", () => this.humidity.toString());
-    this.subscribeGet("temperature", "temperature", () => this.temperature.toString());
+    this.subscribeGet("humidity", "humidity", () => (this.humidity ?? NO_READING).toString());
+    this.subscribeGet("temperature", "temperature", () => (this.temperature ?? NO_READING).toString());
+    this.subscribeGet("vape", "vape detected", () => this.vapeState.toString());
   }
 
   // Spawn the sensor's narrow-selector observers. super spawns the base device's universal observers (currently name sync and firmware/device-info refresh); the sensor

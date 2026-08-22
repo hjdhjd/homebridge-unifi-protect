@@ -62,6 +62,7 @@ The topics and messages that `homebridge-unifi-protect` publishes are:
 
 | Topic                 | Protect Device Type | Message Published
 |-----------------------|---------------------|------------------
+| `airquality`          | Sensor              | `JSON` containing every air quality metric a UniFi Protect sensor reports: `aqi`, `co2`, `humidity`, `nox`, `pm10p0`, `pm1p0`, `pm2p5`, `pm4p0`, `temperature`, `tvoc`, `vape`, and `voc`. Each is an object in the format `{"status": "neutral", "value": 42}`, where `value` is `null` whenever that metric isn't currently reporting a reading. Sensors without air quality hardware never publish this topic.
 | `alarm`               | Sensor              | `true` or `false` when a UniFi Protect sensor detects a recognized alarm sound.
 | `ambientlight`        | Multiple            | Ambient light level, in lux, from a UniFi Protect sensor or a camera's ambient light sensor.
 | `authenticate`        | Doorbell            | `{type: "fingerprint"}` or `{type: "nfc", id: cardId}`. Publishes upon a successful authentication using fingerprint or NFC. `id` is included only for NFC and contains the card ID as detected by the doorbell.
@@ -90,6 +91,7 @@ The topics and messages that `homebridge-unifi-protect` publishes are:
 | `telemetry`           | Controller          | All UniFi Protect telemetry from the realtime events API. This is the raw feed - you're on your own to parse through it for the messages you may be interested in. This is published to the controller MAC address.
 | `temperature`         | Sensor              | Temperature, in Celsius, on a UniFi Protect sensor.
 | `tone`                | Chime               | `buzzer` or `chime` when a UniFi Protect chime plays the corresponding tone.
+| `vape`                | Sensor              | `true` or `false` when a UniFi Protect sensor detects vaping.
 
 Messages are published to MQTT when an action occurs on a camera, controller, or doorbell that triggers the respective event, or when an MQTT message is received for one of the topics `homebridge-unifi-protect` subscribes to. For example, snapshot images are published every time HomeKit requests a snapshot as well as when a request is received through MQTT to trigger a new snapshot.
 
@@ -98,6 +100,7 @@ The topics that `homebridge-unifi-protect` subscribes to are:
 
 | Topic                   | Protect Device Type | Message Expected
 |-------------------------|---------------------|------------------
+| `airquality/get`        | Sensor              | `true` will trigger a publish event of the current air quality metrics for a UniFi Protect sensor.
 | `alarm/get`             | Sensor              | `true` will trigger a publish event of the current alarm state for a UniFi Protect sensor.
 | `ambientlight/get`      | Sensor              | `true` will trigger a publish event of the ambient light level, in lux, for a UniFi Protect sensor.
 | `chime/get`             | Chime               | `true` will trigger a publish event of the volume level for a UniFi Protect doorbell.
@@ -130,6 +133,7 @@ The topics that `homebridge-unifi-protect` subscribes to are:
 | `systeminfo/get`        | Controller          | `true` will trigger a publish of the current controller system information to the `systeminfo` topic.
 | `temperature/get`       | Sensor              | `true` will trigger a publish event of the temperature, in Celsius, for a UniFi Protect sensor.
 | `tone/set`              | Chime               | A value of either `buzzer` or `chime` will play the selected tone on a UniFi Protect chime.
+| `vape/get`              | Sensor              | `true` will trigger a publish event of the current vape detection state for a UniFi Protect sensor.
 
 Some messages, such as those for the liveviews and securitysystem topics, are controller-specific. To use these topics, make sure you use the controller MAC address when you create your topic strings.
 

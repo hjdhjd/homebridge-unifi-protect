@@ -211,6 +211,45 @@ class OccupancyDetectedCharacteristicType {
   public readonly hapKind = "OccupancyDetected" as const;
 }
 
+/* The air-quality characteristic kinds, added together because the sensor's air quality and carbon dioxide services reach them as one surface. AirQuality is the level
+ * the air quality service always carries and CarbonDioxideDetected the alert its own service always carries - each the seed characteristic its service marker
+ * constructs with - while CarbonDioxideLevel and the three density kinds are PRESENCE-DRIVEN: the sensor adds and removes them as their metrics come and go, so each
+ * must be a distinct key for a presence assertion (testCharacteristic) to tell one density's arrival from another's.
+ *
+ * HAP spells the fine particulate characteristic PM2_5Density, with an underscore production reads by that exact name. The namespace key below is quoted and the
+ * backing class named without the underscore, which is what keeps the house camel-case rule satisfied while the key production reaches for stays byte-identical to
+ * HAP's own.
+ */
+class AirQualityCharacteristicType {
+
+  public readonly hapKind = "AirQuality" as const;
+}
+
+class CarbonDioxideDetectedCharacteristicType {
+
+  public readonly hapKind = "CarbonDioxideDetected" as const;
+}
+
+class CarbonDioxideLevelCharacteristicType {
+
+  public readonly hapKind = "CarbonDioxideLevel" as const;
+}
+
+class PM10DensityCharacteristicType {
+
+  public readonly hapKind = "PM10Density" as const;
+}
+
+class PM25DensityCharacteristicType {
+
+  public readonly hapKind = "PM2_5Density" as const;
+}
+
+class VOCDensityCharacteristicType {
+
+  public readonly hapKind = "VOCDensity" as const;
+}
+
 // The brightness characteristic. The doorbell's chime-volume Lightbulb and the camera's night-vision dimmer both bind onGet/onSet handlers and push updates on
 // Brightness, so the kind must be a distinct key for those paths to exercise faithfully.
 class BrightnessCharacteristicType {
@@ -267,14 +306,19 @@ class ServiceLabelNamespaceCharacteristicType {
 // backs the fob's button-label reconcile, where the Home app names a grouped button switch by that characteristic and a user rename writes it; OccupancyDetected
 // backs the device-motion base-capability net, where configureOccupancySensor first reaches it. BatteryLevel / StatusLowBattery (the battery service updater) and
 // CurrentAmbientLightLevel / CurrentRelativeHumidity / CurrentTemperature / LeakDetected (the sensor's per-mode services) back the sensor-family real-construction
-// net, where ProtectSensor first reaches them. SecuritySystemCurrentState / SecuritySystemTargetState (the security-system state machine, the Current marker also
+// net, where ProtectSensor first reaches them, joined there by AirQuality / CarbonDioxideDetected and the presence-driven CarbonDioxideLevel / PM10Density /
+// PM2_5Density / VOCDensity of the air quality and carbon dioxide services. SecuritySystemCurrentState / SecuritySystemTargetState (the security-system state machine,
+// the Current marker also
 // the SecuritySystem service's seed) and HardwareRevision (the security-system's bespoke configureInfo) back the controller-owner net, where ProtectSecuritySystem
 // first reaches them. Expand as the production code reaches for new kinds.
 export const Characteristic = {
 
+  AirQuality: AirQualityCharacteristicType,
   BatteryLevel: BatteryLevelCharacteristicType,
   Brightness: BrightnessCharacteristicType,
   CameraOperatingModeIndicator: CameraOperatingModeIndicatorCharacteristicType,
+  CarbonDioxideDetected: CarbonDioxideDetectedCharacteristicType,
+  CarbonDioxideLevel: CarbonDioxideLevelCharacteristicType,
   ConfiguredName: ConfiguredNameCharacteristicType,
   ContactSensorState: ContactSensorStateCharacteristicType,
   CurrentAmbientLightLevel: CurrentAmbientLightLevelCharacteristicType,
@@ -292,6 +336,8 @@ export const Characteristic = {
   NightVision: NightVisionCharacteristicType,
   OccupancyDetected: OccupancyDetectedCharacteristicType,
   On: OnCharacteristicType,
+  PM10Density: PM10DensityCharacteristicType,
+  "PM2_5Density": PM25DensityCharacteristicType,
   ProgrammableSwitchEvent: ProgrammableSwitchEventCharacteristicType,
   SecuritySystemCurrentState: SecuritySystemCurrentStateCharacteristicType,
   SecuritySystemTargetState: SecuritySystemTargetStateCharacteristicType,
@@ -300,7 +346,8 @@ export const Characteristic = {
   ServiceLabelNamespace: ServiceLabelNamespaceCharacteristicType,
   StatusActive: StatusActiveCharacteristicType,
   StatusLowBattery: StatusLowBatteryCharacteristicType,
-  StatusTampered: StatusTamperedCharacteristicType
+  StatusTampered: StatusTamperedCharacteristicType,
+  VOCDensity: VOCDensityCharacteristicType
 } as const;
 
 // Shorthand for the constructor-as-key shape both Service and Characteristic expose. We use the class itself (not an instance) as the Map key throughout, so
@@ -595,6 +642,21 @@ class AccessoryInformationServiceType extends TestService {
   }
 }
 
+// The air-quality kind. Added for the sensor-family air quality net: ProtectSensor.configureAirQualitySensor acquires it when the sensor reports a metric HomeKit can
+// model, then drives its AirQuality level and hangs the presence-driven densities off it. Seeds its primary AirQuality characteristic.
+class AirQualitySensorServiceType extends TestService {
+
+  public static readonly UUID = "AirQualitySensor";
+  public readonly hapKind = "AirQualitySensor" as const;
+
+  public constructor(displayName = "", subtype?: string) {
+
+    super(AirQualitySensorServiceType, displayName, subtype);
+
+    this.getCharacteristic(AirQualityCharacteristicType);
+  }
+}
+
 // The battery kind. Added for the sensor-family real-construction net: ProtectSensor.configureBatteryService unconditionally acquires a Battery service and
 // updateBatteryStatus writes its BatteryLevel / StatusLowBattery, so the kind must exist as a distinct key. Seeds its primary BatteryLevel characteristic.
 class BatteryServiceType extends TestService {
@@ -623,6 +685,21 @@ class CameraOperatingModeServiceType extends TestService {
     super(CameraOperatingModeServiceType, displayName, subtype);
 
     this.getCharacteristic(NameCharacteristicType);
+  }
+}
+
+// The carbon-dioxide kind. Added for the sensor-family air quality net: ProtectSensor.configureCo2Sensor acquires it when the sensor reports carbon dioxide, driving
+// the alert state from the controller's configured threshold and hanging the presence-driven level off it. Seeds its primary CarbonDioxideDetected characteristic.
+class CarbonDioxideSensorServiceType extends TestService {
+
+  public static readonly UUID = "CarbonDioxideSensor";
+  public readonly hapKind = "CarbonDioxideSensor" as const;
+
+  public constructor(displayName = "", subtype?: string) {
+
+    super(CarbonDioxideSensorServiceType, displayName, subtype);
+
+    this.getCharacteristic(CarbonDioxideDetectedCharacteristicType);
   }
 }
 
@@ -847,8 +924,10 @@ class TemperatureSensorServiceType extends TestService {
 export const Service = {
 
   AccessoryInformation: AccessoryInformationServiceType,
+  AirQualitySensor: AirQualitySensorServiceType,
   Battery: BatteryServiceType,
   CameraOperatingMode: CameraOperatingModeServiceType,
+  CarbonDioxideSensor: CarbonDioxideSensorServiceType,
   ContactSensor: ContactSensorServiceType,
   Doorbell: DoorbellServiceType,
   HumiditySensor: HumiditySensorServiceType,
