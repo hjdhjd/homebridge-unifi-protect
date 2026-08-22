@@ -7,7 +7,6 @@ import { APIEvent, FeatureOptions, FfmpegCodecs, RtpPortAllocator, debugGatedLog
 import type { Clock, HomebridgePluginLogging, Nullable, RecordingProcessFactory } from "homebridge-plugin-utils";
 import type { ProtectAccessory, ProtectPlatformConfig } from "./types.ts";
 import { featureOptionCategories, featureOptions } from "./options.ts";
-import { PROTECT_MQTT_TOPIC } from "./settings.ts";
 import { ProtectNvr } from "./nvr/nvr.ts";
 import type { ProtectOptions } from "./options.ts";
 import type { StreamingDelegateFactory } from "./media/stream-delegate.ts";
@@ -98,9 +97,6 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
 
         continue;
       }
-
-      // MQTT topic to use.
-      controllerConfig.mqttTopic ||= PROTECT_MQTT_TOPIC;
 
       this.controllers.push(new ProtectNvr(this, controllerConfig));
     }

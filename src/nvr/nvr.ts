@@ -3,12 +3,12 @@
  * nvr.ts: NVR device class for UniFi Protect.
  */
 import type { API, HAP } from "homebridge";
-import { APIEvent, MqttClient, debugGatedLog, formatErrorMessage, formatSeconds, loopFaultReporter, prefixedLog, retry, sanitizeName,
+import { APIEvent, createMqttClient, debugGatedLog, formatErrorMessage, formatSeconds, loopFaultReporter, prefixedLog, retry, sanitizeName,
   superviseLoop } from "homebridge-plugin-utils";
 import type { Camera, CollectionSelectors, DeviceCollectionKey, LivestreamRecoveryExhaustedPayload, LivestreamRecoveryRecoveredPayload,
   LivestreamRecoveryStartedPayload, ProtectDeviceConfig, ProtectDeviceConfigMap, ProtectLogging, ProtectNvrConfig } from "unifi-protect";
 import { DEVICE_COLLECTION_KEYS, ProtectClient, deviceSelectors, channels as protectChannels } from "unifi-protect";
-import type { HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
+import type { HomebridgePluginLogging, MqttClient, Nullable } from "homebridge-plugin-utils";
 import type { NvrLifecyclePayload, ReachabilityFanoutPayload } from "../diagnostics.ts";
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_NVR_CONTROLLER_DISABLED_SETTLE_DELAY, PROTECT_NVR_REBOOT_RECENCY_MS } from "../settings.ts";
 import type { ProtectAccessory, ProtectAccessoryContext, ProtectDeviceTypes, ProtectDevices, ProtectProjectionMap } from "../types.ts";
@@ -781,10 +781,7 @@ export class ProtectNvr {
      */
     const mqttSettings = mqttConnectionSettings(this.platform.featureOptions, this.config, this.ufp.mac);
 
-    if(!this.mqtt && mqttSettings) {
-
-      this.mqtt = new MqttClient({ brokerUrl: mqttSettings.brokerUrl, log: this.log, topicPrefix: mqttSettings.topicPrefix }, { signal: this.signal });
-    }
+    this.mqtt ??= createMqttClient({ brokerUrl: mqttSettings?.brokerUrl, log: this.log, topicPrefix: mqttSettings?.topicPrefix }, { signal: this.signal });
 
     // Initialize our liveviews.
     this.liveviews = new ProtectLiveviews(this);

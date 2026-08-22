@@ -23,7 +23,7 @@ export interface ProtectOptions {
 export interface ProtectNvrOptions {
 
   address: string;
-  mqttTopic: string;
+  mqttTopic?: string;
   mqttUrl?: string;
   overrideAddress?: string;
   password: string;
