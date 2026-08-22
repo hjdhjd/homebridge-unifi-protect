@@ -26,7 +26,7 @@ import { ProtectLivestreamUnavailableError } from "unifi-protect";
 import { ProtectTimeshiftBuffer } from "./timeshift.ts";
 import type { Segment } from "unifi-protect";
 import type { SegmentRole } from "./timeshift.ts";
-import type { TestClock } from "homebridge-plugin-utils";
+import type { TestClock } from "homebridge-plugin-utils/testing";
 import type { TestLogEntry } from "../testing.helpers.ts";
 import type { TestProtectNvr } from "../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";

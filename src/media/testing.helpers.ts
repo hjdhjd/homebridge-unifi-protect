@@ -11,11 +11,11 @@
  * are unifi-protect's. The cross-cutting core - the HAP double, the state store, and the streaming and timeshift stubs - lives in the root harness every subsystem's
  * testing.helpers.ts imports from.
  */
-import type { HomebridgePluginLogging, Nullable, RecordingProcessFactory, TestClock } from "homebridge-plugin-utils";
+import type { HomebridgePluginLogging, Nullable, RecordingProcessFactory } from "homebridge-plugin-utils";
 import type { LivestreamSubscriptionState, ProtectCameraConfig, Segment, SnapshotOptions, TalkbackSession } from "unifi-protect";
-import { SAMPLE_FLAG_NON_SYNC, makeBox, makeContainer, makeTrunBox } from "homebridge-plugin-utils";
 import type { TestAccessory, TestLogEntry } from "../testing.helpers.ts";
 import { TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
+import { makeBox, makeContainer, makeTrunBox } from "homebridge-plugin-utils/testing";
 import type { API } from "homebridge";
 import type { ChannelProfile } from "./resolution.ts";
 import { G2_PRO_CHANNELS } from "../camera.fixtures.ts";
@@ -25,7 +25,9 @@ import type { ProtectCameraHints } from "../devices/cameras/camera.ts";
 import type { ProtectCameraHost } from "./camera-host.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import type { ProtectPlatform } from "../platform.ts";
+import { SAMPLE_FLAG_NON_SYNC } from "homebridge-plugin-utils";
 import type { StreamingDelegate } from "./stream-delegate.ts";
+import type { TestClock } from "homebridge-plugin-utils/testing";
 import type { TestProtectNvr } from "../nvr/testing.helpers.ts";
 import { makeCameraConfig } from "../devices/testing.helpers.ts";
 import { makeTestNvr } from "../nvr/testing.helpers.ts";

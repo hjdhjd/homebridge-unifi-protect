@@ -335,8 +335,8 @@
       }
     };
 
-    // Stop watching: clear the watchdog and remove both window listeners. Called from the first failure and from ready(), so nothing is left open once the boot has
-    // resolved one way or the other.
+    // Stop watching: clear the watchdog and remove both window listeners. Called from every terminal path, so nothing is left open once the boot has resolved one
+    // way or the other.
     const stop = () => {
 
       clearTimeout(watchdog);

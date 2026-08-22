@@ -4,12 +4,15 @@
  * explicit-resource-management syntax, this suite asserts the raw-JavaScript Config UI server carries no `await using` declaration and no shipped source constructs a
  * DisposableStack. The moment the floor is bumped to that release, the live assertion fails with an enumerated cleanup list - the anti-forget mechanism that turns
  * "restore the await using form" from a thing to remember into a thing the suite demands.
+ *
+ * What is left here is this package's policy alone: which major closes the gap, what its detectors look for, what its checklist enumerates, and which files its scans
+ * read. The mechanism those feed - reading the engines floor, deciding the regime, walking the shipped source, firing the sunset - is the shared machinery in
+ * `homebridge-plugin-utils/testing`, which the whole family drives with its own policy.
  */
+import { assertRuntimeFloorCompat, parseRuntimeFloor, planRuntimeFloorCheck, readEnginesNode, sweepSourceFiles } from "homebridge-plugin-utils/testing";
 import { describe, test } from "node:test";
-import { readFile, readdir } from "node:fs/promises";
 import assert from "node:assert/strict";
-import { fileURLToPath } from "node:url";
-import { join } from "node:path";
+import { readFile } from "node:fs/promises";
 
 // The major version of the Node release that first parses explicit-resource-management syntax (`await using`/`using`) and ships DisposableStack as a platform global.
 // At or above this floor the raw-JavaScript workaround is redundant and the sunset runs; below it the workaround is required.
@@ -34,54 +37,6 @@ const ERM_DECLARATION = /(?<![\w.])(?:await\s+)?using\s+[A-Za-z_$][\w$]*\s*=/;
 const NEW_DISPOSABLE_STACK = /new\s+DisposableStack\s*\(/;
 const NEW_ASYNC_DISPOSABLE_STACK = /new\s+AsyncDisposableStack\s*\(/;
 
-// Parse the Node major version from an `engines.node` range and decide the regime: below the ERM-capable major the raw-JavaScript workaround is required (compat), at
-// or above it the workaround must be undone (sunset). We read the first integer run as the major, which is the semantics of every range form we accept (">=22.20",
-// "^24", ">=24.0.0"). An unparseable value is a hard failure, never a silent default.
-function parseRuntimeFloor(enginesNode: string): { major: number; regime: "compat" | "sunset" } {
-
-  const digits = /(\d+)/.exec(enginesNode)?.[0];
-
-  if(digits === undefined) {
-
-    throw new Error("Unable to parse a Node major version from the engines.node value: " + JSON.stringify(enginesNode) + ".");
-  }
-
-  const major = Number(digits);
-
-  return { major, regime: (major >= NODE_ERM_GLOBAL_MAJOR) ? "sunset" : "compat" };
-}
-
-// Map an `engines.node` range to the action the live assertion takes: in the sunset regime it fails with the enumerated cleanup, in the compat regime it runs the
-// source scan. Both arms of this function execute on every suite run - the synthetic tests drive the sunset arm with ">=24" and the scan arm with ">=22.20", and the
-// live assertion drives whichever the real package.json selects - so the sunset canary's firing path is never dead code proven only by a replica.
-function planRuntimeFloorCheck(enginesNode: string): { kind: "sunset"; message: string } | { kind: "scan" } {
-
-  const { regime } = parseRuntimeFloor(enginesNode);
-
-  if(regime === "sunset") {
-
-    return { kind: "sunset", message: SUNSET_CLEANUP };
-  }
-
-  return { kind: "scan" };
-}
-
-// Read the package's own `engines.node`. This test derives its regime from nothing but the package's declared runtime floor - the single source of truth for what the
-// plugin supports.
-async function readEnginesNode(): Promise<string> {
-
-  const packageJsonText = await readFile(new URL("../package.json", import.meta.url), "utf8");
-  const packageJson = JSON.parse(packageJsonText) as { engines?: { node?: unknown } };
-  const enginesNode = packageJson.engines?.node;
-
-  if(typeof enginesNode !== "string") {
-
-    throw new Error("The package.json engines.node field is missing or is not a string.");
-  }
-
-  return enginesNode;
-}
-
 // Strip line and block comments from source so the ERM-declaration scan sees code only. This is deliberately naive - a `//` or `/* */` sequence inside a string literal
 // would be removed too - which is an accepted residual risk: the rewritten server comment names `await using` freely, and this stripper keeps that comment text from
 // tripping the code-only scan. String literals carrying an ERM-declaration shape are the one false-negative this cannot see, and the server ships none.
@@ -90,37 +45,11 @@ function stripComments(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
 }
 
-// Enumerate the shipped host-Node source files the sweep inspects: every `.ts` under `src/` except test, helper, and fixture files. The `homebridge-ui/public/` tree is
-// browser-side and out of scope for the host runtime floor, and compiled `dist/` is not swept because tsc preserves bare globals verbatim from `src`, so the source
-// sweep is the same guard without a build-freshness dependency. Reads run in parallel.
-async function sweptSourceFiles(): Promise<{ path: string; text: string }[]> {
-
-  const srcDirectory = fileURLToPath(new URL(".", import.meta.url));
-  const relativePaths = await readdir(srcDirectory, { recursive: true });
-  const excludedSuffixes = [ ".fixtures.ts", ".helpers.ts", ".test.ts" ];
-  const candidatePaths = relativePaths.filter((relativePath) => {
-
-    if(!relativePath.endsWith(".ts")) {
-
-      return false;
-    }
-
-    return !excludedSuffixes.some((suffix) => relativePath.endsWith(suffix));
-  });
-
-  return Promise.all(candidatePaths.map(async (relativePath) => {
-
-    const fullPath = join(srcDirectory, relativePath);
-
-    return { path: fullPath, text: await readFile(fullPath, "utf8") };
-  }));
-}
-
 describe("HBUP runtime floor - regime helper", () => {
 
   test("parses the compat floor and selects the compat regime", () => {
 
-    const result = parseRuntimeFloor(">=22.20");
+    const result = parseRuntimeFloor({ enginesNode: ">=22.20", sunsetMajor: NODE_ERM_GLOBAL_MAJOR });
 
     assert.equal(result.major, 22);
     assert.equal(result.regime, "compat");
@@ -128,7 +57,7 @@ describe("HBUP runtime floor - regime helper", () => {
 
   test("parses a >=24 floor and selects the sunset regime", () => {
 
-    const result = parseRuntimeFloor(">=24");
+    const result = parseRuntimeFloor({ enginesNode: ">=24", sunsetMajor: NODE_ERM_GLOBAL_MAJOR });
 
     assert.equal(result.major, 24);
     assert.equal(result.regime, "sunset");
@@ -136,17 +65,17 @@ describe("HBUP runtime floor - regime helper", () => {
 
   test("parses a ^24 floor and selects the sunset regime", () => {
 
-    assert.equal(parseRuntimeFloor("^24").regime, "sunset");
+    assert.equal(parseRuntimeFloor({ enginesNode: "^24", sunsetMajor: NODE_ERM_GLOBAL_MAJOR }).regime, "sunset");
   });
 
   test("throws on an unparseable engines value", () => {
 
-    assert.throws(() => parseRuntimeFloor("not-a-version"), /Unable to parse/);
+    assert.throws(() => parseRuntimeFloor({ enginesNode: "not-a-version", sunsetMajor: NODE_ERM_GLOBAL_MAJOR }), /Unable to parse/);
   });
 
   test("the sunset regime produces the enumerated cleanup plan", () => {
 
-    const plan = planRuntimeFloorCheck(">=24");
+    const plan = planRuntimeFloorCheck({ enginesNode: ">=24", sunsetMajor: NODE_ERM_GLOBAL_MAJOR, sunsetMessage: SUNSET_CLEANUP });
 
     assert.equal(plan.kind, "sunset");
 
@@ -159,9 +88,9 @@ describe("HBUP runtime floor - regime helper", () => {
     }
   });
 
-  test("the compat regime selects the source scan plan", () => {
+  test("the compat regime selects the source sweep plan", () => {
 
-    assert.equal(planRuntimeFloorCheck(">=22.20").kind, "scan");
+    assert.equal(planRuntimeFloorCheck({ enginesNode: ">=22.20", sunsetMajor: NODE_ERM_GLOBAL_MAJOR, sunsetMessage: SUNSET_CLEANUP }).kind, "sweep");
   });
 });
 
@@ -169,13 +98,12 @@ describe("HBUP runtime floor - live conformance", () => {
 
   test("the engines floor keeps the raw-JS regime, server.js carries no ERM declaration, and no shipped source constructs a DisposableStack", async () => {
 
-    const plan = planRuntimeFloorCheck(await readEnginesNode());
+    // The regime derives from nothing but the package's own declared runtime floor - the single source of truth for what the plugin supports.
+    const plan = planRuntimeFloorCheck({ enginesNode: await readEnginesNode(new URL("../", import.meta.url)), sunsetMajor: NODE_ERM_GLOBAL_MAJOR,
+      sunsetMessage: SUNSET_CLEANUP });
 
     // The floor reached the ERM-capable release: fail with the enumerated cleanup so the raw-JS workaround cannot silently outlive the runtime it works around.
-    if(plan.kind === "sunset") {
-
-      assert.fail(plan.message);
-    }
+    assertRuntimeFloorCompat(plan);
 
     // Self-test the detectors so a silently-broken pattern fails loudly rather than reporting a false all-clear. The ERM detector must catch statement and embedded
     // forms while rejecting `using` embedded in a longer identifier, and the DisposableStack detector must catch a synthetic construction.
@@ -192,7 +120,10 @@ describe("HBUP runtime floor - live conformance", () => {
     assert.doesNotMatch(serverCode, NEW_DISPOSABLE_STACK, "homebridge-ui/server.js constructs a DisposableStack");
     assert.doesNotMatch(serverCode, NEW_ASYNC_DISPOSABLE_STACK, "homebridge-ui/server.js constructs an AsyncDisposableStack");
 
-    const files = await sweptSourceFiles();
+    // The shipped host-Node source this package holds to the rule: every `.ts` under `src/`. The `homebridge-ui/public/` tree is browser-side and out of scope for the
+    // host runtime floor, and compiled `dist/` is not swept because tsc preserves bare globals verbatim from `src`, so the source sweep is the same guard without a
+    // build-freshness dependency.
+    const files = await sweepSourceFiles({ roots: [new URL(".", import.meta.url)] });
 
     // A mis-scoped walk that enumerates almost nothing must fail loudly rather than pass vacuously.
     assert.ok(files.length >= 20, "the source walk enumerated " + files.length.toString() + " files, expected at least 20");

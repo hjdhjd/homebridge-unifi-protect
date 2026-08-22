@@ -15,10 +15,11 @@
  * and captured log telemetry - never a private session field.
  */
 import type { CameraRecordingConfiguration, RecordingPacket } from "homebridge";
-import { HDSProtocolSpecificErrorReason, HKSV_TIMEOUT, TestRecordingProcess, TestRecordingProcessFactory } from "homebridge-plugin-utils";
+import { HDSProtocolSpecificErrorReason, HKSV_TIMEOUT } from "homebridge-plugin-utils";
 import type { LivestreamSubscriptionState, Segment } from "unifi-protect";
 import { PROTECT_SEGMENT_RESOLUTION, PROTECT_TIMESHIFT_BUFFER_MAXDURATION } from "../settings.ts";
-import type { RecordingProcessFactory, TestClock, TestRecordingProcessInit } from "homebridge-plugin-utils";
+import type { TestClock, TestRecordingProcessInit } from "homebridge-plugin-utils/testing";
+import { TestRecordingProcess, TestRecordingProcessFactory } from "homebridge-plugin-utils/testing";
 import { TestStreamingDelegate, settle } from "../testing.helpers.ts";
 import { after, describe, test } from "node:test";
 import { makeLivestreamSubscriptionDouble, makeTestCameraHost } from "./testing.helpers.ts";
@@ -26,6 +27,7 @@ import type { ChannelProfile } from "./resolution.ts";
 import type { LivestreamSubscription } from "./livestream.ts";
 import { ProtectRecordingDelegate } from "./record.ts";
 import { ProtectTimeshiftSupervisor } from "./timeshift-supervisor.ts";
+import type { RecordingProcessFactory } from "homebridge-plugin-utils";
 import type { TestCameraHost } from "./testing.helpers.ts";
 import type { TestLogEntry } from "../testing.helpers.ts";
 import type { TestProtectNvr } from "../nvr/testing.helpers.ts";
