@@ -74,7 +74,7 @@
     "build-docs": "npm run build && homebridge-plugin-utils prepare-docs dist/options.js && homebridge-plugin-utils prepare-chrome docChrome.json",
     "clean": "node -e \"for(const p of ['dist','homebridge-ui/public/lib'])require('node:fs').rmSync(p,{force:true,recursive:true})\"",
     "prelint": "npm run build-ui",
-    "lint": "eslint --max-warnings=${ESLINT_MAX_WARNINGS:-\"-1\"} eslint.config.mjs src homebridge-ui/*.js homebridge-ui/public/**.mjs",
+    "lint": "eslint --max-warnings=${ESLINT_MAX_WARNINGS:-\"0\"} eslint.config.mjs src homebridge-ui/*.js homebridge-ui/public/**.mjs",
     "postpublish": "npm run clean",
     "prepublishOnly": "npm run lint && npm run typecheck && npm run build",
     "test": "node --test --experimental-test-coverage --test-timeout=15000 \"src/**/*.test.ts\"",
