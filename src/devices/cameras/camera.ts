@@ -9,7 +9,7 @@ import type { LivestreamHostOptions, ProtectCameraHost } from "../../media/camer
 import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_NVR_REBOOT_RECENCY_MS, PROTECT_SEGMENT_RESOLUTION } from "../../settings.ts";
 import type { ProtectAccessory, ProtectPersistedContextState } from "../../types.ts";
 import { ProtectAuthorizationError, deviceSelectors, livestreamAudioSampleRate } from "unifi-protect";
-import { STREAM_QUALITY_TIERS, catalogDefaultValue, selectCatalogValues, smartDetectLabel } from "../../options.ts";
+import { STREAM_QUALITY_TIERS, smartDetectLabel } from "../../options.ts";
 import { buildAdvertisedProfiles, buildChannelProfile, formatResolution, isPrimaryChannel, rtspUrl } from "../../media/resolution.ts";
 import { nightVisionActive, nightVisionBrightnessForMode, nightVisionCommandForLevel, nightVisionModeForToggleOn, nightVisionToggleCommand,
   parseNightVisionMode } from "./night-vision-policy.ts";
@@ -972,7 +972,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
    * It takes smartDetectTypes, the detection types this camera currently delivers (the intersection the reconcile pass derives once), and returns the delivered
    * detection types the user has selected for occupancy, empty when smart detection is not this camera's source of truth.
    */
-  private deriveSmartOccupancy(smartDetectTypes: ReadonlySet<string>): string[] {
+  private deriveSmartOccupancy(smartDetectTypes: ReadonlySet<string>): readonly string[] {
 
     // Being past the withdrawal short-circuit establishes only that the HARDWARE reports smart detection. This hint is that flag AND the user's Motion.SmartDetect
     // option, so a camera whose owner has the option off reaches here with it false and must carry no occupancy types at all - the base method's own contract.
@@ -1325,20 +1325,18 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     // The family the overlay still has to answer for, or null once the configuration has converged. The engine read is skipped entirely while the overlay owns the
     // answer, since the retired entries it reads are exactly the ones the engine resolves nothing from.
     const overlaid = this.overlaidFamily(option);
+
+    // The raw stored text on the non-overlaid path, read for the narration below alone: the engine read answers the pin, and this is the spelling the user wrote.
     const stored = overlaid ? undefined : this.getFeatureValue(option);
-
-    // Disabled at some scope, which pins no channel at all. It is read before the default fallback below, because nullish coalescing would not tell the two apart.
-    if(stored === null) {
-
-      return null;
-    }
-
     const selected = overlaid ? resolveLegacySelection({ controller: this.nvr.ufp.mac, device: this.device.config.mac, domain, family: overlaid,
-      options: this.platform.config.options }) : selectCatalogValues({ domain, value: stored ?? catalogDefaultValue(option) ?? "" });
+      options: this.platform.config.options }) : this.platform.featureOptions.valueList({ controller: this.nvr.ufp.mac, defaultWhenUnset: true,
+      device: this.device.config.mac, domain, option });
     const pinned = STREAM_QUALITY_TIERS.find((entry) => entry.choice === selected[0])?.tier ?? null;
 
-    // A stored quality the tier table does not offer names no channel at all. Only a hand-edited configuration reaches it, so we say which value we set aside rather
-    // than resolving it silently to no pin.
+    /* A stored quality the tier table does not offer names no channel at all. Only a hand-edited configuration reaches it, so we say which value we set aside rather
+     * than resolving it silently to no pin. The pin holds one tier by declaration, so its whole stored text is the single candidate the table is asked for: a payload
+     * naming several tiers, or the wildcard that stands for a picker's entire domain, is a value the table does not carry and lands here.
+     */
     if(stored?.length && !pinned) {
 
       this.log.debug("Ignoring an unrecognized stream quality for %s: %s.", option, stored);

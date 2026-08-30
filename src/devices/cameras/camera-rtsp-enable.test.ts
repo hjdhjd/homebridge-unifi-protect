@@ -251,6 +251,51 @@ describe("RTSP autoconfiguration write-through (deriveAdvertisedStreams)", () =>
     assert.equal(camera.hints.rtspDefault, "HIGH", "the stored High tier resolves rather than the Medium preset");
   });
 
+  /* A stored tier matches the tier table without regard to casing and answers in the table's own spelling, which is the spelling the runtime steers on. The preset
+   * never stands in for a stored tier - it answers a pin that stores nothing at all - so a casing the table failed to match would pin nothing here rather than
+   * quietly resolving the preset, and both halves would read as a miss.
+   */
+  test("a stored tier in a different casing still names its tier", async () => {
+
+    const substratePinned = await buildCamera({ channels: MIXED_RTSP_DISABLED_CHANNELS, userOptions: ["Enable.Video.Timeshift.Only=high"] });
+
+    built = substratePinned;
+
+    assert.equal(substratePinned.camera.hints.substrateDefault, "HIGH", "the lowercase spelling names the High tier");
+    assert.equal(substratePinned.camera.selectSubstrateChannel()?.channel.id, 0, "the folded tier steers the substrate to the High channel");
+
+    substratePinned.camera.cleanup();
+    substratePinned.controller.abort();
+
+    const { camera } = built = await buildCamera({ channels: MIXED_RTSP_DISABLED_CHANNELS,
+      updateRejection: new ProtectAuthorizationError("forbidden"), userOptions: ["Enable.Video.Rtsp.Only=high"] });
+
+    assert.equal(camera.hints.rtspDefault, "HIGH", "the lowercase spelling names the High tier, and not the Medium preset");
+  });
+
+  /* Each pin is a single declaration - its own copy says to choose exactly one tier - so the whole stored text is the one candidate the tier table is asked for. A
+   * hand-edited payload naming several tiers, and the wildcard that stands for a picker's entire domain, are both values the table does not carry, so each pins
+   * nothing at all rather than being guessed at.
+   */
+  test("a multi-tier payload and the wildcard each pin no tier at all", async () => {
+
+    const substratePinned = await buildCamera({ channels: MIXED_RTSP_DISABLED_CHANNELS, userOptions: ["Enable.Video.Timeshift.Only=High,Medium"] });
+
+    built = substratePinned;
+
+    assert.equal(substratePinned.camera.hints.substrateDefault, undefined, "a payload naming two tiers names none of them");
+    assert.equal(substratePinned.camera.selectSubstrateChannel()?.channel.id, 0, "the substrate policy computes its own answer, exactly as it does for an " +
+      "unpinned camera");
+
+    substratePinned.camera.cleanup();
+    substratePinned.controller.abort();
+
+    const { camera, projection } = built = await buildCamera({ channels: MIXED_RTSP_DISABLED_CHANNELS, userOptions: ["Enable.Video.Rtsp.Only=*"] });
+
+    assert.equal(camera.hints.rtspDefault, undefined, "the wildcard names no single tier");
+    assert.equal(projection.updateCalls.length, 0, "and nothing pins a channel, so the camera issues no enable write");
+  });
+
   /* A family still carrying retired entries resolves through the overlay, and no preset reaches it: the retired grammar said "pin" by naming a tier, so an entry
    * that names none pins none. The witness is a retired entry that turns a tier OFF at this camera - it puts the family on the overlay while selecting nothing - so a
    * preset leaking onto the overlay path would read as a High pin here instead of no pin.

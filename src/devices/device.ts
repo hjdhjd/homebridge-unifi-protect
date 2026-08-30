@@ -8,7 +8,6 @@ import type { DeviceCollectionKey, ProtectCameraConfig, ProtectDeviceConfig, Pro
 import { PROTECT_MOTION_DURATION, PROTECT_OCCUPANCY_DURATION} from "../settings.ts";
 import type { ProtectAccessory, ProtectPersistedContextState, ProtectProjectionMap, WithoutIdentity } from "../types.ts";
 import { acquireService, setAccessoryName, validService } from "homebridge-plugin-utils";
-import { catalogDefaultValue, selectCatalogValues, smartDetectLabel } from "../options.ts";
 import { deviceSelectors, isDeviceOnline } from "unifi-protect";
 import { legacyFamilyForOption, resolveLegacySelection } from "../options-legacy.ts";
 import type { LegacyFamily } from "../options-legacy.ts";
@@ -20,6 +19,7 @@ import type { ProtectPlatform } from "../platform.ts";
 import { ProtectReservedNames } from "../types.ts";
 import { channels } from "../diagnostics.ts";
 import { describeDevice } from "./device-descriptor.ts";
+import { smartDetectLabel } from "../options.ts";
 
 const RESERVED_NAMES = new Set(Object.values(ProtectReservedNames).map(x => x.toUpperCase()));
 
@@ -50,7 +50,7 @@ export interface ProtectHints {
 
   // The smart-detect object types selected to drive the occupancy sensor; populated only for cameras with smart detection enabled. On the base shape for the same
   // shared-machinery reason smartDetect above is.
-  smartOccupancy: string[];
+  smartOccupancy: readonly string[];
 
   // Whether this accessory is published to HomeKit as a standalone accessory rather than bridged through the platform.
   standalone: boolean;
@@ -620,11 +620,11 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
 
   /* Resolve a multiple-choice feature option's selected values against the domain this device offers right now.
    *
-   * The engine's own selection derivation is the single authority for what a stored value selects - the list grammar, the domain ordering, and the all-choices
-   * wildcard all belong to it. This wrapper adds the consumer's policies above it, and the three readings it tells apart are what make it worth having. An option
-   * disabled at some scope selects nothing. An option enabled with no stored value keeps the meaning a bare enable has always had, resolving the registered default.
-   * An explicit empty payload is a different state entirely - the user emptied the picker on purpose - and it reads as the empty selection rather than falling back.
-   * Matching folds case and answers in the domain's own spelling, so a type or tier the user typed in any casing still names its member.
+   * The engine's own list read is the single authority for what a stored value selects - the list grammar, the domain ordering, the all-choices wildcard, the case
+   * folding that answers in the domain's own spelling, and the registered default a bare enable resolves all belong to it. What this read adds is the overlay below
+   * and the scope identifiers this device resolves at. The three readings the engine tells apart are what make it worth naming here. An option disabled at some scope
+   * selects nothing. An option enabled with no stored value keeps the meaning a bare enable has always had, resolving the registered default. An explicit empty
+   * payload is a different state entirely - the user emptied the picker on purpose - and it reads as the empty selection rather than falling back.
    *
    * While a family's retired entries are still in the configuration, the selection resolves through the overlay instead, which answers with the retired
    * per-member grammar's exact three-level precedence over this device's own device and controller.
@@ -634,7 +634,7 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
    *
    * @returns The selected values, in the domain's own spelling and order.
    */
-  public getFeatureList(option: string, domain: readonly string[]): string[] {
+  public getFeatureList(option: string, domain: readonly string[]): readonly string[] {
 
     const overlaid = this.overlaidFamily(option);
 
@@ -644,15 +644,7 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
         options: this.platform.config.options });
     }
 
-    const stored = this.getFeatureValue(option);
-
-    // Disabled at some scope, which selects nothing at all. It is checked before the default fallback below, because nullish coalescing would not tell the two apart.
-    if(stored === null) {
-
-      return [];
-    }
-
-    return selectCatalogValues({ domain, value: stored ?? catalogDefaultValue(option) ?? "" });
+    return this.platform.featureOptions.valueList({ controller: this.nvr.ufp.mac, defaultWhenUnset: true, device: this.device.config.mac, domain, option });
   }
 
   /* The retired family whose overlay must still answer for a feature option at this device, or null once the configuration has converged - which is also the answer

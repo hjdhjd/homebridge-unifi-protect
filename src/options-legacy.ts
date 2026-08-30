@@ -2,9 +2,10 @@
  *
  * options-legacy.ts: Translation of retired per-member feature options into the selectable value options that carry them.
  */
-import { ALL_CHOICES, buildCatalogIndex, buildConfigIndex, enumerateConfiguredEntries, formatValueList, isValidScopeId, resolveScope } from "homebridge-plugin-utils";
+import { ALL_CHOICES, buildCatalogIndex, buildConfigIndex, enumerateConfiguredEntries, formatValueList, isValidScopeId, resolveScope,
+  selectValues } from "homebridge-plugin-utils";
 import type { ConfigIndex, FeatureCategoryEntry, FeatureOptionEntry, Nullable } from "homebridge-plugin-utils";
-import { SMART_DETECT_TYPES, STREAM_QUALITY_TIERS, featureOptionCategories, featureOptions, selectCatalogValues } from "./options.ts";
+import { SMART_DETECT_TYPES, STREAM_QUALITY_TIERS, featureOptionCategories, featureOptions } from "./options.ts";
 import { USL_FOB_BUTTONS } from "./devices/fob-buttons.ts";
 
 /* A family of retired feature options: one grammar the plugin used to spell a selection member by member, and the single value option that carries that selection
@@ -638,11 +639,11 @@ export function legacyFamilyForOption(option: string): Nullable<LegacyFamily> {
  * @returns The selected values, in the domain's own spelling and order.
  */
 export function resolveLegacySelection({ controller, device, domain, family, options }: { controller?: string; device?: string; domain: readonly string[];
-  family: LegacyFamily; options: readonly string[]; }): string[] {
+  family: LegacyFamily; options: readonly string[]; }): readonly string[] {
 
   const selected = composeFamily({ configIndex: legacyConfigIndex(options), controller, device, family });
 
-  return selectCatalogValues({ domain, value: formatValueList(selected) });
+  return selectValues({ domain, multiple: true, value: formatValueList(selected) }).selected;
 }
 
 // The durable migration.

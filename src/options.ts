@@ -2,7 +2,7 @@
  *
  * options.ts: Feature option and type definitions for UniFi Protect.
  */
-import { ALL_CHOICES, expandOption, mqttFeatureOptions, selectValues } from "homebridge-plugin-utils";
+import { ALL_CHOICES, mqttFeatureOptions } from "homebridge-plugin-utils";
 import type { FeatureCategoryEntry, FeatureOptionChoice, FeatureOptionEntry } from "homebridge-plugin-utils";
 import { PROTECT_DEVICE_REMOVAL_DELAY_INTERVAL, PROTECT_DOORBELL_CHIME_DURATION_DIGITAL, PROTECT_DOORBELL_RING_DELAY, PROTECT_FFMPEG_AUDIO_FILTER_FFTNR,
   PROTECT_FFMPEG_AUDIO_FILTER_HIGHPASS, PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS, PROTECT_M3U_PLAYLIST_PORT, PROTECT_MOTION_DURATION, PROTECT_MQTT_TOPIC,
@@ -423,69 +423,3 @@ export const describeOptionScope = (option: FeatureOptionEntry<ProtectOptionMeta
 
   return undefined;
 };
-
-// Selection reads.
-
-// The value every value-centric option registers as its default, keyed by the lowercased expanded name the engine matches on. It is built once from the catalog
-// itself, through the engine's own key composition, so the default a list read falls back to and the default the engine registers are one fact rather than two.
-const catalogDefaultValues = ((): ReadonlyMap<string, string> => {
-
-  const defaults = new Map<string, string>();
-
-  for(const [ category, entries ] of Object.entries(featureOptions)) {
-
-    for(const entry of entries) {
-
-      if(typeof entry.defaultValue === "string") {
-
-        defaults.set(expandOption(category, entry).toLowerCase(), entry.defaultValue);
-      }
-    }
-  }
-
-  return defaults;
-})();
-
-/**
- * Read the value an option registers as its default, or `undefined` when it registers none this grammar can use.
- *
- * A bare enable of a value option resolves to no value at all, and what that has always meant is the option's registered default. This is the lookup that answers
- * with it. An option whose default is a number registers nothing here: the selection grammar is textual throughout, so a numeric default names no selection.
- *
- * @param option - The feature option name, matched without regard to casing.
- *
- * @returns The registered default value, or `undefined`.
- */
-export function catalogDefaultValue(option: string): string | undefined {
-
-  return catalogDefaultValues.get(option.toLowerCase());
-}
-
-/* Read which members of a domain a stored selection names, folding case on both sides and answering in the domain's own spelling. The engine's `selectValues` is the
- * single authority for what a stored value selects - the delimiter grammar, the de-duplication, the domain ordering, and the all-choices wildcard all belong to it -
- * and this adds exactly one policy above it: our option values have always matched case-insensitively, and a configuration written years ago spells a detection type
- * or a quality tier however the user typed it. We lower both sides for the match and map each selection back to the spelling the domain supplied, so what a caller
- * receives is always a member of the domain it handed in. A domain that repeats a member under two casings keeps the first spelling it named.
- *
- * @param args
- * @param args.domain - The values available in this context, in the order they should read.
- * @param args.value  - The stored text, which may be empty.
- *
- * @returns The selected members, in domain order, in the domain's own spelling.
- */
-export function selectCatalogValues({ domain, value }: { domain: readonly string[]; value: string }): string[] {
-
-  const spellings = new Map<string, string>();
-
-  for(const member of domain) {
-
-    const lowered = member.toLowerCase();
-
-    if(!spellings.has(lowered)) {
-
-      spellings.set(lowered, member);
-    }
-  }
-
-  return selectValues({ domain: [...spellings.keys()], multiple: true, value: value.toLowerCase() }).selected.map((member) => spellings.get(member) ?? member);
-}
