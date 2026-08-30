@@ -393,9 +393,9 @@ function composeFamily({ configIndex, controller, device, family }: { configInde
 
 // Whether a family's retired master option resolved enabled at a scope, which for a kept-name family decides whether that scope's selection was ever live. The scope
 // identifier goes in at the device level for the same reason the composition's does: a configuration string cannot say whether an identifier names a device.
-function masterEnabled({ configIndex, family, scope }: { configIndex: ConfigIndex; family: LegacyFamily; scope: string }): boolean {
+function masterEnabled({ configIndex, controller, family, scope }: { configIndex: ConfigIndex; controller?: string; family: LegacyFamily; scope: string }): boolean {
 
-  return resolveScope({ catalog: legacyCatalog, configIndex, device: scope.length ? scope : undefined, option: FAMILY_OPTION[family] }).enabled;
+  return resolveScope({ catalog: legacyCatalog, configIndex, controller, device: scope.length ? scope : undefined, option: FAMILY_OPTION[family] }).enabled;
 }
 
 /* Compose the canonical entry that states a family's selection at one scope, or answer null when the scope has nothing of its own to say.
@@ -410,26 +410,33 @@ function masterEnabled({ configIndex, family, scope }: { configIndex: ConfigInde
  * touches, so it is still there saying so, and the selection under it was never live. The retired entries at such a scope are dropped, and the startup narration
  * names them.
  *
+ * The controller is supplied only by a pass that KNOWS the topology: with it, a device scope composes and inherits through its true hierarchy rather than through the
+ * scope-plus-global approximation a bare configuration string admits. Without it, both readings fall back to that approximation, which is exactly what the in-memory
+ * rewrite can offer and why the runtime overlay carries the exact answer instead.
+ *
  * @param args
  * @param args.configIndex - The configured-options index over the raw configuration.
+ * @param args.controller  - Optional controller the scope sits under.
  * @param args.family      - The family to state.
  * @param args.scope       - The scope identifier, empty for the global scope.
  *
  * @returns The canonical entry, or null when the scope needs none.
  */
-function composeEmission({ configIndex, family, scope }: { configIndex: ConfigIndex; family: LegacyFamily; scope: string }): Nullable<string> {
+function composeEmission(args: { configIndex: ConfigIndex; controller?: string; family: LegacyFamily; scope: string }): Nullable<string> {
 
-  const here = composeFamily({ configIndex, device: scope.length ? scope : undefined, family });
+  const { configIndex, controller, family, scope } = args;
+
+  const here = composeFamily({ configIndex, controller, device: scope.length ? scope : undefined, family });
   const address = FAMILY_OPTION[family] + (scope.length ? ("." + scope) : "");
 
   if(KEPT_NAME_FAMILIES.has(family)) {
 
     const payload = ALL_MEMBERS_FAMILIES.has(family) ? ALL_CHOICES : formatValueList(here);
 
-    return masterEnabled({ configIndex, family, scope }) ? ("Enable." + address + "=" + payload) : null;
+    return masterEnabled({ configIndex, controller, family, scope }) ? ("Enable." + address + "=" + payload) : null;
   }
 
-  const inherited = scope.length ? composeFamily({ configIndex, family }) : composeFamily({ configIndex: defaultConfigIndex, family });
+  const inherited = scope.length ? composeFamily({ configIndex, controller, family }) : composeFamily({ configIndex: defaultConfigIndex, family });
 
   if(here.join(",") === inherited.join(",")) {
 
@@ -636,4 +643,206 @@ export function resolveLegacySelection({ controller, device, domain, family, opt
   const selected = composeFamily({ configIndex: legacyConfigIndex(options), controller, device, family });
 
   return selectCatalogValues({ domain, value: formatValueList(selected) });
+}
+
+// The durable migration.
+
+/* One device the settings page found on a controller, as the migration needs to see it. Only the identifier matters: what the migration takes from the topology is the
+ * ability to say which controller a scope identifier sits under, which is the whole of what makes its composition exact.
+ */
+export interface LegacyTopologyDevice {
+
+  readonly mac: string;
+}
+
+// One controller and the devices beneath it, as the settings page's own probes report them.
+export interface LegacyTopologyController {
+
+  readonly devices: readonly LegacyTopologyDevice[];
+  readonly mac: string;
+}
+
+// What a durable rewrite of a configuration answers.
+export interface LegacyMigration {
+
+  // Whether any family kept its retired entries because the topology this pass had could not place one of their scopes. The caller reads it as "probe wider and come
+  // back"; a converged configuration answers false and the caller does nothing further.
+  readonly legacyRemaining: boolean;
+
+  // The configured options with every retired entry this pass could rewrite exactly replaced by its canonical form.
+  readonly options: readonly string[];
+}
+
+/* The patch the settings page's own property migration produces, and the envelope this module composes into. The options array is present only when that migration
+ * rewrote one - a controllers-only patch is a live shape and carries no options key at all, which is why every reader here tests for the KEY rather than for the patch.
+ */
+export interface MigrationPatch {
+
+  readonly options?: readonly string[];
+  readonly [key: string]: unknown;
+}
+
+// Whether two configured-options arrays say the same thing, which is what decides whether a rewrite is worth committing at all.
+function sameOptions(left: readonly string[], right: readonly string[]): boolean {
+
+  return (left.length === right.length) && left.every((entry, index) => entry === right[index]);
+}
+
+/**
+ * Rewrite a configuration's retired feature option entries into the current grammar, permanently, as far as the supplied topology makes exact.
+ *
+ * This is the same translation the platform performs in memory on every boot, with the one thing that pass cannot have: the topology. Knowing which identifiers name
+ * controllers and which name devices beneath them is what lets each scope's selection compose through its TRUE three-level walk rather than through the scope-plus-global
+ * approximation a bare configuration string admits. Where that holds, the rewrite is exact and the retired entries are dropped for good.
+ *
+ * Retirement is per family. A family carrying a scope this topology cannot place - a device on a controller that did not answer its probe - keeps its entries exactly as
+ * written and is reported as remaining, so a later pass with more topology finishes it. Nothing is guessed at, and the runtime overlay keeps honoring what stays.
+ *
+ * @param args
+ * @param args.controllers - The controllers that answered this pass, each with the devices beneath it. Omit it for the cheap detector and the topology-free rewrite.
+ * @param args.options     - The configured feature options to rewrite.
+ *
+ * @returns The rewritten options and whether any family still carries retired entries.
+ */
+export function migrateLegacyFeatureOptions(args: { controllers?: readonly LegacyTopologyController[]; options: readonly string[] }): LegacyMigration {
+
+  const { controllers, options } = args;
+
+  const configIndex = legacyConfigIndex(options);
+  const canonicalOptions = options.filter((entry) => entry.includes("="));
+  const consumed = new Set<number>();
+  const emissions: string[] = [];
+  const rewrites = new Map<number, string>();
+
+  // The controller each identifier resolves under: a controller answers for itself, and a device answers for the controller it was found on. An identifier absent from
+  // this map is one the topology cannot place, which is what makes a family's rewrite wait for a later pass.
+  const controllerFor = new Map<string, string>();
+
+  for(const controller of controllers ?? []) {
+
+    controllerFor.set(controller.mac.toLowerCase(), controller.mac);
+
+    for(const device of controller.devices) {
+
+      controllerFor.set(device.mac.toLowerCase(), controller.mac);
+    }
+  }
+
+  let legacyRemaining = false;
+
+  const addressed = new Map<LegacyFamily, { address: LegacyAddress; index: number; role: LegacyRole }[]>();
+
+  for(const [ index, raw ] of options.entries()) {
+
+    // A retired plate list needs no topology at all: its rewrite is a value re-composition, exact wherever it is found.
+    const plates = rewritePlateEntry(raw);
+
+    if(plates !== null) {
+
+      rewrites.set(index, plates);
+
+      continue;
+    }
+
+    const address = decodeLegacyAddress(raw);
+    const role = address ? OPTION_ROLES.get(address.option) : undefined;
+
+    if(!address || !role) {
+
+      continue;
+    }
+
+    const found = addressed.get(role.family) ?? [];
+
+    found.push({ address, index, role });
+    addressed.set(role.family, found);
+  }
+
+  for(const family of LEGACY_FAMILIES) {
+
+    const found = addressed.get(family) ?? [];
+    const scopes = new Set(found.filter(({ address, role }) => !role.master || (address.enabled && address.scope.length)).map(({ address }) => address.scope));
+
+    if(!scopes.size) {
+
+      continue;
+    }
+
+    // A canonical value already supersedes this family, so its retired entries carry no meaning and simply leave.
+    if(isSuperseded({ canonicalOptions, family })) {
+
+      for(const { address, index, role } of found) {
+
+        if(!role.master || (address.enabled && scopes.has(address.scope))) {
+
+          consumed.add(index);
+        }
+      }
+
+      continue;
+    }
+
+    // Every scope this family names has to be placeable, or the rewrite would compose one of them against the wrong hierarchy. A single unplaceable scope holds the
+    // whole family back rather than half-migrating it.
+    if([...scopes].some((scope) => scope.length && !controllerFor.has(scope.toLowerCase()))) {
+
+      legacyRemaining = true;
+
+      continue;
+    }
+
+    for(const { address, index, role } of found) {
+
+      if(!role.master || (address.enabled && scopes.has(address.scope))) {
+
+        consumed.add(index);
+      }
+    }
+
+    for(const scope of scopes) {
+
+      const controller = scope.length ? controllerFor.get(scope.toLowerCase()) : undefined;
+      const emission = composeEmission({ configIndex, controller: (controller === scope) ? undefined : controller, family, scope });
+
+      if(emission) {
+
+        emissions.push(emission);
+      }
+    }
+  }
+
+  return { legacyRemaining, options: options.flatMap((entry, index) => consumed.has(index) ? [] : [rewrites.get(index) ?? entry]).concat(emissions) };
+}
+
+/**
+ * Compose the single patch a settings-page open should commit, or `null` when there is nothing to write.
+ *
+ * Two writers meet here and only one array can be written, so the composition is deliberately a sequence rather than a merge: the property migration produces its patch
+ * first, and the feature-option translation runs over whatever that patch left standing. Which array that is turns on the PRESENCE OF THE OPTIONS KEY, never on the patch
+ * object - a controllers-only patch is a live shape, and reading its absent key would hand the translation an empty array and erase the user's settings.
+ *
+ * A null property patch is the common case, not an exceptional one: virtually every existing installation finished that migration long ago. It must never be read as
+ * "nothing to do", or the feature-option translation would never converge and the startup line promising it would be false.
+ *
+ * @param args
+ * @param args.controllers     - The controllers that answered this pass, each with the devices beneath it. Omit it for the topology-free pass.
+ * @param args.migratePatch    - The patch the property migration produced, or null when it produced none.
+ * @param args.platformOptions - The configuration's own feature options, which the translation runs over when the patch carries no options key.
+ *
+ * @returns The patch to commit (or null), and whether any family still carries retired entries.
+ */
+export function composeMigrationPatch({ controllers, migratePatch, platformOptions }: { controllers?: readonly LegacyTopologyController[];
+  migratePatch?: Nullable<MigrationPatch>; platformOptions?: readonly string[]; }): { legacyRemaining: boolean; patch: Nullable<MigrationPatch> } {
+
+  const source = (migratePatch && ("options" in migratePatch) && Array.isArray(migratePatch.options)) ? migratePatch.options :
+    (Array.isArray(platformOptions) ? platformOptions : []);
+  const migration = migrateLegacyFeatureOptions({ controllers, options: source });
+  const translated = !sameOptions(source, migration.options);
+
+  if(!migratePatch && !translated) {
+
+    return { legacyRemaining: migration.legacyRemaining, patch: null };
+  }
+
+  return { legacyRemaining: migration.legacyRemaining, patch: translated ? { ...migratePatch, options: [...migration.options] } : (migratePatch ?? null) };
 }

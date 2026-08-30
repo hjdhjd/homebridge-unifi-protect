@@ -10,6 +10,7 @@
 import { ProtectClient, isDeviceAdopted, noopLog } from "unifi-protect";
 import { featureOptionCategories, featureOptions } from "../dist/options.js";
 import { HomebridgePluginUiServer } from "@homebridge/plugin-ui-utils";
+import { composeMigrationPatch } from "../dist/options-legacy.js";
 import util from "node:util";
 
 class PluginUiServer extends HomebridgePluginUiServer {
@@ -21,6 +22,8 @@ class PluginUiServer extends HomebridgePluginUiServer {
     this.#registerGetDevices();
 
     this.#registerGetOptions();
+
+    this.#registerTranslateOptions();
 
     this.ready();
   }
@@ -95,6 +98,23 @@ class PluginUiServer extends HomebridgePluginUiServer {
 
     // Return the full feature-option category and option catalog the webUI renders; per-device filtering happens client-side.
     this.onRequest("/getOptions", () => ({ categories: featureOptionCategories, options: featureOptions }));
+  }
+
+  #registerTranslateOptions() {
+
+    /* Rewrite a configuration's retired feature option entries into the current grammar, permanently, and answer the single patch the page should commit. The whole of
+     * the decision lives in the composed leaf this calls, so it is exercised under node against the real catalog rather than only in the browser: which array the
+     * translation runs over, whether the result is worth writing, and how it composes with the property migration's own patch.
+     *
+     * A request carrying no topology is the cheap detector and the topology-free rewrite in one round trip. What it reports as remaining is what the caller widens its
+     * controller probes to resolve before asking again.
+     */
+    this.onRequest("/translateOptions", (request) => composeMigrationPatch({
+
+      controllers: Array.isArray(request?.topology) ? request.topology : undefined,
+      migratePatch: request?.migratePatch ?? null,
+      platformOptions: Array.isArray(request?.platformOptions) ? request.platformOptions : []
+    }));
   }
 }
 

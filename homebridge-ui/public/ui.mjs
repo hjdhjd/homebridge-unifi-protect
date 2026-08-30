@@ -1297,7 +1297,52 @@ const wireProtectConfig = async () => {
     }
   }));
 
-  const patch = protectConfig.migrate(session.platform, macByAddress);
+  const migratePatch = protectConfig.migrate(session.platform, macByAddress);
+
+  /* Fold the feature-option translation into the same envelope, as a second writer over the first one's output. The composition is a sequence rather than a merge: the
+   * server composes the final patch from the property migration's own and the translation it then runs, so exactly one options array is ever written.
+   *
+   * The first call carries no topology at all, which makes it both the cheap detector and the rewrite for every family that needs none. A converged configuration
+   * answers here with nothing remaining and nothing to write, and the flow stops - it never probes a controller and never touches the disk.
+   */
+  const composed = await withDeadline({ promise: homebridge.request("/translateOptions", { migratePatch, platformOptions: session.platform?.options ?? [] }),
+    seconds: PROBE_DEADLINE, signal: wiringSignal }).catch(() => null);
+
+  let patch = composed ? composed.patch : migratePatch;
+
+  /* A family that still carries retired entries is one whose exact rewrite needs to know which controller its scopes sit under, so the flow widens its probes past the
+   * controllers that were awaiting a MAC address and asks every configured controller for its devices. This is the only path that pays for the wider probe, and a
+   * configuration with nothing left to place never reaches it.
+   *
+   * Each probe is bounded exactly as the pass above bounds its own, and a controller that does not answer simply contributes no topology: the families whose scopes it
+   * would have placed keep their entries for a later open, and the runtime overlay keeps honoring them meanwhile.
+   */
+  if(composed?.legacyRemaining && !wiringSignal.aborted) {
+
+    const topology = (await Promise.all(controllers(session.platform).map(async ({ address, password, username }) => {
+
+      const response = await withDeadline({ promise: homebridge.request("/getDevices", { address, password, username }), seconds: PROBE_DEADLINE,
+        signal: wiringSignal }).catch(() => null);
+      const devices = response?.devices;
+
+      if(!Array.isArray(devices)) {
+
+        return null;
+      }
+
+      const mac = devices.find(isController)?.mac;
+
+      return mac ? { devices: devices.filter((device) => !isController(device) && device?.mac).map((device) => ({ mac: device.mac })), mac } : null;
+    }))).filter((entry) => entry);
+
+    const widened = await withDeadline({ promise: homebridge.request("/translateOptions", { migratePatch, platformOptions: session.platform?.options ?? [], topology }),
+      seconds: PROBE_DEADLINE, signal: wiringSignal }).catch(() => null);
+
+    if(widened) {
+
+      patch = widened.patch;
+    }
+  }
 
   // The signal is read immediately before the write, so an envelope that expired while the probes were still running - or a copy the window has retired - cannot
   // stage a patch after the fact.

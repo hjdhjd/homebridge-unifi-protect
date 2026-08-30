@@ -12,7 +12,7 @@
  * This file names the retired option grammar throughout, deliberately: it is the only place that still knows those names existed, which is the exemption the
  * zero-residue sweeps carry for it.
  */
-import { analyzeLegacyFeatureOptions, resolveLegacySelection } from "./options-legacy.ts";
+import { analyzeLegacyFeatureOptions, composeMigrationPatch, migrateLegacyFeatureOptions, resolveLegacySelection } from "./options-legacy.ts";
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 
@@ -539,5 +539,146 @@ describe("the legacy overlay", () => {
       "a sibling relay under the same controller loses only the controller's output");
     assert.deepEqual(resolveLegacySelection({ controller: OTHER_CONTROLLER, device: OTHER_CAMERA, domain, family: "relayOutputs", options }), [ "1", "2" ],
       "a relay under another controller keeps both outputs the retired catalog knew, and still not the third");
+  });
+});
+
+describe("the durable migration", () => {
+
+  // The topology the settings page's probes gather: one controller with two cameras beneath it, and a sibling controller with one.
+  const TOPOLOGY = [
+
+    { devices: [ { mac: CAMERA }, { mac: OTHER_CAMERA } ], mac: CONTROLLER },
+    { devices: [{ mac: "CC0011223344" }], mac: OTHER_CONTROLLER }
+  ];
+
+  // With no topology at all, a family whose scopes are all global rewrites exactly - there is no hierarchy to place - and nothing is reported as remaining.
+  test("a global-only configuration migrates with no topology and reports nothing remaining", () => {
+
+    const migration = migrateLegacyFeatureOptions({ options: ["Enable.Video.Rtsp.Only.High"] });
+
+    assert.deepEqual(migration.options, ["Enable.Video.Rtsp.Only=High"], "the pin is stated canonically");
+    assert.equal(migration.legacyRemaining, false, "nothing is left for a later pass");
+  });
+
+  // A scoped entry cannot be placed without topology, so the family keeps its entries untouched and says so. Nothing is guessed at and nothing is lost.
+  test("a scoped entry with no topology keeps its family's entries and reports them remaining", () => {
+
+    const options = ["Enable.Video.Rtsp.Only.Medium." + CAMERA];
+    const migration = migrateLegacyFeatureOptions({ options });
+
+    assert.deepEqual(migration.options, options, "the entries stand exactly as written");
+    assert.equal(migration.legacyRemaining, true, "the caller is told to probe wider and come back");
+  });
+
+  /* The topology-exact composition, and the reason the migration waits for topology at all. A controller-scoped subtraction and a device-scoped addition compose at the
+   * camera through its TRUE three-level walk, which the in-memory rewrite cannot reach: without knowing that this camera sits under that controller, the camera's own
+   * scope composes against the global level alone and loses the controller's subtraction. The written entry is what the runtime reads from then on, so it has to be the
+   * exact one.
+   */
+  test("a controller-plus-device composition migrates exactly once the topology places the scopes", () => {
+
+    const options = [ "Enable.Motion.OccupancySensor." + CONTROLLER, "Disable.Motion.OccupancySensor.Face." + CONTROLLER,
+      "Enable.Motion.OccupancySensor.Vehicle." + CAMERA ];
+    const migration = migrateLegacyFeatureOptions({ controllers: TOPOLOGY, options });
+
+    assert.equal(migration.legacyRemaining, false, "every scope was placed, so nothing is left for a later pass");
+    assert.deepEqual(migration.options, [ "Enable.Motion.OccupancySensor." + CONTROLLER + "=person",
+      "Enable.Motion.OccupancySensor." + CAMERA + "=person,vehicle" ], "the camera keeps the controller's subtraction and its own addition");
+
+    // The same configuration without topology composes the camera's scope against the global level alone, which is the approximation this pass exists to replace.
+    assert.deepEqual(migrateLegacyFeatureOptions({ options }).legacyRemaining, true, "without topology the family waits rather than writing the approximation");
+  });
+
+  // Retirement is per family: one family whose scopes the topology places migrates while another whose scope it cannot keeps its entries, in a single pass.
+  test("a family the topology cannot place waits while its neighbors migrate", () => {
+
+    const options = [ "Enable.Video.Rtsp.Only.High", "Enable.Video.Timeshift.Only.Low.EEFF00112233" ];
+    const migration = migrateLegacyFeatureOptions({ controllers: TOPOLOGY, options });
+
+    assert.deepEqual(migration.options, [ "Enable.Video.Timeshift.Only.Low.EEFF00112233", "Enable.Video.Rtsp.Only=High" ],
+      "the placeable family is rewritten and the unplaceable one stands exactly as written");
+    assert.equal(migration.legacyRemaining, true, "the unplaceable family is reported so a later pass can finish it");
+  });
+
+  // The plate rewrite needs no topology at all, so it lands on the very first pass alongside every other topology-free family.
+  test("a retired plate list migrates on the topology-free pass", () => {
+
+    const migration = migrateLegacyFeatureOptions({ options: ["Enable.Motion.SmartDetect.ObjectSensors.LicensePlate.ABC123-XYZ789"] });
+
+    assert.deepEqual(migration.options, ["Enable.Motion.SmartDetect.ObjectSensors.LicensePlate=ABC123,XYZ789"], "the plates are re-composed in place");
+    assert.equal(migration.legacyRemaining, false, "nothing about a plate list needs topology");
+  });
+
+  // A superseded family's retired entries carry no meaning, so the migration simply drops them rather than composing anything to replace them.
+  test("a superseded family's retired entries are dropped outright", () => {
+
+    const migration = migrateLegacyFeatureOptions({ options: [ "Enable.Video.Rtsp.Only.High", "Enable.Video.Rtsp.Only=Low" ] });
+
+    assert.deepEqual(migration.options, ["Enable.Video.Rtsp.Only=Low"], "the user's own value is all that is left");
+    assert.equal(migration.legacyRemaining, false, "a superseded family needs no later pass");
+  });
+});
+
+describe("the migration envelope", () => {
+
+  /* The common install: the property migration finished long ago and answers null, while the feature options still speak the retired grammar. A null property patch
+   * must never read as "nothing to do" - virtually every existing configuration is in exactly this state, and reading it that way would leave the translation to never
+   * converge and the startup line promising it to be false.
+   */
+  test("a null property patch with a translation to make still commits", () => {
+
+    const composed = composeMigrationPatch({ migratePatch: null, platformOptions: ["Enable.Video.Rtsp.Only.High"] });
+
+    assert.deepEqual(composed.patch, { options: ["Enable.Video.Rtsp.Only=High"] }, "the translation alone is worth a write");
+  });
+
+  /* A controllers-only patch is a live shape: the property migration can rewrite the controllers array while carrying no options key at all. What selects the array the
+   * translation runs over is the PRESENCE OF THAT KEY, never the patch object - reading an absent key would hand the translation an empty array and erase the user's
+   * settings on the way to writing it back.
+   */
+  test("a controllers-only patch composes with the configuration's own options intact", () => {
+
+    const composed = composeMigrationPatch({ migratePatch: { controllers: [{ address: "10.0.0.1" }] }, platformOptions: ["Enable.Video.Rtsp.Only.High"] });
+
+    assert.deepEqual(composed.patch, { controllers: [{ address: "10.0.0.1" }], options: ["Enable.Video.Rtsp.Only=High"] },
+      "the controllers rewrite and the translated options ride one patch");
+  });
+
+  // Two writers, one options array: the translation runs over what the property migration produced, so the final patch carries the composition rather than a race.
+  test("both writers compose into one options write", () => {
+
+    const composed = composeMigrationPatch({ migratePatch: { options: [ "Enable.Doorbell.Ring.Delay=5", "Enable.Video.Rtsp.Only.High" ], ringDelay: undefined },
+      platformOptions: ["Enable.Video.Rtsp.Only.High"] });
+
+    assert.deepEqual(composed.patch, { options: [ "Enable.Doorbell.Ring.Delay=5", "Enable.Video.Rtsp.Only=High" ], ringDelay: undefined },
+      "the property migration's own entries survive and the retired one beside them is rewritten");
+  });
+
+  // A converged configuration with nothing for either writer to do answers null, which is what keeps a settings-page open from touching the disk at all.
+  test("neither writer having anything to do answers null", () => {
+
+    const composed = composeMigrationPatch({ migratePatch: null, platformOptions: ["Enable.Video.Rtsp.Only=High"] });
+
+    assert.equal(composed.patch, null, "nothing is written");
+    assert.equal(composed.legacyRemaining, false, "and nothing is left to place");
+  });
+
+  // A property patch the translation finds nothing to add to is committed exactly as it arrived, with no options key manufactured for it.
+  test("a property patch the translation leaves alone commits unchanged", () => {
+
+    const migratePatch = { controllers: [{ address: "10.0.0.1" }] };
+    const composed = composeMigrationPatch({ migratePatch, platformOptions: ["Enable.Video.Rtsp.Only=High"] });
+
+    assert.deepEqual(composed.patch, migratePatch, "the patch is handed back as it came, carrying no options key it never had");
+  });
+
+  // The detector half the settings page gates its wider controller probes on: a scoped entry the topology-free pass cannot place is reported, and nothing is written
+  // for its family until a pass that can place it.
+  test("the envelope reports a family still needing topology", () => {
+
+    const composed = composeMigrationPatch({ migratePatch: null, platformOptions: ["Enable.Video.Rtsp.Only.Medium." + CAMERA] });
+
+    assert.equal(composed.legacyRemaining, true, "the page is told to probe wider");
+    assert.equal(composed.patch, null, "and nothing is written in the meantime");
   });
 });
