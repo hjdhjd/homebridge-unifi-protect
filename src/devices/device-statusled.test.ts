@@ -29,31 +29,25 @@
  * bare-revert await - the onSet arms no timer.
  */
 import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
-import type { TestAccessory, TestLogEntry } from "../testing.helpers.ts";
 import { TestBaseDevice, TestSensorProjection, makeSensorConfig } from "./testing.helpers.ts";
 import { afterEach, describe, test } from "node:test";
+import { formatLogEntry, loggedAt } from "homebridge-plugin-utils/testing";
 import type { ProtectAccessory } from "../types.ts";
 import { ProtectAuthorizationError } from "unifi-protect";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
 import type { Sensor } from "unifi-protect";
+import type { TestAccessory } from "../testing.helpers.ts";
+import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import assert from "node:assert/strict";
 import { makeTestNvr } from "../nvr/testing.helpers.ts";
-
-// The device logger prefixes every line with the device name; the harness renders what the real Homebridge logger would emit into entry.formatted (for example
-// "Test Sensor: Status indicator light enabled."), so a log assertion matches a substring of that rendered line at the given level, mirroring the device-motion / chime
-// suites' helper.
-function loggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], substring: string): boolean {
-
-  return entries.some((entry) => (entry.level === level) && entry.formatted.includes(substring));
-}
 
 // A tail-exact variant of loggedAt: it requires a formatted line at the given level to END WITH the supplied suffix. The failure-path assertion uses this so a regression
 // in runDeviceCommand's trailing-period strip (which would leave the line ending in a doubled period after the format string supplies its own terminal one) fails the
 // test, where a plain includes() of the single-period suffix would still match the doubled-period substring and let the regression through.
 function tailLoggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], suffix: string): boolean {
 
-  return entries.some((entry) => (entry.level === level) && entry.formatted.endsWith(suffix));
+  return entries.some((entry) => (entry.level === level) && formatLogEntry(entry).endsWith(suffix));
 }
 
 // Every harness controller this suite opens, drained in afterEach so the controller lifetime signal bounds each test's constructions rather than the file's. The builder

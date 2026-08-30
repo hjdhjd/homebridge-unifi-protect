@@ -26,7 +26,7 @@
  * would no-op.
  */
 import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../testing.helpers.ts";
-import type { TestAccessory, TestLogEntry, TestService } from "../testing.helpers.ts";
+import type { TestAccessory, TestService } from "../testing.helpers.ts";
 import type { TestMqttClient, TestProtectNvr } from "../nvr/testing.helpers.ts";
 import { afterEach, describe, test } from "node:test";
 import { makeNvrConfig, makeTestNvr } from "../nvr/testing.helpers.ts";
@@ -35,7 +35,9 @@ import { ProtectLiveviews } from "./liveviews.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import type { ProtectNvrLiveviewConfig } from "unifi-protect";
 import { ProtectReservedNames } from "../types.ts";
+import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import assert from "node:assert/strict";
+import { loggedAt } from "homebridge-plugin-utils/testing";
 import { makeLiveviewConfig } from "../devices/testing.helpers.ts";
 
 // The controller MAC the makeNvrConfig record carries; the MQTT topic scope and the self-created accessory UUIDs derive from it (the platform double's uuid generator is
@@ -51,13 +53,6 @@ const SECURITY_UUID = "uuid:" + CONTROLLER_MAC + ".Security";
 function liveviewUuid(name: string): string {
 
   return "uuid:" + CONTROLLER_MAC + ".Liveview." + name.toUpperCase();
-}
-
-// The controller logger prefixes every line with the controller name and the harness renders what the real Homebridge logger would emit into entry.formatted, so a log
-// assertion matches a substring of that rendered line at the given level, mirroring the nvr-systeminfo / security-system suites.
-function loggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], substring: string): boolean {
-
-  return entries.some((entry) => (entry.level === level) && entry.formatted.includes(substring));
 }
 
 // Seed a member-camera double into the NVR's configuredDevices registry so the liveviews motion fanout resolves it via getDeviceById. The fanout targets the member's

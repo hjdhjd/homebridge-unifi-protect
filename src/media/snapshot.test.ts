@@ -14,7 +14,7 @@ import { after, describe, test } from "node:test";
 import { ProtectSnapshot } from "./snapshot.ts";
 import type { StreamingDelegate } from "./stream-delegate.ts";
 import type { TestCameraHost } from "./testing.helpers.ts";
-import type { TestLogEntry } from "../testing.helpers.ts";
+import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import assert from "node:assert/strict";
 import { makeTestCameraHost } from "./testing.helpers.ts";
 
@@ -32,7 +32,7 @@ after(() => {
 // The count of log lines at a level whose first format string contains the given fragment.
 function countLogs(entries: TestLogEntry[], level: TestLogEntry["level"], fragment: string): number {
 
-  return entries.filter((entry) => (entry.level === level) && (typeof entry.parameters[0] === "string") && entry.parameters[0].includes(fragment)).length;
+  return entries.filter((entry) => (entry.level === level) && entry.message.includes(fragment)).length;
 }
 
 // Build a ProtectSnapshot over a camera host whose timeshift buffer's snapshotSource is steered to the given decline kind, and whose RTSP and controller sources decline

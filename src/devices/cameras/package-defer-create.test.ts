@@ -11,7 +11,7 @@
  */
 import { G6_PRO_ENTRY_CHANNELS, PACKAGE_FIXTURES } from "../../camera.fixtures.ts";
 import { Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../../testing.helpers.ts";
-import type { TestAccessory, TestLogEntry, TestStreamingDelegateFactory, TestTimeshiftSupervisor } from "../../testing.helpers.ts";
+import type { TestAccessory, TestStreamingDelegateFactory, TestTimeshiftSupervisor } from "../../testing.helpers.ts";
 import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
 import { after, before, describe, test } from "node:test";
 import type { Camera } from "unifi-protect";
@@ -19,9 +19,11 @@ import type { ObserverWakePayload } from "../../diagnostics.ts";
 import type { ProtectAccessory } from "../../types.ts";
 import { ProtectCamera } from "./camera.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
+import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
+import { formatLogEntry } from "homebridge-plugin-utils/testing";
 import { makeTestNvr } from "../../nvr/testing.helpers.ts";
 
 // The deferral sentence's distinguishing fragment, used to count the user-facing narration exactly once.
@@ -45,7 +47,7 @@ describe("package camera defer-create (BC1)", () => {
   // Count the user-facing deferral narrations logged so far.
   function deferralLineCount(): number {
 
-    return logEntries.filter((entry) => (entry.level === "info") && entry.formatted.includes(DEFERRAL_FRAGMENT)).length;
+    return logEntries.filter((entry) => (entry.level === "info") && formatLogEntry(entry).includes(DEFERRAL_FRAGMENT)).length;
   }
 
   // The package camera's accessory, asserted live.
@@ -243,7 +245,7 @@ describe("package camera create-at-adoption (the channel-present arm)", () => {
 
     assert.ok(accessory, "the package camera was composed during construction");
     assert.equal(accessory.configureControllerCalls.length, 1, "the package registered its HomeKit camera controller inside the constructor's own call frame");
-    assert.equal(logEntries.filter((entry) => entry.formatted.includes(DEFERRAL_FRAGMENT)).length, 0,
+    assert.equal(logEntries.filter((entry) => formatLogEntry(entry).includes(DEFERRAL_FRAGMENT)).length, 0,
       "a package whose channel is already provisioned narrates no deferral");
 
     // Exactly one delegate exists at this instant, and it is the PACKAGE'S. The parent's derivation is declared async, so even with every channel already RTSP-enabled

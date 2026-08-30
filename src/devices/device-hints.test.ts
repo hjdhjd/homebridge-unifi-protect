@@ -30,7 +30,6 @@
  * configureHints is synchronous and observer-free (no observeState, no services, no commands, no MQTT), so there is no observer-wake subscription and no settle() here -
  * the hints are read and the logs are asserted immediately after the synchronous configureHintsFor call.
  */
-import type { TestAccessory, TestLogEntry } from "../testing.helpers.ts";
 import { TestBaseDevice, TestSensorProjection, makeSensorConfig } from "./testing.helpers.ts";
 import { TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
 import { afterEach, describe, test } from "node:test";
@@ -38,16 +37,11 @@ import type { ProtectAccessory } from "../types.ts";
 import type { ProtectHints } from "./device.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import type { Sensor } from "unifi-protect";
+import type { TestAccessory } from "../testing.helpers.ts";
+import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import assert from "node:assert/strict";
+import { loggedAt } from "homebridge-plugin-utils/testing";
 import { makeTestNvr } from "../nvr/testing.helpers.ts";
-
-// The device logger prefixes every line with the device name; the harness renders what the real Homebridge logger would emit into entry.formatted (for example
-// "Test Sensor: Motion event duration set to 20 seconds."), so a log assertion matches a substring of that rendered line at the given level, mirroring the
-// device-motion / device-statusled suites' helper.
-function loggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], substring: string): boolean {
-
-  return entries.some((entry) => (entry.level === level) && entry.formatted.includes(substring));
-}
 
 // Every harness controller this suite opens, drained in afterEach so the controller lifetime signal bounds each test's constructions rather than the file's. The builder
 // is the single push site, so a construction inside a test body is captured exactly as the fixture's is.

@@ -21,15 +21,17 @@
 import { AI_PRO_CHANNELS, CAMERA_FIXTURES, G2_PRO_CHANNELS, G6_PRO_ENTRY_CHANNELS, MIXED_RTSP_DISABLED_CHANNELS, makeChannel } from "../../camera.fixtures.ts";
 import type { Camera, ProtectCameraConfig } from "unifi-protect";
 import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
-import type { TestLogEntry, TestStreamingDelegateFactory } from "../../testing.helpers.ts";
 import { TestStateStore, makeProtectState, makeTestAccessory, settle } from "../../testing.helpers.ts";
 import { afterEach, describe, test } from "node:test";
+import { logCount, loggedAt } from "homebridge-plugin-utils/testing";
 import type { CameraFixture } from "../../camera.fixtures.ts";
 import { PACKAGE_CHANNEL_NAME } from "../../media/resolution.ts";
 import type { ProtectAccessory } from "../../types.ts";
 import { ProtectAuthorizationError } from "unifi-protect";
 import { ProtectCamera } from "./camera.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
+import type { TestLogEntry } from "homebridge-plugin-utils/testing";
+import type { TestStreamingDelegateFactory } from "../../testing.helpers.ts";
 import assert from "node:assert/strict";
 import { makeTestNvr } from "../../nvr/testing.helpers.ts";
 
@@ -40,19 +42,6 @@ const AUTH_WARN = "Unable to enable RTSP on all of the camera's channels because
 
 // The feature option that switches live views to direct RTSP, which is what puts a camera in the population that genuinely needs the enable write.
 const TOGGLE_OFF = ["Disable.Video.Timeshift.Livestream"];
-
-// A log assertion matches a substring of entry.formatted at the given level, mirroring the established loggedAt idiom: the device logger prefixes every line with the
-// device descriptor, so substring matching is the faithful comparison.
-function loggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], substring: string): boolean {
-
-  return entries.some((entry) => (entry.level === level) && entry.formatted.includes(substring));
-}
-
-// Count the entries at a level carrying a substring, for the re-attempt assertions that pin cadence rather than mere presence.
-function countLoggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], substring: string): number {
-
-  return entries.filter((entry) => (entry.level === level) && entry.formatted.includes(substring)).length;
-}
 
 // Resolve a named fixture from the golden-master corpus, failing loudly if the corpus ever renames it.
 function fixtureByModel(model: string): CameraFixture {
@@ -126,7 +115,7 @@ describe("RTSP autoconfiguration write-through (deriveAdvertisedStreams)", () =>
 
     // Nothing about this configuration streams over RTSP, so the camera never touches the controller's channel config and never defers its own surface behind a write.
     assert.equal(projection.updateCalls.length, 0, "a default-config camera issues no enable write at all");
-    assert.equal(countLoggedAt(logEntries, "warn", "Unable to enable RTSP"), 0, "a camera that never writes narrates no failure");
+    assert.equal(logCount(logEntries, "warn", "Unable to enable RTSP"), 0, "a camera that never writes narrates no failure");
     assert.equal(factory.createCalls.length, 1, "the delegate stands up immediately, with no write to wait on");
 
     // Every sane primary channel is advertised, RTSP-disabled Medium included - the mixed regime is channel-identical to the G6 Instant corpus fixture, so its
@@ -213,7 +202,7 @@ describe("RTSP autoconfiguration write-through (deriveAdvertisedStreams)", () =>
 
     // The accepted write narrates nothing and defers the streaming surface to the reconcile.
     assert.equal(factory.createCalls.length, 0, "no delegate stands up until the channels observer re-runs against the reconciled state");
-    assert.equal(countLoggedAt(logEntries, "warn", "Unable to enable RTSP"), 0, "an accepted enable logs no warning");
+    assert.equal(logCount(logEntries, "warn", "Unable to enable RTSP"), 0, "an accepted enable logs no warning");
 
     // The controller's reconciled state arrives: every channel now reads enabled. The observer re-run stands the delegate up and issues no further write.
     store.pushCameraPatch(cameraConfig.id, { channels: enabledChannels });
@@ -232,7 +221,7 @@ describe("RTSP autoconfiguration write-through (deriveAdvertisedStreams)", () =>
     // The write was attempted, declined, and narrated at warn - verbatim, so the guidance text is pinned.
     assert.equal(projection.updateCalls.length, 1, "the enable write was attempted despite the limited account");
     assert.ok(loggedAt(logEntries, "warn", AUTH_WARN), "the authorization warn carries the full dual-remedy guidance");
-    assert.equal(countLoggedAt(logEntries, "error", "Unable to enable RTSP"), 0, "the degraded arm is a warn, never an error");
+    assert.equal(logCount(logEntries, "error", "Unable to enable RTSP"), 0, "the degraded arm is a warn, never an error");
 
     // The camera streams anyway: the delegate stands up, and the direct-RTSP selection resolves within the enabled subset.
     assert.equal(factory.createCalls.length, 1, "the delegate stands up from the already-enabled channels");
@@ -274,7 +263,7 @@ describe("RTSP autoconfiguration write-through (deriveAdvertisedStreams)", () =>
     assert.equal(camera.hasRtspStream, false, "the camera honestly reports that it has no RTSP stream to dial");
     assert.equal(camera.selectChannel(1920, 1080), null, "the direct-RTSP selector answers nothing, since nothing is enabled");
     assert.ok(camera.selectSubstrateChannel(), "the buffer substrate resolves anyway - the livestream API serves the channel regardless");
-    assert.equal(countLoggedAt(logEntries, "info", "cannot use the UniFi Protect livestream API"), 0, "no terminal fires for a camera the API can serve");
+    assert.equal(logCount(logEntries, "info", "cannot use the UniFi Protect livestream API"), 0, "no terminal fires for a camera the API can serve");
   });
 
   test("a toggle-off camera with every channel RTSP-disabled still advertises, its live views degrading to the buffer", async () => {
@@ -289,7 +278,7 @@ describe("RTSP autoconfiguration write-through (deriveAdvertisedStreams)", () =>
     assert.equal(factory.createCalls.length, 1, "the toggle-off camera advertises anyway");
     assert.equal(camera.hasRtspStream, false, "there is still nothing to dial directly");
     assert.ok(camera.selectSubstrateChannel(), "the buffer substrate resolves, so the buffer, HKSV, and snapshots all have a channel");
-    assert.equal(countLoggedAt(logEntries, "info", "cannot use the UniFi Protect livestream API"), 0, "no terminal fires - the API can serve this camera");
+    assert.equal(logCount(logEntries, "info", "cannot use the UniFi Protect livestream API"), 0, "no terminal fires - the API can serve this camera");
   });
 
   test("a later channels wake re-attempts the declined write - there is no failure latch", async () => {
@@ -307,7 +296,7 @@ describe("RTSP autoconfiguration write-through (deriveAdvertisedStreams)", () =>
     await settle();
 
     assert.equal(projection.updateCalls.length, 2, "the channels wake re-attempted the enable write");
-    assert.equal(countLoggedAt(logEntries, "warn", AUTH_WARN), 2, "each declined attempt narrates its own warn");
+    assert.equal(logCount(logEntries, "warn", AUTH_WARN), 2, "each declined attempt narrates its own warn");
   });
 
   test("a camera reporting only a package channel reports no usable video channels and stands up nothing", async () => {

@@ -38,11 +38,12 @@
  * store.observerCount are clean every test, the wake log is windowed per push via a captured baseline, and an afterEach unwinds the sensor's per-accessory abort.
  */
 import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../testing.helpers.ts";
-import type { CharacteristicType, TestAccessory, TestLogEntry } from "../testing.helpers.ts";
+import type { CharacteristicType, TestAccessory } from "../testing.helpers.ts";
 import type { ProtectSensorAirQuality, Sensor } from "unifi-protect";
 import { TestRecordingDispatch, makeTestNvr } from "../nvr/testing.helpers.ts";
 import { TestSensorProjection, makeSensorConfig } from "./testing.helpers.ts";
 import { after, afterEach, before, beforeEach, describe, test } from "node:test";
+import { logCount, loggedAt } from "homebridge-plugin-utils/testing";
 import { NOT_CAPABLE_AIR_QUALITY } from "./air-quality-policy.ts";
 import type { Nullable } from "homebridge-plugin-utils";
 import type { ObserverWakePayload } from "../diagnostics.ts";
@@ -51,24 +52,10 @@ import type { ProtectEventDispatch } from "../nvr/event-dispatch.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
 import { ProtectSensor } from "./sensor.ts";
+import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import type { TestMqttClient } from "../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
-
-// The device logger prefixes every line with the device name; the harness renders what the real Homebridge logger would emit into entry.formatted (for example
-// "Test Sensor: Enabled sensor: temperature."), so a log assertion matches a substring of that rendered line at the given level, mirroring the chime / device-motion
-// suites' helper.
-function loggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], substring: string): boolean {
-
-  return entries.some((entry) => (entry.level === level) && entry.formatted.includes(substring));
-}
-
-// The count companion to loggedAt: how MANY log lines at the given level contain the substring. The alarm-family transition assertions need an exact count (a transition
-// must log EXACTLY once per edge), which the presence-only loggedAt cannot express; loggedAt stays fine for absence assertions.
-function countLoggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], substring: string): number {
-
-  return entries.filter((entry) => (entry.level === level) && entry.formatted.includes(substring)).length;
-}
 
 // A full block of air-quality readings, quiet except the metrics a case names - the shape the controller always sends, where every metric is present whether or not the
 // hardware measures it. Air-quality patches carry the WHOLE block, matching how this suite pushes every other nested settings object.
@@ -813,14 +800,14 @@ describe("real ProtectSensor construction and family behavior", () => {
     await settle();
 
     assert.equal(glass.getCharacteristic(Characteristic.ContactSensorState).value, true, "the non-null alarmTriggeredAt landed on the glass-break ContactSensorState");
-    assert.equal(countLoggedAt(built.logEntries, "info", "Glass break detected."), 1, "the detection logged the Glass-break transition exactly once");
+    assert.equal(logCount(built.logEntries, "info", "Glass break detected."), 1, "the detection logged the Glass-break transition exactly once");
 
     built.store.pushSensorPatch("test-sensor-1", { alarmTriggeredAt: null });
 
     await settle();
 
     assert.equal(glass.getCharacteristic(Characteristic.ContactSensorState).value, false, "clearing alarmTriggeredAt cleared the glass-break ContactSensorState");
-    assert.equal(countLoggedAt(built.logEntries, "info", "Glass break no longer detected."), 1, "the clear logged the Glass-break transition exactly once");
+    assert.equal(logCount(built.logEntries, "info", "Glass break no longer detected."), 1, "the clear logged the Glass-break transition exactly once");
 
     built.sensor.cleanup();
   });
@@ -840,14 +827,14 @@ describe("real ProtectSensor construction and family behavior", () => {
     await settle();
 
     assert.equal(alarm.getCharacteristic(Characteristic.ContactSensorState).value, true, "the non-null alarmTriggeredAt landed on the alarm-sound ContactSensorState");
-    assert.equal(countLoggedAt(built.logEntries, "info", "Alarm detected."), 1, "the detection logged the Alarm transition exactly once with the alarm-sound label");
+    assert.equal(logCount(built.logEntries, "info", "Alarm detected."), 1, "the detection logged the Alarm transition exactly once with the alarm-sound label");
 
     built.store.pushSensorPatch("test-sensor-1", { alarmTriggeredAt: null });
 
     await settle();
 
     assert.equal(alarm.getCharacteristic(Characteristic.ContactSensorState).value, false, "clearing alarmTriggeredAt cleared the alarm-sound ContactSensorState");
-    assert.equal(countLoggedAt(built.logEntries, "info", "Alarm no longer detected."), 1, "the clear logged the Alarm transition exactly once");
+    assert.equal(logCount(built.logEntries, "info", "Alarm no longer detected."), 1, "the clear logged the Alarm transition exactly once");
 
     built.sensor.cleanup();
   });
@@ -962,8 +949,8 @@ describe("real ProtectSensor construction and family behavior", () => {
     await settle();
 
     assert.equal(glass.getCharacteristic(Characteristic.ContactSensorState).value, true, "third edge: re-detected on a distinct timestamp");
-    assert.equal(countLoggedAt(built.logEntries, "info", "Glass break detected."), 2, "each detection edge logged exactly once (two detections)");
-    assert.equal(countLoggedAt(built.logEntries, "info", "Glass break no longer detected."), 1, "the single clear edge logged exactly once");
+    assert.equal(logCount(built.logEntries, "info", "Glass break detected."), 2, "each detection edge logged exactly once (two detections)");
+    assert.equal(logCount(built.logEntries, "info", "Glass break no longer detected."), 1, "the single clear edge logged exactly once");
 
     built.sensor.cleanup();
   });
@@ -1261,7 +1248,7 @@ describe("real ProtectSensor construction and family behavior", () => {
     assert.ok(service, "the vape contact sensor exists");
     assert.equal(service.getCharacteristic(Characteristic.ContactSensorState).value, false, "the all-clear status leaves the contact closed");
     assert.equal(service.getCharacteristic(Characteristic.StatusActive).value, true, "the vape sensor carries the shared state characteristics");
-    assert.equal(countLoggedAt(built.logEntries, "info", "Vaping"), 0, "a quiet first reading is saved silently rather than narrated");
+    assert.equal(logCount(built.logEntries, "info", "Vaping"), 0, "a quiet first reading is saved silently rather than narrated");
     assert.ok(loggedAt(built.logEntries, "info", "vape"), "the vape label reached the enabled-sensors log");
 
     built.sensor.cleanup();
@@ -1282,7 +1269,7 @@ describe("real ProtectSensor construction and family behavior", () => {
     await settle();
 
     assert.equal(service.getCharacteristic(Characteristic.ContactSensorState).value, true, "the detection opened the contact");
-    assert.equal(countLoggedAt(built.logEntries, "info", "Vaping detected."), 1, "the transition was narrated exactly once");
+    assert.equal(logCount(built.logEntries, "info", "Vaping detected."), 1, "the transition was narrated exactly once");
 
     // The negative control: a reconcile driven by an unrelated field change, with the vape state unmoved. The state must not be re-narrated on every patch, and this
     // sensor sees one roughly every second and a half in the field.
@@ -1290,7 +1277,7 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     await settle();
 
-    assert.equal(countLoggedAt(built.logEntries, "info", "Vaping detected."), 1, "a reconcile that changed nothing about vaping said nothing about it");
+    assert.equal(logCount(built.logEntries, "info", "Vaping detected."), 1, "a reconcile that changed nothing about vaping said nothing about it");
     assert.equal(service.getCharacteristic(Characteristic.ContactSensorState).value, true, "the contact still reports the ongoing detection");
 
     built.sensor.cleanup();
@@ -1302,13 +1289,13 @@ describe("real ProtectSensor construction and family behavior", () => {
     const detecting = buildSensor({ airQuality: { vape: { status: "detected", value: null } }, vapeEnabled: true },
       { userOptions: ["Enable.Sensor.Vape"] });
 
-    assert.equal(countLoggedAt(detecting.logEntries, "info", "Vaping detected."), 1, "an ongoing detection at construction is narrated exactly once");
+    assert.equal(logCount(detecting.logEntries, "info", "Vaping detected."), 1, "an ongoing detection at construction is narrated exactly once");
 
     detecting.sensor.cleanup();
 
     const quiet = buildSensor({ airQuality: { vape: { status: "neutral", value: null } }, vapeEnabled: true }, { userOptions: ["Enable.Sensor.Vape"] });
 
-    assert.equal(countLoggedAt(quiet.logEntries, "info", "Vaping"), 0, "a quiet sensor at construction narrates nothing");
+    assert.equal(logCount(quiet.logEntries, "info", "Vaping"), 0, "a quiet sensor at construction narrates nothing");
 
     quiet.sensor.cleanup();
   });
@@ -1322,21 +1309,21 @@ describe("real ProtectSensor construction and family behavior", () => {
     const service = built.accessory.getServiceById(Service.ContactSensor, ProtectReservedNames.CONTACT_SENSOR_VAPE);
 
     assert.ok(service, "the vape contact sensor exists");
-    assert.equal(countLoggedAt(built.logEntries, "info", "Vaping detected."), 1, "the ongoing detection was narrated once at construction");
+    assert.equal(logCount(built.logEntries, "info", "Vaping detected."), 1, "the ongoing detection was narrated once at construction");
 
     // The metric falls to the not-capable shape. Reading that as an all-clear would tell the user vaping stopped when the sensor simply stopped answering.
     built.store.pushSensorPatch("test-sensor-1", { airQuality: airQualityBlock({}) });
 
     await settle();
 
-    assert.equal(countLoggedAt(built.logEntries, "info", "Vaping no longer detected."), 0, "the dropout narrated no all-clear the sensor never reported");
+    assert.equal(logCount(built.logEntries, "info", "Vaping no longer detected."), 0, "the dropout narrated no all-clear the sensor never reported");
     assert.equal(service.getCharacteristic(Characteristic.ContactSensorState).value, true, "the contact held its last reported state through the dropout");
 
     built.store.pushSensorPatch("test-sensor-1", { airQuality: airQualityBlock({ vape: { status: "detected", value: null } }) });
 
     await settle();
 
-    assert.equal(countLoggedAt(built.logEntries, "info", "Vaping detected."), 1, "the returning detection was not narrated a second time - the state never changed");
+    assert.equal(logCount(built.logEntries, "info", "Vaping detected."), 1, "the returning detection was not narrated a second time - the state never changed");
 
     built.sensor.cleanup();
   });
@@ -1361,7 +1348,7 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     assert.ok(service, "the cached vape sensor survives a quiet metric - only the toggles remove it");
     assert.equal(service.getCharacteristic(Characteristic.ContactSensorState).value, true, "the restored detection stands; no all-clear was manufactured over it");
-    assert.equal(countLoggedAt(built.logEntries, "info", "Vaping"), 0, "nothing was narrated about a metric that said nothing");
+    assert.equal(logCount(built.logEntries, "info", "Vaping"), 0, "nothing was narrated about a metric that said nothing");
     assert.equal(built.mqtt.published.some((entry) => entry.topic === (built.projection.config.mac + "/vape")), false,
       "no vape state was published from a reading the sensor never gave");
 
@@ -1377,7 +1364,7 @@ describe("real ProtectSensor construction and family behavior", () => {
     await settle();
 
     assert.ok(built.accessory.getServiceById(Service.ContactSensor, ProtectReservedNames.CONTACT_SENSOR_VAPE), "the vape contact sensor exists while detecting");
-    assert.equal(countLoggedAt(built.logEntries, "info", "Vaping detected."), 1, "the detection was narrated once");
+    assert.equal(logCount(built.logEntries, "info", "Vaping detected."), 1, "the detection was narrated once");
 
     const settings = built.projection.config.airQualitySettings;
 
@@ -1397,7 +1384,7 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     assert.ok(service, "re-enabling brought the sensor back");
     assert.equal(service.getCharacteristic(Characteristic.ContactSensorState).value, false, "the returning sensor reports the quiet reading");
-    assert.equal(countLoggedAt(built.logEntries, "info", "Vaping no longer detected."), 0,
+    assert.equal(logCount(built.logEntries, "info", "Vaping no longer detected."), 0,
       "the fresh service seeded silently - stale bookkeeping would have announced an all-clear here");
 
     built.sensor.cleanup();

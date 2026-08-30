@@ -21,7 +21,7 @@ import { FeatureOptions, formatErrorMessage, isHbpuAbortError } from "homebridge
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_NVR_REBOOT_RECENCY_MS, PROTECT_NVR_REMOVAL_STABILITY_WINDOW } from "../settings.ts";
 import type { ProtectAccessory, ProtectDevices } from "../types.ts";
 import type { ProtectNvrOptions, ProtectOptions } from "../options.ts";
-import type { TestApiCall, TestLogEntry, TestStateStore } from "../testing.helpers.ts";
+import type { TestApiCall, TestStateStore } from "../testing.helpers.ts";
 import { TestClock, TestRecordingProcessFactory } from "homebridge-plugin-utils/testing";
 import { countActiveRecordingViews, isDisruptionExpected } from "./nvr-policy.ts";
 import { featureOptionCategories, featureOptions } from "../options.ts";
@@ -41,8 +41,8 @@ import { RebootScheduler } from "./nvr-reboot.ts";
 import { RemovalStabilityGate } from "./nvr-removal.ts";
 import { StreamingCapability } from "../devices/cameras/streaming.ts";
 import type { TestChimeProjection } from "../devices/testing.helpers.ts";
+import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import { analyzeLegacyFeatureOptions } from "../options-legacy.ts";
-import util from "node:util";
 
 // One recorded MQTT subscription registration: the composed topic tail, the human-readable type label, the registration kind, the per-subscription init options
 // production passed (the lifetime signal lives there, so a test can assert which signal scoped each registration and observe it abort with its owner), and the captured
@@ -160,10 +160,10 @@ export interface TestProtectPlatform {
   readonly legacyOptions: LegacyFeatureOptions;
   readonly log: {
 
-    debug: (...parameters: unknown[]) => void;
-    error: (...parameters: unknown[]) => void;
-    info: (...parameters: unknown[]) => void;
-    warn: (...parameters: unknown[]) => void;
+    debug: (message: string, ...params: unknown[]) => void;
+    error: (message: string, ...params: unknown[]) => void;
+    info: (message: string, ...params: unknown[]) => void;
+    warn: (message: string, ...params: unknown[]) => void;
   };
   readonly pluginLog: HomebridgePluginLogging;
   readonly recordingProcessFactory: RecordingProcessFactory;
@@ -255,10 +255,10 @@ export class TestProtectNvr {
   public lastRebootObservedAt: Nullable<number> = null;
   public readonly log: {
 
-    debug: (...parameters: unknown[]) => void;
-    error: (...parameters: unknown[]) => void;
-    info: (...parameters: unknown[]) => void;
-    warn: (...parameters: unknown[]) => void;
+    debug: (message: string, ...params: unknown[]) => void;
+    error: (message: string, ...params: unknown[]) => void;
+    info: (message: string, ...params: unknown[]) => void;
+    warn: (message: string, ...params: unknown[]) => void;
   };
 
   public readonly mqtt: Nullable<TestMqttClient>;
@@ -661,10 +661,11 @@ export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: T
   const factory = new TestStreamingDelegateFactory();
   const logEntries: TestLogEntry[] = [];
   const recordingProcessFactory = options.recordingProcessFactory ?? new TestRecordingProcessFactory();
-  const sink = (level: TestLogEntry["level"]): ((...parameters: unknown[]) => void) => (...parameters: unknown[]): void => {
+  const sink = (level: TestLogEntry["level"]): ((message: string, ...params: unknown[]) => void) => (message: string, ...params: unknown[]): void => {
 
-    // Capture both channels: the raw argument list for media tests that read a structured object argument, and the util.format line the real Homebridge sink would emit.
-    logEntries.push({ formatted: util.format(...parameters as [string, ...unknown[]]), level, parameters });
+    // Capture what the logger was actually called with - the message and the arguments beside it - which is the shape the shared testing helpers read and render. A
+    // test wanting the line the real Homebridge sink would emit renders the entry; one wanting a structured object argument reads it straight off params.
+    logEntries.push({ level, message, params });
   };
   const log = { debug: sink("debug"), error: sink("error"), info: sink("info"), warn: sink("warn") };
 

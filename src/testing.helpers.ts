@@ -12,7 +12,7 @@
  * Alongside the HAP double this file holds the rest of the harness's cross-cutting core: TestStateStore, the facade over unifi-protect's real state store, with
  * makeProtectState to seed it; the streaming and timeshift stubs every device family that constructs a real camera host shares (the streaming delegate and its factory,
  * which satisfies the platform's dependency-inversion contract so a REAL device can be constructed with no FFmpeg, and the timeshift buffer and supervisor doubles); the
- * TestLogEntry and TestApiCall record shapes the log and registration sinks capture into; and settle(), the one-macrotask wait every asynchronous assertion turns on.
+ * TestApiCall record shape the registration sink captures into; and settle(), the one-macrotask wait every asynchronous assertion turns on.
  *
  * The per-subsystem helpers live beside the code they serve, each importing this file: devices/testing.helpers.ts owns the config builders, the projection doubles,
  * and TestBaseDevice; media/testing.helpers.ts owns TestCameraHost and the fragment and livestream doubles; nvr/testing.helpers.ts owns the NVR, platform, and MQTT
@@ -1542,16 +1542,6 @@ export class TestStreamingDelegateFactory implements StreamingDelegateFactory {
 
     return delegate;
   }
-}
-
-// One captured log line from the harness's recording sinks. `parameters` is the raw argument list exactly as the caller passed it, so a media test can read a structured
-// object argument straight off it; `formatted` is the single line Homebridge's logger would write, derived by running util.format over those parameters the same way the
-// real sink does, so a test asserting on final substituted text reads it rather than reassembling the arguments. `level` is the severity the line was emitted at.
-export interface TestLogEntry {
-
-  formatted: string;
-  level: "debug" | "error" | "info" | "warn";
-  parameters: unknown[];
 }
 
 // One recorded homebridge API registration call: which registration verb production invoked and the accessories it carried (snapshotted for the update verb, which

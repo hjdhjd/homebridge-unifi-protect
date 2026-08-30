@@ -31,7 +31,7 @@
  */
 import type { Camera, ProtectCameraConfig } from "unifi-protect";
 import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../../testing.helpers.ts";
-import type { TestAccessory, TestLogEntry, TestStreamingDelegateFactory } from "../../testing.helpers.ts";
+import type { TestAccessory, TestStreamingDelegateFactory } from "../../testing.helpers.ts";
 import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
 import { TestRecordingDispatch, makeTestNvr } from "../../nvr/testing.helpers.ts";
 import { afterEach, describe, mock, test } from "node:test";
@@ -44,6 +44,7 @@ import { ProtectCameraPackage } from "./camera-package.ts";
 import type { ProtectEventDispatch } from "../../nvr/event-dispatch.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
 import { ProtectReservedNames } from "../../types.ts";
+import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 
@@ -546,7 +547,7 @@ describe("camera-family observer reactions and bound read handlers (camera-react
     // presence, because the behavior under assertion is "exactly once per outage" - a boolean would pass the moment the first line landed, whatever followed it.
     function countWarns(entries: TestLogEntry[], fragment: string): number {
 
-      return entries.filter((entry) => (entry.level === "warn") && (typeof entry.parameters[0] === "string") && entry.parameters[0].includes(fragment)).length;
+      return entries.filter((entry) => (entry.level === "warn") && entry.message.includes(fragment)).length;
     }
 
     const ABSENCE_LINE = "has not come back online since the controller rebooted";

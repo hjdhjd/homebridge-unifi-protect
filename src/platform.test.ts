@@ -18,19 +18,12 @@ import { featureOptionCategories, featureOptions } from "./options.ts";
 import { FeatureOptions } from "homebridge-plugin-utils";
 import { ProtectPlatform } from "./platform.ts";
 import type { ProtectPlatformConfig } from "./types.ts";
+import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import assert from "node:assert/strict";
 
 // The controller and camera these rows resolve against.
 const CONTROLLER = "AABBCCDDEEFF";
 const CAMERA = "0123456789AB";
-
-// One captured line from the logger double, carrying the severity, the message, and whatever context rode alongside it.
-interface CapturedLine {
-
-  level: string;
-  message: string;
-  parameters: unknown[];
-}
 
 /* Build the platform against the smallest doubles its construction reaches.
  *
@@ -41,14 +34,16 @@ interface CapturedLine {
  *
  * @returns The constructed platform and every line its construction logged.
  */
-function buildPlatform(options: string[]): { lines: CapturedLine[]; platform: ProtectPlatform } {
+function buildPlatform(options: string[]): { lines: TestLogEntry[]; platform: ProtectPlatform } {
 
-  const lines: CapturedLine[] = [];
-  const sink = (level: string) => (message: string, ...parameters: unknown[]): void => {
+  const lines: TestLogEntry[] = [];
+  const sink = (level: TestLogEntry["level"]) => (message: string, ...params: unknown[]): void => {
 
-    lines.push({ level, message, parameters });
+    lines.push({ level, message, params });
   };
-  const log = Object.assign(sink("info"), { debug: sink("debug"), error: sink("error"), info: sink("info"), log: sink("info"), success: sink("success"),
+  // Homebridge's own logger is a callable object carrying a method per level, and the plugin's debug router wraps it, so the double has to be one too. Its success and
+  // log channels record at info: the captured shape carries the four severities production actually branches on, and nothing here asserts on either channel.
+  const log = Object.assign(sink("info"), { debug: sink("debug"), error: sink("error"), info: sink("info"), log: sink("info"), success: sink("info"),
     warn: sink("warn") });
   const config: ProtectPlatformConfig = { name: "UniFi Protect", options, platform: "UniFi Protect" };
 
@@ -88,7 +83,7 @@ describe("platform construction and the legacy feature-option translation", () =
 
     assert.equal(narrations.length, 1, "the translation is narrated once");
     assert.equal(narrations[0]?.level, "warn", "it is a warning, because the configuration on disk still speaks the older grammar");
-    assert.deepEqual(narrations[0]?.parameters, [{ entries: [ "Enable.Video.Rtsp.Only.High", "Enable.Video.Timeshift.Only.Low" ] }],
+    assert.deepEqual(narrations[0]?.params, [{ entries: [ "Enable.Video.Rtsp.Only.High", "Enable.Video.Timeshift.Only.Low" ] }],
       "the entries it acted on ride along as context");
   });
 

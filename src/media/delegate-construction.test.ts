@@ -27,6 +27,7 @@ import { ProtectTimeshiftBuffer } from "./timeshift.ts";
 import { ProtectTimeshiftSupervisor } from "./timeshift-supervisor.ts";
 import { TestCameraController } from "../testing.helpers.ts";
 import assert from "node:assert/strict";
+import { formatLogEntry } from "homebridge-plugin-utils/testing";
 import { makeTestCameraHost } from "./testing.helpers.ts";
 
 // Every host this suite builds shares the one makeTestNvr AbortController. Aborting it in teardown releases the harness signal so a leaked observer (none here, the
@@ -183,7 +184,7 @@ describe("media-delegate construction against the ProtectCameraHost stub", () =>
 
     assert.equal(stream.probesize, 16384, "the second shutdown left the probesize at the camera's baseline");
     assert.equal(logEntries.length, logCountAfterFirstShutdown, "the second shutdown logged nothing");
-    assert.equal(logEntries.filter((entry) => entry.formatted.includes("Stopped video streaming session.")).length, 0,
+    assert.equal(logEntries.filter((entry) => formatLogEntry(entry).includes("Stopped video streaming session.")).length, 0,
       "neither call reported a session teardown, because there was no session to tear down");
   });
 
@@ -203,7 +204,7 @@ describe("media-delegate construction against the ProtectCameraHost stub", () =>
     host.hints.probesize = 16384;
 
     const stream = new ProtectStreamingDelegate(host, [[ 1920, 1080, 30 ]]);
-    const lastAdjustmentLine = (): string => logEntries.filter((entry) => entry.level === "error").at(-1)?.formatted ?? "";
+    const lastAdjustmentLine = (): string => formatLogEntry(logEntries.filter((entry) => entry.level === "error").at(-1) ?? { level: "error", message: "", params: [] });
 
     for(let adjustment = 1; adjustment < PROTECT_PROBESIZE_OVERRIDE_PERMANENT_THRESHOLD; adjustment++) {
 

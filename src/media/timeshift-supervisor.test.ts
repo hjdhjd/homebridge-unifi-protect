@@ -22,9 +22,10 @@ import type { ChannelProfile } from "./resolution.ts";
 import { ProtectLivestreamUnavailableError } from "unifi-protect";
 import { ProtectRecordingDelegate } from "./record.ts";
 import { ProtectTimeshiftSupervisor } from "./timeshift-supervisor.ts";
-import type { TestLogEntry } from "../testing.helpers.ts";
+import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import type { TestProtectNvr } from "../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
+import { formatLogEntry } from "homebridge-plugin-utils/testing";
 
 // Every host this suite builds shares the one makeTestNvr AbortController. Aborting them in teardown releases the harness signals so any leaked observer (none here -
 // neither the supervisor nor the recording delegate spawns any at construction) could never outlive the suite.
@@ -43,7 +44,7 @@ after(() => {
 // re-acknowledged - the count distinguishes the per-enable acknowledgment behavior.
 function countLogs(entries: TestLogEntry[], level: TestLogEntry["level"], fragment: string): number {
 
-  return entries.filter((entry) => (entry.level === level) && (typeof entry.parameters[0] === "string") && entry.parameters[0].includes(fragment)).length;
+  return entries.filter((entry) => (entry.level === level) && entry.message.includes(fragment)).length;
 }
 
 // A minimal-but-truthy recording configuration cast to the HAP type at this single boundary - the same harness discipline the sibling suites use. The reconcile path
@@ -1184,11 +1185,12 @@ describe("timeshift supervisor streaming arm", () => {
 });
 
 // The rendered HKSV acknowledgment line at info level, or undefined when none fired. The hardware marker is a substituted %s argument, so the marker assertions match
-// against entry.formatted - the util.format render - rather than the format string countLogs keys on, since a countLogs check on the marker passes vacuously in both
-// directions.
+// against the RENDERED line rather than the format string countLogs keys on, since a countLogs check on the marker passes vacuously in both directions.
 function hksvAckLine(entries: TestLogEntry[]): string | undefined {
 
-  return entries.find((entry) => (entry.level === "info") && entry.formatted.includes("HKSV:"))?.formatted;
+  const entry = entries.find((candidate) => (candidate.level === "info") && formatLogEntry(candidate).includes("HKSV:"));
+
+  return entry && formatLogEntry(entry);
 }
 
 // The hardware marker the acknowledgment prefixes when the HKSV encode runs on the host's hardware encoder (U+26A1 HIGH VOLTAGE SIGN + U+FE0F VARIATION SELECTOR-16),

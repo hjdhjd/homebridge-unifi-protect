@@ -19,7 +19,7 @@
  */
 import { Characteristic, Service, TestAccessory, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../../testing.helpers.ts";
 import { G2_PRO_CHANNELS, G6_INSTANT_CHANNELS, G6_PRO_ENTRY_CHANNELS } from "../../camera.fixtures.ts";
-import type { TestApiCall, TestLogEntry, TestStreamingDelegate, TestStreamingDelegateFactory } from "../../testing.helpers.ts";
+import type { TestApiCall, TestStreamingDelegate, TestStreamingDelegateFactory } from "../../testing.helpers.ts";
 import { TestCameraProjection, makeCameraConfig, makeChimeConfig } from "../testing.helpers.ts";
 import { TestRecordingDispatch, makeTestNvr } from "../../nvr/testing.helpers.ts";
 import { after, afterEach, before, describe, test } from "node:test";
@@ -29,9 +29,11 @@ import type { ProtectAccessory } from "../../types.ts";
 import { ProtectCamera } from "./camera.ts";
 import type { ProtectEventDispatch } from "../../nvr/event-dispatch.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
+import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
+import { formatLogEntry } from "homebridge-plugin-utils/testing";
 
 // Construct a real ProtectCamera against an isDoorbell-true config so it construction-attaches its DoorbellCapability, with the casts confined to this one boundary - the
 // instance under test is the production ProtectCamera and its composed capability.
@@ -341,11 +343,11 @@ describe("doorbell + package camera family construction (suite B)", () => {
 
     // The package camera carries its OWN decorated "Name [Model]" log prefix - the parent's name with the Package Camera suffix - so its log lines are attributable
     // rather than colliding with the doorbell's. It shares the underlying projection and market name, so only the suffix on the name keeps the two prefixes distinct.
-    const renameLines = logEntries.filter((entry) => (entry.level === "info") && entry.formatted.includes("updating the HomeKit name to"));
+    const renameLines = logEntries.filter((entry) => (entry.level === "info") && formatLogEntry(entry).includes("updating the HomeKit name to"));
 
-    assert.equal(renameLines.filter((entry) => entry.formatted.includes("New Door Package Camera.")).length, 1,
+    assert.equal(renameLines.filter((entry) => formatLogEntry(entry).includes("New Door Package Camera.")).length, 1,
       "the package logs exactly one rename line of its own");
-    assert.ok(renameLines.some((entry) => entry.formatted.startsWith("New Door Package Camera [Test Camera Model]: ")),
+    assert.ok(renameLines.some((entry) => formatLogEntry(entry).startsWith("New Door Package Camera [Test Camera Model]: ")),
       "the package's rename line carries its own suffixed \"Name [Model]\" prefix, distinct from the doorbell's");
   });
 

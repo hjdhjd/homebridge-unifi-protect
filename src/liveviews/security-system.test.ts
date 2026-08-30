@@ -26,7 +26,7 @@
  */
 import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../testing.helpers.ts";
 import type { ProtectAccessory, ProtectDevices } from "../types.ts";
-import type { TestAccessory, TestLogEntry, TestService } from "../testing.helpers.ts";
+import type { TestAccessory, TestService } from "../testing.helpers.ts";
 import type { TestMqttClient, TestProtectNvr } from "../nvr/testing.helpers.ts";
 import { afterEach, describe, test } from "node:test";
 import { makeNvrConfig, makeTestNvr } from "../nvr/testing.helpers.ts";
@@ -34,7 +34,9 @@ import type { ProtectNvr } from "../nvr/nvr.ts";
 import type { ProtectNvrLiveviewConfig } from "unifi-protect";
 import { ProtectReservedNames } from "../types.ts";
 import { ProtectSecuritySystem } from "./security-system.ts";
+import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import assert from "node:assert/strict";
+import { loggedAt } from "homebridge-plugin-utils/testing";
 import { makeLiveviewConfig } from "../devices/testing.helpers.ts";
 
 // The controller MAC the makeNvrConfig record carries, and the MQTT topic scope (the mqttId is the controller MAC for a ProtectBase owner). A literal so a drift in the
@@ -45,14 +47,6 @@ const CONTROLLER_MAC = "74ACB9FFFFFF";
 // distinct values; SecuritySystemTargetState four (DISARM === DISARMED === 3 under HAP-distinct names).
 const CurrentState = Characteristic.SecuritySystemCurrentState;
 const TargetState = Characteristic.SecuritySystemTargetState;
-
-// The controller logger prefixes every line with the controller name; the harness renders what the real Homebridge logger would emit into entry.formatted (for example
-// "Test Controller: Enabling the security alarm switch..."), so a log assertion matches a substring of that rendered line at the given level, mirroring the sibling
-// suites.
-function loggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], substring: string): boolean {
-
-  return entries.some((entry) => (entry.level === level) && entry.formatted.includes(substring));
-}
 
 // Seed a member device double into the NVR's configuredDevices registry AND the platform accessories array so the cross-camera motion fanout resolves it. The fanout
 // resolves each platform accessory to its configuredDevices entry, gates on the device's recordPresent (a vanished record is skipped), the controller-MAC context, and

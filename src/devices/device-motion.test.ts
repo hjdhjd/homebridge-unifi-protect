@@ -23,7 +23,6 @@
  * base services are HAP- and MQTT-driven, not observeState-driven, so there is no observer-wake subscription here (unlike the family suites).
  */
 import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
-import type { TestAccessory, TestLogEntry } from "../testing.helpers.ts";
 import { TestBaseDevice, TestSensorProjection, makeSensorConfig } from "./testing.helpers.ts";
 import { TestRecordingDispatch, makeTestNvr } from "../nvr/testing.helpers.ts";
 import { afterEach, describe, test } from "node:test";
@@ -31,15 +30,11 @@ import type { ProtectAccessory } from "../types.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
 import type { Sensor } from "unifi-protect";
+import type { TestAccessory } from "../testing.helpers.ts";
+import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import type { TestMqttClient } from "../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
-
-// The device logger prefixes every line with the device name; the harness renders what the real Homebridge logger would emit into entry.formatted (for example
-// "Test Sensor: Motion detection enabled."), so a log assertion matches a substring of that rendered line at the given level, mirroring the chime suite's helper.
-function loggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], substring: string): boolean {
-
-  return entries.some((entry) => (entry.level === level) && entry.formatted.includes(substring));
-}
+import { loggedAt } from "homebridge-plugin-utils/testing";
 
 // Await the bare setTimeout(...,50) reverts the motion trigger arms outside this.timers, so the revert fires within the test rather than after teardown. 60ms clears the
 // 50ms timer with margin, exactly as the chime suite waits out its own bare reverts.

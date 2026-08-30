@@ -26,7 +26,7 @@
  */
 import type { Camera, ProtectCameraConfig } from "unifi-protect";
 import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../../testing.helpers.ts";
-import type { TestAccessory, TestLogEntry, TestStreamingDelegateFactory } from "../../testing.helpers.ts";
+import type { TestAccessory, TestStreamingDelegateFactory } from "../../testing.helpers.ts";
 import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
 import { afterEach, describe, mock, test } from "node:test";
 import { G2_PRO_CHANNELS } from "../../camera.fixtures.ts";
@@ -35,8 +35,10 @@ import { ProtectAuthorizationError } from "unifi-protect";
 import { ProtectCamera } from "./camera.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
 import { ProtectReservedNames } from "../../types.ts";
+import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
+import { loggedAt } from "homebridge-plugin-utils/testing";
 import { makeTestNvr } from "../../nvr/testing.helpers.ts";
 
 // Confine the lone partial-config cast here, mirroring camera-reactions.test.ts: pushCameraPatch's patch is typed as a Partial of the full wire record, whose nested
@@ -79,14 +81,6 @@ async function buildCamera(options: { featureFlags?: Partial<ProtectCameraConfig
   await settle();
 
   return { accessory, camera, cameraConfig, controller, factory, logEntries, nvr, projection };
-}
-
-// A log assertion matches a substring of entry.formatted at the given level, mirroring chime.test.ts's loggedAt: the device logger prefixes every line with the device
-// name and the harness renders what the real Homebridge logger would emit into entry.formatted, so a substring match reads as the intent (did the camera log this line at
-// this level).
-function loggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], substring: string): boolean {
-
-  return entries.some((entry) => (entry.level === level) && entry.formatted.includes(substring));
 }
 
 describe("camera-family device.update-backed onSet handlers (camera-onsets concern net)", () => {

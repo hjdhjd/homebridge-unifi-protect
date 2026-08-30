@@ -223,7 +223,7 @@ describe("recording delegate synchronous configuration observables", () => {
     }
 
     assert.equal(floats.length, 0, "the throwing activation did not float an unhandled rejection");
-    assert.ok(logEntries.some((entry) => (entry.level === "error") && (entry.parameters[1] === "recording activation")),
+    assert.ok(logEntries.some((entry) => (entry.level === "error") && (entry.params[0] === "recording activation")),
       "the throwing activation surfaced through the guardedDispatch failure log");
   });
 

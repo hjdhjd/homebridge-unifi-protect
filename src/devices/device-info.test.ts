@@ -33,24 +33,18 @@
  */
 import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../testing.helpers.ts";
 import type { ProtectSensorConfig, Sensor } from "unifi-protect";
-import type { TestAccessory, TestLogEntry } from "../testing.helpers.ts";
 import { TestBaseDevice, TestSensorProjection, makeSensorConfig } from "./testing.helpers.ts";
 import { after, afterEach, before, beforeEach, describe, test } from "node:test";
+import { formatLogEntry, loggedAt } from "homebridge-plugin-utils/testing";
 import type { ObserverWakePayload } from "../diagnostics.ts";
 import type { ProtectAccessory } from "../types.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
+import type { TestAccessory } from "../testing.helpers.ts";
+import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import type { TestProtectNvr } from "../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
 import { makeTestNvr } from "../nvr/testing.helpers.ts";
-
-// The device logger prefixes every line with the device name; the harness renders what the real Homebridge logger would emit into entry.formatted (for example
-// "Test Sensor: Detected a name change on the controller; updating the HomeKit name to Renamed Sensor."), so a log assertion matches a substring of that rendered line
-// at the given level, mirroring the device-motion / device-statusled suites' helper.
-function loggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], substring: string): boolean {
-
-  return entries.some((entry) => (entry.level === level) && entry.formatted.includes(substring));
-}
 
 // Every harness controller this suite opens, drained in afterEach so the controller lifetime signal bounds each test's constructions rather than the file's. The builder
 // is the single push site, so a construction inside a test body is captured exactly as the fixture's is.
@@ -317,11 +311,11 @@ describe("base ProtectDevice device-information capability (device-info concern 
       // the device's "Name [Model]" descriptor and the family's ": " separator, the derivation prefixedLog applies at every device construction site.
       device.log.info("A base-device prefix probe.");
 
-      const entry = logEntries.find((candidate) => (candidate.level === "info") && candidate.formatted.endsWith("A base-device prefix probe."));
+      const entry = logEntries.find((candidate) => (candidate.level === "info") && formatLogEntry(candidate).endsWith("A base-device prefix probe."));
 
       assert.ok(entry, "the probe line was captured");
-      assert.ok(entry.formatted.startsWith("Test Sensor [Test Sensor Model]: "), "the line carries the device's logName prefix and the family separator");
-      assert.equal(entry.formatted, "Test Sensor [Test Sensor Model]: A base-device prefix probe.", "the rendered line is exactly the prefix plus the message");
+      assert.ok(formatLogEntry(entry).startsWith("Test Sensor [Test Sensor Model]: "), "the line carries the device's logName prefix and the family separator");
+      assert.equal(formatLogEntry(entry), "Test Sensor [Test Sensor Model]: A base-device prefix probe.", "the rendered line is exactly the prefix plus the message");
     });
   });
 
@@ -349,7 +343,7 @@ describe("base ProtectDevice device-information capability (device-info concern 
 
       built.device.log.debug(probe);
 
-      return built.logEntries.some((entry) => (entry.level === "warn") && entry.formatted.endsWith(probe));
+      return built.logEntries.some((entry) => (entry.level === "warn") && formatLogEntry(entry).endsWith(probe));
     }
 
     test("a device-suffixed entry turns on that device's debug lines while a sibling stays silent", () => {

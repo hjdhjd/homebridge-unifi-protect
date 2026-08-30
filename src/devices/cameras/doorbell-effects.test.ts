@@ -34,7 +34,6 @@
  */
 import type { Camera, ProtectCameraConfig, ProtectChimeConfig, ProtectNvrConfig } from "unifi-protect";
 import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../../testing.helpers.ts";
-import type { TestAccessory, TestLogEntry } from "../../testing.helpers.ts";
 import { TestCameraProjection, TestChimeProjection, makeCameraConfig, makeChimeConfig } from "../testing.helpers.ts";
 import type { TestMqttClient, TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import { afterEach, describe, mock, test } from "node:test";
@@ -46,8 +45,11 @@ import { ProtectCamera } from "./camera.ts";
 import { ProtectEventDispatch } from "../../nvr/event-dispatch.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
 import { ProtectReservedNames } from "../../types.ts";
+import type { TestAccessory } from "../../testing.helpers.ts";
+import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import assert from "node:assert/strict";
 import { effectiveLcdMessage } from "./doorbell.ts";
+import { loggedAt } from "homebridge-plugin-utils/testing";
 import { makeTestNvr } from "../../nvr/testing.helpers.ts";
 
 // One captured doorbell-ring routing. The onSet's observable effect is which device it routed to, so this is the shape the recording subclass captures - the same posture
@@ -87,13 +89,6 @@ interface BuiltDoorbell {
   logEntries: TestLogEntry[];
   mqtt: TestMqttClient;
   nvr: TestProtectNvr;
-}
-
-// A log assertion matches a substring of entry.formatted at the given level, mirroring camera-onsets.test.ts / chime.test.ts: the device logger prefixes every line with
-// the device name and the harness renders what the real Homebridge logger would emit into entry.formatted, so we substring-match that rendered line.
-function loggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], substring: string): boolean {
-
-  return entries.some((entry) => (entry.level === level) && entry.formatted.includes(substring));
 }
 
 // Build a REAL ProtectCamera against an isDoorbell-true config (so it construction-attaches its DoorbellCapability), exactly as doorbell-construction.test.ts

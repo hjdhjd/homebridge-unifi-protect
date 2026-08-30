@@ -28,26 +28,20 @@
  * CurrentTemperature.value === NEW after pushNvrPatch moves a FRESH systemInfo by reference, never triggerGet.
  */
 import { Characteristic, Service, TestStateStore, makeProtectState, settle } from "../testing.helpers.ts";
-import type { TestAccessory, TestLogEntry } from "../testing.helpers.ts";
 import type { TestMqttClient, TestProtectNvr } from "./testing.helpers.ts";
 import { afterEach, describe, test } from "node:test";
 import { makeNvrConfig, makeTestNvr } from "./testing.helpers.ts";
 import type { ProtectNvr } from "./nvr.ts";
 import { ProtectNvrSystemInfo } from "./nvr-systeminfo.ts";
+import type { TestAccessory } from "../testing.helpers.ts";
+import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import assert from "node:assert/strict";
+import { loggedAt } from "homebridge-plugin-utils/testing";
 
 // The deterministic accessory UUID the owner composes: the platform double's uuid generator is (seed) => "uuid:" + seed, and the owner generates from
 // nvr.ufp.mac + ".NVRSystemInfo" against the makeNvrConfig mac, so the UUID is fixed. A literal rather than a derivation so a drift in the UUID composition breaks
 // loudly.
 const SYSTEMINFO_UUID = "uuid:74ACB9FFFFFF.NVRSystemInfo";
-
-// The controller logger prefixes every line with the controller name; the harness renders what the real Homebridge logger would emit into entry.formatted (for example
-// "Test Controller: Enabled system information sensor: cpu temperature."), so a log assertion matches a substring of that rendered line at the given level, mirroring the
-// sensor / device-motion suites' helper.
-function loggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], substring: string): boolean {
-
-  return entries.some((entry) => (entry.level === level) && entry.formatted.includes(substring));
-}
 
 // The reusable construction helper: build a REAL ProtectNvrSystemInfo against the harness doubles, taking ONLY an nvr (the owner extends ProtectBase, so its ctor is
 // (nvr)). makeNvrConfig carries the systemInfo the initial pass dereferences; the store's nvr slice is seeded NON-NULL so nvr.ufp - which reads through the store -

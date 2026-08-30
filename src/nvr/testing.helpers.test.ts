@@ -18,20 +18,21 @@ import { TestStateStore, makeProtectState, makeTestAccessory, settle } from "../
 import { asProtectAccessory, makeNvrConfig, makeTestAccessoryFamily, makeTestNvr } from "./testing.helpers.ts";
 import { describe, mock, test } from "node:test";
 import type { ProtectDevices } from "../types.ts";
-import type { TestLogEntry } from "../testing.helpers.ts";
+import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import assert from "node:assert/strict";
+import { formatLogEntry } from "homebridge-plugin-utils/testing";
 
 // Every "Delaying device removal" line the gate narrated, as the harness rendered it. The line carries the resolved grace, so the count of these lines is the
 // schedule-dedup observable and the text is the exact-interval pin.
 function delayingLines(entries: TestLogEntry[]): string[] {
 
-  return entries.filter((entry) => entry.formatted.includes("Delaying device removal")).map((entry) => entry.formatted);
+  return entries.filter((entry) => formatLogEntry(entry).includes("Delaying device removal")).map((entry) => formatLogEntry(entry));
 }
 
 // Every deferral line the reboot scheduler narrated. The line carries the recording count, so its text is the population pin the widening rows read.
 function deferringLines(entries: TestLogEntry[]): string[] {
 
-  return entries.filter((entry) => entry.formatted.includes("Deferring scheduled controller reboot")).map((entry) => entry.formatted);
+  return entries.filter((entry) => formatLogEntry(entry).includes("Deferring scheduled controller reboot")).map((entry) => formatLogEntry(entry));
 }
 
 // The default reboot cadence in milliseconds, which is what a schedule entered with no explicit interval waits.
@@ -342,7 +343,7 @@ describe("harness growth: the NVR double's reboot wiring", () => {
 
       assert.equal(nvr.rebootCalls, 0, "no reboot was commanded");
       assert.equal(nvr.phase, "running", "the lifecycle phase is where the double starts it");
-      assert.deepEqual(logEntries.filter((entry) => entry.formatted.includes("reboot")), [], "the scheduler narrated nothing");
+      assert.deepEqual(logEntries.filter((entry) => formatLogEntry(entry).includes("reboot")), [], "the scheduler narrated nothing");
     } finally {
 
       mock.timers.reset();

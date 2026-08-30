@@ -18,7 +18,6 @@
  */
 import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../testing.helpers.ts";
 import type { Fob, ProtectFobConfig } from "unifi-protect";
-import type { TestAccessory, TestLogEntry } from "../testing.helpers.ts";
 import { TestFobProjection, makeFobConfig } from "./testing.helpers.ts";
 import { after, afterEach, before, beforeEach, describe, test } from "node:test";
 import type { ObserverWakePayload } from "../diagnostics.ts";
@@ -27,9 +26,12 @@ import type { ProtectEventDispatch } from "../nvr/event-dispatch.ts";
 import { ProtectFob } from "./fob.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
+import type { TestAccessory } from "../testing.helpers.ts";
+import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import type { TestMqttClient } from "../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
+import { formatLogEntry } from "homebridge-plugin-utils/testing";
 import { makeTestNvr } from "../nvr/testing.helpers.ts";
 
 // The fixed button table the production ProtectFob authors, mirrored here so every lookup in the suite names the exact index / label / wire id the class created its
@@ -384,7 +386,7 @@ describe("real ProtectFob construction and behavior", () => {
     assert.equal(built.store.observerCount, 4, "an unrecognized fob registers no button-label observer - it has no buttons to rename");
 
     // ...but the adoption is never silent: one actionable warning names the unrecognized model.
-    const warned = built.logEntries.some((entry) => (entry.level === "warn") && entry.formatted.includes("not a recognized model"));
+    const warned = built.logEntries.some((entry) => (entry.level === "warn") && formatLogEntry(entry).includes("not a recognized model"));
 
     assert.ok(warned, "an unrecognized fob logs one actionable warning rather than adopting silently");
 
@@ -646,7 +648,7 @@ describe("real ProtectFob construction and behavior", () => {
         button.label + "'s ConfiguredName was written once at create and left untouched by the configure-time reconcile");
     }
 
-    const labelingLines = logEntries.filter((entry) => (entry.level === "info") && entry.formatted.includes("button names"));
+    const labelingLines = logEntries.filter((entry) => (entry.level === "info") && formatLogEntry(entry).includes("button names"));
 
     assert.deepEqual(labelingLines, [], "a steady-state configure logs no button-labeling info line");
   });

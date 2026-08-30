@@ -29,7 +29,7 @@ import { ProtectRecordingDelegate } from "./record.ts";
 import { ProtectTimeshiftSupervisor } from "./timeshift-supervisor.ts";
 import type { RecordingProcessFactory } from "homebridge-plugin-utils";
 import type { TestCameraHost } from "./testing.helpers.ts";
-import type { TestLogEntry } from "../testing.helpers.ts";
+import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import type { TestProtectNvr } from "../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 
@@ -54,7 +54,7 @@ after(() => {
 // re-acknowledged - the count tells apart the per-enable acknowledgment behavior.
 function countLogs(entries: TestLogEntry[], level: TestLogEntry["level"], fragment: string): number {
 
-  return entries.filter((entry) => (entry.level === level) && (typeof entry.parameters[0] === "string") && entry.parameters[0].includes(fragment)).length;
+  return entries.filter((entry) => (entry.level === level) && entry.message.includes(fragment)).length;
 }
 
 // A minimal-but-truthy recording configuration cast to the HAP type at this confined boundary - the same harness discipline the decline suite uses. The transmit path
@@ -217,11 +217,11 @@ async function buildTransmittingDelegate(factory: RecordingProcessFactory): Prom
 // log's first parameter is the format string and the telemetry payload is the THIRD parameter (the %s%s template's second substitution) - never a pre-formatted string.
 function findEndedEarlyTelemetry(logEntries: TestLogEntry[], fromIndex = 0): string {
 
-  const entry = logEntries.slice(fromIndex).find((e) => (e.level === "error") && String(e.parameters[0]).includes("ended early"));
+  const entry = logEntries.slice(fromIndex).find((e) => (e.level === "error") && e.message.includes("ended early"));
 
   assert.ok(entry, "Expected an early-end telemetry log entry.");
 
-  return String(entry.parameters[2]);
+  return String(entry.params[1]);
 }
 
 describe("recording delegate transmit-path behavior", () => {
@@ -596,11 +596,11 @@ describe("recording delegate transmit-path behavior", () => {
     // The summary fires from the session's own counters, and reports transmitted-video seconds exactly (finding #25). The tally is the prebuffer blob's real fragment
     // count plus the two live fragments: the blob is the keyframe-aligned prebuffer window, prebufferLength / segmentLength = 4000 / 100 = 40 fragments, so the tally is
     // 40 + 2 = 42 fragments at 100ms each = 4.2 seconds, rounded to 4.
-    const summary = logEntries.find((e) => (e.level === "info") && (String(e.parameters[0]) === "HKSV: transmitted a %s %s recording to HomeKit."));
+    const summary = logEntries.find((e) => (e.level === "info") && (e.message === "HKSV: transmitted a %s %s recording to HomeKit."));
 
     assert.ok(summary, "Expected the recorded-event summary log entry.");
-    assert.equal(summary.parameters[1], "4");
-    assert.equal(summary.parameters[2], "second");
+    assert.equal(summary.params[0], "4");
+    assert.equal(summary.params[1], "second");
   });
 
   // Test F - FFmpeg-timeout exit. With a process that yields no media and reports isTimedOut, the segments() generator ends immediately; the init segment is still paced

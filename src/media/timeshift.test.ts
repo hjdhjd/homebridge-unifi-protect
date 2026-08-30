@@ -27,7 +27,7 @@ import { ProtectTimeshiftBuffer } from "./timeshift.ts";
 import type { Segment } from "unifi-protect";
 import type { SegmentRole } from "./timeshift.ts";
 import type { TestClock } from "homebridge-plugin-utils/testing";
-import type { TestLogEntry } from "../testing.helpers.ts";
+import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import type { TestProtectNvr } from "../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import { settle } from "../testing.helpers.ts";
@@ -673,7 +673,7 @@ describe("timeshift buffer behavior", () => {
     const result = timeshift.transmitStart();
 
     assert.equal(result, null, "transmitStart returns null (declines) when not started");
-    assert.ok(logEntries.some((entry) => (entry.level === "error") && String(entry.parameters[0]).includes("HKSV event recording unavailable")),
+    assert.ok(logEntries.some((entry) => (entry.level === "error") && entry.message.includes("HKSV event recording unavailable")),
       "transmitStart logs the not-ready error");
   });
 
@@ -943,8 +943,8 @@ describe("timeshift buffer behavior", () => {
     await settle();
 
     assert.equal(host.rebootCalls.length, 1, "the camera was rebooted exactly once");
-    assert.ok(logEntries.some((entry) => (entry.level === "warn") && String(entry.parameters[0]).includes("Rebooting the camera to recover its livestream") &&
-      (entry.parameters[1] === "10")), "the reboot is announced with a warn carrying the failed-attempt count");
+    assert.ok(logEntries.some((entry) => (entry.level === "warn") && entry.message.includes("Rebooting the camera to recover its livestream") &&
+      (entry.params[0] === "10")), "the reboot is announced with a warn carrying the failed-attempt count");
   });
 
   // Target (bb): reboot does NOT fire on the recovery give-up's negatives. attempts below the threshold takes the first early return; the second early-return guard's
@@ -1027,6 +1027,6 @@ describe("timeshift buffer behavior", () => {
     await settle();
 
     assert.equal(host.rebootCalls.length, 1, "the reboot was attempted before it failed");
-    assert.ok(logEntries.some((entry) => (entry.level === "error") && String(entry.parameters[0]).includes("could not be rebooted")), "the failed reboot is logged");
+    assert.ok(logEntries.some((entry) => (entry.level === "error") && entry.message.includes("could not be rebooted")), "the failed reboot is logged");
   });
 });
