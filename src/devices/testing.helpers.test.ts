@@ -536,14 +536,13 @@ describe("A2 chime + viewer family: config builders, projection doubles, push he
     mqtt.subscribeSet("74ACB9000101/tone", "tone", (value: string) => { setCalls.push(value); });
 
     const getSub = mqtt.subscriptions.find((subscription) => subscription.kind === "get");
-    const setSub = mqtt.subscriptions.find((subscription) => subscription.kind === "set");
 
-    assert.equal(getSub?.getValue?.(), "captured-get", "the get handler is captured and invocable");
+    assert.equal(await mqtt.invokeGet("74ACB9000101/tone/get"), "captured-get", "the get handler is captured and invocable");
 
-    await setSub?.setValue?.("a-value", "a-value");
+    await mqtt.invokeSet("74ACB9000101/tone/set", "a-value");
 
     assert.deepEqual(setCalls, ["a-value"], "the set handler is captured and invocable");
-    assert.equal(getSub?.topic, "74ACB9000101/tone", "the topic is still recorded for the topic-composition assertions");
+    assert.equal(getSub?.topic, "74ACB9000101/tone/get", "the topic is recorded with the suffix the client appends, for the topic-composition assertions");
 
     controller.abort();
   });

@@ -26,11 +26,15 @@ import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectViewer } from "./viewer.ts";
 import type { TestAccessory } from "../testing.helpers.ts";
 import type { TestLogEntry } from "homebridge-plugin-utils/testing";
-import type { TestMqttClient } from "../nvr/testing.helpers.ts";
+import type { TestMqttClient } from "homebridge-plugin-utils/testing";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
 import { loggedAt } from "homebridge-plugin-utils/testing";
 import { makeTestNvr } from "../nvr/testing.helpers.ts";
+
+// The MAC-scoped tail the plugin composed, with the /get or /set suffix the MQTT client appends taken back off. These rows assert what the plugin addressed,
+// which is the tail rather than the child topic the registration lands on.
+const composedTail = (topic: string): string => topic.replace(/\/(get|set)$/, "");
 
 // Every harness controller this suite opens, drained in afterEach so the controller lifetime signal bounds each test's constructions rather than the file's. The builder
 // is the single push site, so an extra build inside a test body is captured exactly as the fixture's is.
@@ -157,7 +161,7 @@ describe("real ProtectViewer construction and set-liveview behavior", () => {
     await target.getCharacteristic(Characteristic.On).triggerSet(true);
 
     assert.deepEqual(projection.updateCalls, [{ liveview: "liveview-2" }], "the real setViewer dispatched a single update with the requested liveview id");
-    assert.deepEqual(mqtt.published, [{ message: "Backyard", topic: projection.config.mac + "/liveview" }],
+    assert.deepEqual(mqtt.published, [{ payload: "Backyard", topic: projection.config.mac + "/liveview" }],
       "the accepted change published the liveview name on the device-scoped topic");
   });
 
@@ -241,33 +245,33 @@ describe("real ProtectViewer construction and set-liveview behavior", () => {
 
   test("the MQTT liveview get handler returns the active liveview name, or None when nothing is active", async () => {
 
-    const liveviewGet = mqtt.subscriptions.find((subscription) => (subscription.kind === "get") && (subscription.topic === projection.config.mac + "/liveview"));
+    const liveviewGet = mqtt.subscriptions.find((subscription) => (subscription.kind === "get") && (subscription.topic === projection.config.mac + "/liveview/get"));
 
-    assert.ok(liveviewGet?.getValue, "the viewer registered a captured get handler for the liveview topic");
-    assert.equal(liveviewGet.getValue(), "Front Door", "the get handler returns the active liveview name");
+    assert.ok(liveviewGet, "the viewer registered a captured get handler for the liveview topic");
+    assert.equal(await mqtt.invokeGet(projection.config.mac + "/liveview/get"), "Front Door", "the get handler returns the active liveview name");
 
     // Move the active liveview to null and confirm the get handler returns the None sentinel.
     store.pushViewerPatch(projection.id, { liveview: null });
 
     await settle();
 
-    assert.equal(liveviewGet.getValue(), "None", "with no active liveview the get handler returns None");
+    assert.equal(await mqtt.invokeGet(projection.config.mac + "/liveview/get"), "None", "with no active liveview the get handler returns None");
   });
 
   test("the MQTT liveview set handler resolves a known name (case-insensitively) and rejects an unknown one", async () => {
 
-    const liveviewSet = mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === projection.config.mac + "/liveview"));
+    const liveviewSet = mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === projection.config.mac + "/liveview/set"));
 
-    assert.ok(liveviewSet?.setValue, "the viewer registered a captured set handler for the liveview topic");
+    assert.ok(liveviewSet, "the viewer registered a captured set handler for the liveview topic");
 
     // The set handler matches on x.name.toLowerCase() === value, so a known name is passed lowercased.
-    await liveviewSet.setValue("backyard", "backyard");
+    await mqtt.invokeSet(projection.config.mac + "/liveview/set", "backyard");
 
     assert.deepEqual(projection.updateCalls, [{ liveview: "liveview-2" }], "a known liveview name resolved to its id and dispatched the update");
     assert.ok(loggedAt(logEntries, "info", "Liveview set via MQTT to Backyard."), "the MQTT set logged the confirmation");
 
     // An unknown name logs the error and dispatches no update.
-    await liveviewSet.setValue("nonexistent", "nonexistent");
+    await mqtt.invokeSet(projection.config.mac + "/liveview/set", "nonexistent");
 
     assert.equal(projection.updateCalls.length, 1, "an unknown liveview name dispatches no update");
     assert.ok(loggedAt(logEntries, "error", "Unable to locate a liveview named nonexistent."), "an unknown liveview name logs the error");
@@ -275,7 +279,7 @@ describe("real ProtectViewer construction and set-liveview behavior", () => {
 
   test("the MQTT subscriptions compose the device-MAC-scoped liveview topic tail", () => {
 
-    const tails = mqtt.subscriptions.map((subscription) => subscription.topic);
+    const tails = mqtt.subscriptions.map((subscription) => composedTail(subscription.topic));
 
     assert.ok(tails.includes(projection.config.mac + "/liveview"), "the viewer liveview subscription composed the device-scoped tail");
   });

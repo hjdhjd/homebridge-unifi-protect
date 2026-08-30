@@ -35,7 +35,6 @@
 import type { Camera, ProtectCameraConfig, ProtectChimeConfig, ProtectNvrConfig } from "unifi-protect";
 import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../../testing.helpers.ts";
 import { TestCameraProjection, TestChimeProjection, makeCameraConfig, makeChimeConfig } from "../testing.helpers.ts";
-import type { TestMqttClient, TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import { afterEach, describe, mock, test } from "node:test";
 import { G2_PRO_CHANNELS } from "../../camera.fixtures.ts";
 import type { Nullable } from "homebridge-plugin-utils";
@@ -47,6 +46,8 @@ import type { ProtectNvr } from "../../nvr/nvr.ts";
 import { ProtectReservedNames } from "../../types.ts";
 import type { TestAccessory } from "../../testing.helpers.ts";
 import type { TestLogEntry } from "homebridge-plugin-utils/testing";
+import type { TestMqttClient } from "homebridge-plugin-utils/testing";
+import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import { effectiveLcdMessage } from "./doorbell.ts";
 import { loggedAt } from "homebridge-plugin-utils/testing";
@@ -267,7 +268,7 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
       assert.deepEqual(served.updateCalls, [{ payload: { ringSettings: [{ cameraId: doorbellId, repeatTimes: 1, ringtoneId: "tone-a", volume: 70 }] } }],
         "the PATCH carries one ring entry: this doorbell's ring spread with only the volume changed to 70");
-      assert.deepEqual(built.mqtt.published.filter((entry) => entry.topic === chimeTopic), [{ message: "70", topic: chimeTopic }],
+      assert.deepEqual(built.mqtt.published.filter((entry) => entry.topic === chimeTopic), [{ payload: "70", topic: chimeTopic }],
         "the new volume is published once on the chime topic after the write is accepted");
       assert.ok(!loggedAt(built.logEntries, "error", "Unable to set the chime volume"), "an accepted write logs no failure");
     });
@@ -292,7 +293,7 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
       assert.deepEqual(served.updateCalls, [{ payload: { ringSettings: [{ cameraId: doorbellId, repeatTimes: 1, ringtoneId: "tone-a", volume: 0 }] } }],
         "a negative volume clamps to zero in the written ring PATCH");
-      assert.deepEqual(built.mqtt.published.filter((entry) => entry.topic === chimeTopic), [{ message: "0", topic: chimeTopic }], "the clamped value is what we publish");
+      assert.deepEqual(built.mqtt.published.filter((entry) => entry.topic === chimeTopic), [{ payload: "0", topic: chimeTopic }], "the clamped value is what we publish");
     });
 
     test("every chime serving this doorbell is written, and the volume is published exactly once", async () => {
@@ -315,7 +316,7 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
       assert.equal(servedA.updateCalls.length, 1, "the first chime serving this doorbell is written");
       assert.equal(servedB.updateCalls.length, 1, "the second chime serving this doorbell is written");
-      assert.deepEqual(built.mqtt.published.filter((entry) => entry.topic === chimeTopic), [{ message: "55", topic: chimeTopic }],
+      assert.deepEqual(built.mqtt.published.filter((entry) => entry.topic === chimeTopic), [{ payload: "55", topic: chimeTopic }],
         "the volume is published exactly once after every assigned chime accepts the write");
     });
 
@@ -338,7 +339,7 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
       assert.equal(foreignProjection.updateCalls.length, 0, "the chime that does not list this doorbell is filtered out and never written");
       assert.equal(servedProjection.updateCalls.length, 1, "only the chime that serves this doorbell is written");
-      assert.deepEqual(built.mqtt.published.filter((entry) => entry.topic === chimeTopic), [{ message: "45", topic: chimeTopic }], "the volume is published once");
+      assert.deepEqual(built.mqtt.published.filter((entry) => entry.topic === chimeTopic), [{ payload: "45", topic: chimeTopic }], "the volume is published once");
     });
 
     test("a chime serving this doorbell but carrying no ring for it is skipped without a write", async () => {
@@ -360,7 +361,7 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
       assert.equal(noRingProjection.updateCalls.length, 0, "the chime listing the doorbell but with no ring for it is skipped; the loop continues to the next");
       assert.equal(servedProjection.updateCalls.length, 1, "the chime carrying a ring for this doorbell is written");
-      assert.deepEqual(built.mqtt.published.filter((entry) => entry.topic === chimeTopic), [{ message: "35", topic: chimeTopic }], "the volume is published once");
+      assert.deepEqual(built.mqtt.published.filter((entry) => entry.topic === chimeTopic), [{ payload: "35", topic: chimeTopic }], "the volume is published once");
     });
 
     test("the first failed write early-returns: no later chime is written, nothing is published, and the failure is logged", async () => {
@@ -478,10 +479,10 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
         built = await buildDoorbell({ chimeConfigs: [chime], userOptions: ["Enable.Doorbell.Volume.Dimmer"] });
 
         // HARD-assert the /chime GET subscription exists FIRST: an absent subscription whose getValue is optional-chained would let the value assertion pass vacuously.
-        const get = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "get") && (subscription.topic === mac + "/chime"));
+        const get = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "get") && (subscription.topic === mac + "/chime/get"));
 
-        assert.ok(get?.getValue, "the doorbell registered a /chime GET subscription");
-        assert.equal(get.getValue(), "50", "the /chime GET returns the doorbell's effective chime volume (50) as a string");
+        assert.ok(get, "the doorbell registered a /chime GET subscription");
+        assert.equal(await built.mqtt.invokeGet(mac + "/chime/get"), "50", "the /chime GET returns the doorbell's effective chime volume (50) as a string");
       });
     });
 
@@ -499,9 +500,9 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
         assert.ok(volumeBulb, "Enable.Doorbell.Volume.Dimmer materializes the chime-volume Lightbulb the SET body drives");
 
-        const set = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === mac + "/chime"));
+        const set = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === mac + "/chime/set"));
 
-        assert.ok(set?.setValue, "the doorbell registered a /chime SET subscription");
+        assert.ok(set, "the doorbell registered a /chime SET subscription");
 
         const [served] = built.chimeProjections;
 
@@ -511,12 +512,12 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
         // setCharacteristic is fire-and-forget, so settle past the onSet before asserting. The On onSet (value > 0 truthy) early-returns, so exactly one served-chime
         // write lands. This nets only the MQTT body's parse / gate / route - setChimeVolume's clamp / fan-out / auth are the
         // setChimeVolume cross-device write describe's concern.
-        await set.setValue("70", "70");
+        await built.mqtt.invokeSet(mac + "/chime/set", "70");
         await settle();
 
         assert.deepEqual(served.updateCalls, [{ payload: { ringSettings: [{ cameraId: doorbellId, repeatTimes: 1, ringtoneId: "default", volume: 70 }] } }],
           "the valid /chime SET routed the volume to the Lightbulb, driving one served-chime ring PATCH at volume 70");
-        assert.deepEqual(built.mqtt.published.filter((entry) => entry.topic === mac + "/chime"), [{ message: "70", topic: mac + "/chime" }],
+        assert.deepEqual(built.mqtt.published.filter((entry) => entry.topic === mac + "/chime"), [{ payload: "70", topic: mac + "/chime" }],
           "the accepted write published the new volume once on the chime topic");
       });
 
@@ -530,16 +531,16 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
         assert.ok(volumeBulb, "the chime-volume Lightbulb materialized");
 
-        const set = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === mac + "/chime"));
+        const set = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === mac + "/chime/set"));
 
-        assert.ok(set?.setValue, "the /chime SET subscription registered");
+        assert.ok(set, "the /chime SET subscription registered");
 
         const [served] = built.chimeProjections;
 
         assert.ok(served, "the held chime projection is present");
 
         // "abc" parses to NaN, so the isNaN gate returns before any setCharacteristic - no Lightbulb drive, no chime write, no publish.
-        await set.setValue("abc", "abc");
+        await built.mqtt.invokeSet(mac + "/chime/set", "abc");
         await settle();
 
         assert.equal(served.updateCalls.length, 0, "a NaN value is gated out before the Lightbulb drive, so no chime write happens");
@@ -556,17 +557,17 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
         assert.ok(volumeBulb, "the chime-volume Lightbulb materialized");
 
-        const set = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === mac + "/chime"));
+        const set = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === mac + "/chime/set"));
 
-        assert.ok(set?.setValue, "the /chime SET subscription registered");
+        assert.ok(set, "the /chime SET subscription registered");
 
         const [served] = built.chimeProjections;
 
         assert.ok(served, "the held chime projection is present");
 
         // Both 150 ( > 100 ) and -5 ( < 0 ) fail the (volume < 0) || (volume > 100) gate, so neither reaches the Lightbulb drive.
-        await set.setValue("150", "150");
-        await set.setValue("-5", "-5");
+        await built.mqtt.invokeSet(mac + "/chime/set", "150");
+        await built.mqtt.invokeSet(mac + "/chime/set", "-5");
         await settle();
 
         assert.equal(served.updateCalls.length, 0, "an out-of-range value is gated out, so no chime write happens");
@@ -581,10 +582,11 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
         // Seed lcdMessage WITHOUT a numeric resetAt (omitted), so typeof resetAt !== "number" forces the deterministic duration-0 branch.
         built = await buildDoorbell({ lcdMessage: { text: "Hello" } });
 
-        const get = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "get") && (subscription.topic === mac + "/message"));
+        const get = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "get") && (subscription.topic === mac + "/message/get"));
 
-        assert.ok(get?.getValue, "the doorbell registered a /message GET subscription");
-        assert.deepEqual(JSON.parse(get.getValue()), { duration: 0, message: "Hello" }, "a current message with no numeric resetAt reads as duration 0 and the text");
+        assert.ok(get, "the doorbell registered a /message GET subscription");
+        assert.deepEqual(JSON.parse(await built.mqtt.invokeGet(mac + "/message/get") ?? ""), { duration: 0, message: "Hello" },
+          "a current message with no numeric resetAt reads as duration 0 and the text");
       });
 
       test("with a numeric resetAt, computes the remaining duration in seconds", async () => {
@@ -599,10 +601,11 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
           built = await buildDoorbell({ lcdMessage: { resetAt: t0 + 45000, text: "Hi" } });
 
-          const get = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "get") && (subscription.topic === mac + "/message"));
+          const get = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "get") && (subscription.topic === mac + "/message/get"));
 
-          assert.ok(get?.getValue, "the doorbell registered a /message GET subscription");
-          assert.deepEqual(JSON.parse(get.getValue()), { duration: 45, message: "Hi" }, "a resetAt 45 seconds out reads back as duration 45 with the message text");
+          assert.ok(get, "the doorbell registered a /message GET subscription");
+          assert.deepEqual(JSON.parse(await built.mqtt.invokeGet(mac + "/message/get") ?? ""), { duration: 45, message: "Hi" },
+            "a resetAt 45 seconds out reads back as duration 45 with the message text");
         } finally {
 
           mock.timers.reset();
@@ -614,10 +617,10 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
         // No lcdMessage seeded: the body's !this.ufp.lcdMessage guard returns the empty string (not the JSON "{}").
         built = await buildDoorbell({});
 
-        const get = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "get") && (subscription.topic === mac + "/message"));
+        const get = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "get") && (subscription.topic === mac + "/message/get"));
 
-        assert.ok(get?.getValue, "the doorbell registered a /message GET subscription");
-        assert.equal(get.getValue(), "", "with no current message the /message GET returns the empty string");
+        assert.ok(get, "the doorbell registered a /message GET subscription");
+        assert.equal(await built.mqtt.invokeGet(mac + "/message/get"), "", "with no current message the /message GET returns the empty string");
       });
     });
 
@@ -637,13 +640,13 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
           built = await buildDoorbell({});
 
           const t0 = Date.now();
-          const set = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === mac + "/message"));
+          const set = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === mac + "/message/set"));
 
-          assert.ok(set?.setValue, "the doorbell registered a /message SET subscription");
+          assert.ok(set, "the doorbell registered a /message SET subscription");
 
           const payload = JSON.stringify({ duration: 30, message: "Ding" });
 
-          await set.setValue(payload, payload);
+          await built.mqtt.invokeSet(mac + "/message/set", payload);
 
           assert.deepEqual(built.cameraProjection.updateCalls,
             [{ payload: { lcdMessage: { resetAt: t0 + 30000, text: "Ding", type: "CUSTOM_MESSAGE" } } }],
@@ -660,13 +663,13 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
         // null-vs-T0 check kills a mutation flipping the ternary.
         built = await buildDoorbell({});
 
-        const set = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === mac + "/message"));
+        const set = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === mac + "/message/set"));
 
-        assert.ok(set?.setValue, "the /message SET subscription registered");
+        assert.ok(set, "the /message SET subscription registered");
 
         const payload = JSON.stringify({ duration: 0, message: "Ding" });
 
-        await set.setValue(payload, payload);
+        await built.mqtt.invokeSet(mac + "/message/set", payload);
 
         assert.deepEqual(built.cameraProjection.updateCalls, [{ payload: { lcdMessage: { resetAt: null, text: "Ding", type: "CUSTOM_MESSAGE" } } }],
           "a duration-0 custom message is non-expiring: resetAt is null, not a timestamp");
@@ -683,13 +686,13 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
           built = await buildDoorbell({});
 
           const t0 = Date.now();
-          const set = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === mac + "/message"));
+          const set = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === mac + "/message/set"));
 
-          assert.ok(set?.setValue, "the /message SET subscription registered");
+          assert.ok(set, "the /message SET subscription registered");
 
           const payload = JSON.stringify({ message: "" });
 
-          await set.setValue(payload, payload);
+          await built.mqtt.invokeSet(mac + "/message/set", payload);
 
           assert.deepEqual(built.cameraProjection.updateCalls, [{ payload: { lcdMessage: { resetAt: t0 } } }],
             "a blank message writes a bare resetAt (the mocked epoch) with no text or type key");
@@ -704,12 +707,12 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
         built = await buildDoorbell({});
 
-        const set = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === mac + "/message"));
+        const set = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === mac + "/message/set"));
 
-        assert.ok(set?.setValue, "the /message SET subscription registered");
+        assert.ok(set, "the /message SET subscription registered");
 
         // A malformed JSON rawValue trips the JSON.parse catch: the body logs the invalid-JSON error and returns before setMessage.
-        await set.setValue("{bad", "{bad");
+        await built.mqtt.invokeSet(mac + "/message/set", "{bad");
 
         assert.equal(built.cameraProjection.updateCalls.length, 0, "invalid JSON writes nothing to the doorbell");
         assert.ok(loggedAt(built.logEntries, "error", "Unable to process MQTT message"), "invalid JSON is reported at error");
@@ -720,15 +723,15 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
         built = await buildDoorbell({});
 
-        const set = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === mac + "/message"));
+        const set = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === mac + "/message/set"));
 
-        assert.ok(set?.setValue, "the /message SET subscription registered");
+        assert.ok(set, "the /message SET subscription registered");
 
         // Valid JSON, but no "message" key: the message is undefined, so the typeof message !== "string" guard rejects it before setMessage. The missing-key case now
         // shares the same string-typed guard as the wrong-type cases below, so it is netted here as one of them rather than left uncovered.
         const payload = JSON.stringify({ duration: 10 });
 
-        await set.setValue(payload, payload);
+        await built.mqtt.invokeSet(mac + "/message/set", payload);
 
         assert.equal(built.cameraProjection.updateCalls.length, 0, "a payload with no message key writes nothing");
         assert.ok(loggedAt(built.logEntries, "error", "Unable to process MQTT message"), "a missing message key is reported at error");
@@ -738,15 +741,15 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
         built = await buildDoorbell({});
 
-        const set = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === mac + "/message"));
+        const set = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === mac + "/message/set"));
 
-        assert.ok(set?.setValue, "the /message SET subscription registered");
+        assert.ok(set, "the /message SET subscription registered");
 
         // A duration of "abc" is present but not a number, so the typeof-duration guard rejects it - without it, "abc" * 1000 would evaluate to NaN, which setMessage
         // would map to a never-expiring message.
         const payload = JSON.stringify({ duration: "abc", message: "Back soon" });
 
-        await set.setValue(payload, payload);
+        await built.mqtt.invokeSet(mac + "/message/set", payload);
 
         assert.equal(built.cameraProjection.updateCalls.length, 0, "a non-numeric string duration writes nothing");
         assert.ok(loggedAt(built.logEntries, "error", "Unable to process MQTT message"), "a non-numeric duration is reported at error");
@@ -756,15 +759,15 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
         built = await buildDoorbell({});
 
-        const set = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === mac + "/message"));
+        const set = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === mac + "/message/set"));
 
-        assert.ok(set?.setValue, "the /message SET subscription registered");
+        assert.ok(set, "the /message SET subscription registered");
 
         // A message of 42 is present but not a string, so the typeof-message guard rejects it - a presence-only check would let it slip past, since 42 is neither
         // undefined nor an empty string.
         const payload = JSON.stringify({ duration: 5, message: 42 });
 
-        await set.setValue(payload, payload);
+        await built.mqtt.invokeSet(mac + "/message/set", payload);
 
         assert.equal(built.cameraProjection.updateCalls.length, 0, "a non-string message writes nothing");
         assert.ok(loggedAt(built.logEntries, "error", "Unable to process MQTT message"), "a non-string message is reported at error");
@@ -774,15 +777,15 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
         built = await buildDoorbell({});
 
-        const set = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === mac + "/message"));
+        const set = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === mac + "/message/set"));
 
-        assert.ok(set?.setValue, "the /message SET subscription registered");
+        assert.ok(set, "the /message SET subscription registered");
 
         // The blessed behavior-narrowing: "30" is a numeric-looking STRING, and the typeof-duration guard rejects it rather than accepting it through arithmetic
         // coercion ("30" * 1000 === 30000), since the documented contract has always required a numeric duration.
         const payload = JSON.stringify({ duration: "30", message: "Back soon" });
 
-        await set.setValue(payload, payload);
+        await built.mqtt.invokeSet(mac + "/message/set", payload);
 
         assert.equal(built.cameraProjection.updateCalls.length, 0, "a numeric-looking string duration writes nothing");
         assert.ok(loggedAt(built.logEntries, "error", "Unable to process MQTT message"), "a stringly-typed duration is reported at error");
@@ -957,9 +960,9 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
       built = await buildMessageDoorbell([{ text: "Back soon", type: "CUSTOM_MESSAGE" }]);
 
-      const get = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "get") && (subscription.topic === "74ACB9000001/message"));
+      const get = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "get") && (subscription.topic === "74ACB9000001/message/get"));
 
-      assert.ok(get?.getValue, "the doorbell registered a /message GET subscription");
+      assert.ok(get, "the doorbell registered a /message GET subscription");
 
       mock.timers.enable({ apis: [ "Date", "setTimeout" ] });
 
@@ -970,13 +973,14 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
         built.nvr.client.state.pushCameraPatch(built.cameraConfig.id, { lcdMessage: { resetAt: t0 + 30000, text: "Back soon", type: "CUSTOM_MESSAGE" } });
         await settle();
 
-        assert.deepEqual(JSON.parse(get.getValue()), { duration: 30, message: "Back soon" }, "the GET reports the active message's remaining duration while it is live");
+        assert.deepEqual(JSON.parse(await built.mqtt.invokeGet("74ACB9000001/message/get") ?? ""), { duration: 30, message: "Back soon" },
+          "the GET reports the active message's remaining duration while it is live");
 
         // Advance past the deadline. The GET runs the slice through the same expiry predicate, so an expired message reports the empty string rather than a stale
         // negative duration.
         mock.timers.tick(30001);
 
-        assert.equal(get.getValue(), "", "the GET reports the empty string once the message has expired");
+        assert.equal(await built.mqtt.invokeGet("74ACB9000001/message/get"), "", "the GET reports the empty string once the message has expired");
       } finally {
 
         mock.timers.reset();

@@ -19,7 +19,7 @@ import type { ProtectAccessory } from "../types.ts";
 import { ProtectBase } from "./device-base.ts";
 import { ProtectDevice } from "./device.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
-import { TestMqttClient } from "../nvr/testing.helpers.ts";
+import { TestMqttClient } from "homebridge-plugin-utils/testing";
 import assert from "node:assert/strict";
 import util from "node:util";
 

@@ -27,7 +27,6 @@
 import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../testing.helpers.ts";
 import type { ProtectAccessory, ProtectDevices } from "../types.ts";
 import type { TestAccessory, TestService } from "../testing.helpers.ts";
-import type { TestMqttClient, TestProtectNvr } from "../nvr/testing.helpers.ts";
 import { afterEach, describe, test } from "node:test";
 import { makeNvrConfig, makeTestNvr } from "../nvr/testing.helpers.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
@@ -35,6 +34,8 @@ import type { ProtectNvrLiveviewConfig } from "unifi-protect";
 import { ProtectReservedNames } from "../types.ts";
 import { ProtectSecuritySystem } from "./security-system.ts";
 import type { TestLogEntry } from "homebridge-plugin-utils/testing";
+import type { TestMqttClient } from "homebridge-plugin-utils/testing";
+import type { TestProtectNvr } from "../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import { loggedAt } from "homebridge-plugin-utils/testing";
 import { makeLiveviewConfig } from "../devices/testing.helpers.ts";
@@ -319,12 +320,13 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
     await settle();
 
     // The mqttId is the controller MAC, so the GET subscription composes {controllerMAC}/securitysystem.
-    const subscription = built.mqtt.subscriptions.find((entry) => (entry.kind === "get") && (entry.topic === CONTROLLER_MAC + "/securitysystem"));
+    const subscription = built.mqtt.subscriptions.find((entry) => (entry.kind === "get") && (entry.topic === CONTROLLER_MAC + "/securitysystem/get"));
 
-    assert.ok(subscription?.getValue, "the securitysystem GET subscription composed the controller-MAC topic and captured a getValue handler");
+    assert.ok(subscription, "the securitysystem GET subscription composed the controller-MAC topic and captured a getValue handler");
 
     // The default saved state is STAY_ARM, which currentSecuritySystemState maps to "Home".
-    assert.equal(subscription.getValue(), "Home", "the GET handler returns the human-readable state string for the saved STAY_ARM state");
+    assert.equal(await built.mqtt.invokeGet(CONTROLLER_MAC + "/securitysystem/get"), "Home",
+      "the GET handler returns the human-readable state string for the saved STAY_ARM state");
 
     // The GET registration binds the owner-lifetime signal, not nvr.signal: it is live at rest, and cleanup() aborts it while the controller-lifetime nvr.signal stays
     // live - the security system unwinds independently of the plugin.
@@ -347,26 +349,26 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
 
     await settle();
 
-    const subscription = built.mqtt.subscriptions.find((entry) => (entry.kind === "set") && (entry.topic === CONTROLLER_MAC + "/securitysystem"));
+    const subscription = built.mqtt.subscriptions.find((entry) => (entry.kind === "set") && (entry.topic === CONTROLLER_MAC + "/securitysystem/set"));
 
-    assert.ok(subscription?.setValue, "the securitysystem SET subscription captured a setValue handler");
+    assert.ok(subscription, "the securitysystem SET subscription composed the controller-MAC topic");
 
     // "away" maps to AWAY_ARM and drives setSecurityState - the CurrentState lands on AWAY_ARM and the state publishes.
-    await subscription.setValue("away", "away");
+    await built.mqtt.invokeSet(CONTROLLER_MAC + "/securitysystem/set", "away");
 
     assert.equal(built.accessory.getService(Service.SecuritySystem)?.getCharacteristic(CurrentState).value, CurrentState.AWAY_ARM,
       "the away MQTT value drove setSecurityState to AWAY_ARM");
-    assert.ok(built.mqtt.published.some((published) => (published.topic === CONTROLLER_MAC + "/securitysystem") && (published.message === "Away")),
+    assert.ok(built.mqtt.published.some((published) => (published.topic === CONTROLLER_MAC + "/securitysystem") && (published.payload === "Away")),
       "the away set published the Away state");
 
     // "off" maps to DISARM and disarms.
-    await subscription.setValue("off", "off");
+    await built.mqtt.invokeSet(CONTROLLER_MAC + "/securitysystem/set", "off");
 
     assert.equal(built.accessory.getService(Service.SecuritySystem)?.getCharacteristic(CurrentState).value, CurrentState.DISARMED,
       "the off MQTT value disarmed the system");
 
     // A bad value logs the error and changes nothing.
-    await subscription.setValue("garbage", "garbage");
+    await built.mqtt.invokeSet(CONTROLLER_MAC + "/securitysystem/set", "garbage");
 
     assert.ok(loggedAt(built.logEntries, "error", "Unable to process MQTT security system setting: garbage."), "a bad MQTT value logs the error");
   });
@@ -405,7 +407,7 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
 
     // CurrentState landed on STAY_ARM and the state published.
     assert.equal(built.accessory.getService(Service.SecuritySystem)?.getCharacteristic(CurrentState).value, CurrentState.STAY_ARM, "CurrentState landed on STAY_ARM");
-    assert.ok(built.mqtt.published.some((published) => (published.topic === CONTROLLER_MAC + "/securitysystem") && (published.message === "Home")),
+    assert.ok(built.mqtt.published.some((published) => (published.topic === CONTROLLER_MAC + "/securitysystem") && (published.payload === "Home")),
       "the armed scene published the Home state");
 
     // Now drive the disarm direction from the true start to net the change the OTHER way (false-gate proven both directions).
@@ -526,7 +528,7 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
     assert.equal(built.accessory.getService(Service.SecuritySystem)?.getCharacteristic(CurrentState).value, CurrentState.ALARM_TRIGGERED,
       "triggering the alarm drove CurrentState to ALARM_TRIGGERED");
     assert.equal(alarm.getCharacteristic(Characteristic.On).value, true, "the alarm Switch reflects the triggered state");
-    assert.ok(built.mqtt.published.some((published) => (published.topic === CONTROLLER_MAC + "/securitysystem") && (published.message === "Alarm")),
+    assert.ok(built.mqtt.published.some((published) => (published.topic === CONTROLLER_MAC + "/securitysystem") && (published.payload === "Alarm")),
       "the alarm published the Alarm state");
 
     // Reset returns to the held securityState (STAY_ARM by default).
@@ -545,7 +547,7 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
 
     await settle();
 
-    const subscription = built.mqtt.subscriptions.find((entry) => (entry.kind === "get") && (entry.topic === CONTROLLER_MAC + "/securitysystem"));
+    const subscription = built.mqtt.subscriptions.find((entry) => (entry.kind === "get") && (entry.topic === CONTROLLER_MAC + "/securitysystem/get"));
 
     assert.equal(subscription?.init?.signal?.aborted, false, "the GET registration's lifetime is live before the controller abort");
 

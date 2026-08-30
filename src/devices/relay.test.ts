@@ -26,11 +26,15 @@ import type { ProtectRelayConfig } from "unifi-protect";
 import { ProtectReservedNames } from "../types.ts";
 import type { Relay } from "unifi-protect";
 import type { TestAccessory } from "../testing.helpers.ts";
-import type { TestMqttClient } from "../nvr/testing.helpers.ts";
+import type { TestMqttClient } from "homebridge-plugin-utils/testing";
 import { analyzeLegacyFeatureOptions } from "../options-legacy.ts";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
 import { makeTestNvr } from "../nvr/testing.helpers.ts";
+
+// The MAC-scoped tail the plugin composed, with the /get or /set suffix the MQTT client appends taken back off. These rows assert what the plugin addressed,
+// which is the tail rather than the child topic the registration lands on.
+const composedTail = (topic: string): string => topic.replace(/\/(get|set)$/, "");
 
 // The subtype the relay assigns each output switch, keyed by the 0-based wire id. Single-sourced here so every lookup in the suite names the exact subtype the class
 // created the service under.
@@ -273,7 +277,7 @@ describe("real ProtectRelay construction and behavior", () => {
 
     assert.deepEqual(relayProjection.toggleCalls, [ { outputId: 0 }, { outputId: 0 } ], "the on tap and the off tap each issued a toggle");
     assert.deepEqual(mqtt.published.filter((entry) => entry.topic === relayConfig.mac + "/relay/1"),
-      [ { message: "true", topic: relayConfig.mac + "/relay/1" }, { message: "false", topic: relayConfig.mac + "/relay/1" } ],
+      [ { payload: "true", topic: relayConfig.mac + "/relay/1" }, { payload: "false", topic: relayConfig.mac + "/relay/1" } ],
       "each accepted tap published its desired state on the 1-based output topic");
 
     // The first broadcast (on, from the first toggle) lands, then the second (off, from the second toggle).
@@ -479,23 +483,23 @@ describe("real ProtectRelay construction and behavior", () => {
 
   test("MQTT registers a MAC-scoped get and set per output; the get reads live state and the set drives the toggle path", async () => {
 
-    const tails = mqtt.subscriptions.map((subscription) => subscription.topic);
+    const tails = mqtt.subscriptions.map((subscription) => composedTail(subscription.topic));
 
     assert.ok(tails.includes(relayConfig.mac + "/relay/1"), "output 1 registered a MAC-scoped subscription tail");
     assert.ok(tails.includes(relayConfig.mac + "/relay/2"), "output 2 registered a MAC-scoped subscription tail");
 
     // HARD-assert the GET subscription exists FIRST: an absent subscription whose getValue is optional-chained would let the value assertion pass vacuously.
-    const get = mqtt.subscriptions.find((subscription) => (subscription.kind === "get") && (subscription.topic === relayConfig.mac + "/relay/1"));
+    const get = mqtt.subscriptions.find((subscription) => (subscription.kind === "get") && (subscription.topic === relayConfig.mac + "/relay/1/get"));
 
-    assert.ok(get?.getValue, "output 1 registered a GET subscription");
-    assert.equal(get.getValue(), "false", "the GET reads the live off state as the string \"false\"");
+    assert.ok(get, "output 1 registered a GET subscription");
+    assert.equal(await mqtt.invokeGet(relayConfig.mac + "/relay/1/get"), "false", "the GET reads the live off state as the string \"false\"");
 
     // The SET body drives the output switch's On onSet, which re-enters the single set-to-toggle path.
-    const set = mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === relayConfig.mac + "/relay/1"));
+    const set = mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === relayConfig.mac + "/relay/1/set"));
 
-    assert.ok(set?.setValue, "output 1 registered a SET subscription");
+    assert.ok(set, "output 1 registered a SET subscription");
 
-    await set.setValue("true", "true");
+    await mqtt.invokeSet(relayConfig.mac + "/relay/1/set", "true");
     await settle();
 
     assert.deepEqual(relayProjection.toggleCalls, [{ outputId: 0 }], "a \"true\" SET on the output topic drove the toggle path for output 0");

@@ -53,9 +53,13 @@ import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
 import { ProtectSensor } from "./sensor.ts";
 import type { TestLogEntry } from "homebridge-plugin-utils/testing";
-import type { TestMqttClient } from "../nvr/testing.helpers.ts";
+import type { TestMqttClient } from "homebridge-plugin-utils/testing";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
+
+// The MAC-scoped tail the plugin composed, with the /get or /set suffix the MQTT client appends taken back off. These rows assert what the plugin addressed,
+// which is the tail rather than the child topic the registration lands on.
+const composedTail = (topic: string): string => topic.replace(/\/(get|set)$/, "");
 
 // A full block of air-quality readings, quiet except the metrics a case names - the shape the controller always sends, where every metric is present whether or not the
 // hardware measures it. Air-quality patches carry the WHOLE block, matching how this suite pushes every other nested settings object.
@@ -259,7 +263,7 @@ describe("real ProtectSensor construction and family behavior", () => {
     assert.equal(await alarm.getCharacteristic(Characteristic.ContactSensorState).triggerGet(), true, "the alarm onGet reads through alarmTriggeredAt !== null");
     assert.equal(alarm.getCharacteristic(Characteristic.StatusActive).value, true, "StatusActive carried from isReachable");
     assert.equal(alarm.getCharacteristic(Characteristic.StatusTampered).value, false, "StatusTampered carried from sensorTamperState(null)");
-    assert.ok(built.mqtt.published.some((entry) => (entry.topic === built.projection.config.mac + "/alarm") && (entry.message === "true")),
+    assert.ok(built.mqtt.published.some((entry) => (entry.topic === built.projection.config.mac + "/alarm") && (entry.payload === "true")),
       "the alarm state published on the device-scoped topic");
     assert.ok(loggedAt(built.logEntries, "info", "Enabled sensor: alarm sound."), "one enabled sensor logs the SINGULAR enabled-sensor line");
 
@@ -393,7 +397,7 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     assert.equal(humidity.getCharacteristic(Characteristic.CurrentRelativeHumidity).value, 47.5, "the arriving stats reading landed on the characteristic");
     assert.equal(await humidity.getCharacteristic(Characteristic.CurrentRelativeHumidity).triggerGet(), 47.5, "the onGet reads through the live stat value");
-    assert.ok(built.mqtt.published.some((entry) => (entry.topic === (mac + "/humidity")) && (entry.message === "47.5")),
+    assert.ok(built.mqtt.published.some((entry) => (entry.topic === (mac + "/humidity")) && (entry.payload === "47.5")),
       "the humidity state published on the device-scoped topic");
 
     built.sensor.cleanup();
@@ -449,7 +453,7 @@ describe("real ProtectSensor construction and family behavior", () => {
     await settle();
 
     assert.equal(temperature.getCharacteristic(Characteristic.CurrentTemperature).value, 18.25, "the first arriving reading landed on the characteristic");
-    assert.ok(built.mqtt.published.some((entry) => (entry.topic === (mac + "/temperature")) && (entry.message === "18.25")), "the first reading published too");
+    assert.ok(built.mqtt.published.some((entry) => (entry.topic === (mac + "/temperature")) && (entry.payload === "18.25")), "the first reading published too");
 
     built.sensor.cleanup();
   });
@@ -609,7 +613,7 @@ describe("real ProtectSensor construction and family behavior", () => {
     // The default carrier advertises no water-leak channels (channelNames []), so the leak-policy leaf gates both leak channels off and the per-channel MQTT fold-in
     // registers NEITHER leak GET. The other sensor GETs are always-on and registered unconditionally in configureMqtt, including both alarm-family gets (alarm sound
     // and glass break) regardless of whether either service exists.
-    const tails = mqtt.subscriptions.filter((subscription) => subscription.kind === "get").map((subscription) => subscription.topic);
+    const tails = mqtt.subscriptions.filter((subscription) => subscription.kind === "get").map((subscription) => composedTail(subscription.topic));
     const mac = projection.config.mac;
 
     for(const tail of [ "alarm", "ambientlight", "contact", "glassbreak", "humidity", "temperature" ]) {
@@ -625,7 +629,7 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     // Single-channel mount-role enabled: the internal leak GET registers, the external never (the channel is not advertised).
     const single = buildSensor({ leakChannelNames: ["internal"], mountType: "leak" });
-    const singleTails = single.mqtt.subscriptions.filter((subscription) => subscription.kind === "get").map((subscription) => subscription.topic);
+    const singleTails = single.mqtt.subscriptions.filter((subscription) => subscription.kind === "get").map((subscription) => composedTail(subscription.topic));
     const singleMac = single.projection.config.mac;
 
     assert.ok(singleTails.includes(singleMac + "/leak"), "a single-channel mount-role sensor registers the internal leak GET");
@@ -635,7 +639,7 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     // Single-channel mount role OFF (the stuck-flag bug case): neither leak GET registers even though the stuck internal flag is true.
     const disabled = buildSensor({ leakChannelNames: ["internal"], leakInternalEnabled: true, mountType: "none" });
-    const disabledTails = disabled.mqtt.subscriptions.filter((subscription) => subscription.kind === "get").map((subscription) => subscription.topic);
+    const disabledTails = disabled.mqtt.subscriptions.filter((subscription) => subscription.kind === "get").map((subscription) => composedTail(subscription.topic));
     const disabledMac = disabled.projection.config.mac;
 
     assert.equal(disabledTails.includes(disabledMac + "/leak"), false,
@@ -645,7 +649,7 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     // Multi-channel with the external flag on: the external leak GET registers.
     const multi = buildSensor({ leakChannelNames: [ "internal", "external" ], leakExternalEnabled: true, leakInternalEnabled: true });
-    const multiTails = multi.mqtt.subscriptions.filter((subscription) => subscription.kind === "get").map((subscription) => subscription.topic);
+    const multiTails = multi.mqtt.subscriptions.filter((subscription) => subscription.kind === "get").map((subscription) => composedTail(subscription.topic));
     const multiMac = multi.projection.config.mac;
 
     assert.ok(multiTails.includes(multiMac + "/leak"), "a multi-channel sensor with the internal flag on registers the internal leak GET");
@@ -661,7 +665,10 @@ describe("real ProtectSensor construction and family behavior", () => {
     // leak GET. The TestMqttClient records every subscribeGet, so a duplicate is directly countable.
     const built = buildSensor({ leakChannelNames: ["internal"], mountType: "leak" });
     const mac = built.projection.config.mac;
-    const leakGetCount = (): number => built.mqtt.subscriptions.filter((subscription) => (subscription.kind === "get") && (subscription.topic === mac + "/leak")).length;
+    const leakGetCount = (): number => {
+
+      return built.mqtt.subscriptions.filter((subscription) => (subscription.kind === "get") && (subscription.topic === mac + "/leak/get")).length;
+    };
 
     await settle();
 
@@ -703,8 +710,8 @@ describe("real ProtectSensor construction and family behavior", () => {
     // restart. The untouched internal channel must NOT re-register - a forbidden onServiceCreate closure-flip would leak the reset into the sibling and double-register
     // its GET.
     const mac = built.projection.config.mac;
-    const externalGets = (): number => built.mqtt.subscriptions.filter((entry) => (entry.kind === "get") && (entry.topic === (mac + "/leak-external"))).length;
-    const internalGets = (): number => built.mqtt.subscriptions.filter((entry) => (entry.kind === "get") && (entry.topic === (mac + "/leak"))).length;
+    const externalGets = (): number => built.mqtt.subscriptions.filter((entry) => (entry.kind === "get") && (entry.topic === (mac + "/leak-external/get"))).length;
+    const internalGets = (): number => built.mqtt.subscriptions.filter((entry) => (entry.kind === "get") && (entry.topic === (mac + "/leak/get"))).length;
     const externalBefore = externalGets();
     const internalBefore = internalGets();
 
@@ -720,19 +727,19 @@ describe("real ProtectSensor construction and family behavior", () => {
     built.sensor.cleanup();
   });
 
-  test("a captured GET handler reads through the live config value", () => {
+  test("a captured GET handler reads through the live config value", async () => {
 
     // Build a temperature-enabled sensor with a present stat, then invoke the captured temperature GET handler directly - the path the production subscribeGet handler
     // takes that the HomeKit onGet machinery does not exercise - and assert the string value the MQTT layer would publish.
     const built = buildSensor({ temperature: 19, temperatureEnabled: true });
     const mac = built.projection.config.mac;
-    const temperatureGet = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "get") && (subscription.topic === mac + "/temperature"));
-    const contactGet = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "get") && (subscription.topic === mac + "/contact"));
+    const temperatureGet = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "get") && (subscription.topic === mac + "/temperature/get"));
+    const contactGet = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "get") && (subscription.topic === mac + "/contact/get"));
 
-    assert.ok(temperatureGet?.getValue, "the temperature GET subscription captured a getValue handler");
-    assert.equal(temperatureGet.getValue(), "19", "the temperature GET handler reads through the live stat value as a string");
-    assert.ok(contactGet?.getValue, "the contact GET subscription captured a getValue handler");
-    assert.equal(contactGet.getValue(), "false", "the contact GET handler reads through isOpened ?? false as a string");
+    assert.ok(temperatureGet, "the temperature GET subscription is registered");
+    assert.equal(await built.mqtt.invokeGet(mac + "/temperature/get"), "19", "the temperature GET handler reads through the live stat value as a string");
+    assert.ok(contactGet, "the contact GET subscription is registered");
+    assert.equal(await built.mqtt.invokeGet(mac + "/contact/get"), "false", "the contact GET handler reads through isOpened ?? false as a string");
 
     built.sensor.cleanup();
   });
@@ -1004,28 +1011,28 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     const built = buildSensor({ glassBreak: true, glassBreakEnabled: true });
     const mac = built.projection.config.mac;
-    const glassGet = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "get") && (subscription.topic === mac + "/glassbreak"));
-    const alarmGet = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "get") && (subscription.topic === mac + "/alarm"));
+    const glassGet = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "get") && (subscription.topic === mac + "/glassbreak/get"));
+    const alarmGet = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "get") && (subscription.topic === mac + "/alarm/get"));
 
     await settle();
 
-    assert.ok(glassGet?.getValue, "the glassbreak GET subscription captured a getValue handler");
-    assert.ok(alarmGet?.getValue, "the alarm GET subscription still registers unconditionally");
-    assert.equal(glassGet.getValue(), "false", "the glassbreak GET reads through alarmDetected as a string (clear at start)");
+    assert.ok(glassGet, "the glassbreak GET subscription captured a getValue handler");
+    assert.ok(alarmGet, "the alarm GET subscription still registers unconditionally");
+    assert.equal(await built.mqtt.invokeGet(mac + "/alarm/get"), "false", "the glassbreak GET reads through alarmDetected as a string (clear at start)");
 
     built.store.pushSensorPatch("test-sensor-1", { alarmTriggeredAt: 1700000000000 });
 
     await settle();
 
-    assert.equal(glassGet.getValue(), "true", "the glassbreak GET reads through the non-null alarmTriggeredAt after the push");
-    assert.ok(built.mqtt.published.some((entry) => (entry.topic === mac + "/glassbreak") && (entry.message === "true")),
+    assert.equal(await built.mqtt.invokeGet(mac + "/alarm/get"), "true", "the glassbreak GET reads through the non-null alarmTriggeredAt after the push");
+    assert.ok(built.mqtt.published.some((entry) => (entry.topic === mac + "/glassbreak") && (entry.payload === "true")),
       "the glass-break state published true on the device-scoped topic after detection");
 
     built.store.pushSensorPatch("test-sensor-1", { alarmTriggeredAt: null });
 
     await settle();
 
-    assert.ok(built.mqtt.published.some((entry) => (entry.topic === mac + "/glassbreak") && (entry.message === "false")),
+    assert.ok(built.mqtt.published.some((entry) => (entry.topic === mac + "/glassbreak") && (entry.payload === "false")),
       "the glass-break state published false on the device-scoped topic after the clear");
 
     built.sensor.cleanup();
@@ -1475,7 +1482,7 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     assert.ok(published, "the telemetry published on the device-scoped topic");
 
-    const payload = JSON.parse(published.message) as Record<string, { status: string; value: Nullable<number> }>;
+    const payload = JSON.parse(String(published.payload)) as Record<string, { status: string; value: Nullable<number> }>;
 
     assert.deepEqual(Object.keys(payload).sort(), [ "aqi", "co2", "humidity", "nox", "pm10p0", "pm1p0", "pm2p5", "pm4p0", "temperature", "tvoc", "vape", "voc" ].sort(),
       "the payload carries exactly the twelve metrics we document and nothing else");
@@ -1483,10 +1490,10 @@ describe("real ProtectSensor construction and family behavior", () => {
     assert.deepEqual(payload["voc"], { status: "neutral", value: 68 }, "the VOC index rides MQTT, having no HomeKit service to live on");
     assert.deepEqual(payload["nox"], { status: "unknown", value: null }, "a metric the sensor does not measure reports null rather than being dropped");
 
-    const airQualityGet = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "get") && (subscription.topic === (mac + "/airquality")));
+    const airQualityGet = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "get") && (subscription.topic === (mac + "/airquality") + "/get"));
 
-    assert.ok(airQualityGet?.getValue, "the airquality GET registered");
-    assert.equal(airQualityGet.getValue(), published.message, "the GET answers with the same curated payload the publish carries");
+    assert.ok(airQualityGet, "the airquality GET registered");
+    assert.equal(await built.mqtt.invokeGet(mac + "/airquality/get"), published.payload, "the GET answers with the same curated payload the publish carries");
 
     built.sensor.cleanup();
 
@@ -1505,20 +1512,20 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     const built = buildSensor({ airQuality: { vape: { status: "neutral", value: null } }, vapeEnabled: true }, { userOptions: ["Enable.Sensor.Vape"] });
     const mac = built.projection.config.mac;
-    const vapeGet = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "get") && (subscription.topic === (mac + "/vape")));
+    const vapeGet = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "get") && (subscription.topic === (mac + "/vape") + "/get"));
 
     await settle();
 
-    assert.ok(vapeGet?.getValue, "the vape GET registered");
-    assert.equal(vapeGet.getValue(), "false", "the GET reads through the vape state, clear at start");
-    assert.ok(built.mqtt.published.some((entry) => (entry.topic === (mac + "/vape")) && (entry.message === "false")), "the quiet state published");
+    assert.ok(vapeGet, "the vape GET registered");
+    assert.equal(await built.mqtt.invokeGet(mac + "/vape/get"), "false", "the GET reads through the vape state, clear at start");
+    assert.ok(built.mqtt.published.some((entry) => (entry.topic === (mac + "/vape")) && (entry.payload === "false")), "the quiet state published");
 
     built.store.pushSensorPatch("test-sensor-1", { airQuality: airQualityBlock({ vape: { status: "detected", value: null } }) });
 
     await settle();
 
-    assert.equal(vapeGet.getValue(), "true", "the GET reads through the detection");
-    assert.ok(built.mqtt.published.some((entry) => (entry.topic === (mac + "/vape")) && (entry.message === "true")), "the detection published");
+    assert.equal(await built.mqtt.invokeGet(mac + "/vape/get"), "true", "the GET reads through the detection");
+    assert.ok(built.mqtt.published.some((entry) => (entry.topic === (mac + "/vape")) && (entry.payload === "true")), "the detection published");
 
     built.sensor.cleanup();
   });
@@ -1541,8 +1548,8 @@ describe("real ProtectSensor construction and family behavior", () => {
     assert.equal(temperature.getCharacteristic(Characteristic.CurrentTemperature).value, 23.92, "CurrentTemperature carries the air-quality reading");
     assert.equal(await humidity.getCharacteristic(Characteristic.CurrentRelativeHumidity).triggerGet(), 50.25, "the humidity onGet reads through the same source");
     assert.equal(await temperature.getCharacteristic(Characteristic.CurrentTemperature).triggerGet(), 23.92, "the temperature onGet reads through the same source");
-    assert.ok(built.mqtt.published.some((entry) => (entry.topic === (mac + "/humidity")) && (entry.message === "50.25")), "the humidity reading published");
-    assert.ok(built.mqtt.published.some((entry) => (entry.topic === (mac + "/temperature")) && (entry.message === "23.92")), "the temperature reading published");
+    assert.ok(built.mqtt.published.some((entry) => (entry.topic === (mac + "/humidity")) && (entry.payload === "50.25")), "the humidity reading published");
+    assert.ok(built.mqtt.published.some((entry) => (entry.topic === (mac + "/temperature")) && (entry.payload === "23.92")), "the temperature reading published");
 
     built.sensor.cleanup();
   });
@@ -1606,17 +1613,17 @@ describe("real ProtectSensor construction and family behavior", () => {
     built.sensor.cleanup();
   });
 
-  test("the humidity and temperature MQTT gets always answer, with the no-reading stand-in when no source reports", () => {
+  test("the humidity and temperature MQTT gets always answer, with the no-reading stand-in when no source reports", async () => {
 
     // The get contract is unconditional: a subscriber asking an all-quiet sensor still gets an answer, and the stand-in tells it apart from a real reading.
     const mac = projection.config.mac;
-    const humidityGet = mqtt.subscriptions.find((subscription) => (subscription.kind === "get") && (subscription.topic === (mac + "/humidity")));
-    const temperatureGet = mqtt.subscriptions.find((subscription) => (subscription.kind === "get") && (subscription.topic === (mac + "/temperature")));
+    const humidityGet = mqtt.subscriptions.find((subscription) => (subscription.kind === "get") && (subscription.topic === (mac + "/humidity") + "/get"));
+    const temperatureGet = mqtt.subscriptions.find((subscription) => (subscription.kind === "get") && (subscription.topic === (mac + "/temperature") + "/get"));
 
-    assert.ok(humidityGet?.getValue, "the humidity GET registered on an all-quiet sensor");
-    assert.ok(temperatureGet?.getValue, "the temperature GET registered on an all-quiet sensor");
-    assert.equal(humidityGet.getValue(), "-1", "the humidity GET answers the no-reading stand-in rather than staying silent");
-    assert.equal(temperatureGet.getValue(), "-1", "the temperature GET answers the no-reading stand-in rather than staying silent");
+    assert.ok(humidityGet, "the humidity GET registered on an all-quiet sensor");
+    assert.ok(temperatureGet, "the temperature GET registered on an all-quiet sensor");
+    assert.equal(await mqtt.invokeGet(mac + "/humidity/get"), "-1", "the humidity GET answers the no-reading stand-in rather than staying silent");
+    assert.equal(await mqtt.invokeGet(mac + "/temperature/get"), "-1", "the temperature GET answers the no-reading stand-in rather than staying silent");
   });
 
   test("a fully-reporting air-quality sensor logs every one of its services in the enabled-sensors line, in order", async () => {

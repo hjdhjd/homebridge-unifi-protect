@@ -28,13 +28,14 @@
  * CurrentTemperature.value === NEW after pushNvrPatch moves a FRESH systemInfo by reference, never triggerGet.
  */
 import { Characteristic, Service, TestStateStore, makeProtectState, settle } from "../testing.helpers.ts";
-import type { TestMqttClient, TestProtectNvr } from "./testing.helpers.ts";
 import { afterEach, describe, test } from "node:test";
 import { makeNvrConfig, makeTestNvr } from "./testing.helpers.ts";
 import type { ProtectNvr } from "./nvr.ts";
 import { ProtectNvrSystemInfo } from "./nvr-systeminfo.ts";
 import type { TestAccessory } from "../testing.helpers.ts";
 import type { TestLogEntry } from "homebridge-plugin-utils/testing";
+import type { TestMqttClient } from "homebridge-plugin-utils/testing";
+import type { TestProtectNvr } from "./testing.helpers.ts";
 import assert from "node:assert/strict";
 import { loggedAt } from "homebridge-plugin-utils/testing";
 
@@ -213,14 +214,14 @@ describe("real ProtectNvrSystemInfo construction and controller-owner behavior",
     await settle();
 
     // The mqttId is the controller MAC (the ProtectBase base default), so the GET subscription composes {controllerMAC}/systeminfo.
-    const subscription = built.mqtt.subscriptions.find((entry) => (entry.kind === "get") && (entry.topic === "74ACB9FFFFFF/systeminfo"));
+    const subscription = built.mqtt.subscriptions.find((entry) => (entry.kind === "get") && (entry.topic === "74ACB9FFFFFF/systeminfo/get"));
 
-    assert.ok(subscription?.getValue, "the systeminfo GET subscription composed the controller-MAC topic and captured a getValue handler");
+    assert.ok(subscription, "the systeminfo GET subscription composed the controller-MAC topic and captured a getValue handler");
 
     // Assert against an INDEPENDENT expected built from the KNOWN seeded temperature, not === JSON.stringify(nvr.ufp.systemInfo) (which re-reads the same handler input
     // and is a tautology). The handler stringifies the whole systemInfo, so parsing it back and reading cpu.temperature proves the read-through. The parse result is
     // typed to the one field under assertion at this confined boundary, exactly as JSON.parse's any would otherwise leak into an unsafe member access.
-    const payload = JSON.parse(subscription.getValue()) as { cpu: { temperature: number } };
+    const payload = JSON.parse(await built.mqtt.invokeGet("74ACB9FFFFFF/systeminfo/get") ?? "") as { cpu: { temperature: number } };
 
     assert.equal(payload.cpu.temperature, 33, "the GET handler stringifies the live systemInfo, carrying the seeded temperature");
 
@@ -244,7 +245,7 @@ describe("real ProtectNvrSystemInfo construction and controller-owner behavior",
 
     assert.equal(built.store.observerCount, 1, "the single nvr.systemInfo observer is registered against the store double");
 
-    const subscription = built.mqtt.subscriptions.find((entry) => (entry.kind === "get") && (entry.topic === "74ACB9FFFFFF/systeminfo"));
+    const subscription = built.mqtt.subscriptions.find((entry) => (entry.kind === "get") && (entry.topic === "74ACB9FFFFFF/systeminfo/get"));
 
     assert.equal(subscription?.init?.signal?.aborted, false, "the GET registration's lifetime is live before the controller abort");
 

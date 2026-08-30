@@ -32,7 +32,7 @@ import { ProtectReservedNames } from "../types.ts";
 import type { Sensor } from "unifi-protect";
 import type { TestAccessory } from "../testing.helpers.ts";
 import type { TestLogEntry } from "homebridge-plugin-utils/testing";
-import type { TestMqttClient } from "../nvr/testing.helpers.ts";
+import type { TestMqttClient } from "homebridge-plugin-utils/testing";
 import assert from "node:assert/strict";
 import { loggedAt } from "homebridge-plugin-utils/testing";
 
@@ -289,7 +289,7 @@ describe("base ProtectDevice motion capability (device-motion concern net)", () 
       device = built.device;
 
       const occupancyGets = (): number => built.mqtt.subscriptions.filter((subscription) => (subscription.kind === "get") && (subscription.topic ===
-        (SENSOR_MAC + "/occupancy"))).length;
+        (SENSOR_MAC + "/occupancy/get"))).length;
 
       built.device.configureOccupancySensorFor(false, false);
 
@@ -411,8 +411,8 @@ describe("base ProtectDevice motion capability (device-motion concern net)", () 
       // The motion get/set MQTT registrations are unconditional in configureMotionSensor (independent of the Motion.* switch features), so they are present on the bare
       // carrier. Find each by the MAC-scoped topic and kind.
       const motionTopic = SENSOR_MAC + "/motion";
-      const setSub = built.mqtt.subscriptions.find((subscription) => (subscription.topic === motionTopic) && (subscription.kind === "set"));
-      const getSub = built.mqtt.subscriptions.find((subscription) => (subscription.topic === motionTopic) && (subscription.kind === "get"));
+      const setSub = built.mqtt.subscriptions.find((subscription) => (subscription.topic === motionTopic + "/set") && (subscription.kind === "set"));
+      const getSub = built.mqtt.subscriptions.find((subscription) => (subscription.topic === motionTopic + "/get") && (subscription.kind === "get"));
 
       assert.ok(setSub, "the motion set subscription registered on the MAC-scoped topic");
       assert.ok(getSub, "the motion get subscription registered on the MAC-scoped topic");
@@ -420,7 +420,7 @@ describe("base ProtectDevice motion capability (device-motion concern net)", () 
       // The firehose-live half: a "true" payload routes to motionEventHandler exactly once, carrying the carrier id.
       const trueBaseline = built.recording.calls.length;
 
-      await setSub.setValue?.("true", "true");
+      await built.mqtt.invokeSet(motionTopic + "/set", "true");
 
       assert.equal(built.recording.calls.length - trueBaseline, 1, "a \"true\" motion set routed to motionEventHandler exactly once");
       assert.deepEqual(built.recording.calls[trueBaseline], { id: SENSOR_ID, kind: "motion" }, "the firehose call carried the carrier id and the motion kind");
@@ -428,12 +428,12 @@ describe("base ProtectDevice motion capability (device-motion concern net)", () 
       // The non-"true" half is non-vacuous only because the "true" half proved the path live: from a FRESH baseline, a "false" payload routes nothing.
       const falseBaseline = built.recording.calls.length;
 
-      await setSub.setValue?.("false", "false");
+      await built.mqtt.invokeSet(motionTopic + "/set", "false");
 
       assert.equal(built.recording.calls.length - falseBaseline, 0, "a non-\"true\" motion set is a no-op (no firehose)");
 
       // The get handler reflects the MotionDetected characteristic state: false initially, true once the motion service is flipped.
-      assert.equal(getSub.getValue?.(), "false", "the motion get reads the initial MotionDetected state (false)");
+      assert.equal(await built.mqtt.invokeGet(motionTopic + "/get"), "false", "the motion get reads the initial MotionDetected state (false)");
 
       const motionService = built.accessory.getService(Service.MotionSensor);
 
@@ -441,7 +441,7 @@ describe("base ProtectDevice motion capability (device-motion concern net)", () 
 
       motionService.updateCharacteristic(Characteristic.MotionDetected, true);
 
-      assert.equal(getSub.getValue?.(), "true", "the motion get reflects the flipped MotionDetected state (true)");
+      assert.equal(await built.mqtt.invokeGet(motionTopic + "/get"), "true", "the motion get reflects the flipped MotionDetected state (true)");
     });
   });
 });

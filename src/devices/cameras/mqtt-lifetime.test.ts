@@ -18,7 +18,7 @@ import { G6_PRO_ENTRY_CHANNELS } from "../../camera.fixtures.ts";
 import type { ProtectAccessory } from "../../types.ts";
 import { ProtectCamera } from "./camera.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
-import type { TestMqttSubscription } from "../../nvr/testing.helpers.ts";
+import type { TestMqttSubscription } from "homebridge-plugin-utils/testing";
 import assert from "node:assert/strict";
 import { makeTestNvr } from "../../nvr/testing.helpers.ts";
 
@@ -43,13 +43,13 @@ describe("MQTT subscription lifetime (owner-signal scoping)", () => {
     assert.ok(mqtt.subscriptions.every((subscription) => subscription.init?.signal?.aborted === false), "every lifetime signal is live after construction");
 
     // The parent's signal, identified through a registration only the parent makes (the camera's RTSP information topic).
-    const parentSignal = mqtt.subscriptions.find((subscription) => subscription.topic === "74ACB9000001/rtsp")?.init?.signal;
+    const parentSignal = mqtt.subscriptions.find((subscription) => subscription.topic === "74ACB9000001/rtsp/get")?.init?.signal;
 
     assert.ok(parentSignal, "the parent's own registration identifies its lifetime signal");
 
     // The shared parent-MAC motion tuple: the parent and the package each hold a get/set pair on the SAME topic, the deliberate shared-topic quirk. The package's
     // pair must carry the package's own signal, never the parent's - that separation is exactly what makes a per-owner release possible on a shared topic.
-    const motionSubscriptions: TestMqttSubscription[] = mqtt.subscriptions.filter((subscription) => subscription.topic === "74ACB9000001/motion");
+    const motionSubscriptions: TestMqttSubscription[] = mqtt.subscriptions.filter((subscription) => subscription.topic.startsWith("74ACB9000001/motion/"));
     const packageMotionSubscriptions = motionSubscriptions.filter((subscription) => subscription.init?.signal !== parentSignal);
 
     assert.equal(motionSubscriptions.length, 4, "the parent and the package each registered a get/set pair on the shared motion topic");

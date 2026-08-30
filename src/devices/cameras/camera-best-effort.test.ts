@@ -234,7 +234,7 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
         await settle();
 
         assert.equal(await lightSensor.getCharacteristic(Characteristic.CurrentAmbientLightLevel).triggerGet(), 80, "the poll updated the changed reading to 80");
-        assert.ok(nvr.mqtt?.published.some((entry) => (entry.topic === (cameraConfig.mac + "/ambientlight")) && (entry.message === "80")),
+        assert.ok(nvr.mqtt?.published.some((entry) => (entry.topic === (cameraConfig.mac + "/ambientlight")) && (entry.payload === "80")),
           "the poll published the new reading on the device-scoped ambientlight topic");
       } finally {
 

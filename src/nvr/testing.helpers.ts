@@ -17,18 +17,18 @@
 import type { Camera, Chime, ProtectEventMetadata, ProtectNvrConfig, ProtectNvrLiveviewConfig, ProtectRingtoneConfig } from "unifi-protect";
 import { Characteristic, Service, TestAccessory, TestCameraController, TestStreamingDelegateFactory } from "../testing.helpers.ts";
 import type { Clock, HomebridgePluginLogging, Nullable, RecordingProcessFactory } from "homebridge-plugin-utils";
-import { FeatureOptions, formatErrorMessage, isHbpuAbortError } from "homebridge-plugin-utils";
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_NVR_REBOOT_RECENCY_MS, PROTECT_NVR_REMOVAL_STABILITY_WINDOW } from "../settings.ts";
 import type { ProtectAccessory, ProtectDevices } from "../types.ts";
 import type { ProtectNvrOptions, ProtectOptions } from "../options.ts";
 import type { TestApiCall, TestStateStore } from "../testing.helpers.ts";
-import { TestClock, TestRecordingProcessFactory } from "homebridge-plugin-utils/testing";
+import { TestClock, TestMqttClient, TestRecordingProcessFactory } from "homebridge-plugin-utils/testing";
 import { countActiveRecordingViews, isDisruptionExpected } from "./nvr-policy.ts";
 import { featureOptionCategories, featureOptions } from "../options.ts";
 import { AmbientLightCapability } from "../devices/cameras/ambient-light.ts";
 import { DiagnosticsHealthBridge } from "./nvr-health-bridge.ts";
 import { DoorbellCapability } from "../devices/cameras/doorbell.ts";
 import { FIXTURE_RTSPS_PORT } from "../camera.fixtures.ts";
+import { FeatureOptions } from "homebridge-plugin-utils";
 import type { HAP } from "homebridge";
 import type { LegacyFeatureOptions } from "../options-legacy.ts";
 import type { NvrPhase } from "./nvr.ts";
@@ -43,96 +43,6 @@ import { StreamingCapability } from "../devices/cameras/streaming.ts";
 import type { TestChimeProjection } from "../devices/testing.helpers.ts";
 import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import { analyzeLegacyFeatureOptions } from "../options-legacy.ts";
-
-// One recorded MQTT subscription registration: the composed topic tail, the human-readable type label, the registration kind, the per-subscription init options
-// production passed (the lifetime signal lives there, so a test can assert which signal scoped each registration and observe it abort with its owner), and the captured
-// handler closure. getValue is present on a "get" registration, setValue on a "set" registration; both are captured so a test can FIND a subscription by topic / kind
-// and INVOKE its handler directly - the path the production MQTT subscribeGet / subscribeSet handlers take that the HomeKit onSet machinery does not exercise (the
-// chime's switch(value) tone dispatch and empty-payload default, the viewer's liveview name lookup and unknown-name error).
-export interface TestMqttSubscription {
-
-  getValue?: () => string;
-  init?: { signal?: AbortSignal };
-  kind: "get" | "set";
-  setValue?: (value: string, rawValue: string) => Promise<void> | void;
-  topic: string;
-  type: string;
-}
-
-/* A minimal recording double of the homebridge-plugin-utils MqttClient surface ProtectBase's wrappers and the event dispatcher reach: publish, publishGuarded,
- * subscribeGet, subscribeSet, and unsubscribe. Registration-recording, plus handler CAPTURE - delivering a message to a registered handler (and releasing it when its
- * signal aborts) is homebridge-plugin-utils' contract, pinned by its own tests, so the double does not stand up a broker; it captures each handler closure onto the
- * recorded subscription so a test can find it by topic / kind and invoke it directly. That lets a test exercise the plugin's own MQTT-specific dispatch (the
- * chime's switch(value) tone dispatch and empty-payload default, the viewer's liveview name lookup and unknown-name error) - the handler bodies that the
- * HomeKit onSet machinery never reaches. What THIS double proves is the plugin's side of the interface: which subscriptions a device registered, on which topics,
- * carrying which lifetime signal, what each handler does, and what was published.
- *
- * publishGuarded mirrors the client's fire-and-forget contract over the same recording publish, so the published array and the rejection lever serve the guarded path
- * too: a cancelled publish drops to a debug line and every other failure lands at error level, each on the logger handed in at construction. The double carries no
- * topic prefix, so its lines name the tail the caller composed rather than the wire topic a real broker would receive.
- */
-export class TestMqttClient {
-
-  public readonly published: { message: string; topic: string }[] = [];
-  // When set, publish() rejects with this error instead of recording, so a test can drive the guarded-publish failure path. Persistent for the double's per-test
-  // lifetime; every test builds a fresh client, so there is no reset machinery.
-  public publishRejection: Nullable<Error> = null;
-  public readonly subscriptions: TestMqttSubscription[] = [];
-  public readonly unsubscribes: { id: string; topic: string }[] = [];
-
-  readonly #log: HomebridgePluginLogging;
-
-  // The reporting logger is optional because most arrangements never arm the rejection lever and have nothing to report; those get a silent sink so an unwired double
-  // emits nothing at all. A test that reads the guarded path's own lines hands in the sink it captures.
-  public constructor(options: { log?: HomebridgePluginLogging } = {}) {
-
-    const silent = (): void => undefined;
-
-    this.#log = options.log ?? { debug: silent, error: silent, info: silent, warn: silent };
-  }
-
-  public async publish(topic: string, message: string): Promise<void> {
-
-    if(this.publishRejection) {
-
-      throw this.publishRejection;
-    }
-
-    this.published.push({ message, topic });
-  }
-
-  public publishGuarded(topic: string, message: string): void {
-
-    void this.publish(topic, message).catch((error: unknown) => {
-
-      // Cancellation is the lifetime working as designed rather than a delivery fault, and every cancellation shape a caller can produce counts: homebridge-plugin-utils'
-      // own abort error, and the platform DOMException a raw AbortController signal yields.
-      if(isHbpuAbortError(error) || ((error instanceof Error) && (error.name === "AbortError"))) {
-
-        this.#log.debug("MQTT publish aborted: %s.", topic);
-
-        return;
-      }
-
-      this.#log.error("Unable to publish to the MQTT topic %s: %s.", topic, formatErrorMessage(error));
-    });
-  }
-
-  public subscribeGet(topic: string, type: string, getValue: () => string, init?: { signal?: AbortSignal }): void {
-
-    this.subscriptions.push({ getValue, init, kind: "get", topic, type });
-  }
-
-  public subscribeSet(topic: string, type: string, setValue: (value: string, rawValue: string) => Promise<void> | void, init?: { signal?: AbortSignal }): void {
-
-    this.subscriptions.push({ init, kind: "set", setValue, topic, type });
-  }
-
-  public unsubscribe(id: string, topic: string): void {
-
-    this.unsubscribes.push({ id, topic });
-  }
-}
 
 // The platform double's honest structural type. The members mirror what ProtectBase and the camera-family construction paths read off nvr.platform: the HAP
 // namespaces plus the deterministic uuid generator, the injected wall clock (the recording delegate reads platform.clock for its pacing-time primitives), the

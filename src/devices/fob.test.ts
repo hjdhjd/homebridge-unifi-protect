@@ -28,7 +28,7 @@ import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
 import type { TestAccessory } from "../testing.helpers.ts";
 import type { TestLogEntry } from "homebridge-plugin-utils/testing";
-import type { TestMqttClient } from "../nvr/testing.helpers.ts";
+import type { TestMqttClient } from "homebridge-plugin-utils/testing";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
 import { formatLogEntry } from "homebridge-plugin-utils/testing";
@@ -291,8 +291,8 @@ describe("real ProtectFob construction and behavior", () => {
 
     assert.deepEqual(publishes, [
 
-      { message: JSON.stringify({ button: "disarm", pressType: "press" }), topic: built.fobConfig.mac + "/button" },
-      { message: JSON.stringify({ button: "panic", pressType: "press" }), topic: built.fobConfig.mac + "/button" }
+      { payload: JSON.stringify({ button: "disarm", pressType: "press" }), topic: built.fobConfig.mac + "/button" },
+      { payload: JSON.stringify({ button: "panic", pressType: "press" }), topic: built.fobConfig.mac + "/button" }
     ], "both presses publish on the button topic, faithful to the firehose - the hidden button's press publishes even though it fires no HomeKit event");
 
     built.fob.cleanup();
@@ -412,9 +412,9 @@ describe("real ProtectFob construction and behavior", () => {
 
     assert.deepEqual(publishes, [
 
-      { message: JSON.stringify({ button: "disarm", pressType: "press" }), topic: built.fobConfig.mac + "/button" },
-      { message: JSON.stringify({ button: "nonexistent", pressType: "press" }), topic: built.fobConfig.mac + "/button" },
-      { message: JSON.stringify({ button: "panic", pressType: "wiggle" }), topic: built.fobConfig.mac + "/button" }
+      { payload: JSON.stringify({ button: "disarm", pressType: "press" }), topic: built.fobConfig.mac + "/button" },
+      { payload: JSON.stringify({ button: "nonexistent", pressType: "press" }), topic: built.fobConfig.mac + "/button" },
+      { payload: JSON.stringify({ button: "panic", pressType: "wiggle" }), topic: built.fobConfig.mac + "/button" }
     ], "every delivered press publishes on the button topic, hidden / unknown button and unmapped gesture included");
 
     built.fob.cleanup();
@@ -466,7 +466,7 @@ describe("real ProtectFob construction and behavior", () => {
     events.buttonEventHandler(fob, "night", "doublePress");
 
     assert.deepEqual(mqtt.published.filter((entry) => entry.topic === fobConfig.mac + "/button"),
-      [{ message: JSON.stringify({ button: "night", pressType: "doublePress" }), topic: fobConfig.mac + "/button" }],
+      [{ payload: JSON.stringify({ button: "night", pressType: "doublePress" }), topic: fobConfig.mac + "/button" }],
       "the delivered press publishes the raw button and press type on the MAC-scoped button topic");
   });
 

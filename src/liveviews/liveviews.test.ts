@@ -27,7 +27,6 @@
  */
 import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../testing.helpers.ts";
 import type { TestAccessory, TestService } from "../testing.helpers.ts";
-import type { TestMqttClient, TestProtectNvr } from "../nvr/testing.helpers.ts";
 import { afterEach, describe, test } from "node:test";
 import { makeNvrConfig, makeTestNvr } from "../nvr/testing.helpers.ts";
 import type { ProtectDevices } from "../types.ts";
@@ -36,6 +35,8 @@ import type { ProtectNvr } from "../nvr/nvr.ts";
 import type { ProtectNvrLiveviewConfig } from "unifi-protect";
 import { ProtectReservedNames } from "../types.ts";
 import type { TestLogEntry } from "homebridge-plugin-utils/testing";
+import type { TestMqttClient } from "homebridge-plugin-utils/testing";
+import type { TestProtectNvr } from "../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import { loggedAt } from "homebridge-plugin-utils/testing";
 import { makeLiveviewConfig } from "../devices/testing.helpers.ts";
@@ -198,8 +199,8 @@ describe("real ProtectLiveviews construction and controller-owner wiring", () =>
     await settle();
 
     // The owner constructed the security system, which registered its securitysystem get/set MQTT handlers on its owner-lifetime signal. Capture both live.
-    const getSubscription = built.mqtt.subscriptions.find((entry) => (entry.kind === "get") && (entry.topic === CONTROLLER_MAC + "/securitysystem"));
-    const setSubscription = built.mqtt.subscriptions.find((entry) => (entry.kind === "set") && (entry.topic === CONTROLLER_MAC + "/securitysystem"));
+    const getSubscription = built.mqtt.subscriptions.find((entry) => (entry.kind === "get") && (entry.topic === CONTROLLER_MAC + "/securitysystem/get"));
+    const setSubscription = built.mqtt.subscriptions.find((entry) => (entry.kind === "set") && (entry.topic === CONTROLLER_MAC + "/securitysystem/set"));
 
     assert.ok(getSubscription?.init?.signal && setSubscription?.init?.signal, "the security system registered its securitysystem get and set handlers");
     assert.equal(getSubscription.init.signal.aborted, false, "the get registration is live before removal");
@@ -222,7 +223,7 @@ describe("real ProtectLiveviews construction and controller-owner wiring", () =>
 
     await settle();
 
-    const liveGetSubscriptions = built.mqtt.subscriptions.filter((entry) => (entry.kind === "get") && (entry.topic === CONTROLLER_MAC + "/securitysystem") &&
+    const liveGetSubscriptions = built.mqtt.subscriptions.filter((entry) => (entry.kind === "get") && (entry.topic === CONTROLLER_MAC + "/securitysystem/get") &&
       (entry.init?.signal?.aborted === false));
 
     assert.equal(liveGetSubscriptions.length, 1, "after the re-add exactly one securitysystem get registration is live - the remove/re-add cycle leaked no handlers");
@@ -330,7 +331,7 @@ describe("real ProtectLiveviews construction and controller-owner wiring", () =>
       "the per-member motion-enabled line fired with the scene and member");
 
     // The scene publish carries the liveview name and the new state.
-    assert.ok(built.mqtt.published.slice(publishedBefore).some((published) => (published.topic === CONTROLLER_MAC + "/liveviews") && published.message.includes("Scene")),
+    assert.ok(built.mqtt.published.slice(publishedBefore).some((published) => (published.topic === CONTROLLER_MAC + "/liveviews") && published.payload.includes("Scene")),
       "the accepted scene toggle published the liveview state on the controller-scoped topic");
   });
 
@@ -342,12 +343,12 @@ describe("real ProtectLiveviews construction and controller-owner wiring", () =>
 
     await settle();
 
-    const subscription = built.mqtt.subscriptions.find((entry) => (entry.kind === "get") && (entry.topic === CONTROLLER_MAC + "/liveviews"));
+    const subscription = built.mqtt.subscriptions.find((entry) => (entry.kind === "get") && (entry.topic === CONTROLLER_MAC + "/liveviews/get"));
 
-    assert.ok(subscription?.getValue, "the liveviews GET subscription composed the controller-MAC topic and captured a getValue handler");
+    assert.ok(subscription, "the liveviews GET subscription composed the controller-MAC topic");
 
     // The handler returns the JSON array of { name, state } for every liveview switch. The seeded Protect-Scene switch is present.
-    const payload = JSON.parse(subscription.getValue()) as { name: string; state: boolean }[];
+    const payload = JSON.parse(await built.mqtt.invokeGet(CONTROLLER_MAC + "/liveviews/get") ?? "[]") as { name: string; state: boolean }[];
 
     assert.ok(payload.some((entry) => entry.name === "Scene"), "the GET handler stringifies the liveview switch states, carrying the Scene switch");
 
@@ -373,9 +374,9 @@ describe("real ProtectLiveviews construction and controller-owner wiring", () =>
 
     await settle();
 
-    const subscription = built.mqtt.subscriptions.find((entry) => (entry.kind === "set") && (entry.topic === CONTROLLER_MAC + "/liveviews"));
+    const subscription = built.mqtt.subscriptions.find((entry) => (entry.kind === "set") && (entry.topic === CONTROLLER_MAC + "/liveviews/set"));
 
-    assert.ok(subscription?.setValue, "the liveviews SET subscription captured a setValue handler");
+    assert.ok(subscription, "the liveviews SET subscription composed the controller-MAC topic");
     assert.equal(member.accessory.context["detectMotion"], false, "the member camera starts with motion detection off");
 
     const publishedBefore = built.mqtt.published.length;
@@ -383,24 +384,24 @@ describe("real ProtectLiveviews construction and controller-owner wiring", () =>
     // A well-formed payload drives the scene through the switch's own onSet (setCharacteristic), which fans motion onto the member cameras exactly as a HomeKit tap does.
     // The set is fire-and-forget, so settle before asserting the downstream effects. A status-only updateCharacteristic never runs the handler, so this test goes red
     // on that mutation - the scene never reaches the member cameras.
-    await subscription.setValue(JSON.stringify([{ name: "Scene", state: true }]), JSON.stringify([{ name: "Scene", state: true }]));
+    await built.mqtt.invokeSet(CONTROLLER_MAC + "/liveviews/set", JSON.stringify([{ name: "Scene", state: true }]));
 
     await settle();
 
     assert.equal(member.accessory.context["detectMotion"], true, "the MQTT-commanded scene flipped the member's detectMotion on");
     assert.equal(member.motionSwitch.getCharacteristic(Characteristic.On).value, true, "the member's subtyped motion switch updated for the scene");
     assert.ok(loggedAt(built.logEntries, "info", "Liveview scene updated via MQTT: Scene."), "the MQTT-update info line logged");
-    assert.ok(built.mqtt.published.slice(publishedBefore).some((published) => (published.topic === CONTROLLER_MAC + "/liveviews") && published.message.includes("Scene")),
+    assert.ok(built.mqtt.published.slice(publishedBefore).some((published) => (published.topic === CONTROLLER_MAC + "/liveviews") && published.payload.includes("Scene")),
       "the applied scene published the liveview state on the controller-scoped topic");
 
     // A non-array payload (top-level null) is the handled failure, not a crash: the Array.isArray guard logs the validation error and the handler returns without
     // throwing (an unguarded length read on a non-array value throws a TypeError - the crash this test forbids).
-    await subscription.setValue("null", "null");
+    await built.mqtt.invokeSet(CONTROLLER_MAC + "/liveviews/set", "null");
 
     assert.ok(loggedAt(built.logEntries, "error", "The payload contained no liveviews."), "a non-array MQTT payload logs the validation error and does not throw");
 
     // Bad JSON logs the invalid-JSON error and changes nothing.
-    await subscription.setValue("not json", "not json");
+    await built.mqtt.invokeSet(CONTROLLER_MAC + "/liveviews/set", "not json");
 
     assert.ok(loggedAt(built.logEntries, "error", "Invalid JSON."), "malformed MQTT JSON logs the invalid-JSON error");
   });
@@ -478,13 +479,13 @@ describe("real ProtectLiveviews construction and controller-owner wiring", () =>
       "no unregister call was recorded for controller B's switch");
 
     // Each controller's MQTT GET addresses only its own switches: A returns Scene and not Other, B returns Other and not Scene.
-    const getA = controllerA.mqtt.subscriptions.find((entry) => (entry.kind === "get") && (entry.topic === CONTROLLER_MAC + "/liveviews"));
-    const getB = controllerB.mqtt.subscriptions.find((entry) => (entry.kind === "get") && (entry.topic === MAC_B + "/liveviews"));
+    const getA = controllerA.mqtt.subscriptions.find((entry) => (entry.kind === "get") && (entry.topic === CONTROLLER_MAC + "/liveviews/get"));
+    const getB = controllerB.mqtt.subscriptions.find((entry) => (entry.kind === "get") && (entry.topic === MAC_B + "/liveviews/get"));
 
-    assert.ok(getA?.getValue && getB?.getValue, "both controllers registered their controller-scoped liveviews GET handlers");
+    assert.ok(getA && getB, "both controllers registered their controller-scoped liveviews GET handlers");
 
-    const payloadA = JSON.parse(getA.getValue()) as { name: string }[];
-    const payloadB = JSON.parse(getB.getValue()) as { name: string }[];
+    const payloadA = JSON.parse(await controllerA.mqtt.invokeGet(CONTROLLER_MAC + "/liveviews/get") ?? "") as { name: string }[];
+    const payloadB = JSON.parse(await controllerB.mqtt.invokeGet(MAC_B + "/liveviews/get") ?? "") as { name: string }[];
 
     assert.ok(payloadA.some((entry) => entry.name === "Scene") && !payloadA.some((entry) => entry.name === "Other"),
       "controller A's GET returned only its own Scene switch");

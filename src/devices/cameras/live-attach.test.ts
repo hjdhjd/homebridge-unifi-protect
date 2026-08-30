@@ -66,7 +66,7 @@ describe("live-attach reclassification (suite C)", () => {
     assert.equal(accessory.getService(Service.Doorbell), undefined, "no Doorbell service exists before the flip");
 
     const churnBaseline = accessory.controllerEvents.length;
-    const ringBefore = mqtt?.subscriptions.filter((subscription) => subscription.topic.endsWith("/doorbell")).length ?? 0;
+    const ringBefore = mqtt?.subscriptions.filter((subscription) => subscription.topic.endsWith("/doorbell/set")).length ?? 0;
 
     assert.equal(ringBefore, 0, "the plain camera registered no ring-trigger MQTT");
 
@@ -96,7 +96,7 @@ describe("live-attach reclassification (suite C)", () => {
 
     // The freshly built stream is now built for a doorbell, and the ring MQTT registered exactly once.
     assert.equal(camera.stream?.builtFor.isDoorbell, true, "the rebuilt stream is now built for a doorbell");
-    assert.equal(mqtt?.subscriptions.filter((subscription) => subscription.topic.endsWith("/doorbell")).length, 1, "the ring-trigger MQTT registered exactly once");
+    assert.equal(mqtt?.subscriptions.filter((subscription) => subscription.topic.endsWith("/doorbell/set")).length, 1, "the ring-trigger MQTT registered exactly once");
 
     // Exactly one user-facing promotion INFO.
     assert.equal(countLogs(logEntries, "info", "now reports this camera as a doorbell"), 1, "the promotion logged exactly one INFO line");

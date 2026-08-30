@@ -33,11 +33,15 @@ import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
 import type { TestAccessory } from "../testing.helpers.ts";
 import type { TestLogEntry } from "homebridge-plugin-utils/testing";
-import type { TestMqttClient } from "../nvr/testing.helpers.ts";
+import type { TestMqttClient } from "homebridge-plugin-utils/testing";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
 import { loggedAt } from "homebridge-plugin-utils/testing";
 import { makeTestNvr } from "../nvr/testing.helpers.ts";
+
+// The MAC-scoped tail the plugin composed, with the /get or /set suffix the MQTT client appends taken back off. These rows assert what the plugin addressed,
+// which is the tail rather than the child topic the registration lands on.
+const composedTail = (topic: string): string => topic.replace(/\/(get|set)$/, "");
 
 // Every harness controller this suite opens, drained in afterEach so the controller lifetime signal bounds each test's constructions rather than the file's. The builder
 // is the single push site, so an extra build inside a test body is captured exactly as the fixture's is, and the abort-driven drain test's own abort stays undisturbed.
@@ -194,7 +198,7 @@ describe("real ProtectChime construction and play behavior", () => {
 
     assert.equal(projection.playBuzzerCalls.length, 1, "the real playTone dispatched a single playBuzzer call with no ringtone join");
     assert.equal(projection.playSpeakerCalls.length, 0, "the buzzer never dispatches to the speaker");
-    assert.deepEqual(mqtt.published, [{ message: "buzzer", topic: projection.config.mac + "/tone" }],
+    assert.deepEqual(mqtt.published, [{ payload: "buzzer", topic: projection.config.mac + "/tone" }],
       "an accepted buzzer publishes its tone name on the device-scoped topic");
     assert.ok(loggedAt(logEntries, "info", "Playing buzzer."), "the Playing info log fired for the buzzer");
     assert.equal(await buzzerSwitch.getCharacteristic(Characteristic.On).triggerGet(), true, "the On getter reads the armed play-timer");
@@ -245,7 +249,7 @@ describe("real ProtectChime construction and play behavior", () => {
     assert.equal(projection.playSpeakerCalls.length, 1, "the real playTone dispatched a single playSpeaker call");
     assert.deepEqual(projection.playSpeakerCalls[0]?.opts, { repeatTimes: 2, ringtoneId: "test-ringtone-1", volume: 65 },
       "the configured repeat/volume for the selected ringtone is joined into the payload alongside the requested ringtoneId");
-    assert.ok(mqtt.published.some((published) => published.message === "Test Ringtone"), "an accepted speaker tone publishes the ringtone name");
+    assert.ok(mqtt.published.some((published) => published.payload === "Test Ringtone"), "an accepted speaker tone publishes the ringtone name");
   });
 
   test("a speaker tone whose id is absent from ringSettings falls back to the first ring entry for the playback values", async () => {
@@ -345,23 +349,23 @@ describe("real ProtectChime construction and play behavior", () => {
 
   test("the MQTT tone handler dispatches buzzer, chime (empty payload), and rejects an unknown tone", async () => {
 
-    const toneSet = mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === projection.config.mac + "/tone"));
+    const toneSet = mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === projection.config.mac + "/tone/set"));
 
-    assert.ok(toneSet?.setValue, "the chime registered a captured set handler for the tone topic");
+    assert.ok(toneSet, "the chime registered a captured set handler for the tone topic");
 
     // "buzzer" dispatches the piezo buzzer.
-    await toneSet.setValue("buzzer", "buzzer");
+    await mqtt.invokeSet(projection.config.mac + "/tone/set", "buzzer");
 
     assert.equal(projection.playBuzzerCalls.length, 1, "the MQTT buzzer value dispatched playBuzzer");
 
     // "chime" plays the speaker with NO tone, the empty-payload default - the no-tone-selected case reachable only here, never via the switch onSet.
-    await toneSet.setValue("chime", "chime");
+    await mqtt.invokeSet(projection.config.mac + "/tone/set", "chime");
 
     assert.equal(projection.playSpeakerCalls.length, 1, "the MQTT chime value dispatched a single playSpeaker");
     assert.deepEqual(projection.playSpeakerCalls[0]?.opts, {}, "the no-tone-selected chime path sends an empty payload so the controller plays the default ringtone");
 
     // An unknown value logs the error and dispatches nothing.
-    await toneSet.setValue("nonsense", "nonsense");
+    await mqtt.invokeSet(projection.config.mac + "/tone/set", "nonsense");
 
     assert.equal(projection.playBuzzerCalls.length, 1, "an unknown tone dispatches no buzzer");
     assert.equal(projection.playSpeakerCalls.length, 1, "an unknown tone dispatches no speaker");
@@ -370,7 +374,7 @@ describe("real ProtectChime construction and play behavior", () => {
 
   test("the MQTT subscriptions compose the device-MAC-scoped tone topic tail", () => {
 
-    const tails = mqtt.subscriptions.map((subscription) => subscription.topic);
+    const tails = mqtt.subscriptions.map((subscription) => composedTail(subscription.topic));
 
     assert.ok(tails.includes(projection.config.mac + "/tone"), "the chime tone subscription composed the device-scoped tail");
   });

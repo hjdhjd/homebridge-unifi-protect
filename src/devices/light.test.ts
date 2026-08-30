@@ -31,9 +31,13 @@ import type { ProtectLightConfig } from "unifi-protect";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
 import type { TestAccessory } from "../testing.helpers.ts";
-import type { TestMqttClient } from "../nvr/testing.helpers.ts";
+import type { TestMqttClient } from "homebridge-plugin-utils/testing";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
+
+// The MAC-scoped tail the plugin composed, with the /get or /set suffix the MQTT client appends taken back off. These rows assert what the plugin addressed,
+// which is the tail rather than the child topic the registration lands on.
+const composedTail = (topic: string): string => topic.replace(/\/(get|set)$/, "");
 
 // Every harness controller this suite opens, drained in afterEach so the controller lifetime signal bounds each test's constructions rather than the file's. The builder
 // is the single push site, so an extra build inside a test body is captured exactly as the fixture's is.
@@ -268,7 +272,7 @@ describe("real ProtectLight construction and observer behavior", () => {
 
   test("MQTT subscriptions compose the device-MAC-scoped topic tails the light registers", () => {
 
-    const tails = mqtt.subscriptions.map((subscription) => subscription.topic);
+    const tails = mqtt.subscriptions.map((subscription) => composedTail(subscription.topic));
 
     // The light's own get/set wrappers plus the default-on motion sensor's get/set wrapper, each MAC-scoped. We assert every tail the light registers so the topic
     // composition coverage is honest about the full set, not just the light-particular ones.
@@ -283,54 +287,54 @@ describe("real ProtectLight construction and observer behavior", () => {
     // body the HomeKit onSet machinery never reaches. The beforeEach builds { isLightOn: true, ledLevel: 4 } -> On true, Brightness ledLevelToBrightness(4) = 60. The SET
     // bodies drive the Lightbulb On / Brightness onSet, which write through this.device.update on the named lightProjection (the harness addition this step unlocked).
 
-    test("the /light GET reads the live power state as a string", () => {
+    test("the /light GET reads the live power state as a string", async () => {
 
       // HARD-assert the /light GET subscription exists FIRST: an absent subscription whose getValue is optional-chained would let the value assertion pass vacuously.
-      const get = mqtt.subscriptions.find((subscription) => (subscription.kind === "get") && (subscription.topic === lightConfig.mac + "/light"));
+      const get = mqtt.subscriptions.find((subscription) => (subscription.kind === "get") && (subscription.topic === lightConfig.mac + "/light/get"));
 
-      assert.ok(get?.getValue, "the light registered a /light GET subscription");
-      assert.equal(get.getValue(), "true", "the /light GET reads isLightOn true as the string \"true\"");
+      assert.ok(get, "the light registered a /light GET subscription");
+      assert.equal(await mqtt.invokeGet(lightConfig.mac + "/light/get"), "true", "the /light GET reads isLightOn true as the string \"true\"");
     });
 
-    test("the /light/brightness GET reads the LED-level-mapped brightness as a string", () => {
+    test("the /light/brightness GET reads the LED-level-mapped brightness as a string", async () => {
 
-      const get = mqtt.subscriptions.find((subscription) => (subscription.kind === "get") && (subscription.topic === lightConfig.mac + "/light/brightness"));
+      const get = mqtt.subscriptions.find((subscription) => (subscription.kind === "get") && (subscription.topic === lightConfig.mac + "/light/brightness/get"));
 
-      assert.ok(get?.getValue, "the light registered a /light/brightness GET subscription");
-      assert.equal(get.getValue(), "60", "the /light/brightness GET maps ledLevel 4 to 60 percent");
+      assert.ok(get, "the light registered a /light/brightness GET subscription");
+      assert.equal(await mqtt.invokeGet(lightConfig.mac + "/light/brightness/get"), "60", "the /light/brightness GET maps ledLevel 4 to 60 percent");
     });
 
     test("a /light SET of \"true\" drives the power write and publishes \"true\"", async () => {
 
-      const set = mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === lightConfig.mac + "/light"));
+      const set = mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === lightConfig.mac + "/light/set"));
 
-      assert.ok(set?.setValue, "the light registered a /light SET subscription");
+      assert.ok(set, "the light registered a /light SET subscription");
 
       // The body's getService(Lightbulb)?.setCharacteristic(On, value === "true") fires the On onSet, which writes through device.update({ lightOnSettings: {
       // isLedForceOn } }) then publishes. setCharacteristic is fire-and-forget, so settle past the onSet before asserting.
-      await set.setValue("true", "true");
+      await mqtt.invokeSet(lightConfig.mac + "/light/set", "true");
       await settle();
 
       assert.deepEqual(lightProjection.updateCalls, [{ payload: { lightOnSettings: { isLedForceOn: true } } }],
         "the /light SET of \"true\" wrote the force-on power state through device.update");
-      assert.deepEqual(mqtt.published.filter((entry) => entry.topic === lightConfig.mac + "/light"), [{ message: "true", topic: lightConfig.mac + "/light" }],
+      assert.deepEqual(mqtt.published.filter((entry) => entry.topic === lightConfig.mac + "/light"), [{ payload: "true", topic: lightConfig.mac + "/light" }],
         "the accepted power write published \"true\" on the light topic");
     });
 
     test("a /light SET of a non-\"true\" value drives the power-off write and publishes \"false\"", async () => {
 
-      const set = mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === lightConfig.mac + "/light"));
+      const set = mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === lightConfig.mac + "/light/set"));
 
-      assert.ok(set?.setValue, "the light registered a /light SET subscription");
+      assert.ok(set, "the light registered a /light SET subscription");
 
       // value === "true" is false for "false", so the On onSet receives false: device.update({ lightOnSettings: { isLedForceOn: false } }) and publish "false". The
       // boolean is the value that distinguishes a true SET from a false one, catching a mutation of the value === "true" comparison.
-      await set.setValue("false", "false");
+      await mqtt.invokeSet(lightConfig.mac + "/light/set", "false");
       await settle();
 
       assert.deepEqual(lightProjection.updateCalls, [{ payload: { lightOnSettings: { isLedForceOn: false } } }],
         "a non-\"true\" /light SET wrote the force-off power state through device.update");
-      assert.deepEqual(mqtt.published.filter((entry) => entry.topic === lightConfig.mac + "/light"), [{ message: "false", topic: lightConfig.mac + "/light" }],
+      assert.deepEqual(mqtt.published.filter((entry) => entry.topic === lightConfig.mac + "/light"), [{ payload: "false", topic: lightConfig.mac + "/light" }],
         "the accepted power-off write published \"false\" on the light topic");
     });
 
@@ -341,20 +345,20 @@ describe("real ProtectLight construction and observer behavior", () => {
 
       try {
 
-        const set = mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === lightConfig.mac + "/light/brightness"));
+        const set = mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === lightConfig.mac + "/light/brightness/set"));
 
-        assert.ok(set?.setValue, "the light registered a /light/brightness SET subscription");
+        assert.ok(set, "the light registered a /light/brightness SET subscription");
 
         // The body parses "55", passes the gate, and setCharacteristic(Brightness, 55) -> the Brightness onSet -> brightnessToLedLevel(55) = Math.round(55/20 + 1) = 4 ->
         // device.update({ lightDeviceSettings: { ledLevel: 4 } }), then schedules the 50ms reflect and publishes ledLevelToBrightness(4) = 60. The 55 -> 60 round-trip is
         // the granularity contract.
-        await set.setValue("55", "55");
+        await mqtt.invokeSet(lightConfig.mac + "/light/brightness/set", "55");
         await settle();
 
         assert.deepEqual(lightProjection.updateCalls, [{ payload: { lightDeviceSettings: { ledLevel: 4 } } }],
           "the /light/brightness SET of \"55\" mapped to LED level 4 and wrote it through device.update");
         assert.deepEqual(mqtt.published.filter((entry) => entry.topic === lightConfig.mac + "/light/brightness"),
-          [{ message: "60", topic: lightConfig.mac + "/light/brightness" }], "the write published the round-tripped brightness (55 in, 60 published)");
+          [{ payload: "60", topic: lightConfig.mac + "/light/brightness" }], "the write published the round-tripped brightness (55 in, 60 published)");
 
         // The 50ms reflect snaps the Lightbulb Brightness to the LED-level-mapped value, reconciling HomeKit's finer granularity with Protect's 1-6 levels.
         mock.timers.tick(50);
@@ -369,12 +373,12 @@ describe("real ProtectLight construction and observer behavior", () => {
 
     test("a non-numeric /light/brightness SET is gated out: no write, no publish", async () => {
 
-      const set = mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === lightConfig.mac + "/light/brightness"));
+      const set = mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === lightConfig.mac + "/light/brightness/set"));
 
-      assert.ok(set?.setValue, "the /light/brightness SET subscription registered");
+      assert.ok(set, "the /light/brightness SET subscription registered");
 
       // "abc" parses to NaN, so the isNaN gate returns before any setCharacteristic - no onSet, no write, no publish.
-      await set.setValue("abc", "abc");
+      await mqtt.invokeSet(lightConfig.mac + "/light/brightness/set", "abc");
       await settle();
 
       assert.equal(lightProjection.updateCalls.length, 0, "a NaN brightness is gated out before the Lightbulb drive, so no write happens");
@@ -383,13 +387,13 @@ describe("real ProtectLight construction and observer behavior", () => {
 
     test("an out-of-range /light/brightness SET (above 100 or below 0) is gated out: no write, no publish", async () => {
 
-      const set = mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === lightConfig.mac + "/light/brightness"));
+      const set = mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === lightConfig.mac + "/light/brightness/set"));
 
-      assert.ok(set?.setValue, "the /light/brightness SET subscription registered");
+      assert.ok(set, "the /light/brightness SET subscription registered");
 
       // Both 150 ( > 100 ) and -5 ( < 0 ) fail the (brightness < 0) || (brightness > 100) gate, so neither reaches the Lightbulb drive.
-      await set.setValue("150", "150");
-      await set.setValue("-5", "-5");
+      await mqtt.invokeSet(lightConfig.mac + "/light/brightness/set", "150");
+      await mqtt.invokeSet(lightConfig.mac + "/light/brightness/set", "-5");
       await settle();
 
       assert.equal(lightProjection.updateCalls.length, 0, "an out-of-range brightness is gated out, so no write happens");

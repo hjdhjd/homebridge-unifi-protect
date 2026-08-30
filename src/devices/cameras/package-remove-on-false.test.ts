@@ -21,7 +21,6 @@
  */
 import type { TestAccessory, TestApiCall } from "../../testing.helpers.ts";
 import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
-import type { TestMqttClient, TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import { TestStateStore, makeProtectState, makeTestAccessory, settle } from "../../testing.helpers.ts";
 import { describe, mock, test } from "node:test";
 import { makeTestAccessoryFamily, makeTestNvr } from "../../nvr/testing.helpers.ts";
@@ -34,6 +33,8 @@ import type { ProtectAccessory } from "../../types.ts";
 import { ProtectCamera } from "./camera.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
 import type { TestLogEntry } from "homebridge-plugin-utils/testing";
+import type { TestMqttClient } from "homebridge-plugin-utils/testing";
+import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
 import { formatLogEntry } from "homebridge-plugin-utils/testing";
@@ -122,7 +123,7 @@ describe("package camera remove-on-false (BC2)", () => {
     assert.equal(nvr.events.hasInflightMotion(PACKAGE_ID), false, "the package's event timers were cleared");
 
     // The terminal publish: the cleared reset timer would have published the shared topic's motion "false"; with no parent inflight, the detach owns it.
-    const motionPublishes = mqtt.published.filter((entry) => entry.topic === PARENT_MAC + "/motion").map((entry) => entry.message);
+    const motionPublishes = mqtt.published.filter((entry) => entry.topic === PARENT_MAC + "/motion").map((entry) => entry.payload);
 
     assert.deepEqual(motionPublishes, [ "true", "false" ], "exactly one terminal motion reset follows the latched motion on the shared topic");
 
@@ -496,7 +497,7 @@ describe("package camera remove-on-false (BC2)", () => {
     assert.equal(nvr.events.hasInflightMotion(PARENT_MAC), true, "the parent's inflight motion survives the package-scoped clear");
 
     // With the parent inflight, its own reset timer owns the shared topic's terminal "false" - the detach publishes nothing.
-    assert.equal(mqtt.published.filter((entry) => (entry.topic === PARENT_MAC + "/motion") && (entry.message === "false")).length, 0,
+    assert.equal(mqtt.published.filter((entry) => (entry.topic === PARENT_MAC + "/motion") && (entry.payload === "false")).length, 0,
       "no premature terminal reset is published while the parent's motion is live");
 
     // Teardown hygiene: clear the parent's real reset timer so nothing outlives the test (a parent-id clear sweeps everything, which is exactly right here).
