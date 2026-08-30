@@ -232,8 +232,8 @@ export function selectChannelProfile(entries: readonly ChannelProfile[], request
 // attempt the camera.
 //
 // The list build is preference-free: each candidate's closest-match uses the bias-lower nearest selection, mapping every HomeKit resolution to the highest channel at or
-// below it. The direct-RTSP quality preference (Video.Rtsp.Only.X) is a request-time concern the selectChannel wrapper applies when a stream starts; it must not bias
-// which resolutions we advertise: doing so would also pin the substrate default to the direct-RTSP channel on constrained hosts.
+// below it. The direct-RTSP quality preference (the Video.Rtsp.Only pin) is a request-time concern the selectChannel wrapper applies when a stream starts; it must not
+// bias which resolutions we advertise: doing so would also pin the substrate default to the direct-RTSP channel on constrained hosts.
 export function buildAdvertisedProfiles(nativeEntries: readonly ChannelProfile[]): ChannelProfile[] {
 
   // Copy the native entries into a mutable working list and sort it high to low. We never mutate the caller's array.

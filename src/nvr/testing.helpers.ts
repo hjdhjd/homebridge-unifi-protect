@@ -30,6 +30,7 @@ import { DiagnosticsHealthBridge } from "./nvr-health-bridge.ts";
 import { DoorbellCapability } from "../devices/cameras/doorbell.ts";
 import { FIXTURE_RTSPS_PORT } from "../camera.fixtures.ts";
 import type { HAP } from "homebridge";
+import type { LegacyFeatureOptions } from "../options-legacy.ts";
 import type { NvrPhase } from "./nvr.ts";
 import type { ProtectCamera } from "../devices/cameras/camera.ts";
 import { ProtectCameraPackage } from "../devices/cameras/camera-package.ts";
@@ -40,6 +41,7 @@ import { RebootScheduler } from "./nvr-reboot.ts";
 import { RemovalStabilityGate } from "./nvr-removal.ts";
 import { StreamingCapability } from "../devices/cameras/streaming.ts";
 import type { TestChimeProjection } from "../devices/testing.helpers.ts";
+import { analyzeLegacyFeatureOptions } from "../options-legacy.ts";
 import util from "node:util";
 
 // One recorded MQTT subscription registration: the composed topic tail, the human-readable type label, the registration kind, the per-subscription init options
@@ -155,6 +157,7 @@ export interface TestProtectPlatform {
   readonly codecSupport: { hostSystem: string };
   readonly config: ProtectOptions;
   readonly featureOptions: FeatureOptions;
+  readonly legacyOptions: LegacyFeatureOptions;
   readonly log: {
 
     debug: (...parameters: unknown[]) => void;
@@ -669,11 +672,19 @@ export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: T
   // path emits. It is built after the sink for that reason.
   const mqtt = options.mqtt ? new TestMqttClient({ log }) : null;
 
-  // The platform double's config and feature-option engine, hoisted out of the literal below so the debug gate can resolve against the very instances the double
-  // exposes - a test steering platform.config.debugAll or seeding a scoped Log.Debug entry then drives the same resolution production performs. The local names
-  // deliberately avoid `featureOptions`, which would shadow the module-level catalog import the constructor call below reads.
-  const platformConfig: ProtectOptions = { controllers: [], debugAll: false, options: [], ringDelay: 0, verboseFfmpeg: false, videoProcessor: "ffmpeg" };
-  const platformFeatureOptions = new FeatureOptions(featureOptionCategories, featureOptions, options.userOptions ?? []);
+  /* The platform double's config, legacy analysis, and feature-option engine, hoisted out of the literal below so the debug gate can resolve against the very
+   * instances the double exposes - a test steering platform.config.debugAll or seeding a scoped Log.Debug entry then drives the same resolution production performs.
+   * The local names deliberately avoid `featureOptions`, which would shadow the module-level catalog import the constructor call below reads.
+   *
+   * The three travel together exactly as they do in the platform constructor: the userOptions run through the legacy analysis, the engine is built on the analysis's
+   * view of them, and the RAW array lands on the double's config.options where the runtime overlay reads it. A double that handed the engine the raw array and left
+   * config.options empty would let every legacy-grammar test pass or fail for the wrong reason - the overlay would find nothing to read, and the engine would see the
+   * shapes the analysis exists to keep away from it.
+   */
+  const userOptions = options.userOptions ?? [];
+  const legacyOptions = analyzeLegacyFeatureOptions(userOptions);
+  const platformConfig: ProtectOptions = { controllers: [], debugAll: false, options: userOptions, ringDelay: 0, verboseFfmpeg: false, videoProcessor: "ffmpeg" };
+  const platformFeatureOptions = new FeatureOptions(featureOptionCategories, featureOptions, [...legacyOptions.engineOptions]);
   const client = {
 
     // The HELD chime projections, exposed as the production client.chimes array the doorbell's setChimeVolume filters by cameraIds and writes through. A plain held
@@ -760,6 +771,7 @@ export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: T
       codecSupport: { hostSystem: "macOS" },
       config: platformConfig,
       featureOptions: platformFeatureOptions,
+      legacyOptions: legacyOptions,
       log: log,
       pluginLog: log,
       recordingProcessFactory: recordingProcessFactory,

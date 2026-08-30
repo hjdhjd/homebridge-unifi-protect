@@ -673,7 +673,7 @@ describe("pure-test unlocks: package channel selection and the recording pixel c
     // pinned-but-dropped channel honestly selects nothing rather than silently substituting.
     const pinnedConfig = makeCameraConfig({ channels: G6_INSTANT_CHANNELS });
     const pinnedStore = new TestStateStore(makeProtectState({ cameras: [pinnedConfig] }));
-    const pinned = makeTestNvr({ store: pinnedStore, userOptions: ["Enable.Video.Timeshift.Only.High"] });
+    const pinned = makeTestNvr({ store: pinnedStore, userOptions: ["Enable.Video.Timeshift.Only=High"] });
 
     pinned.factory.maxSourcePixels = 1280 * 720;
 

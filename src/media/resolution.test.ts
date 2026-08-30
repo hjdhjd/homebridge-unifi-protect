@@ -247,8 +247,8 @@ describe("resolution: the deep-low-resolution drift (the regression locus, exerc
 describe("resolution: the advertised list is streaming-preference-free", () => {
 
   // The list build takes no streaming preference: every synthetic maps to its NEAREST channel (the AI Pro id sequence 0,1,1,1,2,2,2), not a name-pinned one.
-  // buildAdvertisedProfiles is preference-free by construction: the streaming preference (Video.Rtsp.Only.X) is applied only at request time, in the selectChannel
-  // wrapper, never during list construction.
+  // buildAdvertisedProfiles is preference-free by construction: the streaming preference (the Video.Rtsp.Only pin) is applied only at request time, in the
+  // selectChannel wrapper, never during list construction.
   test("buildAdvertisedProfiles maps to nearest channels; the streaming preference applies only at request time", () => {
 
     const list = buildAdvertisedProfiles(nativeEntries(AI_PRO_CHANNELS));

@@ -49,9 +49,15 @@ const FOB_BUTTONS = [
 // created the service under - and the exact address the router delivers to.
 const buttonSubtype = (wireId: string): string => ProtectReservedNames.SWITCH_FOB_BUTTON + "." + wireId;
 
-// The per-button feature-option identity, keyed by the title-cased label. Single-sourced so a userOptions "Disable." string in the suite names the exact option the class
-// gates the switch on, which is what closes the option-identity drift between fob.ts and options.ts.
-const buttonOption = (label: string): string => "Fob.Button." + label;
+// The canonical entry that selects a subset of the fob's buttons, composed from the WIRE IDS the selection stores. Single-sourced so a userOptions string in this suite
+// spells the option exactly as the class reads it, which is what closes the identity drift between fob-buttons.ts and options.ts.
+const buttonSelection = (...wireIds: string[]): string[] => ["Enable.Fob.Buttons=" + wireIds.join(",")];
+
+// The selection that leaves out exactly the named buttons, which is how this suite expresses hiding one button against a visibility option shaped as a list.
+const allButtonsBut = (...wireIds: string[]): string[] => {
+
+  return buttonSelection(...FOB_BUTTONS.filter((button) => !wireIds.includes(button.wireId)).map((button) => button.wireId));
+};
 
 // Every harness controller this suite opens, drained in afterEach so the controller lifetime signal bounds each test's constructions rather than the file's. The builder
 // is the single push site, so an extra build inside a test body is captured exactly as the fixture's is.
@@ -190,7 +196,7 @@ describe("real ProtectFob construction and behavior", () => {
 
     // Hide disarm (table index 3). If the index were the visible-subset position rather than the fixed table index, panic would renumber from 4 to 3 - the exact defect
     // this catches. arm (index 1) and left (index 6) bracket the hidden button to prove nothing above or below it shifted either.
-    const built = buildFob({}, { userOptions: ["Disable." + buttonOption("Disarm")] });
+    const built = buildFob({}, { userOptions: allButtonsBut("disarm") });
 
     assert.equal(built.accessory.getServiceById(Service.StatelessProgrammableSwitch, buttonSubtype("disarm")), undefined, "the hidden disarm button has no switch");
 
@@ -263,7 +269,7 @@ describe("real ProtectFob construction and behavior", () => {
 
   test("hiding one button prunes exactly its switch; a press to it fires nothing while a sibling still fires, and BOTH presses publish MQTT", () => {
 
-    const built = buildFob({}, { userOptions: ["Disable." + buttonOption("Disarm")] });
+    const built = buildFob({}, { userOptions: allButtonsBut("disarm") });
 
     assert.equal(built.accessory.getServiceById(Service.StatelessProgrammableSwitch, buttonSubtype("disarm")), undefined, "disarm's switch is pruned");
     assert.ok(built.accessory.getServiceById(Service.StatelessProgrammableSwitch, buttonSubtype("panic")), "panic's switch survives the hide of disarm");
@@ -293,8 +299,7 @@ describe("real ProtectFob construction and behavior", () => {
   test("a lone visible button is not grouped: no ServiceLabel, no ServiceLabelIndex, and no link", () => {
 
     // Only panic enabled: below the two-button grouping threshold, so no ServiceLabel and no per-button index.
-    const disableAllBut = FOB_BUTTONS.filter((button) => button.label !== "Panic").map((button) => "Disable." + buttonOption(button.label));
-    const built = buildFob({}, { userOptions: disableAllBut });
+    const built = buildFob({}, { userOptions: buttonSelection("panic") });
 
     assert.equal(built.accessory.getService(Service.ServiceLabel), undefined, "a single visible button creates no ServiceLabel");
 
@@ -319,8 +324,7 @@ describe("real ProtectFob construction and behavior", () => {
 
     armSwitch.updateCharacteristic(Characteristic.ServiceLabelIndex, 1);
 
-    const disableAllBut = FOB_BUTTONS.filter((button) => button.label !== "Arm").map((button) => "Disable." + buttonOption(button.label));
-    const built = buildFob({}, { accessory: restored, userOptions: disableAllBut });
+    const built = buildFob({}, { accessory: restored, userOptions: buttonSelection("arm") });
 
     assert.equal(built.accessory.getService(Service.ServiceLabel), undefined, "the restored ServiceLabel is removed once the fob regroups to a single visible button");
 
@@ -389,7 +393,7 @@ describe("real ProtectFob construction and behavior", () => {
 
   test("a hidden button, an unknown button, and an unmapped gesture each fire nothing in HomeKit but still publish MQTT (faithful firehose)", () => {
 
-    const built = buildFob({}, { userOptions: ["Disable." + buttonOption("Disarm")] });
+    const built = buildFob({}, { userOptions: allButtonsBut("disarm") });
 
     // A hidden button (no switch), an unknown button (never in the table), and an unmapped gesture on a visible button: none fire a HomeKit event, all publish MQTT.
     built.events.buttonEventHandler(built.fob, "disarm", "press");
@@ -414,16 +418,16 @@ describe("real ProtectFob construction and behavior", () => {
     built.fob.cleanup();
   });
 
-  test("each button's Disable option prunes exactly its switch, closing the option-identity drift between the leaf and options.ts", () => {
+  test("leaving each button out of the selection prunes exactly its switch, closing the identity drift between the leaf and options.ts", () => {
 
-    // If buttonOption(label) in the leaf ever drifted from the "Fob.Button.<Label>" identity in options.ts, the Disable string below would resolve nothing and the switch
-    // would survive - so a pruned switch here proves the leaf's option identity matches the registered option for EVERY button.
+    // The selection stores WIRE IDS, and the switches are subtyped by wire id. If the choice values the catalog offers ever drifted from the table's wire ids, the
+    // selection below would name nothing the class recognizes and every switch would survive - so a pruned switch here proves the two agree for EVERY button.
     for(const button of FOB_BUTTONS) {
 
-      const built = buildFob({}, { userOptions: ["Disable." + buttonOption(button.label)] });
+      const built = buildFob({}, { userOptions: allButtonsBut(button.wireId) });
 
       assert.equal(built.accessory.getServiceById(Service.StatelessProgrammableSwitch, buttonSubtype(button.wireId)), undefined,
-        "disabling " + button.label + " pruned its switch, so its option identity resolves");
+        "leaving " + button.label + " out of the selection pruned its switch, so the choice value resolves");
 
       const sibling = FOB_BUTTONS.find((entry) => entry.wireId !== button.wireId);
 
@@ -433,6 +437,26 @@ describe("real ProtectFob construction and behavior", () => {
 
       built.fob.cleanup();
     }
+  });
+
+  /* The end-to-end translation row, written in the retired grammar this plugin used before button visibility was one list: one option per button, each default-on, so
+   * a user hid a button by disabling its own option. It is the only row in this file written that way, and it is DEVICE-SCOPED on purpose - a scoped retired entry
+   * addresses nothing the current catalog declares, so it reaches this fob only through the translation and the overlay behind it.
+   */
+  test("a fob configured in the retired per-button grammar keeps exactly the buttons it had", () => {
+
+    const built = buildFob({}, { userOptions: ["Disable.Fob.Button.Disarm.74ACB9000601"] });
+
+    assert.equal(built.accessory.getServiceById(Service.StatelessProgrammableSwitch, buttonSubtype("disarm")), undefined,
+      "the button the retired configuration hid at this fob is still hidden");
+
+    for(const button of FOB_BUTTONS.filter((entry) => entry.wireId !== "disarm")) {
+
+      assert.ok(built.accessory.getServiceById(Service.StatelessProgrammableSwitch, buttonSubtype(button.wireId)),
+        button.label + " keeps its switch - only the named button was hidden");
+    }
+
+    built.fob.cleanup();
   });
 
   test("the button MQTT topic is scoped to the fob's MAC and carries the raw button and press type", () => {

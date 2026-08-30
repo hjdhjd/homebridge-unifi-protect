@@ -2,51 +2,14 @@
  *
  * fob.ts: Fob device class for UniFi Protect.
  */
-import type { Fob, ProtectFobConfig } from "unifi-protect";
-import type { Nullable } from "homebridge-plugin-utils";
+import { USL_FOB_BUTTONS, resolveFobButtons } from "./fob-buttons.ts";
+import type { Fob } from "unifi-protect";
+import type { FobButton } from "./fob-buttons.ts";
 import type { ProtectAccessory } from "../types.ts";
 import { ProtectDevice } from "./device.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
 import { deviceSelectors } from "unifi-protect";
-
-// One physical button on a UniFi Protect fob. index is the STABLE 1-based ServiceLabelIndex the button always carries in HomeKit (never a compacted visible-subset
-// position, so a hidden earlier button never renumbers a later one), following the controller's own button numbering. label is the security-action display name AND the
-// stable per-button feature-option identity (Fob.Button.<label>); that identity never follows the controller's active button labeling. positionLabel is the display name
-// the controller's position-hint labeling assigns the button. wireId is the lowercase protocol id the controller's buttonPressed occurrence carries in its `button`
-// field. label and wireId are deliberately distinct derivations - the protocol id is not a display string and must never drift toward one.
-interface FobButton {
-
-  readonly index: number;
-  readonly label: string;
-  readonly positionLabel: string;
-  readonly wireId: string;
-}
-
-// The fixed, region-agnostic button table for the UniFi fob family. The controller config carries no per-button array (a fob is a pure-input device whose presses arrive
-// only as firehose occurrences), so the plugin authors the button set from live-captured wire truth: six buttons whose wire ids are stable across the controller's
-// button-labeling modes. The indices follow the controller's own button numbering - the numbers its position-hint labeling assigns - so HomeKit's button ordering matches
-// the controller's in both label modes. Because the wire ids are labeling-independent, this table, not the controller's labeling choice, is the button-identity source of
-// truth, and it fixes each button's 1-based ServiceLabelIndex.
-const USL_FOB_BUTTONS: readonly FobButton[] = [
-
-  { index: 1, label: "Arm", positionLabel: "1", wireId: "arm" },
-  { index: 2, label: "Night", positionLabel: "2", wireId: "night" },
-  { index: 3, label: "Disarm", positionLabel: "3", wireId: "disarm" },
-  { index: 4, label: "Panic", positionLabel: "4", wireId: "panic" },
-  { index: 5, label: "Right", positionLabel: "Right", wireId: "right" },
-  { index: 6, label: "Left", positionLabel: "Left", wireId: "left" }
-];
-
-// The single region-agnostic chokepoint that decides which button table a fob record maps to, or null when the fob is not a recognized family. It is deliberately
-// nullish-safe: marketName and type are declared non-optional but are runtime-optional (the same caution the base setInfo documents), so a record missing both resolves
-// to null rather than throwing. A fob is recognized when its marketName is exactly "USL Fob" OR its type carries the "USL-Fob-" family prefix.
-function resolveFobButtons(config: ProtectFobConfig): Nullable<readonly FobButton[]> {
-
-  // marketName is optional at runtime despite its non-optional declared type, so the nullish handling below is real, not redundant.
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-  return ((config.marketName === "USL Fob") || (config.type?.startsWith("USL-Fob-") ?? false)) ? USL_FOB_BUTTONS : null;
-}
 
 // Projects one UniFi Protect LoRa fob's fixed button set and battery state onto a HomeKit accessory.
 export class ProtectFob extends ProtectDevice<Fob> {
@@ -68,20 +31,12 @@ export class ProtectFob extends ProtectDevice<Fob> {
     this.spawnObservers();
   }
 
-  // The stable HomeKit service subtype for one button's stateless-programmable-switch service, keyed by the LOWERCASE wire id. Single-sourced so the create site here and
-  // the router's delivery address (SWITCH_FOB_BUTTON + "." + event.button) name the identical service; a create/address divergence would make getServiceById silently
-  // return undefined and no press would ever fire.
+  // The stable HomeKit service subtype for one button's stateless-programmable-switch service, keyed by the LOWERCASE wire id - the same identity the buttons selection
+  // stores. Single-sourced so the create site here and the router's delivery address (SWITCH_FOB_BUTTON + "." + event.button) name the identical service; a
+  // create/address divergence would make getServiceById silently return undefined and no press would ever fire.
   private buttonSubtype(button: FobButton): string {
 
     return ProtectReservedNames.SWITCH_FOB_BUTTON + "." + button.wireId;
-  }
-
-  // The per-button feature-option identity, keyed by the TITLE-CASED display label so the config reads as "Fob.Button.Panic". Distinct from buttonSubtype by design: the
-  // subtype speaks the protocol (lowercase wire id), the option speaks to the user (title-cased label). Single-sourced so the create-time gate and the option-resolution
-  // test address the identical option string.
-  private buttonOption(button: FobButton): string {
-
-    return "Fob.Button." + button.label;
   }
 
   // Resolve one button's active HomeKit display name from the fob's live button labeling. The position-hint comparison is deliberately the only labeling mode this method
@@ -113,8 +68,8 @@ export class ProtectFob extends ProtectDevice<Fob> {
 
   // Configure a HomeKit stateless-programmable-switch for each of the fob's buttons, grouped under a ServiceLabel when two or more are visible. A fob is a pure-input
   // device: the leaf creates the services here and the event-dispatch router delivers the presses, so there are no onGet/onSet handlers on this path. The button set is
-  // fixed model identity, so this runs once at construction. Each button is individually show/hide-able through its own feature option, and hiding one prunes exactly its
-  // switch. Repeat-safe across restarts and option flips: the ServiceLabel and every switch are validated against the current visibility before being acquired, and a
+  // fixed model identity, so this runs once at construction. Which buttons appear is a single selection the user edits as one list, and leaving one out prunes exactly
+  // its switch. Repeat-safe across restarts and option flips: the ServiceLabel and every switch are validated against the current visibility before being acquired, and a
   // switch surviving from a prior grouped configure has its stale ServiceLabelIndex dropped when the fob regroups down to a lone visible button. Once the switches are in
   // place, a configure-time name reconcile brings every button's ConfiguredName to the controller's active button labeling, covering accessories restored from cache and
   // labeling changes that landed while Homebridge was down.
@@ -134,9 +89,13 @@ export class ProtectFob extends ProtectDevice<Fob> {
       return;
     }
 
+    // The buttons the user selected, resolved once for the whole pass so the grouping decision below and the per-button gate in the loop read one answer. The domain is
+    // this fob's own button table, addressed by wire id, so a selection naming a button this model does not have simply does not appear.
+    const selected = new Set(this.getFeatureList("Fob.Buttons", USL_FOB_BUTTONS.map((button) => button.wireId)));
+
     // The visible subset drives the grouping decision. HAP models a multi-button remote as a ServiceLabel plus one StatelessProgrammableSwitch per button (spec 8.21),
     // but a lone button needs no label, so we group only when two or more buttons are actually visible.
-    const visible = this.#buttons.filter((button) => this.hasFeature(this.buttonOption(button)));
+    const visible = this.#buttons.filter((button) => selected.has(button.wireId));
     const grouped = visible.length >= 2;
 
     // Validate the ServiceLabel against the grouping decision - a fob that drops below two visible buttons (an option flip across a restart) has its label removed - then
@@ -150,14 +109,15 @@ export class ProtectFob extends ProtectDevice<Fob> {
       serviceLabel.updateCharacteristic(this.hap.Characteristic.ServiceLabelNamespace, this.hap.Characteristic.ServiceLabelNamespace.ARABIC_NUMERALS);
     }
 
-    // Iterate the full fixed table, gating each button's switch on its own feature option. Hiding a button prunes exactly its subtyped switch and leaves the siblings and
-    // the accessory intact.
+    // Iterate the full fixed table, gating each button's switch on the selection. Leaving a button out prunes exactly its subtyped switch and leaves the siblings and the
+    // accessory intact.
     for(const button of this.#buttons) {
 
       const subtype = this.buttonSubtype(button);
 
-      // Validate whether this button's switch should exist, gating on the per-button feature option. This prunes exactly this button's subtyped switch when hidden.
-      if(!this.validService(this.hap.Service.StatelessProgrammableSwitch, this.hasFeature(this.buttonOption(button)), subtype)) {
+      // Validate whether this button's switch should exist, gating on the selection resolved above. This prunes exactly this button's subtyped switch when it is left
+      // out of the list.
+      if(!this.validService(this.hap.Service.StatelessProgrammableSwitch, selected.has(button.wireId), subtype)) {
 
         continue;
       }

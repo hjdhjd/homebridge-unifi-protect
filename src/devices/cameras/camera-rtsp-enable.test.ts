@@ -153,7 +153,7 @@ describe("RTSP autoconfiguration write-through (deriveAdvertisedStreams)", () =>
   test("the substrate pin reaches an RTSP-disabled channel while the direct-RTSP pin misses it", async () => {
 
     // The substrate pin selects over the full published list, so it reaches the RTSP-disabled Medium channel that feeds the buffer perfectly well over the API.
-    const substratePinned = await buildCamera({ channels: MIXED_RTSP_DISABLED_CHANNELS, userOptions: ["Enable.Video.Timeshift.Only.Medium"] });
+    const substratePinned = await buildCamera({ channels: MIXED_RTSP_DISABLED_CHANNELS, userOptions: ["Enable.Video.Timeshift.Only=Medium"] });
 
     built = substratePinned;
 
@@ -167,11 +167,36 @@ describe("RTSP autoconfiguration write-through (deriveAdvertisedStreams)", () =>
      * off), so the write must be declined for the derivation to proceed from the mixed state at all - an unhandled write would defer the surface forever.
      */
     const { camera, projection } = built = await buildCamera({ channels: MIXED_RTSP_DISABLED_CHANNELS,
-      updateRejection: new ProtectAuthorizationError("forbidden"), userOptions: ["Enable.Video.Rtsp.Only.Medium"] });
+      updateRejection: new ProtectAuthorizationError("forbidden"), userOptions: ["Enable.Video.Rtsp.Only=Medium"] });
 
     assert.equal(projection.updateCalls.length, 1, "the direct-RTSP quality pin alone makes the enable write necessary");
     assert.ok(camera.selectSubstrateChannel(), "the published list genuinely exists, so the pin miss below is a real miss rather than an empty list");
     assert.equal(camera.selectChannel(1280, 720), null, "the direct-RTSP pin misses a channel that is not RTSP-enabled");
+  });
+
+  /* The end-to-end translation proof, written in the retired per-tier grammar a long-lived configuration still carries, one row per pin family. Both literals are
+   * DEVICE-SCOPED on purpose: a scoped retired entry registers a key that addresses no current option at all, so the feature-option engine reading the raw array
+   * resolves nothing from it. A global literal would slip through on the engine's own incidental reading and prove nothing about the translation. These are the only
+   * rows in this file written in the retired grammar, and they are here to prove that a configuration nobody has opened the settings page on still steers as it did.
+   */
+  test("a device-scoped pin in the retired per-tier grammar still steers both selectors", async () => {
+
+    const substratePinned = await buildCamera({ channels: MIXED_RTSP_DISABLED_CHANNELS, userOptions: ["Enable.Video.Timeshift.Only.Medium.74ACB9000001"] });
+
+    built = substratePinned;
+
+    assert.equal(substratePinned.camera.selectSubstrateChannel()?.channel.id, 1, "the retired timeshift pin resolves to the RTSP-disabled Medium channel");
+
+    substratePinned.camera.cleanup();
+    substratePinned.controller.abort();
+
+    // The direct-RTSP half, arranged exactly as the canonical row above is: the pin term alone makes the enable write necessary, and the write is declined so the
+    // derivation proceeds from the mixed state rather than deferring the surface forever.
+    const { camera, projection } = built = await buildCamera({ channels: MIXED_RTSP_DISABLED_CHANNELS,
+      updateRejection: new ProtectAuthorizationError("forbidden"), userOptions: ["Enable.Video.Rtsp.Only.Medium.74ACB9000001"] });
+
+    assert.equal(projection.updateCalls.length, 1, "the retired direct-RTSP pin alone makes the enable write necessary");
+    assert.equal(camera.selectChannel(1280, 720), null, "the retired direct-RTSP pin misses a channel that is not RTSP-enabled");
   });
 
   test("a direct-RTSP configuration PATCHes every channel field-intact, defers the delegate, and completes through the channels observer", async () => {

@@ -7,9 +7,11 @@ import { APIEvent, FeatureOptions, FfmpegCodecs, RtpPortAllocator, debugGatedLog
 import type { Clock, HomebridgePluginLogging, Nullable, RecordingProcessFactory } from "homebridge-plugin-utils";
 import type { ProtectAccessory, ProtectPlatformConfig } from "./types.ts";
 import { featureOptionCategories, featureOptions } from "./options.ts";
+import type { LegacyFeatureOptions } from "./options-legacy.ts";
 import { ProtectNvr } from "./nvr/nvr.ts";
 import type { ProtectOptions } from "./options.ts";
 import type { StreamingDelegateFactory } from "./media/stream-delegate.ts";
+import { analyzeLegacyFeatureOptions } from "./options-legacy.ts";
 import ffmpegPath from "ffmpeg-for-homebridge";
 import { streamingDelegateFactory } from "./media/stream.ts";
 
@@ -24,6 +26,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
   public readonly config: ProtectOptions;
   private readonly controllers: ProtectNvr[];
   public readonly featureOptions: FeatureOptions;
+  public readonly legacyOptions: LegacyFeatureOptions;
   public readonly log: Logging;
   public readonly pluginLog: HomebridgePluginLogging;
   public readonly recordingProcessFactory: RecordingProcessFactory;
@@ -36,8 +39,25 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
     this.api = api;
     this.clock = systemClock;
     this.controllers = [];
-    this.featureOptions = new FeatureOptions(featureOptionCategories, featureOptions, config?.options ?? []);
+
+    /* The configured options as the engine should see them. A configuration written for an earlier version of this plugin can name options the current catalog does not
+     * declare, and several of those shapes are not merely stale - read through that catalog they decompose into values of the very options that supersede them. The
+     * analysis rewrites each such shape into the current grammar before the engine is built, and reports which families still need the runtime overlay for their exact
+     * historic meaning. The raw entries stay where they already live, on this.config.options, which is what the overlay reads.
+     */
+    const legacyOptions = analyzeLegacyFeatureOptions(config?.options ?? []);
+
+    this.featureOptions = new FeatureOptions(featureOptionCategories, featureOptions, [...legacyOptions.engineOptions]);
+    this.legacyOptions = legacyOptions;
     this.log = log;
+
+    // Say once that a translation happened, and where the permanent fix is. It is a warning rather than an informational line because the translation is exact but
+    // in-memory: the configuration on disk still speaks the older grammar until a settings save rewrites it.
+    if(legacyOptions.translated.length) {
+
+      this.log.warn("Feature option entries from an earlier version of this plugin were translated automatically at startup. Open the plugin settings in the " +
+        "Homebridge UI to migrate your configuration permanently.", { entries: legacyOptions.translated });
+    }
 
     // The plugin-side logging root. Debug is gated at global scope and emitted through warn; the other levels route to the Homebridge logger, which formats each
     // line once at the sink. Per-device and per-controller loggers derive from this root through prefixedLog with scope predicates of their own, so the sink wiring

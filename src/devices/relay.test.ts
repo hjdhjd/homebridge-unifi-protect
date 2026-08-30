@@ -27,6 +27,7 @@ import { ProtectReservedNames } from "../types.ts";
 import type { Relay } from "unifi-protect";
 import type { TestAccessory } from "../testing.helpers.ts";
 import type { TestMqttClient } from "../nvr/testing.helpers.ts";
+import { analyzeLegacyFeatureOptions } from "../options-legacy.ts";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
 import { makeTestNvr } from "../nvr/testing.helpers.ts";
@@ -163,13 +164,76 @@ describe("real ProtectRelay construction and behavior", () => {
     assert.equal(await output0.getCharacteristic(Characteristic.On).triggerGet(), true, "the getter reads on after the controller flips the output");
   });
 
-  test("disabling one output prunes exactly its switch, leaving the sibling switch and the accessory intact", () => {
+  test("leaving one output out of the selection prunes exactly its switch, leaving the sibling switch and the accessory intact", () => {
+
+    const built = buildRelay({}, { userOptions: ["Enable.Relay.Outputs=1"] });
+
+    assert.ok(built.accessory.getServiceById(Service.Switch, outputSubtype(0)), "output 1's switch survives the narrowing");
+    assert.equal(built.accessory.getServiceById(Service.Switch, outputSubtype(1)), undefined, "output 2's switch is pruned");
+    assert.ok(built.accessory.getService(Service.AccessoryInformation), "the accessory itself is intact");
+
+    built.relay.cleanup();
+  });
+
+  /* The end-to-end translation row, written in the retired grammar this plugin used before output visibility was one list: one option per output, each default-on. It
+   * is the only row in this file written that way. The retired entries stay in the configuration untouched - stating what they leave standing takes the live output
+   * list, which a configuration string does not carry - so what gives them their old meaning is the runtime overlay, resolved against this relay's own outputs.
+   */
+  test("a relay configured in the retired per-output grammar keeps exactly the outputs it had", () => {
 
     const built = buildRelay({}, { userOptions: ["Disable.Relay.Output.2"] });
 
-    assert.ok(built.accessory.getServiceById(Service.Switch, outputSubtype(0)), "output 1's switch survives the hide of output 2");
-    assert.equal(built.accessory.getServiceById(Service.Switch, outputSubtype(1)), undefined, "output 2's switch is pruned");
-    assert.ok(built.accessory.getService(Service.AccessoryInformation), "the accessory itself is intact");
+    assert.ok(built.accessory.getServiceById(Service.Switch, outputSubtype(0)), "output 1's switch survives");
+    assert.equal(built.accessory.getServiceById(Service.Switch, outputSubtype(1)), undefined, "the output the retired configuration hid is still hidden");
+
+    built.relay.cleanup();
+  });
+
+  /* The capability the live-domain selection adds: a relay reporting more outputs than the retired catalog ever enumerated shows every one of them. Under the retired
+   * grammar a third output had no option of its own and resolved hidden, so this row is the blessed change - and the narrowed half beside it proves the selection is
+   * what decides, not the hardware.
+   */
+  test("a three-output relay shows every output by default, and a selection hides exactly the ones left out", () => {
+
+    const threeOutputs = [ { id: 0, state: "off" as const }, { id: 1, state: "off" as const }, { id: 2, state: "off" as const } ];
+    const all = buildRelay({ outputs: threeOutputs });
+
+    for(const id of [ 0, 1, 2 ]) {
+
+      assert.ok(all.accessory.getServiceById(Service.Switch, outputSubtype(id)), "output " + (id + 1).toString() + " has a switch by default");
+    }
+
+    all.relay.cleanup();
+
+    const narrowed = buildRelay({ outputs: threeOutputs }, { userOptions: ["Enable.Relay.Outputs=1,3"] });
+
+    assert.ok(narrowed.accessory.getServiceById(Service.Switch, outputSubtype(0)), "output 1 stays");
+    assert.equal(narrowed.accessory.getServiceById(Service.Switch, outputSubtype(1)), undefined, "output 2 is the only one hidden");
+    assert.ok(narrowed.accessory.getServiceById(Service.Switch, outputSubtype(2)), "output 3 stays");
+
+    narrowed.relay.cleanup();
+  });
+
+  /* The mixed-configuration row: a retired per-output entry AND a canonical selection present together. The canonical value is evidence the user has adopted the
+   * current grammar, so it wins outright and every output it names is shown - which is what tells the ruled composition apart from a union (same answer here), an
+   * intersection (which would hide output 2), and a silent legacy override (which would also hide it). The retired entry is superseded rather than honored, and the
+   * startup narration names it so the user can see what was set aside.
+   */
+  test("a canonical selection supersedes a retired per-output entry outright, and the narration names what it set aside", () => {
+
+    const threeOutputs = [ { id: 0, state: "off" as const }, { id: 1, state: "off" as const }, { id: 2, state: "off" as const } ];
+    const built = buildRelay({ outputs: threeOutputs }, { userOptions: [ "Disable.Relay.Output.2", "Enable.Relay.Outputs=1,2,3" ] });
+
+    for(const id of [ 0, 1, 2 ]) {
+
+      assert.ok(built.accessory.getServiceById(Service.Switch, outputSubtype(id)),
+        "output " + (id + 1).toString() + " is shown - the canonical selection wins over the retired entry");
+    }
+
+    const analysis = analyzeLegacyFeatureOptions([ "Disable.Relay.Output.2", "Enable.Relay.Outputs=1,2,3" ]);
+
+    assert.equal(analysis.families.size, 0, "a superseded family is not overlaid");
+    assert.deepEqual(analysis.translated, ["Disable.Relay.Output.2"], "the superseded entry is named for the startup line");
 
     built.relay.cleanup();
   });

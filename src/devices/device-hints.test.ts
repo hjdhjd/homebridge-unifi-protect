@@ -53,6 +53,10 @@ function loggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], substri
 // is the single push site, so a construction inside a test body is captured exactly as the fixture's is.
 const controllers: AbortController[] = [];
 
+// The identifiers the carrier and its controller resolve feature options at, named here so a scoped fixture below addresses the very device the read runs against.
+const CONTROLLER_MAC = "74ACB9FFFFFF";
+const SENSOR_MAC = "74ACB9000401";
+
 // The reusable construction helper: build a REAL TestBaseDevice (a concrete ProtectDevice leaf whose ctor only super()s) against the harness doubles, seeded with the
 // all-quiet sensor carrier, then run the production base configureHints through the configureHintsFor window. The casts are confined to the point of construction exactly
 // as the device-motion / device-statusled suites do; the instance under test is the production base, running its real configureHints derivation / clamp / log paths. The
@@ -306,6 +310,93 @@ describe("base ProtectDevice feature-option hints derivation (device-hints conce
         "no occupancy-duration deviation log (the constant fallback equals the default)");
 
       assert.equal(hints.motionDuration, 10, "motionDuration stays at its default");
+    });
+  });
+  /* The list-read wrapper (getFeatureList), which every picker-shaped option resolves through. Four readings have to stay apart from one another, and only the last two
+   * of them are the engine's own: an option DISABLED anywhere in the hierarchy selects nothing; an option enabled with NO stored value keeps the meaning a bare enable
+   * has always had and resolves the registered default; an option carrying an EXPLICIT EMPTY payload is the selection the user emptied on purpose and resolves to
+   * nothing at all; and a stored value the device does not offer drops rather than falling back to anything. Collapsing any pair of those would either lose a user's
+   * deliberate choice or invent one they never made.
+   */
+  describe("the multiple-choice list read (getFeatureList)", () => {
+
+    // The types the carrier offers these reads, in the wire casing the controller reports them in.
+    const DOMAIN = [ "face", "person", "vehicle" ];
+
+    test("a disabled option selects nothing", () => {
+
+      const built = buildHintsDevice({ userOptions: ["Disable.Motion.OccupancySensor"] });
+
+      device = built.device;
+
+      assert.deepEqual(device.getFeatureList("Motion.OccupancySensor", DOMAIN), [], "an option turned off selects nothing at all");
+    });
+
+    // The unconfigured case belongs to the ENGINE's own resolution rather than to the wrapper's fallback, and it lands on the disabled reading here because this option
+    // is off by default: a camera nobody asked for an occupancy sensor on carries no selection at all, and the registered default is the pre-fill for when they do.
+    test("an unconfigured option selects nothing, because it is off by default", () => {
+
+      const built = buildHintsDevice();
+
+      device = built.device;
+
+      assert.deepEqual(device.getFeatureList("Motion.OccupancySensor", DOMAIN), [], "an option nobody enabled resolves through the engine as disabled");
+    });
+
+    test("an option enabled with no stored value resolves the registered default", () => {
+
+      const built = buildHintsDevice({ userOptions: ["Enable.Motion.OccupancySensor"] });
+
+      device = built.device;
+
+      assert.deepEqual(device.getFeatureList("Motion.OccupancySensor", DOMAIN), [ "face", "person" ], "a bare enable keeps the meaning it has always had");
+    });
+
+    test("an explicit empty payload resolves the empty selection rather than the default", () => {
+
+      const built = buildHintsDevice({ userOptions: ["Enable.Motion.OccupancySensor="] });
+
+      device = built.device;
+
+      assert.deepEqual(device.getFeatureList("Motion.OccupancySensor", DOMAIN), [], "the user emptied the selection, so nothing is selected");
+    });
+
+    test("a stored value matches the domain without regard to casing and answers in the domain's spelling", () => {
+
+      const built = buildHintsDevice({ userOptions: ["Enable.Motion.OccupancySensor=PERSON,Vehicle"] });
+
+      device = built.device;
+
+      assert.deepEqual(device.getFeatureList("Motion.OccupancySensor", DOMAIN), [ "person", "vehicle" ], "both entries match and come back in the domain's casing");
+    });
+
+    test("a stored value the domain does not carry drops rather than falling back", () => {
+
+      const built = buildHintsDevice({ userOptions: ["Enable.Motion.OccupancySensor=package"] });
+
+      device = built.device;
+
+      assert.deepEqual(device.getFeatureList("Motion.OccupancySensor", DOMAIN), [], "an unoffered value selects nothing, and the default does not stand in for it");
+    });
+
+    /* The overlay branch, pinned with a SCOPE-DIVERGENT fixture written in the retired per-type grammar - the one row in this block that is. The controller subtracts
+     * face and the camera adds vehicle, so the overlay's answer and the engine's
+     * post-translation reading of the same configuration genuinely differ - a rewrite composed without topology reads each scope against the global level alone. A
+     * wrapper that quietly fell through to the engine's reading would answer the camera's own composition and fail this row; a single-scope fixture resolves the same
+     * way down either path and could not tell them apart.
+     */
+    test("the overlay answers a controller-plus-device legacy composition, where the engine's own reading differs", () => {
+
+      const built = buildHintsDevice({ userOptions: [ "Enable.Motion.OccupancySensor." + CONTROLLER_MAC, "Disable.Motion.OccupancySensor.Face." + CONTROLLER_MAC,
+        "Enable.Motion.OccupancySensor.Vehicle." + SENSOR_MAC ] });
+
+      device = built.device;
+
+      assert.deepEqual(device.getFeatureList("Motion.OccupancySensor", DOMAIN), [ "person", "vehicle" ],
+        "the overlay composes the controller's subtraction with the device's addition");
+      assert.equal(device.getFeatureValue("Motion.OccupancySensor"), "person",
+        "the engine's own post-translation reading of the same configuration inherits the controller's composition alone, missing the camera's own addition - which " +
+        "is what makes this row tell the two paths apart");
     });
   });
 });

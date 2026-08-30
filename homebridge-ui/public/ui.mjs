@@ -995,6 +995,11 @@ const showProtectDetails = ({ device, panel, signal }) => {
   statsRegion.replaceChildren(grid);
 };
 
+// Render a wire identifier as picker copy: split the camelCase joins and the underscores, then capitalize each word. Local to this file and deliberately small,
+// matching the device-status formatter above rather than reaching for a dependency the page does not otherwise carry.
+const humanizeChoice = (value) => value.replace(/_/g, " ").replace(/([a-z0-9])([A-Z])/g, "$1 $2").split(" ").filter((word) => word.length)
+  .map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(" ");
+
 // Parameters for our feature options webUI.
 const featureOptionsParams = {
 
@@ -1022,6 +1027,49 @@ const featureOptionsParams = {
     }
   },
   ui: {
+
+    // The choice sources our catalog names, each resolving the list its picker offers for whatever is currently in view. Every one runs on each projection recompute
+    // and must be pure, cheap, and incapable of throwing - a resolver that throws after the page has booted fails silently, taking its picker's list with it.
+    choices: {
+
+      /* The outputs a relay reports, named the way the relay itself names them and stored as the 1-based numbers the user sees on the switches. A record carrying an
+       * outputs array answers that relay's own outputs, which is what lets a relay of any size offer every output it has; every other shape answers the pair the
+       * catalog entry carries, the editable surface the global and controller scopes have always had.
+       */
+      relayOutputs: ({ device, option }) => {
+
+        const outputs = device?.outputs;
+
+        if(!Array.isArray(outputs)) {
+
+          return (option?.meta?.choiceDomain ?? []).map((value) => ({ label: "Output " + value, value: value }));
+        }
+
+        return outputs.filter((output) => Number.isInteger(output?.id)).map((output) => ({
+
+          label: (typeof output.name === "string") && output.name.length ? output.name : ("Output " + (output.id + 1).toString()),
+          value: (output.id + 1).toString()
+        }));
+      },
+
+      /* The detection types a camera reports. A record carrying a featureFlags block with either detection array answers that camera's own types, since a picker
+       * should offer what the hardware in view actually detects. Every other shape - the global scope, where there is no device at all, and the controller record the
+       * page selects on load - answers the domain the catalog entry carries, because those scopes were editable when each detection type had a feature option of its
+       * own and a control with nothing in it would quietly take that away.
+       */
+      smartDetectTypes: ({ device, option }) => {
+
+        const flags = device?.featureFlags;
+        const audioTypes = flags?.smartDetectAudioTypes;
+        const objectTypes = flags?.smartDetectTypes;
+        const reported = Array.isArray(audioTypes) || Array.isArray(objectTypes);
+        const domain = reported ? [ ...(Array.isArray(audioTypes) ? audioTypes : []), ...(Array.isArray(objectTypes) ? objectTypes : []) ] :
+          (option?.meta?.choiceDomain ?? []);
+
+        return domain.filter((value) => typeof value === "string").map((value) => ({ label: humanizeChoice(value), value: value }))
+          .sort((a, b) => a.label.localeCompare(b.label));
+      }
+    },
 
     // The delay before the connection-error view re-enables its retry button, overriding the library's five-second default. A UniFi Protect controller can take well
     // over five seconds to authenticate and return its bootstrap, so twenty seconds keeps an impatient user from hammering retry while the first connection attempt is

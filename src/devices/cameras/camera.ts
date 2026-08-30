@@ -2,13 +2,14 @@
  *
  * camera.ts: Camera device class for UniFi Protect.
  */
-import { AudioRecordingCodecType, AudioRecordingSamplerate, capabilityGate, formatErrorMessage, toStartCase } from "homebridge-plugin-utils";
+import { AudioRecordingCodecType, AudioRecordingSamplerate, capabilityGate, formatErrorMessage, parseValueList, toStartCase } from "homebridge-plugin-utils";
 import type { Camera, LivestreamSource, SnapshotOptions, TalkbackSession } from "unifi-protect";
 import type { CharacteristicValue, Resolution } from "homebridge";
 import type { LivestreamHostOptions, ProtectCameraHost } from "../../media/camera-host.ts";
 import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_NVR_REBOOT_RECENCY_MS, PROTECT_SEGMENT_RESOLUTION } from "../../settings.ts";
 import type { ProtectAccessory, ProtectPersistedContextState } from "../../types.ts";
 import { ProtectAuthorizationError, deviceSelectors, livestreamAudioSampleRate } from "unifi-protect";
+import { STREAM_QUALITY_TIERS, selectCatalogValues } from "../../options.ts";
 import { buildAdvertisedProfiles, buildChannelProfile, formatResolution, isPrimaryChannel, rtspUrl } from "../../media/resolution.ts";
 import { nightVisionActive, nightVisionBrightnessForMode, nightVisionCommandForLevel, nightVisionModeForToggleOn, nightVisionToggleCommand,
   parseNightVisionMode } from "./night-vision-policy.ts";
@@ -24,20 +25,18 @@ import type { ProtectHints } from "../device.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
 import { ProtectReservedNames } from "../../types.ts";
 import { RtspLivestreamSubscription } from "../../media/livestream.ts";
+import type { StreamQualityTier } from "../../options.ts";
 import type { StreamingCapability } from "./streaming.ts";
 import type { StreamingDelegate } from "../../media/stream-delegate.ts";
 import { canUseLivestreamApi } from "../../media/stream-source-policy.ts";
 import { doorbellReconcileAction } from "./doorbell-reconcile-policy.ts";
+import { resolveLegacySelection } from "../../options-legacy.ts";
 import { shouldDeliverBareMotion } from "./motion-policy.ts";
 
 // The source tag threaded through the capability-reconcile and doorbell-capability methods: "construct" marks establishment (a fresh adoption or a Homebridge
 // restart), "observe" a live reconcile. The establishment-only side effects - the Access lock's SECURED resting stamp, the night vision dimmer's value push and its
 // "Enabling" log - branch on it; the members with no resting state ignore it.
 type ReconcileSource = "construct" | "observe";
-
-// The Protect stream-quality tiers a per-camera feature option can name, single-sourced for both readers: the write-through's direct-RTSP pin term and the
-// establishment hook's profile-pin loop.
-const STREAM_QUALITY_TIERS = [ "LOW", "MEDIUM", "HIGH" ] as const;
 
 /* The streaming surface a camera derives for HomeKit: the advertised channel-profile list its selectors choose from, and the HomeKit resolution list its
  * CameraController is built with. The two travel together as one derivation RESULT rather than as separate held state, so the narration that reads the profiles and the
@@ -820,14 +819,19 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     const smartDetectTypes = new Set([ ...this.ufp.featureFlags.smartDetectAudioTypes.filter(type => this.ufp.smartDetectSettings.audioTypes.includes(type)),
       ...this.ufp.featureFlags.smartDetectTypes.filter(type => this.ufp.smartDetectSettings.objectTypes.includes(type)) ]);
 
+    // Which of those delivered types the user wants a contact sensor for. It is read once, here, and both the prune and the create below test membership in it, so
+    // "which per-type sensors should this camera advertise?" has a single answer that cannot drift between the two loops.
+    const objectSensorTypes = new Set(this.getFeatureList("Motion.SmartDetect.ObjectSensors", [...smartDetectTypes]));
+
     // Rebuild the smart-occupancy type list from live state. It is a plain ASSIGNMENT on every pass rather than a rising-edge fill, because the type set itself moves
     // live (a type the controller adds or drops, or the user enables or disables), so a once-only fill would trade the flag's staleness for the list's. It sits BELOW the
     // short-circuit, unlike the additive refreshes above: an assignment is not a no-op, so running it during a withdrawal would empty the list against a withdrawn type
     // set and silently stop occupancy delivery - the very deletion the keep-on-withdrawal rule exists to prevent.
     this.hints.smartOccupancy = this.deriveSmartOccupancy(smartDetectTypes);
 
-    // Get any license plates the user has configured for detection, if any.
-    this.detectLicensePlate = this.getFeatureValue("Motion.SmartDetect.ObjectSensors.LicensePlate")?.split("-").filter(x => x.length).map(x => x.toUpperCase()) ?? [];
+    // Get any license plates the user has configured for detection, if any. The list reads through the shared list grammar, so the stored text and every other
+    // list-valued option are parsed by one definition; plates are matched in upper case, which is what the detection events carry.
+    this.detectLicensePlate = parseValueList(this.getFeatureValue("Motion.SmartDetect.ObjectSensors.LicensePlate") ?? "").map(plate => plate.toUpperCase());
 
     // Check if we have disabled specific license plate smart motion object contact sensors, and if so, remove them.
     for(const objectService of this.accessory.services.filter(x => x.subtype?.startsWith(ProtectReservedNames.CONTACT_MOTION_SMARTDETECT_LICENSE + "."))) {
@@ -845,17 +849,17 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
       this.log.info("Disabling smart motion license plate contact sensor: %s.", objectService.subtype?.slice(objectService.subtype.indexOf(".") + 1));
     }
 
-    /* Prune the object-centric contact sensors this camera should not advertise: all of them when the user has the object-sensor option off, and otherwise the ones whose
-     * detection type this camera does not deliver - either because the controller has stopped reporting the hardware type or because the user switched that detection off
-     * in Protect. One keep-condition covers all of it, mirroring the license-plate prune above, so "which per-type sensors survive" has a single answer. Removing a
-     * type's sensor here is the subtractive half of the per-type set reconciling live; the capability level above never reaches this loop, which is what keeps a hardware
-     * withdrawal from deleting anything.
+    /* Prune the object-centric contact sensors this camera should not advertise: all of them when the user has the object-sensor option off, and otherwise the ones the
+     * selection does not name - a detection type this camera has stopped delivering (the controller withdrew the hardware type, or the user switched that detection off
+     * in Protect), or one the user has left out of the selection. One keep-condition covers all of it, mirroring the license-plate prune above, so "which per-type
+     * sensors survive" has a single answer. Removing a type's sensor here is the subtractive half of the per-type set reconciling live; the capability level above never
+     * reaches this loop, which is what keeps a hardware withdrawal from deleting anything.
      */
     for(const objectService of this.accessory.services.filter(x => x.subtype?.startsWith(ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + "."))) {
 
       const smartDetectType = objectService.subtype?.slice(objectService.subtype.indexOf(".") + 1) ?? "";
 
-      if(this.hints.smartDetectSensors && smartDetectTypes.has(smartDetectType)) {
+      if(this.hints.smartDetectSensors && objectSensorTypes.has(smartDetectType)) {
 
         continue;
       }
@@ -907,7 +911,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
       const createdBeforeObjectSensors = sensorsCreated;
 
-      for(const smartDetectType of [...smartDetectTypes].toSorted()) {
+      for(const smartDetectType of [...objectSensorTypes].toSorted()) {
 
         if(addSmartDetectContactSensor(this.accessoryName + " " + toStartCase(smartDetectType),
           ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + "." + smartDetectType, "Unable to add smart motion contact sensor for " + smartDetectType + " detection.")) {
@@ -949,8 +953,8 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     return true;
   }
 
-  /* The smart-detect object types the user has selected to drive the occupancy sensor: every detection type this camera DELIVERS that also carries its own
-   * Motion.OccupancySensor.<type> option. It takes the delivered set rather than re-deriving one, so a detection the user has switched off in Protect is absent here for
+  /* The smart-detect object types the user has selected to drive the occupancy sensor: the selection the Motion.OccupancySensor option holds, read against every
+   * detection type this camera DELIVERS. It takes the delivered set rather than re-deriving one, so a detection the user has switched off in Protect is absent here for
    * the same reason it grows no contact sensor - one answer to "which detections does this camera deliver?", read by every consumer. The list is returned fresh rather
    * than pushed into the hint, so the caller assigns it and no pass can accumulate.
    *
@@ -971,7 +975,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
       return [];
     }
 
-    return [...smartDetectTypes].filter(smartDetectType => this.hasFeature("Motion.OccupancySensor." + smartDetectType));
+    return this.getFeatureList("Motion.OccupancySensor", [...smartDetectTypes]);
   }
 
   // Reconcile the StatusTampered characteristic on the camera's motion sensor against the controller-reported tamper capability and the user setting. A
@@ -1291,6 +1295,40 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     await this.ambientLight.reconcile();
   }
 
+  /* Resolve one of this camera's channel pins: the single stream-quality tier the user named for it, or null when they named none.
+   *
+   * Two paths reach the same answer. While the pin's family still carries entries in the retired per-tier grammar, the overlay resolves the selection with this
+   * camera's own device and controller identifiers, which is the exact three-level precedence those entries have always had. A configuration speaking the current
+   * grammar reads its stored choice against the tier table through the same case folding every other selection read uses, so a quality the user typed in any casing
+   * still names its tier.
+   *
+   * The stored text is read only on the second path, because that is the only one where a value the tier table does not offer can reach us.
+   *
+   * @param option - The feature option holding the pin.
+   *
+   * @returns The pinned tier, or null when no tier is pinned.
+   */
+  private resolveChannelPin(option: string): Nullable<StreamQualityTier> {
+
+    const domain = STREAM_QUALITY_TIERS.map((entry) => entry.choice);
+
+    // The family the overlay still has to answer for, or null once the configuration has converged.
+    const overlaid = this.overlaidFamily(option);
+    const stored = overlaid ? "" : (this.getFeatureValue(option) ?? "");
+    const selected = overlaid ? resolveLegacySelection({ controller: this.nvr.ufp.mac, device: this.device.config.mac, domain, family: overlaid,
+      options: this.platform.config.options }) : selectCatalogValues({ domain, value: stored });
+    const pinned = STREAM_QUALITY_TIERS.find((entry) => entry.choice === selected[0])?.tier ?? null;
+
+    // A stored quality the tier table does not offer names no channel at all. Only a hand-edited configuration reaches it, so we say which value we set aside rather
+    // than resolving it silently to no pin.
+    if(stored.length && !pinned) {
+
+      this.log.debug("Ignoring an unrecognized stream quality for %s: %s.", option, stored);
+    }
+
+    return pinned;
+  }
+
   /* Derive the streaming surface HomeKit advertises for this camera. This is the camera family's derivation HOST HOOK - public because the composed streaming capability
    * drives it across the composition boundary, and NON-ASYNC by declaration so a host whose derivation needs no controller round trip can override it with a plain value.
    * The value-or-promise union is what makes that override legal: an async method cannot declare a non-promise return type, so the asynchronous work lives in the private
@@ -1321,8 +1359,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
      * channel the controller never enabled would be a hard live-view failure the moment the buffer blinks.
      */
     const needsRtspTransport = !this.usesTimeshiftLivestream && (this.ufp.videoCodec !== "av1");
-    const needsRtsp = needsRtspTransport || this.hasFeature("Debug.Video.Timeshift.UseRtsp") ||
-      STREAM_QUALITY_TIERS.some(profile => this.hasFeature("Video.Rtsp.Only." + profile));
+    const needsRtsp = needsRtspTransport || this.hasFeature("Debug.Video.Timeshift.UseRtsp") || Boolean(this.resolveChannelPin("Video.Rtsp.Only"));
 
     // Ensure RTSP is enabled on every channel. This is a write-through config change with no read-after-write: when a channel still needs RTSP, we enable them all and
     // return, letting the channels observer (wired in spawnCameraObservers) re-run this method once the change reconciles, at which point every channel reads back
@@ -1433,20 +1470,9 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     }
 
     // Check for explicit RTSP profile preferences. A pin carries only a genuine user choice; the substrate channel policy computes its own default when neither is set.
-    for(const rtspProfile of STREAM_QUALITY_TIERS) {
-
-      // Check to see if the user has pinned a specific direct-RTSP livestream profile for this camera.
-      if(this.hasFeature("Video.Rtsp.Only." + rtspProfile)) {
-
-        this.hints.rtspDefault = rtspProfile;
-      }
-
-      // Check to see if the user has pinned a specific channel to populate the timeshift buffer for this camera.
-      if(this.hasFeature("Video.Timeshift.Only." + rtspProfile)) {
-
-        this.hints.substrateDefault = rtspProfile;
-      }
-    }
+    // The hints keep their unset-when-unpinned convention, so an unselected pin reads as absent rather than as an empty choice.
+    this.hints.rtspDefault = this.resolveChannelPin("Video.Rtsp.Only") ?? undefined;
+    this.hints.substrateDefault = this.resolveChannelPin("Video.Timeshift.Only") ?? undefined;
 
     // Inform the user if they've pinned a direct-RTSP livestream profile.
     if(this.hints.rtspDefault) {

@@ -4,16 +4,18 @@
  * names, and the landing of every setting that migrated from the configuration schema onto a feature option.
  *
  * The catalog is plain data (featureOptionCategories plus the featureOptions map), so these are pure structure assertions. The end-to-end resolution of the new names
- * through the engine is proven where it steers behavior (the doorbell-construction pixel-ceiling test pins a real Video.Timeshift.Only.High, and the ring-delay and
+ * through the engine is proven where it steers behavior (the doorbell-construction pixel-ceiling test pins a real timeshift channel pin, and the ring-delay and
  * override-address pins drive their own resolution); this suite guards the catalog shape itself, including the map-key hazard that would silently drop a category.
  *
  * One entry is guarded by its ABSENCE. Log.Debug is deliberately undeclared: it resolves at every scope through the engine's unrestricted walk for an option the
  * catalog does not know, the same mechanism the undocumented Debug.* namespace rides, and declaring it would surface it in the webUI and the generated documentation.
  */
 import { PROTECT_DOORBELL_RING_DELAY, PROTECT_MQTT_TOPIC } from "./settings.ts";
+import { SMART_DETECT_TYPES, featureOptionCategories, featureOptions } from "./options.ts";
 import { describe, test } from "node:test";
-import { featureOptionCategories, featureOptions } from "./options.ts";
+import { ALL_CHOICES } from "homebridge-plugin-utils";
 import type { FeatureOptionEntry } from "homebridge-plugin-utils";
+import type { ProtectOptionMeta } from "./options.ts";
 import assert from "node:assert/strict";
 
 // The option names defined under a category's options-map key, or an empty list when the key is absent.
@@ -22,8 +24,9 @@ function optionNames(category: string): string[] {
   return (featureOptions[category] ?? []).map((option) => option.name);
 }
 
-// One option's catalog entry, looked up the way the engine does - by its category key and its own name.
-function optionEntry(category: string, name: string): FeatureOptionEntry | undefined {
+// One option's catalog entry, looked up the way the engine does - by its category key and its own name. The entry type carries the plugin's own annotation shape, so a
+// pin can read the metadata an entry rides on rather than reaching for a cast at each assertion.
+function optionEntry(category: string, name: string): FeatureOptionEntry<ProtectOptionMeta> | undefined {
 
   return featureOptions[category]?.find((option) => option.name === name);
 }
@@ -59,22 +62,51 @@ describe("feature-option retirement wave", () => {
     assert.deepEqual(category.meta?.modelKey, ["camera"], "the category scopes to cameras");
   });
 
-  // The standing-buffer options: the default-on livestreaming toggle plus the source-agnostic per-quality channel pins.
+  // The standing-buffer options: the default-on livestreaming toggle plus the single channel pin the user picks a quality on.
   test("the standing-buffer options are defined with their defaults", () => {
 
-    assert.deepEqual(optionNames("Video.Timeshift"), [ "Livestream", "Only.High", "Only.Medium", "Only.Low" ],
-      "the timeshift options are the livestream toggle and the three channel pins");
-    assert.equal(featureOptions["Video.Timeshift"]?.find((option) => option.name === "Livestream")?.default, true, "buffer-backed livestreaming defaults on");
+    assert.deepEqual(optionNames("Video.Timeshift"), [ "Livestream", "Only" ], "the timeshift options are the livestream toggle and the channel pin");
+    assert.equal(optionEntry("Video.Timeshift", "Livestream")?.default, true, "buffer-backed livestreaming defaults on");
   });
 
-  // The Video category's direct-RTSP quality pins are present, and the superseded Stream.UseApi toggle and Stream.Only.* pins are absent from the category.
-  test("the direct-RTSP pins replaced the streaming options in the Video category", () => {
+  /* Both channel pins are single-select pickers over the same three tiers. The choices are pinned at FULL depth - every label and every value, in order - because a
+   * count-only assertion passes against a mistyped or reordered list, and these values are the exact text a stored configuration carries and the legacy translation
+   * emits. Pinning both entries at the same depth is what keeps the two pickers from drifting apart, since they derive from one table.
+   */
+  test("the channel pins are single-select tier pickers with an empty default", () => {
+
+    for(const [ category, name ] of [ [ "Video", "Rtsp.Only" ], [ "Video.Timeshift", "Only" ] ] as const) {
+
+      const entry = optionEntry(category, name);
+
+      assert.ok(entry, "the " + category + " channel pin exists");
+      assert.deepEqual(entry.choices, [ { label: "High", value: "High" }, { label: "Medium", value: "Medium" }, { label: "Low", value: "Low" } ],
+        "the " + category + " pin offers the three tiers, labels and values alike");
+      assert.equal(entry.multiple, undefined, "a pin holds one tier, so it is not a list");
+      assert.equal(entry.defaultValue, "", "an unconfigured pin names no tier at all");
+      assert.equal(entry.default, false, "no pin applies until the user chooses one");
+    }
+  });
+
+  // The Video category's direct-RTSP pin is present, and the superseded Stream.UseApi toggle and Stream.Only.* pins are absent from the category.
+  test("the direct-RTSP pin replaced the streaming options in the Video category", () => {
 
     const video = optionNames("Video");
 
-    assert.ok([ "Rtsp.Only.High", "Rtsp.Only.Medium", "Rtsp.Only.Low" ].every((name) => video.includes(name)), "the direct-RTSP quality pins are present");
+    assert.ok(video.includes("Rtsp.Only"), "the direct-RTSP quality pin is present");
     assert.ok(!video.includes("Stream.UseApi"), "the retired Stream.UseApi toggle is gone");
     assert.ok(!video.some((name) => name.startsWith("Stream.Only")), "the retired streaming pins are gone");
+  });
+
+  // The catalog declares no per-quality boolean, so a configuration still naming one addresses nothing the engine knows - which is exactly why the translation layer
+  // has to intercept those entries before the engine ever sees them.
+  test("the per-quality channel pins are retired from both categories", () => {
+
+    const video = optionNames("Video");
+    const timeshift = optionNames("Video.Timeshift");
+
+    assert.ok([ "Rtsp.Only.High", "Rtsp.Only.Medium", "Rtsp.Only.Low" ].every((name) => !video.includes(name)), "the retired direct-RTSP quality pins are gone");
+    assert.ok([ "Only.High", "Only.Medium", "Only.Low" ].every((name) => !timeshift.includes(name)), "the retired timeshift quality pins are gone");
   });
 
   // The Video.HKSV category's record pins are absent, and its other options remain unaffected.
@@ -84,6 +116,127 @@ describe("feature-option retirement wave", () => {
 
     assert.ok(!hksv.some((name) => name.startsWith("Record.Only")), "the retired HKSV record pins are gone");
     assert.ok([ "StatusLedIndicator", "Recording.Switch" ].every((name) => hksv.includes(name)), "the surviving HKSV options are untouched");
+  });
+
+  /* The occupancy master is the selection itself: a multiple option over a source the settings page resolves from the camera in view, defaulting to the two detection
+   * types the retired per-type options defaulted on. The default is spelled in the shared list grammar and in WIRE values, because that is the text the runtime reads
+   * back and matches against what the controller delivers.
+   */
+  test("the occupancy master is a source-backed multiple selection defaulting to face and person", () => {
+
+    const entry = optionEntry("Motion", "OccupancySensor");
+
+    assert.ok(entry, "the occupancy option exists");
+    assert.equal(entry.choices, "smartDetectTypes", "its choices come from the camera's own reported detection types");
+    assert.equal(entry.multiple, true, "occupancy is driven by a list of types, not by one of them");
+    assert.equal(entry.defaultValue, "face,person", "the default is the pair the retired per-type options defaulted on");
+    assert.equal(entry.default, false, "no occupancy sensor exists until the user asks for one");
+    assert.deepEqual(entry.meta?.choiceDomain, SMART_DETECT_TYPES.map((type) => type.value),
+      "the entry carries the known-type domain the settings page offers where no camera is in view");
+  });
+
+  // The catalog declares no per-type occupancy boolean, while the duration sibling that shares their name prefix stands: it was never one of them, and an entry
+  // addressing it has to keep resolving to it.
+  test("the per-type occupancy options are retired while the duration sibling survives", () => {
+
+    const motion = optionNames("Motion");
+
+    assert.ok(SMART_DETECT_TYPES.every((type) => !motion.includes("OccupancySensor." + type.name)), "no per-type occupancy option remains");
+    assert.ok(motion.includes("OccupancySensor.Duration"), "the occupancy duration option is untouched");
+    assert.equal(motion.filter((name) => name.startsWith("OccupancySensor")).length, 2, "the master and its duration sibling are all that carry the name");
+  });
+
+  /* The object-sensor option is a selection over the same detection source, defaulting to the all-choices wildcard rather than to a list - a camera's detection types
+   * are not knowable from the catalog, so a default naming them all is the only way to say "every type this camera reports" up front. It reads through the constant
+   * rather than the bare character so the catalog and the engine's expansion cannot disagree about which spelling means everything.
+   */
+  test("the object sensors are a source-backed multiple selection defaulting to every reported type", () => {
+
+    const entry = optionEntry("Motion", "SmartDetect.ObjectSensors");
+
+    assert.ok(entry, "the object-sensor option exists");
+    assert.equal(entry.choices, "smartDetectTypes", "its choices come from the camera's own reported detection types");
+    assert.equal(entry.multiple, true, "a camera can carry a sensor for each type it detects");
+    assert.equal(entry.defaultValue, ALL_CHOICES, "enabling it without choosing types covers every type the camera reports");
+    assert.equal(entry.group, "SmartDetect", "it stays grouped under smart detection");
+    assert.deepEqual(entry.meta?.choiceDomain, SMART_DETECT_TYPES.map((type) => type.value),
+      "the entry carries the known-type domain the settings page offers where no camera is in view");
+  });
+
+  /* The fob's buttons are one inline-choice selection over a fixed table, so its choices are pinned at FULL depth - every label and every value, in order. The labels
+   * carry the controller's position number in parentheses only where it says something the name does not: the numbered buttons read "Arm (1)" through "Panic (4)", and
+   * Right and Left carry none, because their position label IS their name. The values are the wire ids a press arrives under, which is what makes the selection and the
+   * router address one identity.
+   */
+  test("the fob buttons are one inline-choice selection over the button table", () => {
+
+    const entry = optionEntry("Fob", "Buttons");
+
+    assert.ok(entry, "the fob buttons option exists");
+    assert.deepEqual(entry.choices, [
+
+      { label: "Arm (1)", value: "arm" },
+      { label: "Night (2)", value: "night" },
+      { label: "Disarm (3)", value: "disarm" },
+      { label: "Panic (4)", value: "panic" },
+      { label: "Right", value: "right" },
+      { label: "Left", value: "left" }
+    ], "the six buttons are offered with their position labels only where those differ from their names");
+
+    assert.equal(entry.multiple, true, "a fob exposes a list of buttons");
+    assert.equal(entry.defaultValue, ALL_CHOICES, "every button is available until the user narrows the list");
+    assert.equal(entry.default, true, "the buttons are exposed by default");
+    assert.deepEqual(entry.meta?.modelKey, ["fob"], "the option applies to fobs alone");
+  });
+
+  // The catalog declares no per-button boolean, so a configuration still naming one addresses nothing the engine knows.
+  test("the per-button fob options are retired", () => {
+
+    const fob = optionNames("Fob");
+
+    assert.deepEqual(fob, ["Buttons"], "the buttons selection is the whole of the fob category");
+    assert.ok(!fob.some((name) => name.startsWith("Button.")), "no per-button option remains");
+  });
+
+  /* The relay outputs draw their choices from the relay in view rather than from a fixed list, which is what lets a relay of any size offer every output it reports.
+   * The option's name deliberately does NOT extend the retired per-output names: a name shaped as their prefix would let a retired entry register as this option's own
+   * value and quietly narrow the selection to whatever that entry named.
+   */
+  test("the relay outputs are a source-backed multiple selection over the relay's own outputs", () => {
+
+    const entry = optionEntry("Relay", "Outputs");
+
+    assert.ok(entry, "the relay outputs option exists");
+    assert.equal(entry.choices, "relayOutputs", "its choices come from the relay's own reported outputs");
+    assert.equal(entry.multiple, true, "a relay exposes a list of outputs");
+    assert.equal(entry.defaultValue, ALL_CHOICES, "every output the relay reports is exposed until the user narrows the list");
+    assert.equal(entry.default, true, "the outputs are exposed by default");
+    assert.deepEqual(entry.meta?.choiceDomain, [ "1", "2" ], "the entry carries the pair the settings page offers where no relay is in view");
+    assert.deepEqual(entry.meta?.modelKey, ["relay"], "the option applies to relays alone");
+  });
+
+  // The catalog declares no per-output boolean, and the surviving name is not a prefix of the retired ones - which is what keeps a retired entry from reading as this
+  // option's value.
+  test("the per-output relay options are retired under a name that is not their prefix", () => {
+
+    const relay = optionNames("Relay");
+
+    assert.deepEqual(relay, ["Outputs"], "the outputs selection is the whole of the relay category");
+    assert.ok(!relay.some((name) => name.startsWith("Output.")), "no per-output option remains");
+  });
+
+  /* The plate list is a free-form list rather than a picker: the plates a user wants matched cannot be enumerated from anything the plugin knows, so the option
+   * declares no choices at all and the editor builds the list entry by entry. Declaring it a list is what puts it on the shared grammar the camera's read parses.
+   */
+  test("the license plate option is a free-form list with no choices", () => {
+
+    const entry = optionEntry("Motion", "SmartDetect.ObjectSensors.LicensePlate");
+
+    assert.ok(entry, "the license plate option exists");
+    assert.equal(entry.multiple, true, "the plates are stored as a list");
+    assert.equal(entry.choices, undefined, "there is nothing to pick from - the user supplies the plates");
+    assert.equal(entry.defaultValue, "", "no plate is matched until the user names one");
+    assert.equal(entry.group, "SmartDetect", "it stays grouped under smart detection");
   });
 });
 

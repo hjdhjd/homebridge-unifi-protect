@@ -78,12 +78,16 @@ export class ProtectRelay extends ProtectDevice<Relay> {
     return true;
   }
 
-  // Configure a HomeKit switch for each output the controller reports, iterating the live outputs array rather than hardcoding a fixed pair. Each output is keyed by its
-  // wire id (0-based, the stable identity) into a per-output service subtype, is user-visible as 1-based ("Output 1"), and is individually show/hide-able through its own
-  // feature option - hiding one output prunes exactly its switch and leaves the others intact. The visibility catalog enumerates each output the supported relay
-  // hardware reports; an output beyond the catalog has no per-output option and resolves hidden by the feature-option default, so a larger relay would need its catalog
-  // entries extended alongside this iteration.
+  /* Configure a HomeKit switch for each output the controller reports, iterating the live outputs array rather than hardcoding a fixed pair. Each output is keyed by its
+   * wire id (0-based, the stable identity) into a per-output service subtype and is user-visible as 1-based ("Output 1").
+   *
+   * Which outputs appear is a single selection over the relay's OWN reported outputs: the domain the user picks from is derived from the hardware in front of them, so
+   * a relay of any size offers every output it reports and defaults to showing all of them. Leaving one out prunes exactly its switch and leaves the others intact.
+   */
   private configureOutputs(): void {
+
+    // The outputs the user selected, resolved once for the whole pass against this relay's live output list, addressed by the 1-based numbers the user sees.
+    const visible = new Set(this.getFeatureList("Relay.Outputs", this.ufp.outputs.map((output) => (output.id + 1).toString())));
 
     for(const output of this.ufp.outputs) {
 
@@ -91,9 +95,9 @@ export class ProtectRelay extends ProtectDevice<Relay> {
       const label = output.name ?? ("Output " + (id + 1).toString());
       const subtype = this.outputSubtype(id);
 
-      // Validate whether we should have this output's switch enabled, gating on the 1-based per-output feature option. This prunes exactly this output's subtyped switch
-      // when hidden, leaving the sibling outputs and the accessory intact.
-      if(!this.validService(this.hap.Service.Switch, this.hasFeature("Relay.Output." + (id + 1).toString()), subtype)) {
+      // Validate whether we should have this output's switch enabled, gating on the selection resolved above. This prunes exactly this output's subtyped switch when it
+      // is left out, leaving the sibling outputs and the accessory intact.
+      if(!this.validService(this.hap.Service.Switch, visible.has((id + 1).toString()), subtype)) {
 
         continue;
       }

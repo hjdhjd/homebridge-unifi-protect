@@ -2,11 +2,12 @@
  *
  * options.ts: Feature option and type definitions for UniFi Protect.
  */
-import type { FeatureCategoryEntry, FeatureOptionEntry } from "homebridge-plugin-utils";
+import { ALL_CHOICES, expandOption, mqttFeatureOptions, selectValues } from "homebridge-plugin-utils";
+import type { FeatureCategoryEntry, FeatureOptionChoice, FeatureOptionEntry } from "homebridge-plugin-utils";
 import { PROTECT_DEVICE_REMOVAL_DELAY_INTERVAL, PROTECT_DOORBELL_CHIME_DURATION_DIGITAL, PROTECT_DOORBELL_RING_DELAY, PROTECT_FFMPEG_AUDIO_FILTER_FFTNR,
   PROTECT_FFMPEG_AUDIO_FILTER_HIGHPASS, PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS, PROTECT_M3U_PLAYLIST_PORT, PROTECT_MOTION_DURATION, PROTECT_MQTT_TOPIC,
   PROTECT_NVR_REBOOT_INTERVAL, PROTECT_OCCUPANCY_DURATION, PROTECT_TRANSCODE_BITRATE, PROTECT_TRANSCODE_HIGH_LATENCY_BITRATE } from "./settings.ts";
-import { mqttFeatureOptions } from "homebridge-plugin-utils";
+import { FOB_BUTTON_CHOICES } from "./devices/fob-buttons.ts";
 
 // Plugin configuration options.
 export interface ProtectOptions {
@@ -33,6 +34,8 @@ export interface ProtectNvrOptions {
 // The plugin's webUI and documentation renderer make use of additional metadata to only surface the feature options relevant for a particular device. These properties
 // ride in the opaque `meta` channel that homebridge-plugin-utils forwards back to us without interpreting, and provide that metadata.
 //
+// choiceDomain:        The values a source-backed picker offers at the scopes where no device record is in view, since a domain derived from a device cannot be read
+//                      there. The webUI's resolver labels and offers this list rather than rendering a control with nothing in it.
 // hasAccessFeature:    Properties in the UniFi Access metadata featureFlags object that must be enabled for this option to be exposed.
 // hasCameraFeature:    Properties in the featureFlags object on cameras that must be enabled for this option to be exposed.
 // hasFeature:          Properties in the featureFlags object that must be enabled for this option to be exposed.
@@ -42,8 +45,9 @@ export interface ProtectNvrOptions {
 // hasSmartObjectType:  Smart object detection capability that must exist for this option to be exposed.
 // isNotProperty:       Properties that must specifically not exist on the device object for this option to be exposed.
 // modelKey:            Device categories that the option applies to, or "all" for any device type.
-interface ProtectOptionMeta {
+export interface ProtectOptionMeta {
 
+  choiceDomain?: string[];
   hasAccessFeature?: string[];
   hasCameraFeature?: string[];
   hasFeature?: string[];
@@ -71,6 +75,55 @@ interface ProtectCategoryMeta {
 // The MQTT option group, composed from the shared generator so every plugin exposing an MQTT broker offers the same options under the same names. Both entries are
 // declared at controller scope: each configured Protect controller reaches its own broker and publishes under its own topic prefix.
 const mqtt = mqttFeatureOptions({ defaultTopic: PROTECT_MQTT_TOPIC, scopes: ["controller"] });
+
+// The canonical spelling of a Protect stream-quality tier, which is the form the streaming layer matches a channel profile's name against.
+export type StreamQualityTier = "HIGH" | "LOW" | "MEDIUM";
+
+/* The stream-quality tiers a channel pin can name. Each row pairs the canonical form the streaming layer steers on with the text the picker offers and the
+ * configuration stores, so the two spellings are one table rather than two hand-authored lists that could drift apart. The rows read in descending quality order,
+ * which is the order the pickers render and the order a pin resolves through when more than one tier is named at once...the best quality named is the one that wins.
+ */
+export const STREAM_QUALITY_TIERS: readonly { readonly choice: string; readonly tier: StreamQualityTier }[] = [
+
+  { choice: "High", tier: "HIGH" },
+  { choice: "Medium", tier: "MEDIUM" },
+  { choice: "Low", tier: "LOW" }
+];
+
+// The picker list both channel pins offer, derived from the tier table above so a value the user stores and the tier the runtime steers on cannot be spelled apart.
+const streamQualityChoices: readonly FeatureOptionChoice[] = STREAM_QUALITY_TIERS.map((entry) => ({ label: entry.choice, value: entry.choice }));
+
+/* Every smart detection type Protect reports, paired with the option name its own per-type feature option carried before the detection selections became pickers.
+ * The value is the string the controller sends on the wire and the string a selection stores; the name is the spelling the retired option used. The pairing is
+ * written out as data rather than derived, because "lowercase the first letter" describes most of these rows and not all of them, and a rule with exceptions is a
+ * rule that eventually gets one wrong.
+ *
+ * This is also the settings page's fallback domain at the scopes where no camera record is in view. A picker there offers the known types rather than nothing at
+ * all, because the retired per-type options were editable at every scope and an empty control would quietly retire that surface.
+ */
+export const SMART_DETECT_TYPES: readonly { readonly name: string; readonly value: string }[] = [
+
+  { name: "Animal", value: "animal" },
+  { name: "Face", value: "face" },
+  { name: "LicensePlate", value: "licensePlate" },
+  { name: "Package", value: "package" },
+  { name: "Person", value: "person" },
+  { name: "Vehicle", value: "vehicle" },
+  { name: "AlrmBabyCry", value: "alrmBabyCry" },
+  { name: "AlrmBark", value: "alrmBark" },
+  { name: "AlrmBurglar", value: "alrmBurglar" },
+  { name: "AlrmCarHorn", value: "alrmCarHorn" },
+  { name: "AlrmCmonx", value: "alrmCmonx" },
+  { name: "alrmGlassBreak", value: "alrmGlassBreak" },
+  { name: "AlrmSiren", value: "alrmSiren" },
+  { name: "AlrmSmoke", value: "alrmSmoke" },
+  { name: "AlrmSpeak", value: "alrmSpeak" },
+  { name: "Smoke_cmonx", value: "smoke_cmonx" }
+];
+
+// The detection types a picker offers where no camera record is in view, which is every scope above the device. Derived from the table above so the settings page and
+// the translation always offer the same set.
+const smartDetectDomain: string[] = SMART_DETECT_TYPES.map((type) => type.value);
 
 /* eslint-disable @stylistic/max-len */
 
@@ -142,12 +195,7 @@ export const featureOptions: Record<string, FeatureOptionEntry<ProtectOptionMeta
   // Fob options.
   "Fob": [
 
-    { default: true, description: "Make the Arm (1) fob button available in HomeKit.", meta: { modelKey: ["fob"] }, name: "Button.Arm" },
-    { default: true, description: "Make the Night (2) fob button available in HomeKit.", meta: { modelKey: ["fob"] }, name: "Button.Night" },
-    { default: true, description: "Make the Disarm (3) fob button available in HomeKit.", meta: { modelKey: ["fob"] }, name: "Button.Disarm" },
-    { default: true, description: "Make the Panic (4) fob button available in HomeKit.", meta: { modelKey: ["fob"] }, name: "Button.Panic" },
-    { default: true, description: "Make the Right fob button available in HomeKit.", meta: { modelKey: ["fob"] }, name: "Button.Right" },
-    { default: true, description: "Make the Left fob button available in HomeKit.", meta: { modelKey: ["fob"] }, name: "Button.Left" }
+    { choices: FOB_BUTTON_CHOICES, default: true, defaultValue: ALL_CHOICES, description: "Make the selected fob buttons available in HomeKit. Every button is available by default; select specific buttons to expose only those.", meta: { modelKey: ["fob"] }, multiple: true, name: "Buttons" }
   ],
 
   // Logging options.
@@ -163,27 +211,11 @@ export const featureOptions: Record<string, FeatureOptionEntry<ProtectOptionMeta
   "Motion": [
 
     { default: true, defaultValue: PROTECT_MOTION_DURATION, description: "Duration, in seconds, of a single motion event, before allowing a new one.", name: "Duration" },
-    { default: false, description: "Add an occupancy sensor accessory using motion sensor activity to determine occupancy. By default, any motion will trigger occupancy. If the smart detection feature option is enabled, it will be used instead.", meta: { hasProperty: [ "isMotionDetected", "isPirMotionDetected" ] }, name: "OccupancySensor" },
+    { choices: "smartDetectTypes", default: false, defaultValue: "face,person", description: "Add an occupancy sensor accessory using motion sensor activity to determine occupancy. By default, any motion will trigger occupancy. When the smart detection feature option is enabled, the detection types selected here drive occupancy instead, defaulting to face and person detection. Selecting none of them means no smart detection triggers occupancy at all.", meta: { choiceDomain: smartDetectDomain, hasProperty: [ "isMotionDetected", "isPirMotionDetected" ] }, multiple: true, name: "OccupancySensor" },
     { default: true, defaultValue: PROTECT_OCCUPANCY_DURATION, description: "Duration, in seconds, to wait without receiving a motion event to determine when occupancy is no longer detected.", group: "OccupancySensor", name: "OccupancySensor.Duration" },
-    { default: false, description: "When using both the occupancy sensor and smart detection feature options, use UniFi Protect's animal detection to trigger occupancy.", group: "OccupancySensor", meta: { hasFeature: ["hasSmartDetect"] }, name: "OccupancySensor.Animal" },
-    { default: true, description: "When using both the occupancy sensor and smart detection feature options, use UniFi Protect's face detection to trigger occupancy.", group: "OccupancySensor", meta: { hasFeature: ["hasSmartDetect"] }, name: "OccupancySensor.Face" },
-    { default: false, description: "When using both the occupancy sensor and smart detection feature options, use UniFi Protect's license plate detection to trigger occupancy.", group: "OccupancySensor", meta: { hasFeature: ["hasSmartDetect"] }, name: "OccupancySensor.LicensePlate" },
-    { default: false, description: "When using both the occupancy sensor and smart detection feature options, use UniFi Protect's package detection to trigger occupancy.", group: "OccupancySensor", meta: { hasFeature: ["hasSmartDetect"] }, name: "OccupancySensor.Package" },
-    { default: true, description: "When using both the occupancy sensor and smart detection feature options, use UniFi Protect's person detection to trigger occupancy.", group: "OccupancySensor", meta: { hasFeature: ["hasSmartDetect"] }, name: "OccupancySensor.Person" },
-    { default: false, description: "When using both the occupancy sensor and smart detection feature options, use UniFi Protect's vehicle detection to trigger occupancy.", group: "OccupancySensor", meta: { hasFeature: ["hasSmartDetect"] }, name: "OccupancySensor.Vehicle" },
-    { default: false, description: "When using both the occupancy sensor and smart detection feature options, use UniFi Protect's baby crying audio detection to trigger occupancy.", group: "OccupancySensor", meta: { hasFeature: ["hasSmartDetect"] }, name: "OccupancySensor.AlrmBabyCry" },
-    { default: false, description: "When using both the occupancy sensor and smart detection feature options, use UniFi Protect's bark audio detection to trigger occupancy.", group: "OccupancySensor", meta: { hasFeature: ["hasSmartDetect"] }, name: "OccupancySensor.AlrmBark" },
-    { default: false, description: "When using both the occupancy sensor and smart detection feature options, use UniFi Protect's car alarm audio detection to trigger occupancy.", group: "OccupancySensor", meta: { hasFeature: ["hasSmartDetect"] }, name: "OccupancySensor.AlrmBurglar" },
-    { default: false, description: "When using both the occupancy sensor and smart detection feature options, use UniFi Protect's car horn audio detection to trigger occupancy.", group: "OccupancySensor", meta: { hasFeature: ["hasSmartDetect"] }, name: "OccupancySensor.AlrmCarHorn" },
-    { default: false, description: "When using both the occupancy sensor and smart detection feature options, use UniFi Protect's CO alarm audio detection to trigger occupancy.", group: "OccupancySensor", meta: { hasFeature: ["hasSmartDetect"] }, name: "OccupancySensor.AlrmCmonx" },
-    { default: false, description: "When using both the occupancy sensor and smart detection feature options, use UniFi Protect's glass break audio detection to trigger occupancy.", group: "OccupancySensor", meta: { hasFeature: ["hasSmartDetect"] }, name: "OccupancySensor.alrmGlassBreak" },
-    { default: false, description: "When using both the occupancy sensor and smart detection feature options, use UniFi Protect's siren audio detection to trigger occupancy.", group: "OccupancySensor", meta: { hasFeature: ["hasSmartDetect"] }, name: "OccupancySensor.AlrmSiren" },
-    { default: false, description: "When using both the occupancy sensor and smart detection feature options, use UniFi Protect's smoke alarm audio detection to trigger occupancy.", group: "OccupancySensor", meta: { hasFeature: ["hasSmartDetect"] }, name: "OccupancySensor.AlrmSmoke" },
-    { default: false, description: "When using both the occupancy sensor and smart detection feature options, use UniFi Protect's speaking audio detection to trigger occupancy.", group: "OccupancySensor", meta: { hasFeature: ["hasSmartDetect"] }, name: "OccupancySensor.AlrmSpeak" },
-    { default: false, description: "When using both the occupancy sensor and smart detection feature options, use UniFi Protect's CO and smoke alarm audio detection to trigger occupancy.", group: "OccupancySensor", meta: { hasFeature: ["hasSmartDetect"] }, name: "OccupancySensor.Smoke_cmonx" },
     { default: false, description: "Use UniFi Protect smart detection for HomeKit motion events when on a supported device.", meta: { hasFeature: ["hasSmartDetect"] }, name: "SmartDetect" },
-    { default: false, description: "Add contact sensors for each smart detection object type that UniFi Protect supports.", group: "SmartDetect", meta: { hasFeature: ["hasSmartDetect"] }, name: "SmartDetect.ObjectSensors" },
-    { default: false, defaultValue: "", description: "Add a contact sensor accessory that will match a specific license plate detected by UniFi Protect. You may specify multiple license plates by using hyphens to distinguish unique license plates (e.g. PLATE1-PLATE2-PLATE3).", group: "SmartDetect", inputSize: 20, meta: { hasSmartObjectType: ["licensePlate"] }, name: "SmartDetect.ObjectSensors.LicensePlate" },
+    { choices: "smartDetectTypes", default: false, defaultValue: ALL_CHOICES, description: "Add contact sensors for the smart detection object types this camera reports. Every type it detects is included by default; select specific types to add sensors for only those.", group: "SmartDetect", meta: { choiceDomain: smartDetectDomain, hasFeature: ["hasSmartDetect"] }, multiple: true, name: "SmartDetect.ObjectSensors" },
+    { default: false, defaultValue: "", description: "Add a contact sensor accessory for each license plate you want UniFi Protect to match. Enter the plates one at a time; they are stored as a comma-separated list (e.g. PLATE1,PLATE2,PLATE3).", group: "SmartDetect", inputSize: 20, meta: { hasSmartObjectType: ["licensePlate"] }, multiple: true, name: "SmartDetect.ObjectSensors.LicensePlate" },
     { default: false, description: "Add a switch accessory to activate or deactivate motion detection in HomeKit.", meta: { hasProperty: [ "isMotionDetected", "isPirMotionDetected" ] }, name: "Switch" },
     { default: false, description: "Add a switch accessory to manually trigger a motion detection event in HomeKit.", meta: { hasProperty: [ "isMotionDetected", "isPirMotionDetected" ] }, name: "Trigger" }
   ],
@@ -207,8 +239,7 @@ export const featureOptions: Record<string, FeatureOptionEntry<ProtectOptionMeta
   // Relay options.
   "Relay": [
 
-    { default: true, description: "Make relay output 1 available in HomeKit as a switch.", meta: { modelKey: ["relay"] }, name: "Output.1" },
-    { default: true, description: "Make relay output 2 available in HomeKit as a switch.", meta: { modelKey: ["relay"] }, name: "Output.2" }
+    { choices: "relayOutputs", default: true, defaultValue: ALL_CHOICES, description: "Make the selected relay outputs available in HomeKit as switches. Every output the relay reports is available by default; select specific outputs to expose only those.", meta: { choiceDomain: [ "1", "2" ], modelKey: ["relay"] }, multiple: true, name: "Outputs" }
   ],
 
   // Security system options.
@@ -239,9 +270,7 @@ export const featureOptions: Record<string, FeatureOptionEntry<ProtectOptionMeta
     { default: true, defaultValue: PROTECT_TRANSCODE_BITRATE, description: "Bitrate, in kilobits per second, to use when transcoding to low-latency (e.g. at home) clients, ignoring the bitrate HomeKit requests. HomeKit typically requests lower video quality than you may desire in your environment.", group: "Transcode", name: "Transcode.Bitrate" },
     { default: true, description: "When streaming to high-latency clients (e.g. cellular connections), transcode livestreams instead of transmuxing them.", name: "Transcode.HighLatency" },
     { default: true, defaultValue: PROTECT_TRANSCODE_HIGH_LATENCY_BITRATE, description: "Bitrate, in kilobits per second, to use when transcoding to high-latency (e.g. cellular) clients, ignoring the bitrate HomeKit requests. HomeKit typically requests lower video quality than you may desire in your environment.", group: "Transcode.HighLatency", name: "Transcode.HighLatency.Bitrate" },
-    { default: false, description: "When livestreaming directly from the camera over RTSP, force the use of the high quality video stream from the Protect controller.", name: "Rtsp.Only.High" },
-    { default: false, description: "When livestreaming directly from the camera over RTSP, force the use of the medium quality video stream from the Protect controller.", name: "Rtsp.Only.Medium" },
-    { default: false, description: "When livestreaming directly from the camera over RTSP, force the use of the low quality video stream from the Protect controller.", name: "Rtsp.Only.Low" },
+    { choices: streamQualityChoices, default: false, defaultValue: "", description: "When livestreaming directly from the camera over RTSP, force the use of a single video stream quality from the Protect controller. Choose exactly one of High, Medium, or Low. Leaving this unselected lets Protect negotiate the best available stream.", name: "Rtsp.Only" },
     { default: false, description: "Crop the camera video stream. Enabling this option will also force transcoding of livestreams.", name: "Crop" },
     { default: true, defaultValue: 0, description: "Left offset of the crop window, as a percentage of the original image width.", group: "Crop", name: "Crop.X" },
     { default: true, defaultValue: 0, description: "Top offset of the crop window, as a percentage of the original image height.", group: "Crop", name: "Crop.Y" },
@@ -261,9 +290,7 @@ export const featureOptions: Record<string, FeatureOptionEntry<ProtectOptionMeta
   "Video.Timeshift": [
 
     { default: true, description: "Maintain a rolling timeshift buffer of the camera's livestream to power live viewing, HomeKit Secure Video, and snapshots. Disabling this streams live views directly from the camera over RTSP whenever an RTSP-enabled stream is available.", name: "Livestream" },
-    { default: false, description: "Populate the timeshift buffer that feeds HomeKit Secure Video, buffer-backed live views, and snapshots from the high quality video stream from the Protect controller.", name: "Only.High" },
-    { default: false, description: "Populate the timeshift buffer that feeds HomeKit Secure Video, buffer-backed live views, and snapshots from the medium quality video stream from the Protect controller.", name: "Only.Medium" },
-    { default: false, description: "Populate the timeshift buffer that feeds HomeKit Secure Video, buffer-backed live views, and snapshots from the low quality video stream from the Protect controller.", name: "Only.Low" }
+    { choices: streamQualityChoices, default: false, defaultValue: "", description: "Populate the timeshift buffer that feeds HomeKit Secure Video, buffer-backed live views, and snapshots from a single video stream quality on the Protect controller. Choose exactly one of High, Medium, or Low. Leaving this unselected lets Protect negotiate the best available stream.", name: "Only" }
   ]
 };
 /* eslint-enable @stylistic/max-len */
@@ -359,3 +386,69 @@ export const describeOptionScope = (option: FeatureOptionEntry<ProtectOptionMeta
 
   return undefined;
 };
+
+// Selection reads.
+
+// The value every value-centric option registers as its default, keyed by the lowercased expanded name the engine matches on. It is built once from the catalog
+// itself, through the engine's own key composition, so the default a list read falls back to and the default the engine registers are one fact rather than two.
+const catalogDefaultValues = ((): ReadonlyMap<string, string> => {
+
+  const defaults = new Map<string, string>();
+
+  for(const [ category, entries ] of Object.entries(featureOptions)) {
+
+    for(const entry of entries) {
+
+      if(typeof entry.defaultValue === "string") {
+
+        defaults.set(expandOption(category, entry).toLowerCase(), entry.defaultValue);
+      }
+    }
+  }
+
+  return defaults;
+})();
+
+/**
+ * Read the value an option registers as its default, or `undefined` when it registers none this grammar can use.
+ *
+ * A bare enable of a value option resolves to no value at all, and what that has always meant is the option's registered default. This is the lookup that answers
+ * with it. An option whose default is a number registers nothing here: the selection grammar is textual throughout, so a numeric default names no selection.
+ *
+ * @param option - The feature option name, matched without regard to casing.
+ *
+ * @returns The registered default value, or `undefined`.
+ */
+export function catalogDefaultValue(option: string): string | undefined {
+
+  return catalogDefaultValues.get(option.toLowerCase());
+}
+
+/* Read which members of a domain a stored selection names, folding case on both sides and answering in the domain's own spelling. The engine's `selectValues` is the
+ * single authority for what a stored value selects - the delimiter grammar, the de-duplication, the domain ordering, and the all-choices wildcard all belong to it -
+ * and this adds exactly one policy above it: our option values have always matched case-insensitively, and a configuration written years ago spells a detection type
+ * or a quality tier however the user typed it. We lower both sides for the match and map each selection back to the spelling the domain supplied, so what a caller
+ * receives is always a member of the domain it handed in. A domain that repeats a member under two casings keeps the first spelling it named.
+ *
+ * @param args
+ * @param args.domain - The values available in this context, in the order they should read.
+ * @param args.value  - The stored text, which may be empty.
+ *
+ * @returns The selected members, in domain order, in the domain's own spelling.
+ */
+export function selectCatalogValues({ domain, value }: { domain: readonly string[]; value: string }): string[] {
+
+  const spellings = new Map<string, string>();
+
+  for(const member of domain) {
+
+    const lowered = member.toLowerCase();
+
+    if(!spellings.has(lowered)) {
+
+      spellings.set(lowered, member);
+    }
+  }
+
+  return selectValues({ domain: [...spellings.keys()], multiple: true, value: value.toLowerCase() }).selected.map((member) => spellings.get(member) ?? member);
+}

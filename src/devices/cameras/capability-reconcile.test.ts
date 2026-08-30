@@ -1608,8 +1608,8 @@ describe("the camera capability reconcile - the smart-detect contact sensors", (
     // camera whose capability arrives later, raising the flag without rebuilding the list would leave an empty list and an occupancy sensor that can never trip again.
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasSmartDetect: false, smartDetectTypes: ["person"] } });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { nvr } = buildTestNvr({ store, userOptions: [ "Enable.Motion.OccupancySensor", "Enable.Motion.OccupancySensor.Person", "Enable.Motion.SmartDetect",
-      "Enable.Motion.SmartDetect.ObjectSensors" ] });
+    const { nvr } = buildTestNvr({ store,
+      userOptions: [ "Enable.Motion.OccupancySensor=person", "Enable.Motion.SmartDetect", "Enable.Motion.SmartDetect.ObjectSensors" ] });
     const accessory = makeTestAccessory("Test Camera", "uuid:smart-detect-11");
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
 
@@ -1652,7 +1652,7 @@ describe("the camera capability reconcile - the smart-detect contact sensors", (
     // controller later swaps the reported type to vehicle, which the user has also selected.
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasSmartDetect: true, smartDetectTypes: ["person"] } });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { nvr } = buildTestNvr({ store, userOptions: [ "Enable.Motion.OccupancySensor", "Enable.Motion.OccupancySensor.Vehicle", "Enable.Motion.SmartDetect" ] });
+    const { nvr } = buildTestNvr({ store, userOptions: [ "Enable.Motion.OccupancySensor=person,vehicle", "Enable.Motion.SmartDetect" ] });
     const accessory = makeTestAccessory("Test Camera", "uuid:smart-detect-12");
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
 
@@ -1695,7 +1695,7 @@ describe("the camera capability reconcile - the smart-detect contact sensors", (
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasSmartDetect: true, smartDetectTypes: [ "person", "vehicle" ] },
       smartDetectSettings: { objectTypes: ["person"] } });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { nvr } = buildTestNvr({ store, userOptions: [ "Enable.Motion.OccupancySensor", "Enable.Motion.OccupancySensor.Vehicle", "Enable.Motion.SmartDetect" ] });
+    const { nvr } = buildTestNvr({ store, userOptions: [ "Enable.Motion.OccupancySensor=person,vehicle", "Enable.Motion.SmartDetect" ] });
     const accessory = makeTestAccessory("Test Camera", "uuid:smart-detect-13");
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
 
@@ -1707,6 +1707,37 @@ describe("the camera capability reconcile - the smart-detect contact sensors", (
       // excluded anyway, because the camera does not deliver it. Deriving from featureFlags instead of the delivered set yields [ "person", "vehicle" ] -> RED.
       assert.deepEqual(camera.hints.smartOccupancy, ["person"],
         "the occupancy list holds the delivered detection and excludes the one the user disabled in Protect, despite its occupancy option being on");
+    } finally {
+
+      camera.cleanup();
+    }
+  });
+
+  /* The end-to-end translation row for the occupancy selection, written in the retired grammar this plugin used before the selection was a picker: one option per
+   * detection type, with mixed defaults - face and person on, everything else off. It is the only row in this file written that way, and it carries both the global
+   * and the device-scoped shapes, because the two reach the runtime by different routes: a global retired entry is rescued by the current catalog's own reading of the
+   * dotted form, while a device-scoped one addresses nothing at all there and reaches the camera only through the overlay. A camera whose owner has never opened the
+   * settings page has to keep the occupancy sensor it configured years ago, and this is the row that says so.
+   */
+  test("a camera configured in the retired per-type occupancy grammar keeps its exact selection", async () => {
+
+    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasSmartDetect: true, smartDetectTypes: [ "person", "vehicle" ] },
+      smartDetectSettings: { objectTypes: [ "person", "vehicle" ] } });
+    const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
+
+    // Occupancy on globally, face subtracted globally, and vehicle added at this camera alone - the three-level shape a long-lived configuration actually carries.
+    const { nvr } = buildTestNvr({ store, userOptions: [ "Enable.Motion.OccupancySensor", "Disable.Motion.OccupancySensor.Face",
+      "Enable.Motion.OccupancySensor.Vehicle." + cameraConfig.mac, "Enable.Motion.SmartDetect" ] });
+    const accessory = makeTestAccessory("Test Camera", "uuid:smart-detect-legacy");
+    const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
+
+    await settle();
+
+    try {
+
+      assert.ok(accessory.getService(Service.OccupancySensor), "the occupancy sensor the retired configuration asked for still exists");
+      assert.deepEqual(camera.hints.smartOccupancy, [ "person", "vehicle" ],
+        "person survives from the retired defaults and vehicle arrives from this camera's own entry, in the wire casing the controller delivers");
     } finally {
 
       camera.cleanup();
@@ -1750,6 +1781,46 @@ describe("the camera capability reconcile - the smart-detect contact sensors", (
       // place -> RED. This is the remove half's only coverage.
       assert.equal(smartDetectSensor(accessory, "package"), undefined, "the dropped type lost its contact sensor live");
       assert.ok(smartDetectSensor(accessory, "person"), "the still-reported type kept its contact sensor across the removal");
+    } finally {
+
+      camera.cleanup();
+    }
+  });
+
+  /* Per-type SELECTION, which is the new capability: the camera delivers both types and the user narrows the sensors to one of them. The row runs in two passes so the
+   * subtractive branch is genuinely exercised - constructing straight into the narrowed selection would only prove that the excluded sensor was never created, which a
+   * prune that removes nothing would also satisfy. The first pass builds both sensors, the selection then narrows through the engine's own write path, and the
+   * reconcile a controller patch drives is what has to take the excluded one away.
+   */
+  test("narrowing the per-type selection removes the excluded sensor and leaves the selected one standing", async () => {
+
+    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasSmartDetect: true, smartDetectTypes: [ "person", "vehicle" ] },
+      smartDetectSettings: { objectTypes: [ "person", "vehicle" ] } });
+    const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
+    const { nvr } = buildTestNvr({ store,
+      userOptions: [ "Enable.Motion.SmartDetect", "Enable.Motion.SmartDetect.ObjectSensors=person,vehicle" ] });
+    const accessory = makeTestAccessory("Test Camera", "uuid:smart-detect-selection");
+    const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
+
+    await settle();
+
+    try {
+
+      assert.ok(smartDetectSensor(accessory, "person"), "the first pass built the person sensor");
+      assert.ok(smartDetectSensor(accessory, "vehicle"), "the first pass built the vehicle sensor, so the removal below is a real removal");
+
+      /* Narrow the selection through the engine's own write path, the way a settings save does, then let an unrelated controller change drive the reconcile. The
+       * detection types this camera delivers are deliberately unchanged across the patch, so what removes the vehicle sensor is the selection alone.
+       */
+      nvr.platform.featureOptions.setOption({ enabled: true, option: "Motion.SmartDetect.ObjectSensors", value: "person" });
+
+      store.pushCameraPatch(cameraConfig.id, cameraPatch({ featureFlags: { ...cameraConfig.featureFlags, smartDetectTypes: [ "person", "vehicle" ] },
+        smartDetectSettings: { audioTypes: [], enableTamperDetection: true, objectTypes: [ "person", "vehicle" ] } }));
+
+      await settle();
+
+      assert.equal(smartDetectSensor(accessory, "vehicle"), undefined, "the type the user left out of the selection lost its contact sensor");
+      assert.ok(smartDetectSensor(accessory, "person"), "the selected type kept its contact sensor");
     } finally {
 
       camera.cleanup();
@@ -1815,6 +1886,32 @@ describe("the camera capability reconcile - the smart-detect contact sensors", (
       // longer a term in that condition, so this is what holds its surviving half.
       assert.equal(plateSensor(accessory, "XYZ789"), undefined, "the plate the user removed from the list lost its contact sensor");
       assert.ok(plateSensor(accessory, "ABC123"), "the plate the user kept still has its contact sensor");
+    } finally {
+
+      camera.cleanup();
+    }
+  });
+
+  /* The end-to-end row for the retired plate grammar, which separated plates with hyphens rather than with the shared list delimiter. A configuration nobody has
+   * opened the settings page on still carries it, and every plate in it has to keep its sensor. The rewrite happens before the engine reads the entry at all, so the
+   * camera's own read carries no hyphen awareness whatsoever.
+   */
+  test("a plate list stored in the retired hyphen grammar still creates every plate's sensor", async () => {
+
+    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasSmartDetect: true, smartDetectTypes: ["licensePlate"] } });
+    const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
+    const { nvr } = buildTestNvr({ store, userOptions: [ "Enable.Motion.SmartDetect", "Enable.Motion.SmartDetect.ObjectSensors",
+      "Enable.Motion.SmartDetect.ObjectSensors.LicensePlate.ABC123-XYZ789" ] });
+    const accessory = makeTestAccessory("Test Camera", "uuid:smart-detect-plates-legacy");
+    const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
+
+    await settle();
+
+    try {
+
+      assert.ok(plateSensor(accessory, "ABC123"), "the first plate in the retired list has its sensor");
+      assert.ok(plateSensor(accessory, "XYZ789"), "the second plate in the retired list has its sensor");
+      assert.deepEqual(camera.detectLicensePlate, [ "ABC123", "XYZ789" ], "the camera read both plates rather than one run-together value");
     } finally {
 
       camera.cleanup();

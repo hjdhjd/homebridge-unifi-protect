@@ -8,7 +8,10 @@ import type { DeviceCollectionKey, ProtectCameraConfig, ProtectDeviceConfig, Pro
 import { PROTECT_MOTION_DURATION, PROTECT_OCCUPANCY_DURATION} from "../settings.ts";
 import type { ProtectAccessory, ProtectPersistedContextState, ProtectProjectionMap, WithoutIdentity } from "../types.ts";
 import { acquireService, setAccessoryName, validService } from "homebridge-plugin-utils";
+import { catalogDefaultValue, selectCatalogValues } from "../options.ts";
 import { deviceSelectors, isDeviceOnline } from "unifi-protect";
+import { legacyFamilyForOption, resolveLegacySelection } from "../options-legacy.ts";
+import type { LegacyFamily } from "../options-legacy.ts";
 import type { ObserverWakePayload } from "../diagnostics.ts";
 import { ProtectBase } from "./device-base.ts";
 import type { ProtectCapabilityHost } from "./device-capability.ts";
@@ -525,14 +528,10 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
         // ProtectCamera's own configureHints override - no light or sensor ever sets it - so this.ufp is guaranteed to be a camera config whenever this line runs.
         const cameraConfig = this.ufp as Readonly<WithoutIdentity<ProtectCameraConfig>>;
 
-        // Iterate through all the individual object detection types Protect has configured.
-        for(const smartDetectType of [ ...cameraConfig.featureFlags.smartDetectAudioTypes, ...cameraConfig.featureFlags.smartDetectTypes ]) {
-
-          if(this.hasFeature("Motion.OccupancySensor." + smartDetectType)) {
-
-            this.hints.smartOccupancy.push(smartDetectType);
-          }
-        }
+        // The detection types the user selected, read against everything this camera reports it can detect. The wrapper answers in the domain's own spelling, which is
+        // the wire casing the firehose delivers, so the occupancy gate can match a delivered event's type against this list directly.
+        this.hints.smartOccupancy = this.getFeatureList("Motion.OccupancySensor",
+          [ ...cameraConfig.featureFlags.smartDetectAudioTypes, ...cameraConfig.featureFlags.smartDetectTypes ]);
       }
 
       // Configure our MQTT support.
@@ -615,6 +614,56 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
   public getFeatureValue(option: string): Nullable<string | undefined> {
 
     return this.platform.featureOptions.value(option, this.device.config.mac, this.nvr.ufp.mac);
+  }
+
+  /* Resolve a multiple-choice feature option's selected values against the domain this device offers right now.
+   *
+   * The engine's own selection derivation is the single authority for what a stored value selects - the list grammar, the domain ordering, and the all-choices
+   * wildcard all belong to it. This wrapper adds the consumer's policies above it, and the three readings it tells apart are what make it worth having. An option
+   * disabled at some scope selects nothing. An option enabled with no stored value keeps the meaning a bare enable has always had, resolving the registered default.
+   * An explicit empty payload is a different state entirely - the user emptied the picker on purpose - and it reads as the empty selection rather than falling back.
+   * Matching folds case and answers in the domain's own spelling, so a type or tier the user typed in any casing still names its member.
+   *
+   * While a family's retired entries are still in the configuration, the selection resolves through the overlay instead, which answers with the retired
+   * per-member grammar's exact three-level precedence over this device's own device and controller.
+   *
+   * @param option - The feature option to read.
+   * @param domain - The values the option offers on this device right now.
+   *
+   * @returns The selected values, in the domain's own spelling and order.
+   */
+  public getFeatureList(option: string, domain: readonly string[]): string[] {
+
+    const overlaid = this.overlaidFamily(option);
+
+    if(overlaid) {
+
+      return resolveLegacySelection({ controller: this.nvr.ufp.mac, device: this.device.config.mac, domain, family: overlaid,
+        options: this.platform.config.options });
+    }
+
+    const stored = this.getFeatureValue(option);
+
+    // Disabled at some scope, which selects nothing at all. It is checked before the default fallback below, because nullish coalescing would not tell the two apart.
+    if(stored === null) {
+
+      return [];
+    }
+
+    return selectCatalogValues({ domain, value: stored ?? catalogDefaultValue(option) ?? "" });
+  }
+
+  /* The retired family whose overlay must still answer for a feature option at this device, or null once the configuration has converged - which is also the answer
+   * for any option that supersedes nothing.
+   *
+   * Every selection read asks this one question before deciding where to resolve, so "does the retired grammar still own this answer?" has one expression. On a
+   * migrated configuration the families set is empty and the whole question costs one set-membership test.
+   */
+  protected overlaidFamily(option: string): Nullable<LegacyFamily> {
+
+    const family = legacyFamilyForOption(option);
+
+    return (family && this.platform.legacyOptions.families.has(family)) ? family : null;
   }
 
   // Utility for checking feature options on a device.
