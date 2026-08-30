@@ -11,7 +11,7 @@
  * catalog does not know, the same mechanism the undocumented Debug.* namespace rides, and declaring it would surface it in the webUI and the generated documentation.
  */
 import { PROTECT_DOORBELL_RING_DELAY, PROTECT_MQTT_TOPIC } from "./settings.ts";
-import { SMART_DETECT_TYPES, featureOptionCategories, featureOptions } from "./options.ts";
+import { SMART_DETECT_TYPES, featureOptionCategories, featureOptions, smartDetectLabel } from "./options.ts";
 import { describe, test } from "node:test";
 import { ALL_CHOICES } from "homebridge-plugin-utils";
 import type { FeatureOptionEntry } from "homebridge-plugin-utils";
@@ -133,6 +133,8 @@ describe("feature-option retirement wave", () => {
     assert.equal(entry.default, false, "no occupancy sensor exists until the user asks for one");
     assert.deepEqual(entry.meta?.choiceDomain, SMART_DETECT_TYPES.map((type) => type.value),
       "the entry carries the known-type domain the settings page offers where no camera is in view");
+    assert.deepEqual(entry.meta?.choiceLabels, Object.fromEntries(SMART_DETECT_TYPES.map((type) => [ type.value, type.label ])),
+      "the entry carries the display names the picker renders each detection type as");
   });
 
   // The catalog declares no per-type occupancy boolean, while the duration sibling that shares their name prefix stands: it was never one of them, and an entry
@@ -161,6 +163,8 @@ describe("feature-option retirement wave", () => {
     assert.equal(entry.group, "SmartDetect", "it stays grouped under smart detection");
     assert.deepEqual(entry.meta?.choiceDomain, SMART_DETECT_TYPES.map((type) => type.value),
       "the entry carries the known-type domain the settings page offers where no camera is in view");
+    assert.deepEqual(entry.meta?.choiceLabels, Object.fromEntries(SMART_DETECT_TYPES.map((type) => [ type.value, type.label ])),
+      "the entry carries the display names the picker renders each detection type as");
   });
 
   /* The fob's buttons are one inline-choice selection over a fixed table, so its choices are pinned at FULL depth - every label and every value, in order. The labels
@@ -237,6 +241,68 @@ describe("feature-option retirement wave", () => {
     assert.equal(entry.choices, undefined, "there is nothing to pick from - the user supplies the plates");
     assert.equal(entry.defaultValue, "", "no plate is matched until the user names one");
     assert.equal(entry.group, "SmartDetect", "it stays grouped under smart detection");
+  });
+});
+
+/* The label column of the detection-type table, which is the one place a type's display name is written and what every user-facing surface renders: the settings
+ * page's picker copy, the HomeKit contact sensor names, and the log narration. The wire values stay the protocol identity, so every row here pins a value-to-name
+ * pairing rather than a rename of the value itself.
+ */
+describe("smart detection display names", () => {
+
+  // The humanizing rule the label reader falls back to, restated here rather than reached for in the module. A test that calls the implementation agrees with any
+  // drift in it; a test that states the rule fails the moment the implementation stops following it.
+  function humanized(value: string): string {
+
+    return value.replace(/_/g, " ").replace(/([a-z0-9])([A-Z])/g, "$1 $2").split(" ").filter((word) => word.length)
+      .map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(" ");
+  }
+
+  // Every row of the pairing, in the table's own order, because a count-only or spot-check assertion passes against a mistyped, dropped, or reordered name and these
+  // are the exact strings a user reads in the picker, on an accessory, and in the log.
+  test("every detection type reads as the display name the table names for it", () => {
+
+    assert.deepEqual(SMART_DETECT_TYPES.map((type) => [ type.value, smartDetectLabel(type.value) ]), [
+
+      [ "animal", "Animal" ],
+      [ "face", "Face" ],
+      [ "licensePlate", "License Plate" ],
+      [ "package", "Package" ],
+      [ "person", "Person" ],
+      [ "vehicle", "Vehicle" ],
+      [ "alrmBabyCry", "Baby Crying" ],
+      [ "alrmBark", "Barking" ],
+      [ "alrmBurglar", "Burglar" ],
+      [ "alrmCarHorn", "Car Horn" ],
+      [ "alrmCmonx", "CO Alarm" ],
+      [ "alrmGlassBreak", "Glass Breakage" ],
+      [ "alrmSiren", "Siren" ],
+      [ "alrmSmoke", "Smoke Alarm" ],
+      [ "alrmSpeak", "Speaking" ],
+      [ "smoke_cmonx", "Smoke/CO Alarm" ]
+    ], "each wire value renders the name the pickers, the sensor names, and the logs all show");
+  });
+
+  // A type the table does not name is one a newer controller firmware has begun reporting. It reads through the humanizing rule rather than surfacing a wire
+  // spelling, and both of that rule's splits are exercised: the camelCase joins and the underscores.
+  test("a detection type the table does not name humanizes its wire spelling", () => {
+
+    assert.equal(smartDetectLabel("futureAlarmThing"), "Future Alarm Thing", "a camelCase value reads as separate, capitalized words");
+    assert.equal(smartDetectLabel("future_alarm_thing"), "Future Alarm Thing", "an underscore-joined value splits the same way");
+    assert.equal(smartDetectLabel("futureAlarmThing"), humanized("futureAlarmThing"), "the fallback is the humanizing rule itself");
+  });
+
+  /* The curated column earns its place on the audio alarm family alone - the types Protect spells for its own protocol convenience. Every clean object type's label
+   * is exactly what the humanizing rule produces from its value, "License Plate" among them, which is why that rule has to split camelCase joins rather than
+   * capitalize at whitespace alone. Both directions are pinned, so a curated name added to a clean type or dropped from an alarm type fails here.
+   */
+  test("the clean object types read as their humanized values and the alarm family is the curated scope", () => {
+
+    assert.deepEqual(SMART_DETECT_TYPES.filter((type) => type.label === humanized(type.value)).map((type) => type.value),
+      [ "animal", "face", "licensePlate", "package", "person", "vehicle" ], "the clean object types need no curated name, License Plate included");
+    assert.deepEqual(SMART_DETECT_TYPES.filter((type) => type.label !== humanized(type.value)).map((type) => type.value),
+      [ "alrmBabyCry", "alrmBark", "alrmBurglar", "alrmCarHorn", "alrmCmonx", "alrmGlassBreak", "alrmSiren", "alrmSmoke", "alrmSpeak", "smoke_cmonx" ],
+      "the alarm family is exactly the set the curated column renames");
   });
 });
 

@@ -746,7 +746,7 @@ describe("smart-detection delivery (real ProtectEventDispatch.motionEventHandler
 
     dispatch.motionEventHandler(camera, [ "animal", "face", "person" ]);
 
-    assert.deepEqual(logged, [ "Motion detected.", "Smart motion detected: animal, face, person." ],
+    assert.deepEqual(logged, [ "Motion detected.", "Smart motion detected: Animal, Face, Person." ],
       "the three simultaneous detections coalesce onto one line rather than three");
   }));
 
@@ -768,8 +768,8 @@ describe("smart-detection delivery (real ProtectEventDispatch.motionEventHandler
     assert.deepEqual(logged, [
 
       "Motion detected.",
-      "Smart motion detected: vehicle.",
-      "Smart motion detected: vehicle (color: black [68% confidence], vehicleType: suv [96% confidence])."
+      "Smart motion detected: Vehicle.",
+      "Smart motion detected: Vehicle (color: black [68% confidence], vehicleType: suv [96% confidence])."
     ], "the bare vehicle line is followed by exactly one enriched line");
   }));
 
@@ -786,7 +786,7 @@ describe("smart-detection delivery (real ProtectEventDispatch.motionEventHandler
     dispatch.motionEventHandler(camera, [], thumbnail);
     dispatch.motionEventHandler(camera, [], thumbnail);
 
-    assert.deepEqual(logged.filter(line => line.startsWith("Smart motion detected")), ["Smart motion detected: vehicle (color: black [68% confidence])."],
+    assert.deepEqual(logged.filter(line => line.startsWith("Smart motion detected")), ["Smart motion detected: Vehicle (color: black [68% confidence])."],
       "the identical retriggers re-arm the timer but do not re-log the enriched line");
   }));
 
@@ -801,7 +801,7 @@ describe("smart-detection delivery (real ProtectEventDispatch.motionEventHandler
     dispatch.motionEventHandler(camera, ["person"]);
     dispatch.motionEventHandler(camera, ["person"]);
 
-    assert.deepEqual(logged.filter(line => line.startsWith("Smart motion detected")), ["Smart motion detected: person."],
+    assert.deepEqual(logged.filter(line => line.startsWith("Smart motion detected")), ["Smart motion detected: Person."],
       "the second person detection within the window re-arms the timer but does not re-log");
   }));
 
@@ -819,7 +819,7 @@ describe("smart-detection delivery (real ProtectEventDispatch.motionEventHandler
     assert.equal(plateSensor.getCharacteristic(Characteristic.ContactSensorState).value, Characteristic.ContactSensorState.CONTACT_NOT_DETECTED,
       "the matching plate contact sensor trips on the detection");
     assert.deepEqual(logged.filter(line => line.startsWith("Smart motion detected")),
-      ["Smart motion detected: vehicle (license plate: ABC123 [98% confidence])."], "the plate is rendered into the enriched log line");
+      ["Smart motion detected: Vehicle (license plate: ABC123 [98% confidence])."], "the plate is rendered into the enriched log line");
   }));
 
   test("suppresses all smart-detection logging when motion logging is disabled, but still trips the motion sensor", () => withMockTimers(() => {
@@ -850,7 +850,7 @@ describe("smart-detection delivery (real ProtectEventDispatch.motionEventHandler
     dispatch.motionEventHandler(camera, [], thumbnail);
 
     assert.deepEqual(logged.filter(line => line.startsWith("Smart motion detected")),
-      [ "Smart motion detected: vehicle (color: black [68% confidence]).", "Smart motion detected: vehicle (color: black [68% confidence])." ],
+      [ "Smart motion detected: Vehicle (color: black [68% confidence]).", "Smart motion detected: Vehicle (color: black [68% confidence])." ],
       "the detection re-logs once per motion window");
   }));
 
@@ -868,7 +868,7 @@ describe("smart-detection delivery (real ProtectEventDispatch.motionEventHandler
       vehicleType: { confidence: 96, val: "suv" } }, type: "vehicle" }] });
 
     assert.deepEqual(logged.filter(line => line.startsWith("Smart motion detected")),
-      ["Smart motion detected: vehicle (color: black [68% confidence], vehicleType: suv [96% confidence])."],
+      ["Smart motion detected: Vehicle (color: black [68% confidence], vehicleType: suv [96% confidence])."],
       "the vehicle logs once enriched, never also as a bare coalesced line");
   }));
 
@@ -885,8 +885,8 @@ describe("smart-detection delivery (real ProtectEventDispatch.motionEventHandler
 
     assert.deepEqual(logged.filter(line => line.startsWith("Smart motion detected")), [
 
-      "Smart motion detected: vehicle (color: black [68% confidence], vehicleType: suv [96% confidence]).",
-      "Smart motion detected: person."
+      "Smart motion detected: Vehicle (color: black [68% confidence], vehicleType: suv [96% confidence]).",
+      "Smart motion detected: Person."
     ], "the plain person coalesces on its own line and the enriched vehicle is not also listed there");
   }));
 
@@ -948,7 +948,7 @@ describe("smart-detection delivery (real ProtectEventDispatch.motionEventHandler
     dispatch.motionEventHandler(camera, [], thumbnail);
 
     assert.deepEqual(logged.filter(line => line.startsWith("Smart motion detected")),
-      [ "Smart motion detected: vehicle (color: black [68% confidence]).", "Smart motion detected: vehicle (color: black [68% confidence])." ],
+      [ "Smart motion detected: Vehicle (color: black [68% confidence]).", "Smart motion detected: Vehicle (color: black [68% confidence])." ],
       "after the device's timers are cleared, the next detection logs afresh rather than being suppressed by a stale high-water mark");
   }));
 
@@ -967,7 +967,7 @@ describe("smart-detection delivery (real ProtectEventDispatch.motionEventHandler
 
     assert.equal(occupancy.getCharacteristic(Characteristic.OccupancyDetected).value, true, "a thumbnail-only person detection trips occupancy");
     assert.ok(published.some(entry => (String(entry[0]) === "AA:BB:CC:DD:EE:FF/occupancy") && (entry[1] === "true")), "the occupancy MQTT topic publishes \"true\"");
-    assert.ok(logged.includes("Occupancy detected: person."), "the occupancy log names the thumbnail-derived type rather than rendering an empty list");
+    assert.ok(logged.includes("Occupancy detected: Person."), "the occupancy log names the thumbnail-derived type rather than rendering an empty list");
   }));
 
   test("does not trip occupancy for a smart detection outside the configured occupancy set", () => withMockTimers(() => {
@@ -1015,7 +1015,7 @@ describe("smart-detection delivery (real ProtectEventDispatch.motionEventHandler
       { attributes: { color: { confidence: 71, val: "white" } }, name: "ABC123", objectId: "obj-2", type: "vehicle" }
     ] });
 
-    assert.equal(logged.filter(line => line.startsWith("Smart motion detected: vehicle (")).length, 2,
+    assert.equal(logged.filter(line => line.startsWith("Smart motion detected: Vehicle (")).length, 2,
       "two distinct same-type detections each log their own enriched line");
     assert.equal(published.filter(entry => String(entry[0]).endsWith("/motion/smart/vehicle/metadata")).length, 2,
       "two distinct same-type detections each publish their own metadata");
@@ -1039,7 +1039,7 @@ describe("smart-detection delivery (real ProtectEventDispatch.motionEventHandler
     // identity mark latched and suppress this.
     dispatch.motionEventHandler(camera, [], thumbnail);
 
-    assert.equal(logged.filter(line => line.startsWith("Smart motion detected: vehicle (")).length, 2,
+    assert.equal(logged.filter(line => line.startsWith("Smart motion detected: Vehicle (")).length, 2,
       "the same identity re-logs in a fresh window because the window-close swept its high-water mark");
     assert.equal(published.filter(entry => String(entry[0]).endsWith("/motion/smart/vehicle/metadata")).length, 2,
       "the same identity re-publishes its metadata in a fresh window");

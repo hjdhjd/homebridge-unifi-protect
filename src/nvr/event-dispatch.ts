@@ -15,6 +15,7 @@ import { SMART_DETECT_ENRICHERS } from "./smart-detect-metadata.ts";
 import type { SmartDetectEventItem } from "./smart-detect-metadata.ts";
 import { channels } from "../diagnostics.ts";
 import { mqttTopic } from "../mqtt.ts";
+import { smartDetectLabel } from "../options.ts";
 
 // The subkey infix that namespaces a camera's per-smart-detection-type timers and high-water marks under its device id: a full key reads
 // "<id>.Motion.SmartDetect.ObjectSensors.<type>", and a per-plate window extends it with ".<plate>". Written once here so the key build, the plate derivation, and the
@@ -574,7 +575,7 @@ export class ProtectEventDispatch {
       // Log the enriched line, if the user has opted into motion logging.
       if(protectDevice.hints.logMotion) {
 
-        protectDevice.log.info("Smart motion detected: %s (%s).", event.type, attributes.join(", "));
+        protectDevice.log.info("Smart motion detected: %s (%s).", smartDetectLabel(event.type), attributes.join(", "));
       }
     }
 
@@ -584,7 +585,7 @@ export class ProtectEventDispatch {
 
     if(coalescedLine.length && protectDevice.hints.logMotion) {
 
-      protectDevice.log.info("Smart motion detected: %s.", coalescedLine.join(", "));
+      protectDevice.log.info("Smart motion detected: %s.", coalescedLine.map((type) => smartDetectLabel(type)).join(", "));
     }
 
     // Occupancy considers every smart detection the sensors actually saw - the unified list of legacy object types AND thumbnail detections alike - so a thumbnail-only
@@ -614,8 +615,8 @@ export class ProtectEventDispatch {
           // Log the event, if configured to do so.
           if(protectDevice.hints.logMotion) {
 
-            protectDevice.log.info("Occupancy detected%s.",
-              protectDevice.hints.smartDetect ? ": " + protectDevice.hints.smartOccupancy.filter(x => smartEvents.some(event => event.type === x)).join(", ") : "");
+            protectDevice.log.info("Occupancy detected%s.", protectDevice.hints.smartDetect ? ": " +
+              protectDevice.hints.smartOccupancy.filter(x => smartEvents.some(event => event.type === x)).map((type) => smartDetectLabel(type)).join(", ") : "");
           }
         }
 

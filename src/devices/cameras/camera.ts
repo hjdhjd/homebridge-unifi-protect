@@ -9,7 +9,7 @@ import type { LivestreamHostOptions, ProtectCameraHost } from "../../media/camer
 import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_NVR_REBOOT_RECENCY_MS, PROTECT_SEGMENT_RESOLUTION } from "../../settings.ts";
 import type { ProtectAccessory, ProtectPersistedContextState } from "../../types.ts";
 import { ProtectAuthorizationError, deviceSelectors, livestreamAudioSampleRate } from "unifi-protect";
-import { STREAM_QUALITY_TIERS, selectCatalogValues } from "../../options.ts";
+import { STREAM_QUALITY_TIERS, selectCatalogValues, smartDetectLabel } from "../../options.ts";
 import { buildAdvertisedProfiles, buildChannelProfile, formatResolution, isPrimaryChannel, rtspUrl } from "../../media/resolution.ts";
 import { nightVisionActive, nightVisionBrightnessForMode, nightVisionCommandForLevel, nightVisionModeForToggleOn, nightVisionToggleCommand,
   parseNightVisionMode } from "./night-vision-policy.ts";
@@ -324,8 +324,10 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
       const smartDetectTypes = [ ...this.ufp.featureFlags.smartDetectAudioTypes, ...this.ufp.featureFlags.smartDetectTypes ];
 
-      // Inform the user of what smart detection object types we're configured for.
-      this.log.info("Smart motion detection enabled%s.", smartDetectTypes.length ? ": " + smartDetectTypes.toSorted().join(", ") : "");
+      // Inform the user of what smart detection object types we're configured for. The list reads in display-name order rather than wire order, since the names are
+      // what the reader is scanning...a code-unit sort of the labels would file "CO Alarm" before "Car Horn", so the ordering is a locale comparison.
+      this.log.info("Smart motion detection enabled%s.", smartDetectTypes.length ? ": " +
+        smartDetectTypes.map((type) => smartDetectLabel(type)).toSorted((left, right) => left.localeCompare(right)).join(", ") : "");
     }
 
     // Configure accessory information.
@@ -866,7 +868,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
       // We don't have this contact sensor enabled, remove it.
       this.accessory.removeService(objectService);
-      this.log.info("Disabling smart motion contact sensor: %s.", smartDetectType);
+      this.log.info("Disabling smart motion contact sensor: %s.", smartDetectLabel(smartDetectType));
     }
 
     // The number of sensors this pass CREATED, which each summary line below reads against its own pre-loop snapshot so a narration fires only on a real change. Once
@@ -913,8 +915,9 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
       for(const smartDetectType of [...objectSensorTypes].toSorted()) {
 
-        if(addSmartDetectContactSensor(this.accessoryName + " " + toStartCase(smartDetectType),
-          ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + "." + smartDetectType, "Unable to add smart motion contact sensor for " + smartDetectType + " detection.")) {
+        if(addSmartDetectContactSensor(this.accessoryName + " " + smartDetectLabel(smartDetectType),
+          ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + "." + smartDetectType,
+          "Unable to add smart motion contact sensor for " + smartDetectLabel(smartDetectType) + " detection.")) {
 
           enabledContactSensors.push(smartDetectType);
         }
@@ -922,7 +925,10 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
       if(sensorsCreated > createdBeforeObjectSensors) {
 
-        this.log.info("Smart motion contact sensor%s enabled: %s.", enabledContactSensors.length > 1 ? "s" : "", enabledContactSensors.join(", "));
+        // The sensors are created in wire order and narrated in display-name order, the order the reader scans...a locale comparison rather than a code-unit sort,
+        // which would file "CO Alarm" before "Car Horn".
+        this.log.info("Smart motion contact sensor%s enabled: %s.", enabledContactSensors.length > 1 ? "s" : "",
+          enabledContactSensors.map((type) => smartDetectLabel(type)).toSorted((left, right) => left.localeCompare(right)).join(", "));
       }
     }
 

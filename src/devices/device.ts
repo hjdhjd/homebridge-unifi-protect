@@ -8,7 +8,7 @@ import type { DeviceCollectionKey, ProtectCameraConfig, ProtectDeviceConfig, Pro
 import { PROTECT_MOTION_DURATION, PROTECT_OCCUPANCY_DURATION} from "../settings.ts";
 import type { ProtectAccessory, ProtectPersistedContextState, ProtectProjectionMap, WithoutIdentity } from "../types.ts";
 import { acquireService, setAccessoryName, validService } from "homebridge-plugin-utils";
-import { catalogDefaultValue, selectCatalogValues } from "../options.ts";
+import { catalogDefaultValue, selectCatalogValues, smartDetectLabel } from "../options.ts";
 import { deviceSelectors, isDeviceOnline } from "unifi-protect";
 import { legacyFamilyForOption, resolveLegacySelection } from "../options-legacy.ts";
 import type { LegacyFamily } from "../options-legacy.ts";
@@ -537,10 +537,12 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
       // Configure our MQTT support.
       this.subscribeGet("occupancy", "occupancy", () => service.getCharacteristic(this.hap.Characteristic.OccupancyDetected).value ? "true" : "false");
 
-      // Keep smartOccupancy a pure list of detection types - a display sentinel in that set would be a label living in a protocol set the occupancy gate tests membership
-      // against. The all-types-disabled case is rendered here at the log site instead, so the human-facing text is unchanged while the set stays type-only.
+      // Keep smartOccupancy a pure list of detection types - a display name in that set would be a label living in a protocol set the occupancy gate tests membership
+      // against. Both the display names and the all-types-disabled case are rendered here at the log site instead, so what the reader sees is names while the set
+      // stays type-only.
       this.log.info("Enabling occupancy sensor%s.", this.hints.smartDetect ? " using smart motion detection: " +
-        (this.hints.smartOccupancy.length ? this.hints.smartOccupancy.join(", ") : "no smart motion detection object type configured") : "");
+        (this.hints.smartOccupancy.length ? this.hints.smartOccupancy.map((type) => smartDetectLabel(type)).join(", ") :
+          "no smart motion detection object type configured") : "");
     }
 
     return true;

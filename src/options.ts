@@ -36,6 +36,8 @@ export interface ProtectNvrOptions {
 //
 // choiceDomain:        The values a source-backed picker offers at the scopes where no device record is in view, since a domain derived from a device cannot be read
 //                      there. The webUI's resolver labels and offers this list rather than rendering a control with nothing in it.
+// choiceLabels:        The display name each of a picker's values reads as, keyed by the value itself. The webUI's resolver renders these rather than deriving copy
+//                      from a wire spelling, so a picker offers the same names the logs and the HomeKit accessories use.
 // hasAccessFeature:    Properties in the UniFi Access metadata featureFlags object that must be enabled for this option to be exposed.
 // hasCameraFeature:    Properties in the featureFlags object on cameras that must be enabled for this option to be exposed.
 // hasFeature:          Properties in the featureFlags object that must be enabled for this option to be exposed.
@@ -48,6 +50,7 @@ export interface ProtectNvrOptions {
 export interface ProtectOptionMeta {
 
   choiceDomain?: string[];
+  choiceLabels?: Readonly<Record<string, string>>;
   hasAccessFeature?: string[];
   hasCameraFeature?: string[];
   hasFeature?: string[];
@@ -93,37 +96,71 @@ export const STREAM_QUALITY_TIERS: readonly { readonly choice: string; readonly 
 // The picker list both channel pins offer, derived from the tier table above so a value the user stores and the tier the runtime steers on cannot be spelled apart.
 const streamQualityChoices: readonly FeatureOptionChoice[] = STREAM_QUALITY_TIERS.map((entry) => ({ label: entry.choice, value: entry.choice }));
 
-/* Every smart detection type Protect reports, paired with the option name its own per-type feature option carried before the detection selections became pickers.
- * The value is the string the controller sends on the wire and the string a selection stores; the name is the spelling the retired option used. The pairing is
- * written out as data rather than derived, because "lowercase the first letter" describes most of these rows and not all of them, and a rule with exceptions is a
- * rule that eventually gets one wrong.
+/* Every smart detection type Protect reports, paired with the display name a person reads it as and with the option name its own per-type feature option carried
+ * before the detection selections became pickers. The value is the string the controller sends on the wire and the string a selection stores; the name is the
+ * spelling the retired option used. The pairing is written out as data rather than derived, because "lowercase the first letter" describes most of these rows and
+ * not all of them, and a rule with exceptions is a rule that eventually gets one wrong.
+ *
+ * The label column is the one place a detection type's display name is written, and every user-facing surface reads it: the settings page's picker copy, the
+ * HomeKit contact sensor names a camera creates, and the log narration. The controller spells several of these types for its own protocol convenience - the audio
+ * alarm family's "alrmCmonx" and its siblings say nothing to the person reading them - so the label is what faces the user, while the value stays the protocol
+ * identity everywhere it is stored, published, matched, or addressed.
  *
  * This is also the settings page's fallback domain at the scopes where no camera record is in view. A picker there offers the known types rather than nothing at
  * all, because the retired per-type options were editable at every scope and an empty control would quietly retire that surface.
  */
-export const SMART_DETECT_TYPES: readonly { readonly name: string; readonly value: string }[] = [
+export const SMART_DETECT_TYPES: readonly { readonly label: string; readonly name: string; readonly value: string }[] = [
 
-  { name: "Animal", value: "animal" },
-  { name: "Face", value: "face" },
-  { name: "LicensePlate", value: "licensePlate" },
-  { name: "Package", value: "package" },
-  { name: "Person", value: "person" },
-  { name: "Vehicle", value: "vehicle" },
-  { name: "AlrmBabyCry", value: "alrmBabyCry" },
-  { name: "AlrmBark", value: "alrmBark" },
-  { name: "AlrmBurglar", value: "alrmBurglar" },
-  { name: "AlrmCarHorn", value: "alrmCarHorn" },
-  { name: "AlrmCmonx", value: "alrmCmonx" },
-  { name: "alrmGlassBreak", value: "alrmGlassBreak" },
-  { name: "AlrmSiren", value: "alrmSiren" },
-  { name: "AlrmSmoke", value: "alrmSmoke" },
-  { name: "AlrmSpeak", value: "alrmSpeak" },
-  { name: "Smoke_cmonx", value: "smoke_cmonx" }
+  { label: "Animal", name: "Animal", value: "animal" },
+  { label: "Face", name: "Face", value: "face" },
+  { label: "License Plate", name: "LicensePlate", value: "licensePlate" },
+  { label: "Package", name: "Package", value: "package" },
+  { label: "Person", name: "Person", value: "person" },
+  { label: "Vehicle", name: "Vehicle", value: "vehicle" },
+  { label: "Baby Crying", name: "AlrmBabyCry", value: "alrmBabyCry" },
+  { label: "Barking", name: "AlrmBark", value: "alrmBark" },
+  { label: "Burglar", name: "AlrmBurglar", value: "alrmBurglar" },
+  { label: "Car Horn", name: "AlrmCarHorn", value: "alrmCarHorn" },
+  { label: "CO Alarm", name: "AlrmCmonx", value: "alrmCmonx" },
+  { label: "Glass Breakage", name: "alrmGlassBreak", value: "alrmGlassBreak" },
+  { label: "Siren", name: "AlrmSiren", value: "alrmSiren" },
+  { label: "Smoke Alarm", name: "AlrmSmoke", value: "alrmSmoke" },
+  { label: "Speaking", name: "AlrmSpeak", value: "alrmSpeak" },
+  { label: "Smoke/CO Alarm", name: "Smoke_cmonx", value: "smoke_cmonx" }
 ];
 
 // The detection types a picker offers where no camera record is in view, which is every scope above the device. Derived from the table above so the settings page and
 // the translation always offer the same set.
 const smartDetectDomain: string[] = SMART_DETECT_TYPES.map((type) => type.value);
+
+// The display name each detection type reads as, keyed by the wire value that names it. Derived from the same table the domain above comes from, so the picker copy,
+// the sensor names, and the log narration render one curated name rather than each keeping a copy of it.
+const SMART_DETECT_LABELS: Readonly<Record<string, string>> = Object.fromEntries(SMART_DETECT_TYPES.map((type) => [ type.value, type.label ]));
+
+/* Render a wire identifier as a display name: split the underscores and the camelCase joins, then capitalize each word. This is the behavior twin of the settings
+ * page's own humanizeChoice (homebridge-ui/public/ui.mjs), which does this job on the browser side where this module cannot be reached, so a change to the rule
+ * belongs in both. It is deliberately not homebridge-plugin-utils' toStartCase, which capitalizes at whitespace alone and would leave "licensePlate" as one word.
+ */
+function humanizeDetectionType(value: string): string {
+
+  return value.replace(/_/g, " ").replace(/([a-z0-9])([A-Z])/g, "$1 $2").split(" ").filter((word) => word.length)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(" ");
+}
+
+/**
+ * Read the display name a smart detection type reads as.
+ *
+ * A type the table names answers with its curated label. Anything else is a type a newer Protect firmware has begun reporting, and the humanizing rule renders it
+ * readably rather than surfacing a wire spelling to the person looking at it.
+ *
+ * @param value - The detection type, as the controller spells it on the wire.
+ *
+ * @returns The display name.
+ */
+export function smartDetectLabel(value: string): string {
+
+  return SMART_DETECT_LABELS[value] ?? humanizeDetectionType(value);
+}
 
 /* eslint-disable @stylistic/max-len */
 
@@ -211,10 +248,10 @@ export const featureOptions: Record<string, FeatureOptionEntry<ProtectOptionMeta
   "Motion": [
 
     { default: true, defaultValue: PROTECT_MOTION_DURATION, description: "Duration, in seconds, of a single motion event, before allowing a new one.", name: "Duration" },
-    { choices: "smartDetectTypes", default: false, defaultValue: "face,person", description: "Add an occupancy sensor accessory using motion sensor activity to determine occupancy. By default, any motion will trigger occupancy. When the smart detection feature option is enabled, the detection types selected here drive occupancy instead, defaulting to face and person detection. Selecting none of them means no smart detection triggers occupancy at all.", meta: { choiceDomain: smartDetectDomain, hasProperty: [ "isMotionDetected", "isPirMotionDetected" ] }, multiple: true, name: "OccupancySensor" },
+    { choices: "smartDetectTypes", default: false, defaultValue: "face,person", description: "Add an occupancy sensor accessory using motion sensor activity to determine occupancy. By default, any motion will trigger occupancy. When the smart detection feature option is enabled, the detection types selected here drive occupancy instead, defaulting to face and person detection. Selecting none of them means no smart detection triggers occupancy at all.", meta: { choiceDomain: smartDetectDomain, choiceLabels: SMART_DETECT_LABELS, hasProperty: [ "isMotionDetected", "isPirMotionDetected" ] }, multiple: true, name: "OccupancySensor" },
     { default: true, defaultValue: PROTECT_OCCUPANCY_DURATION, description: "Duration, in seconds, to wait without receiving a motion event to determine when occupancy is no longer detected.", group: "OccupancySensor", name: "OccupancySensor.Duration" },
     { default: false, description: "Use UniFi Protect smart detection for HomeKit motion events when on a supported device.", meta: { hasFeature: ["hasSmartDetect"] }, name: "SmartDetect" },
-    { choices: "smartDetectTypes", default: false, defaultValue: ALL_CHOICES, description: "Add contact sensors for the smart detection object types this camera reports. Every type it detects is included by default; select specific types to add sensors for only those.", group: "SmartDetect", meta: { choiceDomain: smartDetectDomain, hasFeature: ["hasSmartDetect"] }, multiple: true, name: "SmartDetect.ObjectSensors" },
+    { choices: "smartDetectTypes", default: false, defaultValue: ALL_CHOICES, description: "Add contact sensors for the smart detection object types this camera reports. Every type it detects is included by default; select specific types to add sensors for only those.", group: "SmartDetect", meta: { choiceDomain: smartDetectDomain, choiceLabels: SMART_DETECT_LABELS, hasFeature: ["hasSmartDetect"] }, multiple: true, name: "SmartDetect.ObjectSensors" },
     { default: false, defaultValue: "", description: "Add a contact sensor accessory for each license plate you want UniFi Protect to match. Enter the plates one at a time; they are stored as a comma-separated list (e.g. PLATE1,PLATE2,PLATE3).", group: "SmartDetect", inputSize: 20, meta: { hasSmartObjectType: ["licensePlate"] }, multiple: true, name: "SmartDetect.ObjectSensors.LicensePlate" },
     { default: false, description: "Add a switch accessory to activate or deactivate motion detection in HomeKit.", meta: { hasProperty: [ "isMotionDetected", "isPirMotionDetected" ] }, name: "Switch" },
     { default: false, description: "Add a switch accessory to manually trigger a motion detection event in HomeKit.", meta: { hasProperty: [ "isMotionDetected", "isPirMotionDetected" ] }, name: "Trigger" }
