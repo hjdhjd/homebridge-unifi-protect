@@ -307,7 +307,7 @@ export const featureOptions: Record<string, FeatureOptionEntry<ProtectOptionMeta
     { default: true, defaultValue: PROTECT_TRANSCODE_BITRATE, description: "Bitrate, in kilobits per second, to use when transcoding to low-latency (e.g. at home) clients, ignoring the bitrate HomeKit requests. HomeKit typically requests lower video quality than you may desire in your environment.", group: "Transcode", name: "Transcode.Bitrate" },
     { default: true, description: "When streaming to high-latency clients (e.g. cellular connections), transcode livestreams instead of transmuxing them.", name: "Transcode.HighLatency" },
     { default: true, defaultValue: PROTECT_TRANSCODE_HIGH_LATENCY_BITRATE, description: "Bitrate, in kilobits per second, to use when transcoding to high-latency (e.g. cellular) clients, ignoring the bitrate HomeKit requests. HomeKit typically requests lower video quality than you may desire in your environment.", group: "Transcode.HighLatency", name: "Transcode.HighLatency.Bitrate" },
-    { choices: streamQualityChoices, default: false, defaultValue: "", description: "When livestreaming directly from the camera over RTSP, force the use of a single video stream quality from the Protect controller. Choose exactly one of High, Medium, or Low. Leaving this unselected lets Protect negotiate the best available stream.", name: "Rtsp.Only" },
+    { choices: streamQualityChoices, default: false, defaultValue: "Medium", description: "When livestreaming directly from the camera over RTSP, force the use of a single video stream quality from the Protect controller. Choose exactly one of High, Medium, or Low. When this option is disabled, Protect negotiates the best available stream.", name: "Rtsp.Only" },
     { default: false, description: "Crop the camera video stream. Enabling this option will also force transcoding of livestreams.", name: "Crop" },
     { default: true, defaultValue: 0, description: "Left offset of the crop window, as a percentage of the original image width.", group: "Crop", name: "Crop.X" },
     { default: true, defaultValue: 0, description: "Top offset of the crop window, as a percentage of the original image height.", group: "Crop", name: "Crop.Y" },
@@ -327,7 +327,7 @@ export const featureOptions: Record<string, FeatureOptionEntry<ProtectOptionMeta
   "Video.Timeshift": [
 
     { default: true, description: "Maintain a rolling timeshift buffer of the camera's livestream to power live viewing, HomeKit Secure Video, and snapshots. Disabling this streams live views directly from the camera over RTSP whenever an RTSP-enabled stream is available.", name: "Livestream" },
-    { choices: streamQualityChoices, default: false, defaultValue: "", description: "Populate the timeshift buffer that feeds HomeKit Secure Video, buffer-backed live views, and snapshots from a single video stream quality on the Protect controller. Choose exactly one of High, Medium, or Low. Leaving this unselected lets Protect negotiate the best available stream.", name: "Only" }
+    { choices: streamQualityChoices, default: false, defaultValue: "High", description: "Populate the timeshift buffer that feeds HomeKit Secure Video, buffer-backed live views, and snapshots from a single video stream quality on the Protect controller. Choose exactly one of High, Medium, or Low. When this option is disabled, Protect negotiates the best available stream.", name: "Only" }
   ]
 };
 /* eslint-enable @stylistic/max-len */

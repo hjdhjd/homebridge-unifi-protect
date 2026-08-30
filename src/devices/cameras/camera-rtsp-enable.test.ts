@@ -163,6 +163,107 @@ describe("RTSP autoconfiguration write-through (deriveAdvertisedStreams)", () =>
     assert.equal(camera.selectChannel(1280, 720), null, "the direct-RTSP pin misses a channel that is not RTSP-enabled");
   });
 
+  /* The preset rows. Each pin registers a tier as its catalog default - High for the timeshift buffer, Medium for direct RTSP - so an enable that stores no tier
+   * resolves that tier rather than collapsing to no pin at all. These read camera.hints directly, because the timeshift preset selects the very channel the unpinned
+   * substrate policy computes on its own, and only the hint tells a preset apart from an absent pin. Every direct-RTSP half is arranged the way the stored-tier row
+   * above is: the pin alone makes the enable write necessary, so the write must be declined for the derivation to proceed from the mixed state rather than deferring
+   * the streaming surface behind a write that never lands.
+   */
+  test("either pin enabled with no stored tier resolves the preset its catalog entry registers", async () => {
+
+    const substratePinned = await buildCamera({ channels: MIXED_RTSP_DISABLED_CHANNELS, userOptions: ["Enable.Video.Timeshift.Only"] });
+
+    built = substratePinned;
+
+    assert.equal(substratePinned.camera.hints.substrateDefault, "HIGH", "a bare timeshift enable resolves the High preset");
+    assert.equal(substratePinned.camera.selectSubstrateChannel()?.channel.id, 0, "the preset steers the substrate selection to the High channel");
+
+    substratePinned.camera.cleanup();
+    substratePinned.controller.abort();
+
+    const { camera, projection } = built = await buildCamera({ channels: MIXED_RTSP_DISABLED_CHANNELS,
+      updateRejection: new ProtectAuthorizationError("forbidden"), userOptions: ["Enable.Video.Rtsp.Only"] });
+
+    assert.equal(camera.hints.rtspDefault, "MEDIUM", "a bare direct-RTSP enable resolves the Medium preset");
+    assert.equal(projection.updateCalls.length, 1, "the preset is a pin like any other, so it makes the enable write necessary");
+    assert.equal(camera.selectChannel(1280, 720), null, "the preset pin misses the Medium channel, which is not RTSP-enabled");
+  });
+
+  /* A hand-authored "Enable.<option>=" is the other enable form, and it lands on the same preset: the engine reads an empty stored payload on an option holding a
+   * single value as unspecified rather than as a choice, so it resolves onward exactly as a bare enable does. This row is what surfaces a change to that engine
+   * contract here rather than in the field.
+   */
+  test("an explicitly emptied pin resolves the same preset a bare enable does", async () => {
+
+    const substratePinned = await buildCamera({ channels: MIXED_RTSP_DISABLED_CHANNELS, userOptions: ["Enable.Video.Timeshift.Only="] });
+
+    built = substratePinned;
+
+    assert.equal(substratePinned.camera.hints.substrateDefault, "HIGH", "the emptied timeshift pin resolves the High preset");
+
+    substratePinned.camera.cleanup();
+    substratePinned.controller.abort();
+
+    const { camera } = built = await buildCamera({ channels: MIXED_RTSP_DISABLED_CHANNELS,
+      updateRejection: new ProtectAuthorizationError("forbidden"), userOptions: ["Enable.Video.Rtsp.Only="] });
+
+    assert.equal(camera.hints.rtspDefault, "MEDIUM", "the emptied direct-RTSP pin resolves the Medium preset");
+  });
+
+  // Disabling the option is how a configuration says it wants no pin, and a configuration that never mentions the pin at all says the same thing, since neither pin
+  // is on by default. Both readings must reach the hints unset - a preset leaking into either one would pin every camera in the field.
+  test("a disabled pin and an unmentioned pin both resolve no tier at all", async () => {
+
+    const disabled = await buildCamera({ channels: MIXED_RTSP_DISABLED_CHANNELS,
+      userOptions: [ "Disable.Video.Rtsp.Only", "Disable.Video.Timeshift.Only" ] });
+
+    built = disabled;
+
+    assert.equal(disabled.camera.hints.rtspDefault, undefined, "the disabled direct-RTSP pin names no tier");
+    assert.equal(disabled.camera.hints.substrateDefault, undefined, "the disabled timeshift pin names no tier");
+
+    disabled.camera.cleanup();
+    disabled.controller.abort();
+
+    const { camera, projection } = built = await buildCamera({ channels: MIXED_RTSP_DISABLED_CHANNELS });
+
+    assert.equal(camera.hints.rtspDefault, undefined, "a default-config camera pins no direct-RTSP tier");
+    assert.equal(camera.hints.substrateDefault, undefined, "a default-config camera pins no timeshift tier");
+    assert.equal(projection.updateCalls.length, 0, "and it still issues no enable write, since nothing pins a channel");
+  });
+
+  // A tier the configuration stores outranks the preset outright. Both halves store a tier the preset is not, so a resolution that fell back would be visible.
+  test("a stored tier resolves ahead of the preset", async () => {
+
+    const substratePinned = await buildCamera({ channels: MIXED_RTSP_DISABLED_CHANNELS, userOptions: ["Enable.Video.Timeshift.Only=Low"] });
+
+    built = substratePinned;
+
+    assert.equal(substratePinned.camera.hints.substrateDefault, "LOW", "the stored Low tier resolves rather than the High preset");
+    assert.equal(substratePinned.camera.selectSubstrateChannel()?.channel.id, 2, "the stored tier steers the substrate to the Low channel");
+
+    substratePinned.camera.cleanup();
+    substratePinned.controller.abort();
+
+    const { camera } = built = await buildCamera({ channels: MIXED_RTSP_DISABLED_CHANNELS,
+      updateRejection: new ProtectAuthorizationError("forbidden"), userOptions: ["Enable.Video.Rtsp.Only=High"] });
+
+    assert.equal(camera.hints.rtspDefault, "HIGH", "the stored High tier resolves rather than the Medium preset");
+  });
+
+  /* A family still carrying retired entries resolves through the overlay, and no preset reaches it: the retired grammar said "pin" by naming a tier, so an entry
+   * that names none pins none. The witness is a retired entry that turns a tier OFF at this camera - it puts the family on the overlay while selecting nothing - so a
+   * preset leaking onto the overlay path would read as a High pin here instead of no pin.
+   */
+  test("a legacy-overlaid family resolves through the overlay and never gains a preset", async () => {
+
+    const { camera } = built = await buildCamera({ channels: MIXED_RTSP_DISABLED_CHANNELS,
+      userOptions: ["Disable.Video.Timeshift.Only.High.74ACB9000001"] });
+
+    assert.equal(camera.hints.substrateDefault, undefined, "the overlaid family selects nothing, and the preset does not fill in behind it");
+    assert.equal(camera.selectSubstrateChannel()?.channel.id, 0, "the substrate policy computes its own answer, exactly as it does for an unpinned camera");
+  });
+
   /* The end-to-end translation proof, written in the retired per-tier grammar a long-lived configuration still carries, one row per pin family. Both literals are
    * DEVICE-SCOPED on purpose: a scoped retired entry registers a key that addresses no current option at all, so the feature-option engine reading the raw array
    * resolves nothing from it. A global literal would slip through on the engine's own incidental reading and prove nothing about the translation. These are the only

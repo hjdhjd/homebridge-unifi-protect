@@ -72,10 +72,14 @@ describe("feature-option retirement wave", () => {
   /* Both channel pins are single-select pickers over the same three tiers. The choices are pinned at FULL depth - every label and every value, in order - because a
    * count-only assertion passes against a mistyped or reordered list, and these values are the exact text a stored configuration carries and the legacy translation
    * emits. Pinning both entries at the same depth is what keeps the two pickers from drifting apart, since they derive from one table.
+   *
+   * The registered defaults differ by pin, and the difference is the whole point: the timeshift buffer feeds HomeKit Secure Video, snapshots, and buffer-backed live
+   * views, so it presets High, while a direct-RTSP live view is the transport a constrained network reaches for and presets Medium. Each is the tier that applies
+   * the moment the option is turned on with nothing chosen.
    */
-  test("the channel pins are single-select tier pickers with an empty default", () => {
+  test("the channel pins are single-select tier pickers that preset a tier on enable", () => {
 
-    for(const [ category, name ] of [ [ "Video", "Rtsp.Only" ], [ "Video.Timeshift", "Only" ] ] as const) {
+    for(const [ category, name, preset ] of [ [ "Video", "Rtsp.Only", "Medium" ], [ "Video.Timeshift", "Only", "High" ] ] as const) {
 
       const entry = optionEntry(category, name);
 
@@ -83,8 +87,8 @@ describe("feature-option retirement wave", () => {
       assert.deepEqual(entry.choices, [ { label: "High", value: "High" }, { label: "Medium", value: "Medium" }, { label: "Low", value: "Low" } ],
         "the " + category + " pin offers the three tiers, labels and values alike");
       assert.equal(entry.multiple, undefined, "a pin holds one tier, so it is not a list");
-      assert.equal(entry.defaultValue, "", "an unconfigured pin names no tier at all");
-      assert.equal(entry.default, false, "no pin applies until the user chooses one");
+      assert.equal(entry.defaultValue, preset, "the " + category + " pin presets " + preset + " for an enable that names no tier");
+      assert.equal(entry.default, false, "no pin applies until the user turns the option on");
     }
   });
 

@@ -9,7 +9,7 @@ import type { LivestreamHostOptions, ProtectCameraHost } from "../../media/camer
 import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_NVR_REBOOT_RECENCY_MS, PROTECT_SEGMENT_RESOLUTION } from "../../settings.ts";
 import type { ProtectAccessory, ProtectPersistedContextState } from "../../types.ts";
 import { ProtectAuthorizationError, deviceSelectors, livestreamAudioSampleRate } from "unifi-protect";
-import { STREAM_QUALITY_TIERS, selectCatalogValues, smartDetectLabel } from "../../options.ts";
+import { STREAM_QUALITY_TIERS, catalogDefaultValue, selectCatalogValues, smartDetectLabel } from "../../options.ts";
 import { buildAdvertisedProfiles, buildChannelProfile, formatResolution, isPrimaryChannel, rtspUrl } from "../../media/resolution.ts";
 import { nightVisionActive, nightVisionBrightnessForMode, nightVisionCommandForLevel, nightVisionModeForToggleOn, nightVisionToggleCommand,
   parseNightVisionMode } from "./night-vision-policy.ts";
@@ -1301,14 +1301,18 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     await this.ambientLight.reconcile();
   }
 
-  /* Resolve one of this camera's channel pins: the single stream-quality tier the user named for it, or null when they named none.
+  /* Resolve one of this camera's channel pins: the single stream-quality tier this configuration names for it, or null when it names none.
    *
-   * Two paths reach the same answer. While the pin's family still carries entries in the retired per-tier grammar, the overlay resolves the selection with this
-   * camera's own device and controller identifiers, which is the exact three-level precedence those entries have always had. A configuration speaking the current
-   * grammar reads its stored choice against the tier table through the same case folding every other selection read uses, so a quality the user typed in any casing
-   * still names its tier.
+   * The readings this tells apart are the ones the device base's list read tells apart, one wrapper philosophy written twice. A pin disabled at some scope pins
+   * nothing. A pin enabled with no stored tier keeps the meaning a bare enable has always had and resolves the tier the catalog registers as its default, so
+   * turning the option on is a working choice rather than a switch that does nothing until a second gesture follows it. A stored tier reads against the tier table
+   * through the same case folding every other selection read uses, so a quality typed in any casing still names its tier. The engine folds a hand-authored
+   * "Enable.<option>=" into the same unspecified reading as a bare enable for an option holding a single value, so both enable forms land on the registered tier
+   * and "no pin" is said by disabling the option.
    *
-   * The stored text is read only on the second path, because that is the only one where a value the tier table does not offer can reach us.
+   * While the pin's family still carries entries in the retired per-tier grammar, the overlay answers instead, with this camera's own device and controller
+   * identifiers and the exact three-level precedence those entries have always had. No registered default reaches that path: the retired grammar said "pin" by
+   * naming a tier, so an entry that names none pins none.
    *
    * @param option - The feature option holding the pin.
    *
@@ -1318,16 +1322,24 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
     const domain = STREAM_QUALITY_TIERS.map((entry) => entry.choice);
 
-    // The family the overlay still has to answer for, or null once the configuration has converged.
+    // The family the overlay still has to answer for, or null once the configuration has converged. The engine read is skipped entirely while the overlay owns the
+    // answer, since the retired entries it reads are exactly the ones the engine resolves nothing from.
     const overlaid = this.overlaidFamily(option);
-    const stored = overlaid ? "" : (this.getFeatureValue(option) ?? "");
+    const stored = overlaid ? undefined : this.getFeatureValue(option);
+
+    // Disabled at some scope, which pins no channel at all. It is read before the default fallback below, because nullish coalescing would not tell the two apart.
+    if(stored === null) {
+
+      return null;
+    }
+
     const selected = overlaid ? resolveLegacySelection({ controller: this.nvr.ufp.mac, device: this.device.config.mac, domain, family: overlaid,
-      options: this.platform.config.options }) : selectCatalogValues({ domain, value: stored });
+      options: this.platform.config.options }) : selectCatalogValues({ domain, value: stored ?? catalogDefaultValue(option) ?? "" });
     const pinned = STREAM_QUALITY_TIERS.find((entry) => entry.choice === selected[0])?.tier ?? null;
 
     // A stored quality the tier table does not offer names no channel at all. Only a hand-edited configuration reaches it, so we say which value we set aside rather
     // than resolving it silently to no pin.
-    if(stored.length && !pinned) {
+    if(stored?.length && !pinned) {
 
       this.log.debug("Ignoring an unrecognized stream quality for %s: %s.", option, stored);
     }
