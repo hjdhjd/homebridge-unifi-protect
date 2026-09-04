@@ -24,7 +24,7 @@ import assert from "node:assert/strict";
 // asks; mirrors the Clock interface the production NvrHealth already accepts.
 class FakeClock {
 
-  public current = 1_000_000;
+  public current = 1000000;
 
   public now(): number {
 
