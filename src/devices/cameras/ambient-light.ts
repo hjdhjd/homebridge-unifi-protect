@@ -9,6 +9,7 @@ import type { ProtectNvr } from "../../nvr/nvr.ts";
 import type { Service } from "homebridge";
 import type { WithoutIdentity } from "../../types.ts";
 import { capabilityGate } from "homebridge-plugin-utils";
+import { mqttTopics } from "../../mqtt.ts";
 
 /* The ambient light capability composed onto a ProtectCamera: the HomeKit LightSensor a camera with lux-reading hardware advertises, its 60-second controller poll, its
  * two read handlers, and its MQTT reading. The whole surface is capability-held - the last-known reading lives here and nothing outside this class touches it - which is
@@ -122,7 +123,7 @@ export class AmbientLightCapability extends ProtectDeviceCapability<ProtectCamer
       service.updateCharacteristic(this.hap.Characteristic.CurrentAmbientLightLevel, this.#ambientLight = lux);
 
       // Publish the state.
-      this.publish("ambientlight", this.#ambientLight.toString());
+      this.publish(mqttTopics.ambientlight.topic, this.#ambientLight.toString());
     };
 
     // Poll every 60 seconds - ambient light changes slowly enough that a faster cadence would only add controller chatter without a visible HomeKit benefit.

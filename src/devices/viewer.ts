@@ -9,6 +9,7 @@ import type { ProtectAccessory } from "../types.ts";
 import { ProtectDevice } from "./device.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import type { Viewer } from "unifi-protect";
+import { mqttTopics } from "../mqtt.ts";
 
 export class ProtectViewer extends ProtectDevice<Viewer> {
 
@@ -200,7 +201,7 @@ export class ProtectViewer extends ProtectDevice<Viewer> {
 
     if(liveview) {
 
-      this.publish("liveview", liveview.name);
+      this.publish(mqttTopics.liveview.topic, liveview.name);
     }
 
     return true;
@@ -210,13 +211,13 @@ export class ProtectViewer extends ProtectDevice<Viewer> {
   private configureMqtt(): boolean {
 
     // Get the current liveview state via MQTT.
-    this.subscribeGet("liveview", "liveview", () => {
+    this.subscribeGet(mqttTopics.liveview.topic, mqttTopics.liveview.label, () => {
 
       return this.nvr.client.liveviews.find(x => x.id === this.activeLiveview)?.name ?? "None";
     });
 
     // Set the liveview state via MQTT.
-    this.subscribeSet("liveview", "liveview", async (value: string) => {
+    this.subscribeSet(mqttTopics.liveview.topic, mqttTopics.liveview.label, async (value: string) => {
 
       const liveview = this.nvr.client.liveviews.find(x => x.name.toLowerCase() === value);
 

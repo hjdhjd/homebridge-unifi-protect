@@ -7,13 +7,12 @@
  */
 import type { API, HAP } from "homebridge";
 import type { ProtectDeviceConfig, ProtectNvrConfig, ProtectState } from "unifi-protect";
-import { TimerRegistry, composeSignals, debugGatedLog, formatErrorMessage, loopFaultReporter, prefixedLog, superviseLoop } from "homebridge-plugin-utils";
+import { TimerRegistry, composeSignals, debugGatedLog, formatErrorMessage, loopFaultReporter, mqttTopic, prefixedLog, superviseLoop } from "homebridge-plugin-utils";
 import type { HomebridgePluginLogging } from "homebridge-plugin-utils";
 import type { ProtectAccessory } from "../types.ts";
 import { ProtectAuthorizationError } from "unifi-protect";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import type { ProtectPlatform } from "../platform.ts";
-import { mqttTopic } from "../mqtt.ts";
 
 // An observed slice of controller state, expressed in the projections a single observer needs. `key` is a stable, dotted, machine-facing tag ("camera.ispSettings")
 // that identifies the slice on the observer-wake diagnostics channel - it stays put across field renames so diagnostic filters keep working. `selector` reads the slice
@@ -252,7 +251,8 @@ export abstract class ProtectBase {
   }
 
   // Remove an MQTT subscription under this owner's scope. The homebridge-plugin-utils unsubscribe takes the id and the topic tail as separate arguments (it reconstructs
-  // {topicPrefix}/{id}/{topic} internally and does not append /get or /set), so the caller passes the full tail - for example "motion/get" - and we supply the mqttId.
+  // {topicPrefix}/{id}/{topic} internally and does not append /get or /set), so the caller passes the full tail - the child it composed through mqttGetTopic or
+  // mqttSetTopic - and we supply the mqttId.
   protected unsubscribe(topic: string): void {
 
     this.nvr.mqtt?.unsubscribe(this.mqttId, topic);

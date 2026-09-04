@@ -8,14 +8,14 @@ import type { HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils"
 import { PACKAGE_CAMERA_NAME_SUFFIX, ProtectReservedNames, packageCameraId } from "../../types.ts";
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_DOORBELL_CHIME_DURATION_DIGITAL } from "../../settings.ts";
 import type { ProtectAccessory, ProtectAccessoryContext, WithoutIdentity } from "../../types.ts";
-import { sanitizeName, toStartCase } from "homebridge-plugin-utils";
+import { mqttTopic, sanitizeName, toStartCase } from "homebridge-plugin-utils";
 import type { ProtectCamera } from "./camera.ts";
 import type { ProtectCameraPackage } from "./camera-package.ts";
 import { ProtectDeviceCapability } from "../device-capability.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
 import { chimeVolumeFor } from "./chime-volume.ts";
 import { deviceSelectors } from "unifi-protect";
-import { mqttTopic } from "../../mqtt.ts";
+import { mqttTopics } from "../../mqtt.ts";
 
 // A doorbell message entry.
 interface MessageInterface {
@@ -413,7 +413,7 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
     // composes from the persisted MAC rather than the publish wrapper, whose topic scope reads the live projection.
     if(this.nvr.events.clearEventTimersForDevice(packageId) && !this.nvr.events.hasInflightMotion(mac)) {
 
-      this.nvr.mqtt?.publishGuarded(mqttTopic(mac, "motion"), "false");
+      this.nvr.mqtt?.publishGuarded(mqttTopic(mac, mqttTopics.motion.topic), "false");
     }
 
     // Tear down the live instance, if any.
@@ -604,12 +604,12 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
   private configureMqtt(): boolean {
 
     // Get and set the chime volume.
-    this.subscribeGet("chime", "chime volume", (): string => {
+    this.subscribeGet(mqttTopics.chime.topic, mqttTopics.chime.label, (): string => {
 
       return this.chimeVolume.toString();
     });
 
-    this.subscribeSet("chime", "chime volume", (value: string) => {
+    this.subscribeSet(mqttTopics.chime.topic, mqttTopics.chime.label, (value: string) => {
 
       const volume = parseInt(value);
 
@@ -627,7 +627,7 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
     });
 
     // Get the current message on the doorbell.
-    this.subscribeGet("message", "doorbell message", (): string => {
+    this.subscribeGet(mqttTopics.message.topic, mqttTopics.message.label, (): string => {
 
       // Read the LCD message non-throwing through the live camera record - an absent record (a doorbell lingering in the removal grace) reads as no message - and run it
       // through the shared expiry predicate, so an expired message reports no message rather than a stale negative duration.
@@ -651,7 +651,7 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
     // If duration is omitted, we assume the default duration.
     // If duration is 0, we assume it's not expiring.
     // If the message is blank, we assume we're resetting the doorbell message.
-    this.subscribeSet("message", "doorbell message", (_value: string, rawValue: string) => {
+    this.subscribeSet(mqttTopics.message.topic, mqttTopics.message.label, (_value: string, rawValue: string) => {
 
       interface mqttMessageJSON {
 
@@ -873,7 +873,7 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
         payload.resetAt !== null ? " (" + Math.round(((payload.resetAt ?? 0) - Date.now()) / 1000).toString() + " seconds)" : "", payload.text);
 
       // Publish to MQTT, if the user has configured it.
-      this.publish("message", JSON.stringify({ duration: entry.duration / 1000, message: entry.text }));
+      this.publish(mqttTopics.message.topic, JSON.stringify({ duration: entry.duration / 1000, message: entry.text }));
     }
   }
 
@@ -923,7 +923,7 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
       }
     }
 
-    this.publish("chime", value.toString());
+    this.publish(mqttTopics.chime.topic, value.toString());
   }
 
   // Push the chime-volume projection onto the doorbell's volume Lightbulb. Shares the read path (chimeVolume / chimeVolumeFor) with the onGet handlers, so the displayed

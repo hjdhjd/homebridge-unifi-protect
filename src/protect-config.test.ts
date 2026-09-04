@@ -13,15 +13,14 @@
  * logging gates, the FFmpeg path, the RTSP host override, and the MQTT pair - before and after the patch applies, which is what proves a migrated configuration runs
  * on the same effective values the legacy one did.
  */
+import { FeatureOptions, mqttConnectionSettings } from "homebridge-plugin-utils";
 import { PROTECT_DOORBELL_RING_DELAY, PROTECT_MQTT_TOPIC } from "./settings.ts";
 import type { ProtectConfig, ProtectConfigPatch, ProtectControllerConfig } from "../homebridge-ui/public/protect-config.mjs";
 import { controllersAwaitingMigration, hasValidCredentials, makeProtectConfig, withControllerRemoved, withControllerSaved }
   from "../homebridge-ui/public/protect-config.mjs";
 import { describe, test } from "node:test";
 import { featureOptionCategories, featureOptions } from "./options.ts";
-import { FeatureOptions } from "homebridge-plugin-utils";
 import assert from "node:assert/strict";
-import { mqttConnectionSettings } from "./mqtt.ts";
 
 // The controller these pins migrate, a sibling that proves one controller's entries never answer for another, and a camera beneath the first for the scope corner.
 const CONTROLLER_MAC = "AABBCCDDEEFF";
@@ -408,7 +407,7 @@ describe("protect webUI legacy-settings migration, whole-pass behavior", () => {
 
       return {
 
-        mqtt: mqttConnectionSettings(engine, controller, CONTROLLER_MAC),
+        mqtt: mqttConnectionSettings({ config: controller, controller: CONTROLLER_MAC, featureOptions: engine }),
         ringDelay: engine.getInteger("Doorbell.Ring.Delay", CAMERA_MAC, CONTROLLER_MAC) ?? state.ringDelay ?? 0,
         rtspHost: (override?.length ? override : undefined) ?? controller.overrideAddress,
         testDebug: (state.debug === true) || engine.test("Log.Debug", CAMERA_MAC, CONTROLLER_MAC),

@@ -10,6 +10,8 @@ import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
 import type { Relay } from "unifi-protect";
 import { deviceSelectors } from "unifi-protect";
+import { mqttTopics } from "../mqtt.ts";
+import { resolveMqttTopic } from "homebridge-plugin-utils";
 
 export class ProtectRelay extends ProtectDevice<Relay> {
 
@@ -52,7 +54,7 @@ export class ProtectRelay extends ProtectDevice<Relay> {
   // The stable MQTT topic tail for one output, user-facing as 1-based. Single-sourced so the publish and the get/set subscriptions all address the identical topic.
   private outputTopic(id: number): string {
 
-    return "relay/" + (id + 1).toString();
+    return resolveMqttTopic(mqttTopics.relayOutput.topic, { output: (id + 1).toString() });
   }
 
   // Initialize and configure the relay accessory for HomeKit.
@@ -179,9 +181,9 @@ export class ProtectRelay extends ProtectDevice<Relay> {
 
       const id = output.id;
 
-      this.subscribeGet(this.outputTopic(id), "relay output", () => this.outputState(id).toString());
+      this.subscribeGet(this.outputTopic(id), mqttTopics.relayOutput.label, () => this.outputState(id).toString());
 
-      this.subscribeSet(this.outputTopic(id), "relay output", (value: string) => {
+      this.subscribeSet(this.outputTopic(id), mqttTopics.relayOutput.label, (value: string) => {
 
         this.accessory.getServiceById(this.hap.Service.Switch, this.outputSubtype(id))?.setCharacteristic(this.hap.Characteristic.On, value === "true");
       });

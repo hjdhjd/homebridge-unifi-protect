@@ -9,6 +9,7 @@ import { ProtectDevice } from "./device.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
 import { deviceSelectors } from "unifi-protect";
+import { mqttTopics } from "../mqtt.ts";
 
 export class ProtectLight extends ProtectDevice<Light> {
 
@@ -94,7 +95,7 @@ export class ProtectLight extends ProtectDevice<Light> {
       }
 
       // Publish our state.
-      this.publish("light", lightState ? "true" : "false");
+      this.publish(mqttTopics.light.topic, lightState ? "true" : "false");
     });
 
     // Adjust the brightness of the light.
@@ -118,7 +119,7 @@ export class ProtectLight extends ProtectDevice<Light> {
       setTimeout(() => service.updateCharacteristic(this.hap.Characteristic.Brightness, this.ledLevelToBrightness(brightness)), 50);
 
       // Publish our state.
-      this.publish("light/brightness", this.ledLevelToBrightness(brightness).toString());
+      this.publish(mqttTopics.lightBrightness.topic, this.ledLevelToBrightness(brightness).toString());
     });
 
     // Initialize the light.
@@ -132,23 +133,23 @@ export class ProtectLight extends ProtectDevice<Light> {
   private configureMqtt(): boolean {
 
     // Get the light state.
-    this.subscribeGet("light", "light status", () => {
+    this.subscribeGet(mqttTopics.light.topic, mqttTopics.light.label, () => {
 
       return this.isLightOn.toString();
     });
 
-    this.subscribeGet("light/brightness", "light brightness", () => {
+    this.subscribeGet(mqttTopics.lightBrightness.topic, mqttTopics.lightBrightness.label, () => {
 
       return this.ledBrightness.toString();
     });
 
     // Control the light.
-    this.subscribeSet("light", "light", (value: string) => {
+    this.subscribeSet(mqttTopics.light.topic, mqttTopics.light.label, (value: string) => {
 
       this.accessory.getService(this.hap.Service.Lightbulb)?.setCharacteristic(this.hap.Characteristic.On, value === "true");
     });
 
-    this.subscribeSet("light/brightness", "light brightness", (value: string) => {
+    this.subscribeSet(mqttTopics.lightBrightness.topic, mqttTopics.lightBrightness.label, (value: string) => {
 
       const brightness = parseInt(value);
 

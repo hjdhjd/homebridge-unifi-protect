@@ -8,6 +8,7 @@ import { acquireService, sanitizeName, validService } from "homebridge-plugin-ut
 import type { Nullable } from "homebridge-plugin-utils";
 import { ProtectBase } from "../devices/device-base.ts";
 import type { ProtectNvr } from "./nvr.ts";
+import { mqttTopics } from "../mqtt.ts";
 import { selectNvr } from "unifi-protect";
 
 /* Represents the NVR controller's system information as a controller-owned accessory, not a device-backed one. It creates and keys its own accessory directly
@@ -173,6 +174,6 @@ export class ProtectNvrSystemInfo extends ProtectBase {
   private configureMqtt(): void {
 
     // Return the controller's current system information.
-    this.subscribeGet("systeminfo", "system information", () => JSON.stringify(this.nvr.ufp.systemInfo));
+    this.subscribeGet(mqttTopics.systeminfo.topic, mqttTopics.systeminfo.label, () => JSON.stringify(this.nvr.ufp.systemInfo));
   }
 }

@@ -7,6 +7,7 @@ import type { HAP, Service } from "homebridge";
 import type { HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
 import { PROTECT_DOORBELL_AUTHSENSOR_DURATION, PROTECT_DOORBELL_TRIGGER_DURATION } from "../settings.ts";
 import { ProtectReservedNames, packageCameraId } from "../types.ts";
+import { mqttTopic, resolveMqttTopic } from "homebridge-plugin-utils";
 import type { FirehoseDispatchPayload } from "../diagnostics.ts";
 import type { ProtectCamera } from "../devices/cameras/camera.ts";
 import type { ProtectDevice } from "../devices/device.ts";
@@ -14,7 +15,7 @@ import type { ProtectNvr } from "./nvr.ts";
 import { SMART_DETECT_ENRICHERS } from "./smart-detect-metadata.ts";
 import type { SmartDetectEventItem } from "./smart-detect-metadata.ts";
 import { channels } from "../diagnostics.ts";
-import { mqttTopic } from "../mqtt.ts";
+import { mqttTopics } from "../mqtt.ts";
 import { smartDetectLabel } from "../options.ts";
 
 // The subkey infix that namespaces a camera's per-smart-detection-type timers and high-water marks under its device id: a full key reads
@@ -324,13 +325,13 @@ export class ProtectEventDispatch {
 
       if((key === id) || (key === packageId)) {
 
-        owedTopics.add(mqttTopic(protectDevice.mac, "motion"));
+        owedTopics.add(mqttTopic(protectDevice.mac, mqttTopics.motion.topic));
       } else if(key.endsWith(OCCUPANCY_KEY_SUFFIX)) {
 
-        owedTopics.add(mqttTopic(protectDevice.mac, "occupancy"));
+        owedTopics.add(mqttTopic(protectDevice.mac, mqttTopics.occupancy.topic));
       } else if(key.startsWith(smartPrefix) && !key.slice(smartPrefix.length).includes(".")) {
 
-        owedTopics.add(mqttTopic(protectDevice.mac, "motion/smart/" + key.slice(smartPrefix.length)));
+        owedTopics.add(mqttTopic(protectDevice.mac, resolveMqttTopic(mqttTopics.smartMotion.topic, { object: key.slice(smartPrefix.length) })));
       }
     }
 
@@ -374,7 +375,7 @@ export class ProtectEventDispatch {
       protectDevice.accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_MOTION_TRIGGER)?.updateCharacteristic(this.hap.Characteristic.On, true);
 
       // Publish the motion event to MQTT, if the user has configured it.
-      this.nvr.mqtt?.publishGuarded(mqttTopic(protectDevice.mac, "motion"), "true");
+      this.nvr.mqtt?.publishGuarded(mqttTopic(protectDevice.mac, mqttTopics.motion.topic), "true");
 
       // Log the event, if configured to do so.
       if(protectDevice.hints.logMotion) {
@@ -407,7 +408,7 @@ export class ProtectEventDispatch {
 
       if(!this.hasInflightMotion(siblingId)) {
 
-        this.nvr.mqtt?.publishGuarded(mqttTopic(protectDevice.mac, "motion"), "false");
+        this.nvr.mqtt?.publishGuarded(mqttTopic(protectDevice.mac, mqttTopics.motion.topic), "false");
       }
 
       // Delete the timer from our motion event tracker.
@@ -471,7 +472,7 @@ export class ProtectEventDispatch {
           updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.hap.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED);
 
         // Publish the smart detection event to MQTT, if the user has configured it.
-        this.nvr.mqtt?.publishGuarded(mqttTopic(protectDevice.mac, "motion/smart/" + event.type), "true");
+        this.nvr.mqtt?.publishGuarded(mqttTopic(protectDevice.mac, resolveMqttTopic(mqttTopics.smartMotion.topic, { object: event.type })), "true");
       } else {
 
         // Clear out the inflight motion event timer.
@@ -486,7 +487,7 @@ export class ProtectEventDispatch {
           updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.hap.Characteristic.ContactSensorState.CONTACT_DETECTED);
 
         // Publish the smart detection event to MQTT, if the user has configured it.
-        this.nvr.mqtt?.publishGuarded(mqttTopic(protectDevice.mac, "motion/smart/" + event.type), "false");
+        this.nvr.mqtt?.publishGuarded(mqttTopic(protectDevice.mac, resolveMqttTopic(mqttTopics.smartMotion.topic, { object: event.type })), "false");
         protectDevice.log.debug("Resetting smart object motion event.");
 
         // Delete the timer, then sweep every logged-attribute high-water mark under this type's window boundary - the bare type-level key and every identity-suffixed
@@ -569,7 +570,8 @@ export class ProtectEventDispatch {
 
       if(mqttPayload) {
 
-        this.nvr.mqtt?.publishGuarded(mqttTopic(protectDevice.mac, "motion/smart/" + event.type + "/metadata"), JSON.stringify(mqttPayload));
+        this.nvr.mqtt?.publishGuarded(mqttTopic(protectDevice.mac, resolveMqttTopic(mqttTopics.smartMotionMetadata.topic, { object: event.type })),
+          JSON.stringify(mqttPayload));
       }
 
       // Log the enriched line, if the user has opted into motion logging.
@@ -610,7 +612,7 @@ export class ProtectEventDispatch {
           occupancyService.updateCharacteristic(this.hap.Characteristic.OccupancyDetected, true);
 
           // Publish the occupancy event to MQTT, if the user has configured it.
-          this.nvr.mqtt?.publishGuarded(mqttTopic(protectDevice.mac, "occupancy"), "true");
+          this.nvr.mqtt?.publishGuarded(mqttTopic(protectDevice.mac, mqttTopics.occupancy.topic), "true");
 
           // Log the event, if configured to do so.
           if(protectDevice.hints.logMotion) {
@@ -627,7 +629,7 @@ export class ProtectEventDispatch {
           occupancyService.updateCharacteristic(this.hap.Characteristic.OccupancyDetected, false);
 
           // Publish to MQTT, if the user has configured it.
-          this.nvr.mqtt?.publishGuarded(mqttTopic(protectDevice.mac, "occupancy"), "false");
+          this.nvr.mqtt?.publishGuarded(mqttTopic(protectDevice.mac, mqttTopics.occupancy.topic), "false");
 
           // Log the event, if configured to do so.
           if(protectDevice.hints.logMotion) {
@@ -698,7 +700,7 @@ export class ProtectEventDispatch {
     }
 
     // Publish to MQTT, if the user has configured it.
-    this.nvr.mqtt?.publishGuarded(mqttTopic(protectDevice.mac, "doorbell"), "true");
+    this.nvr.mqtt?.publishGuarded(mqttTopic(protectDevice.mac, mqttTopics.doorbell.topic), "true");
 
     if(protectDevice.hints.logDoorbell) {
 
@@ -715,7 +717,7 @@ export class ProtectEventDispatch {
     // Fire off our MQTT doorbell ring event.
     this.eventTimers.set(protectDevice.id + ".Doorbell.Ring.MQTT", setTimeout(() => {
 
-      this.nvr.mqtt?.publishGuarded(mqttTopic(protectDevice.mac, "doorbell"), "false");
+      this.nvr.mqtt?.publishGuarded(mqttTopic(protectDevice.mac, mqttTopics.doorbell.topic), "false");
 
       // Delete the timer from our event tracker.
       this.eventTimers.delete(protectDevice.id + ".Doorbell.Ring.MQTT");
@@ -785,7 +787,7 @@ export class ProtectEventDispatch {
     // metadata here at delivery.
     const authInfo = (method === "nfc") ? { id: metadata.nfc?.nfcId ?? "", type: "nfc" } : { type: "fingerprint" };
 
-    this.nvr.mqtt?.publishGuarded(mqttTopic(protectDevice.mac, "authenticate"), JSON.stringify(authInfo));
+    this.nvr.mqtt?.publishGuarded(mqttTopic(protectDevice.mac, mqttTopics.authenticate.topic), JSON.stringify(authInfo));
 
     // Reset the sensor to its resting state after the auth window, so HomeKit shows a momentary authentication rather than a latched one.
     this.eventTimers.set(key, setTimeout(() => {
@@ -831,7 +833,7 @@ export class ProtectEventDispatch {
   public buttonEventHandler(protectDevice: ProtectDevice, button: string, pressType: string): void {
 
     // Publish the raw press first, faithful to the firehose - hidden and unknown buttons and unmapped gestures all publish.
-    this.nvr.mqtt?.publishGuarded(mqttTopic(protectDevice.mac, "button"), JSON.stringify({ button, pressType }));
+    this.nvr.mqtt?.publishGuarded(mqttTopic(protectDevice.mac, mqttTopics.button.topic), JSON.stringify({ button, pressType }));
 
     // Map the wire gesture to a HomeKit press value. An unrecognized gesture is field-diagnosable, so we surface it at info (not debug) - a wrong wire assumption would
     // otherwise silently no-op the HomeKit half - and deliver nothing further.
@@ -895,7 +897,7 @@ export class ProtectEventDispatch {
 
     for await (const packet of this.nvr.client.rawPackets({ signal })) {
 
-      this.nvr.mqtt?.publishGuarded(mqttTopic(this.nvr.ufp.mac, "telemetry"), JSON.stringify(packet));
+      this.nvr.mqtt?.publishGuarded(mqttTopic(this.nvr.ufp.mac, mqttTopics.telemetry.topic), JSON.stringify(packet));
     }
   }
 }

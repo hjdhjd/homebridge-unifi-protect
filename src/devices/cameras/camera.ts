@@ -30,6 +30,7 @@ import type { StreamingCapability } from "./streaming.ts";
 import type { StreamingDelegate } from "../../media/stream-delegate.ts";
 import { canUseLivestreamApi } from "../../media/stream-source-policy.ts";
 import { doorbellReconcileAction } from "./doorbell-reconcile-policy.ts";
+import { mqttTopics } from "../../mqtt.ts";
 import { resolveLegacySelection } from "../../options-legacy.ts";
 import { shouldDeliverBareMotion } from "./motion-policy.ts";
 
@@ -1777,7 +1778,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
   protected configureMqtt(): boolean {
 
     // Return the RTSP URLs when requested.
-    this.subscribeGet("rtsp", "RTSP information", (): string => {
+    this.subscribeGet(mqttTopics.rtsp.topic, mqttTopics.rtsp.label, (): string => {
 
       // Grab all the available RTSP channels and return them as a JSON. The SRTP-enabled RTSPS URL is composed through the shared rtspUrl SSOT (secure by default) over
       // the secure rtsps port - the same composer and host chain the streaming path uses, so the published catalog cannot drift from the URL FFmpeg actually connects to.
@@ -1786,7 +1787,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     });
 
     // Trigger snapshots when requested.
-    this.subscribeSet("snapshot", "snapshot trigger", (value: string) => {
+    this.subscribeSet(mqttTopics.snapshot.topic, mqttTopics.snapshot.label, (value: string) => {
 
       // When we get the right message, we trigger the snapshot request.
       if(value !== "true") {
@@ -1820,7 +1821,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     }
 
     // Trigger doorbell when requested.
-    this.subscribeSet("doorbell", "doorbell ring trigger", (value: string) => {
+    this.subscribeSet(mqttTopics.doorbell.topic, mqttTopics.doorbell.label, (value: string) => {
 
       // When we get the right message, we trigger the doorbell request.
       if(value !== "true") {

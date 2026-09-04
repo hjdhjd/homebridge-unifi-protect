@@ -11,6 +11,7 @@ import type { ProtectNvr } from "../nvr/nvr.ts";
 import type { ProtectNvrLiveviewConfig } from "unifi-protect";
 import { ProtectReservedNames } from "../types.ts";
 import { ProtectSecuritySystem } from "./security-system.ts";
+import { mqttTopics } from "../mqtt.ts";
 import { sanitizeName } from "homebridge-plugin-utils";
 import { selectLiveviews } from "unifi-protect";
 
@@ -236,7 +237,7 @@ export class ProtectLiveviews extends ProtectBase {
     this.isMqttConfigured = true;
 
     // Return the current status of all the liveviews.
-    this.subscribeGet("liveviews", "liveview scenes", () => {
+    this.subscribeGet(mqttTopics.liveviews.topic, mqttTopics.liveviews.label, () => {
 
       // Get the list of this controller's liveviews.
       const liveviews = this.platform.accessories.filter(x => this.isOwnedLiveviewSwitch(x))
@@ -246,7 +247,7 @@ export class ProtectLiveviews extends ProtectBase {
     });
 
     // Set the status of one or more liveviews.
-    this.subscribeSet("liveviews", "liveview scenes", (value: string, rawValue: string) => {
+    this.subscribeSet(mqttTopics.liveviews.topic, mqttTopics.liveviews.label, (value: string, rawValue: string) => {
 
       interface mqttLiveviewJSON {
 
@@ -345,7 +346,7 @@ export class ProtectLiveviews extends ProtectBase {
     liveviewSwitch.context.liveviewState = !!targetState;
 
     // Publish to MQTT, if configured.
-    this.publish("liveviews", JSON.stringify([{ name: liveviewSwitch.context.liveview ?? "", state: targetState }]));
+    this.publish(mqttTopics.liveviews.topic, JSON.stringify([{ name: liveviewSwitch.context.liveview ?? "", state: targetState }]));
   }
 
   // Get the current liveview switch state.

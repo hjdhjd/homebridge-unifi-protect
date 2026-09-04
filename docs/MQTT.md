@@ -60,80 +60,86 @@ In the above example, `1234567890AB` and `ABCDEF123456` are the MAC addresses of
 ### <A NAME="publish"></A>Topics Published
 The topics and messages that `homebridge-unifi-protect` publishes are:
 
-| Topic                 | Protect Device Type | Message Published
-|-----------------------|---------------------|------------------
-| `airquality`          | Sensor              | `JSON` containing every air quality metric a UniFi Protect sensor reports: `aqi`, `co2`, `humidity`, `nox`, `pm10p0`, `pm1p0`, `pm2p5`, `pm4p0`, `temperature`, `tvoc`, `vape`, and `voc`. Each is an object in the format `{"status": "neutral", "value": 42}`, where `value` is `null` whenever that metric isn't currently reporting a reading. Sensors without air quality hardware never publish this topic.
-| `alarm`               | Sensor              | `true` or `false` when a UniFi Protect sensor detects a recognized alarm sound.
-| `ambientlight`        | Multiple            | Ambient light level, in lux, from a UniFi Protect sensor or a camera's ambient light sensor.
-| `authenticate`        | Doorbell            | `{type: "fingerprint"}` or `{type: "nfc", id: cardId}`. Publishes upon a successful authentication using fingerprint or NFC. `id` is included only for NFC and contains the card ID as detected by the doorbell.
-| `button`              | Fob                 | `{"button": "arm", "pressType": "single"}` when a UniFi Protect fob button is pressed. `button` is the button that was pressed and `pressType` is the gesture. Published for every press, including buttons you've hidden in HomeKit.
-| `chime`               | Chime               | A number between 0 and 100 that represents the current volume of the chime as a percentage.
-| `contact`             | Sensor              | `true` or `false` when a UniFi Protect sensor detects contact. Note: UniFi Protect will set this state differently depending on the placement type you select in the Protect app or the Protect webUI.
-| `doorbell`            | Camera              | `true` when the doorbell is rung. Each press of the doorbell will trigger a new event.
-| `glassbreak`          | Sensor              | `true` or `false` when a UniFi Protect sensor detects the sound of breaking glass.
-| `humidity`            | Sensor              | Humidity percentage level on a UniFi Protect sensor.
-| `leak`                | Sensor              | `true` or `false` when a UniFi Protect sensor detects a leak.
-| `leak-external`       | Sensor              | `true` or `false` when a UniFi Protect sensor detects a leak using the external leak sensor.
-| `light`               | Light               | `true` or `false` when a UniFi Protect light is on or off.
-| `light/brightness`    | Light               | A number between 0 and 100 that represents the current brightness as a percentage.
-| `liveview`            | Viewport            | The current liveview being displayed on a UniFi Protect Viewport.
-| `liveviews`           | Camera              | `[{name: "LiveviewName", state: true}, {name: "AnotherLiveview", state: false}]`. `state` can be `true` or `false`, indicating whether a liveview scene is active.
-| `message`             | Doorbell            | `{message: "Some Message", duration: 60}`. See [Doorbell Messages](#doorbell-messages) for additional documentation.
-| `motion`              | Multiple            | `true` when motion is detected. `false` when the motion event is reset.
-| <CODE>motion/smart/<I>object</I></CODE> | Cameras | `true` when a smart motion event is detected for *object*. `false` when the smart motion event is reset. Valid *object* types include visual detection (`animal`, `face`, `licensePlate`, `package`, `person`, `vehicle`) and audio detection (`alrmBabyCry`, `alrmBark`, `alrmBurglar`, `alrmCarHorn`, `alrmCmonx`, `alrmGlassBreak`, `alrmSiren`, `alrmSmoke`, `alrmSpeak`, `smoke_cmonx`). If what you want to listen for is whether a motion event is sent to HomeKit, use the `motion` topic instead.
-| <CODE>motion/smart/<I>object</I>/metadata</CODE> | Cameras | `JSON` when metadata associated with a smart motion detection event is available from Protect such as license plate information, vehicle type, or color. Currently, this is only valid for `vehicle` smart motion events.
-| `occupancy`           | Multiple            | `true` when occupancy is detected. `false` when occupancy is no longer detected.
-| `relay/<output>`      | Relay               | `true` or `false` for the on/off state of a relay output. Outputs are numbered starting at 1.
-| `rtsp`                | Camera              | `{name: "URL"}`. Represents a JSON containing the RTSP URLs for whichever of this camera's channels currently have RTSP enabled, which is an empty JSON object when none of them do. `Name` is the name assigned by UniFi Protect to the RTSP URL. `URL` represents the URL that can be used for streaming.
-| `securitysystem`      | Camera              | One of `Alarm`, `Away`, `Home`, `Night`, `Off`. This message is published every time the security state is set.
-| `snapshot`            | Camera              | A [data URL](https://developer.mozilla.org/en-US/docs/Web/HTTP/Basics_of_HTTP/Data_URIs) containing a base64-encoded JPEG of the snapshot that was requested (either by HomeKit or MQTT).
-| `systeminfo`          | Controller          | `JSON` containing the current Protect controller system information.
-| `telemetry`           | Controller          | All UniFi Protect telemetry from the realtime events API. This is the raw feed - you're on your own to parse through it for the messages you may be interested in. This is published to the controller MAC address.
-| `temperature`         | Sensor              | Temperature, in Celsius, on a UniFi Protect sensor.
-| `tone`                | Chime               | `buzzer` or `chime` when a UniFi Protect chime plays the corresponding tone.
-| `vape`                | Sensor              | `true` or `false` when a UniFi Protect sensor detects vaping.
+<!-- MQTT PUBLISHED:BEGIN - Auto-generated by homebridge-plugin-utils. Do not edit this region by hand. -->
+| Topic                                             | Protect Device Type    | Message Published
+|---------------------------------------------------|------------------------|----------------------------------
+| `airquality`                                      | Sensor                 | `JSON` containing every air quality metric a UniFi Protect sensor reports: `aqi`, `co2`, `humidity`, `nox`, `pm10p0`, `pm1p0`, `pm2p5`, `pm4p0`, `temperature`, `tvoc`, `vape`, and `voc`. Each is an object in the format `{"status": "neutral", "value": 42}`, where `value` is `null` whenever that metric isn't currently reporting a reading. Sensors without air quality hardware never publish this topic.
+| `alarm`                                           | Sensor                 | `true` or `false` when a UniFi Protect sensor detects a recognized alarm sound.
+| `ambientlight`                                    | Camera, Sensor         | Ambient light level, in lux, from a UniFi Protect sensor or a camera's ambient light sensor.
+| `authenticate`                                    | Doorbell               | `{type: "fingerprint"}` or `{type: "nfc", id: cardId}`. Publishes upon a successful authentication using fingerprint or NFC. `id` is included only for NFC and contains the card ID as detected by the doorbell.
+| `button`                                          | Fob                    | `{"button": "arm", "pressType": "single"}` when a UniFi Protect fob button is pressed. `button` is the button that was pressed and `pressType` is the gesture. Published for every press, including buttons you've hidden in HomeKit.
+| `chime`                                           | Doorbell               | A number between 0 and 100 that represents the current volume of the chime as a percentage.
+| `contact`                                         | Sensor                 | `true` or `false` when a UniFi Protect sensor detects contact. Note: UniFi Protect will set this state differently depending on the placement type you select in the Protect app or the Protect webUI.
+| `doorbell`                                        | Camera, Doorbell       | `true` when the doorbell is rung, `false` when the ring ends. Each press of the doorbell will trigger a new event.
+| `glassbreak`                                      | Sensor                 | `true` or `false` when a UniFi Protect sensor detects the sound of breaking glass.
+| `humidity`                                        | Sensor                 | Humidity percentage level on a UniFi Protect sensor.
+| `leak`                                            | Sensor                 | `true` or `false` when a UniFi Protect sensor detects a leak.
+| `leak-external`                                   | Sensor                 | `true` or `false` when a UniFi Protect sensor detects a leak using the external leak sensor.
+| `light`                                           | Light                  | `true` or `false` when a UniFi Protect light is on or off.
+| `light/brightness`                                | Light                  | A number between 0 and 100 that represents the current brightness as a percentage.
+| `liveview`                                        | Viewport               | The current liveview being displayed on a UniFi Protect Viewport.
+| `liveviews`                                       | Controller             | `[{name: "LiveviewName", state: true}, {name: "AnotherLiveview", state: false}]`. `state` can be `true` or `false`, indicating whether a liveview scene is active.
+| `message`                                         | Doorbell               | `{message: "Some Message", duration: 60}`. See [Doorbell Messages](#doorbell-messages) for additional documentation.
+| `motion`                                          | Camera, Light, Sensor  | `true` when motion is detected. `false` when the motion event is reset.
+| <CODE>motion/smart/<I>object</I></CODE>           | Camera                 | `true` when a smart motion event is detected for *object*. `false` when the smart motion event is reset. Valid *object* types include visual detection (`animal`, `face`, `licensePlate`, `package`, `person`, `vehicle`) and audio detection (`alrmBabyCry`, `alrmBark`, `alrmBurglar`, `alrmCarHorn`, `alrmCmonx`, `alrmGlassBreak`, `alrmSiren`, `alrmSmoke`, `alrmSpeak`, `smoke_cmonx`). If what you want to listen for is whether a motion event is sent to HomeKit, use the `motion` topic instead.
+| <CODE>motion/smart/<I>object</I>/metadata</CODE>  | Camera                 | `JSON` when metadata associated with a smart motion detection event is available from Protect such as license plate information, vehicle type, or color. Currently, this is only valid for `vehicle` smart motion events.
+| `occupancy`                                       | Camera, Light, Sensor  | `true` when occupancy is detected. `false` when occupancy is no longer detected.
+| <CODE>relay/<I>output</I></CODE>                  | Relay                  | `true` or `false` for the on/off state of a relay output. Outputs are numbered starting at 1.
+| `rtsp`                                            | Camera                 | `{name: "URL"}`. Represents a JSON containing the RTSP URLs for whichever of this camera's channels currently have RTSP enabled, which is an empty JSON object when none of them do. `Name` is the name assigned by UniFi Protect to the RTSP URL. `URL` represents the URL that can be used for streaming.
+| `securitysystem`                                  | Controller             | One of `Alarm`, `Away`, `Home`, `Night`, `Off`. This message is published every time the security state is set.
+| `snapshot`                                        | Camera                 | A [data URL](https://developer.mozilla.org/en-US/docs/Web/HTTP/Basics_of_HTTP/Data_URIs) containing a base64-encoded JPEG of the snapshot that was requested (either by HomeKit or MQTT).
+| `systeminfo`                                      | Controller             | `JSON` containing the current Protect controller system information.
+| `telemetry`                                       | Controller             | All UniFi Protect telemetry from the realtime events API. This is the raw feed - you're on your own to parse through it for the messages you may be interested in. This is published to the controller MAC address.
+| `temperature`                                     | Sensor                 | Temperature, in Celsius, on a UniFi Protect sensor.
+| `tone`                                            | Chime                  | `buzzer` or `chime` when a UniFi Protect chime plays the corresponding tone.
+| `vape`                                            | Sensor                 | `true` or `false` when a UniFi Protect sensor detects vaping.
+
+<!-- MQTT PUBLISHED:END -->
 
 Messages are published to MQTT when an action occurs on a camera, controller, or doorbell that triggers the respective event, or when an MQTT message is received for one of the topics `homebridge-unifi-protect` subscribes to. For example, snapshot images are published every time HomeKit requests a snapshot as well as when a request is received through MQTT to trigger a new snapshot.
 
 ### <A NAME="subscribe"></A>Topics Subscribed
 The topics that `homebridge-unifi-protect` subscribes to are:
 
-| Topic                   | Protect Device Type | Message Expected
-|-------------------------|---------------------|------------------
-| `airquality/get`        | Sensor              | `true` will trigger a publish event of the current air quality metrics for a UniFi Protect sensor.
-| `alarm/get`             | Sensor              | `true` will trigger a publish event of the current alarm state for a UniFi Protect sensor.
-| `ambientlight/get`      | Sensor              | `true` will trigger a publish event of the ambient light level, in lux, for a UniFi Protect sensor.
-| `chime/get`             | Chime               | `true` will trigger a publish event of the volume level for a UniFi Protect doorbell.
-| `chime/set`             | Chime               | A number between 0 and 100 that will set the volume level for a UniFi Protect doorbell.
-| `contact/get`           | Sensor              | `true` will trigger a publish event of the current contact state for a UniFi Protect sensor. Note: UniFi Protect will set this state differently depending on the placement type you select in the Protect app or the Protect webUI.
-| `doorbell/set`          | Doorbell            | `true` will trigger the camera (if set as doorbell) or doorbell to generate a ring event.
-| `glassbreak/get`        | Sensor              | `true` will trigger a publish event of the current glass break state for a UniFi Protect sensor.
-| `humidity/get`          | Sensor              | `true` will trigger a publish event of the humidity level, as a percentage, for a UniFi Protect sensor.
-| `leak/get`              | Sensor              | `true` will trigger a publish event of the current leak sensor state for a UniFi Protect sensor.
-| `leak-external/get`     | Sensor              | `true` will trigger a publish event of the current external leak sensor state for a UniFi Protect sensor.
-| `light/get`             | Light               | `true` or `false` when a UniFi Protect light is on or off.
-| `light/set`             | Light               | `true` or `false` to turn on or off a UniFi Protect light.
-| `light/brightness/get`  | Light               | `true` will trigger a publish event of the light brightness level, as a percentage, for a UniFi Protect light.
-| `light/brightness/set`  | Light               | A number between 0 and 100 that will set the volume level of a UniFi Protect light.
-| `liveview/get`          | Viewport            | `true` will request that the plugin publish the current liveview being displayed on a UniFi Protect Viewport.
-| `liveview/set `         | Viewport            | The name of a liveview to be set as the currently displayed liveview on a Protect viewer.
-| `liveviews/get`         | Camera              | `true` will trigger a publish event of all liveviews to the `liveviews` topic.
-| `liveviews/set `        | Camera              | A JSON-compatible array in the format `[{"name": "view1", "state": true }, ...]` This will activate or deactivate one of more liveviews, depending on the respective state.
-| `message/get`           | Doorbell            | `true` will trigger a publish event of the current message JSON for the doorbell. See [Doorbell Messages](#doorbell-messages) for additional documentation.
-| `message/set`           | Doorbell            | A JSON in the format `{"message":"Some Message","duration":60}`. See [Doorbell Messages](#doorbell-messages) for additional documentation.
-| `motion/get`            | Multiple            | `true` will trigger a publish event of the motion sensor state.
-| `motion/set`            | Multiple            | `true` will trigger a motion event on the motion sensor.
-| `occupancy/get`         | Multiple            | `true` will trigger a publish event of the occupancy sensor state.
-| `relay/<output>/get`    | Relay               | `true` will trigger a publish of the relay output's current on/off state.
-| `relay/<output>/set`    | Relay               | `true` or `false` to turn a relay output on or off.
-| `rtsp/get`              | Camera              | `true` will request that the plugin publish a message to the `rtsp` topic containing a JSON of RTSP URLs for the camera or doorbell.
-| `securitysystem/get`    | Camera              | `true` will trigger a publish event of the current state of the security system accessory.
-| `securitysystem/set`    | Camera              | One of `AlarmOff`, `AlarmOn`, `Away`, `Home`, `Night`, `Off`. This will set the respective state on the security system accessory.
-| `snapshot/set`          | Camera              | `true` will trigger the camera to generate a snapshot.
-| `systeminfo/get`        | Controller          | `true` will trigger a publish of the current controller system information to the `systeminfo` topic.
-| `temperature/get`       | Sensor              | `true` will trigger a publish event of the temperature, in Celsius, for a UniFi Protect sensor.
-| `tone/set`              | Chime               | A value of either `buzzer` or `chime` will play the selected tone on a UniFi Protect chime.
-| `vape/get`              | Sensor              | `true` will trigger a publish event of the current vape detection state for a UniFi Protect sensor.
+<!-- MQTT SUBSCRIBED:BEGIN - Auto-generated by homebridge-plugin-utils. Do not edit this region by hand. -->
+| Topic                                 | Protect Device Type    | Message Expected
+|---------------------------------------|------------------------|----------------------------------
+| `airquality/get`                      | Sensor                 | `true` will trigger a publish event of the current air quality metrics for a UniFi Protect sensor.
+| `alarm/get`                           | Sensor                 | `true` will trigger a publish event of the current alarm state for a UniFi Protect sensor.
+| `ambientlight/get`                    | Camera, Sensor         | `true` will trigger a publish event of the ambient light level, in lux, for a UniFi Protect sensor.
+| `chime/get`                           | Doorbell               | `true` will trigger a publish event of the volume level for a UniFi Protect doorbell.
+| `chime/set`                           | Doorbell               | A number between 0 and 100 that will set the volume level for a UniFi Protect doorbell.
+| `contact/get`                         | Sensor                 | `true` will trigger a publish event of the current contact state for a UniFi Protect sensor. Note: UniFi Protect will set this state differently depending on the placement type you select in the Protect app or the Protect webUI.
+| `doorbell/set`                        | Camera, Doorbell       | `true` will trigger the camera (if set as doorbell) or doorbell to generate a ring event.
+| `glassbreak/get`                      | Sensor                 | `true` will trigger a publish event of the current glass break state for a UniFi Protect sensor.
+| `humidity/get`                        | Sensor                 | `true` will trigger a publish event of the humidity level, as a percentage, for a UniFi Protect sensor.
+| `leak-external/get`                   | Sensor                 | `true` will trigger a publish event of the current external leak sensor state for a UniFi Protect sensor.
+| `leak/get`                            | Sensor                 | `true` will trigger a publish event of the current leak sensor state for a UniFi Protect sensor.
+| `light/brightness/get`                | Light                  | `true` will trigger a publish event of the light brightness level, as a percentage, for a UniFi Protect light.
+| `light/brightness/set`                | Light                  | A number between 0 and 100 that will set the brightness level of a UniFi Protect light.
+| `light/get`                           | Light                  | `true` or `false` when a UniFi Protect light is on or off.
+| `light/set`                           | Light                  | `true` or `false` to turn on or off a UniFi Protect light.
+| `liveview/get`                        | Viewport               | `true` will request that the plugin publish the current liveview being displayed on a UniFi Protect Viewport.
+| `liveview/set`                        | Viewport               | The name of a liveview to be set as the currently displayed liveview on a Protect viewer.
+| `liveviews/get`                       | Controller             | `true` will trigger a publish event of all liveviews to the `liveviews` topic.
+| `liveviews/set`                       | Controller             | A JSON-compatible array in the format `[{"name": "view1", "state": true }, ...]` This will activate or deactivate one of more liveviews, depending on the respective state.
+| `message/get`                         | Doorbell               | `true` will trigger a publish event of the current message JSON for the doorbell. See [Doorbell Messages](#doorbell-messages) for additional documentation.
+| `message/set`                         | Doorbell               | A JSON in the format `{"message":"Some Message","duration":60}`. See [Doorbell Messages](#doorbell-messages) for additional documentation.
+| `motion/get`                          | Camera, Light, Sensor  | `true` will trigger a publish event of the motion sensor state.
+| `motion/set`                          | Camera, Light, Sensor  | `true` will trigger a motion event on the motion sensor.
+| `occupancy/get`                       | Camera, Light, Sensor  | `true` will trigger a publish event of the occupancy sensor state.
+| <CODE>relay/<I>output</I>/get</CODE>  | Relay                  | `true` will trigger a publish of the relay output's current on/off state.
+| <CODE>relay/<I>output</I>/set</CODE>  | Relay                  | `true` or `false` to turn a relay output on or off.
+| `rtsp/get`                            | Camera                 | `true` will request that the plugin publish a message to the `rtsp` topic containing a JSON of RTSP URLs for the camera or doorbell.
+| `securitysystem/get`                  | Controller             | `true` will trigger a publish event of the current state of the security system accessory.
+| `securitysystem/set`                  | Controller             | One of `AlarmOff`, `AlarmOn`, `Away`, `Home`, `Night`, `Off`. This will set the respective state on the security system accessory.
+| `snapshot/set`                        | Camera                 | `true` will trigger the camera to generate a snapshot.
+| `systeminfo/get`                      | Controller             | `true` will trigger a publish of the current controller system information to the `systeminfo` topic.
+| `temperature/get`                     | Sensor                 | `true` will trigger a publish event of the temperature, in Celsius, for a UniFi Protect sensor.
+| `tone/set`                            | Chime                  | A value of either `buzzer` or `chime` will play the selected tone on a UniFi Protect chime.
+| `vape/get`                            | Sensor                 | `true` will trigger a publish event of the current vape detection state for a UniFi Protect sensor.
+
+<!-- MQTT SUBSCRIBED:END -->
 
 Some messages, such as those for the liveviews and securitysystem topics, are controller-specific. To use these topics, make sure you use the controller MAC address when you create your topic strings.
 

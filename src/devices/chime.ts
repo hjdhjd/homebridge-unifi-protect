@@ -9,6 +9,7 @@ import type { ProtectAccessory } from "../types.ts";
 import { ProtectDevice } from "./device.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
+import { mqttTopics } from "../mqtt.ts";
 import { selectRingtones } from "unifi-protect";
 import { toStartCase } from "homebridge-plugin-utils";
 
@@ -194,7 +195,7 @@ export class ProtectChime extends ProtectDevice<Chime> {
 
     if(played) {
 
-      this.publish("tone", name);
+      this.publish(mqttTopics.tone.topic, name);
     }
 
     return played;
@@ -204,7 +205,7 @@ export class ProtectChime extends ProtectDevice<Chime> {
   private configureMqtt(): boolean {
 
     // Play a tone on the chime.
-    this.subscribeSet("tone", "chime tone", (value: string) => {
+    this.subscribeSet(mqttTopics.tone.topic, mqttTopics.tone.label, (value: string) => {
 
       switch(value) {
 

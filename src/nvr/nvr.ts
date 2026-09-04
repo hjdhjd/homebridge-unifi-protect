@@ -3,8 +3,8 @@
  * nvr.ts: NVR device class for UniFi Protect.
  */
 import type { API, HAP } from "homebridge";
-import { APIEvent, createMqttClient, debugGatedLog, formatErrorMessage, formatSeconds, loopFaultReporter, prefixedLog, retry, sanitizeName,
-  superviseLoop } from "homebridge-plugin-utils";
+import { APIEvent, createMqttClient, debugGatedLog, formatErrorMessage, formatSeconds, loopFaultReporter, mqttConnectionSettings, prefixedLog, retry,
+  sanitizeName, superviseLoop } from "homebridge-plugin-utils";
 import type { Camera, CollectionSelectors, DeviceCollectionKey, LivestreamRecoveryExhaustedPayload, LivestreamRecoveryRecoveredPayload,
   LivestreamRecoveryStartedPayload, ProtectDeviceConfig, ProtectDeviceConfigMap, ProtectLogging, ProtectNvrConfig } from "unifi-protect";
 import { DEVICE_COLLECTION_KEYS, ProtectClient, deviceSelectors, channels as protectChannels } from "unifi-protect";
@@ -38,7 +38,6 @@ import { channels } from "../diagnostics.ts";
 import { describeDevice } from "../devices/device-descriptor.ts";
 import { isPackageCameraContext } from "../types.ts";
 import { livestreamRecoveryDecision } from "../media/livestream-recovery-policy.ts";
-import { mqttConnectionSettings } from "../mqtt.ts";
 import { servePlaylist } from "./nvr-playlist.ts";
 import { setTimeout as sleep } from "node:timers/promises";
 
@@ -778,10 +777,14 @@ export class ProtectNvr {
      * bind through nvr.mqtt, so the client must exist first or those subscriptions would silently no-op against a not-yet-created client and never be retried. The
      * client binds to the NVR's terminal shutdown signal, so it is an AsyncDisposable whose connection ends on plugin shutdown rather than leaking past it. The
      * resolution runs post-connect, where this.ufp is safe to read for the controller scope it resolves at.
+     *
+     * The library resolves both settings in one place, applying the rule that a configured option answers in every state it can be in: an option the user turned
+     * off, or enabled without giving it a value, is the user saying MQTT is off for this controller, the controller's own configuration properties answer only
+     * where no option speaks, and a null answer means there is nothing to connect to and no client is constructed at all.
      */
-    const mqttSettings = mqttConnectionSettings(this.platform.featureOptions, this.config, this.ufp.mac);
+    const mqttSettings = mqttConnectionSettings({ config: this.config, controller: this.ufp.mac, featureOptions: this.platform.featureOptions });
 
-    this.mqtt ??= createMqttClient({ brokerUrl: mqttSettings?.brokerUrl, log: this.log, topicPrefix: mqttSettings?.topicPrefix }, { signal: this.signal });
+    this.mqtt ??= mqttSettings && createMqttClient({ ...mqttSettings, log: this.log }, { signal: this.signal });
 
     // Initialize our liveviews.
     this.liveviews = new ProtectLiveviews(this);

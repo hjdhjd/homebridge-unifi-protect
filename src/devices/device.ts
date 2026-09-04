@@ -7,7 +7,7 @@ import type { AcquireServiceTarget, HomebridgePluginLogging, Nullable } from "ho
 import type { DeviceCollectionKey, ProtectCameraConfig, ProtectDeviceConfig, ProtectState } from "unifi-protect";
 import { PROTECT_MOTION_DURATION, PROTECT_OCCUPANCY_DURATION} from "../settings.ts";
 import type { ProtectAccessory, ProtectPersistedContextState, ProtectProjectionMap, WithoutIdentity } from "../types.ts";
-import { acquireService, setAccessoryName, validService } from "homebridge-plugin-utils";
+import { acquireService, mqttGetTopic, mqttSetTopic, setAccessoryName, validService } from "homebridge-plugin-utils";
 import { deviceSelectors, isDeviceOnline } from "unifi-protect";
 import { legacyFamilyForOption, resolveLegacySelection } from "../options-legacy.ts";
 import type { LegacyFamily } from "../options-legacy.ts";
@@ -19,6 +19,7 @@ import type { ProtectPlatform } from "../platform.ts";
 import { ProtectReservedNames } from "../types.ts";
 import { channels } from "../diagnostics.ts";
 import { describeDevice } from "./device-descriptor.ts";
+import { mqttTopics } from "../mqtt.ts";
 import { smartDetectLabel } from "../options.ts";
 
 const RESERVED_NAMES = new Set(Object.values(ProtectReservedNames).map(x => x.toUpperCase()));
@@ -301,8 +302,8 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
     // Have we disabled the motion sensor?
     if(!isEnabled) {
 
-      this.unsubscribe("motion/get");
-      this.unsubscribe("motion/set");
+      this.unsubscribe(mqttGetTopic(mqttTopics.motion.topic));
+      this.unsubscribe(mqttSetTopic(mqttTopics.motion.topic));
       this.configureMotionSwitch(isEnabled);
       this.configureMotionTrigger(isEnabled);
     }
@@ -337,9 +338,10 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
       service.getCharacteristic(this.hap.Characteristic.StatusActive).onGet(() => this.isReachable);
 
       // Configure our MQTT support.
-      this.subscribeGet("motion", "motion", () => service.getCharacteristic(this.hap.Characteristic.MotionDetected).value ? "true" : "false");
+      this.subscribeGet(mqttTopics.motion.topic, mqttTopics.motion.label,
+        () => service.getCharacteristic(this.hap.Characteristic.MotionDetected).value ? "true" : "false");
 
-      this.subscribeSet("motion", "motion event trigger", (value: string) => {
+      this.subscribeSet(mqttTopics.motion.topic, mqttTopics.motion.label, (value: string) => {
 
         // When we get the right message, we trigger the motion event.
         if(value !== "true") {
@@ -479,7 +481,7 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
     // Occupancy sensors are disabled by default and primarily exist for automation purposes.
     if(!isEnabled || !this.hasFeature("Motion.OccupancySensor")) {
 
-      this.unsubscribe("occupancy/get");
+      this.unsubscribe(mqttGetTopic(mqttTopics.occupancy.topic));
     }
 
     // Validate whether we should have this service enabled.
@@ -535,7 +537,8 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
       }
 
       // Configure our MQTT support.
-      this.subscribeGet("occupancy", "occupancy", () => service.getCharacteristic(this.hap.Characteristic.OccupancyDetected).value ? "true" : "false");
+      this.subscribeGet(mqttTopics.occupancy.topic, mqttTopics.occupancy.label,
+        () => service.getCharacteristic(this.hap.Characteristic.OccupancyDetected).value ? "true" : "false");
 
       // Keep smartOccupancy a pure list of detection types - a display name in that set would be a label living in a protocol set the occupancy gate tests membership
       // against. Both the display names and the all-types-disabled case are rendered here at the log site instead, so what the reader sees is names while the set

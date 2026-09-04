@@ -8,6 +8,7 @@ import type { ProtectAccessory } from "../types.ts";
 import { ProtectBase } from "../devices/device-base.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
+import { mqttTopics } from "../mqtt.ts";
 
 /* The security system accessory synthesized from the controller's Protect-* liveviews. It is the one controller-scoped owner whose lifetime is shorter than the
  * controller connection: its accessory comes and goes with those liveviews, so the inherited composed lifetime is exactly what its MQTT registrations need. Deleting the
@@ -79,13 +80,13 @@ export class ProtectSecuritySystem extends ProtectBase {
   private configureMqtt(): boolean {
 
     // Get the current status of the security system.
-    this.subscribeGet("securitysystem", "security system state", () => {
+    this.subscribeGet(mqttTopics.securitysystem.topic, mqttTopics.securitysystem.label, () => {
 
       return this.currentSecuritySystemState;
     });
 
     // Set the security system state.
-    this.subscribeSet("securitysystem", "security system state", (value: string) => {
+    this.subscribeSet(mqttTopics.securitysystem.topic, mqttTopics.securitysystem.label, (value: string) => {
 
       const SecuritySystemCurrentState = this.hap.Characteristic.SecuritySystemCurrentState;
       const SecuritySystemTargetState = this.hap.Characteristic.SecuritySystemTargetState;
@@ -458,7 +459,7 @@ export class ProtectSecuritySystem extends ProtectBase {
     }
 
     // Publish to MQTT, if configured.
-    this.publish("securitysystem", this.currentSecuritySystemState);
+    this.publish(mqttTopics.securitysystem.topic, this.currentSecuritySystemState);
   }
 
   // Set the security alarm.
@@ -482,6 +483,6 @@ export class ProtectSecuritySystem extends ProtectBase {
     this.accessory.getService(this.hap.Service.Switch)?.updateCharacteristic(this.hap.Characteristic.On, this.isAlarmTriggered);
 
     // Publish to MQTT, if configured.
-    this.publish("securitysystem", this.currentSecuritySystemState);
+    this.publish(mqttTopics.securitysystem.topic, this.currentSecuritySystemState);
   }
 }

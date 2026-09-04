@@ -7,7 +7,7 @@
 import type { AudioOptionsIdentity, StreamingDelegate, StreamingDelegateFactory } from "./stream-delegate.ts";
 import { AudioRecordingCodecType, AudioRecordingSamplerate, AudioStreamingCodecType, AudioStreamingSamplerate, BackpressureWriter, FfmpegOptions,
   FfmpegStreamingProcess, H264Level, H264Profile, HKSV_FRAGMENT_LENGTH, HbpuAbortError, MediaContainerType, RtpDemuxer, SRTPCryptoSuites, StreamRequestTypes,
-  VideoCodecType, formatBps, formatErrorMessage, guardedDispatch, isHbpuAbortReason } from "homebridge-plugin-utils";
+  VideoCodecType, formatBps, formatErrorMessage, guardedDispatch, isHbpuAbortReason, mqttTopic } from "homebridge-plugin-utils";
 import type { CameraController, CameraControllerOptions, CameraStreamingDelegate, HAP, PrepareStreamCallback, PrepareStreamRequest, PrepareStreamResponse, Resolution,
   Service, SnapshotRequest, SnapshotRequestCallback, StartStreamRequest, StreamRequestCallback, StreamingRequest } from "homebridge";
 import type { HomebridgePluginLogging, IpFamily, Nullable, PortReservation } from "homebridge-plugin-utils";
@@ -28,7 +28,7 @@ import { ProtectStreamingFfmpegProcess } from "./stream-ffmpeg-process.ts";
 import { ProtectTimeshiftSupervisor } from "./timeshift-supervisor.ts";
 import type { TalkbackSession } from "unifi-protect";
 import { logLivestreamIterationError } from "./livestream.ts";
-import { mqttTopic } from "../mqtt.ts";
+import { mqttTopics } from "../mqtt.ts";
 import { streamingSamplerates } from "./stream-delegate.ts";
 
 interface OngoingSessionEntry {
@@ -406,7 +406,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
     answer?.(undefined, snapshot);
 
     // Publish the snapshot as a data URL to MQTT, if configured.
-    this.nvr.mqtt?.publishGuarded(mqttTopic(this.protectCamera.mac, "snapshot"), "data:image/jpeg;base64," + snapshot.toString("base64"));
+    this.nvr.mqtt?.publishGuarded(mqttTopic(this.protectCamera.mac, mqttTopics.snapshot.topic), "data:image/jpeg;base64," + snapshot.toString("base64"));
   }
 
   // Prepare to launch the video stream. HomeKit invokes this without awaiting, so the async preparation is routed through guardedDispatch: a fault never floats and the
