@@ -37,19 +37,20 @@ export function sensorTamperState(tamperingDetectedAt: number | null): boolean {
 }
 
 /**
- * Map a sensor's alarm-trigger timestamp to its HomeKit ContactSensorState: alarm when the controller has recorded a trigger time, clear when it has not. The single
- * source of truth is the projection's alarmTriggeredAt, which the controller clears only on explicit user action in the Protect app (never automatically). The
- * alarm-family contact sensors read through this one predicate, so their read-through getter and reactive push can never disagree on what "alarm" means. Kept
- * deliberately distinct from sensorTamperState because it reads a different field and capability and may later honor alarmSilencedAt; it is not collapsed into a generic
- * latched-field predicate.
+ * Map an alarm-family row's latched timestamp to its HomeKit ContactSensorState: alarm when the controller has recorded a trigger time, clear when it has not. The
+ * source of truth for a row is the projection field its descriptor names - alarmTriggeredAt for the alarm-sound contact, glassBreakTriggeredAt for the glass-break
+ * contact - which the controller clears only on explicit user action in the Protect app, never automatically, and clears as a pair when the user clears from the
+ * sensor's detail page. Every alarm-family row reads through this one predicate, so a row's read-through getter and its reactive push can never disagree on what "alarm"
+ * means. Kept deliberately distinct from sensorTamperState because it reads a different family of fields and capability and may later honor alarmSilencedAt; it is not
+ * collapsed into a generic latched-field predicate.
  *
- * @param alarmTriggeredAt - The sensor's alarmTriggeredAt: the epoch-ms time an alarm was last triggered, or null when none has been.
+ * @param triggeredAt - The row's latched timestamp: the epoch-ms time this alarm kind was last triggered, or null when none has been.
  *
  * @returns true when the sensor should report an alarm to HomeKit.
  */
-export function sensorAlarmState(alarmTriggeredAt: number | null): boolean {
+export function sensorAlarmState(triggeredAt: number | null): boolean {
 
-  return alarmTriggeredAt !== null;
+  return triggeredAt !== null;
 }
 
 /**
@@ -73,13 +74,15 @@ export function narratesTransition<T>(options: { previous: T | undefined; quiet:
   return (options.previous === undefined) ? (options.value !== options.quiet) : (options.value !== options.previous);
 }
 
-// The static description of the alarm family's HomeKit contact sensors - the single source for which alarm-family services exist and their gate, display label, log
-// subject, MQTT catalog entry, name suffix, and reserved subtype. The alarm-family contact sensors read the one alarmTriggeredAt field, so this descriptor is read by the
-// create/gate path (configureAlarmContactSensors), the reactive push (updateAlarmState), and the MQTT gets (configureMqtt), keeping the enabled-sensors log, the
-// services actually created, and the topics registered from ever disagreeing. label is the enabled-sensors noun phrase and log is the transition-log subject word - two
-// distinct display strings for two distinct sentences, so both are sourced here. A future alarm-family member is one more row.
+// The static description of the alarm family's HomeKit contact sensors - the single source for which alarm-family services exist and their latched record field, gate,
+// display label, log subject, MQTT catalog entry, name suffix, and reserved subtype. Each row reads and watches the one field named by its own field member, so this
+// descriptor is read by the create/gate path (configureAlarmContactSensors), the per-row reactive push (updateAlarmState), the per-row observer registration
+// (spawnObservers), and the MQTT gets (configureMqtt), keeping the enabled-sensors log, the services actually created, the fields watched, and the topics registered
+// from ever disagreeing. label is the enabled-sensors noun phrase and log is the transition-log subject word - two distinct display strings for two distinct sentences,
+// so both are sourced here. A future alarm-family member is one more row, and its own latched field comes with it.
 interface AlarmContactDescriptor {
 
+  readonly field: "alarmTriggeredAt" | "glassBreakTriggeredAt";
   readonly gate: (config: Readonly<WithoutIdentity<ProtectSensorConfig>>) => boolean;
   readonly label: string;
   readonly log: string;
@@ -92,10 +95,10 @@ interface AlarmContactDescriptor {
 // alarm-sound settings toggle, and the glass-break capability channel being present AND its own settings toggle enabled.
 const SENSOR_ALARM_CONTACTS: readonly AlarmContactDescriptor[] = [
 
-  { gate: (config) => config.alarmSettings.isEnabled, label: "alarm sound", log: "Alarm", mqtt: mqttTopics.alarm, name: " Alarm Sound",
+  { field: "alarmTriggeredAt", gate: (config) => config.alarmSettings.isEnabled, label: "alarm sound", log: "Alarm", mqtt: mqttTopics.alarm, name: " Alarm Sound",
     subtype: ProtectReservedNames.CONTACT_SENSOR_ALARM_SOUND },
-  { gate: (config) => (config.featureFlags.glassBreak !== undefined) && config.glassBreakSettings.isEnabled, label: "glass break", log: "Glass break",
-    mqtt: mqttTopics.glassbreak, name: " Glass Break", subtype: ProtectReservedNames.CONTACT_SENSOR_GLASS_BREAK }
+  { field: "glassBreakTriggeredAt", gate: (config) => (config.featureFlags.glassBreak !== undefined) && config.glassBreakSettings.isEnabled, label: "glass break",
+    log: "Glass break", mqtt: mqttTopics.glassbreak, name: " Glass Break", subtype: ProtectReservedNames.CONTACT_SENSOR_GLASS_BREAK }
 ];
 
 // The characteristic-class shape the reconcile helpers below accept. Service.getCharacteristic and updateCharacteristic want a constructor signature while
@@ -149,7 +152,7 @@ interface SmokeNarration {
 export class ProtectSensor extends ProtectDevice<Sensor> {
 
   private enabledSensors: string[];
-  private lastAlarm?: boolean;
+  private lastAlarm: Partial<Record<AlarmContactDescriptor["field"], boolean>>;
   private lastLeak: Record<string, boolean | undefined>;
   private lastSmoke: Partial<Record<SmokeAlarmType, SmokeNarration>>;
   private lastSmokeTesting?: boolean;
@@ -161,6 +164,7 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
     super(nvr, accessory, device);
 
     this.enabledSensors = [];
+    this.lastAlarm = {};
     this.lastLeak = {};
     this.lastSmoke = {};
 
@@ -379,10 +383,10 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
     return true;
   }
 
-  // Configure the alarm-family contact sensors (alarm sound and glass break) for HomeKit. Each reads the single alarmTriggeredAt field through the shared alarmDetected
-  // getter, so a single steady-state VALUE writer - the dedicated alarmTriggeredAt observer via updateAlarmState - owns their ContactSensorState after the create-time
-  // seed here. Each descriptor row is validated and acquired independently; the returned labels feed the enabled-sensors log so it can never disagree with the services
-  // actually created.
+  // Configure the alarm-family contact sensors (alarm sound and glass break) for HomeKit. Each row reads its own latched field through alarmDetected, so a single
+  // steady-state VALUE writer per row - that row's dedicated field observer via updateAlarmState - owns its ContactSensorState after the create-time seed here. Each
+  // descriptor row is validated and acquired independently; the returned labels feed the enabled-sensors log so it can never disagree with the services actually
+  // created.
   private configureAlarmContactSensors(isInitialized = true): string[] {
 
     const config = this.ufp;
@@ -415,16 +419,17 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
       this.configureStateCharacteristics(service);
 
       // Seed the alarm VALUE bits exactly once per service lifetime - the first configure (isInitialized false) or a late capability creating the service (created): the
-      // onGet read-through, the initial characteristic value from a guaranteed-boolean local, and the initial MQTT publish. Steady-state updates are then owned by the
-      // dedicated alarmTriggeredAt observer, so the alarm VALUE leaves the per-reconcile path entirely.
+      // onGet read-through, the initial characteristic value from a guaranteed-boolean local, and the initial MQTT publish. Steady-state updates are then owned by this
+      // row's dedicated field observer, so the alarm VALUE leaves the per-reconcile path entirely. The seeded baseline is recorded under the row's own field, so the
+      // first observed transition on one kind cannot be measured against what the other kind was doing.
       if(!isInitialized || created) {
 
-        const detected = this.alarmDetected;
+        const detected = this.alarmDetected(descriptor);
 
-        this.lastAlarm = detected;
+        this.lastAlarm[descriptor.field] = detected;
 
         // Retrieve the current contact sensor state when requested.
-        service.getCharacteristic(this.hap.Characteristic.ContactSensorState).onGet(() => this.alarmDetected);
+        service.getCharacteristic(this.hap.Characteristic.ContactSensorState).onGet(() => this.alarmDetected(descriptor));
 
         // Seed the sensor and publish the initial state.
         service.updateCharacteristic(this.hap.Characteristic.ContactSensorState, detected);
@@ -1050,12 +1055,13 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
       temperature: reading(airQuality.temperature), tvoc: reading(airQuality.tvoc), vape: reading(airQuality.vape), voc: reading(airQuality.voc) });
   }
 
-  // The sensor's HomeKit alarm-family state, read non-throwing through the record. An absent record (a sensor lingering in the removal grace) reports no alarm rather
-  // than throwing; the projection's alarmTriggeredAt is mapped through the shared sensorAlarmState predicate so the onGet, the create-time seed, the MQTT get, and the
-  // reactive push can never disagree on what "alarm" means. A pure read-through: the transition log and the lastAlarm bookkeeping live in updateAlarmState.
-  private get alarmDetected(): boolean {
+  // One alarm-family row's HomeKit state, read non-throwing through the record. An absent record (a sensor lingering in the removal grace) reports no alarm rather than
+  // throwing; the row's own latched field is mapped through the shared sensorAlarmState predicate so that row's onGet, create-time seed, MQTT get, and reactive push can
+  // never disagree on what "alarm" means. Taking the descriptor rather than the field name keeps every caller reading the same single source the table declares. A pure
+  // read-through: the transition log and the lastAlarm bookkeeping live in updateAlarmState.
+  private alarmDetected(descriptor: AlarmContactDescriptor): boolean {
 
-    return sensorAlarmState(this.fromRecord((config) => config.alarmTriggeredAt, null));
+    return sensorAlarmState(this.fromRecord((config) => config[descriptor.field], null));
   }
 
   // Get the current ambient light information. An absent record reports the stats sentinel rather than throwing.
@@ -1233,14 +1239,14 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
   // Configure MQTT capabilities for sensors. The leak get handlers are NOT registered here: leak is the one sensor mode whose per-channel enablement is model-aware, so
   // its get registration is folded into configureLeakSensor's per-channel loop (once-guarded, and released by the channel's own unsubscribe when it is disabled). The
   // remaining GETs are always-on and registered unconditionally here; the alarm-family gets (alarm sound and glass break) and the smoke-family gets (smoke and carbon
-  // monoxide) are each driven from their shared descriptor, so their topics and labels are single-sourced with the services they read - the alarm pair through the one
-  // alarmDetected getter, the smoke pair through smokeAlarmState, which answers false on a sensor that is no detector. The detector's telemetry get always answers too,
-  // with JSON null standing in for a detector that has not reported and for a sensor that has no detector hardware at all.
+  // monoxide) are each driven from their shared descriptor, so their topics and labels are single-sourced with the services they read - each alarm row through
+  // alarmDetected on its own latched field, the smoke pair through smokeAlarmState, which answers false on a sensor that is no detector. The detector's telemetry get
+  // always answers too, with JSON null standing in for a detector that has not reported and for a sensor that has no detector hardware at all.
   private configureMqtt(): void {
 
     for(const descriptor of SENSOR_ALARM_CONTACTS) {
 
-      this.subscribeGet(descriptor.mqtt.topic, descriptor.mqtt.label, () => this.alarmDetected.toString());
+      this.subscribeGet(descriptor.mqtt.topic, descriptor.mqtt.label, () => this.alarmDetected(descriptor).toString());
     }
 
     for(const descriptor of SENSOR_SMOKE_ALARMS) {
@@ -1282,11 +1288,17 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
     this.observeState({ key: "sensor.tamperingDetectedAt", selector: state => sensor(state)?.tamperingDetectedAt, title: "tamper detection" },
       () => this.updateTamperState());
 
-    // The reactive alarm-family push: when the controller's alarmTriggeredAt changes, re-write ContactSensorState across each present alarm-family contact sensor. The
-    // alarm family joins tamper as a dedicated-observer latched field the controller clears only on explicit user action; registered unconditionally so it is live
-    // the instant a late capability creates the service (updateAlarmState is a safe no-op while no alarm-family service exists). The onGet already reads through, so this
-    // is purely the push that keeps HomeKit current between reads.
-    this.observeState({ key: "sensor.alarmTriggeredAt", selector: state => sensor(state)?.alarmTriggeredAt, title: "alarm detection" }, () => this.updateAlarmState());
+    // The reactive alarm-family push: one dedicated observer per alarm-family row, each watching the single latched field its descriptor names and pushing only its own
+    // ContactSensorState. Per row rather than one observer over both fields because the controller moves them independently - a glass break advances
+    // glassBreakTriggeredAt while alarmTriggeredAt sits at whatever alarmed last - so a row that watched the other kind's field would miss its own detection and wake on
+    // events that are not its own. Each field joins tamper as a dedicated-observer latched field the controller clears only on explicit user action; registered
+    // unconditionally in table order so both are live the instant a late capability creates a service (updateAlarmState is a safe no-op while that row's service is
+    // absent). The onGet already reads through, so this is purely the push that keeps HomeKit current between reads.
+    for(const descriptor of SENSOR_ALARM_CONTACTS) {
+
+      this.observeState({ key: "sensor." + descriptor.field, selector: state => sensor(state)?.[descriptor.field], title: descriptor.label + " detection" },
+        () => this.updateAlarmState(descriptor));
+    }
 
     // The remaining sensor reactions are a full service reconciliation (battery, the per-mode sensor services, the status indicator, StatusActive). They key off many
     // settings sub-objects and live stat values, so we observe the whole sensor record and re-derive - reproducing a refresh-on-any-change, but now structurally silent
@@ -1313,34 +1325,32 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
     }
   }
 
-  // Push the alarm-family state across each present alarm-family contact sensor, the twin-in-idiom of updateTamperState but TARGETED by subtype rather than fanned across
-  // every service. One read of the projection field, one write per present descriptor's service; the transition log is sourced from the PRESENT descriptor's subject word
-  // so the sentence is correct-by-construction (never a featureFlags.glassBreak probe, which is present even for a glass-break-DISABLED device) and fires only when a
-  // service exists (a device with no alarm-family service never logs). The subtype-scoped getServiceById NEVER touches the plain mount-type contact sensor or a moisture
-  // ContactSensor, so the targeted push cannot corrupt them.
-  private updateAlarmState(): void {
+  // Push one alarm-family row's state to its own contact sensor, the twin-in-idiom of updateTamperState but TARGETED by subtype rather than fanned across every service.
+  // One read of that row's latched field, one write to that row's service; the transition log is sourced from the row's own subject word so the sentence is
+  // correct-by-construction (never a featureFlags.glassBreak probe, which is present even for a glass-break-DISABLED device) and fires only when the service exists (a
+  // device with no service for this row never logs). Each row's last narrated reading is held under its own field, so a unit carrying both alarm kinds narrates each
+  // contact on its own edges and neither kind can silence or double-announce the other. The subtype-scoped getServiceById NEVER touches the plain mount-type contact
+  // sensor or a moisture ContactSensor, so the targeted push cannot corrupt them.
+  private updateAlarmState(descriptor: AlarmContactDescriptor): void {
 
-    const detected = this.alarmDetected;
+    const service = this.accessory.getServiceById(this.hap.Service.ContactSensor, descriptor.subtype);
 
-    for(const descriptor of SENSOR_ALARM_CONTACTS) {
+    if(!service) {
 
-      const service = this.accessory.getServiceById(this.hap.Service.ContactSensor, descriptor.subtype);
-
-      if(!service) {
-
-        continue;
-      }
-
-      // Inform the user on a state change, from the present descriptor's subject word.
-      if(detected !== this.lastAlarm) {
-
-        this.log.info("%s %sdetected.", descriptor.log, detected ? "" : "no longer ");
-      }
-
-      service.updateCharacteristic(this.hap.Characteristic.ContactSensorState, detected);
-      this.publish(descriptor.mqtt.topic, detected.toString());
+      return;
     }
 
-    this.lastAlarm = detected;
+    const detected = this.alarmDetected(descriptor);
+
+    // Inform the user on a state change, from this row's subject word.
+    if(detected !== this.lastAlarm[descriptor.field]) {
+
+      this.log.info("%s %sdetected.", descriptor.log, detected ? "" : "no longer ");
+    }
+
+    service.updateCharacteristic(this.hap.Characteristic.ContactSensorState, detected);
+    this.publish(descriptor.mqtt.topic, detected.toString());
+
+    this.lastAlarm[descriptor.field] = detected;
   }
 }

@@ -17,19 +17,19 @@
  * own subtype, and the curated air-quality telemetry topic that publishes on capability alone), where a service holds through an offline window and sheds when its
  * measurements read the off signature on a device we can see, and the characteristic set never shrinks while the device is unreachable; the sensor observers (the
  * motionDetectedAt firehose routed through the injected TestRecordingDispatch
- * exactly like the light's lastMotion; the tamperingDetectedAt fan-out across every state-bearing service; the alarmTriggeredAt push across each present alarm-family
- * contact sensor; the whole-record sensor.config reconcile); the always-on GET MQTT subscriptions plus the model-aware leak GETs (registered per-channel,
- * present-iff-enabled, once-guarded, and unsubscribed when a channel is toggled off).
+ * exactly like the light's lastMotion; the tamperingDetectedAt fan-out across every state-bearing service; the per-row alarm-family pushes, alarmTriggeredAt to the
+ * alarm-sound contact and glassBreakTriggeredAt to the glass-break contact; the whole-record sensor.config reconcile); the always-on GET MQTT subscriptions plus the
+ * model-aware leak GETs (registered per-channel, present-iff-enabled, once-guarded, and unsubscribed when a channel is toggled off).
  *
  * The multi-wake: the whole-record observer (sensor.config) selects the WHOLE sensor record (deviceSelectors.sensor.byId(id)), and pushSensorPatch replaces it on
  * every patch that changes the record (a value-identical patch is a reducer no-op and wakes nothing at all), so sensor.config wakes on every such push - in ADDITION
- * to any narrow observer (sensor.motionDetectedAt / sensor.tamperingDetectedAt / sensor.alarmTriggeredAt)
+ * to any narrow observer (sensor.motionDetectedAt / sensor.tamperingDetectedAt / sensor.alarmTriggeredAt / sensor.glassBreakTriggeredAt)
  * whose field changed. So a narrow-field push wakes exactly the changed narrow observer plus sensor.config, in registration order (the narrow observer precedes config):
- * a motionDetectedAt push wakes [sensor.motionDetectedAt, sensor.config], a tamperingDetectedAt push wakes [sensor.tamperingDetectedAt, sensor.config], and an
- * alarmTriggeredAt push wakes [sensor.alarmTriggeredAt, sensor.config], while a settings-only push wakes sensor.config alone. The full registration order is device.name,
- * device.firmwareVersion, sensor.motionDetectedAt, sensor.tamperingDetectedAt, sensor.alarmTriggeredAt, sensor.config, but a narrow push never wakes the base observers
- * or the unchanged narrow observer. A single-observer expectation would be wrong; every wake assertion is the registration-ordered set including the accessoryId per
- * payload.
+ * a motionDetectedAt push wakes [sensor.motionDetectedAt, sensor.config] and a tamperingDetectedAt push wakes [sensor.tamperingDetectedAt, sensor.config], while each
+ * alarm-family field wakes its own row's observer and sensor.config, and a settings-only push wakes sensor.config alone. The full registration order is device.name,
+ * device.firmwareVersion, sensor.motionDetectedAt, sensor.tamperingDetectedAt, sensor.alarmTriggeredAt, sensor.glassBreakTriggeredAt, sensor.config, but a narrow push
+ * never wakes the base observers or the unchanged narrow observer. A single-observer expectation would be wrong; every wake assertion is the registration-ordered set
+ * including the accessoryId per payload.
  *
  * The falsy-motionDetectedAt case is a TWO-STEP: the carrier defaults motionDetectedAt to 0, so a bare 0 push is no change (no wake). We first push a truthy timestamp
  * (settle, snapshot+reset the wake window AND a recording baseline), THEN push 0 - the truthy->0 change genuinely wakes the observer while the production
@@ -164,9 +164,9 @@ describe("real ProtectSensor construction and family behavior", () => {
     controllers.length = 0;
   });
 
-  test("six observers register, construction wakes none, and the always-present Battery service carries its battery state", () => {
+  test("seven observers register, construction wakes none, and the always-present Battery service carries its battery state", () => {
 
-    assert.equal(store.observerCount, 6, "the two base observers plus the sensor's four are registered against the store double");
+    assert.equal(store.observerCount, 7, "the two base observers plus the sensor's five are registered against the store double");
     assert.equal(constructionWakes, 0, "no observer wake was published during construction - observers arm against the baseline and stay silent");
 
     const battery = accessory.getService(Service.Battery);
@@ -237,7 +237,7 @@ describe("real ProtectSensor construction and family behavior", () => {
     }
   });
 
-  test("cleanup unwinds all six observers, and a value-changing push afterward wakes nothing", async () => {
+  test("cleanup unwinds all seven observers, and a value-changing push afterward wakes nothing", async () => {
 
     sensor?.cleanup();
 
@@ -835,7 +835,7 @@ describe("real ProtectSensor construction and family behavior", () => {
     alarmOnly.sensor.cleanup();
   });
 
-  test("a glass-break device lands the alarmTriggeredAt value and logs the transition exactly once on each edge", async () => {
+  test("a glass-break device lands the glassBreakTriggeredAt value and logs the transition exactly once on each edge", async () => {
 
     const built = buildSensor({ glassBreak: true, glassBreakEnabled: true });
 
@@ -844,20 +844,21 @@ describe("real ProtectSensor construction and family behavior", () => {
     const glass = built.accessory.getServiceById(Service.ContactSensor, ProtectReservedNames.CONTACT_SENSOR_GLASS_BREAK);
 
     assert.ok(glass, "the glass-break ContactSensor exists");
-    assert.equal(glass.getCharacteristic(Characteristic.ContactSensorState).value, false, "the glass-break sensor starts clear (alarmTriggeredAt null)");
+    assert.equal(glass.getCharacteristic(Characteristic.ContactSensorState).value, false, "the glass-break sensor starts clear (glassBreakTriggeredAt null)");
 
-    built.store.pushSensorPatch("test-sensor-1", { alarmTriggeredAt: 1700000000000 });
+    built.store.pushSensorPatch("test-sensor-1", { glassBreakTriggeredAt: 1700000000000 });
 
     await settle();
 
-    assert.equal(glass.getCharacteristic(Characteristic.ContactSensorState).value, true, "the non-null alarmTriggeredAt landed on the glass-break ContactSensorState");
+    assert.equal(glass.getCharacteristic(Characteristic.ContactSensorState).value, true,
+      "the non-null glassBreakTriggeredAt landed on the glass-break ContactSensorState");
     assert.equal(logCount(built.logEntries, "info", "Glass break detected."), 1, "the detection logged the Glass-break transition exactly once");
 
-    built.store.pushSensorPatch("test-sensor-1", { alarmTriggeredAt: null });
+    built.store.pushSensorPatch("test-sensor-1", { glassBreakTriggeredAt: null });
 
     await settle();
 
-    assert.equal(glass.getCharacteristic(Characteristic.ContactSensorState).value, false, "clearing alarmTriggeredAt cleared the glass-break ContactSensorState");
+    assert.equal(glass.getCharacteristic(Characteristic.ContactSensorState).value, false, "clearing glassBreakTriggeredAt cleared the glass-break ContactSensorState");
     assert.equal(logCount(built.logEntries, "info", "Glass break no longer detected."), 1, "the clear logged the Glass-break transition exactly once");
 
     built.sensor.cleanup();
@@ -905,7 +906,7 @@ describe("real ProtectSensor construction and family behavior", () => {
     assert.ok(plain, "the plain mount-type contact sensor exists");
     assert.equal(plain.getCharacteristic(Characteristic.ContactSensorState).value, false, "the plain contact sensor starts closed");
 
-    built.store.pushSensorPatch("test-sensor-1", { alarmTriggeredAt: 1700000000000 });
+    built.store.pushSensorPatch("test-sensor-1", { glassBreakTriggeredAt: 1700000000000 });
 
     await settle();
 
@@ -937,7 +938,7 @@ describe("real ProtectSensor construction and family behavior", () => {
     assert.equal(glass.getCharacteristic(Characteristic.StatusActive).value, true, "the created service seeded StatusActive from isReachable");
     assert.equal(await glass.getCharacteristic(Characteristic.ContactSensorState).triggerGet(), false, "the created service wired its onGet read-through (clear)");
 
-    built.store.pushSensorPatch("test-sensor-1", { alarmTriggeredAt: 1700000000000 });
+    built.store.pushSensorPatch("test-sensor-1", { glassBreakTriggeredAt: 1700000000000 });
 
     await settle();
 
@@ -963,7 +964,7 @@ describe("real ProtectSensor construction and family behavior", () => {
     idleGlass.sensor.cleanup();
 
     // A sensor already latched at configure shows detected with NO startup log line: the create-seed sets the baseline so the observer never sees a transition.
-    const latched = buildSensor({ alarmTriggeredAt: 1700000000000, glassBreak: true, glassBreakEnabled: true });
+    const latched = buildSensor({ glassBreak: true, glassBreakEnabled: true, glassBreakTriggeredAt: 1700000000000 });
     const glass = latched.accessory.getServiceById(Service.ContactSensor, ProtectReservedNames.CONTACT_SENSOR_GLASS_BREAK);
 
     assert.ok(glass, "the latched glass-break service exists");
@@ -983,19 +984,19 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     assert.ok(glass, "the glass-break service exists");
 
-    built.store.pushSensorPatch("test-sensor-1", { alarmTriggeredAt: 1700000000000 });
+    built.store.pushSensorPatch("test-sensor-1", { glassBreakTriggeredAt: 1700000000000 });
 
     await settle();
 
     assert.equal(glass.getCharacteristic(Characteristic.ContactSensorState).value, true, "first edge: detected");
 
-    built.store.pushSensorPatch("test-sensor-1", { alarmTriggeredAt: null });
+    built.store.pushSensorPatch("test-sensor-1", { glassBreakTriggeredAt: null });
 
     await settle();
 
     assert.equal(glass.getCharacteristic(Characteristic.ContactSensorState).value, false, "second edge: cleared");
 
-    built.store.pushSensorPatch("test-sensor-1", { alarmTriggeredAt: 1700000005000 });
+    built.store.pushSensorPatch("test-sensor-1", { glassBreakTriggeredAt: 1700000005000 });
 
     await settle();
 
@@ -1006,9 +1007,133 @@ describe("real ProtectSensor construction and family behavior", () => {
     built.sensor.cleanup();
   });
 
-  test("six observers register and a bare alarmTriggeredAt push wakes only its observer and sensor.config", async () => {
+  test("the glass-break contact reads its own latched field and ignores the shared one", async () => {
 
-    assert.equal(store.observerCount, 6, "the two base observers plus the sensor's four are registered against the store double");
+    // The field the owner's unit actually moved on a real detection. A glass break advances glassBreakTriggeredAt while alarmTriggeredAt keeps whatever alarmed last, so
+    // the glass-break contact must be deaf to the shared field and answer only to its own.
+    const built = buildSensor({ glassBreak: true, glassBreakEnabled: true });
+
+    await settle();
+
+    const glass = built.accessory.getServiceById(Service.ContactSensor, ProtectReservedNames.CONTACT_SENSOR_GLASS_BREAK);
+
+    assert.ok(glass, "the glass-break service exists");
+
+    built.store.pushSensorPatch("test-sensor-1", { alarmTriggeredAt: 1700000000000 });
+
+    await settle();
+
+    assert.equal(glass.getCharacteristic(Characteristic.ContactSensorState).value, false, "a bare shared-field push left the glass-break ContactSensorState clear");
+    assert.equal(logCount(built.logEntries, "info", "Glass break detected."), 0, "a bare shared-field push narrated no glass-break detection");
+    assert.equal(built.mqtt.published.filter((entry) => entry.topic === built.projection.config.mac + "/glassbreak").length, 1,
+      "a bare shared-field push published nothing beyond the create-time seed on the glassbreak topic");
+
+    built.store.pushSensorPatch("test-sensor-1", { glassBreakTriggeredAt: 1700000000000 });
+
+    await settle();
+
+    assert.equal(glass.getCharacteristic(Characteristic.ContactSensorState).value, true, "the glass-break field tripped the glass-break ContactSensorState");
+    assert.equal(logCount(built.logEntries, "info", "Glass break detected."), 1, "the glass-break detection logged exactly once");
+    assert.ok(built.mqtt.published.some((entry) => (entry.topic === built.projection.config.mac + "/glassbreak") && (entry.payload === "true")),
+      "the glass-break detection published true on its own topic");
+
+    built.sensor.cleanup();
+  });
+
+  test("the alarm-sound contact reads its own latched field and ignores the glass-break one", async () => {
+
+    const built = buildSensor({ alarmEnabled: true });
+
+    await settle();
+
+    const alarm = built.accessory.getServiceById(Service.ContactSensor, ProtectReservedNames.CONTACT_SENSOR_ALARM_SOUND);
+
+    assert.ok(alarm, "the alarm-sound service exists");
+
+    built.store.pushSensorPatch("test-sensor-1", { glassBreakTriggeredAt: 1700000000000 });
+
+    await settle();
+
+    assert.equal(alarm.getCharacteristic(Characteristic.ContactSensorState).value, false, "a bare glass-break push left the alarm-sound ContactSensorState clear");
+    assert.equal(logCount(built.logEntries, "info", "Alarm detected."), 0, "a bare glass-break push narrated no alarm-sound detection");
+
+    built.store.pushSensorPatch("test-sensor-1", { alarmTriggeredAt: 1700000000000 });
+
+    await settle();
+
+    assert.equal(alarm.getCharacteristic(Characteristic.ContactSensorState).value, true, "the alarm-sound field tripped the alarm-sound ContactSensorState");
+    assert.equal(logCount(built.logEntries, "info", "Alarm detected."), 1, "the alarm-sound detection logged exactly once");
+
+    built.sensor.cleanup();
+  });
+
+  test("a unit carrying both alarm kinds narrates each contact on its own field only", async () => {
+
+    // The case the shared bookkeeping could not express: one accessory carrying both contacts, where each kind's transition must be measured against that kind's own
+    // last reading rather than against whatever the other kind last did.
+    const built = buildSensor({ alarmEnabled: true, glassBreak: true, glassBreakEnabled: true });
+
+    await settle();
+
+    const alarm = built.accessory.getServiceById(Service.ContactSensor, ProtectReservedNames.CONTACT_SENSOR_ALARM_SOUND);
+    const glass = built.accessory.getServiceById(Service.ContactSensor, ProtectReservedNames.CONTACT_SENSOR_GLASS_BREAK);
+
+    assert.ok(alarm, "the two-kind unit carries the alarm-sound service");
+    assert.ok(glass, "the two-kind unit carries the glass-break service");
+
+    built.store.pushSensorPatch("test-sensor-1", { glassBreakTriggeredAt: 1700000000000 });
+
+    await settle();
+
+    assert.equal(glass.getCharacteristic(Characteristic.ContactSensorState).value, true, "the glass-break push tripped the glass-break contact");
+    assert.equal(alarm.getCharacteristic(Characteristic.ContactSensorState).value, false, "the glass-break push left the alarm-sound contact clear");
+    assert.equal(logCount(built.logEntries, "info", "Glass break detected."), 1, "the glass-break detection logged exactly once");
+    assert.equal(logCount(built.logEntries, "info", "Alarm detected."), 0, "the glass-break detection narrated nothing for the alarm-sound contact");
+
+    built.store.pushSensorPatch("test-sensor-1", { alarmTriggeredAt: 1700000000000 });
+
+    await settle();
+
+    assert.equal(alarm.getCharacteristic(Characteristic.ContactSensorState).value, true, "the alarm-sound push tripped the alarm-sound contact");
+    assert.equal(logCount(built.logEntries, "info", "Alarm detected."), 1, "the alarm-sound detection logged exactly once");
+    assert.equal(logCount(built.logEntries, "info", "Glass break detected."), 1, "the alarm-sound detection left the glass-break count unchanged");
+
+    built.sensor.cleanup();
+  });
+
+  test("a user clear nulling both latched fields in one patch clears each tripped contact once", async () => {
+
+    // The shape of a real clear from the sensor's detail page: the controller nulls both fields in a single frame, so the one patch must retire both contacts and speak
+    // once for each.
+    // Distinct trip times per kind, as a real two-kind unit carries them: the shared field holds whatever alarmed last, which is not when the glass break happened.
+    const built = buildSensor({ alarmEnabled: true, alarmTriggeredAt: 1690000000000, glassBreak: true, glassBreakEnabled: true,
+      glassBreakTriggeredAt: 1700000000000 });
+
+    await settle();
+
+    const alarm = built.accessory.getServiceById(Service.ContactSensor, ProtectReservedNames.CONTACT_SENSOR_ALARM_SOUND);
+    const glass = built.accessory.getServiceById(Service.ContactSensor, ProtectReservedNames.CONTACT_SENSOR_GLASS_BREAK);
+
+    assert.ok(alarm, "the alarm-sound service exists");
+    assert.ok(glass, "the glass-break service exists");
+    assert.equal(alarm.getCharacteristic(Characteristic.ContactSensorState).value, true, "the alarm-sound contact starts tripped from its latched field");
+    assert.equal(glass.getCharacteristic(Characteristic.ContactSensorState).value, true, "the glass-break contact starts tripped from its latched field");
+
+    built.store.pushSensorPatch("test-sensor-1", { alarmTriggeredAt: null, glassBreakTriggeredAt: null });
+
+    await settle();
+
+    assert.equal(alarm.getCharacteristic(Characteristic.ContactSensorState).value, false, "the one clear frame retired the alarm-sound contact");
+    assert.equal(glass.getCharacteristic(Characteristic.ContactSensorState).value, false, "the one clear frame retired the glass-break contact");
+    assert.equal(logCount(built.logEntries, "info", "Alarm no longer detected."), 1, "the alarm-sound clear logged exactly once");
+    assert.equal(logCount(built.logEntries, "info", "Glass break no longer detected."), 1, "the glass-break clear logged exactly once");
+
+    built.sensor.cleanup();
+  });
+
+  test("seven observers register and a bare alarmTriggeredAt push wakes only its observer and sensor.config", async () => {
+
+    assert.equal(store.observerCount, 7, "the two base observers plus the sensor's five are registered against the store double");
 
     const baseline = wakeLog.length;
 
@@ -1021,6 +1146,37 @@ describe("real ProtectSensor construction and family behavior", () => {
     assert.deepEqual(wakeLog.slice(baseline),
       [ { accessoryId: accessory.UUID, key: "sensor.alarmTriggeredAt" }, { accessoryId: accessory.UUID, key: "sensor.config" } ],
       "the narrow alarmTriggeredAt observer AND the whole-record sensor.config observer woke, in registration order");
+  });
+
+  test("a bare glassBreakTriggeredAt push wakes only its observer and sensor.config", async () => {
+
+    const baseline = wakeLog.length;
+
+    // The glass-break field is a narrow slice of its own, registered after the alarm-sound row: a bare push wakes that one observer and sensor.config, never the
+    // alarm-sound row's observer, which is watching a field this push did not touch.
+    store.pushSensorPatch("test-sensor-1", { glassBreakTriggeredAt: 1700000000000 });
+
+    await settle();
+
+    assert.deepEqual(wakeLog.slice(baseline),
+      [ { accessoryId: accessory.UUID, key: "sensor.glassBreakTriggeredAt" }, { accessoryId: accessory.UUID, key: "sensor.config" } ],
+      "the narrow glassBreakTriggeredAt observer AND the whole-record sensor.config observer woke, in registration order");
+  });
+
+  test("a patch moving both latched fields wakes the two alarm-family observers in table order, then sensor.config", async () => {
+
+    const baseline = wakeLog.length;
+
+    // The registration order the descriptor table fixes: alarm sound first, glass break second, each on its own field, with the whole-record observer last. One patch
+    // that moves both fields wakes exactly those three, in that order, which is the shape a real clear from the sensor's detail page takes on the wire.
+    store.pushSensorPatch("test-sensor-1", { alarmTriggeredAt: 1700000000000, glassBreakTriggeredAt: 1700000000000 });
+
+    await settle();
+
+    assert.deepEqual(wakeLog.slice(baseline),
+      [ { accessoryId: accessory.UUID, key: "sensor.alarmTriggeredAt" }, { accessoryId: accessory.UUID, key: "sensor.glassBreakTriggeredAt" },
+        { accessoryId: accessory.UUID, key: "sensor.config" } ],
+      "both narrow alarm-family observers woke in table order, then the whole-record observer");
   });
 
   test("the alarm-family service's StatusActive flips offline alongside the motion service every reconcile", async () => {
@@ -1051,7 +1207,7 @@ describe("real ProtectSensor construction and family behavior", () => {
     built.sensor.cleanup();
   });
 
-  test("the glassbreak MQTT get reads through alarmDetected, publishes on change, and the alarm get still registers", async () => {
+  test("the glassbreak MQTT get reads through its own latched field, publishes on change, and the alarm get still registers", async () => {
 
     const built = buildSensor({ glassBreak: true, glassBreakEnabled: true });
     const mac = built.projection.config.mac;
@@ -1062,17 +1218,19 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     assert.ok(glassGet, "the glassbreak GET subscription captured a getValue handler");
     assert.ok(alarmGet, "the alarm GET subscription still registers unconditionally");
-    assert.equal(await built.mqtt.invokeGet(mac + "/alarm/get"), "false", "the glassbreak GET reads through alarmDetected as a string (clear at start)");
+    assert.equal(await built.mqtt.invokeGet(mac + "/glassbreak/get"), "false", "the glassbreak GET reads its own latched field as a string (clear at start)");
 
-    built.store.pushSensorPatch("test-sensor-1", { alarmTriggeredAt: 1700000000000 });
+    built.store.pushSensorPatch("test-sensor-1", { glassBreakTriggeredAt: 1700000000000 });
 
     await settle();
 
-    assert.equal(await built.mqtt.invokeGet(mac + "/alarm/get"), "true", "the glassbreak GET reads through the non-null alarmTriggeredAt after the push");
+    assert.equal(await built.mqtt.invokeGet(mac + "/glassbreak/get"), "true", "the glassbreak GET reads through the non-null glass-break timestamp after the push");
+    assert.equal(await built.mqtt.invokeGet(mac + "/alarm/get"), "false",
+      "the alarm-sound GET is untouched by a glass-break detection - it answers from its own field");
     assert.ok(built.mqtt.published.some((entry) => (entry.topic === mac + "/glassbreak") && (entry.payload === "true")),
       "the glass-break state published true on the device-scoped topic after detection");
 
-    built.store.pushSensorPatch("test-sensor-1", { alarmTriggeredAt: null });
+    built.store.pushSensorPatch("test-sensor-1", { glassBreakTriggeredAt: null });
 
     await settle();
 
@@ -1507,7 +1665,7 @@ describe("real ProtectSensor construction and family behavior", () => {
     const service = built.accessory.getService(Service.AirQualitySensor);
 
     assert.ok(service, "the service exists before the patch");
-    assert.equal(built.store.observerCount, 6, "the air-quality surface added no observer - it rides the reconcile the whole-record observer already drives");
+    assert.equal(built.store.observerCount, 7, "the air-quality surface added no observer - it goes through the reconcile the whole-record observer already drives");
 
     const baseline = wakeLog.length;
 

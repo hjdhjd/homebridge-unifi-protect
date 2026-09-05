@@ -284,7 +284,8 @@ export function makeSmokeStatus(overrides: Partial<ProtectSensorSmokeStatus> = {
  *                  trip timestamp the smoke telemetry carries (defaults null);
  *                  externalLeakDetectedAt: the external-leak timestamp the leak path index-reads (defaults null); glassBreak: whether the controller advertises the
  *                  glass-break capability channel in featureFlags.glassBreak - the flag the alarm-family glass-break gate reads (defaults false, channel
- *                  absent); glassBreakEnabled: the glass-break settings toggle folded into glassBreakSettings.isEnabled (defaults false); hardwareRevision: the hardware
+ *                  absent); glassBreakEnabled: the glass-break settings toggle folded into glassBreakSettings.isEnabled (defaults false);
+ *                  glassBreakTriggeredAt: the glass-break trip timestamp the glass-break contact reads (defaults null); hardwareRevision: the hardware
  *                  revision the device-info HardwareRevision write reads (OPT-IN, omitted by default so setInfo's length-guard short-circuits); humidity: the humidity
  *                  reading folded into stats.humidity.value (omitted, no humidity stat); humidityEnabled: the humidity settings toggle (defaults false); id: identity
  *                  override (defaults "test-sensor-1"); isConnected: the connection flag (defaults true); isMotionDetected: the Motion.* applicability property (defaults
@@ -310,7 +311,7 @@ export function makeSensorConfig(options: { airQuality?: Partial<ProtectSensorAi
   alarmTriggeredAt?: Nullable<number>; alarmTypes?: string[];
   ambientLight?: number; batteryLow?: boolean; batteryPercentage?: Nullable<number>; co2Enabled?: boolean; co2Threshold?: Nullable<number>;
   coAlarmTriggeredAt?: Nullable<number>;
-  externalLeakDetectedAt?: Nullable<number>; glassBreak?: boolean; glassBreakEnabled?: boolean; hardwareRevision?: string;
+  externalLeakDetectedAt?: Nullable<number>; glassBreak?: boolean; glassBreakEnabled?: boolean; glassBreakTriggeredAt?: Nullable<number>; hardwareRevision?: string;
   humidity?: number; humidityEnabled?: boolean; id?: string; isConnected?: boolean; isMotionDetected?: boolean; isOpened?: Nullable<boolean>; leakChannelNames?: string[];
   leakDetectedAt?: Nullable<number>; leakExternalEnabled?: boolean; leakInternalEnabled?: boolean; ledEnabled?: boolean; lightEnabled?: boolean; mac?: string;
   marketName?: string; motionDetectedAt?: number; motionEnabled?: boolean; mountType?: string;
@@ -405,6 +406,10 @@ export function makeSensorConfig(options: { airQuality?: Partial<ProtectSensorAi
     // glassBreakSettings.isEnabled, which would throw a TypeError were the object absent the moment a test set the glassBreak channel present. Quiet defaults keep every
     // existing baseline unchanged; the isEnabled toggle is the only per-test lever.
     glassBreakSettings: { isEnabled: options.glassBreakEnabled ?? false, sensitivity: 0, sensitivityWhenArmed: 0 },
+
+    // Emitted explicitly as null rather than left absent, exactly like alarmTriggeredAt: the wire always carries the key, and an absent key would read as a non-null
+    // timestamp through sensorAlarmState and start every glass-break fixture tripped.
+    glassBreakTriggeredAt: options.glassBreakTriggeredAt ?? null,
     humiditySettings: thresholdSettings(options.humidityEnabled ?? false),
     id: options.id ?? "test-sensor-1",
     isConnected: options.isConnected ?? true,

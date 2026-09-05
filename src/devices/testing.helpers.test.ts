@@ -570,6 +570,7 @@ describe("A2 base-capability foundation: the shared dispatch, the sensor carrier
     assert.equal(defaults.mountType, "none", "mountType defaults to none");
     assert.equal(defaults.motionDetectedAt, 0, "motionDetectedAt defaults to 0");
     assert.equal(defaults.alarmTriggeredAt, null, "alarmTriggeredAt defaults null");
+    assert.equal(defaults.glassBreakTriggeredAt, null, "glassBreakTriggeredAt defaults null");
     assert.equal(defaults.tamperingDetectedAt, null, "tamperingDetectedAt defaults null");
     assert.equal(defaults.isConnected, true, "isConnected defaults true");
     assert.equal(defaults.state, "CONNECTED", "state defaults CONNECTED so isOnline / isReachable resolve true");
