@@ -34,6 +34,9 @@ export const mqttTopics = mqttTopicCatalog({
   button: { devices: ["fob"], label: "fob button",
     publish: "`{\"button\": \"arm\", \"pressType\": \"single\"}` when a UniFi Protect fob button is pressed. `button` is the button that was pressed and " +
       "`pressType` is the gesture. Published for every press, including buttons you've hidden in HomeKit.", topic: "button" },
+  carbonmonoxide: { devices: ["sensor"],
+    get: "`true` will trigger a publish event of the current carbon monoxide alarm state for a UniFi Protect smoke detector.", label: "carbon monoxide",
+    publish: "`true` or `false` when a UniFi Protect smoke detector detects carbon monoxide.", topic: "carbonmonoxide" },
   chime: { devices: ["doorbell"], get: "`true` will trigger a publish event of the volume level for a UniFi Protect doorbell.", label: "chime volume",
     publish: "A number between 0 and 100 that represents the current volume of the chime as a percentage.",
     set: "A number between 0 and 100 that will set the volume level for a UniFi Protect doorbell.", topic: "chime" },
@@ -101,6 +104,14 @@ export const mqttTopics = mqttTopicCatalog({
   smartMotionMetadata: { devices: ["camera"], label: "smart motion metadata",
     publish: "`JSON` when metadata associated with a smart motion detection event is available from Protect such as license plate information, vehicle type, or " +
       "color. Currently, this is only valid for `vehicle` smart motion events.", topic: "motion/smart/{object}/metadata" },
+  smoke: { devices: ["sensor"], get: "`true` will trigger a publish event of the current smoke alarm state for a UniFi Protect smoke detector.", label: "smoke",
+    publish: "`true` or `false` when a UniFi Protect smoke detector detects smoke.", topic: "smoke" },
+  smokedetector: { devices: ["sensor"],
+    get: "`true` will trigger a publish event of the current status of a UniFi Protect smoke detector.", label: "smoke detector status",
+    publish: "`JSON` containing the full status of a UniFi Protect smoke detector: the `smokeAlarm` and `coAlarm` states, the raw `smokeValue` and `coValue` " +
+      "readings, `testing`, `alarmSilenced`, `troubleHushed`, the `smokeSensorFault`, `coSensorFault`, `cleanSmokeSensor`, and `endOfLife` flags, `batteryLow` and " +
+      "`batteryVoltage`, `enabled`, `ready`, `wasMounted`, and the `smokeAlarmTriggeredAt`, `coAlarmTriggeredAt`, `alarmSilencedAt`, and `troubleSilencedAt` " +
+      "timestamps, each `null` when that event has never occurred. Sensors without smoke detector hardware never publish this topic.", topic: "smokedetector" },
   snapshot: { devices: ["camera"], label: "snapshot",
     publish: "A [data URL](https://developer.mozilla.org/en-US/docs/Web/HTTP/Basics_of_HTTP/Data_URIs) containing a base64-encoded JPEG of the snapshot that was " +
       "requested (either by HomeKit or MQTT).", set: "`true` will trigger the camera to generate a snapshot.", topic: "snapshot" },

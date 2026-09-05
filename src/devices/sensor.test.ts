@@ -22,7 +22,8 @@
  * present-iff-enabled, once-guarded, and unsubscribed when a channel is toggled off).
  *
  * The multi-wake: the whole-record observer (sensor.config) selects the WHOLE sensor record (deviceSelectors.sensor.byId(id)), and pushSensorPatch replaces it on
- * every patch, so sensor.config wakes on EVERY push - in ADDITION to any narrow observer (sensor.motionDetectedAt / sensor.tamperingDetectedAt / sensor.alarmTriggeredAt)
+ * every patch that changes the record (a value-identical patch is a reducer no-op and wakes nothing at all), so sensor.config wakes on every such push - in ADDITION
+ * to any narrow observer (sensor.motionDetectedAt / sensor.tamperingDetectedAt / sensor.alarmTriggeredAt)
  * whose field changed. So a narrow-field push wakes exactly the changed narrow observer plus sensor.config, in registration order (the narrow observer precedes config):
  * a motionDetectedAt push wakes [sensor.motionDetectedAt, sensor.config], a tamperingDetectedAt push wakes [sensor.tamperingDetectedAt, sensor.config], and an
  * alarmTriggeredAt push wakes [sensor.alarmTriggeredAt, sensor.config], while a settings-only push wakes sensor.config alone. The full registration order is device.name,
@@ -39,9 +40,10 @@
  */
 import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../testing.helpers.ts";
 import type { CharacteristicType, TestAccessory } from "../testing.helpers.ts";
+import { ProtectSensor, narratesTransition } from "./sensor.ts";
 import type { ProtectSensorAirQuality, Sensor } from "unifi-protect";
 import { TestRecordingDispatch, makeTestNvr } from "../nvr/testing.helpers.ts";
-import { TestSensorProjection, makeSensorConfig } from "./testing.helpers.ts";
+import { TestSensorProjection, makeSensorConfig, makeSmokeStatus } from "./testing.helpers.ts";
 import { after, afterEach, before, beforeEach, describe, test } from "node:test";
 import { logCount, loggedAt } from "homebridge-plugin-utils/testing";
 import { NOT_CAPABLE_AIR_QUALITY } from "./air-quality-policy.ts";
@@ -51,7 +53,6 @@ import type { ProtectAccessory } from "../types.ts";
 import type { ProtectEventDispatch } from "../nvr/event-dispatch.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
-import { ProtectSensor } from "./sensor.ts";
 import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import type { TestMqttClient } from "homebridge-plugin-utils/testing";
 import assert from "node:assert/strict";
@@ -67,6 +68,10 @@ function airQualityBlock(overrides: Partial<ProtectSensorAirQuality>): ProtectSe
 
   return { ...NOT_CAPABLE_AIR_QUALITY, ...overrides };
 }
+
+// The device-scoped topic tails the smoke detector owns. Rows proving a sensor that is no detector publishes nothing at all read the whole set through here rather
+// than spelling each one out; the comparisons are exact, so the smoke tail never matches the detector-status one.
+const SMOKE_TOPIC_TAILS = [ "/carbonmonoxide", "/smoke", "/smokedetector" ];
 
 // Every harness controller this suite opens, drained in afterEach so the controller lifetime signal bounds each test's constructions rather than the file's. The builder
 // is the single push site, so the many per-test variant builds are captured exactly as the fixture's is.
@@ -524,6 +529,45 @@ describe("real ProtectSensor construction and family behavior", () => {
     assert.ok(contact.testCharacteristic(Characteristic.ContactSensorState), "the moisture ContactSensor carries ContactSensorState, not LeakDetected");
 
     built.sensor.cleanup();
+  });
+
+  test("the leak narration speaks a condition already under way, then each edge once, and reads the moisture wording in moisture mode", async () => {
+
+    // The transition-narration contract every logged sensor condition shares, characterized on the leak site: a leak already under way when the service first
+    // materializes is spoken, each genuine edge is spoken once, and a reconcile that moved nothing about the leak says nothing about it. The moisture option changes
+    // only the subject word, never the shape of the sentence.
+    const built = buildSensor({ leakChannelNames: ["internal"], leakDetectedAt: 1700000000000, mountType: "leak" });
+
+    await settle();
+
+    assert.equal(logCount(built.logEntries, "info", "Leak detected."), 1, "a leak already under way at construction is narrated exactly once");
+
+    built.store.pushSensorPatch("test-sensor-1", { leakDetectedAt: null });
+
+    await settle();
+
+    assert.equal(logCount(built.logEntries, "info", "Leak no longer detected."), 1, "the clearing edge is narrated exactly once");
+
+    // The negative control, driven by an unrelated field change so a reconcile genuinely runs with the leak unmoved. A value-identical push is a no-op in the
+    // controller's own reducer and would wake nothing at all, which would leave this row asserting against a pass that never happened.
+    built.store.pushSensorPatch("test-sensor-1", { batteryStatus: { isLow: false, modelKey: "sensorBatteryStatus", percentage: 99 } });
+
+    await settle();
+
+    assert.equal(logCount(built.logEntries, "info", "Leak no longer detected."), 1, "a reconcile that changed nothing about the leak said nothing about it");
+    assert.equal(logCount(built.logEntries, "info", "Leak detected."), 1, "the detection sentence never fired a second time either");
+
+    built.sensor.cleanup();
+
+    const moisture = buildSensor({ leakChannelNames: ["internal"], leakDetectedAt: 1700000000000, mountType: "leak" },
+      { userOptions: ["Enable.Sensor.MoistureSensor"] });
+
+    await settle();
+
+    assert.equal(logCount(moisture.logEntries, "info", "Moisture detected."), 1, "moisture mode narrates the same first-run edge under its own subject word");
+    assert.equal(logCount(moisture.logEntries, "info", "Leak detected."), 0, "moisture mode never speaks the leak wording");
+
+    moisture.sensor.cleanup();
   });
 
   test("a truthy motionDetectedAt push wakes the motionDetectedAt and sensor.config observers and routes to the dispatch firehose once", async () => {
@@ -1325,6 +1369,8 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     assert.equal(logCount(built.logEntries, "info", "Vaping no longer detected."), 0, "the dropout narrated no all-clear the sensor never reported");
     assert.equal(service.getCharacteristic(Characteristic.ContactSensorState).value, true, "the contact held its last reported state through the dropout");
+    assert.equal(await service.getCharacteristic(Characteristic.ContactSensorState).triggerGet(), true,
+      "and a pull arriving mid-dropout answers that held state back rather than recomputing an all-clear");
 
     built.store.pushSensorPatch("test-sensor-1", { airQuality: airQualityBlock({ vape: { status: "detected", value: null } }) });
 
@@ -1355,9 +1401,16 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     assert.ok(service, "the cached vape sensor survives a quiet metric - only the toggles remove it");
     assert.equal(service.getCharacteristic(Characteristic.ContactSensorState).value, true, "the restored detection stands; no all-clear was manufactured over it");
+
+    // The read side of the same guarantee, and the assertion that tells the held-value read apart from an in-process fallback: this process has narrated nothing, so a
+    // fallback over its own bookkeeping would answer false here and hand that false straight back into HomeKit's cache on the very first pull after the restart.
+    assert.equal(await service.getCharacteristic(Characteristic.ContactSensorState).triggerGet(), true, "a pull answers the value HomeKit restored, not an all-clear");
     assert.equal(logCount(built.logEntries, "info", "Vaping"), 0, "nothing was narrated about a metric that said nothing");
     assert.equal(built.mqtt.published.some((entry) => entry.topic === (built.projection.config.mac + "/vape")), false,
       "no vape state was published from a reading the sensor never gave");
+
+    // Answering a get republishes on the parent topic, exactly as the real client does, so this reads the same held state one step after the no-publish assertion above.
+    assert.equal(await built.mqtt.invokeGet(built.projection.config.mac + "/vape/get"), "true", "the vape get answers that same restored state");
 
     built.sensor.cleanup();
   });
@@ -1648,6 +1701,523 @@ describe("real ProtectSensor construction and family behavior", () => {
     assert.equal(humidity.getCharacteristic(Characteristic.StatusActive).value, true, "the humidity service carries the shared state characteristics");
     assert.equal(temperature.getCharacteristic(Characteristic.StatusActive).value, true, "the temperature service carries the shared state characteristics");
     assert.equal(humidity.getCharacteristic(Characteristic.StatusTampered).value, false, "the humidity service carries the tamper read-through too");
+
+    built.sensor.cleanup();
+  });
+
+  test("the smoke services materialize per advertised alarm type on detector hardware, and never on a sensor that is no detector", async () => {
+
+    // The gate is two questions asked once per service: is this model a detector, and does that detector advertise this alarm type.
+    const both = buildSensor({ alarmTypes: [ "smoke", "CO" ], smokeStatus: makeSmokeStatus(), type: "USL-Smoke-US" });
+
+    await settle();
+
+    const smoke = both.accessory.getService(Service.SmokeSensor);
+    const carbonMonoxide = both.accessory.getService(Service.CarbonMonoxideSensor);
+
+    assert.ok(smoke, "advertising smoke materializes the SmokeSensor");
+    assert.ok(carbonMonoxide, "advertising carbon monoxide materializes the CarbonMonoxideSensor");
+    assert.equal(await smoke.getCharacteristic(Characteristic.SmokeDetected).triggerGet(), false, "the smoke onGet reads through the at-rest block");
+    assert.equal(await carbonMonoxide.getCharacteristic(Characteristic.CarbonMonoxideDetected).triggerGet(), false,
+      "the carbon monoxide onGet reads through the at-rest block");
+    assert.equal(smoke.getCharacteristic(Characteristic.StatusActive).value, true, "the smoke service carries the shared state characteristics");
+    assert.equal(smoke.getCharacteristic(Characteristic.StatusTampered).value, false, "and the shared tamper read-through");
+    assert.equal(smoke.getCharacteristic(Characteristic.StatusFault).value, false, "an at-rest detector reports no smoke fault");
+    assert.equal(carbonMonoxide.getCharacteristic(Characteristic.StatusFault).value, false, "and no carbon monoxide fault");
+
+    both.sensor.cleanup();
+
+    const smokeOnly = buildSensor({ alarmTypes: ["smoke"], smokeStatus: makeSmokeStatus(), type: "USL-Smoke-US" });
+
+    await settle();
+
+    assert.ok(smokeOnly.accessory.getService(Service.SmokeSensor), "a detector advertising smoke alone materializes the SmokeSensor");
+    assert.equal(smokeOnly.accessory.getService(Service.CarbonMonoxideSensor), undefined, "and grows no CarbonMonoxideSensor");
+
+    smokeOnly.sensor.cleanup();
+
+    /* The negative controls, each a sensor that is no detector. The third is the row that tells an advertisement read apart from a block-presence read: it carries a
+     * full block with BOTH alarms sounding and must still grow nothing, publish nothing, and answer false on both boolean gets - because the capability step, not the
+     * block, decides what a non-detector reports. The fourth is the row that tells the model read apart from the advertisement read: a UP Sense carries a detector's
+     * whole advertisement AND a full block, and only its model says it is a listener rather than a detector.
+     */
+    const assertNoSmokeSurface = async (config: Parameters<typeof makeSensorConfig>[0], label: string): Promise<void> => {
+
+      const built = buildSensor(config);
+      const mac = built.projection.config.mac;
+
+      await settle();
+
+      assert.equal(built.accessory.getService(Service.SmokeSensor), undefined, "no SmokeSensor for " + label);
+      assert.equal(built.accessory.getService(Service.CarbonMonoxideSensor), undefined, "no CarbonMonoxideSensor for " + label);
+      assert.equal(built.mqtt.published.some((entry) => SMOKE_TOPIC_TAILS.some((tail) => entry.topic === (mac + tail))), false,
+        "none of the three smoke topics published for " + label);
+      assert.equal(await built.mqtt.invokeGet(mac + "/smokedetector/get"), "null", "the telemetry get answers JSON null for " + label);
+      assert.equal(await built.mqtt.invokeGet(mac + "/smoke/get"), "false", "the smoke get answers false for " + label);
+      assert.equal(await built.mqtt.invokeGet(mac + "/carbonmonoxide/get"), "false", "the carbon monoxide get answers false for " + label);
+
+      built.sensor.cleanup();
+    };
+
+    await assertNoSmokeSurface({}, "a sensor advertising no alarm types at all");
+    await assertNoSmokeSurface({ alarmTypes: ["glassBreak"], smokeStatus: makeSmokeStatus(), type: "USL-GlassBreak-US" }, "the glass-break unit's own alarm-type list");
+    await assertNoSmokeSurface({ smokeStatus: makeSmokeStatus({ coAlarm: true, smokeAlarm: true }) }, "a non-detector carrying a block with both alarms sounding");
+    await assertNoSmokeSurface({ alarmTypes: [ "smoke", "CO" ], marketName: "UP Sense", smokeStatus: makeSmokeStatus(), type: "UFP-SENSE" },
+      "a UP Sense advertising the alarm sounds it listens for, block and all");
+  });
+
+  test("the smoke labels join the enabled-sensors line in their family-group position", () => {
+
+    const both = buildSensor({ alarmTypes: [ "smoke", "CO" ], smokeStatus: makeSmokeStatus(), type: "USL-Smoke-US" });
+
+    assert.ok(loggedAt(both.logEntries, "info", "Enabled sensors: carbon monoxide, smoke."), "the two smoke labels reach the line in label order");
+
+    both.sensor.cleanup();
+
+    // With carbon dioxide reporting too, the pair lands after it - which is where the group's first label sorts.
+    const withCo2 = buildSensor({ airQuality: { co2: { status: "neutral", value: 800 } }, alarmTypes: [ "smoke", "CO" ], smokeStatus: makeSmokeStatus(),
+      type: "USL-Smoke-US" });
+
+    assert.ok(loggedAt(withCo2.logEntries, "info", "Enabled sensors: carbon dioxide, carbon monoxide, smoke."), "the group lands in its alphabetical family position");
+
+    withCo2.sensor.cleanup();
+  });
+
+  test("a capable detector that has reported no block carries both services while writing, narrating, and publishing nothing", async () => {
+
+    const built = buildSensor({ alarmTypes: [ "smoke", "CO" ], type: "USL-Smoke-US" });
+    const mac = built.projection.config.mac;
+
+    await settle();
+
+    const smoke = built.accessory.getService(Service.SmokeSensor);
+    const carbonMonoxide = built.accessory.getService(Service.CarbonMonoxideSensor);
+
+    assert.ok(smoke, "the SmokeSensor materializes on the advertisement alone, with no block in sight");
+    assert.ok(carbonMonoxide, "the CarbonMonoxideSensor materializes on the advertisement alone");
+    assert.equal(smoke.getCharacteristic(Characteristic.StatusActive).value, true, "the state characteristics still run for a detector that has not reported");
+    assert.equal(smoke.getCharacteristic(Characteristic.SmokeDetected).writes.length, 0, "the detection characteristic never took a value");
+    assert.equal(smoke.getCharacteristic(Characteristic.StatusFault).writes.length, 0, "nor did its fault characteristic");
+    assert.equal(carbonMonoxide.getCharacteristic(Characteristic.CarbonMonoxideDetected).writes.length, 0, "nor did the carbon monoxide detection");
+    assert.equal(carbonMonoxide.getCharacteristic(Characteristic.StatusFault).writes.length, 0, "nor its fault");
+    assert.equal(await smoke.getCharacteristic(Characteristic.SmokeDetected).triggerGet(), false, "the read-through answers a never-written characteristic's held value");
+    assert.equal(await smoke.getCharacteristic(Characteristic.StatusFault).triggerGet(), false, "and the fault read-through answers the same");
+    assert.equal(await carbonMonoxide.getCharacteristic(Characteristic.CarbonMonoxideDetected).triggerGet(), false,
+      "the carbon monoxide read-through answers its own never-written characteristic's held value");
+    assert.equal(await carbonMonoxide.getCharacteristic(Characteristic.StatusFault).triggerGet(), false, "and so does its fault read-through");
+    assert.equal(logCount(built.logEntries, "info", "Smoke"), 0, "nothing was narrated about a detector that said nothing");
+    assert.equal(logCount(built.logEntries, "info", "Carbon monoxide"), 0, "nor about its sibling");
+    assert.equal(built.mqtt.published.some((entry) => SMOKE_TOPIC_TAILS.some((tail) => entry.topic === (mac + tail))), false,
+      "none of the three topics published from a block nobody gave");
+    assert.equal(await built.mqtt.invokeGet(mac + "/smokedetector/get"), "null", "the telemetry get answers JSON null for a detector that has not reported");
+
+    built.sensor.cleanup();
+  });
+
+  test("a smoke detection narrates once per edge and publishes on every reconcile pass", async () => {
+
+    const built = buildSensor({ alarmTypes: [ "smoke", "CO" ], smokeStatus: makeSmokeStatus({ smokeAlarm: true }), type: "USL-Smoke-US" });
+    const mac = built.projection.config.mac;
+
+    await settle();
+
+    const smoke = built.accessory.getService(Service.SmokeSensor);
+
+    assert.ok(smoke, "the SmokeSensor exists");
+    assert.equal(smoke.getCharacteristic(Characteristic.SmokeDetected).value, true, "an alarm already sounding at construction lands on the characteristic");
+    assert.equal(logCount(built.logEntries, "info", "Smoke detected."), 1, "an alarm already under way at construction is narrated exactly once");
+    assert.ok(built.mqtt.published.some((entry) => (entry.topic === (mac + "/smoke")) && (entry.payload === "true")), "the detection published");
+
+    built.store.pushSensorPatch("test-sensor-1", { smokeStatus: makeSmokeStatus() });
+
+    await settle();
+
+    assert.equal(smoke.getCharacteristic(Characteristic.SmokeDetected).value, false, "the clearing block landed on the characteristic");
+    assert.equal(logCount(built.logEntries, "info", "Smoke no longer detected."), 1, "the clearing edge was narrated exactly once");
+    assert.ok(built.mqtt.published.some((entry) => (entry.topic === (mac + "/smoke")) && (entry.payload === "false")), "the all-clear published");
+
+    // The cadence, and the negative control on the narration. A reconcile driven by an unrelated field change, with the detector's block unmoved, republishes the topic
+    // exactly as every other reconcile-pass publish in this family does while saying nothing at all about the alarm. A value-identical block push is a no-op in the
+    // controller's own reducer, so an unrelated change is what genuinely drives a pass here.
+    const publishBaseline = built.mqtt.published.filter((entry) => entry.topic === (mac + "/smoke")).length;
+
+    built.store.pushSensorPatch("test-sensor-1", { batteryStatus: { isLow: false, modelKey: "sensorBatteryStatus", percentage: 99 } });
+
+    await settle();
+
+    assert.equal(logCount(built.logEntries, "info", "Smoke no longer detected."), 1, "a pass that changed nothing about the alarm said nothing about it");
+    assert.equal(logCount(built.logEntries, "info", "Smoke detected."), 1, "and never re-announced the detection either");
+    assert.equal(built.mqtt.published.filter((entry) => entry.topic === (mac + "/smoke")).length, publishBaseline + 1, "while the topic republished on the pass");
+
+    built.store.pushSensorPatch("test-sensor-1", { smokeStatus: makeSmokeStatus({ coAlarm: true }) });
+
+    await settle();
+
+    assert.equal(logCount(built.logEntries, "info", "Carbon monoxide detected."), 1, "the carbon monoxide edge narrates under its own subject word");
+    assert.ok(built.mqtt.published.some((entry) => (entry.topic === (mac + "/carbonmonoxide")) && (entry.payload === "true")),
+      "and publishes on its own topic");
+
+    built.sensor.cleanup();
+  });
+
+  test("a fault warns on its reason set, warns again when that set changes, and clears once at info", async () => {
+
+    const built = buildSensor({ alarmTypes: [ "smoke", "CO" ], smokeStatus: makeSmokeStatus({ cleanSmokeSensor: true }), type: "USL-Smoke-US" });
+
+    await settle();
+
+    const smoke = built.accessory.getService(Service.SmokeSensor);
+    const carbonMonoxide = built.accessory.getService(Service.CarbonMonoxideSensor);
+
+    assert.ok(smoke, "the SmokeSensor exists");
+    assert.ok(carbonMonoxide, "the CarbonMonoxideSensor exists");
+    assert.equal(smoke.getCharacteristic(Characteristic.StatusFault).value, true, "a chamber needing cleaning faults the smoke service");
+    assert.equal(carbonMonoxide.getCharacteristic(Characteristic.StatusFault).value, false, "and leaves the carbon monoxide service clear");
+    assert.equal(logCount(built.logEntries, "warn", "The smoke sensor is reporting a fault: needs cleaning."), 1, "the fault was warned exactly once");
+
+    built.store.pushSensorPatch("test-sensor-1", { smokeStatus: makeSmokeStatus({ cleanSmokeSensor: true, endOfLife: true }) });
+
+    await settle();
+
+    assert.equal(logCount(built.logEntries, "warn", "The smoke sensor is reporting a fault: end of life, needs cleaning."), 1,
+      "a second fault arriving while already faulted warns again, both reasons in table order");
+    assert.equal(carbonMonoxide.getCharacteristic(Characteristic.StatusFault).value, true, "end of life faults the carbon monoxide service too");
+    assert.equal(logCount(built.logEntries, "warn", "The carbon monoxide sensor is reporting a fault: end of life."), 1, "which warns under its own subject");
+
+    built.store.pushSensorPatch("test-sensor-1", { batteryStatus: { isLow: false, modelKey: "sensorBatteryStatus", percentage: 99 } });
+
+    await settle();
+
+    assert.equal(logCount(built.logEntries, "warn", "The smoke sensor is reporting a fault:"), 2, "a pass that changed no fault flag warned nothing more");
+
+    built.store.pushSensorPatch("test-sensor-1", { smokeStatus: makeSmokeStatus() });
+
+    await settle();
+
+    assert.equal(smoke.getCharacteristic(Characteristic.StatusFault).value, false, "clearing every flag cleared the smoke fault");
+    assert.equal(logCount(built.logEntries, "info", "The smoke sensor is no longer reporting a fault."), 1, "the all-clear was said once, at info rather than warn");
+    assert.equal(logCount(built.logEntries, "info", "The carbon monoxide sensor is no longer reporting a fault."), 1, "and once for the carbon monoxide sensor");
+
+    built.sensor.cleanup();
+
+    // Each sensor's own fault stays its own: the carbon monoxide sensor fault never reaches the smoke service.
+    const coFault = buildSensor({ alarmTypes: [ "smoke", "CO" ], smokeStatus: makeSmokeStatus({ coSensorFault: true }), type: "USL-Smoke-US" });
+
+    await settle();
+
+    assert.equal(coFault.accessory.getService(Service.SmokeSensor)?.getCharacteristic(Characteristic.StatusFault).value, false,
+      "the carbon monoxide sensor's own fault leaves the smoke service clear");
+    assert.equal(coFault.accessory.getService(Service.CarbonMonoxideSensor)?.getCharacteristic(Characteristic.StatusFault).value, true,
+      "while faulting its own service");
+    assert.equal(logCount(coFault.logEntries, "warn", "The carbon monoxide sensor is reporting a fault: sensor fault."), 1, "under its own noun phrase");
+
+    coFault.sensor.cleanup();
+  });
+
+  test("a detector that stops reporting holds every state, and every read answers that held state back", async () => {
+
+    const built = buildSensor({ alarmTypes: [ "smoke", "CO" ], smokeStatus: makeSmokeStatus({ coSensorFault: true, smokeAlarm: true }), type: "USL-Smoke-US" });
+    const mac = built.projection.config.mac;
+
+    await settle();
+
+    const smoke = built.accessory.getService(Service.SmokeSensor);
+    const carbonMonoxide = built.accessory.getService(Service.CarbonMonoxideSensor);
+
+    assert.ok(smoke, "the SmokeSensor exists");
+    assert.ok(carbonMonoxide, "the CarbonMonoxideSensor exists");
+    assert.equal(logCount(built.logEntries, "info", "Smoke detected."), 1, "the detection was narrated once at construction");
+
+    const publishBaseline = built.mqtt.published.filter((entry) => SMOKE_TOPIC_TAILS.some((tail) => entry.topic === (mac + tail))).length;
+
+    built.store.pushSensorPatch("test-sensor-1", { smokeStatus: null });
+
+    await settle();
+
+    assert.equal(smoke.getCharacteristic(Characteristic.SmokeDetected).value, true, "the detection held through the dropout");
+    assert.equal(carbonMonoxide.getCharacteristic(Characteristic.StatusFault).value, true, "and so did the carbon monoxide fault");
+    assert.equal(logCount(built.logEntries, "info", "Smoke no longer detected."), 0, "the dropout narrated no all-clear the detector never sent");
+    assert.equal(logCount(built.logEntries, "info", "The carbon monoxide sensor is no longer reporting a fault."), 0, "nor any fault all-clear");
+    assert.equal(built.mqtt.published.filter((entry) => SMOKE_TOPIC_TAILS.some((tail) => entry.topic === (mac + tail))).length, publishBaseline,
+      "and published nothing at all from a block nobody gave");
+    assert.equal(await smoke.getCharacteristic(Characteristic.SmokeDetected).triggerGet(), true, "a pull during the dropout answers the held detection");
+    assert.equal(await carbonMonoxide.getCharacteristic(Characteristic.StatusFault).triggerGet(), true, "and a pull answers the held fault");
+    assert.equal(await built.mqtt.invokeGet(mac + "/smoke/get"), "true", "the smoke get answers the held detection");
+    assert.equal(await built.mqtt.invokeGet(mac + "/carbonmonoxide/get"), "false", "the carbon monoxide get answers its own held state, which was never an alarm");
+
+    built.sensor.cleanup();
+
+    /* The half that tells the mechanism apart from an in-process fallback. This process has narrated nothing and holds no bookkeeping at all, so only HomeKit's own
+     * cached value can answer these reads: Homebridge restores both services still reporting and the detector's block is null. A fallback over an in-process field would
+     * answer false here - and hand that false straight back into the cache on the first pull after the restart.
+     */
+    const seeded = makeTestAccessory("Cached Smoke Detector", "uuid:cached-smoke-detector");
+    const cachedSmoke = new Service.SmokeSensor("Cached Smoke");
+    const cachedCarbonMonoxide = new Service.CarbonMonoxideSensor("Cached Carbon Monoxide");
+
+    seeded.addService(cachedSmoke);
+    seeded.addService(cachedCarbonMonoxide);
+    cachedSmoke.updateCharacteristic(Characteristic.SmokeDetected, true);
+    cachedCarbonMonoxide.updateCharacteristic(Characteristic.CarbonMonoxideDetected, true);
+    cachedCarbonMonoxide.updateCharacteristic(Characteristic.StatusFault, true);
+
+    const restored = buildSensor({ alarmTypes: [ "smoke", "CO" ], type: "USL-Smoke-US" }, { accessory: seeded });
+    const restoredMac = restored.projection.config.mac;
+
+    await settle();
+
+    assert.equal(cachedSmoke.getCharacteristic(Characteristic.SmokeDetected).value, true, "the restored smoke detection stands; no all-clear was written over it");
+    assert.equal(cachedCarbonMonoxide.getCharacteristic(Characteristic.CarbonMonoxideDetected).value, true, "the restored carbon monoxide detection stands too");
+    assert.equal(cachedCarbonMonoxide.getCharacteristic(Characteristic.StatusFault).value, true, "as does the restored fault");
+    assert.equal(await cachedSmoke.getCharacteristic(Characteristic.SmokeDetected).triggerGet(), true, "a pull answers the value HomeKit restored, not an all-clear");
+    assert.equal(await cachedCarbonMonoxide.getCharacteristic(Characteristic.CarbonMonoxideDetected).triggerGet(), true,
+      "the carbon monoxide read-through answers the detection HomeKit restored");
+    assert.equal(await cachedCarbonMonoxide.getCharacteristic(Characteristic.StatusFault).triggerGet(), true, "and the fault read-through answers the cached value");
+    assert.equal(logCount(restored.logEntries, "info", "Smoke"), 0, "nothing was narrated about a detector that has said nothing to this process");
+    assert.equal(restored.mqtt.published.some((entry) => SMOKE_TOPIC_TAILS.some((tail) => entry.topic === (restoredMac + tail))), false, "and nothing was published");
+
+    // Answering a get republishes on the parent topic, exactly as the real client does, so the get reads come one step after the no-publish assertion above.
+    assert.equal(await restored.mqtt.invokeGet(restoredMac + "/smoke/get"), "true", "the smoke get answers the cached detection");
+    assert.equal(await restored.mqtt.invokeGet(restoredMac + "/carbonmonoxide/get"), "true", "the carbon monoxide get answers the cached detection");
+
+    restored.sensor.cleanup();
+  });
+
+  test("the smoke bookkeeping clears with the services, so a returning detector re-seeds without a stale all-clear", async () => {
+
+    const built = buildSensor({ alarmTypes: [ "smoke", "CO" ], smokeStatus: makeSmokeStatus({ cleanSmokeSensor: true, smokeAlarm: true, testing: true }),
+      type: "USL-Smoke-US" });
+
+    await settle();
+
+    assert.equal(logCount(built.logEntries, "info", "Smoke detected."), 1, "the detection was narrated once");
+    assert.equal(logCount(built.logEntries, "warn", "The smoke sensor is reporting a fault: needs cleaning."), 1, "the fault was warned once");
+    assert.equal(logCount(built.logEntries, "info", "The smoke detector's self-test has started."), 1, "the running self-test was narrated once");
+
+    built.store.pushSensorPatch("test-sensor-1", { featureFlags: { alarmTypes: [] } });
+
+    await settle();
+
+    assert.equal(built.accessory.getService(Service.SmokeSensor), undefined, "withdrawing the advertisement removed the SmokeSensor");
+    assert.equal(built.accessory.getService(Service.CarbonMonoxideSensor), undefined, "and the CarbonMonoxideSensor");
+
+    built.store.pushSensorPatch("test-sensor-1", { featureFlags: { alarmTypes: [ "smoke", "CO" ] }, smokeStatus: makeSmokeStatus() });
+
+    await settle();
+
+    assert.ok(built.accessory.getService(Service.SmokeSensor), "restoring the advertisement brought the SmokeSensor back");
+    assert.equal(logCount(built.logEntries, "info", "Smoke no longer detected."), 0, "the fresh service seeded silently - stale bookkeeping would announce an all-clear");
+    assert.equal(logCount(built.logEntries, "info", "The smoke sensor is no longer reporting a fault."), 0, "and would announce a stale fault all-clear here");
+    assert.equal(logCount(built.logEntries, "info", "The smoke detector's self-test has ended."), 0, "and a stale end to a self-test nobody saw finish");
+
+    built.sensor.cleanup();
+  });
+
+  test("one alarm type's removal leaves its sibling's bookkeeping standing, while a capability flicker re-seeds a detection already under way", async () => {
+
+    const built = buildSensor({ alarmTypes: [ "smoke", "CO" ], smokeStatus: makeSmokeStatus({ smokeAlarm: true }), type: "USL-Smoke-US" });
+
+    await settle();
+
+    assert.ok(built.accessory.getService(Service.CarbonMonoxideSensor), "the carbon monoxide service exists to begin with");
+    assert.equal(logCount(built.logEntries, "info", "Smoke detected."), 1, "the smoke detection was narrated once");
+
+    built.store.pushSensorPatch("test-sensor-1", { featureFlags: { alarmTypes: ["smoke"] } });
+
+    await settle();
+
+    assert.equal(built.accessory.getService(Service.CarbonMonoxideSensor), undefined, "dropping one alarm type removed that service alone");
+    assert.ok(built.accessory.getService(Service.SmokeSensor), "while its sibling stood");
+
+    built.store.pushSensorPatch("test-sensor-1", { batteryStatus: { isLow: false, modelKey: "sensorBatteryStatus", percentage: 99 } });
+
+    await settle();
+
+    assert.equal(logCount(built.logEntries, "info", "Smoke detected."), 1, "the surviving service's bookkeeping outlived its sibling's removal");
+
+    built.sensor.cleanup();
+
+    /* The flicker, asserted so the count is deliberate rather than incidental: the advertisement goes away and comes back while the SAME alarm is still sounding, and
+     * the recreated service speaks the detection again. That is the family's designed first-run behavior - a fresh service tells the user what the sensor is reporting
+     * right now, exactly as the vape sensor does - rather than an accidental double-narration.
+     */
+    const flicker = buildSensor({ alarmTypes: [ "smoke", "CO" ], smokeStatus: makeSmokeStatus({ smokeAlarm: true }), type: "USL-Smoke-US" });
+
+    await settle();
+
+    assert.equal(logCount(flicker.logEntries, "info", "Smoke detected."), 1, "the alarm under way at construction was narrated once");
+
+    flicker.store.pushSensorPatch("test-sensor-1", { featureFlags: { alarmTypes: [] } });
+
+    await settle();
+
+    flicker.store.pushSensorPatch("test-sensor-1", { featureFlags: { alarmTypes: [ "smoke", "CO" ] } });
+
+    await settle();
+
+    assert.equal(logCount(flicker.logEntries, "info", "Smoke detected."), 2, "the recreated service spoke the ongoing alarm once more, the designed first-run behavior");
+
+    flicker.sensor.cleanup();
+  });
+
+  test("the smokedetector topic carries the curated status and its four timestamps, and the get answers the same payload", async () => {
+
+    // Distinct timestamp values so a payload that mapped one to the wrong key would be caught by value rather than only by key set, and one key the wire type does not
+    // declare, which the open index signature admits and the curated build must drop.
+    const built = buildSensor({ alarmSilencedAt: 1, alarmTypes: [ "smoke", "CO" ], coAlarmTriggeredAt: 2, smokeAlarmTriggeredAt: 3,
+      smokeStatus: makeSmokeStatus({ undocumentedFutureFlag: true }), troubleSilencedAt: 4, type: "USL-Smoke-US" });
+    const mac = built.projection.config.mac;
+
+    await settle();
+
+    const published = built.mqtt.published.find((entry) => entry.topic === (mac + "/smokedetector"));
+
+    assert.ok(published, "the telemetry published on the device-scoped topic");
+
+    const payload = JSON.parse(String(published.payload)) as Record<string, unknown>;
+
+    assert.deepEqual(Object.keys(payload).sort(), [ "alarmSilenced", "alarmSilencedAt", "batteryLow", "batteryVoltage", "cleanSmokeSensor", "coAlarm",
+      "coAlarmTriggeredAt", "coSensorFault", "coValue", "enabled", "endOfLife", "ready", "smokeAlarm", "smokeAlarmTriggeredAt", "smokeSensorFault", "smokeValue",
+      "testing", "troubleHushed", "troubleSilencedAt", "wasMounted" ].sort(), "the payload carries exactly the members we document and nothing else");
+    assert.equal("undocumentedFutureFlag" in payload, false, "a key the wire type does not declare never reaches a subscriber");
+    assert.equal(payload["alarmSilencedAt"], 1, "the alarm-silenced timestamp landed under its own name");
+    assert.equal(payload["coAlarmTriggeredAt"], 2, "the carbon monoxide trip timestamp landed under its own name");
+    assert.equal(payload["smokeAlarmTriggeredAt"], 3, "the smoke trip timestamp landed under its own name");
+    assert.equal(payload["troubleSilencedAt"], 4, "the trouble-silenced timestamp landed under its own name");
+    assert.equal(await built.mqtt.invokeGet(mac + "/smokedetector/get"), published.payload, "the get answers the identical payload the publish carries");
+    assert.equal(await built.mqtt.invokeGet(mac + "/smoke/get"), "false", "the smoke get reads through the held state");
+    assert.equal(await built.mqtt.invokeGet(mac + "/carbonmonoxide/get"), "false", "the carbon monoxide get reads through the held state");
+
+    built.sensor.cleanup();
+  });
+
+  test("the detector's self-test narrates its start and its end, once each", async () => {
+
+    const built = buildSensor({ alarmTypes: ["smoke"], smokeStatus: makeSmokeStatus(), type: "USL-Smoke-US" });
+
+    await settle();
+
+    assert.equal(logCount(built.logEntries, "info", "The smoke detector's self-test has started."), 0, "a detector at rest narrates no self-test");
+
+    // The self-test as the field capture records it: testing flips true and both raw readings move, with every alarm and fault flag untouched.
+    built.store.pushSensorPatch("test-sensor-1", { smokeStatus: makeSmokeStatus({ coValue: 1, smokeValue: 3410, testing: true }) });
+
+    await settle();
+
+    assert.equal(logCount(built.logEntries, "info", "The smoke detector's self-test has started."), 1, "the start was narrated exactly once");
+
+    built.store.pushSensorPatch("test-sensor-1", { smokeStatus: makeSmokeStatus({ coValue: 1, smokeValue: 3400 }) });
+
+    await settle();
+
+    assert.equal(logCount(built.logEntries, "info", "The smoke detector's self-test has ended."), 1, "the end was narrated exactly once");
+
+    built.sensor.cleanup();
+
+    const testing = buildSensor({ alarmTypes: ["smoke"], smokeStatus: makeSmokeStatus({ testing: true }), type: "USL-Smoke-US" });
+
+    await settle();
+
+    assert.equal(logCount(testing.logEntries, "info", "The smoke detector's self-test has started."), 1, "a self-test already running at construction is narrated once");
+
+    testing.sensor.cleanup();
+  });
+
+  test("both smoke services' StatusActive flips false when the detector goes offline on a reconcile", async () => {
+
+    const built = buildSensor({ alarmTypes: [ "smoke", "CO" ], smokeStatus: makeSmokeStatus(), type: "USL-Smoke-US" });
+
+    await settle();
+
+    const smoke = built.accessory.getService(Service.SmokeSensor);
+    const carbonMonoxide = built.accessory.getService(Service.CarbonMonoxideSensor);
+
+    assert.ok(smoke, "the SmokeSensor exists");
+    assert.ok(carbonMonoxide, "the CarbonMonoxideSensor exists");
+    assert.equal(smoke.getCharacteristic(Characteristic.StatusActive).value, true, "the smoke StatusActive starts active (reachable)");
+
+    built.store.pushSensorPatch("test-sensor-1", { state: "DISCONNECTED" });
+
+    await settle();
+
+    assert.equal(smoke.getCharacteristic(Characteristic.StatusActive).value, false, "the offline detector flipped the smoke service's StatusActive");
+    assert.equal(carbonMonoxide.getCharacteristic(Characteristic.StatusActive).value, false, "and the carbon monoxide service's alongside it");
+
+    built.sensor.cleanup();
+  });
+
+  test("StatusFault stays off every service outside the smoke family", () => {
+
+    // The characteristic is written per smoke service and deliberately never through the shared state helper, which every sensor service passes through.
+    const built = buildSensor({ alarmTypes: [ "smoke", "CO" ], smokeStatus: makeSmokeStatus(), temperatureEnabled: true, type: "USL-Smoke-US" });
+    const temperature = built.accessory.getService(Service.TemperatureSensor);
+    const smoke = built.accessory.getService(Service.SmokeSensor);
+
+    assert.ok(temperature, "the TemperatureSensor exists");
+    assert.ok(smoke, "the SmokeSensor exists");
+    assert.equal(temperature.testCharacteristic(Characteristic.StatusFault), false, "no fault characteristic reached a service no fault flag can speak for");
+    assert.equal(smoke.testCharacteristic(Characteristic.StatusFault), true, "while the smoke service carries its own");
+
+    built.sensor.cleanup();
+  });
+
+  test("the sensor fixture reports an explicitly null smoke status, advertises no alarm types, and names no detector model by default", () => {
+
+    const defaults = makeSensorConfig();
+
+    assert.equal(defaults.smokeStatus, null, "a bare fixture reports no status block");
+    assert.equal("smokeStatus" in defaults, true, "written explicitly, so a presence read cannot mistake an absent key for a reported block");
+    assert.equal(defaults.featureFlags.alarmTypes, undefined, "a bare fixture advertises no alarm types, so it is no smoke detector");
+    assert.equal("type" in defaults, false, "a bare fixture carries no type key at all, the shape the controller sends for a unit it does not type");
+    assert.equal(defaults.marketName, "Test Sensor Model", "and a market name no model family claims");
+
+    const detector = makeSensorConfig({ alarmTypes: [ "smoke", "CO" ], smokeStatus: makeSmokeStatus({ smokeAlarm: true }), type: "USL-Smoke-US" });
+
+    assert.deepEqual(detector.featureFlags.alarmTypes, [ "smoke", "CO" ], "the advertisement override lands in featureFlags");
+    assert.equal(detector.smokeStatus?.smokeAlarm, true, "the status override lands on the record");
+    assert.equal(detector.type, "USL-Smoke-US", "the model override lands on the record, which is how a row says it represents detector hardware");
+    assert.deepEqual(Object.keys(makeSmokeStatus()).sort(), [ "alarmSilenced", "batteryLow", "batteryVoltage", "cleanSmokeSensor", "coAlarm", "coSensorFault",
+      "coValue", "enabled", "endOfLife", "ready", "smokeAlarm", "smokeSensorFault", "smokeValue", "testing", "troubleHushed", "wasMounted" ].sort(),
+    "the at-rest block carries every member the wire type declares");
+  });
+
+  test("the shared narration rule seeds silently on a quiet first reading and speaks every genuine change", () => {
+
+    // Over a boolean condition, where quiet is false: the leak, vape, detection, and self-test callers.
+    assert.equal(narratesTransition({ previous: undefined, quiet: false, value: false }), false, "a first reading with nothing happening is saved silently");
+    assert.equal(narratesTransition({ previous: undefined, quiet: false, value: true }), true, "a first reading of a condition already under way is spoken");
+    assert.equal(narratesTransition({ previous: false, quiet: false, value: true }), true, "a genuine change is spoken");
+    assert.equal(narratesTransition({ previous: true, quiet: false, value: true }), false, "an unchanged reading says nothing");
+
+    // Over a fault-reason key, where quiet is the empty string. The last row is the one a boolean could never express: the set of reasons changed while the service
+    // stayed faulted throughout, and that still earns a sentence.
+    assert.equal(narratesTransition({ previous: undefined, quiet: "", value: "" }), false, "a first reading carrying no reasons is saved silently");
+    assert.equal(narratesTransition({ previous: undefined, quiet: "", value: "endOfLife" }), true, "a first reading already carrying a reason is spoken");
+    assert.equal(narratesTransition({ previous: "", quiet: "", value: "endOfLife" }), true, "a reason arriving is spoken");
+    assert.equal(narratesTransition({ previous: "endOfLife", quiet: "", value: "endOfLife" }), false, "an unchanged reason set says nothing");
+    assert.equal(narratesTransition({ previous: "endOfLife", quiet: "", value: "endOfLife,cleanSmokeSensor" }), true,
+      "a reason set that changed while still non-empty is spoken");
+  });
+
+  test("each smoke service narrates its own alarm and says nothing about its sibling", async () => {
+
+    const built = buildSensor({ alarmTypes: [ "smoke", "CO" ], smokeStatus: makeSmokeStatus(), type: "USL-Smoke-US" });
+
+    await settle();
+
+    built.store.pushSensorPatch("test-sensor-1", { smokeStatus: makeSmokeStatus({ smokeAlarm: true }) });
+
+    await settle();
+
+    assert.equal(logCount(built.logEntries, "info", "Smoke detected."), 1, "the smoke detection was narrated once");
+    assert.equal(logCount(built.logEntries, "info", "Carbon monoxide detected."), 0, "and the carbon monoxide sensor said nothing about it");
+
+    built.store.pushSensorPatch("test-sensor-1", { smokeStatus: makeSmokeStatus({ coAlarm: true, smokeAlarm: true }) });
+
+    await settle();
+
+    assert.equal(logCount(built.logEntries, "info", "Carbon monoxide detected."), 1, "the later carbon monoxide detection narrated its own line");
+    assert.equal(logCount(built.logEntries, "info", "Smoke detected."), 1, "while the smoke line stayed at its single edge");
 
     built.sensor.cleanup();
   });

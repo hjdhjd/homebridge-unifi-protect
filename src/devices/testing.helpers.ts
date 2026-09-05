@@ -13,8 +13,8 @@
  */
 import { DISABLED_THRESHOLD_SETTINGS, DISABLED_VAPE_SENSITIVITY, NOT_CAPABLE_AIR_QUALITY } from "./air-quality-policy.ts";
 import type { PlaySpeakerOptions, ProtectAirQualityThresholdSettings, ProtectCameraChannelConfig, ProtectCameraConfig, ProtectChimeConfig, ProtectFobConfig,
-  ProtectLightConfig, ProtectNvrLiveviewConfig, ProtectRelayConfig, ProtectRingtoneConfig, ProtectSensorAirQuality, ProtectSensorConfig, ProtectViewerConfig,
-  Sensor } from "unifi-protect";
+  ProtectLightConfig, ProtectNvrLiveviewConfig, ProtectRelayConfig, ProtectRingtoneConfig, ProtectSensorAirQuality, ProtectSensorConfig, ProtectSensorSmokeStatus,
+  ProtectViewerConfig, Sensor } from "unifi-protect";
 import { FIXTURE_HOST } from "../camera.fixtures.ts";
 import type { Nullable } from "homebridge-plugin-utils";
 import { ProtectDevice } from "./device.ts";
@@ -236,6 +236,24 @@ export function makeViewerConfig(options: { id?: string; liveview?: Nullable<str
 }
 
 /**
+ * Build the status block a UniFi Protect smoke detector reports, at rest: every alarm and fault clear, both raw readings at zero, the unit enabled, ready, and mounted.
+ * This is the shape the field capture shows a healthy detector sending, so a case that wants an alarm, a fault, or a self-test names only the members it moves.
+ *
+ * The controller sends the block WHOLE on every patch, so a case pushes the full result of this builder rather than a partial - which is also why the overrides are
+ * spread over a complete block rather than folded into a sparse one. An override may carry a key the interface does not declare: the wire type's open index signature
+ * admits it, and that is how a case proves the telemetry payload is built member by member rather than spread from the record.
+ *
+ * @param overrides - The block members to move off their at-rest values, keyed by member name.
+ *
+ * @returns a complete smoke status block the smoke-detector configure and telemetry paths read as real.
+ */
+export function makeSmokeStatus(overrides: Partial<ProtectSensorSmokeStatus> = {}): ProtectSensorSmokeStatus {
+
+  return { alarmSilenced: false, batteryLow: false, batteryVoltage: 0, cleanSmokeSensor: false, coAlarm: false, coSensorFault: false, coValue: 0, enabled: true,
+    endOfLife: false, ready: true, smokeAlarm: false, smokeSensorFault: false, smokeValue: 0, testing: false, troubleHushed: false, wasMounted: true, ...overrides };
+}
+
+/**
  * Build a minimal-but-real sensor config record, mirroring makeCameraConfig's wide-read-set discipline: every field the ProtectSensor construction, the base
  * device-capability paths (motion / occupancy / status-LED), and the later sensor-family configure paths actually read is populated for real, and the record is cast
  * once to the full wire type. A bare makeSensorConfig() is an all-quiet sensor - every *Settings.isEnabled is false, the LED indicator is off, the mount type is "none",
@@ -243,22 +261,27 @@ export function makeViewerConfig(options: { id?: string; liveview?: Nullable<str
  * hardware sends - and isMotionDetected defaults to TRUE so the Motion.* feature options satisfy their hasProperty
  * applicability gate (which makes the option visible to FeatureOptions; it is NOT the runtime service gate - that is the Enable.Motion.* userOptions string, since every
  * Motion.* option defaults to false). This is the ONE carrier the base-capability concern tests ride on AND the sensor-family fixture, so it is the single source for
- * the sensor shape - there is no second "base config" builder. type is omitted exactly as makeLightConfig omits it: marketName wins the model-name derivation, so the
- * construction path stays type-honest without it. hardwareRevision is OPT-IN with no default (stays absent), mirroring makeNvrConfig: a bare call omits the key so
- * ProtectBase.setInfo's HardwareRevision length-guard short-circuits, while passing a value lands it so the device-info HardwareRevision write nets non-vacuously. The
- * air-quality stats sub-objects are ProtectAirQualityMetricInterface ({ status, value }) shapes built only for the metrics a test supplies; the lone confined cast to
- * ProtectSensorConfig carries the whole record's type honesty (the ProtectThresholdSettings and ProtectAirQualityMetricInterface shapes are populated faithfully behind
- * it rather than imported separately).
+ * the sensor shape - there is no second "base config" builder. type is absent unless a test supplies one, exactly as makeLightConfig omits it: marketName wins the
+ * model-name derivation either way, so the construction path stays type-honest without it, while a supplied type serves the smoke leaf's model-family read.
+ * hardwareRevision is OPT-IN with no default (stays absent), mirroring makeNvrConfig: a bare call omits the key so ProtectBase.setInfo's HardwareRevision length-guard
+ * short-circuits, while passing a value lands it so the device-info HardwareRevision write nets non-vacuously. The air-quality stats sub-objects are
+ * ProtectAirQualityMetricInterface ({ status, value }) shapes built only for the metrics a test supplies; the lone confined cast to ProtectSensorConfig carries the
+ * whole record's type honesty (the ProtectThresholdSettings and ProtectAirQualityMetricInterface shapes are populated faithfully behind it rather than imported
+ * separately).
  *
  * Two levels of the record carry same-named settings members with DIFFERENT shapes, and they must never be cross-wired: the record's TOP-LEVEL humiditySettings /
  * temperatureSettings are the margin-bearing environmental thresholds the humidity and temperature services read, while airQualitySettings nests its own
  * humiditySettings / temperatureSettings in the nullable, margin-less air-quality threshold shape. Each level is built by its own helper for exactly that reason.
  *
  * @param options - airQuality: per-metric readings folded over the not-capable defaults, keyed by metric name (defaults to none, every metric quiet); alarmEnabled: the
- *                  alarm settings toggle (defaults false); alarmTriggeredAt: the alarm-trip timestamp (defaults null); ambientLight: the ambient light
- *                  reading folded into stats.light.value (omitted, no light stat); batteryLow / batteryPercentage: the battery status (default false / 100);
+ *                  alarm settings toggle (defaults false); alarmSilencedAt: the alarm-silenced timestamp the smoke telemetry carries (defaults null);
+ *                  alarmTriggeredAt: the alarm-trip timestamp (defaults null); alarmTypes: the alarm types the controller advertises in featureFlags.alarmTypes, which
+ *                  the smoke leaf honors only on detector hardware (see marketName / type) - folded in ONLY when supplied, so a bare fixture is no smoke detector;
+ *                  ambientLight: the ambient light reading folded into stats.light.value (omitted, no light stat); batteryLow / batteryPercentage: the battery status
+ *                  (default false / 100);
  *                  co2Enabled: the carbon dioxide alert toggle folded into airQualitySettings.co2Settings.isEnabled (defaults false); co2Threshold: the carbon dioxide
- *                  alert level folded into airQualitySettings.co2Settings.highThreshold (defaults null, nothing configured);
+ *                  alert level folded into airQualitySettings.co2Settings.highThreshold (defaults null, nothing configured); coAlarmTriggeredAt: the carbon monoxide
+ *                  trip timestamp the smoke telemetry carries (defaults null);
  *                  externalLeakDetectedAt: the external-leak timestamp the leak path index-reads (defaults null); glassBreak: whether the controller advertises the
  *                  glass-break capability channel in featureFlags.glassBreak - the flag the alarm-family glass-break gate reads (defaults false, channel
  *                  absent); glassBreakEnabled: the glass-break settings toggle folded into glassBreakSettings.isEnabled (defaults false); hardwareRevision: the hardware
@@ -269,21 +292,30 @@ export function makeViewerConfig(options: { id?: string; liveview?: Nullable<str
  *                  featureFlags.waterLeak.channelNames - the flag the leak-policy leaf reads (defaults [], no leak capability); leakDetectedAt: the
  *                  internal-leak timestamp (defaults null); leakExternalEnabled / leakInternalEnabled: the leak settings toggles (default false); ledEnabled: the
  *                  status-indicator LED toggle (defaults false); lightEnabled: the light settings toggle (defaults false); mac: identity override (defaults a
- *                  sensor-distinct value); motionDetectedAt: the motion timestamp the sensor motion observer gates on (defaults 0); motionEnabled: the motion settings
- *                  toggle (defaults false); mountType: the sensor mount type (defaults "none"); name: display name (defaults "Test Sensor"); tamperingDetectedAt: the
+ *                  sensor-distinct value); marketName: the controller's display model, which wins the model-name derivation and which the smoke leaf's model-family
+ *                  read matches exactly (defaults "Test Sensor Model"); motionDetectedAt: the motion timestamp the sensor motion observer gates on (defaults 0);
+ *                  motionEnabled: the motion settings toggle (defaults false); mountType: the sensor mount type (defaults "none"); name: display name (defaults
+ *                  "Test Sensor"); smokeAlarmTriggeredAt: the
+ *                  smoke-trip timestamp the smoke telemetry carries (defaults null); smokeStatus: the detector's status block, written EXPLICITLY as null when omitted
+ *                  so a presence read never mistakes an absent key for a reported block (defaults null); tamperingDetectedAt: the
  *                  tamper timestamp (defaults null); temperature: the temperature reading folded into stats.temperature.value (omitted, no temperature stat);
- *                  temperatureEnabled: the temperature settings toggle (defaults false); vapeEnabled: the controller's own vape detection toggle folded into
- *                  airQualitySettings.vapeSensitivitySettings.isEnabled (defaults false).
+ *                  temperatureEnabled: the temperature settings toggle (defaults false); troubleSilencedAt: the trouble-silenced timestamp the smoke telemetry carries
+ *                  (defaults null); type: the family type the smoke leaf's model-family read matches by prefix (OPT-IN, omitted by default so a bare fixture carries no
+ *                  type key at all); vapeEnabled: the controller's own vape detection toggle folded into airQualitySettings.vapeSensitivitySettings.isEnabled (defaults
+ *                  false).
  *
  * @returns a sensor config record the construction, base-capability, and sensor-family paths read as real.
  */
-export function makeSensorConfig(options: { airQuality?: Partial<ProtectSensorAirQuality>; alarmEnabled?: boolean; alarmTriggeredAt?: Nullable<number>;
+export function makeSensorConfig(options: { airQuality?: Partial<ProtectSensorAirQuality>; alarmEnabled?: boolean; alarmSilencedAt?: Nullable<number>;
+  alarmTriggeredAt?: Nullable<number>; alarmTypes?: string[];
   ambientLight?: number; batteryLow?: boolean; batteryPercentage?: Nullable<number>; co2Enabled?: boolean; co2Threshold?: Nullable<number>;
+  coAlarmTriggeredAt?: Nullable<number>;
   externalLeakDetectedAt?: Nullable<number>; glassBreak?: boolean; glassBreakEnabled?: boolean; hardwareRevision?: string;
   humidity?: number; humidityEnabled?: boolean; id?: string; isConnected?: boolean; isMotionDetected?: boolean; isOpened?: Nullable<boolean>; leakChannelNames?: string[];
   leakDetectedAt?: Nullable<number>; leakExternalEnabled?: boolean; leakInternalEnabled?: boolean; ledEnabled?: boolean; lightEnabled?: boolean; mac?: string;
-  motionDetectedAt?: number; motionEnabled?: boolean; mountType?: string;
-  name?: string; tamperingDetectedAt?: Nullable<number>; temperature?: number; temperatureEnabled?: boolean; vapeEnabled?: boolean; } = {}): ProtectSensorConfig {
+  marketName?: string; motionDetectedAt?: number; motionEnabled?: boolean; mountType?: string;
+  name?: string; smokeAlarmTriggeredAt?: Nullable<number>; smokeStatus?: Nullable<ProtectSensorSmokeStatus>; tamperingDetectedAt?: Nullable<number>;
+  temperature?: number; temperatureEnabled?: boolean; troubleSilencedAt?: Nullable<number>; type?: string; vapeEnabled?: boolean; } = {}): ProtectSensorConfig {
 
   const name = options.name ?? "Test Sensor";
 
@@ -350,15 +382,22 @@ export function makeSensorConfig(options: { airQuality?: Partial<ProtectSensorAi
       vocSettings: airQualityThreshold()
     },
     alarmSettings: { isEnabled: options.alarmEnabled ?? false },
+    alarmSilencedAt: options.alarmSilencedAt ?? null,
     alarmTriggeredAt: options.alarmTriggeredAt ?? null,
     batteryStatus: { isLow: options.batteryLow ?? false, percentage: options.batteryPercentage ?? 100 },
+    coAlarmTriggeredAt: options.coAlarmTriggeredAt ?? null,
     displayName: name,
     externalLeakDetectedAt: options.externalLeakDetectedAt ?? null,
 
-    // The minimal sensor featureFlags the leak-policy leaf and the alarm-family gate read: the water-leak capability the controller advertises (keyed by channelNames,
-    // defaulting to [] so the all-quiet carrier exposes no leak service and registers no leak MQTT get), plus the glass-break channel folded in ONLY when a test opts in,
-    // so the alarm-family glass-break gate (featureFlags.glassBreak !== undefined) stays absent by default and present-with-capability on demand.
+    // The minimal sensor featureFlags the leak-policy leaf, the alarm-family gate, and the smoke-policy leaf read: the water-leak capability the controller advertises
+    // (keyed by channelNames, defaulting to [] so the all-quiet carrier exposes no leak service and registers no leak MQTT get), plus the glass-break channel and the
+    // advertised alarm types, each folded in ONLY when a test opts in, so the alarm-family glass-break gate (featureFlags.glassBreak !== undefined) and the smoke gate's
+    // advertisement half (the alarm type appearing in featureFlags.alarmTypes) both stay absent by default and present-with-capability on demand. The smoke gate's other
+    // half is detector hardware, which the marketName / type model options carry rather than featureFlags, because no flag anywhere distinguishes a detector from a unit
+    // that merely listens for its alarm sounds. The water-leak key is always emitted, so a genuinely empty featureFlags object - the shape UP Air Quality hardware
+    // sends - is not a fixture this builder produces; the smoke leaf's own truth table covers that input directly.
     featureFlags: { waterLeak: { channelCount: (options.leakChannelNames ?? []).length, channelNames: options.leakChannelNames ?? [] },
+      ...(options.alarmTypes ? { alarmTypes: options.alarmTypes } : {}),
       ...(options.glassBreak ? { glassBreak: { channelCount: 1 } } : {}) },
     firmwareVersion: "5.0.0",
 
@@ -376,21 +415,29 @@ export function makeSensorConfig(options: { airQuality?: Partial<ProtectSensorAi
     ledSettings: { isEnabled: options.ledEnabled ?? false },
     lightSettings: thresholdSettings(options.lightEnabled ?? false),
     mac: options.mac ?? "74ACB9000401",
-    marketName: "Test Sensor Model",
+    marketName: options.marketName ?? "Test Sensor Model",
     modelKey: "sensor",
     motionDetectedAt: options.motionDetectedAt ?? 0,
     motionSettings: { isEnabled: options.motionEnabled ?? false, sensitivity: 0 },
     mountType: options.mountType ?? "none",
     name: name,
+    smokeAlarmTriggeredAt: options.smokeAlarmTriggeredAt ?? null,
+
+    // Written EXPLICITLY as null rather than left off the record, because the smoke paths read the block's PRESENCE: an absent key and a reported block are the same
+    // shape to a truthiness read, so the quiet default has to be a real null a detector-less sensor genuinely sends.
+    smokeStatus: options.smokeStatus ?? null,
     state: "CONNECTED",
     tamperingDetectedAt: options.tamperingDetectedAt ?? null,
     temperatureSettings: thresholdSettings(options.temperatureEnabled ?? false),
+    troubleSilencedAt: options.troubleSilencedAt ?? null,
     ...(Object.keys(stats).length ? { stats } : {}),
 
     // OPT-IN only, mirroring makeNvrConfig's hardwareRevision exactly: when the caller passes a value the device-info HardwareRevision write nets it on the record;
     // otherwise the field stays absent so ProtectBase.setInfo's length-guard short-circuits. The conditional spread keeps the key absent rather than
-    // present-as-undefined, so an `in` check sees the same shape as when the option is omitted.
-    ...(options.hardwareRevision !== undefined ? { hardwareRevision: options.hardwareRevision } : {})
+    // present-as-undefined, so an `in` check sees the same shape as when the option is omitted. type follows the same idiom for the same reason: the controller omits
+    // it on some units, so a bare fixture has to reproduce a record that genuinely carries no type key for the smoke leaf's model-family read to be exercised honestly.
+    ...(options.hardwareRevision !== undefined ? { hardwareRevision: options.hardwareRevision } : {}),
+    ...(options.type !== undefined ? { type: options.type } : {})
   };
 
   return populated as unknown as ProtectSensorConfig;

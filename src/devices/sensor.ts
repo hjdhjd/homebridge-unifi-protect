@@ -2,13 +2,17 @@
  *
  * sensor.ts: Sensor device class for UniFi Protect.
  */
-import type { Characteristic, Service, WithUUID } from "homebridge";
+import type { AcquireServiceTarget, MqttTopicEntry, Nullable } from "homebridge-plugin-utils";
+import type { Characteristic, HAP, Service, WithUUID } from "homebridge";
 import { DISABLED_THRESHOLD_SETTINGS, DISABLED_VAPE_SENSITIVITY, NOT_CAPABLE_AIR_QUALITY, NO_READING, airQualityLevel, airQualityMetricLive,
   airQualityMetricReported, airQualityReporting, airQualitySensorCapable, co2AlertDetected, environmentalReading, environmentalServiceGate,
   vapeDetected } from "./air-quality-policy.ts";
-import type { MqttTopicEntry, Nullable } from "homebridge-plugin-utils";
 import type { ProtectAccessory, WithoutIdentity } from "../types.ts";
-import type { ProtectAirQualityMetric, ProtectAirQualityThresholdSettings, ProtectSensorAirQuality, ProtectSensorConfig, Sensor } from "unifi-protect";
+import type { ProtectAirQualityMetric, ProtectAirQualityThresholdSettings, ProtectSensorAirQuality, ProtectSensorConfig, ProtectSensorSmokeStatus,
+  Sensor } from "unifi-protect";
+import { SMOKE_ALARM_TYPES, carbonMonoxideDetected, carbonMonoxideFault, carbonMonoxideFaultReasons, smokeAlarmCapable, smokeDetected, smokeDetectorHardware,
+  smokeFault, smokeFaultReasons } from "./smoke-policy.ts";
+import type { SmokeAlarmType, SmokeFaultReason } from "./smoke-policy.ts";
 import { capabilityGate, mqttGetTopic } from "homebridge-plugin-utils";
 import type { LeakChannelContext } from "./leak-policy.ts";
 import { ProtectDevice } from "./device.ts";
@@ -48,6 +52,27 @@ export function sensorAlarmState(alarmTriggeredAt: number | null): boolean {
   return alarmTriggeredAt !== null;
 }
 
+/**
+ * Decide whether a condition's current reading is worth a sentence, given the last reading we narrated for it.
+ *
+ * The rule every transition-logged condition on this accessory shares, in one place: on the FIRST reading of a service's lifetime we save the state silently when
+ * nothing is happening and speak up when the condition is already under way - a user restarting Homebridge mid-detection should be told what the sensor is reporting -
+ * and after that only a genuine change earns a line. The leak sensor, the vape sensor, and each of the smoke detector's narrated conditions read through here, so none
+ * of them can drift into re-announcing a state on every reconcile (a busy sensor can see one every second or two in the field).
+ *
+ * Generic over the reading's type so a boolean condition (quiet false) and a fault-reason key (quiet the empty string) share one rule rather than a copy apiece. An
+ * options object rather than positional arguments because a swapped pair of same-typed members would compile silently.
+ *
+ * @param options - previous: the last reading narrated, or undefined when nothing has been; quiet: the reading that means nothing is happening; value: the current
+ *                  reading.
+ *
+ * @returns true when the reading should be narrated.
+ */
+export function narratesTransition<T>(options: { previous: T | undefined; quiet: T; value: T }): boolean {
+
+  return (options.previous === undefined) ? (options.value !== options.quiet) : (options.value !== options.previous);
+}
+
 // The static description of the alarm family's HomeKit contact sensors - the single source for which alarm-family services exist and their gate, display label, log
 // subject, MQTT catalog entry, name suffix, and reserved subtype. The alarm-family contact sensors read the one alarmTriggeredAt field, so this descriptor is read by the
 // create/gate path (configureAlarmContactSensors), the reactive push (updateAlarmState), and the MQTT gets (configureMqtt), keeping the enabled-sensors log, the
@@ -78,11 +103,56 @@ const SENSOR_ALARM_CONTACTS: readonly AlarmContactDescriptor[] = [
 // homebridge-plugin-utils uses to type its own service-acquisition target. Every real characteristic class satisfies it.
 type CharacteristicClass = WithUUID<typeof Characteristic> & (new () => Characteristic);
 
+// The noun phrases a fault sentence prints for each flag the smoke leaf hands back. Presentation lives here in the device layer because the leaf deals only in typed
+// tags; a phrase is deliberately shared wherever the wire flag behind it would mean nothing to a user, who reads that a sensor is reporting a sensor fault and does not
+// care which flag carried it. This is the same separation the alarm table's label / log pair draws one level up.
+const SMOKE_FAULT_LABELS: Readonly<Record<SmokeFaultReason, string>> = { cleanSmokeSensor: "needs cleaning", coSensorFault: "sensor fault",
+  endOfLife: "end of life", smokeSensorFault: "sensor fault" };
+
+// The static description of the smoke detector's HomeKit sensors - the single source for which smoke-family services exist and their gate, display label, log subject,
+// and MQTT catalog entry. It is read by the configure loop and by the MQTT gets, which keeps the enabled-sensors log, the services actually created, and the topics
+// registered from ever disagreeing. label is the enabled-sensors noun phrase and log is the transition-log subject word - two distinct display strings for two distinct
+// sentences, so both are sourced here, exactly as the alarm table keeps them apart. There is no subtype member: each of these service classes is acquired once on an
+// accessory, so the class itself identifies the service. The service and characteristic classes are resolved through hap at call time because this table is
+// module-scoped while hap is a per-accessory handle.
+interface SmokeAlarmDescriptor {
+
+  readonly alarmType: SmokeAlarmType;
+  readonly characteristic: (hap: HAP) => CharacteristicClass;
+  readonly detected: (status: ProtectSensorSmokeStatus) => boolean;
+  readonly fault: (status: ProtectSensorSmokeStatus) => boolean;
+  readonly faultReasons: (status: ProtectSensorSmokeStatus) => SmokeFaultReason[];
+  readonly label: string;
+  readonly log: string;
+  readonly mqtt: MqttTopicEntry;
+  readonly service: (hap: HAP) => AcquireServiceTarget;
+}
+
+// The smoke-family rows, in label order so their pair reads alphabetically wherever the enabled-sensors line lists them together.
+const SENSOR_SMOKE_ALARMS: readonly SmokeAlarmDescriptor[] = [
+
+  { alarmType: SMOKE_ALARM_TYPES.carbonMonoxide, characteristic: (hap) => hap.Characteristic.CarbonMonoxideDetected, detected: carbonMonoxideDetected,
+    fault: carbonMonoxideFault, faultReasons: carbonMonoxideFaultReasons, label: "carbon monoxide", log: "Carbon monoxide", mqtt: mqttTopics.carbonmonoxide,
+    service: (hap) => hap.Service.CarbonMonoxideSensor },
+  { alarmType: SMOKE_ALARM_TYPES.smoke, characteristic: (hap) => hap.Characteristic.SmokeDetected, detected: smokeDetected, fault: smokeFault,
+    faultReasons: smokeFaultReasons, label: "smoke", log: "Smoke", mqtt: mqttTopics.smoke, service: (hap) => hap.Service.SmokeSensor }
+];
+
+// What we last narrated for one alarm type: the detection state, and the fault sentence's reason key - the typed reasons joined by a comma, the empty string when the
+// service reports nothing wrong. One record per alarm type, so a service's two sentences are cleared together with the service and cannot drift apart.
+interface SmokeNarration {
+
+  detected: boolean;
+  faults: string;
+}
+
 export class ProtectSensor extends ProtectDevice<Sensor> {
 
   private enabledSensors: string[];
   private lastAlarm?: boolean;
   private lastLeak: Record<string, boolean | undefined>;
+  private lastSmoke: Partial<Record<SmokeAlarmType, SmokeNarration>>;
+  private lastSmokeTesting?: boolean;
   private lastVape?: boolean;
 
   // Create an instance.
@@ -92,6 +162,7 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
 
     this.enabledSensors = [];
     this.lastLeak = {};
+    this.lastSmoke = {};
 
     this.configureHints();
     this.configureDevice();
@@ -178,6 +249,10 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
 
       currentEnabledSensors.push("carbon dioxide");
     }
+
+    // Configure the smoke detector's smoke and carbon monoxide sensors. The pair lands here because its first label sorts after carbon dioxide, the family-group
+    // placement the alarm pair set.
+    currentEnabledSensors.push(...this.configureSmokeDetector());
 
     // Configure the contact sensor.
     if(this.configureContactSensor()) {
@@ -608,6 +683,126 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
     return count > 0;
   }
 
+  /* Configure the smoke detector's HomeKit sensors: a SmokeSensor and a CarbonMonoxideSensor, each present only on model-identified detector hardware and only when the
+   * controller advertises that alarm type, each reading the detector's live status block and each carrying its own StatusFault composed from the detector's fault flags.
+   * Neither carries a feature option: both have a direct HomeKit analog, and a smoke or carbon monoxide alarm belongs to HomeKit's life-safety alert class, so whether
+   * the hardware exists is the only question worth asking.
+   *
+   * StatusFault is written here, per service, and deliberately never through the shared state helper: routing it there would hang the characteristic on every sensor
+   * service the accessory carries, including the ones no fault flag can ever speak for. The returned labels feed the enabled-sensors log, so it can never disagree with
+   * the services actually created.
+   */
+  private configureSmokeDetector(): string[] {
+
+    const status = this.smokeStatus;
+    const enabled: string[] = [];
+
+    for(const descriptor of SENSOR_SMOKE_ALARMS) {
+
+      const serviceType = descriptor.service(this.hap);
+
+      // Validate whether we should have this service enabled, on the sensor's model-identified detector hardware and that hardware's own alarm-type advertisement. Both
+      // are stable hardware facts rather than readings that flap, so it is a plain boolean rather than one of the conservative capability gates the measurement-driven
+      // services use.
+      if(!this.validService(serviceType, smokeAlarmCapable(this.smokeAlarmTypes, descriptor.alarmType))) {
+
+        // With no service on the accessory there is no state to hold, so the bookkeeping clears: an alarm type that goes away and later returns re-seeds from its first
+        // live reading rather than narrating a transition against a state nobody has seen since. Cleared by writing undefined, which the record's own value type admits
+        // and every read already treats as nothing-narrated, exactly as the leak bookkeeping beside it does.
+        this.lastSmoke[descriptor.alarmType] = undefined;
+
+        continue;
+      }
+
+      // Acquire the service.
+      const service = this.acquireService(serviceType);
+
+      // Fail gracefully.
+      if(!service) {
+
+        this.log.error("Unable to add " + descriptor.label + " sensor.");
+
+        continue;
+      }
+
+      const characteristic = descriptor.characteristic(this.hap);
+
+      // Retrieve the current alarm and fault states when requested.
+      service.getCharacteristic(characteristic).onGet(() => this.smokeAlarmState(descriptor));
+      service.getCharacteristic(this.hap.Characteristic.StatusFault).onGet(() => this.smokeFaultState(descriptor));
+
+      // The VALUE path writes only from a LIVE block. While the detector has not given us one - a dropout, or a unit that has yet to report - the characteristics keep
+      // whatever they hold, nothing is narrated, and nothing is published, so a gap can never manufacture an all-clear over an alarm the detector really sent.
+      if(status) {
+
+        const detected = this.smokeAlarmState(descriptor);
+        const fault = this.smokeFaultState(descriptor);
+        const reasons = descriptor.faultReasons(status);
+        const faults = reasons.join(",");
+        const previous = this.lastSmoke[descriptor.alarmType];
+
+        if(narratesTransition({ previous: previous?.detected, quiet: false, value: detected })) {
+
+          this.log.info("%s %sdetected.", descriptor.log, detected ? "" : "no longer ");
+        }
+
+        // The fault sentence turns on the REASON SET rather than on the fault boolean, so a detector that picks up a second fault while already faulted says so instead
+        // of staying silent until everything clears.
+        if(narratesTransition({ previous: previous?.faults, quiet: "", value: faults })) {
+
+          if(fault) {
+
+            this.log.warn("The %s sensor is reporting a fault: %s.", descriptor.label, reasons.map((reason) => SMOKE_FAULT_LABELS[reason]).join(", "));
+          } else {
+
+            this.log.info("The %s sensor is no longer reporting a fault.", descriptor.label);
+          }
+        }
+
+        this.lastSmoke[descriptor.alarmType] = { detected, faults };
+
+        // Update the sensor and publish the state.
+        service.updateCharacteristic(characteristic, detected);
+        service.updateCharacteristic(this.hap.Characteristic.StatusFault, fault);
+        this.publish(descriptor.mqtt.topic, detected.toString());
+      }
+
+      // Update the state characteristics.
+      this.configureStateCharacteristics(service);
+
+      enabled.push(descriptor.label);
+    }
+
+    // A sensor that is no detector holds nothing about a self-test, so that bookkeeping clears alongside the per-service records above.
+    if(!this.smokeDetectorCapable) {
+
+      this.lastSmokeTesting = undefined;
+
+      return enabled;
+    }
+
+    // The per-device tail, which speaks for the detector rather than for either service: the self-test narration and the full telemetry topic, both on the same live
+    // block the services read.
+    if(status) {
+
+      if(narratesTransition({ previous: this.lastSmokeTesting, quiet: false, value: status.testing })) {
+
+        this.log.info("The smoke detector's self-test has %s.", status.testing ? "started" : "ended");
+      }
+
+      this.lastSmokeTesting = status.testing;
+
+      const telemetry = this.smokeDetectorTelemetry;
+
+      if(telemetry !== null) {
+
+        this.publish(mqttTopics.smokedetector.topic, telemetry);
+      }
+    }
+
+    return enabled;
+  }
+
   // Configure the temperature sensor for HomeKit.
   private configureTemperatureSensor(): boolean {
 
@@ -675,17 +870,14 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
 
       const detected = this.vapeState;
 
-      // On the first live reading of this service's lifetime we save the state silently when nothing is happening, and speak up when a detection is already underway -
-      // the same first-run shape the leak sensor uses. After that, only genuine changes are worth a sentence.
-      if((this.lastVape === undefined) && !detected) {
-
-        this.lastVape = detected;
-      } else if(detected !== this.lastVape) {
-
-        this.lastVape = detected;
+      // Inform the user on a genuine transition, through the shared narration rule: the first live reading of this service's lifetime is saved silently when nothing is
+      // happening and spoken when a detection is already under way, and after that only a real change is worth a sentence.
+      if(narratesTransition({ previous: this.lastVape, quiet: false, value: detected })) {
 
         this.log.info("Vaping %sdetected.", detected ? "" : "no longer ");
       }
+
+      this.lastVape = detected;
 
       // Update the sensor.
       service.updateCharacteristic(this.hap.Characteristic.ContactSensorState, detected);
@@ -794,6 +986,24 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
     }
   }
 
+  /* Read what HomeKit currently holds for one characteristic, resolving the service by type and, where one is given, by subtype.
+   *
+   * HomeKit's own cached value IS the held state, and this is the single place a read-through reaches for it. hap-nodejs writes a GET handler's answer straight back into
+   * that cached value (Characteristic.handleGetRequest assigns this.value from the handler), so a read-through that answered from an in-process field while a sensor was
+   * quiet would do more than report the wrong thing once: on the first pull after a restart, when this process holds no state of its own, it would overwrite the
+   * detection Homebridge restored from the accessory cache with an all-clear the sensor never sent.
+   *
+   * There is no testCharacteristic probe here, because every caller reads a characteristic its own configure pass has already bound a handler to, or one the service
+   * requires - nothing is ever lazily created by this read. A missing service and a never-written characteristic both answer false, which is what HomeKit itself shows
+   * for a sensor that has said nothing yet.
+   */
+  private heldCharacteristicValue(options: { characteristic: CharacteristicClass; service: WithUUID<typeof Service>; subtype?: string }): boolean {
+
+    const service = options.subtype ? this.accessory.getServiceById(options.service, options.subtype) : this.accessory.getService(options.service);
+
+    return Boolean(service?.getCharacteristic(options.characteristic).value);
+  }
+
   // Configure the additional state characteristics in HomeKit.
   private configureStateCharacteristics(service: Service): boolean {
 
@@ -882,23 +1092,116 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
     // Return true if we are not null, meaning a leak has been detected.
     const value = this.fromRecord((config) => config[type] !== null, false);
 
-    // If it's our first run, just save the state and we're done if we don't have a leak. If we do have a leak, make sure we inform the user.
-    if((this.lastLeak[type] === undefined) && !value) {
-
-      this.lastLeak[type] = value;
-
-      return value;
-    }
-
-    // Save the state change and inform the user.
-    if(value !== this.lastLeak[type]) {
-
-      this.lastLeak[type] = value;
+    // Inform the user on a genuine transition, through the shared narration rule: the first read of a quiet channel is saved silently, a channel already leaking when we
+    // first see it is spoken, and after that only a real change is worth a sentence.
+    if(narratesTransition({ previous: this.lastLeak[type], quiet: false, value })) {
 
       this.log.info("%s %sdetected.", this.hasFeature("Sensor.MoistureSensor") ? "Moisture" : "Leak", value ? "" : "no longer ");
     }
 
+    this.lastLeak[type] = value;
+
     return value;
+  }
+
+  /* The sensor's HomeKit alarm state for one smoke-family service, and the single answer every read path gives. Three steps, in order.
+   *
+   * A sensor whose hardware does not detect this alarm type reports nothing at all. The smoke gets register on every sensor, exactly as the alarm family's do, so a unit
+   * that is no detector yet carries a zeroed status block must never surface that block's raw flags to a subscriber.
+   *
+   * While the detector is reporting a block, the leaf's own predicate over it - the same one the reconcile writes from, so the pull and the push cannot disagree.
+   *
+   * Otherwise, whatever HomeKit already holds. Never an in-process field: a pull arriving during a dropout answers the held state back unchanged, which is what keeps a
+   * restart mid-alarm from turning a cached detection into an all-clear.
+   */
+  private smokeAlarmState(descriptor: SmokeAlarmDescriptor): boolean {
+
+    if(!smokeAlarmCapable(this.smokeAlarmTypes, descriptor.alarmType)) {
+
+      return false;
+    }
+
+    const status = this.smokeStatus;
+
+    if(status) {
+
+      return descriptor.detected(status);
+    }
+
+    return this.heldCharacteristicValue({ characteristic: descriptor.characteristic(this.hap), service: descriptor.service(this.hap) });
+  }
+
+  // The alarm types this sensor's detector hardware advertises: the model family first, because a unit that only listens for alarm sounds advertises the same types for
+  // the sounds it hears, then the controller's own list. Read non-throwing through the record, and an absent record (a sensor lingering in the removal grace) advertises
+  // nothing, so every smoke gate and every read-through reads not-a-detector rather than throwing.
+  private get smokeAlarmTypes(): readonly string[] {
+
+    return this.fromRecord((config) => smokeDetectorHardware(config) ? (config.featureFlags.alarmTypes ?? []) : [], []);
+  }
+
+  // Whether this sensor is a smoke detector at all: its hardware is a detector's and the controller advertises at least one of the alarm types we project. The single
+  // statement of that question, read by the configure method's per-device tail and by the telemetry getter.
+  private get smokeDetectorCapable(): boolean {
+
+    return SENSOR_SMOKE_ALARMS.some((descriptor) => smokeAlarmCapable(this.smokeAlarmTypes, descriptor.alarmType));
+  }
+
+  /* The detector's full telemetry payload: every member of the status block alongside the four latched timestamps the controller keeps beside it, each `null` until its
+   * event first occurs. Built member by member rather than passed through from the record, because the wire shape carries an open index signature and a subscriber's
+   * topic should carry exactly what we document, whatever a future firmware adds beside it - the same discipline the air-quality payload follows. The block and its
+   * timestamps come from a single record read so they can never describe two different moments.
+   *
+   * A sensor that is no detector answers null even when it carries a zeroed block, matching the fact that it publishes nothing on this topic; so does a detector that
+   * has yet to report. The configure method publishes this getter's value and the MQTT get answers it, so the publish and the get carry one payload.
+   */
+  private get smokeDetectorTelemetry(): Nullable<string> {
+
+    if(!this.smokeDetectorCapable) {
+
+      return null;
+    }
+
+    return this.fromRecord((config) => {
+
+      const status = config.smokeStatus;
+
+      if(!status) {
+
+        return null;
+      }
+
+      return JSON.stringify({ alarmSilenced: status.alarmSilenced, alarmSilencedAt: config.alarmSilencedAt, batteryLow: status.batteryLow,
+        batteryVoltage: status.batteryVoltage, cleanSmokeSensor: status.cleanSmokeSensor, coAlarm: status.coAlarm, coAlarmTriggeredAt: config.coAlarmTriggeredAt,
+        coSensorFault: status.coSensorFault, coValue: status.coValue, enabled: status.enabled, endOfLife: status.endOfLife, ready: status.ready,
+        smokeAlarm: status.smokeAlarm, smokeAlarmTriggeredAt: config.smokeAlarmTriggeredAt, smokeSensorFault: status.smokeSensorFault, smokeValue: status.smokeValue,
+        testing: status.testing, troubleHushed: status.troubleHushed, troubleSilencedAt: config.troubleSilencedAt, wasMounted: status.wasMounted });
+    }, null);
+  }
+
+  // The sensor's HomeKit fault state for one smoke-family service, over the same steps smokeAlarmState takes - the capability question first, the leaf's fault
+  // rule while the detector is reporting, and HomeKit's held StatusFault otherwise.
+  private smokeFaultState(descriptor: SmokeAlarmDescriptor): boolean {
+
+    if(!smokeAlarmCapable(this.smokeAlarmTypes, descriptor.alarmType)) {
+
+      return false;
+    }
+
+    const status = this.smokeStatus;
+
+    if(status) {
+
+      return descriptor.fault(status);
+    }
+
+    return this.heldCharacteristicValue({ characteristic: this.hap.Characteristic.StatusFault, service: descriptor.service(this.hap) });
+  }
+
+  // The detector's status block, read non-throwing through the record. An absent record (a sensor lingering in the removal grace) reports no block, which every smoke
+  // path already treats as a detector that has not spoken: nothing is written, narrated, or published, and the read-throughs answer what HomeKit holds.
+  private get smokeStatus(): Nullable<ProtectSensorSmokeStatus> {
+
+    return this.fromRecord((config) => config.smokeStatus, null);
   }
 
   // Get the current temperature reading, from whichever of the two sources this sensor reports through. An absent record - a sensor lingering in the removal grace -
@@ -916,19 +1219,23 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
   }
 
   // The sensor's HomeKit vape state, and the single answer every read path gives. While the metric is live it is the predicate over the current status; while it is not,
-  // it is the last state we saw, defaulting to no detection for a sensor that has never reported. The characteristic's onGet, the MQTT get, and the reconcile's own push
-  // all read through here, so a pull arriving during a dropout can never report an all-clear the sensor did not send.
+  // it is whatever HomeKit already holds on the vape contact. The characteristic's onGet, the MQTT get, and the reconcile's own push all read through here, so a pull
+  // arriving during a dropout can never report an all-clear the sensor did not send - not even the first pull after a restart, when this process holds no state of its
+  // own and Homebridge has restored the contact from the accessory cache. The lastVape field is narration bookkeeping alone and no read path consults it.
   private get vapeState(): boolean {
 
     const vape = this.airQuality.vape;
 
-    return airQualityMetricLive(vape) ? vapeDetected(vape) : (this.lastVape ?? false);
+    return airQualityMetricLive(vape) ? vapeDetected(vape) : this.heldCharacteristicValue({ characteristic: this.hap.Characteristic.ContactSensorState,
+      service: this.hap.Service.ContactSensor, subtype: ProtectReservedNames.CONTACT_SENSOR_VAPE });
   }
 
   // Configure MQTT capabilities for sensors. The leak get handlers are NOT registered here: leak is the one sensor mode whose per-channel enablement is model-aware, so
   // its get registration is folded into configureLeakSensor's per-channel loop (once-guarded, and released by the channel's own unsubscribe when it is disabled). The
-  // remaining GETs are always-on and registered unconditionally here; the alarm-family gets (alarm sound and glass break) are driven from the shared descriptor, so
-  // their topics and labels are single-sourced with the services they read - each reading through the one alarmDetected getter.
+  // remaining GETs are always-on and registered unconditionally here; the alarm-family gets (alarm sound and glass break) and the smoke-family gets (smoke and carbon
+  // monoxide) are each driven from their shared descriptor, so their topics and labels are single-sourced with the services they read - the alarm pair through the one
+  // alarmDetected getter, the smoke pair through smokeAlarmState, which answers false on a sensor that is no detector. The detector's telemetry get always answers too,
+  // with JSON null standing in for a detector that has not reported and for a sensor that has no detector hardware at all.
   private configureMqtt(): void {
 
     for(const descriptor of SENSOR_ALARM_CONTACTS) {
@@ -936,10 +1243,16 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
       this.subscribeGet(descriptor.mqtt.topic, descriptor.mqtt.label, () => this.alarmDetected.toString());
     }
 
+    for(const descriptor of SENSOR_SMOKE_ALARMS) {
+
+      this.subscribeGet(descriptor.mqtt.topic, descriptor.mqtt.label, () => this.smokeAlarmState(descriptor).toString());
+    }
+
     this.subscribeGet(mqttTopics.airquality.topic, mqttTopics.airquality.label, () => this.airQualityPayload);
     this.subscribeGet(mqttTopics.ambientlight.topic, mqttTopics.ambientlight.label, () => this.ambientLight.toString());
     this.subscribeGet(mqttTopics.contact.topic, mqttTopics.contact.label, () => this.contact.toString());
     this.subscribeGet(mqttTopics.humidity.topic, mqttTopics.humidity.label, () => (this.humidity ?? NO_READING).toString());
+    this.subscribeGet(mqttTopics.smokedetector.topic, mqttTopics.smokedetector.label, () => this.smokeDetectorTelemetry ?? "null");
     this.subscribeGet(mqttTopics.temperature.topic, mqttTopics.temperature.label, () => (this.temperature ?? NO_READING).toString());
     this.subscribeGet(mqttTopics.vape.topic, mqttTopics.vape.label, () => this.vapeState.toString());
   }

@@ -250,6 +250,29 @@ class VOCDensityCharacteristicType {
   public readonly hapKind = "VOCDensity" as const;
 }
 
+/* The smoke-detector characteristic kinds, added together because the sensor's smoke and carbon monoxide services reach them as one surface. SmokeDetected and
+ * CarbonMonoxideDetected are each the seed characteristic its own service marker constructs with, and the sensor binds a read-through and pushes a value on each from a
+ * live status block.
+ *
+ * StatusFault joins them here rather than beside StatusActive and StatusTampered because the smoke pair is the only surface that carries it: the sensor writes it per
+ * service from the detector's own fault flags and deliberately never through the shared state helper, so a presence assertion (testCharacteristic) on any other service
+ * is what proves the characteristic stayed off the rest of the accessory.
+ */
+class CarbonMonoxideDetectedCharacteristicType {
+
+  public readonly hapKind = "CarbonMonoxideDetected" as const;
+}
+
+class SmokeDetectedCharacteristicType {
+
+  public readonly hapKind = "SmokeDetected" as const;
+}
+
+class StatusFaultCharacteristicType {
+
+  public readonly hapKind = "StatusFault" as const;
+}
+
 // The brightness characteristic. The doorbell's chime-volume Lightbulb and the camera's night-vision dimmer both bind onGet/onSet handlers and push updates on
 // Brightness, so the kind must be a distinct key for those paths to exercise faithfully.
 class BrightnessCharacteristicType {
@@ -307,7 +330,8 @@ class ServiceLabelNamespaceCharacteristicType {
 // backs the device-motion base-capability net, where configureOccupancySensor first reaches it. BatteryLevel / StatusLowBattery (the battery service updater) and
 // CurrentAmbientLightLevel / CurrentRelativeHumidity / CurrentTemperature / LeakDetected (the sensor's per-mode services) back the sensor-family real-construction
 // net, where ProtectSensor first reaches them, joined there by AirQuality / CarbonDioxideDetected and the presence-driven CarbonDioxideLevel / PM10Density /
-// PM2_5Density / VOCDensity of the air quality and carbon dioxide services. SecuritySystemCurrentState / SecuritySystemTargetState (the security-system state machine,
+// PM2_5Density / VOCDensity of the air quality and carbon dioxide services, and by SmokeDetected / CarbonMonoxideDetected / StatusFault of the smoke detector's own
+// services, where configureSmokeDetector first reaches them. SecuritySystemCurrentState / SecuritySystemTargetState (the security-system state machine,
 // the Current marker also
 // the SecuritySystem service's seed) and HardwareRevision (the security-system's bespoke configureInfo) back the controller-owner net, where ProtectSecuritySystem
 // first reaches them. Expand as the production code reaches for new kinds.
@@ -319,6 +343,7 @@ export const Characteristic = {
   CameraOperatingModeIndicator: CameraOperatingModeIndicatorCharacteristicType,
   CarbonDioxideDetected: CarbonDioxideDetectedCharacteristicType,
   CarbonDioxideLevel: CarbonDioxideLevelCharacteristicType,
+  CarbonMonoxideDetected: CarbonMonoxideDetectedCharacteristicType,
   ConfiguredName: ConfiguredNameCharacteristicType,
   ContactSensorState: ContactSensorStateCharacteristicType,
   CurrentAmbientLightLevel: CurrentAmbientLightLevelCharacteristicType,
@@ -344,7 +369,9 @@ export const Characteristic = {
   SerialNumber: SerialNumberCharacteristicType,
   ServiceLabelIndex: ServiceLabelIndexCharacteristicType,
   ServiceLabelNamespace: ServiceLabelNamespaceCharacteristicType,
+  SmokeDetected: SmokeDetectedCharacteristicType,
   StatusActive: StatusActiveCharacteristicType,
+  StatusFault: StatusFaultCharacteristicType,
   StatusLowBattery: StatusLowBatteryCharacteristicType,
   StatusTampered: StatusTamperedCharacteristicType,
   VOCDensity: VOCDensityCharacteristicType
@@ -703,6 +730,21 @@ class CarbonDioxideSensorServiceType extends TestService {
   }
 }
 
+// The carbon-monoxide kind. Added for the sensor-family smoke net: ProtectSensor.configureSmokeDetector acquires it when the controller advertises the CO alarm type,
+// binds its read-through, and writes the alarm state and StatusFault from a live status block. Seeds its primary CarbonMonoxideDetected characteristic.
+class CarbonMonoxideSensorServiceType extends TestService {
+
+  public static readonly UUID = "CarbonMonoxideSensor";
+  public readonly hapKind = "CarbonMonoxideSensor" as const;
+
+  public constructor(displayName = "", subtype?: string) {
+
+    super(CarbonMonoxideSensorServiceType, displayName, subtype);
+
+    this.getCharacteristic(CarbonMonoxideDetectedCharacteristicType);
+  }
+}
+
 // The contact-sensor kind. Added for the auth-sensor delivery tests: the firehose router's authEventHandler resolves an "Auth"-subtyped ContactSensor service and writes
 // its ContactSensorState on a recognized fingerprint/NFC scan, so an accessory carrying one exercises the real auth trip/reset path; the same kind is also acquired by
 // configureLeakSensor's opt-in moisture-sensor mode (Sensor.MoistureSensor), which the sensor-family leak suite exercises separately.
@@ -872,6 +914,21 @@ class ServiceLabelServiceType extends TestService {
   }
 }
 
+// The smoke kind. Added for the sensor-family smoke net: ProtectSensor.configureSmokeDetector acquires it when the controller advertises the smoke alarm type, binds its
+// read-through, and writes the alarm state and StatusFault from a live status block. Seeds its primary SmokeDetected characteristic.
+class SmokeSensorServiceType extends TestService {
+
+  public static readonly UUID = "SmokeSensor";
+  public readonly hapKind = "SmokeSensor" as const;
+
+  public constructor(displayName = "", subtype?: string) {
+
+    super(SmokeSensorServiceType, displayName, subtype);
+
+    this.getCharacteristic(SmokeDetectedCharacteristicType);
+  }
+}
+
 // The stateless-programmable-switch kind. Added for the fob-family real-construction net: ProtectFob.configureButtons acquires one per button and the event-dispatch
 // router fires its ProgrammableSwitchEvent on a delivered press, so the kind must exist as a distinct key. Seeds its HAP-required ProgrammableSwitchEvent characteristic,
 // which the button delivery fires event notifications on.
@@ -928,6 +985,7 @@ export const Service = {
   Battery: BatteryServiceType,
   CameraOperatingMode: CameraOperatingModeServiceType,
   CarbonDioxideSensor: CarbonDioxideSensorServiceType,
+  CarbonMonoxideSensor: CarbonMonoxideSensorServiceType,
   ContactSensor: ContactSensorServiceType,
   Doorbell: DoorbellServiceType,
   HumiditySensor: HumiditySensorServiceType,
@@ -939,6 +997,7 @@ export const Service = {
   OccupancySensor: OccupancySensorServiceType,
   SecuritySystem: SecuritySystemServiceType,
   ServiceLabel: ServiceLabelServiceType,
+  SmokeSensor: SmokeSensorServiceType,
   StatelessProgrammableSwitch: StatelessProgrammableSwitchServiceType,
   Switch: SwitchServiceType,
   TemperatureSensor: TemperatureSensorServiceType
