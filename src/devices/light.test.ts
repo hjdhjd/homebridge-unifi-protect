@@ -19,15 +19,14 @@
  * slice keys, the light's per-slice observer count, and the leaf-specific reactions are light-particular.
  */
 import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../testing.helpers.ts";
+import type { Light, ProtectLightConfig } from "unifi-protect";
 import { TestLightProjection, makeLightConfig } from "./testing.helpers.ts";
 import { TestRecordingDispatch, makeTestNvr } from "../nvr/testing.helpers.ts";
 import { after, afterEach, before, beforeEach, describe, mock, test } from "node:test";
-import type { Light } from "unifi-protect";
 import type { ObserverWakePayload } from "../diagnostics.ts";
 import type { ProtectAccessory } from "../types.ts";
 import type { ProtectEventDispatch } from "../nvr/event-dispatch.ts";
 import { ProtectLight } from "./light.ts";
-import type { ProtectLightConfig } from "unifi-protect";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
 import type { TestAccessory } from "../testing.helpers.ts";

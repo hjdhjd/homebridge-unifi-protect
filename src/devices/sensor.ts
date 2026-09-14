@@ -199,23 +199,13 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
   }
 
   // Configure the battery service for HomeKit.
-  private configureBatteryService(): boolean {
+  private configureBatteryService(): void {
 
     // Acquire the service.
-    const service = this.acquireService(this.hap.Service.Battery);
-
-    // Fail gracefully.
-    if(!service) {
-
-      this.log.error("Unable to add the battery service.");
-
-      return false;
-    }
+    this.acquireService(this.hap.Service.Battery);
 
     // Initialize the battery state.
     this.updateBatteryStatus();
-
-    return true;
   }
 
   // Update accessory services and characteristics.
@@ -356,14 +346,6 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
     // Acquire the service.
     const service = this.acquireService(this.hap.Service.AirQualitySensor);
 
-    // Fail gracefully.
-    if(!service) {
-
-      this.log.error("Unable to add air quality sensor.");
-
-      return false;
-    }
-
     // Retrieve the current air quality when requested.
     service.getCharacteristic(this.hap.Characteristic.AirQuality).onGet(() => airQualityLevel(this.airQuality.aqi));
 
@@ -406,14 +388,6 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
       const created = !this.accessory.getServiceById(this.hap.Service.ContactSensor, descriptor.subtype);
       const service = this.acquireService(this.hap.Service.ContactSensor, this.accessoryName + descriptor.name, descriptor.subtype);
 
-      // Fail gracefully.
-      if(!service) {
-
-        this.log.error("Unable to add " + descriptor.label + " contact sensor.");
-
-        continue;
-      }
-
       // Apply the connection and tamper status characteristics every reconcile, exactly like every other sensor service: this unconditional call is the sole per-device
       // StatusActive driver when a device goes offline while the controller stays healthy. It does not touch ContactSensorState, so the alarm VALUE is not re-pushed.
       this.configureStateCharacteristics(service);
@@ -454,14 +428,6 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
     // Acquire the service.
     const service = this.acquireService(this.hap.Service.LightSensor);
 
-    // Fail gracefully.
-    if(!service) {
-
-      this.log.error("Unable to add ambient light sensor.");
-
-      return false;
-    }
-
     // Retrieve the current light level when requested.
     service.getCharacteristic(this.hap.Characteristic.CurrentAmbientLightLevel).onGet(() => {
 
@@ -498,14 +464,6 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
     // Acquire the service.
     const service = this.acquireService(this.hap.Service.CarbonDioxideSensor);
 
-    // Fail gracefully.
-    if(!service) {
-
-      this.log.error("Unable to add carbon dioxide sensor.");
-
-      return false;
-    }
-
     // Retrieve the current carbon dioxide alert state when requested.
     service.getCharacteristic(this.hap.Characteristic.CarbonDioxideDetected).onGet(() => co2AlertDetected(this.airQuality.co2, this.co2Settings));
 
@@ -533,14 +491,6 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
 
     // Acquire the service.
     const service = this.acquireService(this.hap.Service.ContactSensor, undefined, ProtectReservedNames.CONTACT_SENSOR);
-
-    // Fail gracefully.
-    if(!service) {
-
-      this.log.error("Unable to add contact sensor.");
-
-      return false;
-    }
 
     // Retrieve the current contact sensor state when requested.
     service.getCharacteristic(this.hap.Characteristic.ContactSensorState).onGet(() => this.contact);
@@ -571,14 +521,6 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
     // Acquire the service.
     const service = this.acquireService(this.hap.Service.HumiditySensor);
 
-    // Fail gracefully.
-    if(!service) {
-
-      this.log.error("Unable to add humidity sensor.");
-
-      return false;
-    }
-
     // Wire the read-through, write the current reading, and publish it.
     this.updateEnvironmentalCharacteristic({ characteristic: this.hap.Characteristic.CurrentRelativeHumidity, read: () => this.humidity, service,
       topic: mqttTopics.humidity.topic });
@@ -603,7 +545,6 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
     const isMoistureSensor = this.hasFeature("Sensor.MoistureSensor");
     const characteristic = isMoistureSensor ? this.hap.Characteristic.ContactSensorState : this.hap.Characteristic.LeakDetected;
     const removeServiceType = isMoistureSensor ? this.hap.Service.LeakSensor : this.hap.Service.ContactSensor;
-    const sensorType = isMoistureSensor ? "contact sensor" : "leak sensor";
     const serviceType = isMoistureSensor ? this.hap.Service.ContactSensor : this.hap.Service.LeakSensor;
 
     // The single source of truth for which channels are enabled, read once per reconcile so the gate, the publish, and the MQTT registration all agree.
@@ -649,14 +590,6 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
 
       // Acquire the service.
       const service = this.acquireService(serviceType, this.accessoryName + (sensor.name ?? ""), sensor.subtype);
-
-      // Fail gracefully.
-      if(!service) {
-
-        this.log.error("Unable to add " + sensorType + ".");
-
-        continue;
-      }
 
       // Retrieve the current sensor state when requested.
       service.getCharacteristic(characteristic).onGet(() => this.leakDetected(sensor.isDetected));
@@ -721,14 +654,6 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
 
       // Acquire the service.
       const service = this.acquireService(serviceType);
-
-      // Fail gracefully.
-      if(!service) {
-
-        this.log.error("Unable to add " + descriptor.label + " sensor.");
-
-        continue;
-      }
 
       const characteristic = descriptor.characteristic(this.hap);
 
@@ -822,14 +747,6 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
     // Acquire the service.
     const service = this.acquireService(this.hap.Service.TemperatureSensor);
 
-    // Fail gracefully.
-    if(!service) {
-
-      this.log.error("Unable to add temperature sensor.");
-
-      return false;
-    }
-
     // Wire the read-through, write the current reading, and publish it.
     this.updateEnvironmentalCharacteristic({ characteristic: this.hap.Characteristic.CurrentTemperature, read: () => this.temperature, service,
       topic: mqttTopics.temperature.topic });
@@ -857,14 +774,6 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
 
     // Acquire the service.
     const service = this.acquireService(this.hap.Service.ContactSensor, this.accessoryName + " Vape", ProtectReservedNames.CONTACT_SENSOR_VAPE);
-
-    // Fail gracefully.
-    if(!service) {
-
-      this.log.error("Unable to add vape contact sensor.");
-
-      return false;
-    }
 
     // Retrieve the current vape state when requested.
     service.getCharacteristic(this.hap.Characteristic.ContactSensorState).onGet(() => this.vapeState);

@@ -28,13 +28,12 @@
  * CurrentTemperature.value === NEW after pushNvrPatch moves a FRESH systemInfo by reference, never triggerGet.
  */
 import { Characteristic, Service, TestStateStore, makeProtectState, settle } from "../testing.helpers.ts";
+import type { TestLogEntry, TestMqttClient } from "homebridge-plugin-utils/testing";
 import { afterEach, describe, test } from "node:test";
 import { makeNvrConfig, makeTestNvr } from "./testing.helpers.ts";
 import type { ProtectNvr } from "./nvr.ts";
 import { ProtectNvrSystemInfo } from "./nvr-systeminfo.ts";
 import type { TestAccessory } from "../testing.helpers.ts";
-import type { TestLogEntry } from "homebridge-plugin-utils/testing";
-import type { TestMqttClient } from "homebridge-plugin-utils/testing";
 import type { TestProtectNvr } from "./testing.helpers.ts";
 import assert from "node:assert/strict";
 import { loggedAt } from "homebridge-plugin-utils/testing";

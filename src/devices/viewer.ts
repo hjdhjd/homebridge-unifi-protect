@@ -155,7 +155,7 @@ export class ProtectViewer extends ProtectDevice<Viewer> {
   }
 
   // Add liveview switches to HomeKit for viewer devices.
-  private addLiveviewSwitch(newLiveviewIds: string[]): boolean {
+  private addLiveviewSwitch(newLiveviewIds: string[]): void {
 
     // Loop through the list of liveview identifiers and add them to HomeKit as switches.
     for(const liveviewId of newLiveviewIds) {
@@ -172,18 +172,8 @@ export class ProtectViewer extends ProtectDevice<Viewer> {
       // Acquire the service.
       const service = this.acquireService(this.hap.Service.Switch, liveviewName, liveviewId);
 
-      // Fail gracefully.
-      if(!service) {
-
-        this.log.error("Unable to add liveview switch: %s.", liveviewName);
-
-        return false;
-      }
-
       this.configureLiveviewSwitch(service);
     }
-
-    return true;
   }
 
   // Set the liveview on a viewer device in UniFi Protect. Returns true when the controller accepted the command. The action phrase is supplied by the caller so the

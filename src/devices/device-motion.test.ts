@@ -24,6 +24,7 @@
  */
 import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
 import { TestBaseDevice, TestSensorProjection, makeSensorConfig } from "./testing.helpers.ts";
+import type { TestLogEntry, TestMqttClient } from "homebridge-plugin-utils/testing";
 import { TestRecordingDispatch, makeTestNvr } from "../nvr/testing.helpers.ts";
 import { afterEach, describe, test } from "node:test";
 import type { ProtectAccessory } from "../types.ts";
@@ -31,8 +32,6 @@ import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
 import type { Sensor } from "unifi-protect";
 import type { TestAccessory } from "../testing.helpers.ts";
-import type { TestLogEntry } from "homebridge-plugin-utils/testing";
-import type { TestMqttClient } from "homebridge-plugin-utils/testing";
 import assert from "node:assert/strict";
 import { loggedAt } from "homebridge-plugin-utils/testing";
 

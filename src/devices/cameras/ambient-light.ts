@@ -67,14 +67,6 @@ export class AmbientLightCapability extends ProtectDeviceCapability<ProtectCamer
       lightSensorService.addOptionalCharacteristic(this.hap.Characteristic.StatusActive);
     });
 
-    // Fail gracefully.
-    if(!service) {
-
-      this.log.error("Unable to add ambient light sensor.");
-
-      return;
-    }
-
     // Read the camera's current lux level, mapping every failure to the -1 no-reading sentinel that both callers below skip on.
     const getLux = async (): Promise<number> => {
 

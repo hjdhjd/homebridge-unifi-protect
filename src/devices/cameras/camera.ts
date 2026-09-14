@@ -714,14 +714,6 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     // Acquire the service.
     const service = this.acquireService(this.hap.Service.LockMechanism, this.accessoryName, ProtectReservedNames.LOCK_ACCESS);
 
-    // Fail gracefully.
-    if(!service) {
-
-      this.log.error("Unable to add lock.");
-
-      return false;
-    }
-
     // Configure the lock current and target state characteristics.
     service.getCharacteristic(this.hap.Characteristic.LockTargetState).onSet(async (value: CharacteristicValue) => {
 
@@ -878,7 +870,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     let sensorsCreated = 0;
 
     // A utility for us to add contact sensors.
-    const addSmartDetectContactSensor = (name: string, serviceId: string, errorMessage: string): boolean => {
+    const addSmartDetectContactSensor = (name: string, serviceId: string): void => {
 
       // Read prior existence BEFORE acquiring, the same establishment-detection idiom the Access lock and the night vision dimmer use: a get-or-create returns the
       // service either way and cannot tell us which it did.
@@ -886,14 +878,6 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
       // Acquire the service.
       const service = this.acquireService(this.hap.Service.ContactSensor, name, serviceId);
-
-      // Fail gracefully.
-      if(!service) {
-
-        this.log.error(errorMessage);
-
-        return false;
-      }
 
       // Initialize a freshly created sensor to its resting state, and only a freshly created one: an existing sensor's state belongs to the delivery path, so re-stamping
       // it here would reset a tripped detection the moment an unrelated capability change drove a reconcile, silently cancelling a live smart-motion event.
@@ -903,8 +887,6 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
         sensorsCreated++;
       }
-
-      return true;
     };
 
     let enabledContactSensors = [];
@@ -916,12 +898,10 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
       for(const smartDetectType of [...objectSensorTypes].toSorted()) {
 
-        if(addSmartDetectContactSensor(this.accessoryName + " " + smartDetectLabel(smartDetectType),
-          ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + "." + smartDetectType,
-          "Unable to add smart motion contact sensor for " + smartDetectLabel(smartDetectType) + " detection.")) {
+        addSmartDetectContactSensor(this.accessoryName + " " + smartDetectLabel(smartDetectType),
+          ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + "." + smartDetectType);
 
-          enabledContactSensors.push(smartDetectType);
-        }
+        enabledContactSensors.push(smartDetectType);
       }
 
       if(sensorsCreated > createdBeforeObjectSensors) {
@@ -943,12 +923,10 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
       // Get the list of plates.
       for(const licenseOption of this.detectLicensePlate.filter(plate => plate.length)) {
 
-        if(addSmartDetectContactSensor(this.accessoryName + " License Plate " + licenseOption,
-          ProtectReservedNames.CONTACT_MOTION_SMARTDETECT_LICENSE + "." + licenseOption,
-          "Unable to add smart motion license plate contact sensor for " + licenseOption + ".")) {
+        addSmartDetectContactSensor(this.accessoryName + " License Plate " + licenseOption,
+          ProtectReservedNames.CONTACT_MOTION_SMARTDETECT_LICENSE + "." + licenseOption);
 
-          enabledContactSensors.push(licenseOption);
-        }
+        enabledContactSensors.push(licenseOption);
       }
 
       if(sensorsCreated > createdBeforePlateSensors) {
@@ -1040,14 +1018,6 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     // Add the switch to the camera, if needed.
     const service = this.acquireService(this.hap.Service.Switch, this.accessoryName + " Doorbell Mute", ProtectReservedNames.SWITCH_DOORBELL_MUTE);
 
-    // Fail gracefully.
-    if(!service) {
-
-      this.log.error("Unable to add the doorbell mute switch.");
-
-      return false;
-    }
-
     // Configure the switch.
     service.getCharacteristic(this.hap.Characteristic.On).onGet(() => this.accessory.context.doorbellMuted ?? false);
 
@@ -1088,10 +1058,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     if(!doorbellService) {
 
       // Configure the doorbell service.
-      if(!this.configureDoorbellService()) {
-
-        return false;
-      }
+      this.configureDoorbellService();
 
       // Now find the doorbell service.
       if(!(doorbellService = this.accessory.getService(this.hap.Service.Doorbell))) {
@@ -1104,14 +1071,6 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
     // Add the switch to the camera, if needed.
     const triggerService = this.acquireService(this.hap.Service.Switch, this.accessoryName + " Doorbell Trigger", ProtectReservedNames.SWITCH_DOORBELL_TRIGGER);
-
-    // Fail gracefully.
-    if(!triggerService) {
-
-      this.log.error("Unable to add the doorbell trigger.");
-
-      return false;
-    }
 
     // Trigger the doorbell.
     triggerService.getCharacteristic(this.hap.Characteristic.On).onGet(() => this.isRinging);
@@ -1145,23 +1104,13 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
   // The camera's "ensure my Doorbell service exists and is primary" interface, public so both the trigger path (configureDoorbellTrigger, when a plain camera enables the
   // automation trigger) and - from the attached capability - the doorbell attach sequence consume the one definition. HomeKit requires the Doorbell service to be the
   // primary service on the accessory.
-  public configureDoorbellService(): boolean {
+  public configureDoorbellService(): void {
 
     // Acquire the service.
     const service = this.acquireService(this.hap.Service.Doorbell);
 
-    // Fail gracefully.
-    if(!service) {
-
-      this.log.error("Unable to add doorbell.");
-
-      return false;
-    }
-
     // Add the doorbell service to this Protect doorbell. HomeKit requires the doorbell service to be marked as the primary service on the accessory.
     service.setPrimaryService(true);
-
-    return true;
   }
 
   // Configure additional camera-specific characteristics for HomeKit.
@@ -1553,14 +1502,6 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     // Acquire the service.
     const service = this.acquireService(this.hap.Service.Switch, this.accessoryName + " HKSV Recording", ProtectReservedNames.SWITCH_HKSV_RECORDING);
 
-    // Fail gracefully.
-    if(!service) {
-
-      this.log.error("Unable to add HKSV recording switch.");
-
-      return false;
-    }
-
     // Activate or deactivate HKSV recording.
     service.getCharacteristic(this.hap.Characteristic.On).onGet(() => !this.accessory.context.hksvRecordingDisabled);
 
@@ -1603,14 +1544,6 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
     // Acquire the service.
     const service = this.acquireService(this.hap.Service.Lightbulb, this.accessoryName + " Night Vision", ProtectReservedNames.LIGHTBULB_NIGHTVISION);
-
-    // Fail gracefully.
-    if(!service) {
-
-      this.log.error("Unable to add the night vision dimmer.");
-
-      return false;
-    }
 
     // Adjust night vision capabilities.
     service.getCharacteristic(this.hap.Characteristic.On).onGet(() => this.nightVision);
@@ -1705,14 +1638,6 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
       // Acquire the service.
       const service = this.acquireService(this.hap.Service.Switch, switchName, ufpRecordingSwitchType);
-
-      // Fail gracefully.
-      if(!service) {
-
-        this.log.error("Unable to add UniFi Protect recording switches.");
-
-        continue;
-      }
 
       // Activate or deactivate the appropriate recording mode on the Protect controller.
       service.getCharacteristic(this.hap.Characteristic.On).onGet(() => this.recordingMode === ufpRecordingSetting);

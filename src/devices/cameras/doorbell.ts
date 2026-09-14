@@ -251,14 +251,6 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
       // Acquire the service. Each message cannot exceed 30 characters, but given that HomeKit allows for strings to be up to 64 characters long, this should be fine.
       const service = this.acquireService(this.hap.Service.Switch, entry.text, switchIndex);
 
-      // Fail gracefully.
-      if(!service) {
-
-        this.log.error("Unable to add doorbell message switch: %s.", entry.text);
-
-        return false;
-      }
-
       const duration = "duration" in entry ? entry.duration : this.defaultMessageDuration;
 
       // Save the message switch in the list we maintain.
@@ -455,14 +447,6 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
       // Acquire the service.
       const service = this.acquireService(this.hap.Service.Switch, this.accessoryName + " Physical Chime " + toStartCase(chimeSetting), physicalChimeType);
 
-      // Fail gracefully.
-      if(!service) {
-
-        this.log.error("Unable to add physical chime switch: %s.", chimeSetting);
-
-        continue;
-      }
-
       // Get the current status of the physical chime mode on the doorbell.
       service.getCharacteristic(this.hap.Characteristic.On).onGet(() => {
 
@@ -533,13 +517,6 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
     // Acquire the service.
     const service = this.acquireService(this.hap.Service.Lightbulb, this.accessoryName + " Chime Volume", ProtectReservedNames.LIGHTBULB_DOORBELL_VOLUME);
 
-    if(!service) {
-
-      this.log.error("Unable to add chime volume control.");
-
-      return false;
-    }
-
     // Turn the chime on or off.
     service.getCharacteristic(this.hap.Characteristic.On).onGet(() => this.chimeVolume > 0);
 
@@ -583,13 +560,6 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
 
     // Acquire the service.
     const service = this.acquireService(this.hap.Service.ContactSensor, this.accessoryName + " Authenticated", ProtectReservedNames.CONTACT_AUTHSENSOR);
-
-    if(!service) {
-
-      this.log.error("Unable to add authentication sensor.");
-
-      return false;
-    }
 
     // Initialize the authentication contact sensor.
     service.updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.hap.Characteristic.ContactSensorState.CONTACT_DETECTED);

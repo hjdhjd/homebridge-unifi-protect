@@ -150,13 +150,6 @@ export class ProtectNvrSystemInfo extends ProtectBase {
     // Acquire the service.
     const service = acquireService(this.accessory, this.hap.Service.TemperatureSensor, this.accessory.displayName + " CPU Temperature");
 
-    if(!service) {
-
-      this.log.error("Unable to add CPU temperature sensor.");
-
-      return false;
-    }
-
     // If we're configuring for the first time, we add our respective handlers.
     if(configureHandler) {
 

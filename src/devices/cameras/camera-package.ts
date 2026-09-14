@@ -204,14 +204,6 @@ export class ProtectCameraPackage extends ProtectCamera {
     // Acquire the service.
     const service = this.acquireService(this.hap.Service.Lightbulb, this.accessoryName + " Flashlight", ProtectReservedNames.LIGHTBULB_PACKAGE_FLASHLIGHT);
 
-    // Fail gracefully.
-    if(!service) {
-
-      this.log.error("Unable to add flashlight.");
-
-      return false;
-    }
-
     // Activate or deactivate the package camera flashlight.
     service.getCharacteristic(this.hap.Characteristic.On).onGet(() => this.flashlightState);
 

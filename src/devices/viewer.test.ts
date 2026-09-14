@@ -18,6 +18,7 @@
  */
 import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../testing.helpers.ts";
 import type { ProtectNvrLiveviewConfig, Viewer } from "unifi-protect";
+import type { TestLogEntry, TestMqttClient } from "homebridge-plugin-utils/testing";
 import { TestViewerProjection, makeLiveviewConfig, makeViewerConfig } from "./testing.helpers.ts";
 import { after, afterEach, before, beforeEach, describe, test } from "node:test";
 import type { ObserverWakePayload } from "../diagnostics.ts";
@@ -25,8 +26,6 @@ import type { ProtectAccessory } from "../types.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectViewer } from "./viewer.ts";
 import type { TestAccessory } from "../testing.helpers.ts";
-import type { TestLogEntry } from "homebridge-plugin-utils/testing";
-import type { TestMqttClient } from "homebridge-plugin-utils/testing";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
 import { loggedAt } from "homebridge-plugin-utils/testing";

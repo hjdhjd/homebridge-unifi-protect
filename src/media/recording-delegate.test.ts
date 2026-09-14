@@ -17,14 +17,13 @@
  * harness's segment-yielding livestream double and constructs the FFmpeg process through the platform's recording-process factory interface, so it drives the transmit
  * path FFmpeg-free with deterministic injected-clock pacing.
  */
+import type { CameraRecordingConfiguration, RecordingPacket } from "homebridge";
 import { Characteristic, Service, TestStreamingDelegate, settle } from "../testing.helpers.ts";
 import { PROTECT_SEGMENT_RESOLUTION, PROTECT_TIMESHIFT_BUFFER_MAXDURATION } from "../settings.ts";
 import { after, describe, test } from "node:test";
-import type { CameraRecordingConfiguration } from "homebridge";
 import type { ChannelProfile } from "./resolution.ts";
 import { ProtectRecordingDelegate } from "./record.ts";
 import { ProtectTimeshiftSupervisor } from "./timeshift-supervisor.ts";
-import type { RecordingPacket } from "homebridge";
 import type { TestCameraHost } from "./testing.helpers.ts";
 import assert from "node:assert/strict";
 import { makeTestCameraHost } from "./testing.helpers.ts";

@@ -24,6 +24,7 @@
 import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../testing.helpers.ts";
 import type { Chime, ProtectRingtoneConfig } from "unifi-protect";
 import { TestChimeProjection, makeChimeConfig, makeRingtoneConfig } from "./testing.helpers.ts";
+import type { TestLogEntry, TestMqttClient } from "homebridge-plugin-utils/testing";
 import { after, afterEach, before, beforeEach, describe, mock, test } from "node:test";
 import type { ObserverWakePayload } from "../diagnostics.ts";
 import type { ProtectAccessory } from "../types.ts";
@@ -32,8 +33,6 @@ import { ProtectChime } from "./chime.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
 import type { TestAccessory } from "../testing.helpers.ts";
-import type { TestLogEntry } from "homebridge-plugin-utils/testing";
-import type { TestMqttClient } from "homebridge-plugin-utils/testing";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
 import { loggedAt } from "homebridge-plugin-utils/testing";

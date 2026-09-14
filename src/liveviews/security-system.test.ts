@@ -27,14 +27,13 @@
 import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../testing.helpers.ts";
 import type { ProtectAccessory, ProtectDevices } from "../types.ts";
 import type { TestAccessory, TestService } from "../testing.helpers.ts";
+import type { TestLogEntry, TestMqttClient } from "homebridge-plugin-utils/testing";
 import { afterEach, describe, test } from "node:test";
 import { makeNvrConfig, makeTestNvr } from "../nvr/testing.helpers.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import type { ProtectNvrLiveviewConfig } from "unifi-protect";
 import { ProtectReservedNames } from "../types.ts";
 import { ProtectSecuritySystem } from "./security-system.ts";
-import type { TestLogEntry } from "homebridge-plugin-utils/testing";
-import type { TestMqttClient } from "homebridge-plugin-utils/testing";
 import type { TestProtectNvr } from "../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import { loggedAt } from "homebridge-plugin-utils/testing";

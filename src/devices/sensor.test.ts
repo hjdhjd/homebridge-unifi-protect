@@ -42,6 +42,7 @@ import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAcce
 import type { CharacteristicType, TestAccessory } from "../testing.helpers.ts";
 import { ProtectSensor, narratesTransition } from "./sensor.ts";
 import type { ProtectSensorAirQuality, Sensor } from "unifi-protect";
+import type { TestLogEntry, TestMqttClient } from "homebridge-plugin-utils/testing";
 import { TestRecordingDispatch, makeTestNvr } from "../nvr/testing.helpers.ts";
 import { TestSensorProjection, makeSensorConfig, makeSmokeStatus } from "./testing.helpers.ts";
 import { after, afterEach, before, beforeEach, describe, test } from "node:test";
@@ -53,8 +54,6 @@ import type { ProtectAccessory } from "../types.ts";
 import type { ProtectEventDispatch } from "../nvr/event-dispatch.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
-import type { TestLogEntry } from "homebridge-plugin-utils/testing";
-import type { TestMqttClient } from "homebridge-plugin-utils/testing";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
 

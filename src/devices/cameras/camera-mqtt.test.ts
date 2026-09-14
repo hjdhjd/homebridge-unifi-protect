@@ -23,6 +23,7 @@
 import type { Camera, ProtectCameraConfig } from "unifi-protect";
 import { G2_PRO_CHANNELS, MIXED_RTSP_DISABLED_CHANNELS } from "../../camera.fixtures.ts";
 import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
+import type { TestLogEntry, TestMqttClient } from "homebridge-plugin-utils/testing";
 import { TestStateStore, makeProtectState, makeTestAccessory, settle } from "../../testing.helpers.ts";
 import { afterEach, describe, mock, test } from "node:test";
 import type { ProtectAccessory } from "../../types.ts";
@@ -30,8 +31,6 @@ import { ProtectCamera } from "./camera.ts";
 import { ProtectEventDispatch } from "../../nvr/event-dispatch.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
 import type { TestAccessory } from "../../testing.helpers.ts";
-import type { TestLogEntry } from "homebridge-plugin-utils/testing";
-import type { TestMqttClient } from "homebridge-plugin-utils/testing";
 import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import { makeTestNvr } from "../../nvr/testing.helpers.ts";

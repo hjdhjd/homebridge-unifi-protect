@@ -122,7 +122,6 @@ describe("per-accessory abort signal composition (composeSignals)", () => {
 
       for await (const _tick of ticks()) {
 
-        void _tick;
         iterations++;
       }
 

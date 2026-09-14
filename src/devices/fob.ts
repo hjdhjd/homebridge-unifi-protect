@@ -131,14 +131,6 @@ export class ProtectFob extends ProtectDevice<Fob> {
       const service = this.acquireService(this.hap.Service.StatelessProgrammableSwitch, button.label, subtype,
         (svc) => svc.updateCharacteristic(this.hap.Characteristic.ConfiguredName, this.buttonName(button)));
 
-      // Fail gracefully.
-      if(!service) {
-
-        this.log.error("Unable to add the fob button switch for %s.", button.label);
-
-        continue;
-      }
-
       if(serviceLabel) {
 
         // Grouped: stamp the STABLE fixed table index (never the visible-subset position, so hiding an earlier button never renumbers a later one) and link the switch to
@@ -173,7 +165,7 @@ export class ProtectFob extends ProtectDevice<Fob> {
 
     for(const button of this.#buttons) {
 
-      // Resolve this button's switch; skip it when absent - hidden by its feature option, or a failed acquire.
+      // Resolve this button's switch; skip it when absent - hidden by its feature option.
       const service = this.accessory.getServiceById(this.hap.Service.StatelessProgrammableSwitch, this.buttonSubtype(button));
 
       if(!service) {
@@ -240,23 +232,13 @@ export class ProtectFob extends ProtectDevice<Fob> {
   }
 
   // Configure the battery service for HomeKit.
-  private configureBatteryService(): boolean {
+  private configureBatteryService(): void {
 
     // Acquire the service.
-    const service = this.acquireService(this.hap.Service.Battery);
-
-    // Fail gracefully.
-    if(!service) {
-
-      this.log.error("Unable to add the battery service.");
-
-      return false;
-    }
+    this.acquireService(this.hap.Service.Battery);
 
     // Initialize the battery state.
     this.updateBatteryStatus();
-
-    return true;
   }
 
   // Update the battery status in HomeKit. The fob's battery lives under wirelessConnectionState.batteryStatus (the LoRa link telemetry), NOT the top-level batteryStatus

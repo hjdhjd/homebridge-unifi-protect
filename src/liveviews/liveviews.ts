@@ -247,7 +247,7 @@ export class ProtectLiveviews extends ProtectBase {
     });
 
     // Set the status of one or more liveviews.
-    this.subscribeSet(mqttTopics.liveviews.topic, mqttTopics.liveviews.label, (value: string, rawValue: string) => {
+    this.subscribeSet(mqttTopics.liveviews.topic, mqttTopics.liveviews.label, (_value: string, rawValue: string) => {
 
       interface mqttLiveviewJSON {
 

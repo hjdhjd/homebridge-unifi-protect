@@ -15,13 +15,12 @@
  */
 import { AI_PRO_CHANNELS, C5_WITNESS_CHANNELS, CAMERA_FIXTURES, FIXTURE_HOST, FIXTURE_RTSPS_PORT, G6_PRO_ENTRY_CHANNELS, MIXED_RTSP_DISABLED_CHANNELS, PACKAGE_FIXTURES,
   SANITY_FAIL_CHANNELS, makeChannel } from "../camera.fixtures.ts";
+import type { ChannelProfile, SelectRequest } from "./resolution.ts";
 import { buildAdvertisedProfiles, buildAdvertisedResolutions, buildChannelProfile, capByPixels, isPrimaryChannel, rtspUrl, selectChannelProfile } from "./resolution.ts";
 import { describe, test } from "node:test";
-import type { ChannelProfile } from "./resolution.ts";
 import type { Nullable } from "homebridge-plugin-utils";
 import type { ProtectCameraChannelConfig } from "unifi-protect";
 import type { Resolution } from "homebridge";
-import type { SelectRequest } from "./resolution.ts";
 import assert from "node:assert/strict";
 
 // A selector outcome projected to the comparison shape: the matched channel id and the matched entry resolution (or null when no entry matches).

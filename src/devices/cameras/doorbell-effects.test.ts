@@ -35,6 +35,7 @@
 import type { Camera, ProtectCameraConfig, ProtectChimeConfig, ProtectNvrConfig } from "unifi-protect";
 import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../../testing.helpers.ts";
 import { TestCameraProjection, TestChimeProjection, makeCameraConfig, makeChimeConfig } from "../testing.helpers.ts";
+import type { TestLogEntry, TestMqttClient } from "homebridge-plugin-utils/testing";
 import { afterEach, describe, mock, test } from "node:test";
 import { G2_PRO_CHANNELS } from "../../camera.fixtures.ts";
 import type { Nullable } from "homebridge-plugin-utils";
@@ -45,8 +46,6 @@ import { ProtectEventDispatch } from "../../nvr/event-dispatch.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
 import { ProtectReservedNames } from "../../types.ts";
 import type { TestAccessory } from "../../testing.helpers.ts";
-import type { TestLogEntry } from "homebridge-plugin-utils/testing";
-import type { TestMqttClient } from "homebridge-plugin-utils/testing";
 import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import { effectiveLcdMessage } from "./doorbell.ts";

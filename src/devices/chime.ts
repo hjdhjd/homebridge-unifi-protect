@@ -99,17 +99,10 @@ export class ProtectChime extends ProtectDevice<Chime> {
   // Configure one chime switch (the buzzer or a ringtone speaker) for HomeKit. The kind ("buzzer" or "speaker") names the chime's sound source for playTone; the
   // auto-reset timer is keyed by the switch's OWN subtype, not by kind, so concurrent ringtone plays never displace each other's reset - the registry's same-key
   // replacement silently drops the displaced callback, which a shared "speaker" key would trigger, stranding every-but-the-last ringtone's tile on forever.
-  private configureChimeSwitch(name: string, kind: "buzzer" | "speaker", subtype: string): boolean {
+  private configureChimeSwitch(name: string, kind: "buzzer" | "speaker", subtype: string): void {
 
     // Acquire the service.
     const service = this.acquireService(this.hap.Service.Switch, this.accessoryName + " " + toStartCase(name), subtype);
-
-    if(!service) {
-
-      this.log.error("Unable to add " + name + " switch.");
-
-      return false;
-    }
 
     // Reflect and drive the play state for this sound source (buzzer or ringtone speaker).
     service.getCharacteristic(this.hap.Characteristic.On).onGet(() => {
@@ -156,8 +149,6 @@ export class ProtectChime extends ProtectDevice<Chime> {
 
     // Initialize the switch.
     service.updateCharacteristic(this.hap.Characteristic.On, false);
-
-    return true;
   }
 
   // Play the specified tone on the chime - a ringtone through the speaker or the piezo buzzer, selected by the typed kind parameter. The unifi-protect library

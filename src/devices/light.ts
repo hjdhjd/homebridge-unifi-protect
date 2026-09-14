@@ -65,18 +65,10 @@ export class ProtectLight extends ProtectDevice<Light> {
   }
 
   // Configure the light for HomeKit.
-  private configureLightbulb(): boolean {
+  private configureLightbulb(): void {
 
     // Acquire the service.
     const service = this.acquireService(this.hap.Service.Lightbulb);
-
-    // Fail gracefully.
-    if(!service) {
-
-      this.log.error("Unable to add light.");
-
-      return false;
-    }
 
     // Turn the light on or off.
     service.getCharacteristic(this.hap.Characteristic.On).onGet(() => {
@@ -125,8 +117,6 @@ export class ProtectLight extends ProtectDevice<Light> {
     // Initialize the light.
     service.updateCharacteristic(this.hap.Characteristic.On, this.isLightOn);
     service.updateCharacteristic(this.hap.Characteristic.Brightness, this.ledBrightness);
-
-    return true;
   }
 
   // Configure MQTT capabilities of this light.

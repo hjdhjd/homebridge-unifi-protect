@@ -162,17 +162,10 @@ export class ProtectSecuritySystem extends ProtectBase {
   }
 
   // Configure the security system for HomeKit.
-  private configureSecuritySystem(): boolean {
+  private configureSecuritySystem(): void {
 
     // Acquire (find or create) the security system service.
     const service = acquireService(this.accessory, this.hap.Service.SecuritySystem, this.accessory.displayName);
-
-    if(!service) {
-
-      this.log.error("Unable to add security system.");
-
-      return false;
-    }
 
     const SecuritySystemCurrentState = this.hap.Characteristic.SecuritySystemCurrentState;
     const SecuritySystemTargetState = this.hap.Characteristic.SecuritySystemTargetState;
@@ -221,8 +214,6 @@ export class ProtectSecuritySystem extends ProtectBase {
     // Set the initial state after we have setup our handlers above. This way, when we startup, we
     // automatically restore the scene we've been set to, if any.
     this.accessory.getService(this.hap.Service.SecuritySystem)?.updateCharacteristic(SecuritySystemTargetState, targetSecurityState);
-
-    return true;
   }
 
   // Configure the security alarm for HomeKit.
@@ -238,13 +229,6 @@ export class ProtectSecuritySystem extends ProtectBase {
 
     // Acquire the service.
     const service = acquireService(this.accessory, this.hap.Service.Switch, this.accessory.displayName + " Security Alarm");
-
-    if(!service) {
-
-      this.log.error("Unable to add security system alarm.");
-
-      return false;
-    }
 
     // Notify the user that we're enabled.
     this.log.info("Enabling the security alarm switch on the security system accessory.");

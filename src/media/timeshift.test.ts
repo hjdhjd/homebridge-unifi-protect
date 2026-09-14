@@ -18,6 +18,7 @@
  * transmitStart's own concat emit the "segment" event, forwarding tests assert on the forwarded PAYLOAD (which fragment's data), never the event count.
  */
 import type { ControllableLivestreamDouble, TestCameraHost } from "./testing.helpers.ts";
+import type { TestClock, TestLogEntry } from "homebridge-plugin-utils/testing";
 import { after, describe, test } from "node:test";
 import { makeControllableLivestreamDouble, makeKeyframeFragment, makeNonKeyframeFragment, makeTestCameraHost } from "./testing.helpers.ts";
 import type { ChannelProfile } from "./resolution.ts";
@@ -26,8 +27,6 @@ import { ProtectLivestreamUnavailableError } from "unifi-protect";
 import { ProtectTimeshiftBuffer } from "./timeshift.ts";
 import type { Segment } from "unifi-protect";
 import type { SegmentRole } from "./timeshift.ts";
-import type { TestClock } from "homebridge-plugin-utils/testing";
-import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import type { TestProtectNvr } from "../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import { settle } from "../testing.helpers.ts";

@@ -15,6 +15,7 @@
  * relay-specific reactions are relay-particular.
  */
 import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../testing.helpers.ts";
+import type { ProtectRelayConfig, Relay } from "unifi-protect";
 import { TestRelayProjection, makeRelayConfig } from "./testing.helpers.ts";
 import { after, afterEach, before, beforeEach, describe, mock, test } from "node:test";
 import type { ObserverWakePayload } from "../diagnostics.ts";
@@ -22,9 +23,7 @@ import { PROTECT_RELAY_COMMAND_TIMEOUT } from "../settings.ts";
 import type { ProtectAccessory } from "../types.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectRelay } from "./relay.ts";
-import type { ProtectRelayConfig } from "unifi-protect";
 import { ProtectReservedNames } from "../types.ts";
-import type { Relay } from "unifi-protect";
 import type { TestAccessory } from "../testing.helpers.ts";
 import type { TestMqttClient } from "homebridge-plugin-utils/testing";
 import { analyzeLegacyFeatureOptions } from "../options-legacy.ts";

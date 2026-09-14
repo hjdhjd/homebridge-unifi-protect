@@ -151,7 +151,7 @@ export abstract class ProtectDeviceCapability<H extends ProtectCapabilityHost = 
   // Acquire a service on the host's accessory, a thin re-binding to the homebridge-plugin-utils free function - the same single source ProtectDevice's own wrapper
   // delegates to. It lives here rather than on the spine because the spine also serves owners with no single accessory (liveviews manages a set) or a nullable one (the
   // controller's system-information owner), so an accessory contract there would be dishonest; here a non-null accessory genuinely exists.
-  protected acquireService(serviceType: AcquireServiceTarget, name = this.accessoryName, subtype?: string, onServiceCreate?: (svc: Service) => void): Nullable<Service> {
+  protected acquireService(serviceType: AcquireServiceTarget, name = this.accessoryName, subtype?: string, onServiceCreate?: (svc: Service) => void): Service {
 
     return acquireService(this.accessory, serviceType, name, subtype, onServiceCreate);
   }

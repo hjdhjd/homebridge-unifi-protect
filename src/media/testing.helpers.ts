@@ -13,6 +13,7 @@
  */
 import type { HomebridgePluginLogging, Nullable, RecordingProcessFactory } from "homebridge-plugin-utils";
 import type { LivestreamSubscriptionState, ProtectCameraConfig, Segment, SnapshotOptions, TalkbackSession } from "unifi-protect";
+import type { TestClock, TestLogEntry } from "homebridge-plugin-utils/testing";
 import { TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
 import { makeBox, makeContainer, makeTrunBox } from "homebridge-plugin-utils/testing";
 import type { API } from "homebridge";
@@ -27,8 +28,6 @@ import type { ProtectPlatform } from "../platform.ts";
 import { SAMPLE_FLAG_NON_SYNC } from "homebridge-plugin-utils";
 import type { StreamingDelegate } from "./stream-delegate.ts";
 import type { TestAccessory } from "../testing.helpers.ts";
-import type { TestClock } from "homebridge-plugin-utils/testing";
-import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import type { TestProtectNvr } from "../nvr/testing.helpers.ts";
 import { makeCameraConfig } from "../devices/testing.helpers.ts";
 import { makeTestNvr } from "../nvr/testing.helpers.ts";

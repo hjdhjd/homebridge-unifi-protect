@@ -182,8 +182,7 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
   }
 
   // Retrieve an existing service from an accessory, creating it if necessary.
-  protected acquireService(serviceType: AcquireServiceTarget, name = this.accessoryName, subtype?: string, onServiceCreate?: (svc: Service) => void):
-  Nullable<Service> {
+  protected acquireService(serviceType: AcquireServiceTarget, name = this.accessoryName, subtype?: string, onServiceCreate?: (svc: Service) => void): Service {
 
     return acquireService(this.accessory, serviceType, name, subtype, onServiceCreate);
   }
@@ -320,13 +319,6 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
       isInitialized = false;
     });
 
-    if(!service) {
-
-      this.log.error("Unable to add motion sensor.");
-
-      return false;
-    }
-
     // Have we previously initialized this sensor? We assume not by default, but this allows for scenarios where you may be dynamically reconfiguring a sensor at
     // runtime (e.g. UniFi sensors can be reconfigured for various sensor modes in realtime).
     if(!isInitialized) {
@@ -377,14 +369,6 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
     // Acquire the service.
     const service = this.acquireService(this.hap.Service.Switch, this.accessoryName + " Motion Events", ProtectReservedNames.SWITCH_MOTION_SENSOR);
 
-    // Fail gracefully.
-    if(!service) {
-
-      this.log.error("Unable to add motion sensor switch.");
-
-      return false;
-    }
-
     // Activate or deactivate motion detection.
     service.getCharacteristic(this.hap.Characteristic.On).onGet(() => !!this.accessory.context.detectMotion);
 
@@ -422,14 +406,6 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
 
     // Acquire the service.
     const triggerService = this.acquireService(this.hap.Service.Switch, this.accessoryName + " Motion Trigger", ProtectReservedNames.SWITCH_MOTION_TRIGGER);
-
-    // Fail gracefully.
-    if(!triggerService) {
-
-      this.log.error("Unable to add motion sensor trigger.");
-
-      return false;
-    }
 
     const motionService = this.accessory.getService(this.hap.Service.MotionSensor);
     const switchService = this.accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_MOTION_SENSOR);
@@ -497,13 +473,6 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
       isInitialized = false;
     });
 
-    if(!service) {
-
-      this.log.error("Unable to add occupancy sensor.");
-
-      return false;
-    }
-
     // Have we previously initialized this sensor? We assume not by default, but this allows for scenarios where you may be dynamically reconfiguring a sensor at
     // runtime (e.g. UniFi sensors can be reconfigured for various sensor modes in realtime).
     if(!isInitialized) {
@@ -562,14 +531,6 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
 
     // Acquire the service.
     const service = this.acquireService(this.hap.Service.Switch, this.accessoryName + " Status Indicator", ProtectReservedNames.SWITCH_STATUS_LED);
-
-    // Fail gracefully.
-    if(!service) {
-
-      this.log.error("Unable to add the status indicator light switch.");
-
-      return false;
-    }
 
     // Enable or disable the status indicator light.
     service.getCharacteristic(this.hap.Characteristic.On).onGet(() => this.statusLed);

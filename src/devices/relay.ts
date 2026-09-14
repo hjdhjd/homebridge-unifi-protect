@@ -107,14 +107,6 @@ export class ProtectRelay extends ProtectDevice<Relay> {
       // Acquire the service.
       const service = this.acquireService(this.hap.Service.Switch, this.accessoryName + " " + label, subtype);
 
-      // Fail gracefully.
-      if(!service) {
-
-        this.log.error("Unable to add the relay output switch for %s.", label);
-
-        continue;
-      }
-
       // Read the live controller output state when requested (controller is authority; the observe loop keeps the tile current between reads).
       service.getCharacteristic(this.hap.Characteristic.On).onGet(() => this.outputState(id));
 
