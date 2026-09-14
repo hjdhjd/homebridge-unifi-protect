@@ -16,6 +16,7 @@ import { isPackageChannel, rtspUrl } from "../media/resolution.ts";
 import { PROTECT_M3U_PLAYLIST_PORT } from "../settings.ts";
 import type { ProtectCameraConfig } from "unifi-protect";
 import type { ProtectNvr } from "./nvr.ts";
+import { describeDeviceModel } from "../devices/device-descriptor.ts";
 import http from "node:http";
 import util from "node:util";
 
@@ -55,7 +56,7 @@ export function buildPlaylist(cameras: readonly ProtectCameraConfig[], host: str
         name, "https://raw.githubusercontent.com/hjdhjd/homebridge-unifi-protect/main/images/homebridge-unifi-protect-4x3.png"));
 
       parts.push(util.format("tvc-guide-title=\"%s Livestream\" tvc-guide-description=\"UniFi Protect %s %s livestream.\" ",
-        name, camera.marketName, description));
+        name, describeDeviceModel(camera), description));
 
       // The placeholder value of 86400 is one day in seconds. Guide-consuming apps such as Channels DVR use it as the duration of the placeholder guide entry for this
       // livestream, since a live camera feed has no fixed program schedule to describe.

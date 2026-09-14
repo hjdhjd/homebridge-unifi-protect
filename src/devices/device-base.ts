@@ -13,6 +13,7 @@ import type { ProtectAccessory } from "../types.ts";
 import { ProtectAuthorizationError } from "unifi-protect";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import type { ProtectPlatform } from "../platform.ts";
+import { describeDeviceModel } from "./device-descriptor.ts";
 
 // An observed slice of controller state, expressed in the projections a single observer needs. `key` is a stable, dotted, machine-facing tag ("camera.ispSettings")
 // that identifies the slice on the observer-wake diagnostics channel - it stays put across field renames so diagnostic filters keep working. `selector` reads the slice
@@ -96,14 +97,7 @@ export abstract class ProtectBase {
     infoService?.updateCharacteristic(this.hap.Characteristic.Manufacturer, "Ubiquiti Inc.");
 
     // Update the model information for this device.
-    // marketName is optional at runtime despite its declared type, so the nullish fallback to device.type is real, not redundant.
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-    const deviceModel = device.marketName ?? device.type;
-
-    if(deviceModel.length) {
-
-      infoService?.updateCharacteristic(this.hap.Characteristic.Model, deviceModel);
-    }
+    infoService?.updateCharacteristic(this.hap.Characteristic.Model, describeDeviceModel(device));
 
     // Update the serial number for this device.
     if(device.mac.length) {

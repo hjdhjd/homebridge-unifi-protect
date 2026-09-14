@@ -210,7 +210,7 @@ describe("A2 controller owners: the widened makeNvrConfig, the read-through clie
     assert.equal(defaults.systemInfo.cpu.temperature, 40, "systemInfo.cpu.temperature defaults to a number so the initial-pass deref succeeds");
     assert.equal(defaults.marketName, "UniFi Dream Machine SE", "marketName defaults so the accessory name and setInfo's Model resolve");
     assert.equal(defaults.name, "Test Controller", "name defaults so sanitizeName(nvr.ufp.name) resolves");
-    assert.equal(defaults.type, "UDMPRO", "type defaults so setInfo's marketName ?? type Model fallback is non-empty");
+    assert.equal(defaults.type, "UDMPRO", "type defaults so the model resolver has a hardware type to fall back on");
 
     // REQUIRED EXACTLY AS WRITTEN: the chime / ringtone nvrMac filter and the makeRingtoneConfig nvrMac default both depend on this exact mac, and the golden-master
     // channel URLs depend on the exact host / ports, so the widening must only ADD fields.

@@ -393,6 +393,18 @@ describe("real ProtectFob construction and behavior", () => {
     built.fob.cleanup();
   });
 
+  test("an unrecognized fob with an empty market name names its hardware type in the warning", () => {
+
+    // The controller reports no market name for some units, and the fixture spells that as the empty string the wire delivers, so the warning names the hardware
+    // type instead. A nullish fallback would keep the empty string and name nothing at all.
+    const built = buildFob({ marketName: "", type: "XYZ-Remote-1" });
+    const named = built.logEntries.some((entry) => (entry.level === "warn") && formatLogEntry(entry).includes("This fob (XYZ-Remote-1) is not a recognized model"));
+
+    assert.ok(named, "the unrecognized-model warning names the hardware type when the fob reports no market name");
+
+    built.fob.cleanup();
+  });
+
   test("a hidden button, an unknown button, and an unmapped gesture each fire nothing in HomeKit but still publish MQTT (faithful firehose)", () => {
 
     const built = buildFob({}, { userOptions: allButtonsBut("disarm") });

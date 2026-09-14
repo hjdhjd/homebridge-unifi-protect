@@ -14,6 +14,7 @@ import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_NVR_CONTROLLER_DISABLED_SETTLE_DELA
 import type { ProtectAccessory, ProtectAccessoryContext, ProtectDeviceTypes, ProtectDevices, ProtectProjectionMap } from "../types.ts";
 import { canTransition, countActiveRecordingViews, createConnectRetryPolicy, createLivestreamEpisodeLatch, isDisruptionExpected, membershipDelta,
   shouldResumeFromInducedReboot } from "./nvr-policy.ts";
+import { describeDevice, describeDeviceModel } from "../devices/device-descriptor.ts";
 import { AmbientLightCapability } from "../devices/cameras/ambient-light.ts";
 import { DiagnosticsHealthBridge } from "./nvr-health-bridge.ts";
 import { DoorbellCapability } from "../devices/cameras/doorbell.ts";
@@ -35,7 +36,6 @@ import { RebootScheduler } from "./nvr-reboot.ts";
 import { RemovalStabilityGate } from "./nvr-removal.ts";
 import { StreamingCapability } from "../devices/cameras/streaming.ts";
 import { channels } from "../diagnostics.ts";
-import { describeDevice } from "../devices/device-descriptor.ts";
 import { isPackageCameraContext } from "../types.ts";
 import { livestreamRecoveryDecision } from "../media/livestream-recovery-policy.ts";
 import { servePlaylist } from "./nvr-playlist.ts";
@@ -1172,7 +1172,7 @@ export class ProtectNvr {
     // We've got a new device, let's add it to HomeKit.
     if(!accessory) {
 
-      accessory = new this.api.platformAccessory<ProtectAccessoryContext>(sanitizeName(device.name ?? device.marketName), uuid);
+      accessory = new this.api.platformAccessory<ProtectAccessoryContext>(sanitizeName(device.name ?? describeDeviceModel(device)), uuid);
 
       this.log.info("%s: Adding %s to HomeKit%s.", describeDevice(device), device.modelKey,
         this.hasFeature("Device.Standalone", device) ? " as a standalone device" : "");

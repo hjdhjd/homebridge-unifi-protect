@@ -42,8 +42,19 @@ describe("nvr-playlist: buildPlaylist - the M3U content composer", () => {
 
     assert.ok(playlist.startsWith("#EXTM3U\n"));
     assert.ok(playlist.includes("#EXTINF:0 channel-id=\"Front Door\""));
-    assert.ok(playlist.includes("UniFi Protect " + camera.marketName + " camera livestream."));
+    assert.ok(playlist.includes("UniFi Protect Test Camera Model camera livestream."));
     assert.ok(playlist.includes(rtspLine("alias0") + "\n"));
+  });
+
+  // The controller reports no market name for some cameras, so the guide text falls through to the hardware type that camera does report. The record drops the
+  // marketName key outright, which is the shape such a camera actually arrives in.
+  test("a camera reporting no market name carries its hardware type in the guide text", () => {
+
+    const { marketName: _marketName, ...camera } = makeCameraConfig({ channels: [makeChannel({ fps: 30, height: 1080, id: 2, name: "High", width: 1920 })],
+      name: "Side Gate" });
+    const playlist = buildPlaylist([{ ...camera, type: "UVC G5 Flex" }], HOST, RTSP_PORT);
+
+    assert.ok(playlist.includes("UniFi Protect UVC G5 Flex camera livestream."));
   });
 
   // An AV1 camera is excluded by the codec filter while a sibling h264 camera is published.

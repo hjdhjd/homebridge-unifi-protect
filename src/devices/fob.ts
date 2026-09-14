@@ -9,6 +9,7 @@ import type { ProtectAccessory } from "../types.ts";
 import { ProtectDevice } from "./device.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
+import { describeDeviceModel } from "./device-descriptor.ts";
 import { deviceSelectors } from "unifi-protect";
 
 // Projects one UniFi Protect LoRa fob's fixed button set and battery state onto a HomeKit accessory.
@@ -79,9 +80,9 @@ export class ProtectFob extends ProtectDevice<Fob> {
     // absent record (a fob lingering in the removal grace) resolves the "unknown" sentinel rather than throwing.
     if(!this.#buttons.length) {
 
-      // marketName is optional at runtime despite its non-optional declared type, so the nullish fallback to type is real, not redundant.
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-      const model = this.fromRecord((config) => config.marketName ?? config.type, "unknown");
+      // The "unknown" default covers an absent record; a present one renders its model through the shared resolver, so the warning names the fob exactly as every
+      // other line naming that hardware does.
+      const model = this.fromRecord(describeDeviceModel, "unknown");
 
       this.log.warn("This fob (%s) is not a recognized model, so its buttons were not added to HomeKit. Please open an issue with a capture of a button press so " +
         "support can be added.", model);

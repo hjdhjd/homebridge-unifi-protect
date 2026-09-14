@@ -152,6 +152,36 @@ describe("base ProtectDevice device-information capability (device-info concern 
       assert.equal(info.getCharacteristic(Characteristic.FirmwareRevision).value, "5.0.0", "FirmwareRevision is the carrier firmwareVersion");
     });
 
+    test("setInfo falls back to the carrier's type for Model when the carrier reports no market name", () => {
+
+      // The controller reports no market name for some units, so the Model write falls through to the hardware type. The carrier drives the EMPTY market name the
+      // wire delivers, which is the falsy edge a nullish fallback would keep rather than fall through on, so a `??` regression in the model resolver reddens here.
+      // We reassign the suite's device handle so afterEach unwinds this freshly-built device's per-accessory abort.
+      const built = buildInfoDevice({ marketName: "", type: "UFP-Sense" });
+
+      device = built.device;
+
+      const info = built.accessory.getService(Service.AccessoryInformation);
+
+      assert.ok(info, "the type-only carrier carries an AccessoryInformation service for setInfo to write");
+      assert.equal(info.getCharacteristic(Characteristic.Model).value, "UFP-Sense", "Model is the carrier type when the carrier reports no market name");
+    });
+
+    test("setInfo writes \"unknown\" for Model when the carrier reports no model at all", () => {
+
+      // A carrier reporting neither field - the fixture omits type unless a test supplies one - reads as the same "unknown" label every other model read renders for
+      // such a unit, rather than leaving HomeKit's Model unwritten.
+      const built = buildInfoDevice({ marketName: "" });
+
+      device = built.device;
+
+      const info = built.accessory.getService(Service.AccessoryInformation);
+
+      assert.ok(info, "the model-less carrier carries an AccessoryInformation service for setInfo to write");
+      assert.equal(info.getCharacteristic(Characteristic.Model).value, "unknown",
+        "Model reads \"unknown\" when the carrier reports neither a market name nor a type");
+    });
+
     test("setInfo's HardwareRevision length-guard writes when hardwareRevision is present and skips it when absent (a non-vacuous opt-in pair)", () => {
 
       // The absent half rides the default beforeEach build (the all-quiet carrier, which omits hardwareRevision). The accessory's AccessoryInformation service carries
