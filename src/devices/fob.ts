@@ -243,7 +243,7 @@ export class ProtectFob extends ProtectDevice<Fob> {
 
   // Update the battery status in HomeKit. The fob's battery lives under wirelessConnectionState.batteryStatus (the LoRa link telemetry), NOT the top-level batteryStatus
   // a wired sensor reads - so the read path is nested here. Both reads are non-throwing: an absent record reports a full, not-low battery rather than throwing.
-  private updateBatteryStatus(): boolean {
+  private updateBatteryStatus(): void {
 
     // Find the battery service, if it exists.
     const batteryService = this.accessory.getService(this.hap.Service.Battery);
@@ -255,8 +255,6 @@ export class ProtectFob extends ProtectDevice<Fob> {
     // Update the battery status.
     batteryService?.updateCharacteristic(this.hap.Characteristic.BatteryLevel, percentage);
     batteryService?.updateCharacteristic(this.hap.Characteristic.StatusLowBattery, isLow);
-
-    return true;
   }
 
   // Spawn the fob's narrow-selector observers. super spawns the universal observers (name sync and firmware/device-info refresh); the fob adds battery observers, one per

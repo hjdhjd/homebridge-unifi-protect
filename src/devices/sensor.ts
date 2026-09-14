@@ -807,7 +807,7 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
   }
 
   // Update the battery status in HomeKit.
-  private updateBatteryStatus(): boolean {
+  private updateBatteryStatus(): void {
 
     // Find the battery service, if it exists.
     const batteryService = this.accessory.getService(this.hap.Service.Battery);
@@ -815,8 +815,6 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
     // Update the battery status.
     batteryService?.updateCharacteristic(this.hap.Characteristic.BatteryLevel, this.ufp.batteryStatus.percentage ?? 0);
     batteryService?.updateCharacteristic(this.hap.Characteristic.StatusLowBattery, this.ufp.batteryStatus.isLow);
-
-    return true;
   }
 
   /* Reconcile one environmental characteristic - the temperature or humidity a sensor reports - against whichever of the two sources this hardware reports through,

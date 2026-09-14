@@ -1040,7 +1040,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
   private configureDoorbellTrigger(): boolean {
 
     // See if we have a doorbell service configured.
-    let doorbellService = this.accessory.getService(this.hap.Service.Doorbell);
+    const doorbellService = this.accessory.getService(this.hap.Service.Doorbell);
 
     // Validate whether we should have this service enabled.
     if(!this.validService(this.hap.Service.Switch, this.hasFeature("Doorbell.Trigger"), ProtectReservedNames.SWITCH_DOORBELL_TRIGGER)) {
@@ -1054,19 +1054,10 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
       return false;
     }
 
-    // We don't have a doorbell service configured, but since we've enabled a doorbell switch, we create the doorbell for automation purposes.
+    // A plain camera with the trigger enabled carries no Doorbell service of its own, so we stand one up for automation purposes.
     if(!doorbellService) {
 
-      // Configure the doorbell service.
       this.configureDoorbellService();
-
-      // Now find the doorbell service.
-      if(!(doorbellService = this.accessory.getService(this.hap.Service.Doorbell))) {
-
-        this.log.error("Unable to find the doorbell service.");
-
-        return false;
-      }
     }
 
     // Add the switch to the camera, if needed.
