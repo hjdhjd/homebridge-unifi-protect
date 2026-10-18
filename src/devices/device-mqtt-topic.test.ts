@@ -33,6 +33,16 @@ class TestProtectDevice extends ProtectDevice {
     this.publish(topic, message);
   }
 
+  public emitPublishState(topic: string, value: string): void {
+
+    this.publishState(topic, value);
+  }
+
+  public emitRestateOnConnect(restate: () => void): void {
+
+    this.restateOnConnect(restate);
+  }
+
   public emitSubscribeGet(topic: string, type: string, getValue: () => string): void {
 
     this.subscribeGet(topic, type, getValue);
@@ -52,6 +62,11 @@ class TestProtectBase extends ProtectBase {
   public emitPublish(topic: string, message: string): void {
 
     this.publish(topic, message);
+  }
+
+  public emitPublishState(topic: string, value: string): void {
+
+    this.publishState(topic, value);
   }
 
   public emitSubscribeGet(topic: string, type: string, getValue: () => string): void {
@@ -110,16 +125,17 @@ const makeDevice = (): { capture: MqttCapture; instance: TestProtectDevice } => 
 // capturing error log (so the reported line is observable). The double reports on the log it is handed at construction, which is the same capturing sink the device
 // logs through, so one array collects the line either origin would write. error renders through util.format - the line the real Homebridge sink would write - the same
 // posture command-error.test.ts uses; the other levels sink.
-const makeGuardedDevice = (): { errors: string[]; instance: TestProtectDevice; mqtt: TestMqttClient } => {
+const makeGuardedDevice = (): { errors: string[]; instance: TestProtectDevice; mqtt: TestMqttClient; record: { present: boolean } } => {
 
   const errors: string[] = [];
   const sink = (): void => undefined;
   const log = { debug: sink, error: (message: string, ...parameters: unknown[]): void => { errors.push(util.format(message, ...parameters)); }, info: sink, warn: sink };
   const mqtt = new TestMqttClient({ log });
   // logName reads the live record through peek() (non-throwing) when the prefixed logger renders a line, so the projection mock exposes it alongside config. The
-  // empty-but-present config makes describeDevice render the same bare descriptor.
+  // empty-but-present config makes describeDevice render the same bare descriptor. The record lever stands in for a removal's grace, when peek() finds no record.
   const config = { mac: MAC };
-  const device = { config, peek: (): Record<string, unknown> => config };
+  const record = { present: true };
+  const device = { config, peek: (): Record<string, unknown> | undefined => (record.present ? config : undefined) };
   const accessory = makeTestAccessory();
 
   accessory.context["mac"] = MAC;
@@ -132,7 +148,7 @@ const makeGuardedDevice = (): { errors: string[]; instance: TestProtectDevice; m
   };
   const instance = new TestProtectDevice(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, device as unknown as Camera);
 
-  return { errors, instance, mqtt };
+  return { errors, instance, mqtt, record };
 };
 
 // The controller MAC the base wrappers compose into every topic tail when no leaf overrides mqttId. Deliberately distinct from the device MAC so a controller-scope
@@ -226,6 +242,88 @@ describe("ProtectDevice MQTT publish guard", () => {
   });
 });
 
+describe("ProtectDevice MQTT state publish", () => {
+
+  test("publishState composes the device MAC into the topic tail as publish does", () => {
+
+    const { capture, instance } = makeDevice();
+
+    instance.emitPublishState("contact", "true");
+
+    assert.deepEqual(capture.publish, [MAC + "/contact"], "publishState prefixes the device MAC onto the supplied topic tail");
+  });
+
+  test("publishState sends a changed value and leaves an unchanged one unsent", () => {
+
+    const { instance, mqtt } = makeGuardedDevice();
+
+    instance.emitPublishState("contact", "true");
+    instance.emitPublishState("contact", "true");
+
+    assert.equal(mqtt.publishedTo("contact").length, 1, "a repeat of the value the topic last carried records nothing");
+
+    instance.emitPublishState("contact", "false");
+
+    assert.deepEqual(mqtt.publishedTo("contact").map((entry) => entry.payload), [ "true", "false" ], "a changed value records once more");
+  });
+});
+
+describe("ProtectDevice MQTT restatement registration", () => {
+
+  // Flip the double's session lever off and back on, settling after each edge so the connect handlers have run.
+  const restoreSession = async (mqtt: TestMqttClient): Promise<void> => {
+
+    mqtt.connected = false;
+    await settle();
+    mqtt.connected = true;
+    await settle();
+  };
+
+  test("the registration runs nothing when it is made and runs once when a later session starts", async () => {
+
+    const { instance, mqtt } = makeGuardedDevice();
+    let runs = 0;
+
+    instance.emitRestateOnConnect(() => { runs++; });
+    await settle();
+
+    assert.equal(runs, 0, "registering into a held session runs nothing, since the owner states its held state as it is built");
+
+    await restoreSession(mqtt);
+
+    assert.equal(runs, 1, "the session that starts after the registration runs the restatement once");
+  });
+
+  test("a torn-down owner's registration does not run", async () => {
+
+    const { instance, mqtt } = makeGuardedDevice();
+    let runs = 0;
+
+    instance.emitRestateOnConnect(() => { runs++; });
+    instance.cleanup();
+    await restoreSession(mqtt);
+
+    assert.equal(runs, 0, "the owner's teardown released its registration");
+  });
+
+  test("a restatement does not run while the owner's record is absent", async () => {
+
+    const { instance, mqtt, record } = makeGuardedDevice();
+    let runs = 0;
+
+    instance.emitRestateOnConnect(() => { runs++; });
+    record.present = false;
+    await restoreSession(mqtt);
+
+    assert.equal(runs, 0, "a device lingering in its removal grace has no record to restate");
+
+    record.present = true;
+    await restoreSession(mqtt);
+
+    assert.equal(runs, 1, "the restatement runs again once the record is back");
+  });
+});
+
 describe("ProtectBase controller-scope MQTT topic composition", () => {
 
   test("publish composes the controller MAC into the topic tail", () => {
@@ -235,6 +333,15 @@ describe("ProtectBase controller-scope MQTT topic composition", () => {
     instance.emitPublish("securitysystem", "Home");
 
     assert.deepEqual(capture.publish, [NVR_MAC + "/securitysystem"], "publish prefixes the controller MAC onto the supplied topic tail");
+  });
+
+  test("publishState composes the controller MAC into the topic tail as publish does", () => {
+
+    const { capture, instance } = makeController();
+
+    instance.emitPublishState("liveviews", "[]");
+
+    assert.deepEqual(capture.publish, [NVR_MAC + "/liveviews"], "publishState prefixes the controller MAC onto the supplied topic tail");
   });
 
   test("subscribeGet composes the controller MAC into the topic tail", () => {

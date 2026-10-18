@@ -230,6 +230,14 @@ export abstract class ProtectBase {
     this.nvr.mqtt?.publishGuarded(mqttTopic(this.mqttId, topic), message);
   }
 
+  // Publish a value this owner holds under its scope, sent only when it differs from the last value that topic delivered in this broker session. The client's change
+  // gate remembers what each topic last carried and forgets it when a session starts, so an unchanged reading costs no broker traffic while a fresh session is told
+  // the value again. Events and confirmations stay on publish, because a repeat of one of those is a new occurrence rather than the same state stated twice.
+  protected publishState(topic: string, value: string): void {
+
+    this.nvr.mqtt?.publishGuarded(mqttTopic(this.mqttId, topic), value, { ifChanged: true });
+  }
+
   // Configure an MQTT get subscription under this owner's scope. The registration is bound to the owner-lifetime signal, so an owner's teardown (cleanup, removal,
   // reclassification) releases exactly this owner's handler - required on shared topics, where the package camera and its parent doorbell each hold handlers on
   // the same parent-MAC tuple and a tuple-wide unsubscribe would clobber the survivor's. The signal governs registration lifetime only; an in-flight handler runs to
@@ -243,6 +251,25 @@ export abstract class ProtectBase {
   protected subscribeSet(topic: string, type: string, setValue: (value: string, rawValue: string) => Promise<void> | void): void {
 
     this.nvr.mqtt?.subscribeSet(mqttTopic(this.mqttId, topic), type, setValue, { signal: this.observeSignal });
+  }
+
+  /* Register this owner's restatement of its held state, run at the start of every broker session that begins after the owner is built. The client forgets what
+   * each topic last delivered when a session starts, so held state is stated again then, and an owner restates by calling the code that already publishes it, so
+   * the restated set is the published set. Registering runs nothing: the session an owner is built into is covered by what the owner states as it is
+   * built. It is bound to the owner-lifetime signal, so an owner's teardown releases exactly its own registration, and a run is skipped while the record is absent,
+   * because a device lingering in its removal grace has no record to restate. With no broker configured there is nothing to register.
+   */
+  protected restateOnConnect(restate: () => void): void {
+
+    this.nvr.mqtt?.onConnect(() => {
+
+      if(!this.recordPresent) {
+
+        return;
+      }
+
+      restate();
+    }, { signal: this.observeSignal });
   }
 
   // Remove an MQTT subscription under this owner's scope. The homebridge-plugin-utils unsubscribe takes the id and the topic tail as separate arguments (it reconstructs

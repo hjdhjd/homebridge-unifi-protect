@@ -44,7 +44,7 @@ const controllers: AbortController[] = [];
 // spawnObservers paths. Returns logEntries and mqtt (the viewer asserts both the failure/configured log lines and the captured MQTT liveview handlers). seedAccessory,
 // when supplied, runs against the fresh accessory before construction, standing in for the services a Homebridge restart restores from the accessory cache.
 function buildViewer(configOptions: Parameters<typeof makeViewerConfig>[0] = {},
-  harnessOptions: { liveviews?: ProtectNvrLiveviewConfig[]; seedAccessory?: (accessory: TestAccessory) => void } = {}): {
+  harnessOptions: { disconnected?: boolean; liveviews?: ProtectNvrLiveviewConfig[]; seedAccessory?: (accessory: TestAccessory) => void } = {}): {
   accessory: TestAccessory; logEntries: readonly TestLogEntry[]; mqtt: TestMqttClient; projection: TestViewerProjection; store: TestStateStore; viewer: ProtectViewer;
 } {
 
@@ -53,6 +53,12 @@ function buildViewer(configOptions: Parameters<typeof makeViewerConfig>[0] = {},
   const { controller, logEntries, mqtt, nvr } = makeTestNvr({ mqtt: true, store });
 
   controllers.push(controller);
+
+  // A disconnected double is the production startup shape: the viewer is built before the broker acknowledges the first session.
+  if(mqtt && harnessOptions.disconnected) {
+
+    mqtt.connected = false;
+  }
 
   const accessory = makeTestAccessory("Test Viewer", "uuid:test-viewer");
 
@@ -108,6 +114,10 @@ describe("real ProtectViewer construction and set-liveview behavior", () => {
     // its own pushes.
     await settle();
 
+    // The viewer states its active liveview as it is built, so each row reads what its own occasion publishes from a list taken past that statement. The double's
+    // gate memory still holds what was stated, as the client's would, so a same-value statement stays unsent.
+    mqtt.published.length = 0;
+
     constructionWakes = wakeLog.length;
     wakeLog.length = 0;
   });
@@ -156,7 +166,7 @@ describe("real ProtectViewer construction and set-liveview behavior", () => {
     fixture.viewer.cleanup();
   });
 
-  test("turning a liveview switch on issues the update command with that liveview id and publishes its name", async () => {
+  test("turning a liveview switch on issues the update command with that liveview id and publishes its name once the controller reports it", async () => {
 
     const target = accessory.getServiceById(Service.Switch, "liveview-2");
 
@@ -165,8 +175,13 @@ describe("real ProtectViewer construction and set-liveview behavior", () => {
     await target.getCharacteristic(Characteristic.On).triggerSet(true);
 
     assert.deepEqual(projection.updateCalls, [{ liveview: "liveview-2" }], "the real setViewer dispatched a single update with the requested liveview id");
+    assert.equal(mqtt.published.length, 0, "the command with no controller confirmation published nothing");
+
+    store.pushViewerPatch(projection.id, { liveview: "liveview-2" });
+    await settle();
+
     assert.deepEqual(mqtt.published, [{ payload: "Backyard", retain: false, topic: projection.config.mac + "/liveview" }],
-      "the accepted change published the liveview name on the device-scoped topic");
+      "the confirming change published the liveview name on the device-scoped topic exactly once");
   });
 
   test("a liveview switch restored from the accessory cache is bound on the first pass, so setting it issues the viewer's update", async () => {
@@ -222,7 +237,28 @@ describe("real ProtectViewer construction and set-liveview behavior", () => {
     await active.getCharacteristic(Characteristic.On).triggerSet(false);
 
     assert.deepEqual(projection.updateCalls, [{ liveview: null }], "a switch-off clears the liveview to null");
-    assert.equal(mqtt.published.length, 0, "a clear-to-null publishes nothing - there is no liveview to name");
+    assert.equal(mqtt.published.length, 0, "a clear-to-null command with no controller confirmation publishes nothing");
+  });
+
+  test("a liveview cleared through the controller publishes None once", async () => {
+
+    store.pushViewerPatch(projection.id, { liveview: null });
+    await settle();
+
+    assert.deepEqual(mqtt.publishedTo("/liveview").map((entry) => entry.payload), ["None"], "the cleared viewer published None, the value its get answers");
+  });
+
+  test("a rename of the active liveview publishes its new name once, and an unrelated change to the list publishes nothing", async () => {
+
+    store.pushLiveviews([ makeLiveviewConfig({ id: "liveview-1", name: "Front Porch" }), makeLiveviewConfig({ id: "liveview-2", name: "Backyard" }) ]);
+    await settle();
+
+    assert.deepEqual(mqtt.publishedTo("/liveview").map((entry) => entry.payload), ["Front Porch"], "the renamed active liveview published its new name once");
+
+    store.pushLiveviews([ makeLiveviewConfig({ id: "liveview-1", name: "Front Porch" }), makeLiveviewConfig({ id: "liveview-2", name: "Back Garden" }) ]);
+    await settle();
+
+    assert.deepEqual(mqtt.publishedTo("/liveview").map((entry) => entry.payload), ["Front Porch"], "a rename of an inactive liveview published nothing further");
   });
 
   test("a rejecting update reports the failure and publishes nothing", async () => {
@@ -346,5 +382,85 @@ describe("real ProtectViewer construction and set-liveview behavior", () => {
     const tails = mqtt.subscriptions.map((subscription) => composedTail(subscription.topic));
 
     assert.ok(tails.includes(projection.config.mac + "/liveview"), "the viewer liveview subscription composed the device-scoped tail");
+  });
+});
+
+describe("the viewer's active liveview restated per broker session", () => {
+
+  test("a viewer with no liveview states None as it is built and restates None once per session", async () => {
+
+    const fixture = buildViewer({}, { liveviews: [] });
+
+    await settle();
+
+    assert.deepEqual(fixture.mqtt.publishedTo("/liveview").map((entry) => entry.payload), ["None"], "the viewer states None once as it is built");
+
+    fixture.mqtt.connected = false;
+    await settle();
+    fixture.mqtt.connected = true;
+    await settle();
+
+    assert.deepEqual(fixture.mqtt.publishedTo("/liveview").map((entry) => entry.payload), [ "None", "None" ], "the restore restates None once");
+  });
+
+  // The liveviews the rows below move the viewer between.
+  const liveviews = (): ProtectNvrLiveviewConfig[] => [ makeLiveviewConfig({ id: "liveview-1", name: "Front Porch" }),
+    makeLiveviewConfig({ id: "liveview-2", name: "Backyard" }) ];
+
+  test("a viewer built while no session is held records nothing until the session starts, then its liveview once", async () => {
+
+    const fixture = buildViewer({ liveview: "liveview-1" }, { disconnected: true, liveviews: liveviews() });
+
+    await settle();
+
+    assert.equal(fixture.mqtt.published.length, 0, "the statement made with no session held is refused");
+
+    fixture.mqtt.connected = true;
+    await settle();
+
+    assert.deepEqual(fixture.mqtt.publishedTo("/liveview").map((entry) => entry.payload), ["Front Porch"], "the first session states the liveview once");
+  });
+
+  test("a session restore restates the liveview once and no event, and an unchanged wake after it adds nothing", async () => {
+
+    const fixture = buildViewer({ liveview: "liveview-1" }, { liveviews: liveviews() });
+
+    await settle();
+
+    const asBuilt = fixture.mqtt.publishedTo("/liveview").length;
+
+    fixture.mqtt.connected = false;
+    await settle();
+    fixture.mqtt.connected = true;
+    await settle();
+
+    assert.deepEqual(fixture.mqtt.publishedTo("/liveview").slice(asBuilt).map((entry) => entry.payload), ["Front Porch"], "the restore restates the liveview once");
+    assert.equal(fixture.mqtt.publishedTo("/motion").length, 0, "no event topic is restated");
+
+    const recorded = fixture.mqtt.published.length;
+
+    fixture.store.pushLiveviews(liveviews());
+    await settle();
+
+    assert.equal(fixture.mqtt.published.length, recorded, "an unchanged wake adds nothing, the gate holding the restated value");
+  });
+
+  test("a liveview changed while the session is down is restated once, as the current value, when the session returns", async () => {
+
+    const fixture = buildViewer({ liveview: "liveview-1" }, { liveviews: liveviews() });
+
+    await settle();
+
+    fixture.mqtt.connected = false;
+    fixture.store.pushViewerPatch(fixture.projection.id, { liveview: "liveview-2" });
+    await settle();
+
+    const asBuilt = fixture.mqtt.publishedTo("/liveview").length;
+
+    fixture.mqtt.connected = true;
+    await settle();
+
+    assert.deepEqual(fixture.mqtt.publishedTo("/liveview").slice(asBuilt).map((entry) => entry.payload), ["Backyard"],
+      "the returning session hears the current value once");
   });
 });

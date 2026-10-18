@@ -11,10 +11,26 @@
  * (a stray ring keyed to the doorbell on a chime that does not list it does not count), a chime listing the doorbell but carrying no ring for it is skipped (not diluted
  * toward zero), and the divisor is the count of contributing chimes.
  */
+import { chimeRingFor, chimeVolumeFor } from "./chime-volume.ts";
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { chimeVolumeFor } from "./chime-volume.ts";
 import { makeChimeConfig } from "../testing.helpers.ts";
+
+describe("chimeRingFor (the real pure leaf, import-driven)", () => {
+
+  test("a chime assigned with a ring answers that ring, and one assigned without a ring or not assigned answers undefined", () => {
+
+    const ring = { cameraId: "doorbell-1", repeatTimes: 1, ringtoneId: "tone-a", volume: 40 };
+
+    // The stray ring on the unassigned chime is keyed to this doorbell, so only the cameraIds membership can make that chime answer undefined.
+    assert.deepEqual(chimeRingFor(makeChimeConfig({ cameraIds: ["doorbell-1"], ringSettings: [ring] }), "doorbell-1"), ring,
+      "an assigned chime carrying a ring for this doorbell answers that ring");
+    assert.equal(chimeRingFor(makeChimeConfig({ cameraIds: ["doorbell-1"], ringSettings: [{ cameraId: "other", volume: 40 }] }), "doorbell-1"), undefined,
+      "an assigned chime carrying no ring for this doorbell answers undefined");
+    assert.equal(chimeRingFor(makeChimeConfig({ cameraIds: ["other"], ringSettings: [ring] }), "doorbell-1"), undefined,
+      "a chime not assigned to this doorbell answers undefined even with a ring keyed to it");
+  });
+});
 
 describe("chimeVolumeFor (the real pure leaf, import-driven)", () => {
 

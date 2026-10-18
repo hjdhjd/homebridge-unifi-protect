@@ -706,12 +706,11 @@ export class ProtectEventDispatch {
   // Doorbell authentication delivery. A fingerprint match or NFC card tap trips the doorbell's authentication contact sensor when the scan resolved a known identity,
   // then resets it to its detected (resting) state after a brief window. The unifi-protect library owns the classification - which method this scan used - so we consume
   // event.method rather than re-derive it, the single source for fingerprint-vs-NFC. The delivery policy stays ours: whether the scan resolved an identity is a
-  // metadata read here, and the "authenticate" MQTT publish fires regardless of whether the contact service is configured - the service is off by default, but the
-  // side-channel is not gated on it, so only the characteristic writes are service-gated.
+  // metadata read here. The "authenticate" MQTT topic is part of the authentication sensor's capability, so it publishes only while that sensor stands.
   public authEventHandler(protectDevice: ProtectCamera, method: AuthMethod, metadata?: ProtectEventMetadata): void {
 
-    // Resolve the authentication contact sensor, if the user configured it. The optional-chained characteristic writes below make a disabled sensor a clean no-op while
-    // the MQTT publish still fires.
+    // Resolve the authentication contact sensor, if the user configured it. The doorbell creates it only while Doorbell.AuthSensor is on and the doorbell reports NFC or
+    // a fingerprint sensor, so its presence is that condition, and the characteristic writes and the MQTT publish below all follow it.
     const authService = protectDevice.accessory.getServiceById(this.hap.Service.ContactSensor, ProtectReservedNames.CONTACT_AUTHSENSOR);
 
     // A new scan supersedes any pending reset, so we clear the inflight timer before acting - the same debounce the access delivery uses. The clear stands on its own
@@ -732,11 +731,14 @@ export class ProtectEventDispatch {
     // A recognized identity: trip the sensor to its not-detected (authenticated) state.
     authService?.updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.hap.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED);
 
-    // Publish the credential to MQTT regardless of the sensor's presence. The method is the classifier's; a card tap additionally carries its card id, read from the
-    // metadata here at delivery.
-    const authInfo = (method === "nfc") ? { id: metadata.nfc?.nfcId ?? "", type: "nfc" } : { type: "fingerprint" };
+    // Publish the credential to MQTT while the sensor stands, because a feature the user has not enabled in HomeKit has no MQTT topic. The method is the classifier's;
+    // a card tap additionally carries its card id, read from the metadata here at delivery.
+    if(authService) {
 
-    this.nvr.mqtt?.publishGuarded(mqttTopic(protectDevice.mac, mqttTopics.authenticate.topic), JSON.stringify(authInfo));
+      const authInfo = (method === "nfc") ? { id: metadata.nfc?.nfcId ?? "", type: "nfc" } : { type: "fingerprint" };
+
+      this.nvr.mqtt?.publishGuarded(mqttTopic(protectDevice.mac, mqttTopics.authenticate.topic), JSON.stringify(authInfo));
+    }
 
     // Reset the sensor to its resting state after the auth window, so HomeKit shows a momentary authentication rather than a latched one.
     this.eventTimers.setTimeout(key, () => {
@@ -773,15 +775,20 @@ export class ProtectEventDispatch {
   }
 
   // Fob button-press delivery. A press fires the addressed button's programmable-switch event in HomeKit, mapping the wire gesture to a single/double/long press value.
-  // The MQTT publish comes FIRST and is faithful to the firehose: it fires for every delivered press, including a hidden or unrecognized button and an unmapped gesture,
-  // so an automation on the raw press is never gated on which HomeKit switches happen to exist. The button subtype is addressed by the LOWERCASE wire id - the identical
-  // convention the fob leaf creates its switches under - so a hidden or unknown button resolves no service and the optional-chained notification is a clean no-op. We use
-  // sendEventNotification, never updateCharacteristic: a stateless programmable switch carries no persistent value, so this pushes the notification without caching
-  // state, and identical rapid presses each notify.
+  // A button's MQTT topic is part of the button the user selected in Fob.Buttons, so a press publishes only when the button's switch stands. The button subtype is
+  // addressed by the LOWERCASE wire id - the identical convention the fob leaf creates its switches under - so a hidden or unknown button resolves no service, which
+  // makes its publish skip and its optional-chained notification a clean no-op. For a selected button the MQTT publish comes first and carries the raw press, an
+  // unmapped gesture included. We use sendEventNotification, never updateCharacteristic: a stateless programmable switch carries no persistent value, so this pushes
+  // the notification without caching state, and identical rapid presses each notify.
   public buttonEventHandler(protectDevice: ProtectDevice, button: string, pressType: string): void {
 
-    // Publish the raw press first, faithful to the firehose - hidden and unknown buttons and unmapped gestures all publish.
-    this.nvr.mqtt?.publishGuarded(mqttTopic(protectDevice.mac, mqttTopics.button.topic), JSON.stringify({ button, pressType }));
+    const buttonService = protectDevice.accessory.getServiceById(this.hap.Service.StatelessProgrammableSwitch, ProtectReservedNames.SWITCH_FOB_BUTTON + "." + button);
+
+    // Publish the raw press first, an unmapped gesture included, while the button's switch stands. A hidden or unknown button has no switch and no MQTT topic.
+    if(buttonService) {
+
+      this.nvr.mqtt?.publishGuarded(mqttTopic(protectDevice.mac, mqttTopics.button.topic), JSON.stringify({ button, pressType }));
+    }
 
     // Map the wire gesture to a HomeKit press value. An unrecognized gesture is field-diagnosable, so we surface it at info (not debug) - a wrong wire assumption would
     // otherwise silently no-op the HomeKit half - and deliver nothing further.
@@ -795,8 +802,7 @@ export class ProtectEventDispatch {
     }
 
     // Fire the addressed button's programmable-switch event. An absent service (a hidden or unknown button) makes the optional chain a clean no-op.
-    protectDevice.accessory.getServiceById(this.hap.Service.StatelessProgrammableSwitch, ProtectReservedNames.SWITCH_FOB_BUTTON + "." + button)?.
-      getCharacteristic(this.hap.Characteristic.ProgrammableSwitchEvent).sendEventNotification(value);
+    buttonService?.getCharacteristic(this.hap.Characteristic.ProgrammableSwitchEvent).sendEventNotification(value);
   }
 
   // Map a fob's wire press gesture to HomeKit's ProgrammableSwitchEvent value, or null for an unrecognized gesture. Testing the result against null matters: SINGLE_PRESS

@@ -6,7 +6,7 @@
  * grouped under a ServiceLabel when two or more are visible, plus a Battery service. A fob is a PURE-INPUT device: it issues no commands, so the leaf only CREATES the
  * services (configure-time) while the event-dispatch ROUTER delivers each press. These tests construct the REAL class end to end, drive presses through the REAL
  * ProtectEventDispatch.buttonEventHandler (never a hand-rolled call), and are written to SURFACE a defect (a mis-created subtype, a compacted ServiceLabelIndex, a
- * swallowed single press, a lost faithful-firehose publish) rather than to assert whatever the current code happens to do.
+ * swallowed single press, a press published for a button the user hid) rather than to assert whatever the current code happens to do.
  *
  * The isolation model mirrors the relay reference: a per-test-fresh beforeEach builds a clean fob against a clean store so the characteristic state, the event log, and
  * the observer baselines are clean every test. The wake log is windowed per push via a captured baseline. buildFob is the copyable skeleton; only makeFobConfig,
@@ -268,7 +268,7 @@ describe("real ProtectFob construction and behavior", () => {
     }
   });
 
-  test("hiding one button prunes exactly its switch; a press to it fires nothing while a sibling still fires, and BOTH presses publish MQTT", () => {
+  test("hiding one button prunes exactly its switch; a press to it fires and publishes nothing while a sibling's press fires and publishes once", () => {
 
     const built = buildFob({}, { userOptions: allButtonsBut("disarm") });
 
@@ -285,14 +285,11 @@ describe("real ProtectFob construction and behavior", () => {
     assert.deepEqual(panic.getCharacteristic(Characteristic.ProgrammableSwitchEvent).events, [Characteristic.ProgrammableSwitchEvent.SINGLE_PRESS],
       "the sibling press fired while the hidden button's press fired nothing");
 
-    // The faithful firehose publishes BOTH presses on the device-family-agnostic button topic, hidden button included.
+    // A hidden button's MQTT topic leaves with its switch, so only the visible sibling's press publishes on the device-family-agnostic button topic.
     const publishes = built.mqtt.published.filter((entry) => entry.topic === built.fobConfig.mac + "/button");
 
-    assert.deepEqual(publishes, [
-
-      { payload: JSON.stringify({ button: "disarm", pressType: "press" }), retain: false, topic: built.fobConfig.mac + "/button" },
-      { payload: JSON.stringify({ button: "panic", pressType: "press" }), retain: false, topic: built.fobConfig.mac + "/button" }
-    ], "both presses publish on the button topic, faithful to the firehose - the hidden button's press publishes even though it fires no HomeKit event");
+    assert.deepEqual(publishes, [{ payload: JSON.stringify({ button: "panic", pressType: "press" }), retain: false, topic: built.fobConfig.mac + "/button" }],
+      "only the sibling's press publishes on the button topic - the hidden button's press publishes nothing, as it fires no HomeKit event");
 
     built.fob.cleanup();
   });
@@ -404,11 +401,12 @@ describe("real ProtectFob construction and behavior", () => {
     built.fob.cleanup();
   });
 
-  test("a hidden button, an unknown button, and an unmapped gesture each fire nothing in HomeKit but still publish MQTT (faithful firehose)", () => {
+  test("a hidden or unknown button publishes nothing, while an unmapped gesture on a selected button fires nothing in HomeKit but publishes once", () => {
 
     const built = buildFob({}, { userOptions: allButtonsBut("disarm") });
 
-    // A hidden button (no switch), an unknown button (never in the table), and an unmapped gesture on a visible button: none fire a HomeKit event, all publish MQTT.
+    // A hidden button (no switch) and an unknown button (never in the table) have no MQTT topic, so neither fires a HomeKit event or publishes. An unmapped gesture on a
+    // visible button maps to no press value, so it fires no HomeKit event, and it still publishes the raw press.
     built.events.buttonEventHandler(built.fob, "disarm", "press");
     built.events.buttonEventHandler(built.fob, "nonexistent", "press");
     built.events.buttonEventHandler(built.fob, "panic", "wiggle");
@@ -421,12 +419,8 @@ describe("real ProtectFob construction and behavior", () => {
 
     const publishes = built.mqtt.published.filter((entry) => entry.topic === built.fobConfig.mac + "/button");
 
-    assert.deepEqual(publishes, [
-
-      { payload: JSON.stringify({ button: "disarm", pressType: "press" }), retain: false, topic: built.fobConfig.mac + "/button" },
-      { payload: JSON.stringify({ button: "nonexistent", pressType: "press" }), retain: false, topic: built.fobConfig.mac + "/button" },
-      { payload: JSON.stringify({ button: "panic", pressType: "wiggle" }), retain: false, topic: built.fobConfig.mac + "/button" }
-    ], "every delivered press publishes on the button topic, hidden / unknown button and unmapped gesture included");
+    assert.deepEqual(publishes, [{ payload: JSON.stringify({ button: "panic", pressType: "wiggle" }), retain: false, topic: built.fobConfig.mac + "/button" }],
+      "only the selected button's press publishes, its unmapped gesture included, while the hidden and unknown buttons publish nothing");
 
     built.fob.cleanup();
   });

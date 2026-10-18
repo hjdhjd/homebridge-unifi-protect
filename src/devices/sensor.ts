@@ -218,11 +218,11 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
       currentEnabledSensors.push("air quality");
     }
 
-    // Publish the sensor's full air-quality telemetry. This rides the reporting capability alone: MQTT is the full-fidelity surface, carrying every metric the
-    // controller reports - including the ones HomeKit has no service for - whatever set of HomeKit services this accessory happens to materialize.
+    // Publish the sensor's full air-quality telemetry when it changed. This follows the reporting capability alone: MQTT is the full-fidelity surface, carrying
+    // every metric the controller reports - including the ones HomeKit has no service for - whatever set of HomeKit services this accessory happens to materialize.
     if(airQualityReporting(this.airQuality)) {
 
-      this.publish(mqttTopics.airquality.topic, this.airQualityPayload);
+      this.publishState(mqttTopics.airquality.topic, this.airQualityPayload);
     }
 
     // Configure the alarm-family contact sensors (alarm sound and glass break), threading updateDevice's own initialized flag exactly as the leak and motion paths do.
@@ -437,8 +437,8 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
     // Update the state characteristics.
     this.configureStateCharacteristics(service);
 
-    // Publish the state.
-    this.publish(mqttTopics.ambientlight.topic, this.ambientLight.toString());
+    // Publish the state when it changed.
+    this.publishState(mqttTopics.ambientlight.topic, this.ambientLight.toString());
 
     return true;
   }
@@ -496,8 +496,8 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
     // Update the state characteristics.
     this.configureStateCharacteristics(service);
 
-    // Publish the state.
-    this.publish(mqttTopics.contact.topic, this.contact.toString());
+    // Publish the state when it changed.
+    this.publishState(mqttTopics.contact.topic, this.contact.toString());
 
     return true;
   }
@@ -590,17 +590,16 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
       // Update the state characteristics.
       this.configureStateCharacteristics(service);
 
-      // Publish the state.
+      // Publish the state when it changed.
       if(this.ufp.isConnected) {
 
-        this.publish(sensor.mqtt.topic, this.leakDetected(sensor.isDetected).toString());
+        this.publishState(sensor.mqtt.topic, this.leakDetected(sensor.isDetected).toString());
       }
 
       // Register the MQTT get handler exactly once per channel: subscribeGet accumulates a handler on every call, so a second call would double-register the channel's
       // GET; we guard it on the first configure (initialized false) OR a channel enabled at runtime (an attached transition) - a channel toggled on after first
       // configure must register its GET now rather than stay dead until a restart. ONLY leak is folded onto this per-channel leaf gate, because only leak has the
-      // model-aware per-channel enable signal; the other sensor GETs remain unconditional in configureMqtt - a pre-existing, accepted inconsistency that is out of scope
-      // here.
+      // model-aware per-channel enable signal. In configureMqtt the ambient light and vape GETs follow their feature options, and the remaining GETs are unconditional.
       if(!initialized || (transition === "attached")) {
 
         this.subscribeGet(sensor.mqtt.topic, sensor.mqtt.label, () => this.leakDetected(sensor.isDetected).toString());
@@ -681,10 +680,10 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
 
         this.lastSmoke[descriptor.alarmType] = { detected, faults };
 
-        // Update the sensor and publish the state.
+        // Update the sensor and publish the state when it changed.
         service.updateCharacteristic(characteristic, detected);
         service.updateCharacteristic(this.hap.Characteristic.StatusFault, fault);
-        this.publish(descriptor.mqtt.topic, detected.toString());
+        this.publishState(descriptor.mqtt.topic, detected.toString());
       }
 
       // Update the state characteristics.
@@ -716,7 +715,7 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
 
       if(telemetry !== null) {
 
-        this.publish(mqttTopics.smokedetector.topic, telemetry);
+        this.publishState(mqttTopics.smokedetector.topic, telemetry);
       }
     }
 
@@ -786,8 +785,8 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
       // Update the sensor.
       service.updateCharacteristic(this.hap.Characteristic.ContactSensorState, detected);
 
-      // Publish the state.
-      this.publish(mqttTopics.vape.topic, detected.toString());
+      // Publish the state when it changed.
+      this.publishState(mqttTopics.vape.topic, detected.toString());
     }
 
     // Update the state characteristics.
@@ -833,9 +832,9 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
       return;
     }
 
-    // Update the sensor and publish the state.
+    // Update the sensor and publish the state when it changed.
     options.service.updateCharacteristic(options.characteristic, reading);
-    this.publish(options.topic, reading.toString());
+    this.publishState(options.topic, reading.toString());
   }
 
   /* Read what HomeKit currently holds for one characteristic, resolving the service by type and, where one is given, by subtype.
@@ -1085,10 +1084,11 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
 
   // Configure MQTT capabilities for sensors. The leak get handlers are NOT registered here: leak is the one sensor mode whose per-channel enablement is model-aware, so
   // its get registration is folded into configureLeakSensor's per-channel loop (once-guarded, and released by the channel's own unsubscribe when it is disabled). The
-  // remaining GETs are always-on and registered unconditionally here; the alarm-family gets (alarm sound and glass break) and the smoke-family gets (smoke and carbon
-  // monoxide) are each driven from their shared descriptor, so their topics and labels are single-sourced with the services they read - each alarm row through
-  // alarmDetected on its own latched field, the smoke pair through smokeAlarmState, which answers false on a sensor that is no detector. The detector's telemetry get
-  // always answers too, with JSON null standing in for a detector that has not reported and for a sensor that has no detector hardware at all.
+  // remaining GETs are registered here, the ambient light and vape gets under their feature options and every other one unconditionally; the alarm-family gets (alarm
+  // sound and glass break) and the smoke-family gets (smoke and carbon monoxide) are each driven from their shared descriptor, so their topics and labels are
+  // single-sourced with the services they read - each alarm row through alarmDetected on its own latched field, the smoke pair through smokeAlarmState, which answers
+  // false on a sensor that is no detector. The detector's telemetry get always answers too, with JSON null standing in for a detector that has not reported and for a
+  // sensor that has no detector hardware at all.
   private configureMqtt(): void {
 
     for(const descriptor of SENSOR_ALARM_CONTACTS) {
@@ -1102,12 +1102,36 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
     }
 
     this.subscribeGet(mqttTopics.airquality.topic, mqttTopics.airquality.label, () => this.airQualityPayload);
-    this.subscribeGet(mqttTopics.ambientlight.topic, mqttTopics.ambientlight.label, () => this.ambientLight.toString());
+
+    // The ambient light and vape topics belong to features the user turns on in HomeKit, so each get exists only while its feature option is on, the option its
+    // publish already reads. The option is read once here because configureMqtt runs once, while the live capability half of each publish's condition is read per pass.
+    if(this.hasFeature("Device.AmbientLightSensor")) {
+
+      this.subscribeGet(mqttTopics.ambientlight.topic, mqttTopics.ambientlight.label, () => this.ambientLight.toString());
+    }
+
     this.subscribeGet(mqttTopics.contact.topic, mqttTopics.contact.label, () => this.contact.toString());
     this.subscribeGet(mqttTopics.humidity.topic, mqttTopics.humidity.label, () => (this.humidity ?? NO_READING).toString());
     this.subscribeGet(mqttTopics.smokedetector.topic, mqttTopics.smokedetector.label, () => this.smokeDetectorTelemetry ?? "null");
     this.subscribeGet(mqttTopics.temperature.topic, mqttTopics.temperature.label, () => (this.temperature ?? NO_READING).toString());
-    this.subscribeGet(mqttTopics.vape.topic, mqttTopics.vape.label, () => this.vapeState.toString());
+
+    if(this.hasFeature("Sensor.Vape")) {
+
+      this.subscribeGet(mqttTopics.vape.topic, mqttTopics.vape.label, () => this.vapeState.toString());
+    }
+
+    // Restate the sensor's held state at the start of every later broker session, through the code that already publishes it. Each alarm row whose service stands
+    // is stated first by its own push, then the reconcile pass runs exactly as a record wake runs it and states every reconcile topic it holds a value for. The order
+    // keeps a row the pass itself attaches to one statement, its seed. The construction pass that precedes this method is the sensor's statement as it is built.
+    this.restateOnConnect(() => {
+
+      for(const descriptor of SENSOR_ALARM_CONTACTS) {
+
+        this.updateAlarmState(descriptor);
+      }
+
+      this.updateDevice({ initialized: true });
+    });
   }
 
   // Spawn the sensor's narrow-selector observers. super spawns the base device's universal observers (currently name sync and firmware/device-info refresh); the sensor

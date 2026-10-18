@@ -81,13 +81,7 @@ export class ProtectLight extends ProtectDevice<Light> {
       const lightState = value === true;
 
       // Push the new power state to the controller, reporting any failure through the shared command-error helper.
-      if(!(await this.runDeviceCommand("turn the light " + (lightState ? "on" : "off"), () => this.device.update({ lightOnSettings: { isLedForceOn: lightState } })))) {
-
-        return;
-      }
-
-      // Publish our state.
-      this.publish(mqttTopics.light.topic, lightState ? "true" : "false");
+      await this.runDeviceCommand("turn the light " + (lightState ? "on" : "off"), () => this.device.update({ lightOnSettings: { isLedForceOn: lightState } }));
     });
 
     // Adjust the brightness of the light.
@@ -109,14 +103,24 @@ export class ProtectLight extends ProtectDevice<Light> {
 
       // Make sure we properly reflect what brightness we're actually at, given the differences in setting granularity between Protect and HomeKit.
       this.reflectAfterSet(() => service.updateCharacteristic(this.hap.Characteristic.Brightness, this.ledLevelToBrightness(brightness)));
-
-      // Publish our state.
-      this.publish(mqttTopics.lightBrightness.topic, this.ledLevelToBrightness(brightness).toString());
     });
 
     // Initialize the light.
     service.updateCharacteristic(this.hap.Characteristic.On, this.isLightOn);
     service.updateCharacteristic(this.hap.Characteristic.Brightness, this.ledBrightness);
+  }
+
+  // Publish the light's on state, the value its MQTT get answers, when it changed. The controller's reported change is the one publisher, so a change made here or in
+  // the Protect app publishes once, from the observer.
+  private publishLightState(): void {
+
+    this.publishState(mqttTopics.light.topic, this.isLightOn.toString());
+  }
+
+  // Publish the light's brightness percentage, the value its MQTT get answers, when it changed, from the observer that carries the controller's change.
+  private publishBrightnessState(): void {
+
+    this.publishState(mqttTopics.lightBrightness.topic, this.ledBrightness.toString());
   }
 
   // Configure MQTT capabilities of this light.
@@ -152,6 +156,17 @@ export class ProtectLight extends ProtectDevice<Light> {
       this.accessory.getService(this.hap.Service.Lightbulb)?.setCharacteristic(this.hap.Characteristic.Brightness, brightness);
     });
 
+    // State the light's held state as it is built, since its construction publishes nothing else, and again at the start of every later broker session, through the
+    // methods its observers publish with.
+    const restate = (): void => {
+
+      this.publishLightState();
+      this.publishBrightnessState();
+    };
+
+    restate();
+    this.restateOnConnect(restate);
+
     return true;
   }
 
@@ -177,12 +192,14 @@ export class ProtectLight extends ProtectDevice<Light> {
     this.observeState({ key: "light.isLightOn", selector: state => light(state)?.isLightOn, title: "the light" }, () => {
 
       this.accessory.getService(this.hap.Service.Lightbulb)?.updateCharacteristic(this.hap.Characteristic.On, this.isLightOn);
+      this.publishLightState();
     });
 
     // The light's LED level drives the Lightbulb Brightness, mapped from Protect's 1-6 scale to a HomeKit percentage.
     this.observeState({ key: "light.ledLevel", selector: state => light(state)?.lightDeviceSettings.ledLevel, title: "brightness" }, () => {
 
       this.accessory.getService(this.hap.Service.Lightbulb)?.updateCharacteristic(this.hap.Characteristic.Brightness, this.ledBrightness);
+      this.publishBrightnessState();
     });
 
     // The light's indicator setting drives the status-indicator switch, when that switch is configured.

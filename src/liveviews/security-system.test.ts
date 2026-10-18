@@ -83,7 +83,8 @@ function seedMember(nvr: TestProtectNvr, options: { detectMotion?: boolean; id: 
 // returned controller is the AbortController behind nvr.signal, aborted in teardown: the fixture tears down through the controller it built, the scope that owns every
 // registration the test created.
 function buildSecuritySystem(
-  harnessOptions: { accessory?: TestAccessory; hardwareRevision?: string; liveviews?: ProtectNvrLiveviewConfig[]; userOptions?: string[] } = {}): {
+  harnessOptions: { accessory?: TestAccessory; disconnected?: boolean; hardwareRevision?: string; liveviews?: ProtectNvrLiveviewConfig[];
+    userOptions?: string[]; } = {}): {
   accessory: TestAccessory; controller: AbortController; logEntries: readonly TestLogEntry[]; mqtt: TestMqttClient; nvr: TestProtectNvr; owner: ProtectSecuritySystem;
   store: TestStateStore;
 } {
@@ -99,6 +100,9 @@ function buildSecuritySystem(
 
     throw new Error("The MQTT recording double was not installed despite mqtt: true.");
   }
+
+  // A disconnected double is the production startup shape: the security system is built before the broker acknowledges the first session.
+  mqtt.connected = !(harnessOptions.disconnected ?? false);
 
   const owner = new ProtectSecuritySystem(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory);
 
@@ -372,6 +376,46 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
     assert.ok(loggedAt(built.logEntries, "error", "Unable to process MQTT security system setting: garbage."), "a bad MQTT value logs the error");
   });
 
+  test("the securitysystem MQTT SET refuses AlarmOn and AlarmOff with SecuritySystem.Alarm off, and drives the alarm with it on", async () => {
+
+    // The alarm state belongs to the SecuritySystem.Alarm feature. With it off an alarm value is refused and logged as an unknown value is, driving no state and
+    // publishing nothing; the same value with the feature on drives the alarm, so the refusal is the option's alone.
+    const disabled = buildSecuritySystem();
+    const enabled = buildSecuritySystem({ userOptions: ["Enable.SecuritySystem.Alarm"] });
+
+    try {
+
+      await settle();
+
+      const publishedBefore = disabled.mqtt.publishedTo("/securitysystem").length;
+
+      await disabled.mqtt.invokeSet(CONTROLLER_MAC + "/securitysystem/set", "AlarmOn");
+
+      assert.equal(disabled.accessory.getService(Service.SecuritySystem)?.getCharacteristic(CurrentState).value, CurrentState.STAY_ARM,
+        "an AlarmOn with the feature off leaves the held STAY_ARM state");
+      assert.equal(await disabled.mqtt.invokeGet(CONTROLLER_MAC + "/securitysystem/get"), "Home", "the GET still answers the held state, never Alarm");
+      assert.ok(loggedAt(disabled.logEntries, "error", "Unable to process MQTT security system setting: alarmon."),
+        "the refused AlarmOn is logged as an unknown value is");
+
+      await disabled.mqtt.invokeSet(CONTROLLER_MAC + "/securitysystem/set", "AlarmOff");
+
+      assert.ok(loggedAt(disabled.logEntries, "error", "Unable to process MQTT security system setting: alarmoff."),
+        "the refused AlarmOff is logged as an unknown value is");
+      assert.deepEqual(disabled.mqtt.publishedTo("/securitysystem").slice(publishedBefore).map((entry) => entry.payload), ["Home"],
+        "the refused alarm values publish nothing, so the one statement after them is the GET's answer");
+
+      await enabled.mqtt.invokeSet(CONTROLLER_MAC + "/securitysystem/set", "AlarmOn");
+
+      assert.equal(enabled.accessory.getService(Service.SecuritySystem)?.getCharacteristic(CurrentState).value, CurrentState.ALARM_TRIGGERED,
+        "an AlarmOn with the feature on drives the alarm");
+      assert.ok(enabled.mqtt.publishedTo("/securitysystem").some((entry) => entry.payload === "Alarm"), "the driven alarm publishes the Alarm state");
+    } finally {
+
+      disabled.controller.abort();
+      enabled.controller.abort();
+    }
+  });
+
   test("setSecurityState fans motion onto a matching member camera (flips false->true), skips a non-member, and publishes - NON-VACUOUS", async () => {
 
     // A Protect-Home liveview carrying one member camera id, DISTINCT ids on the liveview seeds.
@@ -556,5 +600,75 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
 
     assert.equal(subscription.init.signal.aborted, true, "the GET registration's lifetime ended with the controller abort");
     assert.equal(built.store.observerCount, 0, "the owner-driven security system registers and leaks no observers");
+  });
+});
+
+describe("the security system's state stated as it is built and restated per broker session", () => {
+
+  test("it states its current state once as it is built, and a session restore restates it once", async () => {
+
+    const built = buildSecuritySystem();
+
+    try {
+
+      await settle();
+
+      assert.equal(built.mqtt.publishedTo("/securitysystem").length, 1, "the current state is stated once as the security system is built");
+
+      built.mqtt.connected = false;
+      await settle();
+      built.mqtt.connected = true;
+      await settle();
+
+      assert.equal(built.mqtt.publishedTo("/securitysystem").length, 2, "the restore restates the current state once more");
+    } finally {
+
+      built.controller.abort();
+    }
+  });
+
+  test("built while no session is held, it records nothing until the session starts, then its current state once", async () => {
+
+    const built = buildSecuritySystem({ disconnected: true });
+
+    try {
+
+      await settle();
+
+      assert.equal(built.mqtt.published.length, 0, "the statement made with no session held is refused");
+
+      built.mqtt.connected = true;
+      await settle();
+
+      assert.equal(built.mqtt.publishedTo("/securitysystem").length, 1, "the first session states the current state once");
+    } finally {
+
+      built.controller.abort();
+    }
+  });
+
+  test("a state set while the session is down is restated once, as the current state, when the session returns", async () => {
+
+    const built = buildSecuritySystem({ liveviews: [makeLiveviewConfig({ cameras: ["camera-home"], id: "lv-home", name: "Protect-Home" })] });
+
+    try {
+
+      await settle();
+
+      built.mqtt.connected = false;
+      await settle();
+      await built.accessory.getService(Service.SecuritySystem)?.getCharacteristic(TargetState).triggerSet(TargetState.STAY_ARM);
+      await settle();
+
+      assert.equal(built.mqtt.publishedTo("/securitysystem").length, 1, "only the build statement is recorded, the set made with no session held being refused");
+
+      built.mqtt.connected = true;
+      await settle();
+
+      assert.deepEqual(built.mqtt.publishedTo("/securitysystem").slice(1).map((entry) => entry.payload), ["Home"], "the returning session hears the current state once");
+    } finally {
+
+      built.controller.abort();
+    }
   });
 });

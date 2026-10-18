@@ -47,7 +47,7 @@ const controllers: AbortController[] = [];
 // The reusable construction helper: build a REAL ProtectRelay against the harness doubles. The casts are confined to where the class is constructed, exactly as the light
 // and camera suites do; the instance under test runs its real configureHints / configureDevice / spawnObservers paths. Each call builds a fresh store, so an extra build
 // inside a test (the feature-enabled variants) is fully isolated from the beforeEach relay.
-function buildRelay(configOptions: Parameters<typeof makeRelayConfig>[0] = {}, harnessOptions: { userOptions?: string[] } = {}): {
+function buildRelay(configOptions: Parameters<typeof makeRelayConfig>[0] = {}, harnessOptions: { disconnected?: boolean; userOptions?: string[] } = {}): {
   accessory: TestAccessory; clock: TestClock; mqtt: TestMqttClient; relay: ProtectRelay; relayConfig: ProtectRelayConfig; relayProjection: TestRelayProjection;
   store: TestStateStore;
 } {
@@ -57,6 +57,12 @@ function buildRelay(configOptions: Parameters<typeof makeRelayConfig>[0] = {}, h
   const { clock, controller, mqtt, nvr } = makeTestNvr({ mqtt: true, store, userOptions: harnessOptions.userOptions });
 
   controllers.push(controller);
+
+  // A disconnected double is the production startup shape: the relay is built before the broker acknowledges the first session.
+  if(mqtt && harnessOptions.disconnected) {
+
+    mqtt.connected = false;
+  }
 
   const accessory = makeTestAccessory("Test Relay", "uuid:test-relay");
 
@@ -118,6 +124,10 @@ describe("real ProtectRelay construction and behavior", () => {
     // Settle the observe loops' lazy registration before any test asserts, then snapshot the construction-wake count and reset the window so each test measures only
     // its own pushes.
     await settle();
+
+    // The relay states each output's held state as it is built, so each row reads what its own occasion publishes from a list taken past that statement. The double's
+    // gate memory still holds what was stated, as the client's would, so a same-value statement stays unsent.
+    mqtt.published.length = 0;
 
     constructionWakes = wakeLog.length;
     wakeLog.length = 0;
@@ -266,7 +276,7 @@ describe("real ProtectRelay construction and behavior", () => {
     assert.deepEqual(relayProjection.toggleCalls, [{ outputId: 0 }], "a second on-when-heading-on set issued no further toggle");
   });
 
-  test("a rapid on-then-off tap sequence issues two toggles, publishes each intent, and resolves to off once the broadcasts land", async () => {
+  test("a rapid on-then-off tap sequence issues two toggles, publishes each confirmed state, and resolves to off once the broadcasts land", async () => {
 
     const output0 = accessory.getServiceById(Service.Switch, outputSubtype(0));
 
@@ -278,9 +288,7 @@ describe("real ProtectRelay construction and behavior", () => {
     await output0.getCharacteristic(Characteristic.On).triggerSet(false);
 
     assert.deepEqual(relayProjection.toggleCalls, [ { outputId: 0 }, { outputId: 0 } ], "the on tap and the off tap each issued a toggle");
-    assert.deepEqual(mqtt.published.filter((entry) => entry.topic === relayConfig.mac + "/relay/1"),
-      [ { payload: "true", retain: false, topic: relayConfig.mac + "/relay/1" }, { payload: "false", retain: false, topic: relayConfig.mac + "/relay/1" } ],
-      "each accepted tap published its desired state on the 1-based output topic");
+    assert.equal(mqtt.publishedTo("/relay/1").length, 0, "the taps with no controller confirmation published nothing");
 
     // The first broadcast (on, from the first toggle) lands, then the second (off, from the second toggle).
     store.pushRelayOutputs(relayConfig.id, [ { id: 0, state: "on" }, { id: 1, state: "off" } ]);
@@ -294,6 +302,8 @@ describe("real ProtectRelay construction and behavior", () => {
     await settle();
 
     assert.equal(output0.getCharacteristic(Characteristic.On).value, false, "the second broadcast resolved the tile to off - the rapid on-then-off ends off");
+    assert.deepEqual(mqtt.publishedTo("/relay/1").map((entry) => entry.payload), [ "true", "false" ],
+      "each confirming broadcast published the output's state once on the 1-based output topic");
 
     // The confirming broadcast cleared the intent: a fresh on tap toggles again rather than being suppressed against a stale pending value.
     await output0.getCharacteristic(Characteristic.On).triggerSet(true);
@@ -368,6 +378,51 @@ describe("real ProtectRelay construction and behavior", () => {
     await settle();
 
     assert.equal(output0.getCharacteristic(Characteristic.On).value, false, "the self-revert mirrored back off");
+    assert.deepEqual(mqtt.publishedTo("/relay/1").map((entry) => entry.payload), [ "true", "false" ], "the pulse and its self-revert each published once");
+  });
+
+  test("an output Relay.Outputs hides publishes nothing for its changes while a visible output's change publishes once", async () => {
+
+    const built = buildRelay({}, { userOptions: ["Enable.Relay.Outputs=1"] });
+
+    try {
+
+      await settle();
+
+      assert.deepEqual(built.mqtt.publishedTo("/relay/1").map((entry) => entry.payload), ["false"], "the visible output's held state is stated once as it is built");
+      assert.equal(built.mqtt.publishedTo("/relay/2").length, 0, "the hidden output states nothing as it is built");
+
+      built.mqtt.published.length = 0;
+
+      built.store.pushRelayOutputs(built.relayConfig.id, [ { id: 0, state: "on" }, { id: 1, state: "on" } ]);
+      await settle();
+
+      assert.deepEqual(built.mqtt.publishedTo("/relay/1").map((entry) => entry.payload), ["true"], "the visible output's change published once");
+      assert.equal(built.mqtt.publishedTo("/relay/2").length, 0, "the hidden output's change published nothing");
+    } finally {
+
+      built.relay.cleanup();
+    }
+  });
+
+  test("an output Relay.Outputs hides registers no MQTT get or set while a visible output registers its get and its set", () => {
+
+    const built = buildRelay({}, { userOptions: ["Enable.Relay.Outputs=1"] });
+
+    // The registration kinds each output's MAC-scoped tail carries. A hidden output has no switch, and with it no MQTT topic, so its tail carries neither kind.
+    const kinds = (tail: string): string[] => built.mqtt.subscriptions.filter((subscription) => composedTail(subscription.topic) === built.relayConfig.mac + tail)
+      .map((subscription) => subscription.kind);
+
+    try {
+
+      assert.ok(built.accessory.getServiceById(Service.Switch, outputSubtype(0)), "the visible output's switch exists");
+      assert.equal(built.accessory.getServiceById(Service.Switch, outputSubtype(1)), undefined, "the hidden output's switch is pruned");
+      assert.deepEqual(kinds("/relay/1"), [ "get", "set" ], "the visible output registers its get and its set");
+      assert.deepEqual(kinds("/relay/2"), [], "the hidden output registers neither a get nor a set");
+    } finally {
+
+      built.relay.cleanup();
+    }
   });
 
   test("a toggle command failure drops the intent, cancels the safety timer, and bounces the tile back to controller truth", async () => {
@@ -489,5 +544,84 @@ describe("real ProtectRelay construction and behavior", () => {
     await settle();
 
     assert.deepEqual(relayProjection.toggleCalls, [{ outputId: 0 }], "a \"true\" SET on the output topic drove the toggle path for output 0");
+  });
+});
+
+describe("the relay's outputs restated per broker session", () => {
+
+  test("a session restore restates each visible output once and a hidden output not at all, and a push leaving the outputs unchanged records nothing", async () => {
+
+    const built = buildRelay({}, { userOptions: ["Enable.Relay.Outputs=1"] });
+
+    try {
+
+      await settle();
+
+      built.mqtt.connected = false;
+      await settle();
+      built.mqtt.connected = true;
+      await settle();
+
+      assert.deepEqual(built.mqtt.publishedTo("/relay/1").map((entry) => entry.payload), [ "false", "false" ], "the visible output is stated as built and restated once");
+      assert.equal(built.mqtt.publishedTo("/relay/2").length, 0, "the hidden output is never stated");
+      assert.equal(built.mqtt.publishedTo("/motion").length, 0, "no event topic is restated");
+
+      const recorded = built.mqtt.published.length;
+
+      // A push that leaves every output's state where it was is one the per-output observer never sees, so this holds only that such a push records nothing. That the
+      // gate suppresses an unchanged statement is held by the owner spine's own rows in device-mqtt-topic.test.ts.
+      built.store.pushRelayOutputs(built.relayConfig.id, [ { id: 0, state: "off" }, { id: 1, state: "on" } ]);
+      await settle();
+
+      assert.equal(built.mqtt.published.length, recorded, "a push leaving the outputs unchanged records nothing");
+    } finally {
+
+      built.relay.cleanup();
+    }
+  });
+
+  test("a relay built while no session is held records nothing until the session starts, then each visible output once", async () => {
+
+    const built = buildRelay({}, { disconnected: true, userOptions: ["Enable.Relay.Outputs=1"] });
+
+    try {
+
+      await settle();
+
+      assert.equal(built.mqtt.published.length, 0, "the statements made with no session held are refused");
+
+      built.mqtt.connected = true;
+      await settle();
+
+      assert.deepEqual(built.mqtt.publishedTo("/relay/1").map((entry) => entry.payload), ["false"], "the first session states the visible output once");
+      assert.equal(built.mqtt.publishedTo("/relay/2").length, 0, "the hidden output is never stated");
+    } finally {
+
+      built.relay.cleanup();
+    }
+  });
+
+  test("an output changed while the session is down is restated once, as the current value, when the session returns", async () => {
+
+    const built = buildRelay();
+
+    try {
+
+      await settle();
+
+      built.mqtt.connected = false;
+      built.store.pushRelayOutputs(built.relayConfig.id, [ { id: 0, state: "on" }, { id: 1, state: "off" } ]);
+      await settle();
+
+      const asBuilt = built.mqtt.publishedTo("/relay/1").length;
+
+      built.mqtt.connected = true;
+      await settle();
+
+      assert.deepEqual(built.mqtt.publishedTo("/relay/1").slice(asBuilt).map((entry) => entry.payload), ["true"], "the returning session hears the current value once");
+    } finally {
+
+      built.relay.cleanup();
+    }
   });
 });

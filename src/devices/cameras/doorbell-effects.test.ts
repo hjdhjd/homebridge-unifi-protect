@@ -91,13 +91,16 @@ interface BuiltDoorbell {
   logEntries: readonly TestLogEntry[];
   mqtt: TestMqttClient;
   nvr: TestProtectNvr;
+  // What the doorbell published as it was built, taken off the double's list so each row reads only what its own occasion adds.
+  stated: TestMqttClient["published"];
+  store: TestStateStore;
 }
 
 // Build a REAL ProtectCamera against an isDoorbell-true config (so it construction-attaches its DoorbellCapability), exactly as doorbell-construction.test.ts
 // assembles it: the doorbell camera config (with the test's extra feature flags merged over isDoorbell), an optional chime serving it, the store double, the typed
 // NVR / platform doubles with the test's userOptions threaded into the REAL FeatureOptions engine and an optional dispatch factory, the read-through projection, and a
 // fresh accessory. The casts are confined to this one boundary - the instance is the production ProtectCamera and its composed capability.
-async function buildDoorbell(options: { chimeConfigs?: ProtectChimeConfig[]; dispatch?: (nvr: ProtectNvr) => ProtectEventDispatch;
+async function buildDoorbell(options: { chimeConfigs?: ProtectChimeConfig[]; disconnected?: boolean; dispatch?: (nvr: ProtectNvr) => ProtectEventDispatch;
   doorbellSettings?: ProtectNvrConfig["doorbellSettings"];
   featureFlags?: Partial<ProtectCameraConfig["featureFlags"]>; lcdMessage?: { duration?: number; resetAt?: Nullable<number>; text?: string; type?: string };
   userOptions?: string[]; } = {}): Promise<BuiltDoorbell> {
@@ -118,6 +121,13 @@ async function buildDoorbell(options: { chimeConfigs?: ProtectChimeConfig[]; dis
   // behavior-neutral for them. The held chime projections flow in through client.chimes; non-chime tests seed none (the empty default).
   const { clock, controller, logEntries, mqtt, nvr } = makeTestNvr({ chimes: chimeProjections, ...(options.dispatch ? { dispatch: options.dispatch } : {}),
     ...(options.doorbellSettings !== undefined ? { doorbellSettings: options.doorbellSettings } : {}), mqtt: true, store, userOptions: options.userOptions });
+
+  // A disconnected double is the production startup shape: the doorbell is built before the broker acknowledges the first session.
+  if(mqtt && options.disconnected) {
+
+    mqtt.connected = false;
+  }
+
   const accessory = makeTestAccessory("Front Door", "uuid:74ACB9000001");
   const projection = new TestCameraProjection(cameraConfig.id, store);
   const doorbell = new ProtectCamera(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Camera);
@@ -127,7 +137,11 @@ async function buildDoorbell(options: { chimeConfigs?: ProtectChimeConfig[]; dis
 
   assert.ok(mqtt, "the MQTT recording double is installed");
 
-  return { accessory, cameraConfig, cameraProjection: projection, chimeProjections, clock, controller, doorbell, logEntries, mqtt, nvr };
+  // The doorbell states its held state as it is built. The builder hands that statement back as the baseline and leaves the list past it, so each row reads what its
+  // own occasion publishes. The double's gate memory still holds what was stated, as the client's would, so a same-value statement stays unsent.
+  const stated = mqtt.published.splice(0);
+
+  return { accessory, cameraConfig, cameraProjection: projection, chimeProjections, clock, controller, doorbell, logEntries, mqtt, nvr, stated, store };
 }
 
 describe("doorbell capability observer effects and the trigger ring (doorbell-effects concern net)", () => {
@@ -251,7 +265,7 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
     // Each test resolves the materialized volume Lightbulb inline and HARD-asserts it exists FIRST (the gate is hasFeature("Doorbell.Volume.Dimmer")): an absent service
     // would let the write assertions pass vacuously. The Brightness onSet routes straight to setChimeVolume(value), so a triggerSet on it drives the cross-device write.
 
-    test("a single serving chime is PATCHed with a single-entry ringSettings carrying the modified ring, then published once", async () => {
+    test("a single serving chime is PATCHed with a single-entry ringSettings carrying the modified ring, and its confirmation published once", async () => {
 
       const chime = makeChimeConfig({ cameraIds: [doorbellId], ringSettings: [{ cameraId: doorbellId, ringtoneId: "tone-a", volume: 20 }] });
 
@@ -269,8 +283,13 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
       assert.deepEqual(served.updateCalls, [{ payload: { ringSettings: [{ cameraId: doorbellId, repeatTimes: 1, ringtoneId: "tone-a", volume: 70 }] } }],
         "the PATCH carries one ring entry: this doorbell's ring spread with only the volume changed to 70");
+      assert.equal(built.mqtt.publishedTo("/chime").length, 0, "the command with no controller confirmation published nothing");
+
+      built.store.pushChimePatch(chime.id, { ringSettings: [{ cameraId: doorbellId, repeatTimes: 1, ringtoneId: "tone-a", volume: 70 }] });
+      await settle();
+
       assert.deepEqual(built.mqtt.published.filter((entry) => entry.topic === chimeTopic), [{ payload: "70", retain: false, topic: chimeTopic }],
-        "the new volume is published once on the chime topic after the write is accepted");
+        "the confirmed volume is published once on the chime topic");
       assert.ok(!loggedAt(built.logEntries, "error", "Unable to set the chime volume"), "an accepted write logs no failure");
     });
 
@@ -294,11 +313,40 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
       assert.deepEqual(served.updateCalls, [{ payload: { ringSettings: [{ cameraId: doorbellId, repeatTimes: 1, ringtoneId: "tone-a", volume: 0 }] } }],
         "a negative volume clamps to zero in the written ring PATCH");
+      assert.equal(built.mqtt.publishedTo("/chime").length, 0, "the command with no controller confirmation published nothing");
+
+      built.store.pushChimePatch(chime.id, { ringSettings: [{ cameraId: doorbellId, repeatTimes: 1, ringtoneId: "tone-a", volume: 0 }] });
+      await settle();
+
       assert.deepEqual(built.mqtt.published.filter((entry) => entry.topic === chimeTopic), [{ payload: "0", retain: false, topic: chimeTopic }],
-        "the clamped value is what we publish");
+        "the confirmed clamped value is what we publish");
     });
 
-    test("every chime serving this doorbell is written, and the volume is published exactly once", async () => {
+    test("a chime volume change pushed to a doorbell built without Doorbell.Volume.Dimmer publishes nothing", async () => {
+
+      const chime = makeChimeConfig({ cameraIds: [doorbellId], ringSettings: [{ cameraId: doorbellId, ringtoneId: "tone-a", volume: 20 }] });
+
+      built = await buildDoorbell({ chimeConfigs: [chime] });
+
+      built.store.pushChimePatch(chime.id, { ringSettings: [{ cameraId: doorbellId, repeatTimes: 1, ringtoneId: "tone-a", volume: 70 }] });
+      await settle();
+
+      assert.equal(built.mqtt.publishedTo("/chime").length, 0, "a doorbell with no volume dimmer has no chime topic to publish");
+    });
+
+    test("a chime volume change the controller reports with no command publishes the value the chime get answers once", async () => {
+
+      const chime = makeChimeConfig({ cameraIds: [doorbellId], ringSettings: [{ cameraId: doorbellId, ringtoneId: "tone-a", volume: 20 }] });
+
+      built = await buildDoorbell({ chimeConfigs: [chime], userOptions: ["Enable.Doorbell.Volume.Dimmer"] });
+
+      built.store.pushChimePatch(chime.id, { ringSettings: [{ cameraId: doorbellId, repeatTimes: 1, ringtoneId: "tone-a", volume: 70 }] });
+      await settle();
+
+      assert.deepEqual(built.mqtt.publishedTo("/chime").map((entry) => entry.payload), ["70"], "the reported change published the doorbell's chime volume once");
+    });
+
+    test("every chime serving this doorbell is written, and the confirmed volume is published exactly once", async () => {
 
       const chimeA = makeChimeConfig({ cameraIds: [doorbellId], id: "chime-a", mac: "74ACB9000201", ringSettings: [{ cameraId: doorbellId, volume: 10 }] });
       const chimeB = makeChimeConfig({ cameraIds: [ doorbellId, "doorbell-2" ], id: "chime-b", mac: "74ACB9000202",
@@ -318,8 +366,15 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
       assert.equal(servedA.updateCalls.length, 1, "the first chime serving this doorbell is written");
       assert.equal(servedB.updateCalls.length, 1, "the second chime serving this doorbell is written");
+      assert.equal(built.mqtt.publishedTo("/chime").length, 0, "the command with no controller confirmation published nothing");
+
+      // The confirmations land together in one drain of the observe loop, which reads the final state once.
+      built.store.pushChimePatch(chimeA.id, { ringSettings: [{ cameraId: doorbellId, repeatTimes: 1, ringtoneId: "default", volume: 55 }] });
+      built.store.pushChimePatch(chimeB.id, { ringSettings: [{ cameraId: doorbellId, repeatTimes: 1, ringtoneId: "default", volume: 55 }] });
+      await settle();
+
       assert.deepEqual(built.mqtt.published.filter((entry) => entry.topic === chimeTopic), [{ payload: "55", retain: false, topic: chimeTopic }],
-        "the volume is published exactly once after every assigned chime accepts the write");
+        "the volume is published exactly once after every assigned chime confirms the write");
     });
 
     test("a chime that does not serve this doorbell is left untouched", async () => {
@@ -341,8 +396,13 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
       assert.equal(foreignProjection.updateCalls.length, 0, "the chime that does not list this doorbell is filtered out and never written");
       assert.equal(servedProjection.updateCalls.length, 1, "only the chime that serves this doorbell is written");
-      assert.deepEqual(built.mqtt.published.filter((entry) => entry.topic === chimeTopic), [{ payload: "45", retain: false, topic: chimeTopic }],
-        "the volume is published once");
+      assert.equal(built.mqtt.publishedTo("/chime").length, 0, "the command publishes nothing of its own");
+
+      // The served chime's confirmation is the change the topic follows, and the foreign chime's volume never enters the doorbell's reading.
+      built.store.pushChimePatch(served.id, { ringSettings: [{ cameraId: doorbellId, repeatTimes: 1, ringtoneId: "default", volume: 45 }] });
+      await settle();
+
+      assert.deepEqual(built.mqtt.publishedTo("/chime").map((entry) => entry.payload), ["45"], "the served chime's confirmation published its volume once");
     });
 
     test("a chime serving this doorbell but carrying no ring for it is skipped without a write", async () => {
@@ -364,8 +424,13 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
       assert.equal(noRingProjection.updateCalls.length, 0, "the chime listing the doorbell but with no ring for it is skipped; the loop continues to the next");
       assert.equal(servedProjection.updateCalls.length, 1, "the chime carrying a ring for this doorbell is written");
-      assert.deepEqual(built.mqtt.published.filter((entry) => entry.topic === chimeTopic), [{ payload: "35", retain: false, topic: chimeTopic }],
-        "the volume is published once");
+      assert.equal(built.mqtt.publishedTo("/chime").length, 0, "the command publishes nothing of its own");
+
+      // The ringing chime's confirmation is the change the topic follows, and the chime with no ring for this doorbell never enters the doorbell's reading.
+      built.store.pushChimePatch(served.id, { ringSettings: [{ cameraId: doorbellId, repeatTimes: 1, ringtoneId: "default", volume: 35 }] });
+      await settle();
+
+      assert.deepEqual(built.mqtt.publishedTo("/chime").map((entry) => entry.payload), ["35"], "the ringing chime's confirmation published its volume once");
     });
 
     test("the first failed write early-returns: no later chime is written, nothing is published, and the failure is logged", async () => {
@@ -471,6 +536,9 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
     // the publish rides "74ACB9000001/chime". These literals must match exactly - a mismatch makes the subscription find skip and the test reads as vacuous, which the
     // HARD-assert-exists gate catches.
     const mac = "74ACB9000001";
+
+    // The message topic exists only while Doorbell.Messages is on, so the message get and set rows build with the feature enabled.
+    const messagesOn = ["Enable.Doorbell.Messages"];
     const doorbellId = "test-camera-1";
 
     describe("the /chime GET (the chime-volume read-through)", () => {
@@ -492,7 +560,7 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
     describe("the /chime SET (parse, gate, route the volume to the Lightbulb)", () => {
 
-      test("a valid in-range value drives one served-chime write and publishes once", async () => {
+      test("a valid in-range value drives one served-chime write and publishes nothing from the command path", async () => {
 
         const chime = makeChimeConfig({ cameraIds: [doorbellId], ringSettings: [{ cameraId: doorbellId, ringtoneId: "default", volume: 20 }] });
 
@@ -521,8 +589,12 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
         assert.deepEqual(served.updateCalls, [{ payload: { ringSettings: [{ cameraId: doorbellId, repeatTimes: 1, ringtoneId: "default", volume: 70 }] } }],
           "the valid /chime SET routed the volume to the Lightbulb, driving one served-chime ring PATCH at volume 70");
-        assert.deepEqual(built.mqtt.published.filter((entry) => entry.topic === mac + "/chime"), [{ payload: "70", retain: false, topic: mac + "/chime" }],
-          "the accepted write published the new volume once on the chime topic");
+        assert.equal(built.mqtt.publishedTo("/chime").length, 0, "the command with no controller confirmation published nothing");
+
+        built.store.pushChimePatch(chime.id, { ringSettings: [{ cameraId: doorbellId, repeatTimes: 1, ringtoneId: "default", volume: 70 }] });
+        await settle();
+
+        assert.deepEqual(built.mqtt.publishedTo("/chime").map((entry) => entry.payload), ["70"], "the controller's confirmation published the new volume once");
       });
 
       test("a non-numeric value is gated out: no write, no publish", async () => {
@@ -584,7 +656,7 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
       test("with a current message and no numeric resetAt, returns duration 0 and the message text", async () => {
 
         // Seed lcdMessage WITHOUT a numeric resetAt (omitted), so typeof resetAt !== "number" forces the deterministic duration-0 branch.
-        built = await buildDoorbell({ lcdMessage: { text: "Hello" } });
+        built = await buildDoorbell({ lcdMessage: { text: "Hello" }, userOptions: messagesOn });
 
         const get = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "get") && (subscription.topic === mac + "/message/get"));
 
@@ -599,7 +671,7 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
         // before construction; a resetAt 45 seconds out reads back as duration 45, killing mutations of the subtraction, the / 1000 scaling, and the Math.round.
         const t0 = TEST_CLOCK_EPOCH;
 
-        built = await buildDoorbell({ lcdMessage: { resetAt: t0 + 45000, text: "Hi" } });
+        built = await buildDoorbell({ lcdMessage: { resetAt: t0 + 45000, text: "Hi" }, userOptions: messagesOn });
 
         const get = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "get") && (subscription.topic === mac + "/message/get"));
 
@@ -611,7 +683,7 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
       test("with no current message, returns the empty string", async () => {
 
         // No lcdMessage seeded: the body's !this.ufp.lcdMessage guard returns the empty string (not the JSON "{}").
-        built = await buildDoorbell({});
+        built = await buildDoorbell({ userOptions: messagesOn });
 
         const get = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "get") && (subscription.topic === mac + "/message/get"));
 
@@ -630,7 +702,7 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
         // The harness clock holds still through the row, so resetAt === T0 + duration*1000 is exact, making the * 1000 seconds-scaling and the now + duration math
         // mutation-detectable.
-        built = await buildDoorbell({});
+        built = await buildDoorbell({ userOptions: messagesOn });
 
         const t0 = built.clock.now();
         const set = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === mac + "/message/set"));
@@ -650,7 +722,7 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
         // Deterministic, no time dependence: duration 0 is present and not negative, so * 1000 = 0; setMessage's resetAt = duration ? ... : null yields null. The
         // null-vs-T0 check kills a mutation flipping the ternary.
-        built = await buildDoorbell({});
+        built = await buildDoorbell({ userOptions: messagesOn });
 
         const set = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === mac + "/message/set"));
 
@@ -668,7 +740,7 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
         // The reset resetAt is the harness clock's exact instant T0, asserted with deepEqual rather than truthiness so the check reads the value itself. A blank
         // message takes the reset branch: outbound { resetAt: now } has no "duration" key, so setMessage passes it through untranslated.
-        built = await buildDoorbell({});
+        built = await buildDoorbell({ userOptions: messagesOn });
 
         const t0 = built.clock.now();
         const set = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === mac + "/message/set"));
@@ -686,7 +758,7 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
       test("invalid JSON is caught, logged, and writes nothing", async () => {
 
-        built = await buildDoorbell({});
+        built = await buildDoorbell({ userOptions: messagesOn });
 
         const set = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === mac + "/message/set"));
 
@@ -702,7 +774,7 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
       test("a payload missing the message key is rejected and writes nothing", async () => {
 
-        built = await buildDoorbell({});
+        built = await buildDoorbell({ userOptions: messagesOn });
 
         const set = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === mac + "/message/set"));
 
@@ -720,7 +792,7 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
       test("a non-numeric string duration is rejected and writes nothing", async () => {
 
-        built = await buildDoorbell({});
+        built = await buildDoorbell({ userOptions: messagesOn });
 
         const set = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === mac + "/message/set"));
 
@@ -738,7 +810,7 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
       test("a non-string message is rejected and writes nothing", async () => {
 
-        built = await buildDoorbell({});
+        built = await buildDoorbell({ userOptions: messagesOn });
 
         const set = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === mac + "/message/set"));
 
@@ -756,7 +828,7 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
       test("a numeric-looking string duration is rejected per the documented numeric contract", async () => {
 
-        built = await buildDoorbell({});
+        built = await buildDoorbell({ userOptions: messagesOn });
 
         const set = built.mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === mac + "/message/set"));
 
@@ -994,6 +1066,208 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
     // wakes the observer) cannot be exercised here - the harness's shallow merge cannot mirror the reducer's reference-preserving merge, and building a second reducer
     // mirror is the anti-pattern this suite avoids. That path self-heals only via the 120-second bootstrap-refresh reconcile, and capturing the real {}-vs-null wire
     // shape is HJD's rig item.
+  });
+
+  describe("the doorbell's held state stated as it is built and restated per broker session", () => {
+
+    const doorbellId = "test-camera-1";
+    const settingsShell = { customImages: [], customMessages: [], defaultMessageResetTimeoutMs: 60000, defaultMessageText: "" };
+    const both = [ "Enable.Doorbell.Messages", "Enable.Doorbell.Volume.Dimmer" ];
+
+    // A chime serving this doorbell at a known volume, and a doorbell with an LCD screen and one saved message, so a showing message can match a switch or not.
+    interface StatedOptions {
+
+      disconnected?: boolean;
+      lcdMessage?: { resetAt?: null; text: string; type: string };
+      noChime?: boolean;
+      userOptions: string[];
+    }
+
+    const buildStatedDoorbell = async (options: StatedOptions): Promise<BuiltDoorbell> => {
+
+      const chime = makeChimeConfig({ cameraIds: [doorbellId], ringSettings: [{ cameraId: doorbellId, ringtoneId: "tone-a", volume: 20 }] });
+
+      return buildDoorbell({ chimeConfigs: options.noChime ? [] : [chime], disconnected: options.disconnected ?? false,
+        doorbellSettings: { allMessages: [{ text: "Back soon", type: "CUSTOM_MESSAGE" }], ...settingsShell }, featureFlags: { hasLcdScreen: true },
+        ...(options.lcdMessage ? { lcdMessage: options.lcdMessage } : {}), userOptions: options.userOptions });
+    };
+
+    // Flip the double's session lever off and back on, settling after each edge so the connect handlers have run.
+    const restoreSession = async (mqtt: TestMqttClient): Promise<void> => {
+
+      mqtt.connected = false;
+      await settle();
+      mqtt.connected = true;
+      await settle();
+    };
+
+    // The payloads a list of recorded publishes carries on one topic.
+    const payloads = (entries: TestMqttClient["published"], suffix: string): string[] => {
+
+      return entries.filter((entry) => entry.topic.endsWith(suffix)).map((entry) => entry.payload.toString());
+    };
+
+    // The registration kinds the double holds on a topic's get and set children, which is whether the topic answers or accepts anything from the broker at all.
+    const registrations = (doorbell: BuiltDoorbell, topic: string): string[] => {
+
+      return doorbell.mqtt.subscriptions.filter((subscription) => subscription.topic.startsWith(doorbell.cameraConfig.mac + topic + "/"))
+        .map((subscription) => subscription.kind);
+    };
+
+    test("built with both features and a showing message that matches a switch, it states the chime volume and the message once each", async () => {
+
+      built = await buildStatedDoorbell({ lcdMessage: { resetAt: null, text: "Back soon", type: "CUSTOM_MESSAGE" }, userOptions: both });
+
+      assert.deepEqual(payloads(built.stated, "/chime"), ["20"], "the chime volume is stated once as the doorbell is built");
+      assert.deepEqual(payloads(built.stated, "/message"), [JSON.stringify({ duration: 0, message: "Back soon" })],
+        "the switch sync states the matching message once, in the get's shape");
+    });
+
+    test("built with a showing message that matches no switch, it states that message once", async () => {
+
+      built = await buildStatedDoorbell({ lcdMessage: { resetAt: null, text: "Elsewhere", type: "CUSTOM_MESSAGE" }, userOptions: both });
+
+      assert.deepEqual(payloads(built.stated, "/message"), [JSON.stringify({ duration: 0, message: "Elsewhere" })], "the unmatched message is stated once");
+    });
+
+    test("with no message it states none, a restore restates the chime volume once and no message or event, and an unchanged volume records nothing", async () => {
+
+      built = await buildStatedDoorbell({ userOptions: both });
+
+      assert.equal(payloads(built.stated, "/message").length, 0, "no message is stated when none shows");
+
+      await restoreSession(built.mqtt);
+
+      assert.deepEqual(payloads(built.mqtt.published, "/chime"), ["20"], "the restore restates the chime volume once");
+      assert.equal(payloads(built.mqtt.published, "/message").length, 0, "a doorbell with no message restates no message");
+      assert.equal(payloads(built.mqtt.published, "/doorbell").length, 0, "no event topic is restated");
+
+      const [chime] = built.chimeProjections;
+
+      assert.ok(chime, "the doorbell is served by one chime");
+
+      const recorded = built.mqtt.published.length;
+
+      // A chime change that leaves this doorbell's volume where it was is one the volume observer never sees, so this holds only that such a change records nothing.
+      // That the gate suppresses an unchanged statement is held by the owner spine's own rows in device-mqtt-topic.test.ts.
+      built.store.pushChimePatch(chime.id, { ringSettings: [{ cameraId: doorbellId, repeatTimes: 2, ringtoneId: "tone-a", volume: 20 }] });
+      await settle();
+
+      assert.equal(built.mqtt.published.length, recorded, "a chime change leaving the volume where it was records nothing");
+    });
+
+    test("built while no session is held, it records nothing until the session starts, then its chime volume and showing message once each", async () => {
+
+      built = await buildStatedDoorbell({ disconnected: true, lcdMessage: { resetAt: null, text: "Back soon", type: "CUSTOM_MESSAGE" }, userOptions: both });
+
+      assert.equal(built.stated.length, 0, "the statements made with no session held are refused");
+
+      built.mqtt.connected = true;
+      await settle();
+
+      assert.deepEqual(payloads(built.mqtt.published, "/chime"), ["20"], "the first session states the chime volume once");
+      assert.deepEqual(payloads(built.mqtt.published, "/message"), [JSON.stringify({ duration: 0, message: "Back soon" })],
+        "the first session states the showing message once");
+    });
+
+    test("a chime volume changed while the session is down is restated once, as the current value, when the session returns", async () => {
+
+      built = await buildStatedDoorbell({ userOptions: both });
+
+      const [chime] = built.chimeProjections;
+
+      assert.ok(chime, "the doorbell is served by one chime");
+
+      built.mqtt.connected = false;
+      built.store.pushChimePatch(chime.id, { ringSettings: [{ cameraId: doorbellId, repeatTimes: 1, ringtoneId: "tone-a", volume: 70 }] });
+      await settle();
+
+      assert.equal(payloads(built.mqtt.published, "/chime").length, 0, "the change made with no session held is refused");
+
+      built.mqtt.connected = true;
+      await settle();
+
+      assert.deepEqual(payloads(built.mqtt.published, "/chime"), ["70"], "the returning session hears the current value once");
+    });
+
+    test("a session restore restates a showing message once", async () => {
+
+      built = await buildStatedDoorbell({ lcdMessage: { resetAt: null, text: "Elsewhere", type: "CUSTOM_MESSAGE" }, userOptions: both });
+
+      await restoreSession(built.mqtt);
+
+      assert.deepEqual(payloads(built.mqtt.published, "/message"), [JSON.stringify({ duration: 0, message: "Elsewhere" })], "the restore restates the message once");
+    });
+
+    test("with both features off it states neither topic as it is built or at a session restore, whatever shows", async () => {
+
+      built = await buildStatedDoorbell({ lcdMessage: { resetAt: null, text: "Back soon", type: "CUSTOM_MESSAGE" },
+        userOptions: [ "Disable.Doorbell.Messages", "Disable.Doorbell.Volume.Dimmer" ] });
+
+      await restoreSession(built.mqtt);
+
+      for(const suffix of [ "/chime", "/message" ]) {
+
+        assert.equal(payloads([ ...built.stated, ...built.mqtt.published ], suffix).length, 0, "a disabled feature's topic states nothing");
+      }
+    });
+
+    test("without Doorbell.Volume.Dimmer the chime topic has no get or set and states nothing as built, on a change, or at a session restore", async () => {
+
+      built = await buildStatedDoorbell({ lcdMessage: { resetAt: null, text: "Elsewhere", type: "CUSTOM_MESSAGE" }, userOptions: ["Enable.Doorbell.Messages"] });
+
+      assert.deepEqual(registrations(built, "/chime"), [], "the chime topic has no get and no set without the volume dimmer");
+      assert.deepEqual(registrations(built, "/message"), [ "get", "set" ], "the message topic, whose feature is on, registers its get and its set");
+      assert.deepEqual(payloads(built.stated, "/message"), [JSON.stringify({ duration: 0, message: "Elsewhere" })], "the enabled message topic is stated as built");
+
+      const [chime] = built.chimeProjections;
+
+      assert.ok(chime, "the doorbell is served by one chime");
+
+      built.store.pushChimePatch(chime.id, { ringSettings: [{ cameraId: doorbellId, repeatTimes: 1, ringtoneId: "tone-a", volume: 70 }] });
+      await settle();
+      await restoreSession(built.mqtt);
+
+      assert.equal(payloads([ ...built.stated, ...built.mqtt.published ], "/chime").length, 0, "no chime volume is stated as built, on the change, or at the restore");
+    });
+
+    test("without Doorbell.Messages the message topic has no get or set and states nothing as built, on a change, or at a session restore", async () => {
+
+      built = await buildStatedDoorbell({ lcdMessage: { resetAt: null, text: "Back soon", type: "CUSTOM_MESSAGE" }, userOptions: ["Enable.Doorbell.Volume.Dimmer"] });
+
+      assert.deepEqual(registrations(built, "/message"), [], "the message topic has no get and no set without the messages feature");
+      assert.deepEqual(registrations(built, "/chime"), [ "get", "set" ], "the chime topic, whose feature is on, registers its get and its set");
+      assert.deepEqual(payloads(built.stated, "/chime"), ["20"], "the enabled chime topic is stated as built");
+
+      built.store.pushCameraPatch(built.cameraConfig.id, { lcdMessage: { text: "Elsewhere", type: "CUSTOM_MESSAGE" } });
+      await settle();
+      await restoreSession(built.mqtt);
+
+      assert.equal(payloads([ ...built.stated, ...built.mqtt.published ], "/message").length, 0, "no message is stated as built, on the change, or at the restore");
+    });
+
+    test("with the volume dimmer and no chime assigned it states and restates no chime volume", async () => {
+
+      built = await buildStatedDoorbell({ noChime: true, userOptions: both });
+
+      await restoreSession(built.mqtt);
+
+      assert.equal(payloads([ ...built.stated, ...built.mqtt.published ], "/chime").length, 0, "no chime rings for this doorbell, so no volume is stated");
+    });
+
+    test("with the volume dimmer and only an assigned chime that carries no ring for this doorbell it states and restates no chime volume", async () => {
+
+      // The chime lists this doorbell but rings only for another, so the volume reads 0 with no setting behind it. A ring check that read the assignment alone would
+      // state that 0 here, where the no-chime row above cannot tell the difference.
+      const noRing = makeChimeConfig({ cameraIds: [ doorbellId, "doorbell-2" ], ringSettings: [{ cameraId: "doorbell-2", volume: 60 }] });
+
+      built = await buildDoorbell({ chimeConfigs: [noRing], userOptions: ["Enable.Doorbell.Volume.Dimmer"] });
+
+      await restoreSession(built.mqtt);
+
+      assert.equal(payloads([ ...built.stated, ...built.mqtt.published ], "/chime").length, 0,
+        "a chime with no ring for this doorbell states no volume, built or restored");
+    });
   });
 });
 

@@ -22,6 +22,7 @@ import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAcce
 import { G2_PRO_CHANNELS, G6_PRO_ENTRY_CHANNELS } from "../../camera.fixtures.ts";
 import type { TestAccessory, TestCharacteristic } from "../../testing.helpers.ts";
 import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
+import type { TestClock, TestMqttClient } from "homebridge-plugin-utils/testing";
 import { advanceThroughSchedule, settle } from "homebridge-plugin-utils/testing";
 import { afterEach, describe, test } from "node:test";
 import type { Camera } from "unifi-protect";
@@ -30,7 +31,6 @@ import type { ProtectAccessory } from "../../types.ts";
 import { ProtectCamera } from "./camera.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
 import { ProtectReservedNames } from "../../types.ts";
-import type { TestClock } from "homebridge-plugin-utils/testing";
 import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import { makeTestNvr } from "../../nvr/testing.helpers.ts";
@@ -238,7 +238,7 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
 
     test("the 60-second poll skips on a throw (the -1 sentinel), holding the prior reading and publishing nothing", async () => {
 
-      // Construct with a known init reading (42), then make the next query throw: getLux's catch returns -1, the guard if((42 === -1) || (-1 === -1)) is true, so the
+      // Construct with a known init reading (42), which the reconcile adopts and publishes once, then make the next query throw: getLux's catch returns -1, so the
       // poll SKIPS - no updateCharacteristic, no publish. The prior reading is held.
       const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasLuxCheck: true } });
       const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
@@ -267,7 +267,8 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
 
         assert.equal(await lightSensor.getCharacteristic(Characteristic.CurrentAmbientLightLevel).triggerGet(), 42,
           "a thrown reading skips the poll - the prior 42 holds");
-        assert.equal(nvr.mqtt?.published.some((entry) => entry.topic === (cameraConfig.mac + "/ambientlight")), false, "the skipped poll published nothing");
+        assert.deepEqual(nvr.mqtt?.publishedTo(cameraConfig.mac + "/ambientlight").map((entry) => entry.payload), ["42"],
+          "the reconcile's adoption of the first reading is the topic's one statement, and the skipped poll published nothing");
       } finally {
 
         camera.cleanup();
@@ -505,5 +506,298 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
       assert.equal(await onChar.triggerGet(), true, "the later activation's On survives the earlier not-dark reset window");
       assert.equal(onChar.value, true, "the switch characteristic stays on, not stomped off by the stale not-dark reset");
     });
+  });
+});
+
+describe("the camera's ambient-light reading restated per broker session", () => {
+
+  // Build a lux-capable camera whose first read returns the given reading or fails, flip the session lever off and on, and hand back the topic's payloads.
+  const restoredPayloads = async (options: { reading?: number }): Promise<{ asBuilt: string[]; restored: string[] }> => {
+
+    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasLuxCheck: true } });
+    const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
+    const { controller, nvr } = makeTestNvr({ mqtt: true, store });
+    const projection = new TestCameraProjection(cameraConfig.id, store);
+
+    if(options.reading === undefined) {
+
+      projection.luxRejection = new Error("The lux response did not contain a numeric illuminance reading.");
+    } else {
+
+      projection.luxReading = options.reading;
+    }
+
+    const camera = new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Test Camera", "uuid:74ACB9000001") as unknown as ProtectAccessory,
+      projection as unknown as Camera);
+
+    try {
+
+      await settle();
+
+      const read = (): string[] => (nvr.mqtt?.publishedTo(cameraConfig.mac + "/ambientlight") ?? []).map((entry) => entry.payload.toString());
+      const asBuilt = read();
+
+      if(nvr.mqtt) {
+
+        nvr.mqtt.connected = false;
+        await settle();
+        nvr.mqtt.connected = true;
+        await settle();
+      }
+
+      return { asBuilt, restored: read().slice(asBuilt.length) };
+    } finally {
+
+      camera.cleanup();
+      controller.abort();
+    }
+  };
+
+  test("a genuine first reading is stated once as the camera is built and restated once per session", async () => {
+
+    assert.deepEqual(await restoredPayloads({ reading: 42 }), { asBuilt: ["42"], restored: ["42"] }, "the adopted reading is stated once and restated once");
+  });
+
+  test("a failed first read states nothing, and a session restore after it restates nothing", async () => {
+
+    assert.deepEqual(await restoredPayloads({}), { asBuilt: [], restored: [] }, "the floor that stands in for no reading is never stated");
+  });
+
+  // Build a lux-capable camera reading the given level and hand back the levers the rows below drive: the capability's reconcile, reached through the camera's private
+  // accessor because a capability wake is exactly a run of it, the session double, and the topic's recorded payloads.
+  const buildLuxCamera = ({ connected = true, reading, userOptions = [] }: { connected?: boolean; reading?: number; userOptions?: string[] }): {
+    accessory: TestAccessory; cleanup: () => void; clock: TestClock; mqtt: TestMqttClient; projection: TestCameraProjection; read: () => string[];
+    reconcile: () => Promise<void>;
+  } => {
+
+    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasLuxCheck: true } });
+    const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
+    const { clock, controller, mqtt, nvr } = makeTestNvr({ mqtt: true, store, userOptions });
+    const projection = new TestCameraProjection(cameraConfig.id, store);
+    const accessory = makeTestAccessory("Test Camera", "uuid:74ACB9000001");
+
+    assert.ok(mqtt, "the NVR double carries an MQTT client double");
+
+    // A disconnected double is the production startup shape: the camera is built before the broker acknowledges the first session. An absent reading makes the
+    // first read fail.
+    mqtt.connected = connected;
+
+    if(reading === undefined) {
+
+      projection.luxRejection = new Error("The lux response did not contain a numeric illuminance reading.");
+    } else {
+
+      projection.luxReading = reading;
+    }
+
+    const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Camera);
+    const capability = (camera as unknown as { ambientLight: { reconcile: () => Promise<void> } }).ambientLight;
+
+    return {
+
+      accessory,
+      cleanup: (): void => {
+
+        camera.cleanup();
+        controller.abort();
+      },
+      clock,
+      mqtt,
+      projection,
+      read: (): string[] => mqtt.publishedTo(cameraConfig.mac + "/ambientlight").map((entry) => entry.payload.toString()),
+      reconcile: async (): Promise<void> => capability.reconcile()
+    };
+  };
+
+  // Flip the session lever off and back on, settling after each edge so the connect handlers have run.
+  const restoreSession = async (mqtt: TestMqttClient): Promise<void> => {
+
+    mqtt.connected = false;
+    await settle();
+    mqtt.connected = true;
+    await settle();
+  };
+
+  test("two reconciles reading the same moved level, the second run after the first completes, record that level once", async () => {
+
+    const built = buildLuxCamera({ reading: 42 });
+
+    try {
+
+      await settle();
+
+      built.projection.luxReading = 57;
+      await built.reconcile();
+      await built.reconcile();
+
+      assert.deepEqual(built.read(), [ "42", "57" ], "the moved level is stated once and the second run leaves it unsent");
+    } finally {
+
+      built.cleanup();
+    }
+  });
+
+  test("two reconciles that overlap at the light-level read record the moved level once", async () => {
+
+    const built = buildLuxCamera({ reading: 42 });
+
+    try {
+
+      await settle();
+
+      built.projection.luxReading = 57;
+      await Promise.all([ built.reconcile(), built.reconcile() ]);
+
+      assert.deepEqual(built.read(), [ "42", "57" ], "the second statement of the moved level is suppressed at issue");
+    } finally {
+
+      built.cleanup();
+    }
+  });
+
+  test("a later failed read records nothing", async () => {
+
+    const built = buildLuxCamera({ reading: 42 });
+
+    try {
+
+      await settle();
+
+      built.projection.luxRejection = new Error("The lux response did not contain a numeric illuminance reading.");
+      await built.reconcile();
+
+      assert.deepEqual(built.read(), ["42"], "the floor a failed read stands in with is never stated");
+    } finally {
+
+      built.cleanup();
+    }
+  });
+
+  test("after a second reconcile, a session restore restates the reading once", async () => {
+
+    const built = buildLuxCamera({ reading: 42 });
+
+    try {
+
+      await settle();
+      await built.reconcile();
+
+      const asBuilt = built.read().length;
+
+      await restoreSession(built.mqtt);
+
+      assert.deepEqual(built.read().slice(asBuilt), ["42"], "the capability's one registration restates the reading once, however many times it reconciled");
+    } finally {
+
+      built.cleanup();
+    }
+  });
+
+  test("a camera whose light sensor is gated off states and restates nothing", async () => {
+
+    const built = buildLuxCamera({ reading: 42, userOptions: ["Disable.Device.AmbientLightSensor"] });
+
+    try {
+
+      await settle();
+      await restoreSession(built.mqtt);
+
+      assert.deepEqual(built.read(), [], "no sensor service stands, so the topic is never stated");
+    } finally {
+
+      built.cleanup();
+    }
+  });
+
+  test("a camera built while no session is held records nothing until the session starts, then its reading once", async () => {
+
+    const built = buildLuxCamera({ connected: false, reading: 42 });
+
+    try {
+
+      await settle();
+
+      assert.deepEqual(built.read(), [], "the statement made with no session held is refused");
+
+      built.mqtt.connected = true;
+      await settle();
+
+      assert.deepEqual(built.read(), ["42"], "the first session states the reading once");
+    } finally {
+
+      built.cleanup();
+    }
+  });
+
+  test("a poll that reads a moved level while the session is down restates that level once when the session returns", async () => {
+
+    const built = buildLuxCamera({ reading: 42 });
+
+    try {
+
+      await settle();
+
+      built.mqtt.connected = false;
+      await settle();
+      built.projection.luxReading = 57;
+      built.clock.advance(60000);
+      await settle();
+
+      assert.deepEqual(built.read(), ["42"], "the poll's statement made with no session held is refused");
+
+      built.mqtt.connected = true;
+      await settle();
+
+      assert.deepEqual(built.read(), [ "42", "57" ], "the returning session hears the moved level once");
+    } finally {
+
+      built.cleanup();
+    }
+  });
+
+  test("a teardown during the reconcile's light-level read writes nothing and publishes nothing afterwards", async () => {
+
+    const built = buildLuxCamera({ reading: 42 });
+
+    await settle();
+
+    // The run is suspended at its read when the camera tears down, so only the capability's signal check after that read keeps the moved level out of HomeKit and MQTT.
+    built.projection.luxReading = 57;
+
+    const run = built.reconcile();
+
+    built.cleanup();
+    await run;
+    await settle();
+
+    assert.equal(built.accessory.getService(Service.LightSensor)?.getCharacteristic(Characteristic.CurrentAmbientLightLevel).value, 42,
+      "the torn-down run leaves the sensor's reading where it was");
+    assert.deepEqual(built.read(), ["42"], "the torn-down run publishes nothing");
+  });
+
+  test("a failed first read, then a dark poll reading at the same floor, is restated once at the next session", async () => {
+
+    const built = buildLuxCamera({});
+
+    try {
+
+      await settle();
+
+      // The failed read floors the held value to the same minimum a dark reading floors to, so the poll's comparison sees no change and publishes nothing. The poll's
+      // reading is still genuine, which is what the restatement reads.
+      built.projection.luxRejection = null;
+      built.projection.luxReading = 0;
+      built.clock.advance(60000);
+      await settle();
+
+      assert.deepEqual(built.read(), [], "neither the failed read nor the unchanged dark poll publishes");
+
+      await restoreSession(built.mqtt);
+
+      assert.deepEqual(built.read(), ["0.0001"], "the session restates the dark reading once");
+    } finally {
+
+      built.cleanup();
+    }
   });
 });

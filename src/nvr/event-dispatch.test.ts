@@ -634,17 +634,16 @@ describe("doorbell auth delivery (real ProtectEventDispatch.authEventHandler)", 
     assert.deepEqual(published, [], "an unrecognized scan is an attempt, not an authentication, so it publishes nothing");
   });
 
-  test("publishes the auth MQTT even when the contact sensor is not configured", () => {
+  test("publishes no auth MQTT when the contact sensor is not configured", () => {
 
-    // The AuthSensor contact service is off by default; the auth delivery publishes the authenticate event regardless, gating only the characteristic writes. A
-    // recognized scan on an accessory with no ContactSensor must still publish - and must not throw - or the default configuration silently loses its auth MQTT.
+    // The AuthSensor contact service is off by default, and the authenticate topic is part of that sensor's capability. A recognized scan on an accessory with no
+    // ContactSensor publishes nothing, and must not throw.
     const accessory = makeTestAccessory();
     const { camera, dispatch, published } = makeAuthDispatch(accessory);
 
     assert.doesNotThrow(() => dispatch.authEventHandler(camera, "nfc", { nfc: { nfcId: "card-9", ulpId: "ulp-2" } }),
       "a recognized scan without a contact service is handled cleanly");
-    assert.deepEqual(published, [[ "AA:BB:CC:DD:EE:FF/authenticate", JSON.stringify({ id: "card-9", type: "nfc" }) ]],
-      "the auth MQTT publishes regardless of whether the contact sensor is configured");
+    assert.deepEqual(published, [], "the auth MQTT publishes nothing while the contact sensor is not configured");
   });
 
   test("a second scan before the window cancels the pending reset rather than racing it", () => {

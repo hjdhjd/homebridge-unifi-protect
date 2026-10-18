@@ -179,8 +179,8 @@ export class ProtectViewer extends ProtectDevice<Viewer> {
   }
 
   // Set the liveview on a viewer device in UniFi Protect. Returns true when the controller accepted the command. The action phrase is supplied by the caller so the
-  // shared command-error helper can name the specific operation (a switch toggle versus an MQTT set) in any failure it reports, and the liveview-name MQTT event is
-  // published only once the controller has accepted the change.
+  // shared command-error helper can name the specific operation (a switch toggle versus an MQTT set) in any failure it reports. The liveview topic follows the
+  // controller's reported change rather than the command, so the observers publish it once the controller's broadcast lands.
   private async setViewer(action: string, newLiveview: Nullable<string>): Promise<boolean> {
 
     if(!(await this.runDeviceCommand(action, () => this.device.update({ liveview: newLiveview })))) {
@@ -188,15 +188,20 @@ export class ProtectViewer extends ProtectDevice<Viewer> {
       return false;
     }
 
-    // Find the liveview name and publish the MQTT event now that the change has been accepted.
-    const liveview = this.nvr.client.liveviews.find(x => x.id === newLiveview);
-
-    if(liveview) {
-
-      this.publish(mqttTopics.liveview.topic, liveview.name);
-    }
-
     return true;
+  }
+
+  // The active liveview's name, or "None" when the viewer shows none, which is what the liveview topic carries on its get and its state publish alike.
+  private get activeLiveviewName(): string {
+
+    return this.nvr.client.liveviews.find(x => x.id === this.activeLiveview)?.name ?? "None";
+  }
+
+  // Publish the active liveview's name when it changed. Each observer that can move the name calls this, the viewer's own liveview and the controller's list, which
+  // carries a rename of the active one. A dispatch that wakes them together states the name once, because the second statement of an unchanged name is not sent.
+  private publishLiveviewState(): void {
+
+    this.publishState(mqttTopics.liveview.topic, this.activeLiveviewName);
   }
 
   // Configure MQTT capabilities of this viewer.
@@ -205,7 +210,7 @@ export class ProtectViewer extends ProtectDevice<Viewer> {
     // Get the current liveview state via MQTT.
     this.subscribeGet(mqttTopics.liveview.topic, mqttTopics.liveview.label, () => {
 
-      return this.nvr.client.liveviews.find(x => x.id === this.activeLiveview)?.name ?? "None";
+      return this.activeLiveviewName;
     });
 
     // Set the liveview state via MQTT.
@@ -229,6 +234,11 @@ export class ProtectViewer extends ProtectDevice<Viewer> {
       this.log.info("Liveview set via MQTT to %s.", liveview.name);
     });
 
+    // State the active liveview as the viewer is built, since its construction publishes nothing else, and again at the start of every later broker session, through
+    // the method its observers publish with.
+    this.publishLiveviewState();
+    this.restateOnConnect(() => this.publishLiveviewState());
+
     return true;
   }
 
@@ -242,11 +252,18 @@ export class ProtectViewer extends ProtectDevice<Viewer> {
 
     // The viewer's active liveview drives which liveview switch reads on. This observe reflects only the active selection - the single switch that shows as on - by
     // re-running updateLiveviewSwitchState; the set of switches itself is reconciled by the liveview-collection observe below.
-    this.observeState({ key: "viewer.liveview", selector: state => viewer(state)?.liveview, title: "the active live view" },
-      () => this.updateLiveviewSwitchState({ initialized: true }));
+    this.observeState({ key: "viewer.liveview", selector: state => viewer(state)?.liveview, title: "the active live view" }, () => {
+
+      this.updateLiveviewSwitchState({ initialized: true });
+      this.publishLiveviewState();
+    });
 
     // The controller's liveview collection drives which switches this viewer exposes. Re-run the full reconcile whenever that collection changes, so the switch set
     // stays in step with the liveviews the controller offers. (The viewer.liveview observe above handles the active-selection reflection.)
-    this.observeState({ key: "nvr.liveviews", selector: selectLiveviews, title: "the live view list" }, () => this.updateDevice({ initialized: true }));
+    this.observeState({ key: "nvr.liveviews", selector: selectLiveviews, title: "the live view list" }, () => {
+
+      this.updateDevice({ initialized: true });
+      this.publishLiveviewState();
+    });
   }
 }

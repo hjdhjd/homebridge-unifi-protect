@@ -165,8 +165,13 @@ export class ProtectNvrSystemInfo extends ProtectBase {
     return true;
   }
 
-  // Configure MQTT capabilities for the controller system information.
+  // Configure MQTT capabilities for the controller system information, only while the feature is on, because a feature the user has not enabled has no MQTT topic.
   private configureMqtt(): void {
+
+    if(!this.nvr.hasFeature("NVR.SystemInfo")) {
+
+      return;
+    }
 
     // Return the controller's current system information.
     this.subscribeGet(mqttTopics.systeminfo.topic, mqttTopics.systeminfo.label, () => JSON.stringify(this.nvr.ufp.systemInfo));

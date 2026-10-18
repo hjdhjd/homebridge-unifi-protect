@@ -49,7 +49,8 @@ const controllers: AbortController[] = [];
 // production class, running its real configureHints / configureDevice / spawnObservers paths. The injected recording dispatch is read off nvr.events after construction
 // rather than captured from the factory closure - reading it back avoids both the assignment-expression smell and a TS2454 definite-assignment error on a
 // factory-captured binding.
-function buildLight(configOptions: Parameters<typeof makeLightConfig>[0] = {}, harnessOptions: { accessory?: TestAccessory; userOptions?: string[] } = {}): {
+function buildLight(configOptions: Parameters<typeof makeLightConfig>[0] = {},
+  harnessOptions: { accessory?: TestAccessory; disconnected?: boolean; userOptions?: string[] } = {}): {
   accessory: TestAccessory; clock: TestClock; light: ProtectLight; lightConfig: ProtectLightConfig; lightProjection: TestLightProjection; mqtt: TestMqttClient;
   recording: TestRecordingDispatch; store: TestStateStore;
 } {
@@ -60,6 +61,12 @@ function buildLight(configOptions: Parameters<typeof makeLightConfig>[0] = {}, h
     userOptions: harnessOptions.userOptions });
 
   controllers.push(controller);
+
+  // A disconnected double is the production startup shape: the light is built before the broker acknowledges the first session.
+  if(mqtt && harnessOptions.disconnected) {
+
+    mqtt.connected = false;
+  }
 
   const recording = nvr.events as TestRecordingDispatch;
   const accessory = harnessOptions.accessory ?? makeTestAccessory("Test Light", "uuid:test-light");
@@ -124,6 +131,10 @@ describe("real ProtectLight construction and observer behavior", () => {
     // Settle the observe loops' lazy registration before any test asserts, then snapshot the construction-wake count and reset the window so each test measures only
     // its own pushes.
     await settle();
+
+    // The light states its held state as it is built, so each row reads what its own occasion publishes from a list taken past that statement. The double's gate
+    // memory still holds what was stated, as the client's would, so a same-value statement stays unsent.
+    mqtt.published.length = 0;
 
     constructionWakes = wakeLog.length;
     wakeLog.length = 0;
@@ -313,63 +324,94 @@ describe("real ProtectLight construction and observer behavior", () => {
       assert.equal(await mqtt.invokeGet(lightConfig.mac + "/light/brightness/get"), "60", "the /light/brightness GET maps ledLevel 4 to 60 percent");
     });
 
-    test("a /light SET of \"true\" drives the power write and publishes \"true\"", async () => {
+    test("a /light SET of off and then of \"true\" drives each power write and publishes nothing from the command path", async () => {
 
       const set = mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === lightConfig.mac + "/light/set"));
 
       assert.ok(set, "the light registered a /light SET subscription");
 
       // The body's getService(Lightbulb)?.setCharacteristic(On, value === "true") fires the On onSet, which writes through device.update({ lightOnSettings: {
-      // isLedForceOn } }) then publishes. setCharacteristic is fire-and-forget, so settle past the onSet before asserting.
+      // isLedForceOn } }). setCharacteristic is fire-and-forget, so settle past each onSet before asserting. The fixture holds the light on, so the row commands off
+      // first...a command path that still published the requested state would record a "false" no observer made. The "true" command that follows holds the write
+      // of the force-on state itself. The topic follows the controller's reported change, and no change is pushed, so nothing publishes.
+      await mqtt.invokeSet(lightConfig.mac + "/light/set", "false");
+      await settle();
       await mqtt.invokeSet(lightConfig.mac + "/light/set", "true");
       await settle();
 
-      assert.deepEqual(lightProjection.updateCalls, [{ payload: { lightOnSettings: { isLedForceOn: true } } }],
-        "the /light SET of \"true\" wrote the force-on power state through device.update");
-      assert.deepEqual(mqtt.published.filter((entry) => entry.topic === lightConfig.mac + "/light"),
-        [{ payload: "true", retain: false, topic: lightConfig.mac + "/light" }], "the accepted power write published \"true\" on the light topic");
+      assert.deepEqual(lightProjection.updateCalls,
+        [ { payload: { lightOnSettings: { isLedForceOn: false } } }, { payload: { lightOnSettings: { isLedForceOn: true } } } ],
+        "the /light SETs of off and then \"true\" wrote each force-on power state through device.update");
+      assert.equal(mqtt.publishedTo("/light").length, 0, "the accepted power writes published nothing of their own on the light topic");
     });
 
-    test("a /light SET of a non-\"true\" value drives the power-off write and publishes \"false\"", async () => {
+    test("a /light SET of a non-\"true\" value drives the power-off write and publishes \"false\" once the controller reports it", async () => {
 
       const set = mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === lightConfig.mac + "/light/set"));
 
       assert.ok(set, "the light registered a /light SET subscription");
 
-      // value === "true" is false for "false", so the On onSet receives false: device.update({ lightOnSettings: { isLedForceOn: false } }) and publish "false". The
-      // boolean is the value that distinguishes a true SET from a false one, catching a mutation of the value === "true" comparison.
+      // value === "true" is false for "false", so the On onSet receives false: device.update({ lightOnSettings: { isLedForceOn: false } }). The boolean is the value
+      // that distinguishes a true SET from a false one, catching a mutation of the value === "true" comparison. The command alone publishes nothing; the controller's
+      // confirming change does, once.
       await mqtt.invokeSet(lightConfig.mac + "/light/set", "false");
       await settle();
 
       assert.deepEqual(lightProjection.updateCalls, [{ payload: { lightOnSettings: { isLedForceOn: false } } }],
         "a non-\"true\" /light SET wrote the force-off power state through device.update");
+      assert.equal(mqtt.publishedTo("/light").length, 0, "the command with no controller confirmation published nothing");
+
+      store.pushLightPatch(lightConfig.id, { isLightOn: false });
+      await settle();
+
       assert.deepEqual(mqtt.published.filter((entry) => entry.topic === lightConfig.mac + "/light"),
-        [{ payload: "false", retain: false, topic: lightConfig.mac + "/light" }], "the accepted power-off write published \"false\" on the light topic");
+        [{ payload: "false", retain: false, topic: lightConfig.mac + "/light" }], "the confirming change published \"false\" on the light topic exactly once");
     });
 
-    test("a valid /light/brightness SET maps the percentage to an LED level, publishes the round-tripped brightness, and reflects it after 50ms", async () => {
+    test("an on-state change the controller reports with no command publishes the value the light get answers once", async () => {
+
+      store.pushLightPatch(lightConfig.id, { isLightOn: false });
+      await settle();
+
+      assert.deepEqual(mqtt.publishedTo("/light").map((entry) => entry.payload), ["false"], "the reported change published the light's on state once");
+    });
+
+    test("a brightness change the controller reports with no command publishes the value the brightness get answers once", async () => {
+
+      store.pushLightDeviceSettings(lightConfig.id, { ledLevel: 6 });
+      await settle();
+
+      assert.deepEqual(mqtt.publishedTo("/light/brightness").map((entry) => entry.payload), ["100"], "the reported change published the brightness percentage once");
+    });
+
+    test("a valid /light/brightness SET maps the percentage to an LED level, publishes the confirmed brightness, and reflects it after 50ms", async () => {
 
       // The reflect is armed on the platform's clock, which settle does not move, so the row advances the harness clock through the reflect delay.
       const set = mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === lightConfig.mac + "/light/brightness/set"));
 
       assert.ok(set, "the light registered a /light/brightness SET subscription");
 
-      // The body parses "55", passes the gate, and setCharacteristic(Brightness, 55) -> the Brightness onSet -> brightnessToLedLevel(55) = Math.round(55/20 + 1) = 4 ->
-      // device.update({ lightDeviceSettings: { ledLevel: 4 } }), then schedules the deferred reflect and publishes ledLevelToBrightness(4) = 60. The 55 -> 60 round-trip
-      // is the granularity contract.
-      await mqtt.invokeSet(lightConfig.mac + "/light/brightness/set", "55");
+      // The body parses "75", passes the gate, and setCharacteristic(Brightness, 75) -> the Brightness onSet -> brightnessToLedLevel(75) = Math.round(75/20 + 1) = 5 ->
+      // device.update({ lightDeviceSettings: { ledLevel: 5 } }), then schedules the deferred reflect. The 75 -> 80 round-trip is the granularity contract, and the
+      // fixture holds level 4, so the controller's confirmation genuinely moves the topic.
+      await mqtt.invokeSet(lightConfig.mac + "/light/brightness/set", "75");
       await settle();
 
-      assert.deepEqual(lightProjection.updateCalls, [{ payload: { lightDeviceSettings: { ledLevel: 4 } } }],
-        "the /light/brightness SET of \"55\" mapped to LED level 4 and wrote it through device.update");
+      assert.deepEqual(lightProjection.updateCalls, [{ payload: { lightDeviceSettings: { ledLevel: 5 } } }],
+        "the /light/brightness SET of \"75\" mapped to LED level 5 and wrote it through device.update");
+      assert.equal(mqtt.publishedTo("/light/brightness").length, 0, "the command with no controller confirmation published nothing");
+
+      store.pushLightDeviceSettings(lightConfig.id, { ledLevel: 5 });
+      await settle();
+
       assert.deepEqual(mqtt.published.filter((entry) => entry.topic === lightConfig.mac + "/light/brightness"),
-        [{ payload: "60", retain: false, topic: lightConfig.mac + "/light/brightness" }], "the write published the round-tripped brightness (55 in, 60 published)");
+        [{ payload: "80", retain: false, topic: lightConfig.mac + "/light/brightness" }], "the confirmation published the round-tripped brightness once (75 in, 80)");
 
       // The deferred reflect snaps the Lightbulb Brightness to the LED-level-mapped value, reconciling HomeKit's finer granularity with Protect's 1-6 levels.
       clock.advance(PROTECT_HOMEKIT_REFLECT_DELAY);
 
-      assert.equal(accessory.getService(Service.Lightbulb)?.getCharacteristic(Characteristic.Brightness).value, 60,
-        "the 50ms reflect snapped the Lightbulb Brightness to the LED-level-mapped 60 percent");
+      assert.equal(accessory.getService(Service.Lightbulb)?.getCharacteristic(Characteristic.Brightness).value, 80,
+        "the 50ms reflect snapped the Lightbulb Brightness to the LED-level-mapped 80 percent");
     });
 
     test("a non-numeric /light/brightness SET is gated out: no write, no publish", async () => {
@@ -399,6 +441,76 @@ describe("real ProtectLight construction and observer behavior", () => {
 
       assert.equal(lightProjection.updateCalls.length, 0, "an out-of-range brightness is gated out, so no write happens");
       assert.equal(mqtt.published.filter((entry) => entry.topic === lightConfig.mac + "/light/brightness").length, 0, "an out-of-range brightness publishes nothing");
+    });
+  });
+
+  describe("the light's held state stated as it is built and restated per broker session", () => {
+
+    // Flip the double's session lever off and back on, settling after each edge so the connect handlers have run.
+    const restoreSession = async (client: TestMqttClient): Promise<void> => {
+
+      client.connected = false;
+      await settle();
+      client.connected = true;
+      await settle();
+    };
+
+    test("a light built into a held session states its on state and brightness once each", async () => {
+
+      const built = buildLight({ isLightOn: true, ledLevel: 4 });
+
+      await settle();
+
+      assert.deepEqual(built.mqtt.publishedTo("/light").map((entry) => entry.payload), ["true"], "the on state is stated once as the light is built");
+      assert.deepEqual(built.mqtt.publishedTo("/light/brightness").map((entry) => entry.payload), ["60"], "the brightness is stated once as the light is built");
+    });
+
+    test("a light built while no session is held records nothing until the session starts, then each held state once", async () => {
+
+      const built = buildLight({ isLightOn: true, ledLevel: 4 }, { disconnected: true });
+
+      await settle();
+
+      assert.equal(built.mqtt.published.length, 0, "the statements made with no session held are refused");
+
+      built.mqtt.connected = true;
+      await settle();
+
+      assert.deepEqual(built.mqtt.publishedTo("/light").map((entry) => entry.payload), ["true"], "the first session states the on state once");
+      assert.deepEqual(built.mqtt.publishedTo("/light/brightness").map((entry) => entry.payload), ["60"], "the first session states the brightness once");
+    });
+
+    test("a session restore restates every held state once and no event, and a push leaving the on state unchanged records nothing", async () => {
+
+      await restoreSession(mqtt);
+
+      assert.equal(mqtt.published[0]?.topic.endsWith("availability"), true, "the double records its availability statement first");
+      assert.deepEqual(mqtt.publishedTo("/light").map((entry) => entry.payload), ["true"], "the restore restates the on state once");
+      assert.deepEqual(mqtt.publishedTo("/light/brightness").map((entry) => entry.payload), ["60"], "the restore restates the brightness once");
+      assert.equal(mqtt.publishedTo("/motion").length, 0, "no event topic is restated");
+
+      const recorded = mqtt.published.length;
+
+      // A push that leaves the on state where it was is one the on-state observer never sees, so this holds only that such a push records nothing. That the gate
+      // suppresses an unchanged statement is held by the owner spine's own rows in device-mqtt-topic.test.ts.
+      store.pushLightPatch(lightConfig.id, { isLightOn: true });
+      await settle();
+
+      assert.equal(mqtt.published.length, recorded, "a push leaving the on state unchanged records nothing after the restore");
+    });
+
+    test("a change made while the session is down is restated once, as the current value, when the session returns", async () => {
+
+      mqtt.connected = false;
+      store.pushLightPatch(lightConfig.id, { isLightOn: false });
+      await settle();
+
+      assert.equal(mqtt.publishedTo("/light").length, 0, "the change made with no session held is refused");
+
+      mqtt.connected = true;
+      await settle();
+
+      assert.deepEqual(mqtt.publishedTo("/light").map((entry) => entry.payload), ["false"], "the returning session hears the current value once");
     });
   });
 });

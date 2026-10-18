@@ -157,19 +157,40 @@ export class ProtectRelay extends ProtectDevice<Relay> {
 
       return;
     }
-
-    // Publish our state on success.
-    this.publish(this.outputTopic(id), desired ? "true" : "false");
   }
 
-  // Configure MQTT capabilities of this relay. Each output exposes a get (the live output state) and a set (which drives the output switch's On characteristic,
-  // re-entering the single set-to-toggle path). We register for every output the hardware reports; a hidden output's set is a safe no-op (no switch to drive) while its
-  // get still reports the live controller state.
+  // Publish one output's on state, the value its MQTT get answers, when it changed. The controller's reported change is the one publisher of this topic, so a toggle
+  // made here, in the Protect app, or by a momentary output's self-revert each publishes once, from the observer. An output the user left out of Relay.Outputs has no
+  // switch, and with it no MQTT topic, so it publishes nothing.
+  private publishOutputState(id: number): void {
+
+    if(!this.hasOutputSwitch(id)) {
+
+      return;
+    }
+
+    this.publishState(this.outputTopic(id), this.outputState(id).toString());
+  }
+
+  // Whether an output's Switch stands, the condition Relay.Outputs creates it under. An output's MQTT topic is part of the same capability, so its get, its set and its
+  // publishes all follow this one answer.
+  private hasOutputSwitch(id: number): boolean {
+
+    return this.accessory.getServiceById(this.hap.Service.Switch, this.outputSubtype(id)) !== undefined;
+  }
+
+  // Configure MQTT capabilities of this relay. Each output whose Switch stands exposes a get (the live output state) and a set (which drives the output switch's On
+  // characteristic, re-entering the single set-to-toggle path). An output the user left out of Relay.Outputs has no switch and no MQTT topic, so it registers neither.
   private configureMqtt(): void {
 
     for(const output of this.ufp.outputs) {
 
       const id = output.id;
+
+      if(!this.hasOutputSwitch(id)) {
+
+        continue;
+      }
 
       this.subscribeGet(this.outputTopic(id), mqttTopics.relayOutput.label, () => this.outputState(id).toString());
 
@@ -178,6 +199,19 @@ export class ProtectRelay extends ProtectDevice<Relay> {
         this.accessory.getServiceById(this.hap.Service.Switch, this.outputSubtype(id))?.setCharacteristic(this.hap.Characteristic.On, value === "true");
       });
     }
+
+    // State each output's held state as the relay is built, since its construction publishes nothing else, and again at the start of every later broker session,
+    // through the method its observers publish with.
+    const restate = (): void => {
+
+      for(const output of this.ufp.outputs) {
+
+        this.publishOutputState(output.id);
+      }
+    };
+
+    restate();
+    this.restateOnConnect(restate);
   }
 
   // Spawn the relay's narrow-selector observers. super spawns the universal observers (name sync and firmware/device-info refresh); the relay adds one observer per
@@ -209,8 +243,9 @@ export class ProtectRelay extends ProtectDevice<Relay> {
           this.timers.clear(this.pendingTimerKey(id));
         }
 
-        // Push controller truth to this output's tile.
+        // Push controller truth to this output's tile, and on to MQTT.
         this.accessory.getServiceById(this.hap.Service.Switch, this.outputSubtype(id))?.updateCharacteristic(this.hap.Characteristic.On, actual);
+        this.publishOutputState(id);
       });
     }
 

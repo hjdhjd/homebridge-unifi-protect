@@ -33,7 +33,7 @@ export const mqttTopics = mqttTopicCatalog({
       "only for NFC and contains the card ID as detected by the doorbell.", topic: "authenticate" },
   button: { devices: ["fob"], label: "fob button",
     publish: "`{\"button\": \"arm\", \"pressType\": \"single\"}` when a UniFi Protect fob button is pressed. `button` is the button that was pressed and " +
-      "`pressType` is the gesture. Published for every press, including buttons you've hidden in HomeKit.", topic: "button" },
+      "`pressType` is the gesture. Published for every press of a button selected in HomeKit; a button you've hidden publishes nothing.", topic: "button" },
   carbonmonoxide: { devices: ["sensor"],
     get: "`true` will trigger a publish event of the current carbon monoxide alarm state for a UniFi Protect smoke detector.", label: "carbon monoxide",
     publish: "`true` or `false` when a UniFi Protect smoke detector detects carbon monoxide.", topic: "carbonmonoxide" },
@@ -75,7 +75,8 @@ export const mqttTopics = mqttTopicCatalog({
     get: "`true` will trigger a publish event of the current message JSON for the doorbell. See [Doorbell Messages](#doorbell-messages) for additional " +
       "documentation.", label: "doorbell message",
     publish: "`{message: \"Some Message\", duration: 60}`. See [Doorbell Messages](#doorbell-messages) for additional documentation.",
-    set: "A JSON in the format `{\"message\":\"Some Message\",\"duration\":60}`. See [Doorbell Messages](#doorbell-messages) for additional documentation.",
+    set: "A JSON in the format `{\"message\":\"Some Message\",\"duration\":60}`. Requires the `Doorbell.Messages` feature option to be enabled. " +
+      "See [Doorbell Messages](#doorbell-messages) for additional documentation.",
     topic: "message" },
   motion: { devices: [ "camera", "light", "sensor" ], get: "`true` will trigger a publish event of the motion sensor state.", label: "motion",
     publish: "`true` when motion is detected. `false` when the motion event is reset.", set: "`true` will trigger a motion event on the motion sensor.",

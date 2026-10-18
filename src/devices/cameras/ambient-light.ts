@@ -33,6 +33,9 @@ export class AmbientLightCapability extends ProtectDeviceCapability<ProtectCamer
   // The last-known ambient light reading, in lux. Seeded to zero, which HomeKit cannot represent, so the first genuine read (or the initial-read floor below) replaces it
   // before anything displays it. It is the poll's change-detection baseline and the value the CurrentAmbientLightLevel handler reports.
   #ambientLight = 0;
+  // Whether a genuine reading has been adopted. A failed read floors the held value to the same minimum a dark reading does, so the value alone cannot tell a reading
+  // the camera reported from the floor that stands in for none, and only a reported one is stated to MQTT at a session's start.
+  #hasGenuineReading = false;
 
   // Construct the capability against its owning camera. The camera passes itself, its own live projection handle, and its protected per-accessory signal from inside its
   // own class body, so no visibility widening is needed.
@@ -41,6 +44,18 @@ export class AmbientLightCapability extends ProtectDeviceCapability<ProtectCamer
     super(nvr, { host: init.host, signal: init.signal });
 
     this.#device = init.device;
+
+    // Restate the held reading at the start of every later broker session, while the sensor stands and a genuine reading has been adopted. The capability registers
+    // here, once for its lifetime, because reconcile runs again on every capability wake and a registration there would accumulate one restatement per wake.
+    this.restateOnConnect(() => {
+
+      if(!this.#hasGenuineReading || !this.accessory.getService(this.hap.Service.LightSensor)) {
+
+        return;
+      }
+
+      this.publishState(mqttTopics.ambientlight.topic, this.#ambientLight.toString());
+    });
   }
 
   // The owning camera projection's live STATE, narrowed to drop device identity (id/mac/modelKey) - the capability-held projection each capability types for itself,
@@ -108,8 +123,17 @@ export class AmbientLightCapability extends ProtectDeviceCapability<ProtectCamer
         return;
       }
 
+      // A failed read leaves everything as it stands.
+      if(lux === -1) {
+
+        return;
+      }
+
+      // A genuine reading counts as adopted even when it matches the held value, which a failed first read may have floored to the same minimum.
+      this.#hasGenuineReading = true;
+
       // Nothing to update, we're done.
-      if((this.#ambientLight === lux) || (lux === -1)) {
+      if(this.#ambientLight === lux) {
 
         return;
       }
@@ -117,8 +141,8 @@ export class AmbientLightCapability extends ProtectDeviceCapability<ProtectCamer
       // Update the sensor.
       service.updateCharacteristic(this.hap.Characteristic.CurrentAmbientLightLevel, this.#ambientLight = lux);
 
-      // Publish the state.
-      this.publish(mqttTopics.ambientlight.topic, this.#ambientLight.toString());
+      // Publish the state when it changed.
+      this.publishState(mqttTopics.ambientlight.topic, this.#ambientLight.toString());
     };
 
     // Poll every 60 seconds - ambient light changes slowly enough that a faster cadence would only add controller chatter without a visible HomeKit benefit.
@@ -132,9 +156,16 @@ export class AmbientLightCapability extends ProtectDeviceCapability<ProtectCamer
     // above. On the first reconcile there is no prior reading - the field seeds 0, which HomeKit cannot represent - so we floor to the minimum only in that case.
     const reading = await getLux();
 
+    // A teardown that lands while the read is in flight leaves this run with nothing to write, the same check the poll makes after its own read.
+    if(this.signal.aborted) {
+
+      return;
+    }
+
     if(reading !== -1) {
 
       this.#ambientLight = reading;
+      this.#hasGenuineReading = true;
     } else if(this.#ambientLight === 0) {
 
       this.#ambientLight = 0.0001;
@@ -145,6 +176,13 @@ export class AmbientLightCapability extends ProtectDeviceCapability<ProtectCamer
 
     service.updateCharacteristic(this.hap.Characteristic.CurrentAmbientLightLevel, this.#ambientLight);
     service.updateCharacteristic(this.hap.Characteristic.StatusActive, this.isReachable);
+
+    // Publish a genuine reading this run adopted. It is the capability's statement as it is built, and a later run that reads the same level leaves it unsent while one
+    // that reads a moved level sends it.
+    if(reading !== -1) {
+
+      this.publishState(mqttTopics.ambientlight.topic, this.#ambientLight.toString());
+    }
   }
 
   // Reflect the host's reachability onto the sensor's StatusActive characteristic, composed by the camera's availability projection. The service is resolved at call time

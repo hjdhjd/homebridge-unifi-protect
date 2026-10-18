@@ -145,8 +145,16 @@ export class ProtectSecuritySystem extends ProtectBase {
           return;
       }
 
-      // The security alarm gets handled differently than the other state settings.
+      // The security alarm gets handled differently than the other state settings. The alarm belongs to the SecuritySystem.Alarm feature, so with that feature off an
+      // alarm value is refused as an unknown one is, and the alarm state the option hides cannot be driven from MQTT.
       if(targetState === SecuritySystemCurrentState.ALARM_TRIGGERED) {
+
+        if(!this.nvr.hasFeature("SecuritySystem.Alarm")) {
+
+          this.log.error("Unable to process MQTT security system setting: %s.", value);
+
+          return;
+        }
 
         this.setSecurityAlarm(alarmState);
 
@@ -157,6 +165,13 @@ export class ProtectSecuritySystem extends ProtectBase {
       this.accessory.getService(this.hap.Service.SecuritySystem)?.updateCharacteristic(SecuritySystemTargetState, targetState);
       this.setSecurityState(targetState);
     });
+
+    // State the security system's current state as it is built, since its construction publishes nothing else, and again at the start of every later broker session.
+    // The liveviews owner can build a security system while a session is held, when a matching liveview appears, so the statement here is what that session hears.
+    const restate = (): void => this.publish(mqttTopics.securitysystem.topic, this.currentSecuritySystemState);
+
+    restate();
+    this.restateOnConnect(restate);
 
     return true;
   }

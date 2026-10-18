@@ -91,7 +91,7 @@ function seedMember(nvr: TestProtectNvr, options: { detectMotion?: boolean; id: 
 // distinct-id discipline; the casts are confined to the construction boundary exactly as the family suites do. Optional cachedAccessories are pushed onto the array
 // BEFORE construction (orphan-removal / pre-seeded-switch-state fixtures). The returned controller is aborted in teardown: the fixture tears down through the controller
 // it built, the scope that owns every registration the test created.
-function buildLiveviews(harnessOptions: { cachedAccessories?: TestAccessory[]; liveviews?: ProtectNvrLiveviewConfig[]; mac?: string;
+function buildLiveviews(harnessOptions: { cachedAccessories?: TestAccessory[]; disconnected?: boolean; liveviews?: ProtectNvrLiveviewConfig[]; mac?: string;
   sharedPlatform?: { accessories: TestAccessory[]; apiCalls: ReturnType<typeof makeTestNvr>["apiCalls"] }; userOptions?: string[]; } = {}): {
   apiCalls: ReturnType<typeof makeTestNvr>["apiCalls"]; controller: AbortController; logEntries: readonly TestLogEntry[]; mqtt: TestMqttClient; nvr: TestProtectNvr;
   owner: ProtectLiveviews; store: TestStateStore;
@@ -112,6 +112,9 @@ function buildLiveviews(harnessOptions: { cachedAccessories?: TestAccessory[]; l
 
     nvr.platform.accessories.push(cached);
   }
+
+  // A disconnected double is the production startup shape: the liveviews owner is built before the broker acknowledges the first session.
+  mqtt.connected = !(harnessOptions.disconnected ?? false);
 
   const owner = new ProtectLiveviews(nvr as unknown as ProtectNvr);
 
@@ -517,5 +520,132 @@ describe("real ProtectLiveviews construction and controller-owner wiring", () =>
 
     assert.equal(built.nvr.platform.accessories.includes(ghostOne), false, "the first adjacent orphan was swept");
     assert.equal(built.nvr.platform.accessories.includes(ghostTwo), false, "the second adjacent orphan was swept in the SAME pass - not skipped by an index shift");
+  });
+});
+
+describe("the liveviews owner's whole list restated per broker session", () => {
+
+  test("a session restore restates the whole owned-switch list once, however often the liveviews reconfigured before it", async () => {
+
+    const built = buildLiveviews({ liveviews: [ makeLiveviewConfig({ id: "lv-scene", name: "Protect-Scene" }),
+      makeLiveviewConfig({ id: "lv-garden", name: "Protect-Garden" }) ] });
+
+    try {
+
+      await settle();
+
+      const asBuilt = built.mqtt.publishedTo("/liveviews").length;
+
+      built.owner.configureLiveviews();
+      built.mqtt.connected = false;
+      await settle();
+      built.mqtt.connected = true;
+      await settle();
+
+      const restated = built.mqtt.publishedTo("/liveviews").slice(asBuilt);
+
+      assert.equal(restated.length, 1, "the restore restates the whole list once, one registration standing behind the configure guard");
+      assert.equal((JSON.parse(restated[0]?.payload.toString() ?? "[]") as unknown[]).length, 2, "the restatement carries the whole owned-switch list");
+    } finally {
+
+      built.controller.abort();
+    }
+  });
+
+  // The whole-list statements among a run of recorded liveviews publishes: every entry carrying more than the one switch a switch change states.
+  const wholeLists = (entries: TestMqttClient["published"]): TestMqttClient["published"] => {
+
+    return entries.filter((entry) => (JSON.parse(entry.payload.toString()) as unknown[]).length > 1);
+  };
+
+  const scene = (): ProtectNvrLiveviewConfig => makeLiveviewConfig({ id: "lv-scene", name: "Protect-Scene" });
+
+  for(const row of [ { liveviews: [ scene(), makeLiveviewConfig({ id: "lv-garden", name: "Protect-Garden" }) ], title: "two switches" },
+    { liveviews: [scene()], title: "one switch whose restored state matches its cameras" } ]) {
+
+    test("an owner built with " + row.title + " states no whole list as it is built", async () => {
+
+      const built = buildLiveviews({ liveviews: row.liveviews });
+
+      try {
+
+        await settle();
+
+        assert.equal(wholeLists(built.mqtt.publishedTo("/liveviews")).length, 0, "only a switch whose restored state differs is stated, as a one-element list");
+
+        if(row.liveviews.length === 1) {
+
+          assert.equal(built.mqtt.publishedTo("/liveviews").length, 0, "a switch whose restored state matches its cameras is not stated");
+        }
+      } finally {
+
+        built.controller.abort();
+      }
+    });
+  }
+
+  test("an owner built while no session is held records nothing until the session starts, then the whole list once", async () => {
+
+    const built = buildLiveviews({ disconnected: true, liveviews: [ makeLiveviewConfig({ id: "lv-scene", name: "Protect-Scene" }),
+      makeLiveviewConfig({ id: "lv-garden", name: "Protect-Garden" }) ] });
+
+    try {
+
+      await settle();
+
+      assert.equal(built.mqtt.published.length, 0, "the statements made with no session held are refused");
+
+      built.mqtt.connected = true;
+      await settle();
+
+      assert.equal(built.mqtt.publishedTo("/liveviews").length, 1, "the first session states the list once");
+      assert.equal(wholeLists(built.mqtt.publishedTo("/liveviews")).length, 1, "the first session's statement is the whole owned-switch list");
+    } finally {
+
+      built.controller.abort();
+    }
+  });
+
+  test("a switch toggled while the session is down is restated in the whole list, with its new state, when the session returns", async () => {
+
+    // Pre-seed the scene switch off, as the toggle row above does, so the construction-time sync leaves it off and the toggle is a genuine change.
+    const sceneAccessory = makeTestAccessory("Controller Scene", liveviewUuid("Scene"));
+
+    sceneAccessory.context["liveview"] = "Scene";
+    sceneAccessory.context["liveviewState"] = false;
+    sceneAccessory.context["nvr"] = CONTROLLER_MAC;
+    sceneAccessory.addService(new Service.Switch("Controller Scene"));
+
+    const built = buildLiveviews({ cachedAccessories: [sceneAccessory],
+      liveviews: [ makeLiveviewConfig({ id: "lv-scene", name: "Protect-Scene" }), makeLiveviewConfig({ id: "lv-garden", name: "Protect-Garden" }) ] });
+
+    try {
+
+      await settle();
+
+      const sceneSwitch = sceneAccessory.getService(Service.Switch);
+
+      assert.ok(sceneSwitch, "the scene switch service exists");
+
+      const asBuilt = built.mqtt.publishedTo("/liveviews").length;
+
+      built.mqtt.connected = false;
+      await settle();
+      await sceneSwitch.getCharacteristic(Characteristic.On).triggerSet(true);
+      await settle();
+
+      assert.equal(built.mqtt.publishedTo("/liveviews").length, asBuilt, "the toggle made with no session held is refused");
+
+      built.mqtt.connected = true;
+      await settle();
+
+      const restated = built.mqtt.publishedTo("/liveviews").slice(asBuilt).map((entry) => JSON.parse(entry.payload.toString()) as { name: string; state: unknown }[]);
+
+      assert.equal(restated.length, 1, "the returning session hears the whole list once");
+      assert.deepEqual(restated[0]?.find((entry) => entry.name === "Scene"), { name: "Scene", state: true }, "the whole list carries the toggled switch's new state");
+    } finally {
+
+      built.controller.abort();
+    }
   });
 });

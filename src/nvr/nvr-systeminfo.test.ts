@@ -253,6 +253,18 @@ describe("real ProtectNvrSystemInfo construction and controller-owner behavior",
     assert.equal(subscription.init.signal.aborted, true, "the GET registration's lifetime ended with the controller abort");
   });
 
+  test("with NVR.SystemInfo off the systeminfo topic has no GET, so the controller's system information is not reachable over MQTT", async () => {
+
+    const built = buildSystemInfo({ temperature: 33 });
+
+    activeController = built.controller;
+
+    await settle();
+
+    assert.equal(built.mqtt.subscriptions.some((entry) => entry.topic === "74ACB9FFFFFF/systeminfo/get"), false, "no systeminfo GET is registered with the feature off");
+    assert.equal(built.mqtt.publishedTo("/systeminfo").length, 0, "nothing publishes on the systeminfo topic with the feature off");
+  });
+
   test("aborting the controller signal deregisters the observer and ends the MQTT subscription lifetime, and a later push no longer refreshes", async () => {
 
     const built = buildSystemInfo({ temperature: 20 }, { userOptions: ["Enable.Nvr.SystemInfo"] });

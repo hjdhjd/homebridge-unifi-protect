@@ -18,8 +18,9 @@
  * measurements read the off signature on a device we can see, and the characteristic set never shrinks while the device is unreachable; the sensor observers (the
  * motionDetectedAt firehose routed through the injected TestRecordingDispatch
  * exactly like the light's lastMotion; the tamperingDetectedAt fan-out across every state-bearing service; the per-row alarm-family pushes, alarmTriggeredAt to the
- * alarm-sound contact and glassBreakTriggeredAt to the glass-break contact; the whole-record sensor.config reconcile); the always-on GET MQTT subscriptions plus the
- * model-aware leak GETs (registered per-channel, present-iff-enabled, once-guarded, and unsubscribed when a channel is toggled off).
+ * alarm-sound contact and glassBreakTriggeredAt to the glass-break contact; the whole-record sensor.config reconcile); the GET MQTT subscriptions, the ambient light and
+ * vape gets present only under their feature options, plus the model-aware leak GETs (registered per-channel, present-iff-enabled, once-guarded, and unsubscribed when
+ * a channel is toggled off).
  *
  * The multi-wake: the whole-record observer (sensor.config) selects the WHOLE sensor record (deviceSelectors.sensor.byId(id)), and pushSensorPatch replaces it on
  * every patch that changes the record (a value-identical patch is a reducer no-op and wakes nothing at all), so sensor.config wakes on every such push - in ADDITION
@@ -82,7 +83,8 @@ const controllers: AbortController[] = [];
 // running its real configureHints / configureDevice / spawnObservers paths. The accessory factory is injectable so the moisture mode-flip test can pre-seed a LeakSensor
 // before construction. The injected recording dispatch is read off nvr.events after construction rather than captured from the factory closure - reading it back avoids
 // both the assignment-expression smell and a TS2454 definite-assignment error on a factory-captured binding.
-function buildSensor(configOptions: Parameters<typeof makeSensorConfig>[0] = {}, harnessOptions: { accessory?: TestAccessory; userOptions?: string[] } = {}): {
+function buildSensor(configOptions: Parameters<typeof makeSensorConfig>[0] = {},
+  harnessOptions: { accessory?: TestAccessory; disconnected?: boolean; userOptions?: string[] } = {}): {
   accessory: TestAccessory; logEntries: readonly TestLogEntry[]; mqtt: TestMqttClient; projection: TestSensorProjection; recording: TestRecordingDispatch;
   sensor: ProtectSensor; store: TestStateStore;
 } {
@@ -93,6 +95,12 @@ function buildSensor(configOptions: Parameters<typeof makeSensorConfig>[0] = {},
     store, userOptions: harnessOptions.userOptions });
 
   controllers.push(controller);
+
+  // A disconnected double is the production startup shape: the sensor is built before the broker acknowledges the first session.
+  if(mqtt && harnessOptions.disconnected) {
+
+    mqtt.connected = false;
+  }
 
   const recording = nvr.events as TestRecordingDispatch;
   const accessory = harnessOptions.accessory ?? makeTestAccessory("Test Sensor", "uuid:test-sensor");
@@ -651,11 +659,11 @@ describe("real ProtectSensor construction and family behavior", () => {
     assert.ok(accessory.getService(Service.TemperatureSensor), "the sensor.config reconcile materialized the newly-enabled temperature service");
   });
 
-  test("the six always-on GET MQTT subscriptions compose the device-MAC-scoped topic tails, and the default no-leak sensor registers NEITHER leak GET", () => {
+  test("the six default GET MQTT subscriptions compose the device-MAC-scoped topic tails, and the default no-leak sensor registers NEITHER leak GET", () => {
 
     // The default carrier advertises no water-leak channels (channelNames []), so the leak-policy leaf gates both leak channels off and the per-channel MQTT fold-in
-    // registers NEITHER leak GET. The other sensor GETs are always-on and registered unconditionally in configureMqtt, including both alarm-family gets (alarm sound
-    // and glass break) regardless of whether either service exists.
+    // registers NEITHER leak GET. The ambient light GET registers under its default-on feature option, and the other sensor GETs here are registered unconditionally
+    // in configureMqtt, including every alarm-family get (alarm sound and glass break) whether or not its service exists.
     const tails = mqtt.subscriptions.filter((subscription) => subscription.kind === "get").map((subscription) => composedTail(subscription.topic));
     const mac = projection.config.mac;
 
@@ -1863,6 +1871,45 @@ describe("real ProtectSensor construction and family behavior", () => {
     built.sensor.cleanup();
   });
 
+  test("with Sensor.Vape off the vape topic has no GET, and a detection on reporting hardware publishes nothing", async () => {
+
+    // The controller's own vape enable is on and the metric reports, so the user's option is the one condition held off and the topic's absence is that option's alone.
+    const built = buildSensor({ airQuality: { vape: { status: "neutral", value: null } }, vapeEnabled: true });
+    const mac = built.projection.config.mac;
+
+    await settle();
+
+    assert.equal(built.mqtt.subscriptions.some((subscription) => subscription.topic === (mac + "/vape/get")), false, "no vape GET is registered with the option off");
+
+    built.store.pushSensorPatch("test-sensor-1", { airQuality: airQualityBlock({ vape: { status: "detected", value: null } }) });
+
+    await settle();
+
+    assert.equal(built.mqtt.publishedTo("/vape").length, 0, "neither the quiet state nor the detection publishes with the option off");
+
+    built.sensor.cleanup();
+  });
+
+  test("with Device.AmbientLightSensor off the sensor's ambientlight topic has no GET, and a reading change publishes nothing", async () => {
+
+    // The sensor's own light setting is on and it reports a reading, so the user's option is the one condition held off and the topic's absence is that option's alone.
+    const built = buildSensor({ ambientLight: 120, lightEnabled: true }, { userOptions: ["Disable.Device.AmbientLightSensor"] });
+    const mac = built.projection.config.mac;
+
+    await settle();
+
+    assert.equal(built.mqtt.subscriptions.some((subscription) => subscription.topic === (mac + "/ambientlight/get")), false,
+      "no ambientlight GET is registered with the option off");
+
+    built.store.pushSensorPatch("test-sensor-1", { stats: { light: { status: "", value: 250 } } });
+
+    await settle();
+
+    assert.equal(built.mqtt.publishedTo("/ambientlight").length, 0, "neither the first reading nor the change publishes with the option off");
+
+    built.sensor.cleanup();
+  });
+
   test("air-quality hardware lands its temperature and humidity in HomeKit with no toggle and no option", async () => {
 
     // The delivered feature, on a fixture shaped like the field: a UP Air Quality unit reports temperature and humidity through its air-quality telemetry while both
@@ -2094,7 +2141,7 @@ describe("real ProtectSensor construction and family behavior", () => {
     built.sensor.cleanup();
   });
 
-  test("a smoke detection narrates once per edge and publishes on every reconcile pass", async () => {
+  test("a smoke detection narrates once per edge and publishes when the detection changes", async () => {
 
     const built = buildSensor({ alarmTypes: [ "smoke", "CO" ], smokeStatus: makeSmokeStatus({ smokeAlarm: true }), type: "USL-Smoke-US" });
     const mac = built.projection.config.mac;
@@ -2116,10 +2163,10 @@ describe("real ProtectSensor construction and family behavior", () => {
     assert.equal(logCount(built.logEntries, "info", "Smoke no longer detected."), 1, "the clearing edge was narrated exactly once");
     assert.ok(built.mqtt.published.some((entry) => (entry.topic === (mac + "/smoke")) && (entry.payload === "false")), "the all-clear published");
 
-    // The cadence, and the negative control on the narration. A reconcile driven by an unrelated field change, with the detector's block unmoved, republishes the topic
-    // exactly as every other reconcile-pass publish in this family does while saying nothing at all about the alarm. A value-identical block push is a no-op in the
-    // controller's own reducer, so an unrelated change is what genuinely drives a pass here.
-    const publishBaseline = built.mqtt.published.filter((entry) => entry.topic === (mac + "/smoke")).length;
+    // The cadence, and the negative control on the narration. A reconcile driven by an unrelated field change, with the detector's block unmoved, leaves the topic
+    // unsent exactly as every other reconcile-pass publish in this family does, and says nothing at all about the alarm. A value-identical block push is a no-op in
+    // the controller's own reducer, so an unrelated change is what genuinely drives a pass here.
+    const publishBaseline = built.mqtt.publishedTo("/smoke").length;
 
     built.store.pushSensorPatch("test-sensor-1", { batteryStatus: { isLow: false, modelKey: "sensorBatteryStatus", percentage: 99 } });
 
@@ -2127,7 +2174,7 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     assert.equal(logCount(built.logEntries, "info", "Smoke no longer detected."), 1, "a pass that changed nothing about the alarm said nothing about it");
     assert.equal(logCount(built.logEntries, "info", "Smoke detected."), 1, "and never re-announced the detection either");
-    assert.equal(built.mqtt.published.filter((entry) => entry.topic === (mac + "/smoke")).length, publishBaseline + 1, "while the topic republished on the pass");
+    assert.equal(built.mqtt.publishedTo("/smoke").length, publishBaseline, "while the topic stayed unsent on a pass that left the detection where it was");
 
     built.store.pushSensorPatch("test-sensor-1", { smokeStatus: makeSmokeStatus({ coAlarm: true }) });
 
@@ -2500,5 +2547,190 @@ describe("real ProtectSensor construction and family behavior", () => {
     assert.equal(logCount(built.logEntries, "info", "Smoke detected."), 1, "while the smoke line stayed at its single edge");
 
     built.sensor.cleanup();
+  });
+
+  // Each reconcile topic the sensor holds, with the configuration that gives it a value and the record patch that moves that value. One table drives the cadence rows
+  // below, so every topic is held to the same change-gated rule rather than a sample of them.
+  const RECONCILE_TOPICS: readonly { change: Parameters<TestStateStore["pushSensorPatch"]>[1]; config: Parameters<typeof makeSensorConfig>[0]; topic: string;
+    userOptions?: string[]; }[] = [
+    { change: { airQuality: airQualityBlock({ aqi: { status: "neutral", value: 50 } }) }, config: { airQuality: { aqi: { status: "neutral", value: 42 } } },
+      topic: "airquality" },
+    { change: { stats: { light: { status: "", value: 250 } } }, config: { ambientLight: 120, lightEnabled: true }, topic: "ambientlight" },
+    { change: { isOpened: true }, config: { isOpened: false, mountType: "door" }, topic: "contact" },
+    { change: { stats: { humidity: { status: "", value: 47.5 } } }, config: { humidity: 40, humidityEnabled: true }, topic: "humidity" },
+    { change: { stats: { temperature: { status: "", value: 18.25 } } }, config: { temperature: 21.5, temperatureEnabled: true }, topic: "temperature" },
+    { change: { leakDetectedAt: 1700000000000 }, config: { leakChannelNames: [ "internal", "external" ], leakDetectedAt: null, leakExternalEnabled: true,
+      leakInternalEnabled: true }, topic: "leak" },
+    { change: { externalLeakDetectedAt: 1700000000000 }, config: { externalLeakDetectedAt: null, leakChannelNames: [ "internal", "external" ], leakExternalEnabled: true,
+      leakInternalEnabled: true }, topic: "leak-external" },
+    { change: { smokeStatus: makeSmokeStatus({ smokeAlarm: true }) }, config: { alarmTypes: [ "smoke", "CO" ], smokeStatus: makeSmokeStatus(), type: "USL-Smoke-US" },
+      topic: "smoke" },
+    { change: { smokeStatus: makeSmokeStatus({ coAlarm: true }) }, config: { alarmTypes: [ "smoke", "CO" ], smokeStatus: makeSmokeStatus(), type: "USL-Smoke-US" },
+      topic: "carbonmonoxide" },
+    { change: { smokeStatus: makeSmokeStatus({ batteryLow: true }) }, config: { alarmTypes: [ "smoke", "CO" ], smokeStatus: makeSmokeStatus(), type: "USL-Smoke-US" },
+      topic: "smokedetector" },
+    { change: { airQuality: airQualityBlock({ vape: { status: "detected", value: null } }) }, config: { airQuality: { vape: { status: "neutral", value: null } },
+      vapeEnabled: true }, topic: "vape", userOptions: ["Enable.Sensor.Vape"] }
+  ];
+
+  describe("reconcile topics publish when their value changes", () => {
+
+    for(const row of RECONCILE_TOPICS) {
+
+      test("the " + row.topic + " topic stays unsent on an unrelated wake and records one publish when its value changes", async () => {
+
+        const built = buildSensor(row.config, { userOptions: row.userOptions });
+        const tail = "/" + row.topic;
+
+        await settle();
+
+        assert.equal(built.mqtt.publishedTo(tail).length, 1, "the construction pass stated the topic once");
+
+        // A record change that leaves this topic's value where it was still runs the whole reconcile pass.
+        built.store.pushSensorPatch("test-sensor-1", { batteryStatus: { isLow: false, modelKey: "sensorBatteryStatus", percentage: 99 } });
+
+        await settle();
+
+        assert.equal(built.mqtt.publishedTo(tail).length, 1, "a pass that left the value unchanged published nothing for the topic");
+
+        built.store.pushSensorPatch("test-sensor-1", row.change);
+
+        await settle();
+
+        const published = built.mqtt.publishedTo(tail);
+
+        assert.equal(published.length, 2, "a pass that changed the value published it once");
+        assert.equal(published[1]?.payload, await built.mqtt.invokeGet(tail + "/get"), "the published value is the one the topic's get answers");
+
+        built.sensor.cleanup();
+      });
+    }
+  });
+
+  test("a fresh alarm trigger while the alarm is already sounding publishes true again", async () => {
+
+    const built = buildSensor({ alarmEnabled: true });
+
+    await settle();
+
+    built.store.pushSensorPatch("test-sensor-1", { alarmTriggeredAt: 1700000000000 });
+
+    await settle();
+
+    built.store.pushSensorPatch("test-sensor-1", { alarmTriggeredAt: 1700000060000 });
+
+    await settle();
+
+    assert.deepEqual(built.mqtt.publishedTo("/alarm").map((entry) => entry.payload), [ "false", "true", "true" ],
+      "the seed stated the clear alarm and each fresh trigger stated true, the repeat included");
+
+    built.sensor.cleanup();
+  });
+});
+
+describe("the sensor's held state restated per broker session", () => {
+
+  test("a session restore restates each attached alarm row once, states no reading the sensor does not hold, and logs nothing at info or above", async () => {
+
+    const built = buildSensor({ alarmEnabled: true });
+
+    await settle();
+
+    assert.deepEqual(built.mqtt.publishedTo("/alarm").map((entry) => entry.payload), ["false"], "the alarm row is stated once as the sensor is built, by its seed");
+
+    const logged = built.logEntries.length;
+
+    built.mqtt.connected = false;
+    await settle();
+    built.mqtt.connected = true;
+    await settle();
+
+    assert.deepEqual(built.mqtt.publishedTo("/alarm").map((entry) => entry.payload), [ "false", "false" ], "the restore restates the attached alarm row once");
+    assert.equal(built.mqtt.publishedTo("/temperature").length, 0, "a reading the sensor does not hold is not restated");
+    assert.equal(built.logEntries.slice(logged).filter((entry) => entry.level !== "debug").length, 0, "the restatement of an unchanged sensor logs nothing");
+  });
+
+  test("an alarm row the restatement's own pass attaches is stated once, by its seed", async () => {
+
+    const built = buildSensor();
+
+    await settle();
+
+    // The enabling patch and the session edge land with no settle between them, so the restatement's pass is the one that attaches the row.
+    built.store.pushSensorPatch("test-sensor-1", { alarmSettings: { isEnabled: true } });
+    built.mqtt.connected = false;
+    built.mqtt.connected = true;
+    await settle();
+
+    assert.deepEqual(built.mqtt.publishedTo("/alarm").map((entry) => entry.payload), ["false"], "the newly attached row is stated once");
+  });
+
+  // A sensor holding a temperature reading and an attached alarm row, one held state of each kind the sensor states.
+  const heldState = { alarmEnabled: true, temperature: 21.5, temperatureEnabled: true };
+
+  test("a sensor built into a held session states each reading it holds and each alarm row once", async () => {
+
+    const built = buildSensor(heldState);
+
+    await settle();
+
+    assert.deepEqual(built.mqtt.publishedTo("/temperature").map((entry) => entry.payload), ["21.5"], "the reading is stated once as the sensor is built");
+    assert.deepEqual(built.mqtt.publishedTo("/alarm").map((entry) => entry.payload), ["false"], "the alarm row is stated once as the sensor is built");
+  });
+
+  test("a sensor built while no session is held records nothing until the session starts, then each held state once", async () => {
+
+    const built = buildSensor(heldState, { disconnected: true });
+
+    await settle();
+
+    assert.equal(built.mqtt.published.length, 0, "the statements made with no session held are refused");
+
+    built.mqtt.connected = true;
+    await settle();
+
+    assert.deepEqual(built.mqtt.publishedTo("/temperature").map((entry) => entry.payload), ["21.5"], "the first session states the reading once");
+    assert.deepEqual(built.mqtt.publishedTo("/alarm").map((entry) => entry.payload), ["false"], "the first session states the alarm row once");
+  });
+
+  test("a session restore restates the reading once and no event, and an unchanged wake after it adds nothing", async () => {
+
+    const built = buildSensor(heldState);
+
+    await settle();
+
+    built.mqtt.connected = false;
+    await settle();
+    built.mqtt.connected = true;
+    await settle();
+
+    assert.deepEqual(built.mqtt.publishedTo("/temperature").map((entry) => entry.payload), [ "21.5", "21.5" ], "the restore restates the reading once");
+    assert.equal(built.mqtt.publishedTo("/motion").length, 0, "no event topic is restated");
+
+    const recorded = built.mqtt.published.length;
+
+    built.store.pushSensorPatch("test-sensor-1", { batteryStatus: { isLow: false, modelKey: "sensorBatteryStatus", percentage: 99 } });
+    await settle();
+
+    assert.equal(built.mqtt.published.length, recorded, "an unchanged wake adds nothing, the gate holding the restated value");
+  });
+
+  test("a reading changed while the session is down is restated once, as the current value, when the session returns", async () => {
+
+    const built = buildSensor(heldState);
+
+    await settle();
+
+    built.mqtt.connected = false;
+    built.store.pushSensorPatch("test-sensor-1", { stats: { temperature: { status: "", value: 18.25 } } });
+    await settle();
+
+    const asBuilt = built.mqtt.publishedTo("/temperature").length;
+
+    built.mqtt.connected = true;
+    await settle();
+
+    assert.deepEqual(built.mqtt.publishedTo("/temperature").slice(asBuilt).map((entry) => entry.payload), ["18.25"],
+      "the returning session hears the current value once");
   });
 });

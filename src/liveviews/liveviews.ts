@@ -53,6 +53,16 @@ export class ProtectLiveviews extends ProtectBase {
     return ("liveview" in accessory.context) && (accessory.context.nvr === this.nvr.ufp.mac);
   }
 
+  // Every liveview switch this controller owns with its current state, as the MQTT topic carries the whole list. The get answers it and the session restatement
+  // publishes it, so the get and the restatement read one derivation.
+  private get liveviewsPayload(): string {
+
+    const liveviews = this.platform.accessories.filter(x => this.isOwnedLiveviewSwitch(x))
+      .map(x => ({ name: x.context.liveview ?? "", state: x.getService(this.hap.Service.Switch)?.getCharacteristic(this.hap.Characteristic.On).value }));
+
+    return JSON.stringify(liveviews);
+  }
+
   // Reconcile the liveview-derived accessories against the controller's current liveview collection. The NVR-level observe loop drives this on each change to the live
   // liveview projection, and once at startup for the initial population.
   public configureLiveviews(): void {
@@ -237,14 +247,11 @@ export class ProtectLiveviews extends ProtectBase {
     this.isMqttConfigured = true;
 
     // Return the current status of all the liveviews.
-    this.subscribeGet(mqttTopics.liveviews.topic, mqttTopics.liveviews.label, () => {
+    this.subscribeGet(mqttTopics.liveviews.topic, mqttTopics.liveviews.label, () => this.liveviewsPayload);
 
-      // Get the list of this controller's liveviews.
-      const liveviews = this.platform.accessories.filter(x => this.isOwnedLiveviewSwitch(x))
-        .map(x => ({ name: x.context.liveview ?? "", state: x.getService(this.hap.Service.Switch)?.getCharacteristic(this.hap.Characteristic.On).value }));
-
-      return JSON.stringify(liveviews);
-    });
+    // Restate the whole list at the start of every later broker session. The owner is built in the same synchronous run that creates the MQTT client, so no session is
+    // held as it is built and it states nothing more then; registering behind the guard above keeps it to one registration however often the liveviews reconfigure.
+    this.restateOnConnect(() => this.publish(mqttTopics.liveviews.topic, this.liveviewsPayload));
 
     // Set the status of one or more liveviews.
     this.subscribeSet(mqttTopics.liveviews.topic, mqttTopics.liveviews.label, (_value: string, rawValue: string) => {

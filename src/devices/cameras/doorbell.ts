@@ -8,12 +8,12 @@ import type { HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils"
 import { PACKAGE_CAMERA_NAME_SUFFIX, ProtectReservedNames, packageCameraId } from "../../types.ts";
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_DOORBELL_CHIME_DURATION_DIGITAL } from "../../settings.ts";
 import type { ProtectAccessory, ProtectAccessoryContext, WithoutIdentity } from "../../types.ts";
+import { chimeRingFor, chimeVolumeFor } from "./chime-volume.ts";
 import { mqttTopic, sanitizeName, toStartCase } from "homebridge-plugin-utils";
 import type { ProtectCamera } from "./camera.ts";
 import type { ProtectCameraPackage } from "./camera-package.ts";
 import { ProtectDeviceCapability } from "../device-capability.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
-import { chimeVolumeFor } from "./chime-volume.ts";
 import { deviceSelectors } from "unifi-protect";
 import { mqttTopics } from "../../mqtt.ts";
 
@@ -158,8 +158,8 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
     // Configure volume control, if enabled.
     this.configureProtectChimeLightbulb();
 
-    // Configure the doorbell MQTT topics (chime and message get/set). These ride the capability's observeSignal through the inherited subscribe wrappers; the camera
-    // registers its own MQTT separately, so there is no super-MQTT to resolve here.
+    // Configure the doorbell MQTT topics (chime and message get/set). These go through the inherited subscribe wrappers on the capability's observeSignal, and each is
+    // registered only while its feature stands; the camera registers its own MQTT separately, so there is no super-MQTT to resolve here.
     this.configureMqtt();
 
     // Spawn the doorbell observers on the capability's own signal.
@@ -210,8 +210,11 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
     // the volume Lightbulb. The selector returns the computed mean volume across the doorbell's assigned chimes, so the store's value dedup wakes this only on a real
     // ring-volume change, not on every unrelated chime patch, and the push keeps the volume Lightbulb consistent with the onGet. The id is hoisted to the plain string
     // here, alongside cam, because a selector runs inside the store's dispatch, where a projection read against a removed record throws.
-    this.observeState({ key: "doorbell.chimeVolume", selector: state => chimeVolumeFor(deviceSelectors.chime.all(state), id), title: "the chime volume" },
-      () => this.updateChimeVolume());
+    this.observeState({ key: "doorbell.chimeVolume", selector: state => chimeVolumeFor(deviceSelectors.chime.all(state), id), title: "the chime volume" }, () => {
+
+      this.updateChimeVolume();
+      this.publishChimeVolumeState();
+    });
   }
 
   // Configure our access to the doorbell LCD screen.
@@ -569,11 +572,48 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
     return true;
   }
 
-  // Configure MQTT capabilities for the doorbell: the chime volume and the doorbell message get/set. These ride the capability's observeSignal through the inherited
-  // subscribe wrappers, scoped under the camera's MAC. The camera registers its own MQTT separately, so there is no parent camera-MQTT to resolve here.
+  // Configure MQTT capabilities for the doorbell: the chime volume and the doorbell message get/set. These go through the inherited subscribe wrappers, bound to the
+  // capability's observeSignal and scoped under the camera's MAC. The camera registers its own MQTT separately, so there is no parent camera-MQTT to resolve here.
   private configureMqtt(): boolean {
 
-    // Get and set the chime volume.
+    this.configureChimeVolumeMqtt();
+    this.configureMessageMqtt();
+
+    // State the chime volume as the doorbell is built, since its construction publishes nothing for it. The message switch sync that ran earlier in construction has
+    // already stated a showing message that matches a configured switch, so the current message is stated here only when no switch is on, which covers a message that
+    // matches none and keeps one that does to a single statement.
+    this.publishChimeVolumeState();
+
+    if(![...this.messageSwitches.values()].some(entry => entry.state)) {
+
+      this.publishLcdMessageState();
+    }
+
+    // Restate the chime volume and the current message at the start of every later broker session, through the same methods.
+    this.restateOnConnect(() => {
+
+      this.publishChimeVolumeState();
+      this.publishLcdMessageState();
+    });
+
+    return true;
+  }
+
+  // Whether the chime volume dimmer stands, the condition Doorbell.Volume.Dimmer creates it under. The chime volume's MQTT topic is part of the same capability, so its
+  // get, its set and its publishes all follow this one answer.
+  private get hasVolumeDimmer(): boolean {
+
+    return this.accessory.getServiceById(this.hap.Service.Lightbulb, ProtectReservedNames.LIGHTBULB_DOORBELL_VOLUME) !== undefined;
+  }
+
+  // Get and set the chime volume, only while the volume dimmer stands, because a feature the user has not enabled in HomeKit has no MQTT topic.
+  private configureChimeVolumeMqtt(): void {
+
+    if(!this.hasVolumeDimmer) {
+
+      return;
+    }
+
     this.subscribeGet(mqttTopics.chime.topic, mqttTopics.chime.label, (): string => {
 
       return this.chimeVolume.toString();
@@ -595,24 +635,19 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
       this.accessory.getServiceById(this.hap.Service.Lightbulb, ProtectReservedNames.LIGHTBULB_DOORBELL_VOLUME)
         ?.setCharacteristic(this.hap.Characteristic.On, volume > 0);
     });
+  }
+
+  // Get and set the doorbell message, only while Doorbell.Messages is on, because a feature the user has not enabled in HomeKit has no MQTT topic. Setting a message
+  // from MQTT is part of that feature, so with it off no MQTT message reaches the doorbell's screen.
+  private configureMessageMqtt(): void {
+
+    if(!this.isMessagesEnabled) {
+
+      return;
+    }
 
     // Get the current message on the doorbell.
-    this.subscribeGet(mqttTopics.message.topic, mqttTopics.message.label, (): string => {
-
-      // Read the LCD message non-throwing through the live camera record - an absent record (a doorbell lingering in the removal grace) reads as no message - and run it
-      // through the shared expiry predicate, so an expired message reports no message rather than a stale negative duration.
-      const lcdMessage = effectiveLcdMessage({ lcdMessage: this.#device.peek()?.lcdMessage ?? {}, nowMs: this.platform.clock.now() });
-
-      if(!Object.keys(lcdMessage).length) {
-
-        return "";
-      }
-
-      const doorbellDuration = (typeof lcdMessage.resetAt === "number") ? Math.round((lcdMessage.resetAt - this.platform.clock.now()) / 1000) : 0;
-
-      // Return the current message.
-      return JSON.stringify({ duration: doorbellDuration, message: lcdMessage.text ?? "" });
-    });
+    this.subscribeGet(mqttTopics.message.topic, mqttTopics.message.label, (): string => this.lcdMessagePayload);
 
     // We support the ability to set the doorbell message like so:
     //
@@ -681,8 +716,40 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
       // Send it to the doorbell and we're done.
       void this.setMessage(outboundPayload);
     });
+  }
 
-    return true;
+  /* The doorbell's current message as its MQTT topic carries it: JSON holding the message text and the seconds remaining before it clears, `0` for a message that
+   * never expires, or the empty string when no message shows. The get answers it and every publish of the topic carries it, so the topic has one payload shape
+   * wherever it is read. The LCD message is read non-throwing through the live camera record, so an absent record (a doorbell lingering in the removal grace) reads as
+   * no message, and through the shared expiry predicate, so an expired message reads as none rather than a stale negative duration.
+   */
+  private get lcdMessagePayload(): string {
+
+    const nowMs = this.platform.clock.now();
+    const lcdMessage = effectiveLcdMessage({ lcdMessage: this.#device.peek()?.lcdMessage ?? {}, nowMs });
+
+    if(!Object.keys(lcdMessage).length) {
+
+      return "";
+    }
+
+    const duration = (typeof lcdMessage.resetAt === "number") ? Math.round((lcdMessage.resetAt - nowMs) / 1000) : 0;
+
+    return JSON.stringify({ duration, message: lcdMessage.text ?? "" });
+  }
+
+  // State the doorbell's current message while the Doorbell.Messages feature is on and a message shows. The topic belongs to the message feature, so a doorbell
+  // without it states nothing, and a doorbell with no message states nothing rather than an empty payload.
+  private publishLcdMessageState(): void {
+
+    const payload = this.lcdMessagePayload;
+
+    if(!this.isMessagesEnabled || !payload) {
+
+      return;
+    }
+
+    this.publish(mqttTopics.message.topic, payload);
   }
 
   // Push the physical-chime switch states from the doorbell's current chime duration, when the doorbell has a chime and the switches are configured. Driven by the
@@ -841,8 +908,8 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
       this.log.info("Doorbell message set%s: %s.",
         (typeof payload.resetAt === "number") ? " (" + Math.round((payload.resetAt - this.platform.clock.now()) / 1000).toString() + " seconds)" : "", payload.text);
 
-      // Publish to MQTT, if the user has configured it.
-      this.publish(mqttTopics.message.topic, JSON.stringify({ duration: entry.duration / 1000, message: entry.text }));
+      // Publish to MQTT, if the user has configured it, in the shape the topic's get answers.
+      this.publish(mqttTopics.message.topic, this.lcdMessagePayload);
     }
   }
 
@@ -876,9 +943,9 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
     // A chime can be assigned to multiple doorbells, so update the ring entry for THIS doorbell on every chime that serves it. The controller is the single,
     // immutable source of state, so each update is write-through only: we send the PATCH and let the reducer's stream reflect the change once it arrives. We send a
     // single-entry ringSettings array carrying only the modified ring, matching the controller's expected payload.
-    for(const chime of this.nvr.client.chimes.filter(chime => chime.config.cameraIds.includes(this.#device.id))) {
+    for(const chime of this.nvr.client.chimes) {
 
-      const ring = chime.config.ringSettings.find(setting => setting.cameraId === this.#device.id);
+      const ring = chimeRingFor(chime.config, this.#device.id);
 
       if(!ring) {
 
@@ -891,8 +958,26 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
         return;
       }
     }
+  }
 
-    this.publish(mqttTopics.chime.topic, value.toString());
+  // Publish this doorbell's chime volume, the value its MQTT get answers, when it changed. The controller's reported change is the one publisher, so a volume set here,
+  // in the Protect app, or on a chime shared with another doorbell publishes from the observer once each assigned chime confirms it. The topic belongs to the volume
+  // dimmer, so a doorbell without the Doorbell.Volume.Dimmer feature publishes nothing, and a volume needs a chime that rings for this doorbell, so with none assigned
+  // the 0 the volume reads stands for no setting and publishes nothing either.
+  private publishChimeVolumeState(): void {
+
+    if(!this.hasVolumeDimmer || !this.hasChimeRing) {
+
+      return;
+    }
+
+    this.publishState(mqttTopics.chime.topic, this.chimeVolume.toString());
+  }
+
+  // Whether any chime assigned to this doorbell carries a ring for it, read over the same chime projection the volume reduces and through the same ring lookup.
+  private get hasChimeRing(): boolean {
+
+    return deviceSelectors.chime.all(this.nvr.client.state.snapshot()).some(chime => chimeRingFor(chime, this.#device.id) !== undefined);
   }
 
   // Push the chime-volume projection onto the doorbell's volume Lightbulb. Shares the read path (chimeVolume / chimeVolumeFor) with the onGet handlers, so the displayed
